@@ -6,7 +6,7 @@ import sys
 from core.lexer import tokenize
 from core.parser import Parser
 from core.interpreter import Interpreter
-from parsergen import Parser as MKParser
+from parsergen import mklangParser
 
 
 if len(sys.argv) != 2:
@@ -17,7 +17,7 @@ with open(sys.argv[1], "r", encoding="utf-8") as f:
     code = f.read()
 
 tokens = tokenize(code)
-# ast = MKParser().parse(code)
-# print(ast)
+ast = mklangParser().parse(code)
+print(ast)
 parser = Parser(tokenize(code))
 Interpreter().run(parser.parse())

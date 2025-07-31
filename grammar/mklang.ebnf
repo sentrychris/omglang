@@ -1,4 +1,8 @@
-start = { statement } $ ;
+@@grammar :: mklang
+@@whitespace :: /[ \t\r\n]+/
+
+start 
+    = { statement } $ ;
 
 statement
     =
