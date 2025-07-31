@@ -1,0 +1,55 @@
+import re
+
+class Token:
+    def __init__(self, type_, value):
+        self.type = type_
+        self.value = value
+
+    def __repr__(self):
+        return f"Token({self.type}, {self.value})"
+
+def tokenize(code):
+    token_specification = [
+        ('NUMBER',   r'\d+'),
+        ('STRING',   r'"[^"\n]*"'),
+        ('ID',       r'[A-Za-z_][A-Za-z0-9_]*'),
+        ('ASSIGN',   r':='),
+        ('ARROW',    r'<<'),
+        ('LPAREN',   r'\('),
+        ('RPAREN',   r'\)'),
+        ('PLUS',     r'\+'),
+        ('MINUS',    r'-'),
+        ('MUL',      r'\*'),
+        ('DIV',      r'/'),
+        ('NEWLINE',  r'\n'),
+        ('SKIP',     r'[ \t]+'),
+        ('MISMATCH', r'.'),
+    ]
+
+    tok_regex = '|'.join(f'(?P<{name}>{pattern})' for name, pattern in token_specification)
+    keywords = {'cout', 'var'}
+    tokens = []
+
+    for mo in re.finditer(tok_regex, code):
+        kind = mo.lastgroup
+        value = mo.group()
+        if kind == 'NUMBER':
+            tokens.append(Token('NUMBER', int(value)))
+        elif kind == 'STRING':
+            tokens.append(Token('STRING', value[1:-1]))
+        elif kind == 'ID':
+            if value in keywords:
+                tokens.append(Token(value.upper(), value))
+            else:
+                tokens.append(Token('ID', value))
+        elif kind == 'SKIP':
+            continue
+        elif kind == 'NEWLINE':
+            tokens.append(Token('NEWLINE', value))
+        elif kind == 'MISMATCH':
+            raise RuntimeError(f'Unexpected character {value}')
+        else:
+            tokens.append(Token(kind, value))
+
+    tokens.append(Token('EOF', None))
+    return tokens

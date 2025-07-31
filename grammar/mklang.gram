@@ -1,0 +1,26 @@
+@@grammar::mklang
+
+start = statements $ ;
+
+statements = { statement [NEWLINE] }* ;
+
+statement = cout_stmt | var_decl ;
+
+cout_stmt = "cout" "<<" expr ;
+
+var_decl = "var" ID ":=" expr ;
+
+expr = term { ("+" | "-") term } ;
+
+term = factor { ("*" | "/") factor } ;
+
+factor = NUMBER
+       | STRING
+       | ID
+       | "(" expr ")" ;
+
+ID = /[A-Za-z_][A-Za-z0-9_]*/ ;
+NUMBER = /\d+/ ;
+STRING = /"[^"\n]*"/ ;
+
+NEWLINE = /\n/ ;
