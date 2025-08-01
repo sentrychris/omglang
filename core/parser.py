@@ -4,8 +4,8 @@ Parser.
 This is a recursive descent parser that operates in a mostly LL(1) fashion.
 
 1. Parsing
-The parser implements a set of mutually recursive functions (factor(), term(), expr(), 
-comparison(), statement(), block()), each corresponding to a nonterminal in the grammar. 
+The parser implements a set of mutually recursive functions (_factor(), _term(), _expr(), 
+_comparison(), _statement(), _block()), each corresponding to a nonterminal in the grammar. 
 These functions parse specific syntactic constructs and call one another as needed, reflecting 
 the structure of the grammar.
 
@@ -15,7 +15,7 @@ against the expected type and advances the token stream if they match.
 
 3. LL(1) & LL(2)
 Parsing decisions are typically made using a single token of lookahead (LL(1)). In limited cases,
-the parser peeks ahead one additional token (e.g., self._tokens[self._position + 1] in factor()) 
+the parser peeks ahead one additional token (e.g., self._tokens[self._position + 1] in _factor()) 
 to resolve ambiguities such as distinguishing variable references from function calls. This 
 occasional lookahead makes the parser technically LL(2) in those specific situations, but its 
 overall behavior and structure align with LL(1) principles.
@@ -39,7 +39,7 @@ class Parser:
         self._source_file = file
 
 
-    def eat(self, token_type: str) -> None:
+    def _eat(self, token_type: str) -> None:
         """
         Consume the current token if it matches the expected type.
 
@@ -61,7 +61,7 @@ class Parser:
             )
 
 
-    def factor(self) -> tuple:
+    def _factor(self) -> tuple:
         """
         Parse a factor (number, string, variable, or parenthesized expression).
 
@@ -73,32 +73,32 @@ class Parser:
         """
         tok = self._current_token
         if tok.type == 'NUMBER':
-            self.eat('NUMBER')
+            self._eat('NUMBER')
             return ('number', tok.value, tok.line)
         elif tok.type == 'STRING':
-            self.eat('STRING')
+            self._eat('STRING')
             return ('string', tok.value, tok.line)
         elif tok.type == 'ID':
             if self._position + 1 < len(self._tokens) and self._tokens[self._position + 1].type == 'LPAREN':
                 func_name = tok.value
-                self.eat('ID')
-                self.eat('LPAREN')
+                self._eat('ID')
+                self._eat('LPAREN')
                 args = []
                 if self._current_token.type != 'RPAREN':
-                    args.append(self.expr())
+                    args.append(self._expr())
                     while self._current_token.type == 'COMMA':
-                        self.eat('COMMA')
-                        args.append(self.expr())
-                self.eat('RPAREN')
+                        self._eat('COMMA')
+                        args.append(self._expr())
+                self._eat('RPAREN')
                 return ('call', func_name, args, tok.line)
             else:
                 # variable reference or error
-                self.eat('ID')
+                self._eat('ID')
                 return ('thingy', tok.value, tok.line)
         elif tok.type == 'LPAREN':
-            self.eat('LPAREN')
-            node = self.expr()
-            self.eat('RPAREN')
+            self._eat('LPAREN')
+            node = self._expr()
+            self._eat('RPAREN')
             return node
         else:
             raise SyntaxError(
@@ -108,55 +108,55 @@ class Parser:
             )
 
 
-    def term(self) -> tuple:
+    def _term(self) -> tuple:
         """
         Parse a term (factor optionally followed by * or /).
 
         Returns:
             An AST node representing the term.
         """
-        result = self.factor()
+        result = self._factor()
         while self._current_token.type in ('MUL', 'DIV', 'MOD'):
             op_tok = self._current_token
-            self.eat(op_tok.type)
+            self._eat(op_tok.type)
             op_map = {'MUL': 'mul', 'DIV': 'div', 'MOD': 'mod'}
-            result = (op_map[op_tok.type], result, self.factor(), op_tok.line)
+            result = (op_map[op_tok.type], result, self._factor(), op_tok.line)
         return result
 
 
-    def expr(self) -> tuple:
+    def _expr(self) -> tuple:
         """
         Parse an expression (term optionally followed by + or -).
 
         Returns:
             An AST node representing the expression.
         """
-        result = self.term()
+        result = self._term()
         while self._current_token.type in ('PLUS', 'MINUS'):
             op_tok = self._current_token
-            self.eat(op_tok.type)
+            self._eat(op_tok.type)
             op_map = {'PLUS': 'add', 'MINUS': 'sub'}
-            result = (op_map[op_tok.type], result, self.term(), op_tok.line)
+            result = (op_map[op_tok.type], result, self._term(), op_tok.line)
         return result
 
 
-    def comparison(self) -> tuple:
+    def _comparison(self) -> tuple:
         """
         Parse a comparison expression (e.g., ==, <, >, <=, >=).
 
         Returns:
             An AST node representing the comparison.
         """
-        result = self.expr()
+        result = self._expr()
         while self._current_token.type in ('EQ', 'GT', 'LT', 'GE', 'LE'):
             op_tok = self._current_token
-            self.eat(op_tok.type)
+            self._eat(op_tok.type)
             op_map = {'EQ': 'eq', 'GT': 'gt', 'LT': 'lt', 'GE': 'ge', 'LE': 'le'}
-            result = (op_map[op_tok.type], result, self.expr(), op_tok.line)
+            result = (op_map[op_tok.type], result, self._expr(), op_tok.line)
         return result
 
 
-    def block(self) -> tuple:
+    def _block(self) -> tuple:
         """
         Parse a block of statements enclosed in braces.
 
@@ -164,19 +164,19 @@ class Parser:
             A ('block', list_of_statements, line_number) AST node.
         """
         tok = self._current_token
-        self.eat('LBRACE')
+        self._eat('LBRACE')
         statements = []
         while self._current_token.type != 'RBRACE':
             while self._current_token.type == 'NEWLINE':
-                self.eat('NEWLINE')
-            statements.append(self.statement())
+                self._eat('NEWLINE')
+            statements.append(self._statement())
             while self._current_token.type == 'NEWLINE':
-                self.eat('NEWLINE')
-        self.eat('RBRACE')
+                self._eat('NEWLINE')
+        self._eat('RBRACE')
         return ('block', statements, tok.line)
 
 
-    def statement(self) -> tuple:
+    def _statement(self) -> tuple:
         """
         Parse a single statement (saywhat, thingy assignment, maybe, or while).
 
@@ -222,8 +222,8 @@ class Parser:
             SyntaxError: If the expression is malformed.
         """
         tok = self._current_token
-        self.eat("FACTS")
-        expr_node = self.expr()
+        self._eat("FACTS")
+        expr_node = self._expr()
         return ("facts", expr_node, tok.line)
 
 
@@ -241,9 +241,9 @@ class Parser:
             SyntaxError: If '<<' or the expression is missing.
         """
         tok = self._current_token
-        self.eat("ECHO")
-        self.eat("ARROW")
-        expr_node = self.expr()
+        self._eat("ECHO")
+        self._eat("ARROW")
+        expr_node = self._expr()
 
         return ("saywhat", expr_node, tok.line)
 
@@ -266,13 +266,13 @@ class Parser:
             SyntaxError: If condition or blocks are malformed.
         """
         tok = self._current_token
-        self.eat("IF")
-        condition = self.comparison()
-        then_block = self.block()
+        self._eat("IF")
+        condition = self._comparison()
+        then_block = self._block()
         else_block = None
         if self._current_token.type == 'ELSE':
-            self.eat('ELSE')
-            else_block = self.block()
+            self._eat('ELSE')
+            else_block = self._block()
 
         return ('maybe', condition, then_block, else_block, tok.line)
 
@@ -293,9 +293,9 @@ class Parser:
             SyntaxError: If the condition or block is invalid.
         """
         tok = self._current_token
-        self.eat('WHILE')
-        condition = self.comparison()
-        body = self.block()
+        self._eat('WHILE')
+        condition = self._comparison()
+        body = self._block()
         return ('hamsterwheel', condition, body, tok.line)
 
 
@@ -315,20 +315,20 @@ class Parser:
             SyntaxError: If the syntax is malformed or parameters are invalid.
         """
         start_tok = self._current_token
-        self.eat('FUNC')
+        self._eat('FUNC')
         func_name = self._current_token.value
-        self.eat('ID')
-        self.eat('LPAREN')
+        self._eat('ID')
+        self._eat('LPAREN')
         params = []
         if self._current_token.type != 'RPAREN':
             params.append(self._current_token.value)
-            self.eat('ID')
+            self._eat('ID')
             while self._current_token.type == 'COMMA':
-                self.eat('COMMA')
+                self._eat('COMMA')
                 params.append(self._current_token.value)
-                self.eat('ID')
-        self.eat('RPAREN')
-        body = self.block()
+                self._eat('ID')
+        self._eat('RPAREN')
+        body = self._block()
         return ('func_def', func_name, params, body, start_tok.line)
 
 
@@ -347,16 +347,16 @@ class Parser:
         """
         tok = self._current_token
         func_name = tok.value
-        self.eat('ID')
+        self._eat('ID')
         if self._current_token.type == 'LPAREN':
-            self.eat('LPAREN')
+            self._eat('LPAREN')
             args = []
             if self._current_token.type != 'RPAREN':
-                args.append(self.expr())  # parse an expression argument
+                args.append(self._expr())  # parse an expression argument
                 while self._current_token.type == 'COMMA':
-                    self.eat('COMMA')
-                    args.append(self.expr())
-            self.eat('RPAREN')
+                    self._eat('COMMA')
+                    args.append(self._expr())
+            self._eat('RPAREN')
             return ('func_call', func_name, args, tok.line)
         else:
             # Could be a variable usage statement or error if not expected
@@ -379,7 +379,7 @@ class Parser:
         Raises:
             SyntaxError: If the variable name, ':=' operator, or expression is missing or invalid.
         """
-        self.eat('THINGY')
+        self._eat('THINGY')
         id_tok = self._current_token
         if id_tok.type != 'ID':
             raise SyntaxError(
@@ -388,14 +388,14 @@ class Parser:
                 f"in {self._source_file}"
             )
         var_name = id_tok.value
-        self.eat('ID')
+        self._eat('ID')
         if self._current_token.type != 'ASSIGN':
             raise SyntaxError(
                 f"Expected ':=' after variable name "
                 f"on line {self._current_token.line} in {self._source_file}"
             )
-        self.eat('ASSIGN')
-        expr_node = self.expr()
+        self._eat('ASSIGN')
+        expr_node = self._expr()
         return ('assign', var_name, expr_node, id_tok.line)
 
 
@@ -409,10 +409,10 @@ class Parser:
         statements = []
         while self._current_token.type != 'EOF':
             while self._current_token.type == 'NEWLINE':
-                self.eat('NEWLINE')
+                self._eat('NEWLINE')
             if self._current_token.type == 'EOF':
                 break
-            statements.append(self.statement())
+            statements.append(self._statement())
             while self._current_token.type == 'NEWLINE':
-                self.eat('NEWLINE')
+                self._eat('NEWLINE')
         return statements
