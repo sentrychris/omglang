@@ -1,6 +1,6 @@
 # OMGlang
 
-**OMG** is a toy programming language with a light‑hearted syntax and basic support for variables, arithmetic, conditionals, loops and functions. It is implemented in Python using a hand‑written lexer, a recursive‑descent parser and a tree‑walk interpreter. The language is intended as an educational exercise rather than a production tool.
+**OMG** is a toy programming language with a light‑hearted syntax and basic support for variables, arithmetic, conditionals, loops and functions. It's implemented in Python using a hand‑written lexer, a recursive‑descent parser and a tree‑walk interpreter. The language is intended as an educational exercise rather than a production tool.
 
 ## Table of Contents
 
@@ -16,7 +16,7 @@
 
 ## Overview
 
-The language uses playful keywords like `thingy`, `saywhat`, `maybe` and `hamsterwheel`, but it is grounded in a well‑defined grammar. All scripts must start with a header line `;;;omg`. Execution proceeds through three stages:
+The language uses playful keywords like `thingy`, `saywhat`, `maybe` and `hamsterwheel`, but it's grounded in a well‑defined grammar. All scripts must start with a header line `;;;omg`. Execution proceeds through three stages:
 
 1. **Lexing** – convert raw source code into tokens.
 2. **Parsing** – build an Abstract Syntax Tree (AST) from tokens.
@@ -24,7 +24,7 @@ The language uses playful keywords like `thingy`, `saywhat`, `maybe` and `hamste
 
 ## Running OMG Scripts
 
-Once you have installed or built the interpreter, the command‑line entry point is named `oli`. It can execute a script file or drop you into an interactive session if run with no arguments.
+Once you've installed or built the interpreter, the command‑line entry point is named `oli`. It can execute a script file or drop you into an interactive session if run with no arguments.
 
 ### Usage
 
