@@ -38,12 +38,13 @@ def tokenize(code):
     Raises:
         RuntimeError: If an unexpected character is encountered.
     """
+
     token_specification = [
         ('NUMBER',   r'\d+'),
         ('STRING',   r'"[^"\n]*"'),
         ('IF',       r'\bmaybe\b'),
         ('ELSE',     r'\bokthen\b'),
-        ('WHILE', r'\bhamsterwheel\b'),
+        ('WHILE',    r'\bhamsterwheel\b'),
         ('ID',       r'[A-Za-z_][A-Za-z0-9_]*'),
         ('ASSIGN',   r':='),
         ('ARROW',    r'<<'),
@@ -72,12 +73,19 @@ def tokenize(code):
         'saywhat',
         'thingy',
         'maybe',
-        'okthen'
+        'okthen',
+        'hamsterwheel'
     }
 
     tokens = []
     line_num = 1
-    line_start = 0
+
+    # Remove comments before tokenizing:
+    code_no_comments = []
+    for line in code.splitlines():
+        stripped_line = line.split('#', 1)[0]  # Keep text before #
+        code_no_comments.append(stripped_line)
+    code = '\n'.join(code_no_comments)
 
     for mo in re.finditer(tok_regex, code):
         kind = mo.lastgroup
@@ -85,11 +93,12 @@ def tokenize(code):
         if kind == 'NEWLINE':
             tokens.append(Token('NEWLINE', value, line_num))
             line_num += 1
-            line_start = mo.end()
             continue
-        elif kind == 'SKIP':
+
+        if kind == 'SKIP':
             continue
-        elif kind == 'MISMATCH':
+
+        if kind == 'MISMATCH':
             raise RuntimeError(f'Unexpected character {value} on line {line_num}')
 
         # For other tokens:

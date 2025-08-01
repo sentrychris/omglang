@@ -1,13 +1,16 @@
 ;;;omg
 
+# Define some variables
 thingy user := "Nedjem"
 thingy limit := 5
 thingy fact := 1
 thingy sum := 0
 thingy i := 1
 
+# Echo out some shit
 saywhat << "Hello " + user + ", let's do some math!"
 
+# Do a while loop
 hamsterwheel i <= limit {
     saywhat << "i = " + i
 
@@ -23,10 +26,12 @@ hamsterwheel i <= limit {
     thingy i := i + 1
 }
 
+# Echo out some more shit
 saywhat << "Done looping!"
 saywhat << "Sum of 1 to " + limit + " is: " + sum
 saywhat << "Factorial of " + limit + " is: " + fact
 
+# Do a conditional
 maybe fact > 100 {
     saywhat << "That's a big number!"
 } okthen {
