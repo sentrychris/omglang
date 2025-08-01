@@ -185,6 +185,11 @@ class Parser:
         """
         tok = self.current_token
 
+        if tok.type == "FACTS":
+            self.eat("FACTS")
+            expr_node = self.expr()
+            return ("facts", expr_node, tok.line)
+
         if tok.type == 'SAYWHAT':
             self.eat('SAYWHAT')
             self.eat('ARROW')

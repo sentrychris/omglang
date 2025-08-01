@@ -1,16 +1,28 @@
 ;;;omg
 
+# Declare some variables
 thingy x := 5
 thingy y := 10
+thingy z := 0
 
+# Assert some things
+facts x
+facts y
+
+# facts z # this one will raise an AssertionError, try it!
+
+# Print to stdout
 saywhat << x + y
 
-bitchin greet(name) {
+# Define a function
+bitchin greeting(name) {
     saywhat << "Hello " + name
 }
 
-greet("World")
+# Call a function
+greeting("World")
 
+# Create a loop
 thingy i := 0
 hamsterwheel i <= 3 {
     maybe i == 3 {

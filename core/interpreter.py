@@ -172,6 +172,12 @@ class Interpreter:
                 print(value)
 
 
+            elif kind == 'facts':
+                _, expr_node, _ = stmt
+                value = self.eval_expr(expr_node)
+                assert value
+
+
             elif kind == 'maybe':
                 _, cond_node, then_block, else_block, _ = stmt
                 if self.eval_expr(cond_node):

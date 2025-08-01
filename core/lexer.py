@@ -69,6 +69,7 @@ def tokenize(code):
         ('ELSE',     r'\bokthen\b'),
         ('WHILE',    r'\bhamsterwheel\b'),
         ('SAYWHAT',  r'\bsaywhat\b'),
+        ('FACTS',   r"\bfacts\b"),
         ('FUNC',     r'\bbitchin\b'),
         ('COMMA',    r','),
         ('ID',       r'[A-Za-z_][A-Za-z0-9_]*'),
@@ -99,6 +100,7 @@ def tokenize(code):
     # todo add consts, globals
     identifier_keywords = {
         'thingy',
+        'facts'
     }
 
     tokens = []
