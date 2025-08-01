@@ -1,4 +1,10 @@
+"""
+Errors.
+"""
 class UndefinedVariableError(Exception):
+    """
+    Error for undefined variables.
+    """
     def __init__(self, varname, line=None, file=None):
         self.varname = varname
         self.line = line
@@ -11,6 +17,9 @@ class UndefinedVariableError(Exception):
 
 
 class UnknownOperationError(Exception):
+    """
+    Error for unknown operations.
+    """
     def __init__(self, op, line=None, file=None):
         self.op = op
         self.line = line
@@ -23,5 +32,8 @@ class UnknownOperationError(Exception):
 
 
 class ReturnError(Exception):
+    """
+    Error for invalid return statements.
+    """
     def __init__(self, value):
         self.value = value

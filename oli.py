@@ -37,13 +37,17 @@ def print_usage():
     print()
     print("Arguments:")
     print("    <script.omg>")
-    print("        The path to an OMG language source file to execute. The file must")
+    print("        Path to an OMG language source file to execute. The file must")
     print("        include the required header ';;;omg' on the first non-empty line.")
     print()
     print("Example:")
     print("    oli hello.omg")
     print()
     print("Or run with no arguments to enter interactive mode (REPL).")
+    print()
+    print("Options:")
+    print("    -h, --help")
+    print("        Show this help message and exit.")
 
 
 def run_script(script_name: str):
@@ -107,11 +111,29 @@ def run_repl():
             break
 
 
-if __name__ == "__main__":
-    if len(sys.argv) == 2:
-        run_script(os.path.join(LAUNCH_ENV, sys.argv[1]))
-    elif len(sys.argv) == 1:
+def main(argv: list[str]) -> int:
+    """
+    Entry point for the CLI.
+
+    Behaviour:
+    - No arguments: enter the REPL.
+    - One argument equal to ``-h`` or ``--help``: print usage and exit.
+    - One argument that is not an option: treat it as the path to a script and run it.
+    - Any other pattern: print usage and return a non‑zero exit code.
+    """
+    args = argv[1:]
+    if not args:
         run_repl()
-    else:
+        return 0
+    if len(args) == 1 and args[0] in ('-h', '--help'):
         print_usage()
-        sys.exit(1)
+        return 0
+    if len(args) == 1:
+        run_script(args[0])
+        return 0
+    print_usage()
+    return 1
+
+
+if __name__ == "__main__":
+    main(sys.argv)
