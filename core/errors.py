@@ -20,3 +20,8 @@ class UnknownOperationError(Exception):
         if file is not None:
             message += f" in {file}"
         super().__init__(message)
+
+
+class ReturnError(Exception):
+    def __init__(self, value):
+        self.value = value

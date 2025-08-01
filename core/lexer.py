@@ -71,6 +71,7 @@ def tokenize(code) -> list[Token]:
         ('ECHO',  r'\bsaywhat\b'),
         ('FACTS',   r"\bfacts\b"),
         ('FUNC',     r'\bbitchin\b'),
+        ('RETURN',   r'\bgimme\b'),
         ('COMMA',    r','),
         ('ID',       r'[A-Za-z_][A-Za-z0-9_]*'),
         ('ASSIGN',   r':='),
@@ -96,11 +97,10 @@ def tokenize(code) -> list[Token]:
 
     tok_regex = '|'.join(f'(?P<{name}>{pattern})' for name, pattern in token_specification)
 
-    # Sharing ID regex
-    # todo add consts, globals
     identifier_keywords = {
+        'facts',
+        'gimme',
         'thingy',
-        'facts'
     }
 
     tokens = []

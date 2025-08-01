@@ -35,7 +35,7 @@ execution is aborted with a descriptive runtime error.
 Runtime errors during interpretation—, such as undefined variables, unknown operations, or 
 malformed AST nodes, are surfaced as typed exceptions with line numbers and file context.
 """
-from core.errors import UndefinedVariableError, UnknownOperationError
+from core.errors import UndefinedVariableError, UnknownOperationError, ReturnError
 
 class Interpreter:
     """
@@ -136,6 +136,37 @@ class Interpreter:
                     case _:
                         raise UnknownOperationError(f"Unknown binary operator '{op}'")
                 return term
+            elif op == 'func_call':
+                _, func_name, args_nodes, line = node
+                args = [self.eval_expr(arg) for arg in args_nodes]
+
+                if func_name not in self.functions:
+                    raise NameError(
+                        f"Undefined function '{func_name}' on line {line} in {self.file}"
+                    )
+
+                params, body = self.functions[func_name]
+
+                if len(args) != len(params):
+                    raise TypeError(
+                        f"Function '{func_name}' expects {len(params)} arguments "
+                        f"but got {len(args)} on line {line} in {self.file}"
+                    )
+
+                saved_vars = self.vars.copy()
+                self.vars.update(dict(zip(params, args)))
+
+                try:
+                    if body[0] == "block":
+                        self.execute(body[1])
+                    else:
+                        self.execute([body])
+                    result = None
+                except ReturnError as ret:
+                    result = ret.value
+
+                self.vars = saved_vars
+                return result
 
         raise RuntimeError(f"Invalid expression node: {node}")
 
@@ -196,7 +227,6 @@ class Interpreter:
             elif kind == 'func_def':
                 _, name, params, body, _ = stmt
                 self.functions[name] = (params, body)
-                # print(self.functions)
 
 
             elif kind == 'func_call':
@@ -222,11 +252,24 @@ class Interpreter:
                 saved_vars = self.vars.copy()
                 self.vars.update(dict(zip(params, args)))
 
-                # Execute the function body (which is presumably a block node)
-                self.execute([body])
+                try:
+                    if body[0] == "block":
+                        self.execute(body[1])
+                    else:
+                        self.execute([body])
+                    result = None  # no return statement encountered
+                except ReturnError as ret:
+                    result = ret.value
 
                 # Restore the previous variable scope
                 self.vars = saved_vars
+                return result
+
+
+            elif kind == 'return':
+                _, expr_node, _ = stmt
+                value = self.eval_expr(expr_node)
+                raise ReturnError(value)
 
 
             else:

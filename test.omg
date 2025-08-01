@@ -8,19 +8,21 @@ thingy z := 0
 # Assert some things
 facts x
 facts y
-
 # facts z # this one will raise an AssertionError, try it!
-
-# Print to stdout
-saywhat << x + y
 
 # Define a function
 bitchin greeting(name) {
-    saywhat << "Hello " + name
+    gimme "Hello " + name
 }
 
 # Call a function
-greeting("World")
+thingy welcome:= greeting("World")
+
+saywhat << welcome
+
+# Do some arithmetic Print to stdout
+thingy term := (x + y) * 10 / 2
+saywhat << term
 
 # Create a loop
 thingy i := 0

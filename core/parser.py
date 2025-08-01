@@ -90,7 +90,7 @@ class Parser:
                         self._eat('COMMA')
                         args.append(self._expr())
                 self._eat('RPAREN')
-                return ('call', func_name, args, tok.line)
+                return ('func_call', func_name, args, tok.line)
             else:
                 # variable reference or error
                 self._eat('ID')
@@ -201,6 +201,8 @@ class Parser:
             return self._parse_assignment()
         elif tok.type == 'ID':
             return self._parse_func_call_or_error()
+        elif tok.type == 'RETURN':
+            return self._parse_return()
         else:
             raise SyntaxError(
                 f"Unexpected token {tok.type} "
@@ -364,6 +366,25 @@ class Parser:
                 f"Unexpected token after identifier {func_name} "
                 f"on line {tok.line} in {self._source_file}"
             )
+
+
+    def _parse_return(self) -> tuple:
+        """
+        Parse a 'gimme' return statement.
+
+        Syntax:
+            gimme <expression>
+
+        Returns:
+            tuple: ('return', expression_node, line_number)
+
+        Raises:
+            SyntaxError: If the return expression is malformed.
+        """
+        tok = self._current_token
+        self._eat("RETURN")
+        expr_node = self._expr()
+        return ("return", expr_node, tok.line)
 
 
     def _parse_assignment(self) -> tuple:
