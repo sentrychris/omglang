@@ -141,7 +141,7 @@ class Parser:
 
     def statement(self):
         """
-        Parse a single statement (cout, var assignment, if, or while).
+        Parse a single statement (cout, var assignment, maybe, or while).
 
         Returns:
             A tuple representing the statement AST node.
@@ -165,7 +165,7 @@ class Parser:
             if self.current_token.type == 'ELSE':
                 self.eat('ELSE')
                 else_block = self.block()
-            return ('if', condition, then_block, else_block, tok.line)
+            return ('maybe', condition, then_block, else_block, tok.line)
 
         elif tok.type == 'WHILE':
             self.eat('WHILE')

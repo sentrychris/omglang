@@ -90,7 +90,7 @@ class Interpreter:
         Execute a list of statements.
 
         Parameters:
-            statements (list): A list of ('assign' | 'cout' | 'if' | 'block' | 'while', ...) tuples.
+            statements (list): A list of ('assign' | 'cout' | 'maybe' | 'block' | 'while', ...) tuples.
 
         Raises:
             Exception: For unknown statement types.
@@ -109,7 +109,7 @@ class Interpreter:
                 value = self.eval_expr(expr_node)
                 print(value)
 
-            elif kind == 'if':
+            elif kind == 'maybe':
                 _, cond_node, then_block, else_block, _ = stmt
                 if self.eval_expr(cond_node):
                     self.execute([then_block])

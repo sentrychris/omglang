@@ -41,8 +41,8 @@ def tokenize(code):
     token_specification = [
         ('NUMBER',   r'\d+'),
         ('STRING',   r'"[^"\n]*"'),
-        ('IF',       r'\bif\b'),
-        ('ELSE',     r'\belse\b'),
+        ('IF',       r'\bmaybe\b'),
+        ('ELSE',     r'\bokthen\b'),
         ('WHILE', r'\bwhile\b'),
         ('ID',       r'[A-Za-z_][A-Za-z0-9_]*'),
         ('ASSIGN',   r':='),
@@ -70,8 +70,8 @@ def tokenize(code):
     keywords = {
         'cout',
         'var',
-        'if',
-        'else'
+        'maybe',
+        'okthen'
     }
 
     tokens = []

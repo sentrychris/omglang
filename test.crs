@@ -5,9 +5,9 @@ var b := 10
 var c := (a + b) * 2 - (b / a)
 cout << c
 
-if a < b {
+maybe a < b {
     cout << "a is less than b"
-} else {
+} okthen {
     cout << "a is not less"
 }
 
