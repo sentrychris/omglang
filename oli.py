@@ -17,6 +17,13 @@ from core.lexer import tokenize
 from core.parser import Parser
 from core.interpreter import Interpreter
 
+if getattr(sys, "frozen", False):
+    # Running in a bundled executable
+    LAUNCH_ENV = os.getcwd()
+else:
+    # Running through a Python interpreter
+    LAUNCH_ENV = os.path.abspath(os.path.join(os.path.dirname(__file__)))
+
 
 def print_usage():
     """
@@ -102,7 +109,7 @@ def run_repl():
 
 if __name__ == "__main__":
     if len(sys.argv) == 2:
-        run_script(os.path.join(os.path.dirname(__file__), sys.argv[1]))
+        run_script(os.path.join(LAUNCH_ENV, sys.argv[1]))
     elif len(sys.argv) == 1:
         run_repl()
     else:

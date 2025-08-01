@@ -125,6 +125,23 @@ hamsterwheel i <= 3 {
 saywhat << "Finished loop."
 ```
 
+Output:
+
+```
+> py .\bin\oli.exe .\examples\example1.omg
+Hello World
+x = 5
+y = 10
+5 + 10 = 15
+(5 + 10) * 10 / 2 = 75
+Beginning loop:
+0
+1
+2 is alright I guess.
+3 is the magic number.
+Finished loop.
+```
+
 ---
 
 ## Design Notes
