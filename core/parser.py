@@ -1,9 +1,29 @@
 """
 Parser.
+
+This is a recursive descent parser that operates in a mostly LL(1) fashion.
+
+1. Parsing
+The parser implements a set of mutually recursive functions (factor(), term(), expr(), 
+comparison(), statement(), block()), each corresponding to a nonterminal in the grammar. 
+These functions parse specific syntactic constructs and call one another as needed, reflecting 
+the structure of the grammar.
+
+2. Token Consumption
+The parser consumes tokens manually using an eat() method, which checks the current token 
+against the expected type and advances the token stream if they match.
+
+3. LL(1) & LL(2)
+Parsing decisions are typically made using a single token of lookahead (LL(1)). In limited 
+cases, the parser peeks ahead one additional token (e.g., self.tokens[self.pos + 1] in factor()) 
+to resolve ambiguities such as distinguishing variable references from function calls. This 
+occasional lookahead makes the parser technically LL(2) in those specific situations, but its 
+overall behavior and structure align with LL(1) principles.
 """
+
 class Parser:
     """
-    A simple recursive descent parser for expressions and statements.
+    OMGlang parser.
     """
     def __init__(self, tokens: list, file: str):
         """
@@ -56,8 +76,22 @@ class Parser:
             self.eat('STRING')
             return ('string', tok.value, tok.line)
         elif tok.type == 'ID':
-            self.eat('ID')
-            return ('thingy', tok.value, tok.line)
+            if self.pos + 1 < len(self.tokens) and self.tokens[self.pos + 1].type == 'LPAREN':
+                func_name = tok.value
+                self.eat('ID')
+                self.eat('LPAREN')
+                args = []
+                if self.current_token.type != 'RPAREN':
+                    args.append(self.expr())
+                    while self.current_token.type == 'COMMA':
+                        self.eat('COMMA')
+                        args.append(self.expr())
+                self.eat('RPAREN')
+                return ('call', func_name, args, tok.line)
+            else:
+                # variable reference or error
+                self.eat('ID')
+                return ('thingy', tok.value, tok.line)
         elif tok.type == 'LPAREN':
             self.eat('LPAREN')
             node = self.expr()
@@ -157,7 +191,7 @@ class Parser:
             expr_node = self.expr()
             return ('saywhat', expr_node, tok.line)
 
-        elif tok.type == 'IF':
+        if tok.type == 'IF':
             self.eat('IF')
             condition = self.comparison()
             then_block = self.block()
@@ -167,13 +201,53 @@ class Parser:
                 else_block = self.block()
             return ('maybe', condition, then_block, else_block, tok.line)
 
-        elif tok.type == 'WHILE':
+        if tok.type == 'WHILE':
             self.eat('WHILE')
             condition = self.comparison()
             body = self.block()
             return ('hamsterwheel', condition, body, tok.line)
 
-        elif tok.type == 'THINGY':
+        if tok.type == 'FUNC':
+            self.eat('FUNC')
+            func_name = self.current_token.value
+            self.eat('ID')
+            self.eat('LPAREN')
+            params = []
+            if self.current_token.type != 'RPAREN':
+                params.append(self.current_token.value)
+                self.eat('ID')
+                while self.current_token.type == 'COMMA':
+                    self.eat('COMMA')
+                    params.append(self.current_token.value)
+                    self.eat('ID')
+            self.eat('RPAREN')
+            body = self.block()
+            return ('func_def', func_name, params, body, tok.line)
+
+
+        if tok.type == 'ID':
+            func_name = tok.value
+            self.eat('ID')
+            if self.current_token.type == 'LPAREN':
+                self.eat('LPAREN')
+                args = []
+                if self.current_token.type != 'RPAREN':
+                    args.append(self.expr())  # parse an expression argument
+                    while self.current_token.type == 'COMMA':
+                        self.eat('COMMA')
+                        args.append(self.expr())
+                self.eat('RPAREN')
+                return ('func_call', func_name, args, tok.line)
+            else:
+                # Could be a variable usage statement or error if not expected
+                raise SyntaxError(
+                    f"Unexpected token after identifier {func_name} "
+                    f"on line {tok.line} "
+                    f"in {self.file}"
+                )
+
+
+        if tok.type == 'THINGY':
             self.eat('THINGY')
             id_tok = self.current_token
             if id_tok.type != 'ID':

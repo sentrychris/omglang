@@ -1,5 +1,28 @@
 """
 Lexer.
+
+This is a regex-based lexer that performs single-pass tokenization of source code into a flat
+list of tokens.
+
+1. Token Definitions
+Token types are defined via named regular expressions (token_specification), covering language 
+constructs such as keywords (e.g. maybe, hamsterwheel), operators (e.g. :=, <<, +), literals 
+(numbers, strings), and structural tokens (braces, parentheses, commas, etc.). The combined regex 
+is constructed using named groups to enable type identification during matching.
+
+2. Tokenization
+Tokenization is performed with re.finditer over the full input string. Each match is assigned 
+a type and value and wrapped in a Token object that also stores line number metadata. 
+Whitespace is skipped, and newlines increment the line counter and produce a NEWLINE token.
+
+3. Keyword Differentiation
+The lexer differentiates between identifiers and language keywords (e.g., 'thingy') using a 
+post-processing check after matching ID tokens. If the value matches a reserved keyword, the 
+token type is replaced accordingly.
+
+4. Comments
+Single-line comments beginning with '#' are removed before tokenization. Only the portion 
+before the comment delimiter is retained per line.
 """
 import re
 
@@ -46,6 +69,8 @@ def tokenize(code):
         ('ELSE',     r'\bokthen\b'),
         ('WHILE',    r'\bhamsterwheel\b'),
         ('SAYWHAT',  r'\bsaywhat\b'),
+        ('FUNC',     r'\bbitchin\b'),
+        ('COMMA',    r','),
         ('ID',       r'[A-Za-z_][A-Za-z0-9_]*'),
         ('ASSIGN',   r':='),
         ('ARROW',    r'<<'),
@@ -71,7 +96,7 @@ def tokenize(code):
     tok_regex = '|'.join(f'(?P<{name}>{pattern})' for name, pattern in token_specification)
 
     # Sharing ID regex
-    # todo add consts, globals... other shit
+    # todo add consts, globals
     identifier_keywords = {
         'thingy',
     }
@@ -114,4 +139,6 @@ def tokenize(code):
             tokens.append(Token(kind, value, line_num))
 
     tokens.append(Token('EOF', None, line_num))
+    # for t in tokens:
+    #     print(t)
     return tokens

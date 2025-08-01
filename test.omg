@@ -1,39 +1,22 @@
 ;;;omg
 
-# Define some variables
-thingy user := "Nedjem"
-thingy limit := 5
-thingy fact := 1
-thingy sum := 0
-thingy i := 1
+thingy x := 5
+thingy y := 10
 
-# Echo out some shit
-saywhat << "Hello " + user + ", let's do some math!"
+saywhat << x + y
 
-# Do a while loop
-hamsterwheel i <= limit {
-    saywhat << "i = " + i
-
-    thingy sum := sum + i
-    thingy fact := fact * i
-
-    maybe i % 2 == 0 {
-        saywhat << i + " is even"
-    } okthen {
-        saywhat << i + " is odd"
-    }
-
-    thingy i := i + 1
+bitchin greet(name) {
+    saywhat << "Hello " + name
 }
 
-# Echo out some more shit
-saywhat << "Done looping!"
-saywhat << "Sum of 1 to " + limit + " is: " + sum
-saywhat << "Factorial of " + limit + " is: " + fact
+greet("World")
 
-# Do a conditional
-maybe fact > 100 {
-    saywhat << "That's a big number!"
-} okthen {
-    saywhat << "Pretty tame factorial..."
+thingy i := 0
+hamsterwheel i <= 3 {
+    maybe i == 3 {
+        saywhat << "3 is the magic number."
+    } okthen {
+        saywhat << i
+    }
+    thingy i := i + 1
 }
