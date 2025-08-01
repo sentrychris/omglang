@@ -68,7 +68,7 @@ def tokenize(code):
         ('IF',       r'\bmaybe\b'),
         ('ELSE',     r'\bokthen\b'),
         ('WHILE',    r'\bhamsterwheel\b'),
-        ('SAYWHAT',  r'\bsaywhat\b'),
+        ('ECHO',  r'\bsaywhat\b'),
         ('FACTS',   r"\bfacts\b"),
         ('FUNC',     r'\bbitchin\b'),
         ('COMMA',    r','),

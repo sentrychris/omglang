@@ -39,7 +39,7 @@ class Parser:
         self.file = file
 
 
-    def eat(self, token_type: str):
+    def eat(self, token_type: str) -> None:
         """
         Consume the current token if it matches the expected type.
 
@@ -61,12 +61,15 @@ class Parser:
             )
 
 
-    def factor(self):
+    def factor(self) -> tuple:
         """
         Parse a factor (number, string, variable, or parenthesized expression).
 
         Returns:
             An AST node representing the factor.
+
+        Raises:
+            SyntaxError: If the syntax is invalid or unexpected.
         """
         tok = self.current_token
         if tok.type == 'NUMBER':
@@ -105,7 +108,7 @@ class Parser:
             )
 
 
-    def term(self):
+    def term(self) -> tuple:
         """
         Parse a term (factor optionally followed by * or /).
 
@@ -121,7 +124,7 @@ class Parser:
         return result
 
 
-    def expr(self):
+    def expr(self) -> tuple:
         """
         Parse an expression (term optionally followed by + or -).
 
@@ -137,7 +140,7 @@ class Parser:
         return result
 
 
-    def comparison(self):
+    def comparison(self) -> tuple:
         """
         Parse a comparison expression (e.g., ==, <, >, <=, >=).
 
@@ -153,7 +156,7 @@ class Parser:
         return result
 
 
-    def block(self):
+    def block(self) -> tuple:
         """
         Parse a block of statements enclosed in braces.
 
@@ -173,7 +176,7 @@ class Parser:
         return ('block', statements, tok.line)
 
 
-    def statement(self):
+    def statement(self) -> tuple:
         """
         Parse a single statement (saywhat, thingy assignment, maybe, or while).
 
@@ -184,100 +187,216 @@ class Parser:
             SyntaxError: If the syntax is invalid or unexpected.
         """
         tok = self.current_token
-
         if tok.type == "FACTS":
-            self.eat("FACTS")
-            expr_node = self.expr()
-            return ("facts", expr_node, tok.line)
+            return self._parse_facts()
+        elif tok.type == 'ECHO':
+            return self._parse_echo()
+        elif tok.type == 'IF':
+            return self._parse_if()
+        elif tok.type == 'WHILE':
+            return self._parse_while()
+        elif tok.type == 'FUNC':
+            return self._parse_func_def()
+        elif tok.type == 'THINGY':
+            return self._parse_assignment()
+        elif tok.type == 'ID':
+            return self._parse_func_call_or_error()
+        else:
+            raise SyntaxError(
+                f"Unexpected token {tok.type} "
+                f"on line {tok.line} "
+                f"in {self.file}"
+            )
 
-        if tok.type == 'SAYWHAT':
-            self.eat('SAYWHAT')
-            self.eat('ARROW')
-            expr_node = self.expr()
-            return ('saywhat', expr_node, tok.line)
+    def _parse_facts(self) -> tuple:
+        """
+        Parse a 'facts' statement.
 
-        if tok.type == 'IF':
-            self.eat('IF')
-            condition = self.comparison()
-            then_block = self.block()
-            else_block = None
-            if self.current_token.type == 'ELSE':
-                self.eat('ELSE')
-                else_block = self.block()
-            return ('maybe', condition, then_block, else_block, tok.line)
+        Syntax:
+            facts <expression>
 
-        if tok.type == 'WHILE':
-            self.eat('WHILE')
-            condition = self.comparison()
-            body = self.block()
-            return ('hamsterwheel', condition, body, tok.line)
+        Returns:
+            tuple: ('facts', expression_node, line_number)
 
-        if tok.type == 'FUNC':
-            self.eat('FUNC')
-            func_name = self.current_token.value
+        Raises:
+            SyntaxError: If the expression is malformed.
+        """
+        tok = self.current_token
+        self.eat("FACTS")
+        expr_node = self.expr()
+        return ("facts", expr_node, tok.line)
+
+
+    def _parse_echo(self) -> tuple:
+        """
+        Parse a 'saywhat' (echo) statement.
+
+        Syntax:
+            saywhat << <expression>
+
+        Returns:
+            tuple: ('saywhat', expression_node, line_number)
+
+        Raises:
+            SyntaxError: If '<<' or the expression is missing.
+        """
+        tok = self.current_token
+        self.eat("ECHO")
+        self.eat("ARROW")
+        expr_node = self.expr()
+
+        return ("saywhat", expr_node, tok.line)
+
+
+    def _parse_if(self) -> tuple:
+        """
+        Parse a conditional 'maybe' (if/else) statement.
+
+        Syntax:
+            maybe <condition> {
+                ...
+            } okthen {
+                ...
+            }
+
+        Returns:
+            tuple: ('maybe', condition_expr, then_block, else_block_or_None, line_number)
+
+        Raises:
+            SyntaxError: If condition or blocks are malformed.
+        """
+        tok = self.current_token
+        self.eat("IF")
+        condition = self.comparison()
+        then_block = self.block()
+        else_block = None
+        if self.current_token.type == 'ELSE':
+            self.eat('ELSE')
+            else_block = self.block()
+
+        return ('maybe', condition, then_block, else_block, tok.line)
+
+
+    def _parse_while(self) -> tuple:
+        """
+        Parse a 'hamsterwheel' (while) loop.
+
+        Syntax:
+            hamsterwheel <condition> {
+                ...
+            }
+
+        Returns:
+            tuple: ('hamsterwheel', condition_expr, block_node, line_number)
+
+        Raises:
+            SyntaxError: If the condition or block is invalid.
+        """
+        tok = self.current_token
+        self.eat('WHILE')
+        condition = self.comparison()
+        body = self.block()
+        return ('hamsterwheel', condition, body, tok.line)
+
+
+    def _parse_func_def(self) -> tuple:
+        """
+        Parse a function definition.
+
+        Syntax:
+            bitchin <name>(<param1>, <param2>, ...) {
+                ...
+            }
+
+        Returns:
+            tuple: ('func_def', function_name, [param_names], block_node, line_number)
+
+        Raises:
+            SyntaxError: If the syntax is malformed or parameters are invalid.
+        """
+        start_tok = self.current_token
+        self.eat('FUNC')
+        func_name = self.current_token.value
+        self.eat('ID')
+        self.eat('LPAREN')
+        params = []
+        if self.current_token.type != 'RPAREN':
+            params.append(self.current_token.value)
             self.eat('ID')
-            self.eat('LPAREN')
-            params = []
-            if self.current_token.type != 'RPAREN':
+            while self.current_token.type == 'COMMA':
+                self.eat('COMMA')
                 params.append(self.current_token.value)
                 self.eat('ID')
+        self.eat('RPAREN')
+        body = self.block()
+        return ('func_def', func_name, params, body, start_tok.line)
+
+
+    def _parse_func_call_or_error(self) -> tuple:
+        """
+        Parse a function call or raise a syntax error.
+
+        Syntax:
+            <identifier>(<arg1>, <arg2>, ...)
+
+        Returns:
+            tuple: ('func_call', function_name, [arg_exprs], line_number)
+
+        Raises:
+            SyntaxError: If the call syntax is invalid or unexpected tokens follow.
+        """
+        tok = self.current_token
+        func_name = tok.value
+        self.eat('ID')
+        if self.current_token.type == 'LPAREN':
+            self.eat('LPAREN')
+            args = []
+            if self.current_token.type != 'RPAREN':
+                args.append(self.expr())  # parse an expression argument
                 while self.current_token.type == 'COMMA':
                     self.eat('COMMA')
-                    params.append(self.current_token.value)
-                    self.eat('ID')
+                    args.append(self.expr())
             self.eat('RPAREN')
-            body = self.block()
-            return ('func_def', func_name, params, body, tok.line)
+            return ('func_call', func_name, args, tok.line)
+        else:
+            # Could be a variable usage statement or error if not expected
+            raise SyntaxError(
+                f"Unexpected token after identifier {func_name} "
+                f"on line {tok.line} in {self.file}"
+            )
 
 
-        if tok.type == 'ID':
-            func_name = tok.value
-            self.eat('ID')
-            if self.current_token.type == 'LPAREN':
-                self.eat('LPAREN')
-                args = []
-                if self.current_token.type != 'RPAREN':
-                    args.append(self.expr())  # parse an expression argument
-                    while self.current_token.type == 'COMMA':
-                        self.eat('COMMA')
-                        args.append(self.expr())
-                self.eat('RPAREN')
-                return ('func_call', func_name, args, tok.line)
-            else:
-                # Could be a variable usage statement or error if not expected
-                raise SyntaxError(
-                    f"Unexpected token after identifier {func_name} "
-                    f"on line {tok.line} "
-                    f"in {self.file}"
-                )
+    def _parse_assignment(self) -> tuple:
+        """
+        Parse a 'thingy' variable assignment.
 
+        Syntax:
+            thingy <name> := <expression>
 
-        if tok.type == 'THINGY':
-            self.eat('THINGY')
-            id_tok = self.current_token
-            if id_tok.type != 'ID':
-                raise SyntaxError(
-                    f"Expected identifier after 'thingy' "
-                    f"on line {id_tok.line} "
-                    f"in {self.file}"
-                )
-            var_name = id_tok.value
-            self.eat('ID')
-            if self.current_token.type != 'ASSIGN':
-                raise SyntaxError(
-                    f"Expected ':=' after variable name "
-                    f"on line {self.current_token.line} "
-                    f"in {self.file}"
-                )
-            self.eat('ASSIGN')
-            expr_node = self.expr()
-            return ('assign', var_name, expr_node, id_tok.line)
+        Returns:
+            tuple: ('assign', var_name, expr_node, line_number)
 
-        raise SyntaxError(
-            f"Unexpected token {tok.type} "
-            f"on line {tok.line} "
-            f"in {self.file}"
-        )
+        Raises:
+            SyntaxError: If the variable name, ':=' operator, or expression is missing or invalid.
+        """
+        self.eat('THINGY')
+        id_tok = self.current_token
+        if id_tok.type != 'ID':
+            raise SyntaxError(
+                f"Expected identifier after 'thingy' "
+                f"on line {id_tok.line} "
+                f"in {self.file}"
+            )
+        var_name = id_tok.value
+        self.eat('ID')
+        if self.current_token.type != 'ASSIGN':
+            raise SyntaxError(
+                f"Expected ':=' after variable name "
+                f"on line {self.current_token.line} in {self.file}"
+            )
+        self.eat('ASSIGN')
+        expr_node = self.expr()
+        return ('assign', var_name, expr_node, id_tok.line)
 
 
     def parse(self):
