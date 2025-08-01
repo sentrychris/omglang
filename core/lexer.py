@@ -42,13 +42,13 @@ class Token:
         self.value = value
         self.line = line
 
-    def __repr__(self):
+    def __repr__(self) -> str:
         """
         Return a string representation of the token.
         """
         return f"Token({self.type}, {self.value}, line={self.line})"
 
-def tokenize(code):
+def tokenize(code) -> list[Token]:
     """
     Convert a string of source code into a list of tokens.
 

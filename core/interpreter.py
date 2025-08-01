@@ -87,7 +87,20 @@ class Interpreter:
 
     def eval_expr(self, node):
         """
-        Evaluate an expression.
+        Recursively evaluate an expression node and return its computed value.
+
+        Parameters:
+            node (tuple): An expression node, structured as a tuple.
+                        The first element is the operation type (e.g., 'add', 'thingy'),
+                        followed by operands and the line number for error reporting.
+
+        Returns:
+            The evaluated result of the expression.
+
+        Raises:
+            UndefinedVariableError: If a variable is referenced that has not been defined.
+            UnknownOperationError: If an unrecognized binary operator is encountered.
+            RuntimeError: If the expression node format is invalid or improperly structured.
         """
         if isinstance(node, tuple):
             op = node[0]
@@ -108,24 +121,28 @@ class Interpreter:
                 match op:
                     case 'add':
                         if isinstance(lhs, str) or isinstance(rhs, str):
-                            return str(lhs) + str(rhs)
-                        return lhs + rhs
-                    case 'sub': return lhs - rhs
-                    case 'mul': return lhs * rhs
-                    case 'mod': return lhs % rhs
-                    case 'div': return lhs / rhs
-                    case 'eq': return lhs == rhs
-                    case 'gt': return lhs > rhs
-                    case 'lt': return lhs < rhs
-                    case 'ge': return lhs >= rhs
-                    case 'le': return lhs <= rhs
+                            term = str(lhs) + str(rhs)
+                        else:
+                            term = lhs + rhs
+                    case 'sub': term = lhs - rhs
+                    case 'mul': term = lhs * rhs
+                    case 'mod': term = lhs % rhs
+                    case 'div': term = lhs / rhs
+                    case 'eq':  term = lhs == rhs
+                    case 'gt':  term = lhs > rhs
+                    case 'lt':  term = lhs < rhs
+                    case 'ge':  term = lhs >= rhs
+                    case 'le':  term = lhs <= rhs
+                    case _:
+                        raise UnknownOperationError(f"Unknown binary operator '{op}'")
+                return term
 
-        raise TypeError(f"Invalid expression node: {node}")
+        raise RuntimeError(f"Invalid expression node: {node}")
 
 
     def execute(self, statements: list):
         """
-        Execute a list of statements.
+        Executes a list of statements.
 
         Parameters:
             statements (list):
