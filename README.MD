@@ -90,11 +90,8 @@ bitchin greeting(name) {
     gimme "Hello " + name
 }
 
-# Call a function
-thingy welcome:= greeting("World")
-
-# Print to stdout
-saywhat << welcome
+# Call a function and print to stdout
+saywhat << greeting("World")
 
 # Declare some variables
 thingy x := 5
@@ -108,8 +105,7 @@ bitchin add(a, b) {
     gimme a + b
 }
 
-
-# Do some arithmetic and print to stdout
+# Do some arithmetic and format for stdout
 saywhat << x + " + " + y + " = " + add(x, y)
 saywhat << "(" + x + " + " + y + ") * 10 / 2 = " + (x + y) * 10 / 2
 
@@ -119,6 +115,8 @@ thingy i := 0
 hamsterwheel i <= 3 {
     maybe i == 3 {
         saywhat << "3 is the magic number."
+    } oractually i == 2 {
+        saywhat << "2 is alright I guess."
     } okthen {
         saywhat << i
     }
