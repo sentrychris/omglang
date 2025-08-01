@@ -14,7 +14,7 @@ maybe a < b {
 
 thingy counter := 0
 
-cantstopwontstop counter < 5 {
+again.exe counter < 5 {
     saywhat << counter
     thingy counter := counter + 1
 }

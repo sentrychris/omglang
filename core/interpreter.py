@@ -90,7 +90,7 @@ class Interpreter:
         Execute a list of statements.
 
         Parameters:
-            statements (list): A list of ('assign' | 'saywhat' | 'maybe' | 'block' | 'cantstopwontstop', ...) tuples.
+            statements (list): A list of ('assign' | 'saywhat' | 'maybe' | 'block' | 'again.exe', ...) tuples.
 
         Raises:
             Exception: For unknown statement types.
@@ -120,7 +120,7 @@ class Interpreter:
                 _, block_statements, _ = stmt
                 self.execute(block_statements)
 
-            elif kind == 'cantstopwontstop':
+            elif kind == 'again.exe':
                 _, cond_node, block_node, _ = stmt
                 while self.eval_expr(cond_node):
                     self.execute([block_node])
