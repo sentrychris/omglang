@@ -15,9 +15,13 @@ if len(sys.argv) != 2:
 with open(sys.argv[1], "r", encoding="utf-8") as f:
     code = f.read()
 
+crsi = Interpreter()
+crsi.check_header(code)
+source_code = crsi.strip_header(code)
+
 # Lexical Analysis: The lexer reads the raw source code and converts it into
 # a stream of tokens - keywords, identifiers, operators, literals etc.
-tokens = tokenize(code)
+tokens = tokenize(source_code)
 
 # Syntactical Analysis: The parser takes the stream of tokens and applies
 # grammar rules to build an Abstract Syntax Tree (AST). The AST represents

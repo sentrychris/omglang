@@ -12,6 +12,36 @@ class Interpreter:
         self.vars = {}
 
 
+    def check_header(self, source_code: str):
+        """
+        Ensure the source code starts with ';;;crsi' on the first non-empty line.
+        
+        Raises:
+            RuntimeError: If the header is missing or incorrect.
+        """
+        for line in source_code.splitlines():
+            stripped = line.strip()
+            if stripped == '':
+                continue
+            if stripped == ';;;crsi':
+                return
+        raise RuntimeError("CRS script missing required header ';;;crsi'")
+
+
+    def strip_header(self, source_code: str) -> str:
+        """
+        Strip the header from the source code before evaluation.
+
+        Raises:
+            RuntimeError if the header is missing.
+        """
+        lines = source_code.splitlines()
+        for i, line in enumerate(lines):
+            if line.strip() == ';;;crsi':
+                return '\n'.join(lines[i+1:])
+        raise RuntimeError("CRS script missing required header ';;;crsi'")
+
+
     def eval_expr(self, node: int | str | tuple):
         """
         Evaluate an expression node.
