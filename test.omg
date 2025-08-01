@@ -1,0 +1,20 @@
+;;;omg
+
+thingy a := 5
+thingy b := 10
+thingy c := (a + b)
+
+saywhat << c
+
+maybe a < b {
+    saywhat << "a is less than b"
+} okthen {
+    saywhat << "a is not less"
+}
+
+thingy counter := 0
+
+cantstopwontstop counter < 5 {
+    saywhat << counter
+    thingy counter := counter + 1
+}

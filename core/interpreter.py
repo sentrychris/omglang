@@ -17,7 +17,7 @@ class Interpreter:
 
     def check_header(self, source_code: str):
         """
-        Ensure the source code starts with ';;;crsi' on the first non-empty line.
+        Ensure the source code starts with header on the first non-empty line.
         
         Raises:
             RuntimeError: If the header is missing or incorrect.
@@ -25,10 +25,10 @@ class Interpreter:
         for line in source_code.splitlines():
             if line.strip() == '':
                 continue
-            if line.strip() == ';;;crsi':
+            if line.strip() == ';;;omg':
                 return
         raise RuntimeError(
-            f"CRS script missing required header ';;;crsi'\n"
+            f"CRS script missing required header ';;;omg'\n"
             f"in {self.file}"
         )
 
@@ -42,10 +42,10 @@ class Interpreter:
         """
         lines = source_code.splitlines()
         for i, line in enumerate(lines):
-            if line.strip() == ';;;crsi':
+            if line.strip() == ';;;omg':
                 return '\n'.join(lines[i + 1:])
         raise RuntimeError(
-            f"CRS script missing required header ';;;crsi'\n"
+            f"CRS script missing required header ';;;omg'\n"
             f"in {self.file}"
         )
 
@@ -62,7 +62,7 @@ class Interpreter:
                 return node[1]
             elif op == 'string':
                 return node[1]
-            elif op == 'var':
+            elif op == 'thingy':
                 varname = node[1]
                 if varname in self.vars:
                     return self.vars[varname]
@@ -90,7 +90,7 @@ class Interpreter:
         Execute a list of statements.
 
         Parameters:
-            statements (list): A list of ('assign' | 'cout' | 'maybe' | 'block' | 'while', ...) tuples.
+            statements (list): A list of ('assign' | 'saywhat' | 'maybe' | 'block' | 'cantstopwontstop', ...) tuples.
 
         Raises:
             Exception: For unknown statement types.
@@ -104,7 +104,7 @@ class Interpreter:
                 value = self.eval_expr(expr_node)
                 self.vars[var_name] = value
 
-            elif kind == 'cout':
+            elif kind == 'saywhat':
                 _, expr_node, _ = stmt
                 value = self.eval_expr(expr_node)
                 print(value)
@@ -120,7 +120,7 @@ class Interpreter:
                 _, block_statements, _ = stmt
                 self.execute(block_statements)
 
-            elif kind == 'while':
+            elif kind == 'cantstopwontstop':
                 _, cond_node, block_node, _ = stmt
                 while self.eval_expr(cond_node):
                     self.execute([block_node])

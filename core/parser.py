@@ -57,7 +57,7 @@ class Parser:
             return ('string', tok.value, tok.line)
         elif tok.type == 'ID':
             self.eat('ID')
-            return ('var', tok.value, tok.line)
+            return ('thingy', tok.value, tok.line)
         elif tok.type == 'LPAREN':
             self.eat('LPAREN')
             node = self.expr()
@@ -141,7 +141,7 @@ class Parser:
 
     def statement(self):
         """
-        Parse a single statement (cout, var assignment, maybe, or while).
+        Parse a single statement (saywhat, thingy assignment, maybe, or while).
 
         Returns:
             A tuple representing the statement AST node.
@@ -151,11 +151,11 @@ class Parser:
         """
         tok = self.current_token
 
-        if tok.type == 'COUT':
-            self.eat('COUT')
+        if tok.type == 'SAYWHAT':
+            self.eat('SAYWHAT')
             self.eat('ARROW')
             expr_node = self.expr()
-            return ('cout', expr_node, tok.line)
+            return ('saywhat', expr_node, tok.line)
 
         elif tok.type == 'IF':
             self.eat('IF')
@@ -171,14 +171,14 @@ class Parser:
             self.eat('WHILE')
             condition = self.comparison()
             body = self.block()
-            return ('while', condition, body, tok.line)
+            return ('cantstopwontstop', condition, body, tok.line)
 
-        elif tok.type == 'VAR':
-            self.eat('VAR')
+        elif tok.type == 'THINGY':
+            self.eat('THINGY')
             id_tok = self.current_token
             if id_tok.type != 'ID':
                 raise SyntaxError(
-                    f"Expected identifier after 'var' "
+                    f"Expected identifier after 'thingy' "
                     f"on line {id_tok.line} "
                     f"in {self.file}"
                 )

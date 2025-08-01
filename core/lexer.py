@@ -43,7 +43,7 @@ def tokenize(code):
         ('STRING',   r'"[^"\n]*"'),
         ('IF',       r'\bmaybe\b'),
         ('ELSE',     r'\bokthen\b'),
-        ('WHILE', r'\bwhile\b'),
+        ('WHILE', r'\bcantstopwontstop\b'),
         ('ID',       r'[A-Za-z_][A-Za-z0-9_]*'),
         ('ASSIGN',   r':='),
         ('ARROW',    r'<<'),
@@ -68,8 +68,8 @@ def tokenize(code):
     tok_regex = '|'.join(f'(?P<{name}>{pattern})' for name, pattern in token_specification)
 
     keywords = {
-        'cout',
-        'var',
+        'saywhat',
+        'thingy',
         'maybe',
         'okthen'
     }
