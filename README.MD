@@ -80,24 +80,43 @@ Each function call creates a new scope for its parameters, and the previous vari
 
 ## Example
 
-Source file `test.omg`:
+Examples can be found in the **examples** directory.
 
-```go
+```php
 ;;;omg
 
-thingy x := 5
-thingy y := 10
-
-saywhat << x + y
-
+# Define a function
 bitchin greeting(name) {
-    saywhat << "Hello " + name
+    gimme "Hello " + name
 }
 
-greeting("World")
+# Call a function
+thingy welcome:= greeting("World")
 
+# Print to stdout
+saywhat << welcome
+
+# Declare some variables
+thingy x := 5
+thingy y := 10
+thingy z := 0
+
+saywhat << "x = " + x
+saywhat << "y = " + y
+
+bitchin add(a, b) {
+    gimme a + b
+}
+
+
+# Do some arithmetic and print to stdout
+saywhat << x + " + " + y + " = " + add(x, y)
+saywhat << "(" + x + " + " + y + ") * 10 / 2 = " + (x + y) * 10 / 2
+
+# Create a loop
+saywhat << "Beginning loop:"
 thingy i := 0
-hamsterwheel i <= 3  {
+hamsterwheel i <= 3 {
     maybe i == 3 {
         saywhat << "3 is the magic number."
     } okthen {
@@ -105,23 +124,7 @@ hamsterwheel i <= 3  {
     }
     thingy i := i + 1
 }
-```
-
-Run it:
-
-```sh
-./oli.exe test.omg
-```
-
-Output:
-
-```sh
-15
-Hello World
-0
-1
-2
-3 is the magic number.
+saywhat << "Finished loop."
 ```
 
 ---
