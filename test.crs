@@ -1,14 +1,18 @@
 ;;;crsi
-var s := "hello world"
-cout << s
 
-var x := 1
-var y := 99
-var z := (x + y) / 2
-cout << z
+var a := 5
+var b := 10
+var c := (a + b) * 2 - (b / a)
+cout << c
 
-if x < y {
-	cout << "x is less"
+if a < b {
+	cout << "a is less than b"
 } else {
-	cout << "x is more"
+	cout << "a is not less"
 }
+
+var message := "result is: "
+cout << message
+
+var r := c / 3 + (b - a)
+cout << r

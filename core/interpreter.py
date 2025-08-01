@@ -1,15 +1,41 @@
 """
 Interpreter.
 """
+
+import sys
+
+class UndefinedVariableError(Exception):
+    def __init__(self, varname, line=None, file=None):
+        self.varname = varname
+        self.line = line
+        message = f"Undefined variable '{varname}'"
+        if line is not None:
+            message += f" on line {line}"
+        if file is not None:
+            message += f" in {file}"
+        super().__init__(message)
+
+class UnknownOperationError(Exception):
+    def __init__(self, op, line=None, file=None):
+        self.op = op
+        self.line = line
+        message = f"Unknown operation '{op}'"
+        if line is not None:
+            message += f" on line {line}"
+        if file is not None:
+            message += f" in {file}"
+        super().__init__(message)
+
 class Interpreter:
     """
     A simple expression interpreter supporting variables and arithmetic.
     """
-    def __init__(self):
+    def __init__(self, file: str):
         """
         Initialize the interpreter with an empty variable environment.
         """
         self.vars = {}
+        self.file = file
 
 
     def check_header(self, source_code: str):
@@ -20,12 +46,14 @@ class Interpreter:
             RuntimeError: If the header is missing or incorrect.
         """
         for line in source_code.splitlines():
-            stripped = line.strip()
-            if stripped == '':
+            if line.strip() == '':
                 continue
-            if stripped == ';;;crsi':
+            if line.strip() == ';;;crsi':
                 return
-        raise RuntimeError("CRS script missing required header ';;;crsi'")
+        raise RuntimeError(
+            f"CRS script missing required header ';;;crsi'\n"
+            f"in {self.file}"
+        )
 
 
     def strip_header(self, source_code: str) -> str:
@@ -38,61 +66,49 @@ class Interpreter:
         lines = source_code.splitlines()
         for i, line in enumerate(lines):
             if line.strip() == ';;;crsi':
-                return '\n'.join(lines[i+1:])
-        raise RuntimeError("CRS script missing required header ';;;crsi'")
+                return '\n'.join(lines[i + 1:])
+        raise RuntimeError("" \
+            f"CRS script missing required header ';;;crsi'\n"
+            f"in {self.file}"
+        )
 
 
-    def eval_expr(self, node: int | str | tuple):
+    def eval_expr(self, node):
         """
-        Evaluate an expression node.
-
-        Parameters:
-            node (int | str | tuple): The expression node.
-
-        Returns:
-            The result of evaluating the expression.
-
-        Raises:
-            NameError: If a variable is used before assignment.
-            Exception: For unknown node types.
+        Evaluate AST node.
         """
-        if isinstance(node, int):
-            return node
-        if isinstance(node, str):
-            return node
         if isinstance(node, tuple):
             op = node[0]
-            ret = None
-            if op == 'var':
+            line = node[-1]
+
+            if op == 'number':
+                return node[1]
+            elif op == 'string':
+                return node[1]
+            elif op == 'var':
                 varname = node[1]
                 if varname in self.vars:
-                    ret = self.vars[varname]
-                else:
-                    raise NameError(f"Undefined variable '{varname}'")
-            elif op == 'add':
-                ret = self.eval_expr(node[1]) + self.eval_expr(node[2])
-            elif op == 'sub':
-                ret = self.eval_expr(node[1]) - self.eval_expr(node[2])
-            elif op == 'mul':
-                ret = self.eval_expr(node[1]) * self.eval_expr(node[2])
-            elif op == 'div':
-                ret = self.eval_expr(node[1]) / self.eval_expr(node[2])
-            elif op == 'eq':
-                ret = self.eval_expr(node[1]) == self.eval_expr(node[2])
-            elif op == 'gt':
-                ret = self.eval_expr(node[1]) > self.eval_expr(node[2])
-            elif op == 'lt':
-                ret = self.eval_expr(node[1]) < self.eval_expr(node[2])
-            elif op == 'ge':
-                ret = self.eval_expr(node[1]) >= self.eval_expr(node[2])
-            elif op == 'le':
-                ret = self.eval_expr(node[1]) <= self.eval_expr(node[2])
-            if ret is None:
-                raise ValueError(f'Unknown op {op}')
-            return ret
-        raise ValueError(f'Unknown node {node}')
+                    return self.vars[varname]
+                raise UndefinedVariableError(varname, line, self.file)
+            elif op in ('add', 'sub', 'mul', 'div', 'eq', 'gt', 'lt', 'ge', 'le'):
+                lhs = self.eval_expr(node[1])
+                rhs = self.eval_expr(node[2])
+                match op:
+                    case 'add': return lhs + rhs
+                    case 'sub': return lhs - rhs
+                    case 'mul': return lhs * rhs
+                    case 'div': return lhs / rhs
+                    case 'eq': return lhs == rhs
+                    case 'gt': return lhs > rhs
+                    case 'lt': return lhs < rhs
+                    case 'ge': return lhs >= rhs
+                    case 'le': return lhs <= rhs
+            else:
+                raise UnknownOperationError(op, line, self.file)
+        raise TypeError(f"Invalid expression node: {node}")
 
-    def run(self, statements: list):
+
+    def execute(self, statements: list):
         """
         Execute a list of statements.
 
@@ -104,22 +120,32 @@ class Interpreter:
         """
         for stmt in statements:
             kind = stmt[0]
+            line = stmt[-1]
+
             if kind == 'assign':
-                _, var_name, expr_node = stmt
+                _, var_name, expr_node, _ = stmt
                 value = self.eval_expr(expr_node)
                 self.vars[var_name] = value
+
             elif kind == 'cout':
-                _, expr_node = stmt
+                _, expr_node, _ = stmt
                 value = self.eval_expr(expr_node)
                 print(value)
+
             elif kind == 'if':
-                _, condition_node, then_node, else_node = stmt
-                if self.eval_expr(condition_node):
-                    self.run([then_node])
-                elif else_node:
-                    self.run([else_node])
+                _, cond_node, then_block, else_block, _ = stmt
+                if self.eval_expr(cond_node):
+                    self.execute([then_block])
+                elif else_block:
+                    self.execute([else_block])
+
             elif kind == 'block':
-                _, statements = stmt
-                self.run(statements)
+                _, block_statements, _ = stmt
+                self.execute(block_statements)
+
             else:
-                raise TypeError(f'Unknown statement type: {kind}')
+                raise TypeError(
+                    f"Unknown statement type: {kind} "
+                    f"on line {line}"
+                    f"in {self.file}"
+                )

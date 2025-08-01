@@ -1,20 +1,11 @@
-"""
-Parser.
-"""
-class Parser:
-    """
-    A simple recursive descent parser for expressions and statements.
-    """
-    def __init__(self, tokens):
-        """
-        Initialize the parser with a list of tokens.
+import sys
 
-        Parameters:
-            tokens (list): A list of Token instances.
-        """
+class Parser:
+    def __init__(self, tokens, file):
         self.tokens = tokens
         self.pos = 0
         self.current_token = self.tokens[self.pos]
+        self.file = file
 
     def eat(self, token_type):
         """
@@ -30,25 +21,12 @@ class Parser:
             self.pos += 1
             self.current_token = self.tokens[self.pos]
         else:
-            raise SyntaxError(f'Expected token {token_type}, got {self.current_token}')
-
-
-    def comparison(self):
-        left = self.expr()
-        while self.current_token.type in ('EQ', 'GT', 'LT', 'GE', 'LE'):
-            op = self.current_token.type
-            self.eat(op)
-            right = self.expr()
-            op_map = {
-                'EQ': 'eq',
-                'GT': 'gt',
-                'LT': 'lt',
-                'GE': 'ge',
-                'LE': 'le'
-            }
-            left = (op_map[op], left, right)
-        return left
-
+            raise SyntaxError(
+                f"Expected {token_type}, "
+                f"got {self.current_token.type} "
+                f"on line {self.current_token.line}"
+                f"in {self.file}"
+            )
 
     def factor(self):
         """
@@ -60,20 +38,24 @@ class Parser:
         tok = self.current_token
         if tok.type == 'NUMBER':
             self.eat('NUMBER')
-            return tok.value
+            return ('number', tok.value, tok.line)
         elif tok.type == 'STRING':
             self.eat('STRING')
-            return tok.value
+            return ('string', tok.value, tok.line)
         elif tok.type == 'ID':
             self.eat('ID')
-            return ('var', tok.value)
+            return ('var', tok.value, tok.line)
         elif tok.type == 'LPAREN':
             self.eat('LPAREN')
             node = self.expr()
             self.eat('RPAREN')
             return node
         else:
-            raise SyntaxError(f'Unexpected token {tok}')
+            raise SyntaxError(
+                f"Unexpected token {tok} "
+                f"on line {tok.line}"
+                f"in {self.file}"
+            )
 
     def term(self):
         """
@@ -84,10 +66,10 @@ class Parser:
         """
         result = self.factor()
         while self.current_token.type in ('MUL', 'DIV'):
-            op = self.current_token.type
-            self.eat(op)
+            op_tok = self.current_token
+            self.eat(op_tok.type)
             op_map = {'MUL': 'mul', 'DIV': 'div'}
-            result = (op_map[op], result, self.factor())
+            result = (op_map[op_tok.type], result, self.factor(), op_tok.line)
         return result
 
     def expr(self):
@@ -99,14 +81,23 @@ class Parser:
         """
         result = self.term()
         while self.current_token.type in ('PLUS', 'MINUS'):
-            op = self.current_token.type
-            self.eat(op)
+            op_tok = self.current_token
+            self.eat(op_tok.type)
             op_map = {'PLUS': 'add', 'MINUS': 'sub'}
-            result = (op_map[op], result, self.term())
+            result = (op_map[op_tok.type], result, self.term(), op_tok.line)
         return result
 
+    def comparison(self):
+        result = self.expr()
+        while self.current_token.type in ('EQ', 'GT', 'LT', 'GE', 'LE'):
+            op_tok = self.current_token
+            self.eat(op_tok.type)
+            op_map = {'EQ': 'eq', 'GT': 'gt', 'LT': 'lt', 'GE': 'ge', 'LE': 'le'}
+            result = (op_map[op_tok.type], result, self.expr(), op_tok.line)
+        return result
 
     def block(self):
+        tok = self.current_token
         self.eat('LBRACE')
         statements = []
         while self.current_token.type != 'RBRACE':
@@ -116,8 +107,7 @@ class Parser:
             while self.current_token.type == 'NEWLINE':
                 self.eat('NEWLINE')
         self.eat('RBRACE')
-        return ('block', statements)
-
+        return ('block', statements, tok.line)
 
     def statement(self):
         """
@@ -129,13 +119,15 @@ class Parser:
         Raises:
             SyntaxError: If the syntax is invalid or unexpected.
         """
-        if self.current_token.type == 'COUT':
+        tok = self.current_token
+
+        if tok.type == 'COUT':
             self.eat('COUT')
             self.eat('ARROW')
             expr_node = self.expr()
-            return ('cout', expr_node)
+            return ('cout', expr_node, tok.line)
 
-        if self.current_token.type == 'IF':
+        elif tok.type == 'IF':
             self.eat('IF')
             condition = self.comparison()
             then_block = self.block()
@@ -143,22 +135,34 @@ class Parser:
             if self.current_token.type == 'ELSE':
                 self.eat('ELSE')
                 else_block = self.block()
-            return ('if', condition, then_block, else_block)
+            return ('if', condition, then_block, else_block, tok.line)
 
-        if self.current_token.type == 'VAR':
+        elif tok.type == 'VAR':
             self.eat('VAR')
-            if self.current_token.type != 'ID':
-                raise SyntaxError("Expected identifier after 'var'")
-            var_name = self.current_token.value
+            id_tok = self.current_token
+            if id_tok.type != 'ID':
+                raise SyntaxError(
+                    f"Expected identifier after 'var' "
+                    f"on line {id_tok.line}"
+                    f"in {self.file}"
+                )
+            var_name = id_tok.value
             self.eat('ID')
-            if self.current_token.type == 'ASSIGN':
-                self.eat('ASSIGN')
-                expr_node = self.expr()
-                return ('assign', var_name, expr_node)
-            else:
-                raise SyntaxError("Expected ':=' after variable name")
+            if self.current_token.type != 'ASSIGN':
+                raise SyntaxError(
+                    f"Expected ':=' after variable name "
+                    f"on line {self.current_token.line}"
+                    f"in {self.file}"
+                )
+            self.eat('ASSIGN')
+            expr_node = self.expr()
+            return ('assign', var_name, expr_node, id_tok.line)
 
-        raise SyntaxError(f'Unexpected token {self.current_token.type}')
+        raise SyntaxError(
+            f"Unexpected token {tok.type} "
+            f"on line {tok.line}"
+            f"in {self.file}"
+        )
 
     def parse(self):
         """
@@ -173,9 +177,7 @@ class Parser:
                 self.eat('NEWLINE')
             if self.current_token.type == 'EOF':
                 break
-            stmt = self.statement()
-            statements.append(stmt)
+            statements.append(self.statement())
             while self.current_token.type == 'NEWLINE':
                 self.eat('NEWLINE')
         return statements
-
