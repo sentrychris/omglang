@@ -7,10 +7,10 @@ Workflow:
 1. The source script is read from the file specified on the command line.
 2. The Interpreter verifies the script header to ensure validity.
 3. The Lexer tokenizes the stripped source code into meaningful tokens.
-4. The Parser processes tokens into an Abstract Syntax Tree (AST) following
-   the language grammar.
+4. The Parser processes tokens into an AST following the language grammar.
 5. The Interpreter walks the AST, evaluating expressions and executing statements.
 """
+
 import sys
 
 from core.lexer import tokenize
@@ -35,35 +35,76 @@ def print_usage():
     print()
     print("Example:")
     print("    oli hello.omg")
+    print()
+    print("Or run with no arguments to enter interactive mode (REPL).")
 
-if len(sys.argv) != 2:
-    print_usage()
-    sys.exit(1)
 
-script_name = sys.argv[1]
-with open(script_name, "r", encoding="utf-8") as f:
-    code = f.read()
+def run_script(script_name: str):
+    """
+    Run an OMG script
+    """
+    with open(script_name, "r", encoding="utf-8") as f:
+        code = f.read()
 
-try:
-    # Create the interpreter and the check the script for the required header.
-    interpreter = Interpreter(script_name)
-    interpreter.check_header(code)
+    try:
+        interpreter = Interpreter(script_name)
+        interpreter.check_header(code)
 
-    # Lexical Analysis: The lexer reads the raw source code and converts it into
-    # a stream of tokens - keywords, identifiers, operators, literals etc.
-    tokens = tokenize(interpreter.strip_header(code))
+        tokens = tokenize(interpreter.strip_header(code))
+        parser = Parser(tokens, script_name)
+        ast = parser.parse()
 
-    # Syntactical Analysis: The parser takes the stream of tokens and applies
-    # grammar rules to build an Abstract Syntax Tree (AST). The AST represents
-    # the hierarchical syntax of the code e.g. nested expressions, control
-    # structures.
-    parser = Parser(tokens, script_name)
-    ast = parser.parse()
+        interpreter.execute(ast)
+    except Exception as e:
+        print(f"{type(e).__name__}: {e}")
 
-    # Evaluation: The interpreter walks the AST and executes it node by node.
-    # Some interpreters transform the AST into an intermediate representation
-    # (e.g. bytecode) and then execute that, but this is a simple tree-walk
-    # interpreter.
-    interpreter.execute(ast)
-except Exception as e:
-    print(f"{type(e).__name__}: {e}")
+
+def run_repl():
+    """
+    Run the interactive REPL
+    """
+    print("OMG Language Intrepeter - REPL")
+    print("Type `exit` or `quit` to leave.")
+    interpreter = Interpreter("<stdin>")
+    buffer = []
+
+    while True:
+        try:
+            prompt = ">>> " if not buffer else "... "
+            line = input(prompt)
+            if line.strip() in {"exit", "quit"}:
+                break
+            buffer.append(line)
+            source = "\n".join(buffer)
+
+            try:
+                tokens = tokenize(source)
+                parser = Parser(tokens, "<stdin>")
+                ast = parser.parse()
+
+                interpreter.execute(ast)
+                buffer.clear()
+            except SyntaxError as e:
+                if "unexpected EOF" in str(e).lower():
+                    continue  # likely incomplete input
+                raise
+            except Exception as e:
+                print(f"{type(e).__name__}: {e}")
+                buffer.clear()
+
+        except KeyboardInterrupt:
+            print("\nInterrupted.")
+            break
+        except EOFError:
+            print()
+            break
+
+
+if __name__ == "__main__":
+    if len(sys.argv) == 2:
+        run_script(sys.argv[1])
+    elif len(sys.argv) == 1:
+        run_repl()
+    else:
+        print_usage()
+        sys.exit(1)
