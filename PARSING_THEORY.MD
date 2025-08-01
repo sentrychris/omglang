@@ -32,6 +32,7 @@ A composition of factors joined by **multiplicative operators** like `*`, `/`, `
 def term(self):
 ```
 
+
 Builds:
 
 * `factor` `*` `factor`
