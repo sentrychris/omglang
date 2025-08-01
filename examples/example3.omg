@@ -1,8 +1,7 @@
 ;;;omg
 
-
+# Complex control flow structure
 thingy x := 5
-
 maybe x == 4 {
     saywhat << "x is 4"
 } oractually x == 5 {
