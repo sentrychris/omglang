@@ -32,6 +32,24 @@ class Parser:
         else:
             raise SyntaxError(f'Expected token {token_type}, got {self.current_token}')
 
+
+    def comparison(self):
+        left = self.expr()
+        while self.current_token.type in ('EQ', 'GT', 'LT', 'GE', 'LE'):
+            op = self.current_token.type
+            self.eat(op)
+            right = self.expr()
+            op_map = {
+                'EQ': 'eq',
+                'GT': 'gt',
+                'LT': 'lt',
+                'GE': 'ge',
+                'LE': 'le'
+            }
+            left = (op_map[op], left, right)
+        return left
+
+
     def factor(self):
         """
         Parse a factor (number, string, variable, or parenthesized expression).
@@ -87,6 +105,20 @@ class Parser:
             result = (op_map[op], result, self.term())
         return result
 
+
+    def block(self):
+        self.eat('LBRACE')
+        statements = []
+        while self.current_token.type != 'RBRACE':
+            while self.current_token.type == 'NEWLINE':
+                self.eat('NEWLINE')
+            statements.append(self.statement())
+            while self.current_token.type == 'NEWLINE':
+                self.eat('NEWLINE')
+        self.eat('RBRACE')
+        return ('block', statements)
+
+
     def statement(self):
         """
         Parse a single statement (cout or var assignment).
@@ -102,6 +134,16 @@ class Parser:
             self.eat('ARROW')
             expr_node = self.expr()
             return ('cout', expr_node)
+
+        if self.current_token.type == 'IF':
+            self.eat('IF')
+            condition = self.comparison()
+            then_block = self.block()
+            else_block = None
+            if self.current_token.type == 'ELSE':
+                self.eat('ELSE')
+                else_block = self.block()
+            return ('if', condition, then_block, else_block)
 
         if self.current_token.type == 'VAR':
             self.eat('VAR')

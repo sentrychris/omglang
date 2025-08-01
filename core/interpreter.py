@@ -47,6 +47,16 @@ class Interpreter:
                 ret = self.eval_expr(node[1]) * self.eval_expr(node[2])
             elif op == 'div':
                 ret = self.eval_expr(node[1]) / self.eval_expr(node[2])
+            elif op == 'eq':
+                ret = self.eval_expr(node[1]) == self.eval_expr(node[2])
+            elif op == 'gt':
+                ret = self.eval_expr(node[1]) > self.eval_expr(node[2])
+            elif op == 'lt':
+                ret = self.eval_expr(node[1]) < self.eval_expr(node[2])
+            elif op == 'ge':
+                ret = self.eval_expr(node[1]) >= self.eval_expr(node[2])
+            elif op == 'le':
+                ret = self.eval_expr(node[1]) <= self.eval_expr(node[2])
             if ret is None:
                 raise ValueError(f'Unknown op {op}')
             return ret
@@ -72,5 +82,14 @@ class Interpreter:
                 _, expr_node = stmt
                 value = self.eval_expr(expr_node)
                 print(value)
+            elif kind == 'if':
+                _, condition_node, then_node, else_node = stmt
+                if self.eval_expr(condition_node):
+                    self.run([then_node])
+                elif else_node:
+                    self.run([else_node])
+            elif kind == 'block':
+                _, statements = stmt
+                self.run(statements)
             else:
                 raise TypeError(f'Unknown statement type: {kind}')

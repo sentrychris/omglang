@@ -43,6 +43,15 @@ def tokenize(code):
         ('ID',       r'[A-Za-z_][A-Za-z0-9_]*'),
         ('ASSIGN',   r':='),
         ('ARROW',    r'<<'),
+        ('GE',       r'>='),
+        ('LE',       r'<='),
+        ('EQ',       r'=='),
+        ('GT',       r'>'),
+        ('LT',       r'<'),
+        ('IF',       r'\bif\b'),
+        ('ELSE',     r'\belse\b'),
+        ('LBRACE',   r'\{'),
+        ('RBRACE',   r'\}'),
         ('LPAREN',   r'\('),
         ('RPAREN',   r'\)'),
         ('PLUS',     r'\+'),
@@ -55,7 +64,14 @@ def tokenize(code):
     ]
 
     tok_regex = '|'.join(f'(?P<{name}>{pattern})' for name, pattern in token_specification)
-    keywords = {'cout', 'var'}
+
+    keywords = {
+        'cout',
+        'var',
+        'if',
+        'else'
+    }
+
     tokens = []
 
     for mo in re.finditer(tok_regex, code):
