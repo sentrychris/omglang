@@ -1,31 +1,67 @@
+"""
+Interpreter.
+"""
 class Interpreter:
+    """
+    A simple expression interpreter supporting variables and arithmetic.
+    """
     def __init__(self):
+        """
+        Initialize the interpreter with an empty variable environment.
+        """
         self.vars = {}
 
-    def eval_expr(self, node):
+
+    def eval_expr(self, node: int | str | tuple):
+        """
+        Evaluate an expression node.
+
+        Parameters:
+            node (int | str | tuple): The expression node.
+
+        Returns:
+            The result of evaluating the expression.
+
+        Raises:
+            NameError: If a variable is used before assignment.
+            Exception: For unknown node types.
+        """
         if isinstance(node, int):
             return node
         if isinstance(node, str):
             return node
         if isinstance(node, tuple):
             op = node[0]
+            ret = None
             if op == 'var':
                 varname = node[1]
                 if varname in self.vars:
-                    return self.vars[varname]
+                    ret = self.vars[varname]
                 else:
                     raise NameError(f"Undefined variable '{varname}'")
             elif op == 'add':
-                return self.eval_expr(node[1]) + self.eval_expr(node[2])
+                ret = self.eval_expr(node[1]) + self.eval_expr(node[2])
             elif op == 'sub':
-                return self.eval_expr(node[1]) - self.eval_expr(node[2])
+                ret = self.eval_expr(node[1]) - self.eval_expr(node[2])
             elif op == 'mul':
-                return self.eval_expr(node[1]) * self.eval_expr(node[2])
+                ret = self.eval_expr(node[1]) * self.eval_expr(node[2])
             elif op == 'div':
-                return self.eval_expr(node[1]) / self.eval_expr(node[2])
-        raise Exception(f'Unknown node {node}')
+                ret = self.eval_expr(node[1]) / self.eval_expr(node[2])
+            if ret is None:
+                raise ValueError(f'Unknown op {op}')
+            return ret
+        raise ValueError(f'Unknown node {node}')
 
-    def run(self, statements):
+    def run(self, statements: list):
+        """
+        Execute a list of statements.
+
+        Parameters:
+            statements (list): A list of ('assign' | 'cout', ...) tuples.
+
+        Raises:
+            Exception: For unknown statement types.
+        """
         for stmt in statements:
             kind = stmt[0]
             if kind == 'assign':
@@ -37,5 +73,4 @@ class Interpreter:
                 value = self.eval_expr(expr_node)
                 print(value)
             else:
-                raise Exception(f'Unknown statement type: {kind}')
-
+                raise TypeError(f'Unknown statement type: {kind}')

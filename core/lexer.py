@@ -1,14 +1,42 @@
+"""
+Lexer.
+"""
 import re
 
 class Token:
+    """
+    Represents a lexical token with a type and value.
+    """
     def __init__(self, type_, value):
+        """
+        Initialize a new token.
+
+        Parameters:
+            type_ (str): The token type.
+            value (Any): The token value.
+        """
         self.type = type_
         self.value = value
 
     def __repr__(self):
+        """
+        Return a string representation of the token.
+        """
         return f"Token({self.type}, {self.value})"
 
 def tokenize(code):
+    """
+    Convert a string of source code into a list of tokens.
+
+    Parameters:
+        code (str): The source code to tokenize.
+
+    Returns:
+        list[Token]: A list of Token instances.
+
+    Raises:
+        RuntimeError: If an unexpected character is encountered.
+    """
     token_specification = [
         ('NUMBER',   r'\d+'),
         ('STRING',   r'"[^"\n]*"'),
@@ -52,4 +80,5 @@ def tokenize(code):
             tokens.append(Token(kind, value))
 
     tokens.append(Token('EOF', None))
+
     return tokens
