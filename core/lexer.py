@@ -49,15 +49,15 @@ def tokenize(code):
         ('ID',       r'[A-Za-z_][A-Za-z0-9_]*'),
         ('ASSIGN',   r':='),
         ('ARROW',    r'<<'),
+        ('LBRACE',   r'\{'),
+        ('RBRACE',   r'\}'),
+        ('LPAREN',   r'\('),
+        ('RPAREN',   r'\)'),
         ('GE',       r'>='),
         ('LE',       r'<='),
         ('EQ',       r'=='),
         ('GT',       r'>'),
         ('LT',       r'<'),
-        ('LBRACE',   r'\{'),
-        ('RBRACE',   r'\}'),
-        ('LPAREN',   r'\('),
-        ('RPAREN',   r'\)'),
         ('PLUS',     r'\+'),
         ('MINUS',    r'-'),
         ('MUL',      r'\*'),
@@ -72,7 +72,7 @@ def tokenize(code):
 
     # Sharing ID regex
     # todo add consts, globals... other shit
-    keywords = {
+    identifier_keywords = {
         'thingy',
     }
 
@@ -106,7 +106,7 @@ def tokenize(code):
         elif kind == 'STRING':
             tokens.append(Token('STRING', value[1:-1], line_num))
         elif kind == 'ID':
-            if value in keywords:
+            if value in identifier_keywords:
                 tokens.append(Token(value.upper(), value, line_num))
             else:
                 tokens.append(Token('ID', value, line_num))
