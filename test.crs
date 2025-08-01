@@ -6,9 +6,9 @@ var c := (a + b) * 2 - (b / a)
 cout << c
 
 if a < b {
-	cout << "a is less than b"
+    cout << "a is less than b"
 } else {
-	cout << "a is not less"
+    cout << "a is not less"
 }
 
 var message := "result is: "
@@ -16,3 +16,9 @@ cout << message
 
 var r := c / 3 + (b - a)
 cout << r
+
+var counter := 0
+while counter < 5 {
+    cout << counter
+    var counter := counter + 1
+}

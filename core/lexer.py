@@ -41,6 +41,9 @@ def tokenize(code):
     token_specification = [
         ('NUMBER',   r'\d+'),
         ('STRING',   r'"[^"\n]*"'),
+        ('IF',       r'\bif\b'),
+        ('ELSE',     r'\belse\b'),
+        ('WHILE', r'\bwhile\b'),
         ('ID',       r'[A-Za-z_][A-Za-z0-9_]*'),
         ('ASSIGN',   r':='),
         ('ARROW',    r'<<'),
@@ -49,8 +52,6 @@ def tokenize(code):
         ('EQ',       r'=='),
         ('GT',       r'>'),
         ('LT',       r'<'),
-        ('IF',       r'\bif\b'),
-        ('ELSE',     r'\belse\b'),
         ('LBRACE',   r'\{'),
         ('RBRACE',   r'\}'),
         ('LPAREN',   r'\('),

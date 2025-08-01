@@ -1,30 +1,7 @@
 """
 Interpreter.
 """
-
-import sys
-
-class UndefinedVariableError(Exception):
-    def __init__(self, varname, line=None, file=None):
-        self.varname = varname
-        self.line = line
-        message = f"Undefined variable '{varname}'"
-        if line is not None:
-            message += f" on line {line}"
-        if file is not None:
-            message += f" in {file}"
-        super().__init__(message)
-
-class UnknownOperationError(Exception):
-    def __init__(self, op, line=None, file=None):
-        self.op = op
-        self.line = line
-        message = f"Unknown operation '{op}'"
-        if line is not None:
-            message += f" on line {line}"
-        if file is not None:
-            message += f" in {file}"
-        super().__init__(message)
+from core.errors import UndefinedVariableError, UnknownOperationError
 
 class Interpreter:
     """
@@ -67,7 +44,7 @@ class Interpreter:
         for i, line in enumerate(lines):
             if line.strip() == ';;;crsi':
                 return '\n'.join(lines[i + 1:])
-        raise RuntimeError("" \
+        raise RuntimeError(
             f"CRS script missing required header ';;;crsi'\n"
             f"in {self.file}"
         )
@@ -113,7 +90,7 @@ class Interpreter:
         Execute a list of statements.
 
         Parameters:
-            statements (list): A list of ('assign' | 'cout', ...) tuples.
+            statements (list): A list of ('assign' | 'cout' | 'if' | 'block' | 'while', ...) tuples.
 
         Raises:
             Exception: For unknown statement types.
@@ -143,9 +120,14 @@ class Interpreter:
                 _, block_statements, _ = stmt
                 self.execute(block_statements)
 
+            elif kind == 'while':
+                _, cond_node, block_node, _ = stmt
+                while self.eval_expr(cond_node):
+                    self.execute([block_node])
+
             else:
                 raise TypeError(
                     f"Unknown statement type: {kind} "
-                    f"on line {line}"
+                    f"on line {line} "
                     f"in {self.file}"
                 )
