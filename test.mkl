@@ -1,7 +1,0 @@
-
-var s := "hello world"
-cout << s
-
-var y := 5
-var z := (1 + y) / 2
-cout << z

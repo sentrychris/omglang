@@ -1,5 +1,5 @@
 """
-MKLang
+Main.
 """
 import sys
 
@@ -9,7 +9,7 @@ from core.interpreter import Interpreter
 
 
 if len(sys.argv) != 2:
-    print("Usage: python mklang.py <script.mkl>")
+    print("Usage: ./crsi <script.crs>")
     sys.exit(1)
 
 with open(sys.argv[1], "r", encoding="utf-8") as f:
