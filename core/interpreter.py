@@ -87,7 +87,7 @@ class Interpreter:
 
     def eval_expr(self, node):
         """
-        Evaluate AST node.
+        Evaluate an expression.
         """
         if isinstance(node, tuple):
             op = node[0]
@@ -120,27 +120,6 @@ class Interpreter:
                     case 'ge': return lhs >= rhs
                     case 'le': return lhs <= rhs
 
-            elif op == 'call':
-                print("hi")
-                func_name, args, line = node[1], node[2], node[3]
-                if func_name not in self.functions:
-                    raise UndefinedVariableError(func_name, line, self.file)
-                params, body = self.functions[func_name]
-                if len(params) != len(args):
-                    raise RuntimeError(
-                        f"Function '{func_name}' argument count mismatch "
-                        f"on line {line} in {self.file}"
-                    )
-                arg_values = [self.eval_expr(arg) for arg in args]
-
-                # Save current variable state
-                prev_vars = self.vars.copy()
-                self.vars = {k: v for k, v in zip(params, arg_values)}
-                self.execute([body])
-                self.vars = prev_vars
-                return None
-            else:
-                raise UnknownOperationError(op, line, self.file)
         raise TypeError(f"Invalid expression node: {node}")
 
 
