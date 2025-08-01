@@ -1,20 +1,40 @@
 ;;;omg
 
-thingy a := 5
-thingy b := 10
-thingy c := (a + b)
+thingy name := "Chris"
+thingy count := 0
+thingy total := 0
+thingy multiplier := 2
+thingy max := 10
 
-saywhat << c
+saywhat << "Starting loop for: " + name
 
-maybe a < b {
-    saywhat << "a is less than b"
-} okthen {
-    saywhat << "a is not less"
+hamsterwheel count < max {
+    saywhat << "Count is: "
+    saywhat << count
+
+    maybe count % 2 == 0 {
+        saywhat << "Even number detected"
+        thingy total := total + (count * multiplier)
+    } okthen {
+        saywhat << "Odd number skipped"
+    }
+
+    thingy count := count + 1
 }
 
-thingy counter := 0
+saywhat << "Loop finished."
+saywhat << "Final total: "
+saywhat << total
 
-hamsterwheel counter < 5 {
-    saywhat << counter
-    thingy counter := counter + 1
+thingy grade := "A"
+
+maybe total > 20 {
+    saywhat << "Performance: Excellent"
+    maybe grade == "A" {
+        saywhat << "Top tier confirmed"
+    } okthen {
+        saywhat << "Grade mismatch!"
+    }
+} okthen {
+    saywhat << "Needs improvement"
 }

@@ -67,13 +67,14 @@ class Interpreter:
                 if varname in self.vars:
                     return self.vars[varname]
                 raise UndefinedVariableError(varname, line, self.file)
-            elif op in ('add', 'sub', 'mul', 'div', 'eq', 'gt', 'lt', 'ge', 'le'):
+            elif op in ('add', 'sub', 'mul', 'mod', 'div', 'eq', 'gt', 'lt', 'ge', 'le'):
                 lhs = self.eval_expr(node[1])
                 rhs = self.eval_expr(node[2])
                 match op:
                     case 'add': return lhs + rhs
                     case 'sub': return lhs - rhs
                     case 'mul': return lhs * rhs
+                    case 'mod': return lhs % rhs
                     case 'div': return lhs / rhs
                     case 'eq': return lhs == rhs
                     case 'gt': return lhs > rhs

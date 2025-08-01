@@ -59,6 +59,7 @@ def tokenize(code):
         ('PLUS',     r'\+'),
         ('MINUS',    r'-'),
         ('MUL',      r'\*'),
+        ('MOD',      r'%'),
         ('DIV',      r'/'),
         ('NEWLINE',  r'\n'),
         ('SKIP',     r'[ \t]+'),

@@ -79,10 +79,10 @@ class Parser:
             An AST node representing the term.
         """
         result = self.factor()
-        while self.current_token.type in ('MUL', 'DIV'):
+        while self.current_token.type in ('MUL', 'DIV', 'MOD'):
             op_tok = self.current_token
             self.eat(op_tok.type)
-            op_map = {'MUL': 'mul', 'DIV': 'div'}
+            op_map = {'MUL': 'mul', 'DIV': 'div', 'MOD': 'mod'}
             result = (op_map[op_tok.type], result, self.factor(), op_tok.line)
         return result
 
