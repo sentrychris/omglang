@@ -1,0 +1,71 @@
+;;;omg
+
+# Primality check using trial division
+bitchin is_prime(n) {
+    maybe n <= 1 {
+        gimme 0
+    }
+
+    thingy i := 2
+    hamsterwheel i * i <= n {
+        maybe n % i == 0 {
+            gimme 0
+        }
+        thingy i := i + 1
+    }
+
+    gimme 1
+}
+
+# Digit sum of a number
+bitchin digit_sum(n) {
+    thingy sum := 0
+    thingy temp := n
+    hamsterwheel temp > 0 {
+        thingy sum := sum + (temp % 10)
+        thingy temp := temp / 10
+    }
+    gimme sum
+}
+
+# Obfuscated strength rating based on digit sum and primality
+bitchin classify_number(n) {
+    thingy isprime := is_prime(n)
+
+    maybe isprime == 1 {
+        gimme "is prime, sum of decimals " + digit_sum(n)
+    } okthen {
+        maybe digit_sum(n) % 2 == 0 {
+            gimme "is even, sum of decimals " + digit_sum(n)
+        } okthen {
+            gimme "is odd, sum of decimals " + digit_sum(n)
+        }
+    }
+}
+
+# Deep recursive Fibonacci function
+bitchin fibonacci(n) {
+    maybe n <= 1 {
+        gimme n
+    } okthen {
+        gimme fibonacci(n - 1) + fibonacci(n - 2)
+    }
+}
+
+# Loop over numbers and rate them, including Fibonacci calculation
+thingy start := 91
+thingy stop := 97
+thingy current := start
+thingy fibint := 2
+
+hamsterwheel current <= stop {
+    thingy rating := classify_number(current)
+    thingy fibval := fibonacci(fibint)
+    saywhat << "Classified number " + current + " " + rating
+    saywhat << "Fibonnaci sequence[" + fibint + "] = " + fibval
+    thingy current := current + 1
+    thingy fibint := fibint + 2
+}
+
+# Assert primality of 97 for validation
+facts is_prime(97)

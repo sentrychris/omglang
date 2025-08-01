@@ -127,7 +127,7 @@ class Interpreter:
                     case 'sub': term = lhs - rhs
                     case 'mul': term = lhs * rhs
                     case 'mod': term = lhs % rhs
-                    case 'div': term = lhs / rhs
+                    case 'div': term = lhs // rhs
                     case 'eq':  term = lhs == rhs
                     case 'gt':  term = lhs > rhs
                     case 'lt':  term = lhs < rhs
