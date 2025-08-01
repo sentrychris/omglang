@@ -257,13 +257,10 @@ class Interpreter:
                         self.execute(body[1])
                     else:
                         self.execute([body])
-                    result = None  # no return statement encountered
-                except ReturnError as ret:
-                    result = ret.value
-
-                # Restore the previous variable scope
-                self.vars = saved_vars
-                return result
+                except ReturnError:
+                    pass
+                finally:
+                    self.vars = saved_vars
 
 
             elif kind == 'return':

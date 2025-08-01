@@ -66,6 +66,7 @@ def tokenize(code) -> list[Token]:
         ('NUMBER',   r'\d+'),
         ('STRING',   r'"[^"\n]*"'),
         ('IF',       r'\bmaybe\b'),
+        ('ELIF',     r'\boractually'),
         ('ELSE',     r'\bokthen\b'),
         ('WHILE',    r'\bhamsterwheel\b'),
         ('ECHO',  r'\bsaywhat\b'),
@@ -98,8 +99,6 @@ def tokenize(code) -> list[Token]:
     tok_regex = '|'.join(f'(?P<{name}>{pattern})' for name, pattern in token_specification)
 
     identifier_keywords = {
-        'facts',
-        'gimme',
         'thingy',
     }
 

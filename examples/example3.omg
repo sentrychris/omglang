@@ -1,5 +1,18 @@
 ;;;omg
 
+
+thingy x := 5
+
+maybe x == 4 {
+    saywhat << "x is 4"
+} oractually x == 5 {
+    saywhat << "x is 5"
+} oractually x == 6 {
+    saywhat << "x is 6"
+} okthen {
+    saywhat << "x is something else"
+}
+
 # Primality check using trial division
 bitchin is_prime(n) {
     maybe n <= 1 {

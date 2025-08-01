@@ -10,7 +10,7 @@ Workflow:
 4. The Parser processes tokens into an AST following the language grammar.
 5. The Interpreter walks the AST, evaluating expressions and executing statements.
 """
-
+import os
 import sys
 
 from core.lexer import tokenize
@@ -102,7 +102,7 @@ def run_repl():
 
 if __name__ == "__main__":
     if len(sys.argv) == 2:
-        run_script(sys.argv[1])
+        run_script(os.path.join(os.path.dirname(__file__), sys.argv[1]))
     elif len(sys.argv) == 1:
         run_repl()
     else:

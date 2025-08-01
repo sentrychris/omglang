@@ -271,12 +271,25 @@ class Parser:
         self._eat("IF")
         condition = self._comparison()
         then_block = self._block()
+
+        elif_cases = []
+        while self._current_token.type == 'ELIF':
+            self._eat('ELIF')
+            cond = self._comparison()
+            block = self._block()
+            elif_cases.append((cond, block))
+
         else_block = None
         if self._current_token.type == 'ELSE':
             self._eat('ELSE')
             else_block = self._block()
 
-        return ('maybe', condition, then_block, else_block, tok.line)
+        tail = else_block
+        for cond_node, block_node in reversed(elif_cases):
+            cond_line = cond_node[-1] if isinstance(cond_node, tuple) else tok.line
+            tail = ('maybe', cond_node, block_node, tail, cond_line)
+
+        return ('maybe', condition, then_block, tail, tok.line)
 
 
     def _parse_while(self) -> tuple:
