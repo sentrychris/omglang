@@ -74,11 +74,10 @@ def run_repl():
     """
     Run the interactive REPL
     """
-    print("OMG Language Intrepeter - REPL")
+    print("OMG Language Interpreter - REPL")
     print("Type `exit` or `quit` to leave.")
     interpreter = Interpreter("<stdin>")
-    buffer = []
-
+    buffer: list[str] = []
     while True:
         try:
             prompt = ">>> " if not buffer else "... "
@@ -87,22 +86,20 @@ def run_repl():
                 break
             buffer.append(line)
             source = "\n".join(buffer)
-
             try:
                 tokens = tokenize(source)
                 parser = Parser(tokens, "<stdin>")
                 ast = parser.parse()
-
                 interpreter.execute(ast)
                 buffer.clear()
             except SyntaxError as e:
-                if "unexpected EOF" in str(e).lower():
-                    continue  # likely incomplete input
+                # If the parser complains about reaching EOF, assume the input is incomplete
+                if "EOF" in str(e):
+                    continue
                 raise
             except Exception as e:
                 print(f"{type(e).__name__}: {e}")
                 buffer.clear()
-
         except KeyboardInterrupt:
             print("\nInterrupted.")
             break

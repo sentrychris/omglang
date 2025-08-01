@@ -1,10 +1,14 @@
 # OMGlang
 
-**OMG** is a toy programming language with a silly syntax and basic support for variables, arithmetic, conditionals, loops, and functions. It’s implemented in Python using a hand-written recursive descent parser and tree-walk interpreter.
+**OMG** is a toy programming language with a light‑hearted syntax and basic support for variables, arithmetic, conditionals, loops and functions. It is implemented in Python using a hand‑written lexer, a recursive‑descent parser and a tree‑walk interpreter. The language is intended as an educational exercise rather than a production tool.
 
 ## Table of Contents
 
 * [Overview](#overview)
+* [Running OMG Scripts](#running-omg-scripts)
+
+  * [Usage](#usage)
+  * [Interactive REPL](#interactive-repl)
 * [Lexer](#lexer)
 * [Parser](#parser)
 * [Interpreter](#interpreter)
@@ -13,74 +17,115 @@
 
 ## Overview
 
-The language uses playful keywords like `thingy`, `saywhat`, and `hamsterwheel`, but is structured with a serious underlying grammar. It enforces a header line (`;;;omg`) and processes code in the following pipeline:
+The language uses playful keywords like `thingy`, `saywhat`, `maybe` and `hamsterwheel`, but it is grounded in a well‑defined grammar. All scripts must start with a header line `;;;omg`. Execution proceeds through three stages:
 
-1. **Lexing** – Convert raw source code into tokens.
-2. **Parsing** – Build an Abstract Syntax Tree (AST) from tokens.
-3. **Interpreting** – Walk the AST to evaluate expressions and execute statements.
+1. **Lexing** – convert raw source code into tokens.
+2. **Parsing** – build an Abstract Syntax Tree (AST) from tokens.
+3. **Interpreting** – walk the AST to evaluate expressions and execute statements.
+
+## Running OMG Scripts
+
+Once you have installed or built the interpreter, the command‑line entry point is named `oli`. It can execute a script file or drop you into an interactive session if run with no arguments.
+
+### Usage
+
+```
+oli <script.omg>
+oli -h | --help
+oli
+```
+
+* `oli <script.omg>` – run the specified OMG program. The file must include the required `;;;omg` header on the first non‑empty line. Relative paths are resolved from your current working directory.
+
+* `oli` with no arguments – start a Read–Eval–Print Loop (REPL) where you can type OMG statements interactively. Multi‑line constructs such as function definitions or `maybe … { … }` blocks are supported; simply continue entering lines until the braces balance. Type `exit` or `quit` to leave the REPL.
+
+* `-h` or `--help` – print a short usage summary and exit.
+
+If you prefer not to install the `oli` script, you can also run programs directly via Python:
+
+```sh
+py ./oli.py <script>.omg
+```
+
+### Interactive REPL
+
+Running `oli` with no arguments launches an interactive session. This REPL lets you experiment with the language one statement or block at a time. For example:
+
+```plaintext
+>>> thingy x := 5
+>>> saywhat << x
+5
+>>> maybe x < 10 {
+...     saywhat << x + " is smaller than 10"
+... } okthen {
+...     saywhat << x + " is bigger than 10"
+... }
+x is smaller than 10
+>>> exit
+```
+
+If you start a block and do not close it, the prompt switches to `...` and the interpreter waits for you to finish entering the block.
 
 ## Lexer
 
-The lexer (tokenizer) scans the raw text and splits it into a stream of tokens. Each token includes a type, value, and line number. Token types include:
+The lexer scans the raw text and splits it into a stream of tokens. Each token has a type, value and line number. Token types include:
 
-* **Keywords**: `thingy`, `saywhat`, `bitchin`, `maybe`, `okthen`, `hamsterwheel`
-* **Operators**: `+`, `-`, `*`, `/`, `%`, `=`, `==`, `<`, `>`, `<=`, `>=`
-* **Identifiers**: variable and function names
-* **Literals**: integers and strings
-* **Punctuation**: `(`, `)`, `{`, `}`, `,`
+* **Keywords**: `thingy`, `saywhat`, `bitchin`, `maybe`, `oractually`, `okthen`, `hamsterwheel`.
+* **Operators**: `+`, `-`, `*`, `/`, `%`, `:=`, `<<`, `==`, `<`, `>`, `<=`, `>=`.
+* **Identifiers**: variable and function names.
+* **Literals**: integers and strings.
+* **Punctuation**: `(`, `)`, `{`, `}`, `,`.
 
-Whitespace and comments are ignored. The lexer is line-aware to provide precise error reporting.
+Whitespace and comments (lines starting with `#`) are ignored. The lexer records line numbers to improve error messages.
 
 ## Parser
 
-The parser is a **recursive descent parser**, manually written to follow an LL(1)-style grammar. It builds an AST from tokens using mutually recursive methods like:
+The parser is a hand‑written **recursive descent parser** following an LL(1) grammar. It converts the token stream into an AST using mutually recursive methods:
 
-* `expr()` — handles addition and subtraction
-* `term()` — handles multiplication, division, modulus
-* `factor()` — handles literals, variables, and parenthesized expressions
-* `statement()` — parses individual statements (assignments, output, control flow)
-* `block()` — parses a sequence of statements inside `{ ... }`
-* `function_def()` and `function_call()` — parse user-defined function declarations and invocations
+* `_factor()` – handles literals, variables and parenthesised expressions.
 
-Each node in the AST is a tuple that encodes the operation, its operands, and the line number.
+* `_term()` – handles multiplication, division and modulus.
 
-**Example AST node**:
+* `_expr()` – handles addition and subtraction.
+
+* `_comparison()` - handles comparison operators.
+
+* `_statement()` – parses individual statements (assignments, output, control flow).
+
+* `_block()` – parses a sequence of statements inside `{ … }`.
+
+Each AST node is represented as a tuple encoding the operation, its operands and the originating line number. For example:
 
 ```python
 ('add', ('thingy', 'x', 3), ('number', 5, 3), 3)
 ```
 
----
-
 ## Interpreter
 
-The interpreter walks the AST and evaluates expressions or executes statements. It uses a variable environment (`self.vars`) and a function environment (`self.functions`).
+The interpreter walks the AST and evaluates expressions or executes statements. It maintains:
+
+* A **variable environment** (`vars`) for storing values bound by `thingy` declarations.
+* A **function environment** (`functions`) for storing user‑defined functions.
 
 ### Expression Evaluation
 
-Handled by `eval_expr(node)`:
-
-* Literals return their value.
-* Variables are looked up in the environment.
-* Binary operations are recursively evaluated.
-* Function calls evaluate arguments, bind them to parameters, and execute the function body.
+Handled by `eval_expr(node)`: literals return their value; variables are looked up in the current scope; binary operations are recursively evaluated (with support for both numeric addition and string concatenation); function calls evaluate their arguments, bind them to parameters, execute the function body and return the result (or `None` if no `gimme` statement is encountered).
 
 ### Statement Execution
 
-Handled by `execute(statements)`:
+Handled by `execute(statements)`. Supported statements include:
 
-* **thingy**: evaluates and stores a value.
-* **saywhat**: evaluates and prints an scalar value, term, variable or expression.
-* **maybe/okthen**: conditionally executes blocks.
-* **hamsterwheel**: executes a block repeatedly while a condition holds.
-* **bitchin (func\_def)**: registers a named function.
-    * **(func\_call)**: invokes a registered function with evaluated arguments.
+* **thingy** – evaluate an expression and store it in the variable environment.
+* **saywhat** – evaluate an expression and print the result.
+* **maybe/oractually/okthen** – evaluate a condition and execute one of several blocks conditionally.
+* **hamsterwheel** – execute a block repeatedly while a condition holds.
+* **bitchin** – register a named function. Subsequent calls to that function will evaluate arguments, bind them to parameters and execute the function body in a local scope.
 
-Each function call creates a new scope for its parameters, and the previous variable state is restored afterward (no closures or return values yet).
+Each function call creates a new scope for its parameters, and the previous variable state is restored afterward (there are no closures or first‑class functions yet).
 
 ## Example
 
-Examples can be found in the **examples** directory.
+Examples can be found in the examples directory.
 
 ```php
 ;;;omg
@@ -125,28 +170,9 @@ hamsterwheel i <= 3 {
 saywhat << "Finished loop."
 ```
 
-Output:
-
-```
-> py .\bin\oli.exe .\examples\example1.omg
-Hello World
-x = 5
-y = 10
-5 + 10 = 15
-(5 + 10) * 10 / 2 = 75
-Beginning loop:
-0
-1
-2 is alright I guess.
-3 is the magic number.
-Finished loop.
-```
-
----
-
 ## Design Notes
 
-* **Header requirement**: Scripts must begin with `;;;omg` to be valid.
-* **Scope model**: Variables are global except during function calls, which create a local scope.
-* **Error handling**: Line numbers and file names are preserved for better error messages.
-* **Extensibility**: New constructs can be added by expanding the parser and interpreter tuples.
+* **Header requirement** – scripts must begin with `;;;omg` to be valid.
+* **Scope model** – variables are global except during function calls, which create a local scope.
+* **Error handling** – line numbers and file names are preserved for better error messages.
+* **Extensibility** – new constructs can be added by expanding the parser and interpreter.
