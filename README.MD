@@ -6,7 +6,6 @@
 
 * [Overview](#overview)
 * [Running OMG Scripts](#running-omg-scripts)
-
   * [Usage](#usage)
   * [Interactive REPL](#interactive-repl)
 * [Lexer](#lexer)
