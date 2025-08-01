@@ -14,7 +14,7 @@ maybe a < b {
 
 thingy counter := 0
 
-again.exe counter < 5 {
+hamsterwheel counter < 5 {
     saywhat << counter
     thingy counter := counter + 1
 }

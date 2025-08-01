@@ -43,7 +43,7 @@ def tokenize(code):
         ('STRING',   r'"[^"\n]*"'),
         ('IF',       r'\bmaybe\b'),
         ('ELSE',     r'\bokthen\b'),
-        ('WHILE', r'\bagain.exe\b'),
+        ('WHILE', r'\bhamsterwheel\b'),
         ('ID',       r'[A-Za-z_][A-Za-z0-9_]*'),
         ('ASSIGN',   r':='),
         ('ARROW',    r'<<'),

@@ -171,7 +171,7 @@ class Parser:
             self.eat('WHILE')
             condition = self.comparison()
             body = self.block()
-            return ('again.exe', condition, body, tok.line)
+            return ('hamsterwheel', condition, body, tok.line)
 
         elif tok.type == 'THINGY':
             self.eat('THINGY')
