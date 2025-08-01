@@ -1,0 +1,61 @@
+;;;omg
+
+# Recursive factorial function with debugging output
+bitchin factorial(n) {
+    maybe n <= 1 {
+        gimme 1
+    } okthen {
+        gimme n * factorial(n - 1)
+    }
+}
+
+# Greeting function with conditional logic
+bitchin greeting(name, excited) {
+    maybe excited == 1 {
+        gimme "Hey " + name + "! You're awesome!"
+    } okthen {
+        gimme "Hello " + name
+    }
+}
+
+# Compose full message combining factorial and greeting
+bitchin compose_message(name, num) {
+    thingy fact := factorial(num)
+
+    thingy excited := 0
+    maybe num > 5 {
+        thingy excited := 1
+    }
+
+    thingy greet := greeting(name, excited)
+    gimme greet + ", your factorial of " + num + " is " + fact
+}
+
+# Variables
+thingy user := "Chris"
+thingy number := 6
+
+# Output composed message
+thingy message := compose_message(user, number)
+saywhat << message
+
+# Loop counting down with conditional inside
+thingy countdown := number
+hamsterwheel countdown > 0 {
+    maybe countdown % 2 == 0 {
+        saywhat << countdown + " is even"
+    } okthen {
+        saywhat << countdown + " is odd"
+    }
+    thingy countdown := countdown - 1
+}
+
+# Use string concatenation, arithmetic, and facts assertion
+thingy sum := 0
+thingy i := 1
+hamsterwheel i <= 10 {
+    thingy sum := sum + i
+    thingy i := i + 1
+}
+
+saywhat << "Sum of 1 to 10 is " + sum

@@ -10,8 +10,13 @@ facts x
 facts y
 # facts z # this one will raise an AssertionError, try it!
 
+bitchin add(a, b) {
+    gimme a + b
+}
+
 # Define a function
 bitchin greeting(name) {
+    saywhat << add(5, 5)
     gimme "Hello " + name
 }
 
