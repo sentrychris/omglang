@@ -71,7 +71,10 @@ class Interpreter:
                 lhs = self.eval_expr(node[1])
                 rhs = self.eval_expr(node[2])
                 match op:
-                    case 'add': return lhs + rhs
+                    case 'add':
+                        if isinstance(lhs, str) or isinstance(rhs, str):
+                            return str(lhs) + str(rhs)
+                        return lhs + rhs
                     case 'sub': return lhs - rhs
                     case 'mul': return lhs * rhs
                     case 'mod': return lhs % rhs
