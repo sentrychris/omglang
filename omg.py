@@ -72,8 +72,8 @@ def run_script(script_name: str):
         interpreter.check_header(code)
         source = interpreter.strip_header(code)
 
-        tokens, token_map = tokenize(source)
-        parser = Parser(tokens, token_map, script_name)
+        tokens, token_map_literals = tokenize(source)
+        parser = Parser(tokens, token_map_literals, script_name)
         ast = parser.parse()
 
         # debug_print_tokens_ast(tokens, ast)
@@ -100,8 +100,8 @@ def run_repl():
             buffer.append(line)
             source = "\n".join(buffer)
             try:
-                tokens, token_map = tokenize(source)
-                parser = Parser(tokens, token_map, "<stdin>")
+                tokens, token_map_literals = tokenize(source)
+                parser = Parser(tokens, token_map_literals, "<stdin>")
                 ast = parser.parse()
                 interpreter.execute(ast)
                 buffer.clear()

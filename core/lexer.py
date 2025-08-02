@@ -124,14 +124,14 @@ def tokenize(code) -> tuple[list[Token], dict[str, str]]:
         ('MISMATCH',  r'.'),
     ]
 
-    token_map = {}
+    token_map_literals = {}
     for name, pattern in token_specification:
         try:
             literal = re.compile(pattern).pattern
             literal = literal.replace(r'\b', '')
             if re.match(r'^[\\\w{}()<>=:%+\-*/]+$', literal):
                 unescaped = re.sub(r'\\', '', literal)
-                token_map[unescaped] = name
+                token_map_literals[unescaped] = name
         except re.error:
             pass
 
@@ -181,4 +181,4 @@ def tokenize(code) -> tuple[list[Token], dict[str, str]]:
     tokens.append(Token('EOF', None, line_num))
     # for t in tokens:
     #     print(t)
-    return tokens, token_map
+    return tokens, token_map_literals

@@ -25,16 +25,17 @@ class Parser:
     """
     OMGlang parser.
     """
-    def __init__(self, tokens: list, token_map: dict[str, str], file: str):
+    def __init__(self, tokens: list, token_map_literals: dict[str, str], file: str):
         """
         Initialize the parser with a list of tokens.
 
         Parameters:
             tokens (list): A list of Token instances.
+            token_map_literals (dict): A dict of tokens mapped to their literals.
             file (str): The name of the script.
         """
         self._tokens = tokens
-        self._token_map = token_map
+        self._token_map = token_map_literals
         self._reverse_token_map = {v: k for k, v in self._token_map.items()}
         self._position = 0
         self._current_token = self._tokens[self._position]
