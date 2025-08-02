@@ -50,6 +50,16 @@ def print_usage():
     print("        Show this help message and exit.")
 
 
+def debug_print_tokens_ast(tokens, ast):
+    """
+    Print tokenized source and AST
+    """
+    print ("\nTokens:\n")
+    print(tokens)
+    print ("\nAST:\n")
+    print(ast)
+    print (" ")
+
 def run_script(script_name: str):
     """
     Run an OMG script
@@ -65,6 +75,8 @@ def run_script(script_name: str):
         tokens, token_map = tokenize(source)
         parser = Parser(tokens, token_map, script_name)
         ast = parser.parse()
+
+        # debug_print_tokens_ast(tokens, ast)
 
         interpreter.execute(ast)
     except Exception as e:

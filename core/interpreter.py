@@ -167,10 +167,13 @@ class Interpreter:
                         f"{target_name} is not sliceable on line {line} in {self.file}")
 
             # Binary operations
-            elif op in ('add', 'sub', 'mul', 'mod', 'div', 'eq', 'gt', 'lt', 'ge', 'le'):
+            elif op in ('add', 'sub', 'mul', 'mod', 'div',
+                        'and_bits', 'or_bits', 'xor_bits', 'shl', 'shr',
+                        'eq', 'gt', 'lt', 'ge', 'le'):
                 lhs = self.eval_expr(node[1])
                 rhs = self.eval_expr(node[2])
                 match op:
+                    # Arithmetic
                     case 'add':
                         if isinstance(lhs, str) or isinstance(rhs, str):
                             term = str(lhs) + str(rhs)
@@ -180,6 +183,13 @@ class Interpreter:
                     case 'mul': term = lhs * rhs
                     case 'mod': term = lhs % rhs
                     case 'div': term = lhs // rhs
+                    # Bitwise
+                    case 'and_bits': term = lhs & rhs
+                    case 'or_bits':  term = lhs | rhs
+                    case 'xor_bits': term = lhs ^ rhs
+                    case 'shl':      term = lhs << rhs
+                    case 'shr':      term = lhs >> rhs
+                    # Comparison
                     case 'eq':  term = lhs == rhs
                     case 'gt':  term = lhs > rhs
                     case 'lt':  term = lhs < rhs

@@ -3,15 +3,15 @@
 thingy a := true
 thingy b := false
 
-saywhat << a           # should print: true
-saywhat << b           # should print: false
+saywhat  a           # should print: true
+saywhat  b           # should print: false
 
 maybe a {
-    saywhat <<  "a is true"
+    saywhat   "a is true"
 } oractually b {
-    saywhat <<  "b is true"
+    saywhat   "b is true"
 } okthen {
-    saywhat <<  "neither is true"
+    saywhat   "neither is true"
 }
 
 thingy xs := [
@@ -31,22 +31,22 @@ thingy ys := [
 
 thingy empty := []
 
-saywhat <<  xs          # should print: [1, 2, 3]
-saywhat <<  sxs         # should print [2]
-saywhat <<  ys          # should print: [true, false, true, false]
-saywhat <<  empty       # should print: []
+saywhat   xs          # should print: [1, 2, 3]
+saywhat   sxs         # should print [2]
+saywhat   ys          # should print: [true, false, true, false]
+saywhat   empty       # should print: []
 
 # lists should be truthy if non-empty
 maybe xs {
-    saywhat <<  "xs is non-empty"
+    saywhat   "xs is non-empty"
 } okthen {
-    saywhat <<  "xs is empty"
+    saywhat   "xs is empty"
 }
 
 maybe empty {
-    saywhat <<  "empty list is non-empty"
+    saywhat   "empty list is non-empty"
 } okthen {
-    saywhat <<  "empty list is empty"
+    saywhat   "empty list is empty"
 }
 
 facts a

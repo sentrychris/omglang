@@ -3,13 +3,13 @@
 # Complex control flow structure
 thingy x := 5
 maybe x == 4 {
-    saywhat << "x is 4"
+    saywhat  "x is 4"
 } oractually x == 5 {
-    saywhat << "x is 5"
+    saywhat  "x is 5"
 } oractually x == 6 {
-    saywhat << "x is 6"
+    saywhat  "x is 6"
 } okthen {
-    saywhat << "x is something else"
+    saywhat  "x is something else"
 }
 
 # Primality check using trial division
@@ -67,15 +67,15 @@ thingy max := 20
 thingy fnum := 2
 
 roundabout idx <= max {
-    saywhat << "Classified number " + idx + " " + classify_number(idx)
-    saywhat << "Fibonacci sequence[" + fnum + "] = " + fibonacci(fnum)
+    saywhat  "Classified number " + idx + " " + classify_number(idx)
+    saywhat  "Fibonacci sequence[" + fnum + "] = " + fibonacci(fnum)
     idx := idx + 1
     fnum := fnum + 2
 }
 
 # Assert primality of 97 for validation
 facts is_prime(97)
-saywhat << "hell yeah"
+saywhat  "hell yeah"
 # Will throw an AssertionFailure as expected
-saywhat << "96 is not prime"
+saywhat  "96 is not prime"
 facts is_prime(96)

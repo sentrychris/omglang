@@ -83,9 +83,8 @@ def tokenize(code) -> tuple[list[Token], dict[str, str]]:
         # Identifiers
         ('ID',        r'[A-Za-z_][A-Za-z0-9_]*'),
 
-        # Assignment and function arrow
+        # Assignment
         ('ASSIGN',    r':='),
-        ('ARROW',     r'<<'),
 
         # Delimiters
         ('LBRACE',    r'\{'),
@@ -97,17 +96,27 @@ def tokenize(code) -> tuple[list[Token], dict[str, str]]:
         ('COMMA',     r','),
         ('COLON',     r':'),
 
-        # Operators
-        ('GE',        r'>='),
-        ('LE',        r'<='),
-        ('EQ',        r'=='),
-        ('GT',        r'>'),
-        ('LT',        r'<'),
+        # Arithmetic operators
         ('PLUS',      r'\+'),
         ('MINUS',     r'-'),
         ('MUL',       r'\*'),
         ('MOD',       r'%'),
         ('DIV',       r'/'),
+
+        # Bitwise operators
+        ('LSHIFT',    r'<<'),
+        ('RSHIFT',    r'>>'),
+        ('AMP',       r'&'),
+        ('PIPE',      r'\|'),
+        ('CARET',     r'\^'),
+        ('TILDE',     r'~'),
+
+        # Comparison operators
+        ('GE',        r'>='),
+        ('LE',        r'<='),
+        ('EQ',        r'=='),
+        ('GT',        r'>'),
+        ('LT',        r'<'),
 
         # Miscellaneous
         ('NEWLINE',   r'\n'),

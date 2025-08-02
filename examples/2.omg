@@ -36,15 +36,15 @@ thingy number := 6
 
 # Output composed message
 thingy message := compose_message(user, number)
-saywhat << message
+saywhat  message
 
 # Loop counting down with conditional inside
 thingy countdown := number
 roundabout countdown > 0 {
     maybe countdown % 2 == 0 {
-        saywhat << countdown + " is even"
+        saywhat  countdown + " is even"
     } okthen {
-        saywhat << countdown + " is odd"
+        saywhat  countdown + " is odd"
     }
     countdown := countdown - 1
 }
@@ -57,4 +57,4 @@ roundabout i <= 10 {
     i := i + 1
 }
 
-saywhat << "Sum of 1 to 10 is " + sum
+saywhat  "Sum of 1 to 10 is " + sum

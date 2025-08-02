@@ -290,17 +290,16 @@ class Parser:
         Parse a 'saywhat' (echo) statement.
 
         Syntax:
-            saywhat << <expression>
+            saywhat <expression>
 
         Returns:
             tuple: ('saywhat', expression_node, line_number)
 
         Raises:
-            SyntaxError: If '<<' or the expression is missing.
+            SyntaxError: If the expression is malformed.
         """
         tok = self._current_token
         self._eat("ECHO")
-        self._eat("ARROW")
         expr_node = self._expr()
 
         return ("saywhat", expr_node, tok.line)
