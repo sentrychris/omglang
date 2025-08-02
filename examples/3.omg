@@ -20,6 +20,8 @@ thingy xs := [
     3
 ]
 
+thingy sxs := "sliced xs (Start: inc. End: exc.): " + xs[1:2]
+
 thingy ys := [
     true,
     false,
@@ -30,6 +32,7 @@ thingy ys := [
 thingy empty := []
 
 saywhat <<  xs          # should print: [1, 2, 3]
+saywhat <<  sxs         # should print [2]
 saywhat <<  ys          # should print: [true, false, true, false]
 saywhat <<  empty       # should print: []
 

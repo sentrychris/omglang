@@ -24,31 +24,31 @@ The language uses playful keywords like `thingy`, `saywhat`, `maybe` and `rounda
 
 ## Running OMG Scripts
 
-Once you've installed or built the interpreter, the command‑line entry point is named `oli`. It can execute a script file or drop you into an interactive session if run with no arguments.
+Once you've installed or built the interpreter, the command‑line entry point is named `omg`. It can execute a script file or drop you into an interactive session if run with no arguments.
 
 ### Usage
 
 ```
-oli <script.omg>
-oli -h | --help
-oli
+omg <script.omg>
+omg -h | --help
+omg
 ```
 
-* `oli <script.omg>` – run the specified OMG program. The file must include the required `;;;omg` header on the first non‑empty line. Relative paths are resolved from your current working directory.
+* `omg <script.omg>` – run the specified OMG program. The file must include the required `;;;omg` header on the first non‑empty line. Relative paths are resolved from your current working directory.
 
-* `oli` with no arguments – start a Read–Eval–Print Loop (REPL) where you can type OMG statements interactively. Multi‑line constructs such as function definitions or `maybe … { … }` blocks are supported; simply continue entering lines until the braces balance. Type `exit` or `quit` to leave the REPL.
+* `omg` with no arguments – start a Read–Eval–Print Loop (REPL) where you can type OMG statements interactively. Multi‑line constructs such as function definitions or `maybe … { … }` blocks are supported; simply continue entering lines until the braces balance. Type `exit` or `quit` to leave the REPL.
 
 * `-h` or `--help` – print a short usage summary and exit.
 
-If you prefer not to install the `oli` script, you can also run programs directly via Python:
+If you prefer not to install the `omg` script, you can also run programs directly via Python:
 
 ```sh
-py ./oli.py <script>.omg
+py ./omg.py <script>.omg
 ```
 
 ### Interactive REPL
 
-Running `oli` with no arguments launches an interactive session. This REPL lets you experiment with the language one statement or block at a time. For example:
+Running `omg` with no arguments launches an interactive session. This REPL lets you experiment with the language one statement or block at a time. For example:
 
 ```plaintext
 >>> thingy x := 5
