@@ -14,8 +14,19 @@ maybe a {
     saywhat <<  "neither is true"
 }
 
-thingy xs := [1, 2, 3]
-thingy ys := [true, false, a, b]
+thingy xs := [
+    1,
+    2,
+    3
+]
+
+thingy ys := [
+    true,
+    false,
+    a,
+    b
+]
+
 thingy empty := []
 
 saywhat <<  xs          # should print: [1, 2, 3]

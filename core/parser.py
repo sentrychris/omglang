@@ -96,11 +96,18 @@ class Parser:
             start_tok = tok
             self._eat('LBRACKET')
             elements = []
-            if self._current_token.type != 'RBRACKET':
+            while self._current_token.type != 'RBRACKET':
+                while self._current_token.type == 'NEWLINE':
+                    self._eat('NEWLINE')
+                if self._current_token.type == 'RBRACKET':
+                    break
                 elements.append(self._expr())
-                while self._current_token.type == 'COMMA':
+                while self._current_token.type == 'NEWLINE':
+                    self._eat('NEWLINE')
+                if self._current_token.type == 'COMMA':
                     self._eat('COMMA')
-                    elements.append(self._expr())
+                    while self._current_token.type == 'NEWLINE':
+                        self._eat('NEWLINE')
             self._eat('RBRACKET')
             return ('list', elements, start_tok.line)
 

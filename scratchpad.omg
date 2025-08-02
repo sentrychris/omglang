@@ -1,4 +1,40 @@
 ;;;omg
 
-# Attempt to use saywhat with an ID (variable) that isn't defined
-saywhat << hello
+# String starts_with helper
+bitchin starts_with(str, prefix) {
+    maybe slice(str, 0, length(prefix)) == prefix {
+        gimme true
+    }
+    gimme false
+}
+
+# Dummy slice implementation
+bitchin slice(str, start, end) {
+    gimme str  # You’ll need to implement this properly
+}
+
+# Extracts content between << and "
+bitchin extract_message(line) {
+    gimme line
+}
+
+# Core interpreter: walks a list of lines and executes saywhat statements
+bitchin run_script(lines) {
+    thingy i := 0
+    roundabout i < length(lines) {
+        thingy line := lines[i]
+        maybe starts_with(line, "saywhat <<") {
+            thingy msg := extract_message(line)
+            saywhat << msg
+        } okthen {
+            saywhat << "Unknown command: " + line
+        }
+        i := i + 1
+    }
+}
+
+thingy program:=[
+    "saywhat << Hello from OMG"
+]
+
+run_script(program)
