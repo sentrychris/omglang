@@ -141,20 +141,24 @@ class Interpreter:
                     case _:
                         raise UnknownOperationError(f"Unknown binary operator '{op}'")
                 return term
-            elif op == 'index':
-                _, list_node, index_node, line = node
-                lst = self.eval_expr(list_node)
-                idx = self.eval_expr(index_node)
-
+            elif op == 'length':
+                lst = self.eval_expr(node[1])
                 if not isinstance(lst, list):
-                    raise TypeError(f"Tried to index non-list value on line {line} in {self.file}")
-                if not isinstance(idx, int):
-                    raise TypeError(f"List index must be an integer on line {line} in {self.file}")
-
-                try:
-                    return lst[idx]
-                except IndexError:
+                    raise TypeError(
+                        f"Cannot take length of non-list value on line {line} in {self.file}"
+                    )
+                return len(lst)
+            elif op == 'index':
+                _, list_name, index_expr, _ = node
+                if list_name not in self.vars:
+                    raise UndefinedVariableError(list_name, line, self.file)
+                lst = self.vars[list_name]
+                index = self.eval_expr(index_expr)
+                if not isinstance(lst, list):
+                    raise RuntimeError(f"{list_name} is not a list on line {line} in {self.file}")
+                if not (0 <= index < len(lst)):
                     raise RuntimeError(f"List index out of bounds on line {line} in {self.file}")
+                return lst[index]
             elif op == 'func_call':
                 _, func_name, args_nodes, line = node
                 args = [self.eval_expr(arg) for arg in args_nodes]

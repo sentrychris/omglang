@@ -97,35 +97,40 @@ class Parser:
             self._eat('RBRACKET')
             return ('list', elements, start_tok.line)
 
-        elif tok.type == 'ID':
+        elif tok.type == 'ID' and tok.value == 'length':
+            # Dirty as hell to overload ID with special case handling but fuck it...
+            # it's a toy language.
+            # Handle built-in 'length <expr>'
+            start_tok = tok
             self._eat('ID')
-            base = ('thingy', tok.value, tok.line)
+            expr = self._factor()
+            return ('length', expr, start_tok.line)
 
-            # Loop through any trailing () or [] after the ID
-            while True:
-                if self._current_token.type == 'LPAREN':
-                    # Function call
-                    self._eat('LPAREN')
-                    args = []
-                    if self._current_token.type != 'RPAREN':
+        elif tok.type == 'ID':
+            id_tok = tok
+            self._eat('ID')
+
+            if self._current_token.type == 'LPAREN':
+                # function call
+                self._eat('LPAREN')
+                args = []
+                if self._current_token.type != 'RPAREN':
+                    args.append(self._expr())
+                    while self._current_token.type == 'COMMA':
+                        self._eat('COMMA')
                         args.append(self._expr())
-                        while self._current_token.type == 'COMMA':
-                            self._eat('COMMA')
-                            args.append(self._expr())
-                    self._eat('RPAREN')
-                    base = ('func_call', base[1], args, tok.line)
+                self._eat('RPAREN')
+                return ('func_call', id_tok.value, args, id_tok.line)
 
-                elif self._current_token.type == 'LBRACKET':
-                    # Indexing
-                    self._eat('LBRACKET')
-                    index_expr = self._expr()
-                    self._eat('RBRACKET')
-                    base = ('index', base, index_expr, tok.line)
+            elif self._current_token.type == 'LBRACKET':
+                # list indexing
+                self._eat('LBRACKET')
+                index_expr = self._expr()
+                self._eat('RBRACKET')
+                return ('index', id_tok.value, index_expr, id_tok.line)
 
-                else:
-                    break
-
-            return base
+            else:
+                return ('thingy', id_tok.value, id_tok.line)
 
         elif tok.type == 'LPAREN':
             self._eat('LPAREN')
