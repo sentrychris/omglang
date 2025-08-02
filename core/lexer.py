@@ -112,21 +112,19 @@ def tokenize(code) -> list[Token]:
         code_no_comments.append(stripped_line)
     code = '\n'.join(code_no_comments)
 
-    for mo in re.finditer(tok_regex, code):
-        kind = mo.lastgroup
-        value = mo.group()
+    for match_obj in re.finditer(tok_regex, code):
+        kind = match_obj.lastgroup
+        value = match_obj.group()
+
         if kind == 'NEWLINE':
             tokens.append(Token('NEWLINE', value, line_num))
             line_num += 1
             continue
-
         if kind == 'SKIP':
             continue
-
         if kind == 'MISMATCH':
             raise RuntimeError(f'Unexpected character {value} on line {line_num}')
 
-        # For other tokens:
         if kind == 'NUMBER':
             tokens.append(Token('NUMBER', int(value), line_num))
         elif kind == 'STRING':
