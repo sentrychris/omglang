@@ -12,12 +12,12 @@ bitchin alphabet() {
 }
 
 # Shift the list by n positions
-bitchin shift(lst, n) {
+bitchin shift(a_list, n) {
     thingy i := 0
     thingy result := []
-    thingy len := length(lst)
+    thingy len := length(a_list)
     roundabout i < len {
-        thingy shifted := lst[(i + n) % len]
+        thingy shifted := a_list[(i + n) % len]
         result := result + [shifted]
         i := i + 1
     }
