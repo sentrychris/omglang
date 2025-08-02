@@ -1,0 +1,22 @@
+;;;omg
+
+# Attempt to use saywhat without valid syntax
+
+# valid
+saywhat << "saywhat requires an '<<' token after the keyword"
+
+# string
+saywhat "hello"
+# SyntaxError: Expected token '<<' of type ARROW, but got value 'hello' of type STRING on line [n] in .\<script>.omg
+
+# variable identifier
+saywhat hello
+# SyntaxError: Expected token '<<' of type ARROW, but got value 'hello' of type ID on line 3 in .\<script>.omg
+
+# int
+saywhat 1
+# SyntaxError: Expected token '<<' of type ARROW, but got value '1' of type NUMBER on line 3 in .\<script>.omg
+
+# bool (literal)
+saywhat true
+# SyntaxError: Expected token '<<' of type ARROW, but got value 'true' of type TRUE (which maps to TRUE) on line 3 in .\<script>.omg 
