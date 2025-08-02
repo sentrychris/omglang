@@ -200,6 +200,9 @@ class Parser:
         elif tok.type == 'THINGY':
             return self._parse_assignment()
         elif tok.type == 'ID':
+            if (self._position + 1 < len(self._tokens)
+                    and self._tokens[self._position + 1].type == 'ASSIGN'):
+                return self._parse_reassignment()
             return self._parse_func_call_or_error()
         elif tok.type == 'RETURN':
             return self._parse_return()
@@ -398,6 +401,19 @@ class Parser:
         self._eat("RETURN")
         expr_node = self._expr()
         return ("return", expr_node, tok.line)
+
+
+    def _parse_reassignment(self) -> tuple:
+        """Parse reassignment of an existing variable.
+
+        Syntax:
+            <identifier> := <expression>
+        """
+        id_tok = self._current_token
+        self._eat('ID')
+        self._eat('ASSIGN')
+        expr_node = self._expr()
+        return ('assign', id_tok.value, expr_node, id_tok.line)
 
 
     def _parse_assignment(self) -> tuple:

@@ -21,14 +21,13 @@ bitchin greeting(name, excited) {
 # Compose full message combining factorial and greeting
 bitchin compose_message(name, num) {
     thingy fact := factorial(num)
-
     thingy excited := 0
+
     maybe num > 5 {
-        thingy excited := 1
+        excited := 1
     }
 
-    thingy greet := greeting(name, excited)
-    gimme greet + ", your factorial of " + num + " is " + fact
+    gimme greeting(name, excited) + ", your factorial of " + num + " is " + fact
 }
 
 # Variables
@@ -47,15 +46,15 @@ hamsterwheel countdown > 0 {
     } okthen {
         saywhat << countdown + " is odd"
     }
-    thingy countdown := countdown - 1
+    countdown := countdown - 1
 }
 
 # Use string concatenation, arithmetic, and facts assertion
 thingy sum := 0
 thingy i := 1
 hamsterwheel i <= 10 {
-    thingy sum := sum + i
-    thingy i := i + 1
+    sum := sum + i
+    i := i + 1
 }
 
 saywhat << "Sum of 1 to 10 is " + sum

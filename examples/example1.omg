@@ -24,6 +24,13 @@ bitchin add(a, b) {
 saywhat << x + " + " + y + " = " + add(x, y)
 saywhat << "(" + x + " + " + y + ") * 10 / 2 = " + (x + y) * 10 / 2
 
+# Reassign
+saywhat << "Re-assigning x"
+saywhat << "x was " + x
+x := 10
+saywhat << "x is now " + x
+
+
 # Create a loop
 saywhat << "Beginning loop:"
 thingy i := 0
@@ -35,6 +42,6 @@ hamsterwheel i <= 3 {
     } okthen {
         saywhat << i
     }
-    thingy i := i + 1
+    i := i + 1
 }
 saywhat << "Finished loop."
