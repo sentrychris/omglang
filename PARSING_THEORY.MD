@@ -94,7 +94,7 @@ def statement(self):
 Handles:
 
 * Variable declarations (`thingy`)
-* Output (`saywhat`)
+* Output (`woah`)
 * Control flow (`maybe`, `roundabout`)
 * Function definitions
 * Function calls

@@ -40,6 +40,6 @@ bitchin tabula_recta() {
 thingy table := tabula_recta()
 thingy i := 0
 roundabout i < length(table) {
-    saywhat  table[i]
+    woah  table[i]
     i := i + 1
 }

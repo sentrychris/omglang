@@ -75,7 +75,7 @@ def tokenize(code) -> tuple[list[Token], dict[str, str]]:
         ('ELIF',      r'\boractually'),
         ('ELSE',      r'\bokthen\b'),
         ('WHILE',     r'\broundabout\b'),
-        ('ECHO',      r'\bsaywhat\b'),
+        ('ECHO',      r'\bwoah\b'),
         ('FACTS',     r'\bfacts\b'),
         ('FUNC',      r'\bbitchin\b'),
         ('RETURN',    r'\bgimme\b'),

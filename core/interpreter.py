@@ -263,7 +263,7 @@ class Interpreter:
 
         Parameters:
             statements (list):
-                A list of ('assign' | 'saywhat' | 'maybe' | 'block' | 'roundabout', ...) tuples.
+                A list of ('assign' | 'woah' | 'maybe' | 'block' | 'roundabout', ...) tuples.
 
         Raises:
             Exception: For unknown statement types.
@@ -279,7 +279,7 @@ class Interpreter:
                 self.vars[var_name] = value
 
 
-            elif kind == 'saywhat':
+            elif kind == 'woah':
                 _, expr_node, _ = stmt
                 value = self.eval_expr(expr_node)
                 print(value)

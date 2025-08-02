@@ -16,7 +16,7 @@
 
 ## Overview
 
-The language uses playful keywords like `thingy`, `saywhat`, `maybe` and `roundabout`, but it's grounded in a well‑defined grammar. All scripts must start with a header line `;;;omg`. Execution proceeds through three stages:
+The language uses playful keywords like `thingy`, `woah`, `maybe` and `roundabout`, but it's grounded in a well‑defined grammar. All scripts must start with a header line `;;;omg`. Execution proceeds through three stages:
 
 1. **Lexing** – convert raw source code into tokens.
 2. **Parsing** – build an Abstract Syntax Tree (AST) from tokens.
@@ -52,12 +52,12 @@ Running `omg` with no arguments launches an interactive session. This REPL lets 
 
 ```plaintext
 >>> thingy x := 5
->>> saywhat x
+>>> woah x
 5
 >>> maybe x < 10 {
-...     saywhat x + " is smaller than 10"
+...     woah x + " is smaller than 10"
 ... } okthen {
-...     saywhat x + " is bigger than 10"
+...     woah x + " is bigger than 10"
 ... }
 x is smaller than 10
 >>> exit
@@ -69,7 +69,7 @@ If you start a block and do not close it, the prompt switches to `...` and the i
 
 The lexer scans the raw text and splits it into a stream of tokens. Each token has a type, value and line number. Token types include:
 
-* **Keywords**: `thingy`, `saywhat`, `bitchin`, `maybe`, `oractually`, `okthen`, `roundabout`.
+* **Keywords**: `thingy`, `woah`, `bitchin`, `maybe`, `oractually`, `okthen`, `roundabout`.
 * **Operators**: `+`, `-`, `*`, `/`, `%`, `:=`, `<<`, `==`, `<`, `>`, `<=`, `>=`.
 * **Identifiers**: variable and function names.
 * **Literals**: integers and strings.
@@ -115,7 +115,7 @@ Handled by `eval_expr(node)`: literals return their value; variables are looked 
 Handled by `execute(statements)`. Supported statements include:
 
 * **thingy** – evaluate an expression and store it in the variable environment.
-* **saywhat** – evaluate an expression and print the result.
+* **woah** – evaluate an expression and print the result.
 * **maybe/oractually/okthen** – evaluate a condition and execute one of several blocks conditionally.
 * **roundabout** – execute a block repeatedly while a condition holds.
 * **bitchin** – register a named function. Subsequent calls to that function will evaluate arguments, bind them to parameters and execute the function body in a local scope.
@@ -135,38 +135,38 @@ bitchin greeting(name) {
 }
 
 # Call a function and print to stdout
-saywhat greeting("World")
+woah greeting("World")
 
 # Declare some variables
 thingy x := 5
 thingy y := 10
 thingy z := 0
 
-saywhat "x = " + x
-saywhat "y = " + y
+woah "x = " + x
+woah "y = " + y
 
 bitchin add(a, b) {
     gimme a + b
 }
 
 # Do some arithmetic and format for stdout
-saywhat x + " + " + y + " = " + add(x, y)
-saywhat "(" + x + " + " + y + ") * 10 / 2 = " + (x + y) * 10 / 2
+woah x + " + " + y + " = " + add(x, y)
+woah "(" + x + " + " + y + ") * 10 / 2 = " + (x + y) * 10 / 2
 
 # Create a loop
-saywhat "Beginning loop:"
+woah "Beginning loop:"
 thingy i := 0
 roundabout i <= 3 {
     maybe i == 3 {
-        saywhat "3 is the magic number."
+        woah "3 is the magic number."
     } oractually i == 2 {
-        saywhat "2 is alright I guess."
+        woah "2 is alright I guess."
     } okthen {
-        saywhat i
+        woah i
     }
     thingy i := i + 1
 }
-saywhat "Finished loop."
+woah "Finished loop."
 ```
 
 ## Design Notes

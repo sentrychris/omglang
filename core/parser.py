@@ -231,7 +231,7 @@ class Parser:
 
     def _statement(self) -> tuple:
         """
-        Parse a single statement (saywhat, thingy assignment, maybe, or while).
+        Parse a single statement (woah, thingy assignment, maybe, or while).
 
         Returns:
             A tuple representing the statement AST node.
@@ -287,13 +287,13 @@ class Parser:
 
     def _parse_echo(self) -> tuple:
         """
-        Parse a 'saywhat' (echo) statement.
+        Parse a 'woah' (echo) statement.
 
         Syntax:
-            saywhat <expression>
+            woah <expression>
 
         Returns:
-            tuple: ('saywhat', expression_node, line_number)
+            tuple: ('woah', expression_node, line_number)
 
         Raises:
             SyntaxError: If the expression is malformed.
@@ -302,7 +302,7 @@ class Parser:
         self._eat("ECHO")
         expr_node = self._expr()
 
-        return ("saywhat", expr_node, tok.line)
+        return ("woah", expr_node, tok.line)
 
 
     def _parse_if(self) -> tuple:
