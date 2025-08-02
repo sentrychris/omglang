@@ -103,17 +103,6 @@ The parser is a hand‑written **recursive descent parser** following an LL(1) g
 
 ### Expression Precedence (highest to lowest):
 
-```
-_expr
-  └── _bitwise_or
-        └── _bitwise_xor
-              └── _bitwise_and
-                    └── _shift
-                          └── _add_sub
-                                └── _term
-                                      └── _factor
-```
-
 | Level | Category           | Operators                  | Parser Function |
 | ----- | ------------------ | -------------------------- | --------------- |
 | 1     | **Unary**          | `~`                        | `_factor`       |
