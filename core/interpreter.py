@@ -117,13 +117,14 @@ class Interpreter:
                 _, elements, _ = node
                 return [self.eval_expr(elem) for elem in elements]
 
-
             # Variables
             elif op == 'thingy':
                 varname = node[1]
                 if varname in self.vars:
                     return self.vars[varname]
                 raise UndefinedVariableError(varname, line, self.file)
+
+            # Indexes
             elif op == 'index':
                 _, target_name, index_expr, _ = node
 
@@ -148,6 +149,22 @@ class Interpreter:
                 else:
                     raise TypeError(f"{target_name} is not indexable on line {line} in {self.file}")
 
+            # Index slicing
+            elif op == 'slice':
+                _, target_name, start_expr, end_expr, _ = node
+
+                if target_name not in self.vars:
+                    raise UndefinedVariableError(target_name, line, self.file)
+
+                target = self.vars[target_name]
+                start = self.eval_expr(start_expr)
+                end = self.eval_expr(end_expr) if end_expr is not None else None
+
+                if isinstance(target, (list, str)):
+                    return target[start:end]
+                else:
+                    raise TypeError(
+                        f"{target_name} is not sliceable on line {line} in {self.file}")
 
             # Binary operations
             elif op in ('add', 'sub', 'mul', 'mod', 'div', 'eq', 'gt', 'lt', 'ge', 'le'):
@@ -171,23 +188,6 @@ class Interpreter:
                     case _:
                         raise UnknownOperationError(f"Unknown binary operator '{op}'")
                 return term
-
-            # Indexed slicing
-            elif op == 'slice':
-                _, target_name, start_expr, end_expr, _ = node
-
-                if target_name not in self.vars:
-                    raise UndefinedVariableError(target_name, line, self.file)
-
-                target = self.vars[target_name]
-                start = self.eval_expr(start_expr)
-                end = self.eval_expr(end_expr) if end_expr is not None else None
-
-                if isinstance(target, (list, str)):
-                    return target[start:end]
-                else:
-                    raise TypeError(
-                        f"{target_name} is not sliceable on line {line} in {self.file}")
 
             # Function calls
             elif op == 'func_call':

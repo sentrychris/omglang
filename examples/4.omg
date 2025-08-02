@@ -43,15 +43,14 @@ bitchin digit_sum(n) {
 # Obfuscated strength rating based on digit sum and primality
 bitchin classify_number(n) {
     thingy isprime := is_prime(n)
+    thingy dsum := digit_sum(n)
 
     maybe isprime == 1 {
-        gimme "is prime, sum of decimals " + digit_sum(n)
+        gimme "is prime, sum of digits is " + dsum
+    } oractually n % 2 == 0 {
+        gimme "is even, sum of digits is " + dsum
     } okthen {
-        maybe digit_sum(n) % 2 == 0 {
-            gimme "is even, sum of decimals " + digit_sum(n)
-        } okthen {
-            gimme "is odd, sum of decimals " + digit_sum(n)
-        }
+        gimme "is odd, sum of digits is " + dsum
     }
 }
 
@@ -65,14 +64,14 @@ bitchin fibonacci(n) {
 }
 
 # Loop over numbers and rate them, including Fibonacci calculation
-thingy start := 91
-thingy stop := 97
+thingy start := 10
+thingy stop := 20
 thingy current := start
 thingy fibint := 2
 
 roundabout current <= stop {
     saywhat << "Classified number " + current + " " + classify_number(current)
-    saywhat << "Fibonnaci sequence[" + fibint + "] = " + fibonacci(fibint)
+    saywhat << "Fibonacci sequence[" + fibint + "] = " + fibonacci(fibint)
     current := current + 1
     fibint := fibint + 2
 }
