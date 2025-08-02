@@ -48,7 +48,7 @@ class Token:
         """
         return f"Token({self.type}, {self.value}, line={self.line})"
 
-def tokenize(code) -> list[Token]:
+def tokenize(code) -> tuple[list[Token], dict[str, str]]:
     """
     Convert a string of source code into a list of tokens.
 
@@ -57,6 +57,7 @@ def tokenize(code) -> list[Token]:
 
     Returns:
         list[Token]: A list of Token instances.
+        dict[str, str]: A dict containing mapped token-values.
 
     Raises:
         RuntimeError: If an unexpected character is encountered.
@@ -113,6 +114,17 @@ def tokenize(code) -> list[Token]:
         ('MISMATCH',  r'.'),
     ]
 
+    token_map = {}
+    for name, pattern in token_specification:
+        try:
+            literal = re.compile(pattern).pattern
+            literal = literal.replace(r'\b', '')
+            if re.match(r'^[\\\w{}()<>=:%+\-*/]+$', literal):
+                unescaped = re.sub(r'\\', '', literal)
+                token_map[unescaped] = name
+        except re.error:
+            pass
+
     tok_regex = '|'.join(f'(?P<{name}>{pattern})' for name, pattern in token_specification)
 
     identifier_keywords = {
@@ -157,4 +169,4 @@ def tokenize(code) -> list[Token]:
     tokens.append(Token('EOF', None, line_num))
     # for t in tokens:
     #     print(t)
-    return tokens
+    return tokens, token_map
