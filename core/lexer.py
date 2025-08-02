@@ -62,42 +62,55 @@ def tokenize(code) -> list[Token]:
         RuntimeError: If an unexpected character is encountered.
     """
 
-    token_specification = [
-        ('NUMBER',   r'\d+'),
-        ('STRING',   r'"[^"\n]*"'),
-        ('IF',       r'\bmaybe\b'),
-        ('ELIF',     r'\boractually'),
-        ('ELSE',     r'\bokthen\b'),
-        ('WHILE',    r'\broundabout\b'),
-        ('ECHO',  r'\bsaywhat\b'),
-        ('FACTS',   r"\bfacts\b"),
-        ('FUNC',     r'\bbitchin\b'),
-        ('RETURN',   r'\bgimme\b'),
+    token_specification: list[Token] = [
+        # Literals
+        ('NUMBER',    r'\d+'),
+        ('STRING',    r'"[^"\n]*"'),
         ('TRUE',      r'\btrue\b'),
         ('FALSE',     r'\bfalse\b'),
+
+        # Keywords
+        ('IF',        r'\bmaybe\b'),
+        ('ELIF',      r'\boractually'),
+        ('ELSE',      r'\bokthen\b'),
+        ('WHILE',     r'\broundabout\b'),
+        ('ECHO',      r'\bsaywhat\b'),
+        ('FACTS',     r'\bfacts\b'),
+        ('FUNC',      r'\bbitchin\b'),
+        ('RETURN',    r'\bgimme\b'),
+
+        # Identifiers
+        ('ID',        r'[A-Za-z_][A-Za-z0-9_]*'),
+
+        # Assignment and function arrow
+        ('ASSIGN',    r':='),
+        ('ARROW',     r'<<'),
+
+        # Delimiters
+        ('LBRACE',    r'\{'),
+        ('RBRACE',    r'\}'),
+        ('LPAREN',    r'\('),
+        ('RPAREN',    r'\)'),
         ('LBRACKET',  r'\['),
         ('RBRACKET',  r'\]'),
-        ('COMMA',    r','),
-        ('ID',       r'[A-Za-z_][A-Za-z0-9_]*'),
-        ('ASSIGN',   r':='),
-        ('ARROW',    r'<<'),
-        ('LBRACE',   r'\{'),
-        ('RBRACE',   r'\}'),
-        ('LPAREN',   r'\('),
-        ('RPAREN',   r'\)'),
-        ('GE',       r'>='),
-        ('LE',       r'<='),
-        ('EQ',       r'=='),
-        ('GT',       r'>'),
-        ('LT',       r'<'),
-        ('PLUS',     r'\+'),
-        ('MINUS',    r'-'),
-        ('MUL',      r'\*'),
-        ('MOD',      r'%'),
-        ('DIV',      r'/'),
-        ('NEWLINE',  r'\n'),
-        ('SKIP',     r'[ \t]+'),
-        ('MISMATCH', r'.'),
+        ('COMMA',     r','),
+
+        # Operators
+        ('GE',        r'>='),
+        ('LE',        r'<='),
+        ('EQ',        r'=='),
+        ('GT',        r'>'),
+        ('LT',        r'<'),
+        ('PLUS',      r'\+'),
+        ('MINUS',     r'-'),
+        ('MUL',       r'\*'),
+        ('MOD',       r'%'),
+        ('DIV',       r'/'),
+
+        # Miscellaneous
+        ('NEWLINE',   r'\n'),
+        ('SKIP',      r'[ \t]+'),
+        ('MISMATCH',  r'.'),
     ]
 
     tok_regex = '|'.join(f'(?P<{name}>{pattern})' for name, pattern in token_specification)
