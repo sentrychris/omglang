@@ -40,7 +40,7 @@ bitchin digit_sum(n) {
     gimme sum
 }
 
-# Obfuscated strength rating based on digit sum and primality
+# Primality, odd/even, and digit sum
 bitchin classify_number(n) {
     thingy isprime := is_prime(n)
     thingy dsum := digit_sum(n)
