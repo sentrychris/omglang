@@ -80,6 +80,11 @@ class Parser:
             SyntaxError: If the syntax is invalid or unexpected.
         """
         tok = self._current_token
+        if tok.type == 'TILDE':
+            self._eat('TILDE')
+            operand = self._factor()
+            return ('unary', 'not_bits', operand, tok.line)
+
         if tok.type == 'NUMBER':
             self._eat('NUMBER')
             return ('number', tok.value, tok.line)
@@ -164,7 +169,7 @@ class Parser:
 
     def _term(self) -> tuple:
         """
-        Parse a term (factor optionally followed by * or /).
+        Parse a term (factor optionally followed by an operator).
 
         Returns:
             An AST node representing the term.
@@ -180,17 +185,61 @@ class Parser:
 
     def _expr(self) -> tuple:
         """
-        Parse an expression (term optionally followed by + or -).
+        Parse an expression (term optionally followed by an operator).
 
         Returns:
             An AST node representing the expression.
         """
+        return self._bitwise_or()
+
+
+    def _bitwise_or(self) -> tuple:
+        result = self._bitwise_xor()
+        while self._current_token.type == 'PIPE':
+            tok = self._current_token
+            self._eat('PIPE')
+            result = ('or_bits', result, self._bitwise_xor(), tok.line)
+        return result
+
+
+    def _bitwise_xor(self) -> tuple:
+        result = self._bitwise_and()
+        while self._current_token.type == 'CARET':
+            tok = self._current_token
+            self._eat('CARET')
+            result = ('xor_bits', result, self._bitwise_and(), tok.line)
+        return result
+
+
+    def _bitwise_and(self) -> tuple:
+        result = self._shift()
+        while self._current_token.type == 'AMP':
+            tok = self._current_token
+            self._eat('AMP')
+            result = ('and_bits', result, self._shift(), tok.line)
+        return result
+
+
+    def _shift(self) -> tuple:
+        result = self._add_sub()
+        while self._current_token.type in ('LSHIFT', 'RSHIFT'):
+            tok = self._current_token
+            if tok.type == 'LSHIFT':
+                self._eat('LSHIFT')
+                result = ('shl', result, self._add_sub(), tok.line)
+            else:
+                self._eat('RSHIFT')
+                result = ('shr', result, self._add_sub(), tok.line)
+        return result
+
+
+    def _add_sub(self) -> tuple:
         result = self._term()
         while self._current_token.type in ('PLUS', 'MINUS'):
-            op_tok = self._current_token
-            self._eat(op_tok.type)
+            tok = self._current_token
+            self._eat(tok.type)
             op_map = {'PLUS': 'add', 'MINUS': 'sub'}
-            result = (op_map[op_tok.type], result, self._term(), op_tok.line)
+            result = (op_map[tok.type], result, self._term(), tok.line)
         return result
 
 

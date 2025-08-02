@@ -199,6 +199,23 @@ class Interpreter:
                         raise UnknownOperationError(f"Unknown binary operator '{op}'")
                 return term
 
+            # Unary operator
+            elif op == 'unary':
+                operator = node[1]
+                operand = self.eval_expr(node[2])
+                match operator:
+                    case 'not_bits':
+                        if not isinstance(operand, int):
+                            raise TypeError(
+                                f"Bitwise NOT (~) requires an integer operand "
+                                f"on line {line} in {self.file}"
+                            )
+                        return ~operand
+                    case _:
+                        raise UnknownOperationError(
+                            f"Unknown unary operator '{operator}' on line {line} in {self.file}"
+                        )
+
             # Function calls
             elif op == 'func_call':
                 _, func_name, args_nodes, line = node

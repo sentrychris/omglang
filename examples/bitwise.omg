@@ -1,0 +1,29 @@
+;;;omg
+
+# Demonstrate bitwise operations
+
+# Bitwise AND: 6 & 3 = 2
+thingy a := 6 & 3
+
+# Bitwise OR: 6 | 3 = 7
+thingy b := 6 | 3
+
+# Bitwise XOR: 6 ^ 3 = 5
+thingy c := 6 ^ 3
+
+# Bitwise NOT: ~6 = -7
+thingy d := ~6
+
+# Bit shift left: 3 << 2 = 12
+thingy e := 3 << 2
+
+# Bit shift right: 8 >> 1 = 4
+thingy f := 8 >> 1
+
+# Output the results
+woah a  # 2
+woah b  # 7
+woah c  # 5
+woah d  # -7
+woah e  # 12
+woah f  # 4
