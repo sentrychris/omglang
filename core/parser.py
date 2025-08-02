@@ -128,11 +128,22 @@ class Parser:
                 return ('func_call', id_tok.value, args, id_tok.line)
 
             elif self._current_token.type == 'LBRACKET':
-                # list indexing
+                # List indexing
                 self._eat('LBRACKET')
-                index_expr = self._expr()
-                self._eat('RBRACKET')
-                return ('index', id_tok.value, index_expr, id_tok.line)
+                start_expr = self._expr()
+
+                if self._current_token.type == 'COLON':
+                    # List slicing
+                    self._eat('COLON')
+                    if self._current_token.type != 'RBRACKET':
+                        end_expr = self._expr()
+                    else:
+                        end_expr = None
+                    self._eat('RBRACKET')
+                    return ('slice', id_tok.value, start_expr, end_expr, id_tok.line)
+                else:
+                    self._eat('RBRACKET')
+                    return ('index', id_tok.value, start_expr, id_tok.line)
 
             else:
                 return ('thingy', id_tok.value, id_tok.line)

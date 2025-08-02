@@ -160,6 +160,19 @@ class Interpreter:
                         raise UnknownOperationError(f"Unknown binary operator '{op}'")
                 return term
 
+            # List slicing
+            elif op == 'slice':
+                _, list_name, start_expr, end_expr, _ = node
+                if list_name not in self.vars:
+                    raise UndefinedVariableError(list_name, line, self.file)
+                lst = self.vars[list_name]
+                if not isinstance(lst, list):
+                    raise TypeError(f"{list_name} is not a list on line {line} in {self.file}")
+
+                start = self.eval_expr(start_expr)
+                end = self.eval_expr(end_expr) if end_expr is not None else None
+
+                return lst[start:end]
 
             # Function calls
             elif op == 'func_call':
