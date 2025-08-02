@@ -110,6 +110,11 @@ class Interpreter:
                 return node[1]
             elif op == 'string':
                 return node[1]
+            elif op == 'bool':
+                return node[1]
+            elif op == 'list':
+                _, elements, _ = node
+                return [self.eval_expr(elem) for elem in elements]
             elif op == 'thingy':
                 varname = node[1]
                 if varname in self.vars:

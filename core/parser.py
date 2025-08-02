@@ -75,9 +75,28 @@ class Parser:
         if tok.type == 'NUMBER':
             self._eat('NUMBER')
             return ('number', tok.value, tok.line)
+
         elif tok.type == 'STRING':
             self._eat('STRING')
             return ('string', tok.value, tok.line)
+
+        elif tok.type in ('TRUE', 'FALSE'):
+            value = True if tok.type == 'TRUE' else False
+            self._eat(tok.type)
+            return ('bool', value, tok.line)
+
+        elif tok.type == 'LBRACKET':
+            start_tok = tok
+            self._eat('LBRACKET')
+            elements = []
+            if self._current_token.type != 'RBRACKET':
+                elements.append(self._expr())
+                while self._current_token.type == 'COMMA':
+                    self._eat('COMMA')
+                    elements.append(self._expr())
+            self._eat('RBRACKET')
+            return ('list', elements, start_tok.line)
+
         elif tok.type == 'ID':
             if self._position + 1 < len(self._tokens) and self._tokens[self._position + 1].type == 'LPAREN':
                 func_name = tok.value
@@ -95,6 +114,7 @@ class Parser:
                 # variable reference or error
                 self._eat('ID')
                 return ('thingy', tok.value, tok.line)
+
         elif tok.type == 'LPAREN':
             self._eat('LPAREN')
             node = self._expr()
