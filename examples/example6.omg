@@ -1,11 +1,11 @@
 ;;;omg
 
 # Check if all items in a list are true
-bitchin all_true(lst) {
+bitchin all_true(a_list) {
     thingy i := 0
-    thingy n := length lst
+    thingy n := length a_list
     roundabout i < n {
-        maybe lst[i] == false {
+        maybe a_list[i] == false {
             gimme false
         }
         i := i + 1
@@ -14,11 +14,11 @@ bitchin all_true(lst) {
 }
 
 # Check if any item in a list is true
-bitchin any_true(lst) {
+bitchin any_true(a_list) {
     thingy i := 0
-    thingy n := length lst
+    thingy n := length a_list
     roundabout i < n {
-        maybe lst[i] == true {
+        maybe a_list[i] == true {
             gimme true
         }
         i := i + 1
@@ -27,12 +27,12 @@ bitchin any_true(lst) {
 }
 
 # Count how many true values are in the list
-bitchin count_true(lst) {
+bitchin count_true(a_list) {
     thingy i := 0
     thingy count := 0
-    thingy n := length lst
+    thingy n := length a_list
     roundabout i < n {
-        maybe lst[i] == true {
+        maybe a_list[i] == true {
             count := count + 1
         }
         i := i + 1
@@ -41,24 +41,24 @@ bitchin count_true(lst) {
 }
 
 # Reverse a list
-bitchin reverse(lst) {
-    thingy i := length lst - 1
+bitchin reverse(a_list) {
+    thingy i := length a_list - 1
     thingy result := []
     roundabout i >= 0 {
-        result := result + [lst[i]]
+        result := result + [a_list[i]]
         i := i - 1
     }
     gimme result
 }
 
 # Filter only true values
-bitchin filter_true(lst) {
+bitchin filter_true(a_list) {
     thingy i := 0
     thingy result := []
-    thingy n := length lst
+    thingy n := length a_list
     roundabout i < n {
-        maybe lst[i] == true {
-            result := result + [lst[i]]
+        maybe a_list[i] == true {
+            result := result + [a_list[i]]
         }
         i := i + 1
     }
@@ -66,12 +66,12 @@ bitchin filter_true(lst) {
 }
 
 # Boolean map: invert each boolean in the list
-bitchin invert(lst) {
+bitchin invert(a_list) {
     thingy i := 0
     thingy result := []
-    thingy n := length lst
+    thingy n := length a_list
     roundabout i < n {
-        maybe lst[i] == true {
+        maybe a_list[i] == true {
             result := result + [false]
         } okthen {
             result := result + [true]
