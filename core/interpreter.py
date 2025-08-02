@@ -125,16 +125,28 @@ class Interpreter:
                     return self.vars[varname]
                 raise UndefinedVariableError(varname, line, self.file)
             elif op == 'index':
-                _, list_name, index_expr, _ = node
-                if list_name not in self.vars:
-                    raise UndefinedVariableError(list_name, line, self.file)
-                lst = self.vars[list_name]
+                _, target_name, index_expr, _ = node
+
+                if target_name not in self.vars:
+                    raise UndefinedVariableError(target_name, line, self.file)
+
+                target = self.vars[target_name]
                 index = self.eval_expr(index_expr)
-                if not isinstance(lst, list):
-                    raise RuntimeError(f"{list_name} is not a list on line {line} in {self.file}")
-                if not 0 <= index < len(lst):
-                    raise RuntimeError(f"List index out of bounds on line {line} in {self.file}")
-                return lst[index]
+
+                if isinstance(target, list):
+                    if not 0 <= index < len(target):
+                        raise RuntimeError(
+                            f"List index out of bounds on line {line} in {self.file}"
+                        )
+                    return target[index]
+                elif isinstance(target, str):
+                    if not 0 <= index < len(target):
+                        raise RuntimeError(
+                            f"String index out of bounds on line {line} in {self.file}"
+                        )
+                    return target[index]
+                else:
+                    raise TypeError(f"{target_name} is not indexable on line {line} in {self.file}")
 
 
             # Binary operations
@@ -160,19 +172,22 @@ class Interpreter:
                         raise UnknownOperationError(f"Unknown binary operator '{op}'")
                 return term
 
-            # List slicing
+            # Indexed slicing
             elif op == 'slice':
-                _, list_name, start_expr, end_expr, _ = node
-                if list_name not in self.vars:
-                    raise UndefinedVariableError(list_name, line, self.file)
-                lst = self.vars[list_name]
-                if not isinstance(lst, list):
-                    raise TypeError(f"{list_name} is not a list on line {line} in {self.file}")
+                _, target_name, start_expr, end_expr, _ = node
 
+                if target_name not in self.vars:
+                    raise UndefinedVariableError(target_name, line, self.file)
+
+                target = self.vars[target_name]
                 start = self.eval_expr(start_expr)
                 end = self.eval_expr(end_expr) if end_expr is not None else None
 
-                return lst[start:end]
+                if isinstance(target, (list, str)):
+                    return target[start:end]
+                else:
+                    raise TypeError(
+                        f"{target_name} is not sliceable on line {line} in {self.file}")
 
             # Function calls
             elif op == 'func_call':
@@ -189,12 +204,16 @@ class Interpreter:
                     return chr(args[0])
 
                 if func_name == 'length':
-                    if len(args) != 1 or not isinstance(args[0], list):
+                    if len(args) != 1:
                         raise TypeError(
-                            f"length() expects one list argument "
-                            f"on line {line} in {self.file}"
+                            f"length() expects one argument on line {line} in {self.file}"
                         )
-                    return len(args[0])
+                    arg = args[0]
+                    if not isinstance(arg, (list, str)):
+                        raise TypeError(
+                            f"length() only works on lists or strings on line {line} in {self.file}"
+                        )
+                    return len(arg)
 
                 # User-defined functions
                 if func_name not in self.functions:

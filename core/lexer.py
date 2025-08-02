@@ -66,7 +66,7 @@ def tokenize(code) -> tuple[list[Token], dict[str, str]]:
     token_specification: list[Token] = [
         # Literals
         ('NUMBER',    r'\d+'),
-        ('STRING',    r'"[^"\n]*"'),
+        ('STRING',    r'"([^"\\]|\\.)*"'),
         ('TRUE',      r'\btrue\b'),
         ('FALSE',     r'\bfalse\b'),
 
@@ -158,7 +158,9 @@ def tokenize(code) -> tuple[list[Token], dict[str, str]]:
         if kind == 'NUMBER':
             tokens.append(Token('NUMBER', int(value), line_num))
         elif kind == 'STRING':
-            tokens.append(Token('STRING', value[1:-1], line_num))
+            value = value[1:-1]
+            value = bytes(value, 'utf-8').decode('unicode_escape')
+            tokens.append(Token('STRING', value, line_num))
         elif kind == 'ID':
             if value in identifier_keywords:
                 tokens.append(Token(value.upper(), value, line_num))

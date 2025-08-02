@@ -1,5 +1,5 @@
 """
-OLI - OMG Language Interpreter
+OMG Language Interpreter
 
 This is the main entry point for the OMG language interpreter.
 
@@ -30,10 +30,10 @@ def print_usage():
     Print usage.
     """
     print()
-    print("OLI - OMG Language Interpreter")
+    print("OMG Language Interpreter")
     print()
     print("Usage:")
-    print("    oli <script.omg>")
+    print("    omg <script.omg>")
     print()
     print("Arguments:")
     print("    <script.omg>")
@@ -41,7 +41,7 @@ def print_usage():
     print("        include the required header ';;;omg' on the first non-empty line.")
     print()
     print("Example:")
-    print("    oli hello.omg")
+    print("    omg hello.omg")
     print()
     print("Or run with no arguments to enter interactive mode (REPL).")
     print()
