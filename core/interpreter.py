@@ -106,6 +106,7 @@ class Interpreter:
             op = node[0]
             line = node[-1]
 
+            # Literals
             if op == 'number':
                 return node[1]
             elif op == 'string':
@@ -115,11 +116,28 @@ class Interpreter:
             elif op == 'list':
                 _, elements, _ = node
                 return [self.eval_expr(elem) for elem in elements]
+
+
+            # Variables
             elif op == 'thingy':
                 varname = node[1]
                 if varname in self.vars:
                     return self.vars[varname]
                 raise UndefinedVariableError(varname, line, self.file)
+            elif op == 'index':
+                _, list_name, index_expr, _ = node
+                if list_name not in self.vars:
+                    raise UndefinedVariableError(list_name, line, self.file)
+                lst = self.vars[list_name]
+                index = self.eval_expr(index_expr)
+                if not isinstance(lst, list):
+                    raise RuntimeError(f"{list_name} is not a list on line {line} in {self.file}")
+                if not 0 <= index < len(lst):
+                    raise RuntimeError(f"List index out of bounds on line {line} in {self.file}")
+                return lst[index]
+
+
+            # Binary operations
             elif op in ('add', 'sub', 'mul', 'mod', 'div', 'eq', 'gt', 'lt', 'ge', 'le'):
                 lhs = self.eval_expr(node[1])
                 rhs = self.eval_expr(node[2])
@@ -141,17 +159,9 @@ class Interpreter:
                     case _:
                         raise UnknownOperationError(f"Unknown binary operator '{op}'")
                 return term
-            elif op == 'index':
-                _, list_name, index_expr, _ = node
-                if list_name not in self.vars:
-                    raise UndefinedVariableError(list_name, line, self.file)
-                lst = self.vars[list_name]
-                index = self.eval_expr(index_expr)
-                if not isinstance(lst, list):
-                    raise RuntimeError(f"{list_name} is not a list on line {line} in {self.file}")
-                if not 0 <= index < len(lst):
-                    raise RuntimeError(f"List index out of bounds on line {line} in {self.file}")
-                return lst[index]
+
+
+            # Function calls
             elif op == 'func_call':
                 _, func_name, args_nodes, line = node
                 args = [self.eval_expr(arg) for arg in args_nodes]
@@ -159,12 +169,18 @@ class Interpreter:
                 # Built-in functions
                 if func_name == 'chr':
                     if len(args) != 1 or not isinstance(args[0], int):
-                        raise TypeError(f"chr() expects one integer argument on line {line} in {self.file}")
+                        raise TypeError(
+                            f"chr() expects one integer argument "
+                            f"on line {line} in {self.file}"
+                        )
                     return chr(args[0])
 
                 if func_name == 'length':
                     if len(args) != 1 or not isinstance(args[0], list):
-                        raise TypeError(f"length() expects one list argument on line {line} in {self.file}")
+                        raise TypeError(
+                            f"length() expects one list argument "
+                            f"on line {line} in {self.file}"
+                        )
                     return len(args[0])
 
                 # User-defined functions
