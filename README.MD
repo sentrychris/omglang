@@ -52,12 +52,12 @@ Running `omg` with no arguments launches an interactive session. This REPL lets 
 
 ```plaintext
 >>> thingy x := 5
->>> saywhat << x
+>>> saywhat x
 5
 >>> maybe x < 10 {
-...     saywhat << x + " is smaller than 10"
+...     saywhat x + " is smaller than 10"
 ... } okthen {
-...     saywhat << x + " is bigger than 10"
+...     saywhat x + " is bigger than 10"
 ... }
 x is smaller than 10
 >>> exit
@@ -135,38 +135,38 @@ bitchin greeting(name) {
 }
 
 # Call a function and print to stdout
-saywhat << greeting("World")
+saywhat greeting("World")
 
 # Declare some variables
 thingy x := 5
 thingy y := 10
 thingy z := 0
 
-saywhat << "x = " + x
-saywhat << "y = " + y
+saywhat "x = " + x
+saywhat "y = " + y
 
 bitchin add(a, b) {
     gimme a + b
 }
 
 # Do some arithmetic and format for stdout
-saywhat << x + " + " + y + " = " + add(x, y)
-saywhat << "(" + x + " + " + y + ") * 10 / 2 = " + (x + y) * 10 / 2
+saywhat x + " + " + y + " = " + add(x, y)
+saywhat "(" + x + " + " + y + ") * 10 / 2 = " + (x + y) * 10 / 2
 
 # Create a loop
-saywhat << "Beginning loop:"
+saywhat "Beginning loop:"
 thingy i := 0
 roundabout i <= 3 {
     maybe i == 3 {
-        saywhat << "3 is the magic number."
+        saywhat "3 is the magic number."
     } oractually i == 2 {
-        saywhat << "2 is alright I guess."
+        saywhat "2 is alright I guess."
     } okthen {
-        saywhat << i
+        saywhat i
     }
     thingy i := i + 1
 }
-saywhat << "Finished loop."
+saywhat "Finished loop."
 ```
 
 ## Design Notes
