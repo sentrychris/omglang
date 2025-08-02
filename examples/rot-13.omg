@@ -1,0 +1,76 @@
+;;;omg
+
+# Generate alphabet
+bitchin alphabet() {
+    thingy i := 0
+    thingy result := []
+    roundabout i < 26 {
+        result := result + [chr(65 + i)]
+        i := i + 1
+    }
+    gimme result
+}
+
+# Shift the list by n positions
+bitchin shift(a_list, n) {
+    thingy i := 0
+    thingy result := []
+    thingy len := length(a_list)
+    roundabout i < len {
+        thingy shifted := a_list[(i + n) % len]
+        result := result + [shifted]
+        i := i + 1
+    }
+    gimme result
+}
+
+# Generate Tabula Recta (list of 26 shifted alphabets)
+bitchin tabula_recta() {
+    thingy i := 0
+    thingy base := alphabet()
+    thingy result := []
+    roundabout i < 26 {
+        result := result + [shift(base, i)]
+        i := i + 1
+    }
+    gimme result
+}
+
+# Perform ROT-13 using tabula recta and return joined string
+bitchin rot13(input) {
+    thingy base := alphabet()
+    thingy table := tabula_recta()
+    thingy i := 0
+    thingy result := ""  # use string instead of list
+    roundabout i < length(input) {
+        thingy c := input[i]
+        thingy j := 0
+        thingy found := false
+        thingy index := 0
+
+        roundabout j < length(base) {
+            maybe base[j] == c {
+                found := true
+                index := j
+                j := length(base)
+            } okthen {
+                j := j + 1
+            }
+        }
+
+        maybe found {
+            thingy rot := table[13]
+            result := result + rot[index]
+        } okthen {
+            result := result + c
+        }
+
+        i := i + 1
+    }
+    gimme result
+}
+
+# Entry point
+thingy message := ["H", "E", "L", "L", "O"]
+thingy encoded := rot13(message)
+saywhat << encoded
