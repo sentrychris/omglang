@@ -98,22 +98,34 @@ class Parser:
             return ('list', elements, start_tok.line)
 
         elif tok.type == 'ID':
-            if self._position + 1 < len(self._tokens) and self._tokens[self._position + 1].type == 'LPAREN':
-                func_name = tok.value
-                self._eat('ID')
-                self._eat('LPAREN')
-                args = []
-                if self._current_token.type != 'RPAREN':
-                    args.append(self._expr())
-                    while self._current_token.type == 'COMMA':
-                        self._eat('COMMA')
+            self._eat('ID')
+            base = ('thingy', tok.value, tok.line)
+
+            # Loop through any trailing () or [] after the ID
+            while True:
+                if self._current_token.type == 'LPAREN':
+                    # Function call
+                    self._eat('LPAREN')
+                    args = []
+                    if self._current_token.type != 'RPAREN':
                         args.append(self._expr())
-                self._eat('RPAREN')
-                return ('func_call', func_name, args, tok.line)
-            else:
-                # variable reference or error
-                self._eat('ID')
-                return ('thingy', tok.value, tok.line)
+                        while self._current_token.type == 'COMMA':
+                            self._eat('COMMA')
+                            args.append(self._expr())
+                    self._eat('RPAREN')
+                    base = ('func_call', base[1], args, tok.line)
+
+                elif self._current_token.type == 'LBRACKET':
+                    # Indexing
+                    self._eat('LBRACKET')
+                    index_expr = self._expr()
+                    self._eat('RBRACKET')
+                    base = ('index', base, index_expr, tok.line)
+
+                else:
+                    break
+
+            return base
 
         elif tok.type == 'LPAREN':
             self._eat('LPAREN')

@@ -1,0 +1,171 @@
+;;;omg
+
+# Compute list length
+bitchin len(lst) {
+    thingy i := 0
+    roundabout true {
+        maybe i == i {  # dummy always-true test
+            maybe lst[i] == lst[i] {
+                i := i + 1
+            } okthen {
+                gimme i
+            }
+        }
+    }
+}
+
+# Check if all items in a list are true
+bitchin all_true(lst) {
+    thingy i := 0
+    thingy n := len(lst)
+    roundabout i < n {
+        maybe lst[i] == false {
+            gimme false
+        }
+        i := i + 1
+    }
+    gimme true
+}
+
+# Check if any item in a list is true
+bitchin any_true(lst) {
+    thingy i := 0
+    thingy n := len(lst)
+    roundabout i < n {
+        maybe lst[i] == true {
+            gimme true
+        }
+        i := i + 1
+    }
+    gimme false
+}
+
+# Count how many true values are in the list
+bitchin count_true(lst) {
+    thingy i := 0
+    thingy count := 0
+    thingy n := len(lst)
+    roundabout i < n {
+        maybe lst[i] == true {
+            count := count + 1
+        }
+        i := i + 1
+    }
+    gimme count
+}
+
+# Reverse a list
+bitchin reverse(lst) {
+    thingy i := len(lst) - 1
+    thingy result := []
+    roundabout i >= 0 {
+        result := result + [lst[i]]
+        i := i - 1
+    }
+    gimme result
+}
+
+# Filter only true values
+bitchin filter_true(lst) {
+    thingy i := 0
+    thingy result := []
+    thingy n := len(lst)
+    roundabout i < n {
+        maybe lst[i] == true {
+            result := result + [lst[i]]
+        }
+        i := i + 1
+    }
+    gimme result
+}
+
+# Boolean map: invert each boolean in the list
+bitchin invert(lst) {
+    thingy i := 0
+    thingy result := []
+    thingy n := len(lst)
+    roundabout i < n {
+        maybe lst[i] == true {
+            result := result + [false]
+        } okthen {
+            result := result + [true]
+        }
+        i := i + 1
+    }
+    gimme result
+}
+
+# Generate alternating boolean sequence
+bitchin bool_pattern(n) {
+    thingy result := []
+    thingy i := 0
+    roundabout i < n {
+        maybe i % 2 == 0 {
+            result := result + [true]
+        } okthen {
+            result := result + [false]
+        }
+        i := i + 1
+    }
+    gimme result
+}
+
+# Entry point
+thingy base := [true, true, false, true, false, false]
+thingy empty := []
+
+saywhat << "Base: " + base
+saywhat << "Empty: " + empty
+
+saywhat << "Length of base: " + len(base)
+saywhat << "All true in base? " + all_true(base)
+saywhat << "Any true in base? " + any_true(base)
+saywhat << "True count: " + count_true(base)
+saywhat << "Reversed base: " + reverse(base)
+saywhat << "Filtered base: " + filter_true(base)
+saywhat << "Inverted base: " + invert(base)
+
+thingy pattern := bool_pattern(10)
+saywhat << "Pattern 10: " + pattern
+saywhat << "Reversed pattern: " + reverse(pattern)
+saywhat << "All true in pattern? " + all_true(pattern)
+
+# Test list truthiness
+maybe base {
+    saywhat << "Base is non-empty"
+} okthen {
+    saywhat << "Base is empty"
+}
+
+maybe empty {
+    saywhat << "Empty is non-empty"
+} okthen {
+    saywhat << "Empty is empty"
+}
+
+# Assertions
+facts all_true([true, true])
+
+maybe count_true([true, false, true, false]) == 2 {
+    saywhat << "count true"
+} okthen {
+    saywhat << "count false"
+}
+
+maybe reverse([true, false]) == [false, true] {
+    saywhat << "reverse passed"
+} okthen {
+    saywhat << "reverse failed"
+}
+
+maybe invert([true, false, false]) == [false, true, true] {
+    saywhat << "invert passed"
+} okthen {
+    saywhat << "invert failed"
+}
+
+maybe bool_pattern(4) == [true, false, true, false] {
+    saywhat << "bool_pattern passed"
+} okthen {
+    saywhat << "bool_pattern failed"
+}
