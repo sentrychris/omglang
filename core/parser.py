@@ -183,17 +183,16 @@ class Parser:
         return result
 
 
-    def _expr(self) -> tuple:
+    def _bitwise_or(self) -> tuple:
         """
-        Parse an expression (term optionally followed by an operator).
+        Parse bitwise OR expressions using the '|' operator.
+
+        Syntax:
+            <left> | <right>
 
         Returns:
-            An AST node representing the expression.
+            tuple: ('or_bits', left_expr, right_expr, line)
         """
-        return self._bitwise_or()
-
-
-    def _bitwise_or(self) -> tuple:
         result = self._bitwise_xor()
         while self._current_token.type == 'PIPE':
             tok = self._current_token
@@ -203,6 +202,15 @@ class Parser:
 
 
     def _bitwise_xor(self) -> tuple:
+        """
+        Parse bitwise XOR expressions using the '^' operator.
+
+        Syntax:
+            <left> ^ <right>
+
+        Returns:
+            tuple: ('xor_bits', left_expr, right_expr, line)
+        """
         result = self._bitwise_and()
         while self._current_token.type == 'CARET':
             tok = self._current_token
@@ -212,6 +220,15 @@ class Parser:
 
 
     def _bitwise_and(self) -> tuple:
+        """
+        Parse bitwise AND expressions using the '&' operator.
+
+        Syntax:
+            <left> & <right>
+
+        Returns:
+            tuple: ('and_bits', left_expr, right_expr, line)
+        """
         result = self._shift()
         while self._current_token.type == 'AMP':
             tok = self._current_token
@@ -221,6 +238,16 @@ class Parser:
 
 
     def _shift(self) -> tuple:
+        """
+        Parse bitwise shift expressions using '<<' or '>>'.
+
+        Syntax:
+            <left> << <right>
+            <left> >> <right>
+
+        Returns:
+            tuple: ('shl' | 'shr', left_expr, right_expr, line)
+        """
         result = self._add_sub()
         while self._current_token.type in ('LSHIFT', 'RSHIFT'):
             tok = self._current_token
@@ -234,6 +261,16 @@ class Parser:
 
 
     def _add_sub(self) -> tuple:
+        """
+        Parse addition and subtraction expressions.
+
+        Syntax:
+            <left> + <right>
+            <left> - <right>
+
+        Returns:
+            tuple: ('add' | 'sub', left_expr, right_expr, line)
+        """
         result = self._term()
         while self._current_token.type in ('PLUS', 'MINUS'):
             tok = self._current_token
@@ -241,6 +278,16 @@ class Parser:
             op_map = {'PLUS': 'add', 'MINUS': 'sub'}
             result = (op_map[tok.type], result, self._term(), tok.line)
         return result
+
+
+    def _expr(self) -> tuple:
+        """
+        Parse an expression, starting from the highest precedence (bitwise OR).
+
+        Returns:
+            tuple: The AST node representing the expression.
+        """
+        return self._bitwise_or()
 
 
     def _comparison(self) -> tuple:
