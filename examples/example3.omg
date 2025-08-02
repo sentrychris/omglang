@@ -19,7 +19,7 @@ bitchin is_prime(n) {
     }
 
     thingy i := 2
-    hamsterwheel i * i <= n {
+    roundabout i * i <= n {
         maybe n % i == 0 {
             gimme 0
         }
@@ -33,7 +33,7 @@ bitchin is_prime(n) {
 bitchin digit_sum(n) {
     thingy sum := 0
     thingy temp := n
-    hamsterwheel temp > 0 {
+    roundabout temp > 0 {
         sum := sum + (temp % 10)
         temp := temp / 10
     }
@@ -70,7 +70,7 @@ thingy stop := 97
 thingy current := start
 thingy fibint := 2
 
-hamsterwheel current <= stop {
+roundabout current <= stop {
     saywhat << "Classified number " + current + " " + classify_number(current)
     saywhat << "Fibonnaci sequence[" + fibint + "] = " + fibonacci(fibint)
     current := current + 1

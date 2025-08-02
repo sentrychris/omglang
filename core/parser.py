@@ -297,15 +297,15 @@ class Parser:
 
     def _parse_while(self) -> tuple:
         """
-        Parse a 'hamsterwheel' (while) loop.
+        Parse a 'roundabout' (while) loop.
 
         Syntax:
-            hamsterwheel <condition> {
+            roundabout <condition> {
                 ...
             }
 
         Returns:
-            tuple: ('hamsterwheel', condition_expr, block_node, line_number)
+            tuple: ('roundabout', condition_expr, block_node, line_number)
 
         Raises:
             SyntaxError: If the condition or block is invalid.
@@ -314,7 +314,7 @@ class Parser:
         self._eat('WHILE')
         condition = self._comparison()
         body = self._block()
-        return ('hamsterwheel', condition, body, tok.line)
+        return ('roundabout', condition, body, tok.line)
 
 
     def _parse_func_def(self) -> tuple:

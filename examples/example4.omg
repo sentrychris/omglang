@@ -22,7 +22,7 @@ bitchin factorial(n) {
 bitchin armstrong(n) {
     thingy sum := 0
     thingy temp := n
-    hamsterwheel temp > 0 {
+    roundabout temp > 0 {
         digit := temp % 10
         sum := sum + digit * digit * digit
         temp := temp / 10
@@ -38,7 +38,7 @@ bitchin armstrong(n) {
 bitchin collatz_steps(n) {
     thingy count := 0
     thingy current := n
-    hamsterwheel current > 1 {
+    roundabout current > 1 {
         maybe current % 2 == 0 {
             current := current / 2
         } okthen {
@@ -60,7 +60,7 @@ bitchin is_prime(n) {
         gimme 0
     }
     thingy i := 2
-    hamsterwheel i * i <= n {
+    roundabout i * i <= n {
         maybe n % i == 0 {
             gimme 0
         }
@@ -73,7 +73,7 @@ bitchin is_prime(n) {
 bitchin digit_sum(n) {
     thingy sum := 0
     thingy temp := n
-    hamsterwheel temp > 0 {
+    roundabout temp > 0 {
         sum := sum + (temp % 10)
         temp := temp / 10
     }
@@ -111,7 +111,7 @@ thingy prev := 1
 thingy seed := 123
 thingy current := start
 
-hamsterwheel current <= stop {
+roundabout current <= stop {
     saywhat << classify(current, prev, seed)
     prev := current
     seed := lcg(seed)

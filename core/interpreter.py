@@ -24,7 +24,7 @@ types (`UndefinedVariableError`, `UnknownOperationError`) are raised on invalid 
 4. Control Flow
 Control constructs include:
 - `maybe`/'okthen' (if/else): executes conditional blocks based on boolean evaluation.
-- `hamsterwheel` (while): repeatedly evaluates a block while a condition holds.
+- `roundabout` (while): repeatedly evaluates a block while a condition holds.
 - `block`: executes a nested sequence of statements.
 
 5. Header Validation
@@ -177,7 +177,7 @@ class Interpreter:
 
         Parameters:
             statements (list):
-                A list of ('assign' | 'saywhat' | 'maybe' | 'block' | 'hamsterwheel', ...) tuples.
+                A list of ('assign' | 'saywhat' | 'maybe' | 'block' | 'roundabout', ...) tuples.
 
         Raises:
             Exception: For unknown statement types.
@@ -218,7 +218,7 @@ class Interpreter:
                 self.execute(block_statements)
 
 
-            elif kind == 'hamsterwheel':
+            elif kind == 'roundabout':
                 _, cond_node, block_node, _ = stmt
                 while self.eval_expr(cond_node):
                     self.execute([block_node])

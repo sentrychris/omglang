@@ -40,7 +40,7 @@ saywhat << message
 
 # Loop counting down with conditional inside
 thingy countdown := number
-hamsterwheel countdown > 0 {
+roundabout countdown > 0 {
     maybe countdown % 2 == 0 {
         saywhat << countdown + " is even"
     } okthen {
@@ -52,7 +52,7 @@ hamsterwheel countdown > 0 {
 # Use string concatenation, arithmetic, and facts assertion
 thingy sum := 0
 thingy i := 1
-hamsterwheel i <= 10 {
+roundabout i <= 10 {
     sum := sum + i
     i := i + 1
 }

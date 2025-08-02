@@ -77,7 +77,7 @@ Handles:
 * `expr == expr`
 * `expr > expr`, etc.
 
-Used in control flow (`maybe`, `hamsterwheel`) for condition evaluation.
+Used in control flow (`maybe`, `roundabout`) for condition evaluation.
 
 ---
 
@@ -95,7 +95,7 @@ Handles:
 
 * Variable declarations (`thingy`)
 * Output (`saywhat`)
-* Control flow (`maybe`, `hamsterwheel`)
+* Control flow (`maybe`, `roundabout`)
 * Function definitions
 * Function calls
 
