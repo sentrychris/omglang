@@ -11,12 +11,12 @@ saywhat "hello"
 
 # variable identifier
 saywhat hello
-# SyntaxError: Expected token '<<' of type ARROW, but got value 'hello' of type ID on line 3 in .\<script>.omg
+# SyntaxError: Expected token '<<' of type ARROW, but got value 'hello' of type ID on line [n] in .\<script>.omg
 
 # int
 saywhat 1
-# SyntaxError: Expected token '<<' of type ARROW, but got value '1' of type NUMBER on line 3 in .\<script>.omg
+# SyntaxError: Expected token '<<' of type ARROW, but got value '1' of type NUMBER on line [n] in .\<script>.omg
 
 # bool (literal)
 saywhat true
-# SyntaxError: Expected token '<<' of type ARROW, but got value 'true' of type TRUE (which maps to TRUE) on line 3 in .\<script>.omg 
+# SyntaxError: Expected token '<<' of type ARROW, but got value 'true' of type TRUE (which maps to TRUE) on line [n] in .\<script>.omg 
