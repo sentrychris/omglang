@@ -1,116 +1,45 @@
 ;;;omg
 
-# Check if all items in a list are true
-bitchin all_true(a_list) {
-    thingy i := 0
-    thingy n := length a_list
-    roundabout i < n {
-        maybe a_list[i] == false {
-            gimme false
-        }
-        i := i + 1
-    }
-    gimme true
-}
-
-# Check if any item in a list is true
-bitchin any_true(a_list) {
-    thingy i := 0
-    thingy n := length a_list
-    roundabout i < n {
-        maybe a_list[i] == true {
-            gimme true
-        }
-        i := i + 1
-    }
-    gimme false
-}
-
-# Count how many true values are in the list
-bitchin count_true(a_list) {
-    thingy i := 0
-    thingy count := 0
-    thingy n := length a_list
-    roundabout i < n {
-        maybe a_list[i] == true {
-            count := count + 1
-        }
-        i := i + 1
-    }
-    gimme count
-}
-
-# Reverse a list
-bitchin reverse(a_list) {
-    thingy i := length a_list - 1
-    thingy result := []
-    roundabout i >= 0 {
-        result := result + [a_list[i]]
-        i := i - 1
-    }
-    gimme result
-}
-
-# Filter only true values
-bitchin filter_true(a_list) {
+# Generate alphabet
+bitchin alphabet() {
     thingy i := 0
     thingy result := []
-    thingy n := length a_list
-    roundabout i < n {
-        maybe a_list[i] == true {
-            result := result + [a_list[i]]
-        }
+    roundabout i < 26 {
+        result := result + [chr(65 + i)]
         i := i + 1
     }
     gimme result
 }
 
-# Boolean map: invert each boolean in the list
-bitchin invert(a_list) {
+# Shift the list by n positions
+bitchin shift(lst, n) {
     thingy i := 0
     thingy result := []
-    thingy n := length a_list
-    roundabout i < n {
-        maybe a_list[i] == true {
-            result := result + [false]
-        } okthen {
-            result := result + [true]
-        }
+    thingy len := length(lst)
+    roundabout i < len {
+        thingy shifted := lst[(i + n) % len]
+        result := result + [shifted]
         i := i + 1
     }
     gimme result
 }
 
-# Generate alternating boolean sequence
-bitchin bool_pattern(n) {
-    thingy result := []
+# Generate Tabula Recta (list of 26 shifted alphabets)
+bitchin tabula_recta() {
     thingy i := 0
-    roundabout i < n {
-        maybe i % 2 == 0 {
-            result := result + [true]
-        } okthen {
-            result := result + [false]
-        }
+    thingy base := alphabet()
+    thingy result := []
+    roundabout i < 26 {
+        result := result + [shift(base, i)]
         i := i + 1
     }
     gimme result
 }
 
-# Entry point tests
-thingy x := [true, false, true, true, false]
-thingy empty := []
-
-saywhat << " "
-saywhat << "Input list: " + x
-saywhat << " "
-saywhat << "All true? " + all_true(x)
-saywhat << "Any true? " + any_true(x)
-saywhat << "Count of true: " + count_true(x)
-saywhat << "Reversed: " + reverse(x)
-saywhat << "Filtered (true only): " + filter_true(x)
-saywhat << "Inverted: " + invert(x)
-
-thingy pattern := bool_pattern(7)
-saywhat << "Alternating pattern (7): " + pattern
-saywhat << "All true in pattern? " + all_true(pattern)
-saywhat << "Count true in pattern: " + count_true(pattern)
+# Entry point
+thingy table := tabula_recta()
+thingy i := 0
+roundabout i < length(table) {
+    saywhat << table[i]
+    i := i + 1
+}

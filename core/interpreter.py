@@ -141,13 +141,6 @@ class Interpreter:
                     case _:
                         raise UnknownOperationError(f"Unknown binary operator '{op}'")
                 return term
-            elif op == 'length':
-                lst = self.eval_expr(node[1])
-                if not isinstance(lst, list):
-                    raise TypeError(
-                        f"Cannot take length of non-list value on line {line} in {self.file}"
-                    )
-                return len(lst)
             elif op == 'index':
                 _, list_name, index_expr, _ = node
                 if list_name not in self.vars:
@@ -156,13 +149,25 @@ class Interpreter:
                 index = self.eval_expr(index_expr)
                 if not isinstance(lst, list):
                     raise RuntimeError(f"{list_name} is not a list on line {line} in {self.file}")
-                if not (0 <= index < len(lst)):
+                if not 0 <= index < len(lst):
                     raise RuntimeError(f"List index out of bounds on line {line} in {self.file}")
                 return lst[index]
             elif op == 'func_call':
                 _, func_name, args_nodes, line = node
                 args = [self.eval_expr(arg) for arg in args_nodes]
 
+                # Built-in functions
+                if func_name == 'chr':
+                    if len(args) != 1 or not isinstance(args[0], int):
+                        raise TypeError(f"chr() expects one integer argument on line {line} in {self.file}")
+                    return chr(args[0])
+
+                if func_name == 'length':
+                    if len(args) != 1 or not isinstance(args[0], list):
+                        raise TypeError(f"length() expects one list argument on line {line} in {self.file}")
+                    return len(args[0])
+
+                # User-defined functions
                 if func_name not in self.functions:
                     raise NameError(
                         f"Undefined function '{func_name}' on line {line} in {self.file}"

@@ -97,15 +97,6 @@ class Parser:
             self._eat('RBRACKET')
             return ('list', elements, start_tok.line)
 
-        elif tok.type == 'ID' and tok.value == 'length':
-            # Dirty as hell to overload ID with special case handling but fuck it...
-            # it's a toy language.
-            # Handle built-in 'length <expr>'
-            start_tok = tok
-            self._eat('ID')
-            expr = self._factor()
-            return ('length', expr, start_tok.line)
-
         elif tok.type == 'ID':
             id_tok = tok
             self._eat('ID')
