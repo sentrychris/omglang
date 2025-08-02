@@ -17,7 +17,6 @@ bitchin is_prime(n) {
     maybe n <= 1 {
         gimme 0
     }
-
     thingy i := 2
     roundabout i * i <= n {
         maybe n % i == 0 {
@@ -25,7 +24,6 @@ bitchin is_prime(n) {
         }
         i := i + 1
     }
-
     gimme 1
 }
 
@@ -64,16 +62,15 @@ bitchin fibonacci(n) {
 }
 
 # Loop over numbers and rate them, including Fibonacci calculation
-thingy start := 10
-thingy stop := 20
-thingy current := start
-thingy fibint := 2
+thingy idx := 10
+thingy max := 20
+thingy fnum := 2
 
-roundabout current <= stop {
-    saywhat << "Classified number " + current + " " + classify_number(current)
-    saywhat << "Fibonacci sequence[" + fibint + "] = " + fibonacci(fibint)
-    current := current + 1
-    fibint := fibint + 2
+roundabout idx <= max {
+    saywhat << "Classified number " + idx + " " + classify_number(idx)
+    saywhat << "Fibonacci sequence[" + fnum + "] = " + fibonacci(fnum)
+    idx := idx + 1
+    fnum := fnum + 2
 }
 
 # Assert primality of 97 for validation
