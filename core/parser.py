@@ -394,7 +394,7 @@ class Parser:
         Parse a 'woah' (echo) statement.
 
         Syntax:
-            woah <- <expression>
+            woah ¬¬ <expression>
 
         Returns:
             tuple: ('woah', expression_node, line_number)

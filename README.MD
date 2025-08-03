@@ -67,12 +67,12 @@ Running `omg` with no arguments launches an interactive session. This REPL lets 
 
 ```plaintext
 >>> thingy x := 5
->>> woah <- x
+>>> woah ¬¬ x
 5
 >>> maybe x < 10 {
-...     woah <- x + " is smaller than 10"
+...     woah ¬¬ x + " is smaller than 10"
 ... } okthen {
-...     woah <- x + " is bigger than 10"
+...     woah ¬¬ x + " is bigger than 10"
 ... }
 x is smaller than 10
 >>> exit
@@ -190,38 +190,38 @@ bitchin greeting(name) {
 }
 
 # Call a function and print to stdout
-woah <- greeting("World")
+woah ¬¬ greeting("World")
 
 # Declare some variables
 thingy x := 5
 thingy y := 10
 thingy z := 0
 
-woah <- "x = " + x
-woah <- "y = " + y
+woah ¬¬ "x = " + x
+woah ¬¬ "y = " + y
 
 bitchin add(a, b) {
     gimme a + b
 }
 
 # Do some arithmetic and format for stdout
-woah <- x + " + " + y + " = " + add(x, y)
-woah <- "(" + x + " + " + y + ") * 10 / 2 = " + (x + y) * 10 / 2
+woah ¬¬ x + " + " + y + " = " + add(x, y)
+woah ¬¬ "(" + x + " + " + y + ") * 10 / 2 = " + (x + y) * 10 / 2
 
 # Create a loop
-woah <- "Beginning loop:"
+woah ¬¬ "Beginning loop:"
 thingy i := 0
 roundabout i <= 3 {
     maybe i == 3 {
-        woah <- "3 is the magic number."
+        woah ¬¬ "3 is the magic number."
     } oractually i == 2 {
-        woah <- "2 is alright I guess."
+        woah ¬¬ "2 is alright I guess."
     } okthen {
-        woah <- i
+        woah ¬¬ i
     }
     thingy i := i + 1
 }
-woah <- "Finished loop."
+woah ¬¬ "Finished loop."
 ```
 
 ## Design Notes
