@@ -16,7 +16,7 @@
 
 ## Overview
 
-The language uses playful keywords like `io`, `ɀ`, `⨇` and `⊕`, but it's grounded in a well‑defined grammar. All scripts must start with a header line `;;;omg`. Execution proceeds through three stages:
+The language uses playful keywords like `thingy`, `woah`, `maybe` and `roundabout`, but it's grounded in a well‑defined grammar. All scripts must start with a header line `;;;omg`. Execution proceeds through three stages:
 
 1. **Lexing** – convert raw source code into tokens.
 2. **Parsing** – build an Abstract Syntax Tree (AST) from tokens.
@@ -51,7 +51,7 @@ Options:
 
 * `omg <script.omg>` – run the specified OMG program. The file must include the required `;;;omg` header on the first non‑empty line. Relative paths are resolved from your current working directory.
 
-* `omg` with no arguments – start a Read–Eval–Print Loop (REPL) where you can type OMG statements interactively. Multi‑line constructs such as function definitions or `⨇ … { … }` blocks are supported; simply continue entering lines until the braces balance. Type `exit` or `quit` to leave the REPL.
+* `omg` with no arguments – start a Read–Eval–Print Loop (REPL) where you can type OMG statements interactively. Multi‑line constructs such as function definitions or `maybe … { … }` blocks are supported; simply continue entering lines until the braces balance. Type `exit` or `quit` to leave the REPL.
 
 * `-h` or `--help` – print a short usage summary and exit.
 
@@ -66,13 +66,13 @@ py ./omg.py <script>.omg
 Running `omg` with no arguments launches an interactive session. This REPL lets you experiment with the language one statement or block at a time. For example:
 
 ```plaintext
->>> io x := 5
->>> ɀ ¬¬ x
+>>> thingy x := 5
+>>> woah ¬¬ x
 5
->>> ⨇ x < 10 {
-...     ɀ ¬¬ x + " is smaller than 10"
-... } ∵ {
-...     ɀ ¬¬ x + " is bigger than 10"
+>>> maybe x < 10 {
+...     woah ¬¬ x + " is smaller than 10"
+... } okthen {
+...     woah ¬¬ x + " is bigger than 10"
 ... }
 x is smaller than 10
 >>> exit
@@ -84,7 +84,7 @@ If you start a block and do not close it, the prompt switches to `...` and the i
 
 The lexer scans the raw text and splits it into a stream of tokens. Each token has a type, value and line number. Token types include:
 
-* **Keywords**: `io`, `ɀ`, `®`, `⨇`, `∴`, `∵`, `⊕`.
+* **Keywords**: `thingy`, `woah`, `bitchin`, `maybe`, `oractually`, `okthen`, `roundabout`.
 * **Operators**:
     * Arithmetic: `+`, `-`, `*`, `/`, `%`
     * Comparison: `==`, `!=`, `<`, `>`, `<=`, `>=`
@@ -152,28 +152,28 @@ Each AST node is represented as a tuple encoding the operation, its operands and
 
 The interpreter walks the AST and evaluates expressions or executes statements. It maintains:
 
-* A **variable environment** (`vars`) for storing values bound by `io` declarations.
+* A **variable environment** (`vars`) for storing values bound by `thingy` declarations.
 * A **function environment** (`functions`) for storing user‑defined functions.
 
 ### Expression Evaluation
 
-Handled by `eval_expr(node)`: literals return their value; variables are looked up in the current scope; binary operations are recursively evaluated (with support for `+` for both numeric addition and string concatenation); function calls evaluate their arguments, bind them to parameters, execute the function body and return the result (or `None` if no `⋉` statement is encountered).
+Handled by `eval_expr(node)`: literals return their value; variables are looked up in the current scope; binary operations are recursively evaluated (with support for `+` for both numeric addition and string concatenation); function calls evaluate their arguments, bind them to parameters, execute the function body and return the result (or `None` if no `gimme` statement is encountered).
 
 ### Statement Execution
 
 Handled by `execute(statements)`. Supported statements include:
 
-* **io** – evaluate an expression and store it in the variable environment.
+* **thingy** – evaluate an expression and store it in the variable environment.
 
-* **ɀ** – evaluate an expression and print the result.
+* **woah** – evaluate an expression and print the result.
 
-* **⨇/∴/∵** – evaluate a condition and execute one of several blocks conditionally.
+* **maybe/oractually/okthen** – evaluate a condition and execute one of several blocks conditionally.
 
-* **⊕** – execute a block repeatedly while a condition holds.
+* **roundabout** – execute a block repeatedly while a condition holds.
 
-* **®** – define a named function with parameters and body.
+* **bitchin** – define a named function with parameters and body.
 
-* **⋉** – return a value from a function.
+* **gimme** – return a value from a function.
 
 Each function call creates a new scope for its parameters, and the previous variable state is restored afterward (there are no closures or first‑class functions yet).
 
@@ -185,43 +185,43 @@ Examples can be found in the examples directory.
 ;;;omg
 
 # Define a function
-® greeting(name) {
-    ⋉ "Hello " + name
+bitchin greeting(name) {
+    gimme "Hello " + name
 }
 
 # Call a function and print to stdout
-ɀ ¬¬ greeting("World")
+woah ¬¬ greeting("World")
 
 # Declare some variables
-io x := 5
-io y := 10
-io z := 0
+thingy x := 5
+thingy y := 10
+thingy z := 0
 
-ɀ ¬¬ "x = " + x
-ɀ ¬¬ "y = " + y
+woah ¬¬ "x = " + x
+woah ¬¬ "y = " + y
 
-® add(a, b) {
-    ⋉ a + b
+bitchin add(a, b) {
+    gimme a + b
 }
 
 # Do some arithmetic and format for stdout
-ɀ ¬¬ x + " + " + y + " = " + add(x, y)
-ɀ ¬¬ "(" + x + " + " + y + ") * 10 / 2 = " + (x + y) * 10 / 2
+woah ¬¬ x + " + " + y + " = " + add(x, y)
+woah ¬¬ "(" + x + " + " + y + ") * 10 / 2 = " + (x + y) * 10 / 2
 
 # Create a loop
-ɀ ¬¬ "Beginning loop:"
-io i := 0
-⊕ i <= 3 {
-    ⨇ i == 3 {
-        ɀ ¬¬ "3 is the magic number."
-    } ∴ i == 2 {
-        ɀ ¬¬ "2 is alright I guess."
-    } ∵ {
-        ɀ ¬¬ i
+woah ¬¬ "Beginning loop:"
+thingy i := 0
+roundabout i <= 3 {
+    maybe i == 3 {
+        woah ¬¬ "3 is the magic number."
+    } oractually i == 2 {
+        woah ¬¬ "2 is alright I guess."
+    } okthen {
+        woah ¬¬ i
     }
-    io i := i + 1
+    thingy i := i + 1
 }
-ɀ ¬¬ "Finished loop."
+woah ¬¬ "Finished loop."
 ```
 
 ## Design Notes

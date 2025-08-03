@@ -1,60 +1,60 @@
 ;;;omg
 
 # Recursive factorial function with debugging output
-® factorial(n) {
-    ⨇ n <= 1 {
-        ⋉ 1
-    } ∵ {
-        ⋉ n * factorial(n - 1)
+bitchin factorial(n) {
+    maybe n <= 1 {
+        gimme 1
+    } okthen {
+        gimme n * factorial(n - 1)
     }
 }
 
 # Greeting function with conditional logic
-® greeting(name, excited) {
-    ⨇ excited == 1 {
-        ⋉ "Hey " + name + "! You're awesome!"
-    } ∵ {
-        ⋉ "Hello " + name
+bitchin greeting(name, excited) {
+    maybe excited == 1 {
+        gimme "Hey " + name + "! You're awesome!"
+    } okthen {
+        gimme "Hello " + name
     }
 }
 
 # Compose full message combining factorial and greeting
-® compose_message(name, num) {
-    io fact := factorial(num)
-    io excited := 0
+bitchin compose_message(name, num) {
+    thingy fact := factorial(num)
+    thingy excited := 0
 
-    ⨇ num > 5 {
+    maybe num > 5 {
         excited := 1
     }
 
-    ⋉ greeting(name, excited) + ", your factorial of " + num + " is " + fact
+    gimme greeting(name, excited) + ", your factorial of " + num + " is " + fact
 }
 
 # Variables
-io user := "Chris"
-io number := 6
+thingy user := "Chris"
+thingy number := 6
 
 # Output composed message
-io message := compose_message(user, number)
-ɀ ¬¬ message
+thingy message := compose_message(user, number)
+woah ¬¬ message
 
 # Loop counting down with conditional inside
-io countdown := number
-⊕ countdown > 0 {
-    ⨇ countdown % 2 == 0 {
-        ɀ ¬¬ countdown + " is even"
-    } ∵ {
-        ɀ ¬¬ countdown + " is odd"
+thingy countdown := number
+roundabout countdown > 0 {
+    maybe countdown % 2 == 0 {
+        woah ¬¬ countdown + " is even"
+    } okthen {
+        woah ¬¬ countdown + " is odd"
     }
     countdown := countdown - 1
 }
 
 # Use string concatenation, arithmetic, and facts assertion
-io sum := 0
-io i := 1
-⊕ i <= 10 {
+thingy sum := 0
+thingy i := 1
+roundabout i <= 10 {
     sum := sum + i
     i := i + 1
 }
 
-ɀ ¬¬ "Sum of 1 to 10 is " + sum
+woah ¬¬ "Sum of 1 to 10 is " + sum

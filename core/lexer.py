@@ -6,7 +6,7 @@ list of tokens.
 
 1. Token Definitions
 Token types are defined via named regular expressions (token_specification), covering language 
-constructs such as keywords (e.g. ⨇, ⊕), operators (e.g. :=, <<, +), literals 
+constructs such as keywords (e.g. maybe, roundabout), operators (e.g. :=, <<, +), literals 
 (numbers, strings), and structural tokens (braces, parentheses, commas, etc.). The combined regex 
 is constructed using named groups to enable type identification during matching.
 
@@ -16,7 +16,7 @@ a type and value and wrapped in a Token object that also stores line number meta
 Whitespace is skipped, and newlines increment the line counter and produce a NEWLINE token.
 
 3. Keyword Differentiation
-The lexer differentiates between identifiers and language keywords (e.g., 'io') using a 
+The lexer differentiates between identifiers and language keywords (e.g., 'thingy') using a 
 post-processing check after matching ID tokens. If the value matches a reserved keyword, the 
 token type is replaced accordingly.
 
@@ -72,14 +72,14 @@ def tokenize(code) -> tuple[list[Token], dict[str, str]]:
         ('FALSE',     r'\bfalse\b'),
 
         # Keywords
-        ('IF',        r'⨇'),
-        ('ELIF',      r'∴'),
-        ('ELSE',      r'∵'),
-        ('WHILE',     r'⊕'),
-        ('ECHO',      r'\bɀ\b'),
+        ('IF',        r'\bmaybe\b'),
+        ('ELIF',      r'\boractually'),
+        ('ELSE',      r'\bokthen\b'),
+        ('WHILE',     r'\broundabout\b'),
+        ('ECHO',      r'\bwoah\b'),
         ('FACTS',     r'\bfacts\b'),
-        ('FUNC',      r'®'),
-        ('RETURN',    r'⋉'),
+        ('FUNC',      r'\bbitchin\b'),
+        ('RETURN',    r'\bgimme\b'),
 
         # Chain
         ('CHAIN',     r'¬¬'),
@@ -143,7 +143,7 @@ def tokenize(code) -> tuple[list[Token], dict[str, str]]:
     tok_regex = '|'.join(f'(?P<{name}>{pattern})' for name, pattern in token_specification)
 
     identifier_keywords = {
-        'io',
+        'thingy',
     }
 
     tokens = []

@@ -1,50 +1,50 @@
 ;;;omg
 
 # Permission bitmasks
-io READ := 4      # 100
-io WRITE := 2     # 010
-io EXECUTE := 1   # 001
+thingy READ := 4      # 100
+thingy WRITE := 2     # 010
+thingy EXECUTE := 1   # 001
 
 # Convert a single digit (0–7) to rwx string
-® to_rwx(bits) {
-    io result := ""
+bitchin to_rwx(bits) {
+    thingy result := ""
 
-    ⨇ bits & READ != 0 {
+    maybe bits & READ != 0 {
         result := result + "r"
-    } ∵ {
+    } okthen {
         result := result + "-"
     }
 
-    ⨇ bits & WRITE != 0 {
+    maybe bits & WRITE != 0 {
         result := result + "w"
-    } ∵ {
+    } okthen {
         result := result + "-"
     }
 
-    ⨇ bits & EXECUTE != 0 {
+    maybe bits & EXECUTE != 0 {
         result := result + "x"
-    } ∵ {
+    } okthen {
         result := result + "-"
     }
 
-    ⋉ result
+    gimme result
 }
 
 # Convert full numeric mode (e.g. 755) to rwxrwxrwx
-® perms(mode) {
-    io u := mode / 100
-    io g := (mode / 10) % 10
-    io o := mode % 10
+bitchin perms(mode) {
+    thingy u := mode / 100
+    thingy g := (mode / 10) % 10
+    thingy o := mode % 10
 
-    ⋉ to_rwx(u) + to_rwx(g) + to_rwx(o)
+    gimme to_rwx(u) + to_rwx(g) + to_rwx(o)
 }
 
 # Try a few examples
-io codes := [755, 644, 700, 600, 777]
-io i := 0
+thingy codes := [755, 644, 700, 600, 777]
+thingy i := 0
 
-⊕ i < length(codes) {
-    io mode := codes[i]
-    ɀ ¬¬ mode + ": " + perms(mode)
+roundabout i < length(codes) {
+    thingy mode := codes[i]
+    woah ¬¬ mode + ": " + perms(mode)
     i := i + 1
 }

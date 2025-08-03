@@ -1,45 +1,45 @@
 ;;;omg
 
 # Generate alphabet
-® alphabet() {
-    io i := 0
-    io result := []
-    ⊕ i < 26 {
+bitchin alphabet() {
+    thingy i := 0
+    thingy result := []
+    roundabout i < 26 {
         result := result + [chr(65 + i)]
         i := i + 1
     }
-    ⋉ result
+    gimme result
 }
 
 # Shift the list by n positions
-® shift(a_list, n) {
-    io i := 0
-    io result := []
-    io len := length(a_list)
-    ⊕ i < len {
-        io shifted := a_list[(i + n) % len]
+bitchin shift(a_list, n) {
+    thingy i := 0
+    thingy result := []
+    thingy len := length(a_list)
+    roundabout i < len {
+        thingy shifted := a_list[(i + n) % len]
         result := result + [shifted]
         i := i + 1
     }
-    ⋉ result
+    gimme result
 }
 
 # Generate Tabula Recta (list of 26 shifted alphabets)
-® tabula_recta() {
-    io i := 0
-    io base := alphabet()
-    io result := []
-    ⊕ i < 26 {
+bitchin tabula_recta() {
+    thingy i := 0
+    thingy base := alphabet()
+    thingy result := []
+    roundabout i < 26 {
         result := result + [shift(base, i)]
         i := i + 1
     }
-    ⋉ result
+    gimme result
 }
 
 # Entry point
-io table := tabula_recta()
-io i := 0
-⊕ i < length(table) {
-    ɀ ¬¬ table[i]
+thingy table := tabula_recta()
+thingy i := 0
+roundabout i < length(table) {
+    woah ¬¬ table[i]
     i := i + 1
 }

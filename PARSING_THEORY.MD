@@ -14,7 +14,7 @@ def factor(self):
 Handles:
 
 * **Literals**: numbers, strings
-* **Variables**: identifiers (`io`)
+* **Variables**: identifiers (`thingy`)
 * **Function calls**: if followed by `(`
 * **Parenthesized expressions**: grouped expressions `( ... )`
 
@@ -77,7 +77,7 @@ Handles:
 * `expr == expr`
 * `expr > expr`, etc.
 
-Used in control flow (`⨇`, `⊕`) for condition evaluation.
+Used in control flow (`maybe`, `roundabout`) for condition evaluation.
 
 ---
 
@@ -93,9 +93,9 @@ def statement(self):
 
 Handles:
 
-* Variable declarations (`io`)
-* Output (`ɀ`)
-* Control flow (`⨇`, `⊕`)
+* Variable declarations (`thingy`)
+* Output (`woah`)
+* Control flow (`maybe`, `roundabout`)
 * Function definitions
 * Function calls
 

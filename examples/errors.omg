@@ -1,22 +1,22 @@
 ;;;omg
 
-# Attempt to use ɀ without valid syntax
+# Attempt to use woah without valid syntax
 
 # valid
-ɀ ¬¬ "ɀ requires an '¬¬' token after the keyword"
+woah ¬¬ "woah requires an '¬¬' token after the keyword"
 
 # string
-ɀ "hello"
+woah "hello"
 # SyntaxError: Expected token '¬¬' of type CHAIN, but got value 'hello' of type STRING on line [n] in .\<script>.omg
 
 # variable identifier
-ɀ hello
+woah hello
 # SyntaxError: Expected token '¬¬' of type CHAIN, but got value 'hello' of type ID on line [n] in .\<script>.omg
 
 # int
-ɀ 1
+woah 1
 # SyntaxError: Expected token '¬¬' of type CHAIN, but got value '1' of type NUMBER on line [n] in .\<script>.omg
 
 # bool (literal)
-ɀ true
+woah true
 # SyntaxError: Expected token '¬¬' of type CHAIN, but got value 'true' of type TRUE (which maps to TRUE) on line [n] in .\<script>.omg 

@@ -1,58 +1,58 @@
 ;;;omg
 
 # Character lookup for hex digits
-io HEXCHARS := "0123456789ABCDEF"
+thingy HEXCHARS := "0123456789ABCDEF"
 
 # Convert a single hex digit to decimal
-® hex_char_to_int(ch) {
-    io i := 0
-    ⊕ i < 16 {
-        ⨇ HEXCHARS[i] == ch {
-            ⋉ i
+bitchin hex_char_to_int(ch) {
+    thingy i := 0
+    roundabout i < 16 {
+        maybe HEXCHARS[i] == ch {
+            gimme i
         }
         i := i + 1
     }
-    ⋉ 0  # fallback (shouldn't be reached)
+    gimme 0  # fallback (shouldn't be reached)
 }
 
 # Convert two hex characters to a decimal byte
-® hex_to_byte(pair) {
-    io high := hex_char_to_int(pair[0])
-    io low := hex_char_to_int(pair[1])
-    ⋉ high * 16 + low
+bitchin hex_to_byte(pair) {
+    thingy high := hex_char_to_int(pair[0])
+    thingy low := hex_char_to_int(pair[1])
+    gimme high * 16 + low
 }
 
 # Convert full hex string to RGB
-® hex_to_rgb(hexstr) {
-    io r := hex_to_byte(hexstr[0:2])
-    io g := hex_to_byte(hexstr[2:4])
-    io b := hex_to_byte(hexstr[4:6])
-    ⋉ "R: " + r + " G: " + g + " B: " + b
+bitchin hex_to_rgb(hexstr) {
+    thingy r := hex_to_byte(hexstr[0:2])
+    thingy g := hex_to_byte(hexstr[2:4])
+    thingy b := hex_to_byte(hexstr[4:6])
+    gimme "R: " + r + " G: " + g + " B: " + b
 }
 
 # Convert decimal 0–15 to a hex digit
-® nibble_to_hex(n) {
-    ⋉ HEXCHARS[n]
+bitchin nibble_to_hex(n) {
+    gimme HEXCHARS[n]
 }
 
 # Convert a byte (0–255) to two hex characters
-® byte_to_hex(n) {
-    io hi := n / 16
-    io lo := n % 16
-    ⋉ nibble_to_hex(hi) + nibble_to_hex(lo)
+bitchin byte_to_hex(n) {
+    thingy hi := n / 16
+    thingy lo := n % 16
+    gimme nibble_to_hex(hi) + nibble_to_hex(lo)
 }
 
 # Convert RGB values to hex string
-® rgb_to_hex(r, g, b) {
-    ⋉ byte_to_hex(r) + byte_to_hex(g) + byte_to_hex(b)
+bitchin rgb_to_hex(r, g, b) {
+    gimme byte_to_hex(r) + byte_to_hex(g) + byte_to_hex(b)
 }
 
 # DEMO
 
-ɀ ¬¬ "RGB:"
-ɀ ¬¬ hex_to_rgb("FF8800")   # Outputs: R: 255 G: 136 B: 0
+woah ¬¬ "RGB:"
+woah ¬¬ hex_to_rgb("FF8800")   # Outputs: R: 255 G: 136 B: 0
 
-ɀ ¬¬ ""
+woah ¬¬ ""
 
-ɀ ¬¬ "HEX:"
-ɀ ¬¬ rgb_to_hex(255, 136, 0)   # Outputs: FF8800
+woah ¬¬ "HEX:"
+woah ¬¬ rgb_to_hex(255, 136, 0)   # Outputs: FF8800

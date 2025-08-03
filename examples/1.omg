@@ -1,47 +1,47 @@
 ;;;omg
 
 # Define a function
-® greeting(name) {
-    ⋉ "Hello " + name
+bitchin greeting(name) {
+    gimme "Hello " + name
 }
 
 # Call a function and print to stdout
-ɀ ¬¬ greeting("World")
+woah ¬¬ greeting("World")
 
 # Declare some variables
-io x := 5
-io y := 10
-io z := 0
+thingy x := 5
+thingy y := 10
+thingy z := 0
 
-ɀ ¬¬ "x = " + x
-ɀ ¬¬ "y = " + y
+woah ¬¬ "x = " + x
+woah ¬¬ "y = " + y
 
-® add(a, b) {
-    ⋉ a + b
+bitchin add(a, b) {
+    gimme a + b
 }
 
 # Do some arithmetic and format for stdout
-ɀ ¬¬ x + " + " + y + " = " + add(x, y)
-ɀ ¬¬ "(" + x + " + " + y + ") * 10 / 2 = " + (x + y) * 10 / 2
+woah ¬¬ x + " + " + y + " = " + add(x, y)
+woah ¬¬ "(" + x + " + " + y + ") * 10 / 2 = " + (x + y) * 10 / 2
 
 # Reassign
-ɀ ¬¬ "Re-assigning x"
-ɀ ¬¬ "x was " + x
+woah ¬¬ "Re-assigning x"
+woah ¬¬ "x was " + x
 x := 10
-ɀ ¬¬ "x is now " + x
+woah ¬¬ "x is now " + x
 
 
 # Create a loop
-ɀ ¬¬ "Beginning loop:"
-io i := 0
-⊕ i <= 3 {
-    ⨇ i == 3 {
-        ɀ ¬¬ "3 is the magic number."
-    } ∴ i == 2 {
-        ɀ ¬¬ "2 is alright I guess."
-    } ∵ {
-        ɀ ¬¬ i
+woah ¬¬ "Beginning loop:"
+thingy i := 0
+roundabout i <= 3 {
+    maybe i == 3 {
+        woah ¬¬ "3 is the magic number."
+    } oractually i == 2 {
+        woah ¬¬ "2 is alright I guess."
+    } okthen {
+        woah ¬¬ i
     }
     i := i + 1
 }
-ɀ ¬¬ "Finished loop."
+woah ¬¬ "Finished loop."
