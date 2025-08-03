@@ -27,3 +27,41 @@ woah c  # 5
 woah d  # -7
 woah e  # 12
 woah f  # 4
+
+# Flag bitmasks
+thingy FLAG_1 := 0b0001  # 1
+thingy FLAG_2 := 0b0010  # 2
+thingy FLAG_3 := 0b0100  # 4
+thingy FLAG_4 := 0b1000  # 8
+
+# Start with FLAG_1 set
+thingy flags := FLAG_1
+
+woah "Initial flags: " + flags
+
+# Set FLAG_3
+flags := flags | FLAG_3
+woah "After setting FLAG_3: " + flags
+
+# Check if FLAG_3 is set
+maybe flags & FLAG_3 != 0 {
+    woah "FLAG_3 is set"
+}
+
+# Check if FLAG_2 is set
+maybe flags & FLAG_2 != 0 {
+    woah "FLAG_2 is set"
+} okthen {
+    woah "FLAG_2 is not set"
+}
+
+# Toggle FLAG_1 (should unset it)
+flags := flags ^ FLAG_1
+woah "After toggling FLAG_1: " + flags
+
+# Clear FLAG_3 (using bitwise AND with complement)
+flags := flags & ~FLAG_3
+woah "After clearing FLAG_3: " + flags
+
+# Final flag state
+woah "Final flags: " + flags

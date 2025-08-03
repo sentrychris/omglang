@@ -76,7 +76,8 @@ def run_script(script_name: str):
         parser = Parser(tokens, token_map_literals, script_name)
         ast = parser.parse()
 
-        # debug_print_tokens_ast(tokens, ast)
+        if os.environ.get('OMGDEBUG'):
+            debug_print_tokens_ast(tokens, ast)
 
         interpreter.execute(ast)
     except Exception as e:

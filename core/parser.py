@@ -292,7 +292,7 @@ class Parser:
 
     def _comparison(self) -> tuple:
         """
-        Parse a comparison expression (e.g., ==, <, >, <=, >=).
+        Parse a comparison expression (e.g., ==, !=, <, >, <=, >=).
 
         Returns:
             An AST node representing the comparison.
