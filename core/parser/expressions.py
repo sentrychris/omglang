@@ -14,7 +14,11 @@ if TYPE_CHECKING:
 
 
 def parse_factor(parser: 'Parser') -> tuple:
-    """Parse a factor (number, string, variable, or parenthesized expression).
+    """
+    Parse a factor (number, string, variable, or parenthesized expression).
+
+    Args:
+        parser: The parser instance.
 
     Returns:
         tuple: An AST node representing the factor.
@@ -108,7 +112,11 @@ def parse_factor(parser: 'Parser') -> tuple:
 
 
 def parse_term(parser: 'Parser') -> tuple:
-    """Parse a term (factor optionally followed by an operator).
+    """
+    Parse a term (factor optionally followed by an operator).
+
+    Args:
+        parser: The parser instance.
 
     Returns:
         tuple: An AST node representing the term.
@@ -127,10 +135,14 @@ def parse_term(parser: 'Parser') -> tuple:
 
 
 def parse_bitwise_or(parser: 'Parser') -> tuple:
-    """Parse bitwise OR expressions using the '|' operator.
+    """
+    Parse bitwise OR expressions using the '|' operator.
 
     Syntax:
         <left> | <right>
+
+    Args:
+        parser: The parser instance.
 
     Returns:
         tuple: ('or_bits', left_expr, right_expr, line)
@@ -144,10 +156,14 @@ def parse_bitwise_or(parser: 'Parser') -> tuple:
 
 
 def parse_bitwise_xor(parser: 'Parser') -> tuple:
-    """Parse bitwise XOR expressions using the '^' operator.
+    """
+    Parse bitwise XOR expressions using the '^' operator.
 
     Syntax:
         <left> ^ <right>
+
+    Args:
+        parser: The parser instance.
 
     Returns:
         tuple: ('xor_bits', left_expr, right_expr, line)
@@ -161,10 +177,14 @@ def parse_bitwise_xor(parser: 'Parser') -> tuple:
 
 
 def parse_bitwise_and(parser: 'Parser') -> tuple:
-    """Parse bitwise AND expressions using the '&' operator.
+    """
+    Parse bitwise AND expressions using the '&' operator.
 
     Syntax:
         <left> & <right>
+
+    Args:
+        parser: The parser instance.
 
     Returns:
         tuple: ('and_bits', left_expr, right_expr, line)
@@ -178,11 +198,15 @@ def parse_bitwise_and(parser: 'Parser') -> tuple:
 
 
 def parse_shift(parser: 'Parser') -> tuple:
-    """Parse bitwise shift expressions using '<<' or '>>'.
+    """
+    Parse bitwise shift expressions using '<<' or '>>'.
 
     Syntax:
         <left> << <right>
         <left> >> <right>
+
+    Args:
+        parser: The parser instance.
 
     Returns:
         tuple: ('shl' | 'shr', left_expr, right_expr, line)
@@ -200,11 +224,15 @@ def parse_shift(parser: 'Parser') -> tuple:
 
 
 def parse_add_sub(parser: 'Parser') -> tuple:
-    """Parse addition and subtraction expressions.
+    """
+    Parse addition and subtraction expressions.
 
     Syntax:
         <left> + <right>
         <left> - <right>
+
+    Args:
+        parser: The parser instance.
 
     Returns:
         tuple: ('add' | 'sub', left_expr, right_expr, line)
@@ -222,7 +250,11 @@ def parse_add_sub(parser: 'Parser') -> tuple:
 
 
 def parse_expr(parser: 'Parser') -> tuple:
-    """Parse an expression, starting from the highest precedence (bitwise OR).
+    """
+    Parse an expression, starting from the highest precedence (bitwise OR).
+
+    Args:
+        parser: The parser instance.
 
     Returns:
         tuple: The AST node representing the expression.
@@ -231,7 +263,11 @@ def parse_expr(parser: 'Parser') -> tuple:
 
 
 def parse_comparison(parser: 'Parser') -> tuple:
-    """Parse a comparison expression (e.g., ==, !=, <, >, <=, >=).
+    """
+    Parse a comparison expression (e.g., ==, !=, <, >, <=, >=).
+
+    Args:
+        parser: The parser instance.
 
     Returns:
         tuple: An AST node representing the comparison.

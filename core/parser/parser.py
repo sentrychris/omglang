@@ -14,7 +14,8 @@ class Parser:
     """OMGlang parser."""
 
     def __init__(self, tokens: list, token_map_literals: dict[str, str], file: str):
-        """Initialize the parser with a list of tokens.
+        """
+        Initialize the parser with a list of tokens.
 
         Parameters:
             tokens (list): A list of Token instances.
@@ -30,7 +31,8 @@ class Parser:
 
 
     def eat(self, token_type: str) -> None:
-        """Consume the current token if it matches the expected type.
+        """
+        Consume the current token if it matches the expected type.
 
         Parameters:
             token_type (str): The expected token type.
@@ -57,90 +59,132 @@ class Parser:
 
     # Expression wrappers
     def factor(self) -> tuple:
-        """Parse a factor expression such as a literal, variable, or parenthesized group."""
+        """
+        Parse a factor expression such as a literal, variable, or parenthesized group.
+        """
         return _expr.parse_factor(self)
 
     def term(self) -> tuple:
-        """Parse a term in an expression, typically involving multiplication or division."""
+        """
+        Parse a term in an expression, typically involving multiplication or division.
+        """
         return _expr.parse_term(self)
 
     def bitwise_or(self) -> tuple:
-        """Parse a bitwise OR expression."""
+        """
+        Parse a bitwise OR expression.
+        """
         return _expr.parse_bitwise_or(self)
 
     def bitwise_xor(self) -> tuple:
-        """Parse a bitwise XOR expression."""
+        """
+        Parse a bitwise XOR expression.
+        """
         return _expr.parse_bitwise_xor(self)
 
     def bitwise_and(self) -> tuple:
-        """Parse a bitwise AND expression."""
+        """
+        Parse a bitwise AND expression.
+        """
         return _expr.parse_bitwise_and(self)
 
     def shift(self) -> tuple:
-        """Parse a bit-shift expression using left or right shift operators."""
+        """
+        Parse a bit-shift expression using left or right shift operators.
+        """
         return _expr.parse_shift(self)
 
     def add_sub(self) -> tuple:
-        """Parse an addition or subtraction expression."""
+        """
+        Parse an addition or subtraction expression.
+        """
         return _expr.parse_add_sub(self)
 
     def expr(self) -> tuple:
-        """Parse a full expression with arithmetic or logical operations."""
+        """
+        Parse a full expression with arithmetic or logical operations.
+        """
         return _expr.parse_expr(self)
 
     def comparison(self) -> tuple:
-        """Parse a comparison expression using relational operators."""
+        """
+        Parse a comparison expression using relational operators.
+        """
         return _expr.parse_comparison(self)
 
 
     # Statement wrappers
     def block(self) -> tuple:
-        """Parse a block of statements enclosed in delimiters."""
+        """
+        Parse a block of statements enclosed in delimiters.
+        """
         return _stmt.parse_block(self)
 
     def statement(self) -> tuple:
-        """Parse a single statement."""
+        """
+        Parse a single statement.
+        """
         return _stmt.parse_statement(self)
 
     def parse_facts(self) -> tuple:
-        """Parse a 'facts' statement."""
+        """
+        Parse a 'facts' statement.
+        """
         return _stmt.parse_facts(self)
 
     def parse_echo(self) -> tuple:
-        """Parse an 'echo' statement used for output."""
+        """
+        Parse an 'echo' statement used for output.
+        """
         return _stmt.parse_echo(self)
 
     def parse_if(self) -> tuple:
-        """Parse an 'if' conditional statement."""
+        """
+        Parse an 'if' conditional statement.
+        """
         return _stmt.parse_if(self)
 
     def parse_while(self) -> tuple:
-        """Parse a 'while' loop statement."""
+        """
+        Parse a 'while' loop statement.
+        """
         return _stmt.parse_while(self)
 
     def parse_break(self) -> tuple:
-        """Parse a 'break' statement for loop termination."""
+        """
+        Parse a 'break' statement for loop termination.
+        """
         return _stmt.parse_break(self)
 
     def parse_func_def(self) -> tuple:
-        """Parse a function definition statement."""
+        """
+        Parse a function definition statement.
+        """
         return _stmt.parse_func_def(self)
 
     def parse_return(self) -> tuple:
-        """Parse a 'return' statement from within a function."""
+        """
+        Parse a 'return' statement from within a function.
+        """
         return _stmt.parse_return(self)
 
     def parse_reassignment(self) -> tuple:
-        """Parse a variable reassignment statement."""
+        """
+        Parse a variable reassignment statement.
+        """
         return _stmt.parse_reassignment(self)
 
     def parse_assignment(self) -> tuple:
-        """Parse a new variable assignment statement."""
+        """
+        Parse a new variable assignment statement.
+        """
         return _stmt.parse_assignment(self)
 
 
     def parse(self):
-        """Parse the full input into a list of statements."""
+        """
+        Parse the full input into a list of statements.
+        """
         statements = []
         while self.curr_token.type != 'EOF':
             while self.curr_token.type == 'NEWLINE':

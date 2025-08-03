@@ -13,10 +13,14 @@ if TYPE_CHECKING:
 
 
 def parse_block(parser: 'Parser') -> tuple:
-    """Parse a block of statements enclosed in braces.
+    """
+    Parse a block of statements enclosed in braces.
+
+    Args:
+        parser: The parser instance.
 
     Returns:
-        tuple: A ('block', list_of_statements, line_number) AST node.
+        tuple: ('block', list_of_statements, line_number)
     """
     tok = parser.curr_token
     parser.eat('LBRACE')
@@ -32,13 +36,14 @@ def parse_block(parser: 'Parser') -> tuple:
 
 
 def parse_statement(parser: 'Parser') -> tuple:
-    """Parse a single statement.
+    """
+    Parse a single statement.
+
+    Args:
+        parser: The parser instance.
 
     Returns:
-        tuple: A tuple representing the statement AST node.
-
-    Raises:
-        SyntaxError: If the syntax is invalid or unexpected.
+        tuple: tuple: representing the AST node.
     """
     tok = parser.curr_token
     if tok.type == "FACTS":
@@ -74,16 +79,17 @@ def parse_statement(parser: 'Parser') -> tuple:
 
 
 def parse_facts(parser: 'Parser') -> tuple:
-    """Parse a 'facts' statement.
+    """
+    Parse a 'facts' statement.
 
     Syntax:
         facts <expression>
 
-    Returns:
-        tuple: ('facts', expression_node, line_number)
+    Args:
+        parser: The parser instance.
 
-    Raises:
-        SyntaxError: If the expression is malformed.
+    Returns:
+        tuple: tuple: representing the AST node.
     """
     tok = parser.curr_token
     parser.eat("FACTS")
@@ -92,16 +98,17 @@ def parse_facts(parser: 'Parser') -> tuple:
 
 
 def parse_echo(parser: 'Parser') -> tuple:
-    """Parse a 'emit' (echo) statement.
+    """
+    Parse an 'emit' (echo) statement.
 
     Syntax:
         emit <expression>
 
+    Args:
+        parser: The parser instance.
+
     Returns:
         tuple: ('emit', expression_node, line_number)
-
-    Raises:
-        SyntaxError: If the expression is malformed.
     """
     tok = parser.curr_token
     parser.eat("ECHO")
@@ -110,7 +117,15 @@ def parse_echo(parser: 'Parser') -> tuple:
 
 
 def parse_if(parser: 'Parser') -> tuple:
-    """Parse a conditional 'if' statement with optional elif and else blocks."""
+    """
+    Parse a conditional 'if' statement with optional elif and else blocks.
+
+    Args:
+        parser: The parser instance.
+
+    Returns:
+        tuple: tuple: representing the AST node.
+    """
     tok = parser.curr_token
     parser.eat("IF")
     condition = parser.comparison()
@@ -137,7 +152,12 @@ def parse_if(parser: 'Parser') -> tuple:
 
 
 def parse_while(parser: 'Parser') -> tuple:
-    """Parse a 'loop' (while) loop."""
+    """
+    Parse a 'loop' (while) loop.
+
+    Returns:
+        tuple: representing the AST node.
+    """
     tok = parser.curr_token
     parser.eat('WHILE')
     condition = parser.comparison()
@@ -146,14 +166,30 @@ def parse_while(parser: 'Parser') -> tuple:
 
 
 def parse_break(parser: 'Parser') -> tuple:
-    """Parse a 'break' control statement."""
+    """
+    Parse a 'break' control statement.
+
+    Args:
+        parser: The parser instance.
+
+    Returns:
+        tuple: representing the AST node.
+    """
     tok = parser.curr_token
     parser.eat("BREAK")
     return ("break", tok.line)
 
 
 def parse_func_def(parser: 'Parser') -> tuple:
-    """Parse a function definition."""
+    """
+    Parse a function definition.
+    
+    Args:
+        parser: The parser instance.
+
+    Returns:
+        tuple: representing the AST node.
+    """
     start_tok = parser.curr_token
     parser.eat('FUNC')
     func_name = parser.curr_token.value
@@ -173,7 +209,15 @@ def parse_func_def(parser: 'Parser') -> tuple:
 
 
 def parse_return(parser: 'Parser') -> tuple:
-    """Parse a 'return' statement."""
+    """
+    Parse a 'return' statement.
+
+    Args:
+        parser: The parser instance.
+
+    Returns:
+        tuple: representing the AST node.
+    """
     tok = parser.curr_token
     parser.eat("RETURN")
     expr_node = parser.expr()
@@ -181,7 +225,15 @@ def parse_return(parser: 'Parser') -> tuple:
 
 
 def parse_reassignment(parser: 'Parser') -> tuple:
-    """Parse reassignment of an existing variable."""
+    """
+    Parse reassignment of an existing variable.
+    
+    Args:
+        parser: The parser instance.
+
+    Returns:
+        tuple: representing the AST node.
+    """
     id_tok = parser.curr_token
     parser.eat('ID')
     parser.eat('ASSIGN')
@@ -190,7 +242,15 @@ def parse_reassignment(parser: 'Parser') -> tuple:
 
 
 def parse_assignment(parser: 'Parser') -> tuple:
-    """Parse a 'alloc' variable assignment."""
+    """
+    Parse an 'alloc' variable assignment.
+    
+    Args:
+        parser: The parser instance.
+
+    Returns:
+        tuple: representing the AST node.
+    """
     parser.eat('ALLOC')
     id_tok = parser.curr_token
     if id_tok.type != 'ID':
