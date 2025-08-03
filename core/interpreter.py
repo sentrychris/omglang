@@ -23,8 +23,8 @@ types (`UndefinedVariableError`, `UnknownOperationError`) are raised on invalid 
 
 4. Control Flow
 Control constructs include:
-- `maybe`/'okthen' (if/else): executes conditional blocks based on boolean evaluation.
-- `roundabout` (while): repeatedly evaluates a block while a condition holds.
+- `⨇`/'∵' (if/else): executes conditional blocks based on boolean evaluation.
+- `⊕` (while): repeatedly evaluates a block while a condition holds.
 - `block`: executes a nested sequence of statements.
 
 5. Header Validation
@@ -91,7 +91,7 @@ class Interpreter:
 
         Parameters:
             node (tuple): An expression node, structured as a tuple.
-                        The first element is the operation type (e.g., 'add', 'thingy'),
+                        The first element is the operation type (e.g., 'add', 'io'),
                         followed by operands and the line number for error reporting.
 
         Returns:
@@ -118,7 +118,7 @@ class Interpreter:
                 return [self.eval_expr(elem) for elem in elements]
 
             # Variables
-            elif op == 'thingy':
+            elif op == 'io':
                 varname = node[1]
                 if varname in self.vars:
                     return self.vars[varname]
@@ -231,7 +231,7 @@ class Interpreter:
                         )
                     return chr(args[0])
 
-                if func_name == 'length':
+                if func_name == 'll':
                     if len(args) != 1:
                         raise TypeError(
                             f"length() expects one argument on line {line} in {self.file}"
@@ -281,7 +281,7 @@ class Interpreter:
 
         Parameters:
             statements (list):
-                A list of ('assign' | 'woah' | 'maybe' | 'block' | 'roundabout', ...) tuples.
+                A list of ('assign' | 'ɀ' | '⨇' | 'block' | '⊕', ...) tuples.
 
         Raises:
             Exception: For unknown statement types.
@@ -297,7 +297,7 @@ class Interpreter:
                 self.vars[var_name] = value
 
 
-            elif kind == 'woah':
+            elif kind == 'ɀ':
                 _, expr_node, _ = stmt
                 value = self.eval_expr(expr_node)
                 print(value)
@@ -309,7 +309,7 @@ class Interpreter:
                 assert value
 
 
-            elif kind == 'maybe':
+            elif kind == '⨇':
                 _, cond_node, then_block, else_block, _ = stmt
                 if self.eval_expr(cond_node):
                     self.execute([then_block])
@@ -322,7 +322,7 @@ class Interpreter:
                 self.execute(block_statements)
 
 
-            elif kind == 'roundabout':
+            elif kind == '⊕':
                 _, cond_node, block_node, _ = stmt
                 while self.eval_expr(cond_node):
                     self.execute([block_node])

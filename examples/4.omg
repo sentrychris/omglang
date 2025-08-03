@@ -1,81 +1,81 @@
 ;;;omg
 
 # Complex control flow structure
-thingy x := 5
-maybe x == 4 {
-    woah ¬¬ "x is 4"
-} oractually x == 5 {
-    woah ¬¬ "x is 5"
-} oractually x == 6 {
-    woah ¬¬ "x is 6"
-} okthen {
-    woah ¬¬ "x is something else"
+io x := 5
+⨇ x == 4 {
+    ɀ ¬¬ "x is 4"
+} ∴ x == 5 {
+    ɀ ¬¬ "x is 5"
+} ∴ x == 6 {
+    ɀ ¬¬ "x is 6"
+} ∵ {
+    ɀ ¬¬ "x is something else"
 }
 
 # Primality check using trial division
-bitchin is_prime(n) {
-    maybe n <= 1 {
-        gimme 0
+® is_prime(n) {
+    ⨇ n <= 1 {
+        ⋉ 0
     }
-    thingy i := 2
-    roundabout i * i <= n {
-        maybe n % i == 0 {
-            gimme 0
+    io i := 2
+    ⊕ i * i <= n {
+        ⨇ n % i == 0 {
+            ⋉ 0
         }
         i := i + 1
     }
-    gimme 1
+    ⋉ 1
 }
 
 # Digit sum of a number
-bitchin digit_sum(n) {
-    thingy sum := 0
-    thingy temp := n
-    roundabout temp > 0 {
+® digit_sum(n) {
+    io sum := 0
+    io temp := n
+    ⊕ temp > 0 {
         sum := sum + (temp % 10)
         temp := temp / 10
     }
-    gimme sum
+    ⋉ sum
 }
 
 # Primality, odd/even, and digit sum
-bitchin classify_number(n) {
-    thingy isprime := is_prime(n)
-    thingy dsum := digit_sum(n)
+® classify_number(n) {
+    io isprime := is_prime(n)
+    io dsum := digit_sum(n)
 
-    maybe isprime == 1 {
-        gimme "is prime, sum of digits is " + dsum
-    } oractually n % 2 == 0 {
-        gimme "is even, sum of digits is " + dsum
-    } okthen {
-        gimme "is odd, sum of digits is " + dsum
+    ⨇ isprime == 1 {
+        ⋉ "is prime, sum of digits is " + dsum
+    } ∴ n % 2 == 0 {
+        ⋉ "is even, sum of digits is " + dsum
+    } ∵ {
+        ⋉ "is odd, sum of digits is " + dsum
     }
 }
 
 # Deep recursive Fibonacci function
-bitchin fibonacci(n) {
-    maybe n <= 1 {
-        gimme n
-    } okthen {
-        gimme fibonacci(n - 1) + fibonacci(n - 2)
+® fibonacci(n) {
+    ⨇ n <= 1 {
+        ⋉ n
+    } ∵ {
+        ⋉ fibonacci(n - 1) + fibonacci(n - 2)
     }
 }
 
 # Loop over numbers and rate them, including Fibonacci calculation
-thingy idx := 10
-thingy max := 20
-thingy fnum := 2
+io idx := 10
+io max := 20
+io fnum := 2
 
-roundabout idx <= max {
-    woah ¬¬ "Classified number " + idx + " " + classify_number(idx)
-    woah ¬¬ "Fibonacci sequence[" + fnum + "] = " + fibonacci(fnum)
+⊕ idx <= max {
+    ɀ ¬¬ "Classified number " + idx + " " + classify_number(idx)
+    ɀ ¬¬ "Fibonacci sequence[" + fnum + "] = " + fibonacci(fnum)
     idx := idx + 1
     fnum := fnum + 2
 }
 
 # Assert primality of 97 for validation
 facts is_prime(97)
-woah ¬¬ "hell yeah"
+ɀ ¬¬ "hell yeah"
 # Will throw an AssertionFailure as expected
-woah ¬¬ "96 is not prime"
+ɀ ¬¬ "96 is not prime"
 facts is_prime(96)

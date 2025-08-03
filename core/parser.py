@@ -152,7 +152,7 @@ class Parser:
                     return ('index', id_tok.value, start_expr, id_tok.line)
 
             else:
-                return ('thingy', id_tok.value, id_tok.line)
+                return ('io', id_tok.value, id_tok.line)
 
         elif tok.type == 'LPAREN':
             self._eat('LPAREN')
@@ -335,7 +335,7 @@ class Parser:
 
     def _statement(self) -> tuple:
         """
-        Parse a single statement (woah, thingy assignment, maybe, or while).
+        Parse a single statement (ɀ, io assignment, ⨇, or while).
 
         Returns:
             A tuple representing the statement AST node.
@@ -354,7 +354,7 @@ class Parser:
             return self._parse_while()
         elif tok.type == 'FUNC':
             return self._parse_func_def()
-        elif tok.type == 'THINGY':
+        elif tok.type == 'IO':
             return self._parse_assignment()
         elif tok.type == 'ID':
             if (self._position + 1 < len(self._tokens)
@@ -391,13 +391,13 @@ class Parser:
 
     def _parse_echo(self) -> tuple:
         """
-        Parse a 'woah' (echo) statement.
+        Parse a 'ɀ' (echo) statement.
 
         Syntax:
-            woah ¬¬ <expression>
+            ɀ ¬¬ <expression>
 
         Returns:
-            tuple: ('woah', expression_node, line_number)
+            tuple: ('ɀ', expression_node, line_number)
 
         Raises:
             SyntaxError: If the expression is malformed.
@@ -407,22 +407,22 @@ class Parser:
         self._eat("CHAIN")
         expr_node = self._expr()
 
-        return ("woah", expr_node, tok.line)
+        return ("ɀ", expr_node, tok.line)
 
 
     def _parse_if(self) -> tuple:
         """
-        Parse a conditional 'maybe' (if/else) statement.
+        Parse a conditional '⨇' (if/else) statement.
 
         Syntax:
-            maybe <condition> {
+            ⨇ <condition> {
                 ...
-            } okthen {
+            } ∵ {
                 ...
             }
 
         Returns:
-            tuple: ('maybe', condition_expr, then_block, else_block_or_None, line_number)
+            tuple: ('⨇', condition_expr, then_block, else_block_or_None, line_number)
 
         Raises:
             SyntaxError: If condition or blocks are malformed.
@@ -447,22 +447,22 @@ class Parser:
         tail = else_block
         for cond_node, block_node in reversed(elif_cases):
             cond_line = cond_node[-1] if isinstance(cond_node, tuple) else tok.line
-            tail = ('maybe', cond_node, block_node, tail, cond_line)
+            tail = ('⨇', cond_node, block_node, tail, cond_line)
 
-        return ('maybe', condition, then_block, tail, tok.line)
+        return ('⨇', condition, then_block, tail, tok.line)
 
 
     def _parse_while(self) -> tuple:
         """
-        Parse a 'roundabout' (while) loop.
+        Parse a '⊕' (while) loop.
 
         Syntax:
-            roundabout <condition> {
+            ⊕ <condition> {
                 ...
             }
 
         Returns:
-            tuple: ('roundabout', condition_expr, block_node, line_number)
+            tuple: ('⊕', condition_expr, block_node, line_number)
 
         Raises:
             SyntaxError: If the condition or block is invalid.
@@ -471,7 +471,7 @@ class Parser:
         self._eat('WHILE')
         condition = self._comparison()
         body = self._block()
-        return ('roundabout', condition, body, tok.line)
+        return ('⊕', condition, body, tok.line)
 
 
     def _parse_func_def(self) -> tuple:
@@ -479,7 +479,7 @@ class Parser:
         Parse a function definition.
 
         Syntax:
-            bitchin <name>(<param1>, <param2>, ...) {
+            ® <name>(<param1>, <param2>, ...) {
                 ...
             }
 
@@ -543,10 +543,10 @@ class Parser:
 
     def _parse_return(self) -> tuple:
         """
-        Parse a 'gimme' return statement.
+        Parse a '⋉' return statement.
 
         Syntax:
-            gimme <expression>
+            ⋉ <expression>
 
         Returns:
             tuple: ('return', expression_node, line_number)
@@ -575,10 +575,10 @@ class Parser:
 
     def _parse_assignment(self) -> tuple:
         """
-        Parse a 'thingy' variable assignment.
+        Parse a 'io' variable assignment.
 
         Syntax:
-            thingy <name> := <expression>
+            io <name> := <expression>
 
         Returns:
             tuple: ('assign', var_name, expr_node, line_number)
@@ -586,11 +586,11 @@ class Parser:
         Raises:
             SyntaxError: If the variable name, ':=' operator, or expression is missing or invalid.
         """
-        self._eat('THINGY')
+        self._eat('IO')
         id_tok = self._current_token
         if id_tok.type != 'ID':
             raise SyntaxError(
-                f"Expected identifier after 'thingy' "
+                f"Expected identifier after 'io' "
                 f"on line {id_tok.line} "
                 f"in {self._source_file}"
             )

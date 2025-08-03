@@ -3,65 +3,65 @@
 # Demonstrate bitwise operations
 
 # Bitwise AND: 6 & 3 = 2
-thingy a := 6 & 3
+io a := 6 & 3
 
 # Bitwise OR: 6 | 3 = 7
-thingy b := 6 | 3
+io b := 6 | 3
 
 # Bitwise XOR: 6 ^ 3 = 5
-thingy c := 6 ^ 3
+io c := 6 ^ 3
 
 # Bitwise NOT: ~6 = -7
-thingy d := ~6
+io d := ~6
 
 # Bit shift left: 3 << 2 = 12
-thingy e := 3 << 2
+io e := 3 << 2
 
 # Bit shift right: 8 >> 1 = 4
-thingy f := 8 >> 1
+io f := 8 >> 1
 
 # Output the results
-woah ¬¬ a  # 2
-woah ¬¬ b  # 7
-woah ¬¬ c  # 5
-woah ¬¬ d  # -7
-woah ¬¬ e  # 12
-woah ¬¬ f  # 4
+ɀ ¬¬ a  # 2
+ɀ ¬¬ b  # 7
+ɀ ¬¬ c  # 5
+ɀ ¬¬ d  # -7
+ɀ ¬¬ e  # 12
+ɀ ¬¬ f  # 4
 
 # Flag bitmasks
-thingy FLAG_1 := 0b0001  # 1
-thingy FLAG_2 := 0b0010  # 2
-thingy FLAG_3 := 0b0100  # 4
-thingy FLAG_4 := 0b1000  # 8
+io FLAG_1 := 0b0001  # 1
+io FLAG_2 := 0b0010  # 2
+io FLAG_3 := 0b0100  # 4
+io FLAG_4 := 0b1000  # 8
 
 # Start with FLAG_1 set
-thingy flags := FLAG_1
+io flags := FLAG_1
 
-woah ¬¬ "Initial flags: " + flags
+ɀ ¬¬ "Initial flags: " + flags
 
 # Set FLAG_3
 flags := flags | FLAG_3
-woah ¬¬ "After setting FLAG_3: " + flags
+ɀ ¬¬ "After setting FLAG_3: " + flags
 
 # Check if FLAG_3 is set
-maybe flags & FLAG_3 != 0 {
-    woah ¬¬ "FLAG_3 is set"
+⨇ flags & FLAG_3 != 0 {
+    ɀ ¬¬ "FLAG_3 is set"
 }
 
 # Check if FLAG_2 is set
-maybe flags & FLAG_2 != 0 {
-    woah ¬¬ "FLAG_2 is set"
-} okthen {
-    woah ¬¬ "FLAG_2 is not set"
+⨇ flags & FLAG_2 != 0 {
+    ɀ ¬¬ "FLAG_2 is set"
+} ∵ {
+    ɀ ¬¬ "FLAG_2 is not set"
 }
 
 # Toggle FLAG_1 (should unset it)
 flags := flags ^ FLAG_1
-woah ¬¬ "After toggling FLAG_1: " + flags
+ɀ ¬¬ "After toggling FLAG_1: " + flags
 
 # Clear FLAG_3 (using bitwise AND with complement)
 flags := flags & ~FLAG_3
-woah ¬¬ "After clearing FLAG_3: " + flags
+ɀ ¬¬ "After clearing FLAG_3: " + flags
 
 # Final flag state
-woah ¬¬ "Final flags: " + flags
+ɀ ¬¬ "Final flags: " + flags

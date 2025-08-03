@@ -1,76 +1,76 @@
 ;;;omg
 
 # Generate alphabet
-bitchin alphabet() {
-    thingy i := 0
-    thingy result := []
-    roundabout i < 26 {
+® alphabet() {
+    io i := 0
+    io result := []
+    ⊕ i < 26 {
         result := result + [chr(65 + i)]
         i := i + 1
     }
-    gimme result
+    ⋉ result
 }
 
 # Shift the list by n positions
-bitchin shift(a_list, n) {
-    thingy i := 0
-    thingy result := []
-    thingy len := length(a_list)
-    roundabout i < len {
-        thingy shifted := a_list[(i + n) % len]
+® shift(a_list, n) {
+    io i := 0
+    io result := []
+    io len := length(a_list)
+    ⊕ i < len {
+        io shifted := a_list[(i + n) % len]
         result := result + [shifted]
         i := i + 1
     }
-    gimme result
+    ⋉ result
 }
 
 # Generate Tabula Recta (list of 26 shifted alphabets)
-bitchin tabula_recta() {
-    thingy i := 0
-    thingy base := alphabet()
-    thingy result := []
-    roundabout i < 26 {
+® tabula_recta() {
+    io i := 0
+    io base := alphabet()
+    io result := []
+    ⊕ i < 26 {
         result := result + [shift(base, i)]
         i := i + 1
     }
-    gimme result
+    ⋉ result
 }
 
 # Perform ROT-13 using tabula recta and return joined string
-bitchin rot13(input) {
-    thingy base := alphabet()
-    thingy table := tabula_recta()
-    thingy i := 0
-    thingy result := ""  # use string instead of list
-    roundabout i < length(input) {
-        thingy c := input[i]
-        thingy j := 0
-        thingy found := false
-        thingy index := 0
+® rot13(input) {
+    io base := alphabet()
+    io table := tabula_recta()
+    io i := 0
+    io result := ""  # use string instead of list
+    ⊕ i < length(input) {
+        io c := input[i]
+        io j := 0
+        io found := false
+        io index := 0
 
-        roundabout j < length(base) {
-            maybe base[j] == c {
+        ⊕ j < length(base) {
+            ⨇ base[j] == c {
                 found := true
                 index := j
                 j := length(base)
-            } okthen {
+            } ∵ {
                 j := j + 1
             }
         }
 
-        maybe found {
-            thingy rot := table[13]
+        ⨇ found {
+            io rot := table[13]
             result := result + rot[index]
-        } okthen {
+        } ∵ {
             result := result + c
         }
 
         i := i + 1
     }
-    gimme result
+    ⋉ result
 }
 
 # Entry point
-thingy message := ["H", "E", "L", "L", "O"]
-thingy encoded := rot13(message)
-woah ¬¬ encoded
+io message := ["H", "E", "L", "L", "O"]
+io encoded := rot13(message)
+ɀ ¬¬ encoded
