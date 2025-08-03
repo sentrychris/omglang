@@ -65,6 +65,7 @@ def tokenize(code) -> tuple[list[Token], dict[str, str]]:
 
     token_specification: list[Token] = [
         # Literals
+        ('BINARY',    r'0b[01]+'),
         ('NUMBER',    r'\d+'),
         ('STRING',    r'"([^"\\]|\\.)*"'),
         ('TRUE',      r'\btrue\b'),
@@ -164,7 +165,10 @@ def tokenize(code) -> tuple[list[Token], dict[str, str]]:
         if kind == 'MISMATCH':
             raise RuntimeError(f'Unexpected character {value} on line {line_num}')
 
-        if kind == 'NUMBER':
+        elif kind == 'BINARY':
+            value = int(value, 2)
+            tokens.append(Token('NUMBER', value, line_num))
+        elif kind == 'NUMBER':
             tokens.append(Token('NUMBER', int(value), line_num))
         elif kind == 'STRING':
             value = value[1:-1]
