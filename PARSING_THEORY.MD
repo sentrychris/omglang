@@ -14,7 +14,7 @@ def factor(self):
 Handles:
 
 * **Literals**: numbers, strings
-* **Variables**: identifiers (`thingy`)
+* **Variables**: identifiers (`alloc`)
 * **Function calls**: if followed by `(`
 * **Parenthesized expressions**: grouped expressions `( ... )`
 
@@ -93,7 +93,7 @@ def statement(self):
 
 Handles:
 
-* Variable declarations (`thingy`)
+* Variable declarations (`alloc`)
 * Output (`woah`)
 * Control flow (`maybe`, `roundabout`)
 * Function definitions

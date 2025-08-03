@@ -152,7 +152,7 @@ class Parser:
                     return ('index', id_tok.value, start_expr, id_tok.line)
 
             else:
-                return ('thingy', id_tok.value, id_tok.line)
+                return ('alloc', id_tok.value, id_tok.line)
 
         elif tok.type == 'LPAREN':
             self._eat('LPAREN')
@@ -335,7 +335,7 @@ class Parser:
 
     def _statement(self) -> tuple:
         """
-        Parse a single statement (woah, thingy assignment, maybe, or while).
+        Parse a single statement (woah, alloc assignment, maybe, or while).
 
         Returns:
             A tuple representing the statement AST node.
@@ -354,7 +354,7 @@ class Parser:
             return self._parse_while()
         elif tok.type == 'FUNC':
             return self._parse_func_def()
-        elif tok.type == 'THINGY':
+        elif tok.type == 'ALLOC':
             return self._parse_assignment()
         elif tok.type == 'ID':
             if (self._position + 1 < len(self._tokens)
@@ -575,10 +575,10 @@ class Parser:
 
     def _parse_assignment(self) -> tuple:
         """
-        Parse a 'thingy' variable assignment.
+        Parse a 'alloc' variable assignment.
 
         Syntax:
-            thingy <name> := <expression>
+            alloc <name> := <expression>
 
         Returns:
             tuple: ('assign', var_name, expr_node, line_number)
@@ -586,11 +586,11 @@ class Parser:
         Raises:
             SyntaxError: If the variable name, ':=' operator, or expression is missing or invalid.
         """
-        self._eat('THINGY')
+        self._eat('ALLOC')
         id_tok = self._current_token
         if id_tok.type != 'ID':
             raise SyntaxError(
-                f"Expected identifier after 'thingy' "
+                f"Expected identifier after 'alloc' "
                 f"on line {id_tok.line} "
                 f"in {self._source_file}"
             )

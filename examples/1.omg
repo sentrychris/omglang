@@ -9,9 +9,9 @@ bitchin greeting(name) {
 woah ¬¬ greeting("World")
 
 # Declare some variables
-thingy x := 5
-thingy y := 10
-thingy z := 0
+alloc x := 5
+alloc y := 10
+alloc z := 0
 
 woah ¬¬ "x = " + x
 woah ¬¬ "y = " + y
@@ -33,7 +33,7 @@ woah ¬¬ "x is now " + x
 
 # Create a loop
 woah ¬¬ "Beginning loop:"
-thingy i := 0
+alloc i := 0
 roundabout i <= 3 {
     maybe i == 3 {
         woah ¬¬ "3 is the magic number."

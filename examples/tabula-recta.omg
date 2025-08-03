@@ -2,8 +2,8 @@
 
 # Generate alphabet
 bitchin alphabet() {
-    thingy i := 0
-    thingy result := []
+    alloc i := 0
+    alloc result := []
     roundabout i < 26 {
         result := result + [chr(65 + i)]
         i := i + 1
@@ -13,11 +13,11 @@ bitchin alphabet() {
 
 # Shift the list by n positions
 bitchin shift(a_list, n) {
-    thingy i := 0
-    thingy result := []
-    thingy len := length(a_list)
+    alloc i := 0
+    alloc result := []
+    alloc len := length(a_list)
     roundabout i < len {
-        thingy shifted := a_list[(i + n) % len]
+        alloc shifted := a_list[(i + n) % len]
         result := result + [shifted]
         i := i + 1
     }
@@ -26,9 +26,9 @@ bitchin shift(a_list, n) {
 
 # Generate Tabula Recta (list of 26 shifted alphabets)
 bitchin tabula_recta() {
-    thingy i := 0
-    thingy base := alphabet()
-    thingy result := []
+    alloc i := 0
+    alloc base := alphabet()
+    alloc result := []
     roundabout i < 26 {
         result := result + [shift(base, i)]
         i := i + 1
@@ -37,8 +37,8 @@ bitchin tabula_recta() {
 }
 
 # Entry point
-thingy table := tabula_recta()
-thingy i := 0
+alloc table := tabula_recta()
+alloc i := 0
 roundabout i < length(table) {
     woah ¬¬ table[i]
     i := i + 1

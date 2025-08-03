@@ -1,11 +1,11 @@
 ;;;omg
 
 # Character lookup for hex digits
-thingy HEXCHARS := "0123456789ABCDEF"
+alloc HEXCHARS := "0123456789ABCDEF"
 
 # Convert a single hex digit to decimal
 bitchin hex_char_to_int(ch) {
-    thingy i := 0
+    alloc i := 0
     roundabout i < 16 {
         maybe HEXCHARS[i] == ch {
             gimme i
@@ -17,16 +17,16 @@ bitchin hex_char_to_int(ch) {
 
 # Convert two hex characters to a decimal byte
 bitchin hex_to_byte(pair) {
-    thingy high := hex_char_to_int(pair[0])
-    thingy low := hex_char_to_int(pair[1])
+    alloc high := hex_char_to_int(pair[0])
+    alloc low := hex_char_to_int(pair[1])
     gimme high * 16 + low
 }
 
 # Convert full hex string to RGB
 bitchin hex_to_rgb(hexstr) {
-    thingy r := hex_to_byte(hexstr[0:2])
-    thingy g := hex_to_byte(hexstr[2:4])
-    thingy b := hex_to_byte(hexstr[4:6])
+    alloc r := hex_to_byte(hexstr[0:2])
+    alloc g := hex_to_byte(hexstr[2:4])
+    alloc b := hex_to_byte(hexstr[4:6])
     gimme "R: " + r + " G: " + g + " B: " + b
 }
 
@@ -37,8 +37,8 @@ bitchin nibble_to_hex(n) {
 
 # Convert a byte (0–255) to two hex characters
 bitchin byte_to_hex(n) {
-    thingy hi := n / 16
-    thingy lo := n % 16
+    alloc hi := n / 16
+    alloc lo := n % 16
     gimme nibble_to_hex(hi) + nibble_to_hex(lo)
 }
 

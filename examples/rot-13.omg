@@ -2,8 +2,8 @@
 
 # Generate alphabet
 bitchin alphabet() {
-    thingy i := 0
-    thingy result := []
+    alloc i := 0
+    alloc result := []
     roundabout i < 26 {
         result := result + [chr(65 + i)]
         i := i + 1
@@ -13,11 +13,11 @@ bitchin alphabet() {
 
 # Shift the list by n positions
 bitchin shift(a_list, n) {
-    thingy i := 0
-    thingy result := []
-    thingy len := length(a_list)
+    alloc i := 0
+    alloc result := []
+    alloc len := length(a_list)
     roundabout i < len {
-        thingy shifted := a_list[(i + n) % len]
+        alloc shifted := a_list[(i + n) % len]
         result := result + [shifted]
         i := i + 1
     }
@@ -26,9 +26,9 @@ bitchin shift(a_list, n) {
 
 # Generate Tabula Recta (list of 26 shifted alphabets)
 bitchin tabula_recta() {
-    thingy i := 0
-    thingy base := alphabet()
-    thingy result := []
+    alloc i := 0
+    alloc base := alphabet()
+    alloc result := []
     roundabout i < 26 {
         result := result + [shift(base, i)]
         i := i + 1
@@ -38,15 +38,15 @@ bitchin tabula_recta() {
 
 # Perform ROT-13 using tabula recta and return joined string
 bitchin rot13(input) {
-    thingy base := alphabet()
-    thingy table := tabula_recta()
-    thingy i := 0
-    thingy result := ""  # use string instead of list
+    alloc base := alphabet()
+    alloc table := tabula_recta()
+    alloc i := 0
+    alloc result := ""  # use string instead of list
     roundabout i < length(input) {
-        thingy c := input[i]
-        thingy j := 0
-        thingy found := false
-        thingy index := 0
+        alloc c := input[i]
+        alloc j := 0
+        alloc found := false
+        alloc index := 0
 
         roundabout j < length(base) {
             maybe base[j] == c {
@@ -59,7 +59,7 @@ bitchin rot13(input) {
         }
 
         maybe found {
-            thingy rot := table[13]
+            alloc rot := table[13]
             result := result + rot[index]
         } okthen {
             result := result + c
@@ -71,6 +71,6 @@ bitchin rot13(input) {
 }
 
 # Entry point
-thingy message := ["H", "E", "L", "L", "O"]
-thingy encoded := rot13(message)
+alloc message := ["H", "E", "L", "L", "O"]
+alloc encoded := rot13(message)
 woah ¬¬ encoded

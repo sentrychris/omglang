@@ -16,7 +16,7 @@
 
 ## Overview
 
-The language uses playful keywords like `thingy`, `woah`, `maybe` and `roundabout`, but it's grounded in a well‑defined grammar. All scripts must start with a header line `;;;omg`. Execution proceeds through three stages:
+The language uses playful keywords like `alloc`, `woah`, `maybe` and `roundabout`, but it's grounded in a well‑defined grammar. All scripts must start with a header line `;;;omg`. Execution proceeds through three stages:
 
 1. **Lexing** – convert raw source code into tokens.
 2. **Parsing** – build an Abstract Syntax Tree (AST) from tokens.
@@ -66,7 +66,7 @@ py ./omg.py <script>.omg
 Running `omg` with no arguments launches an interactive session. This REPL lets you experiment with the language one statement or block at a time. For example:
 
 ```plaintext
->>> thingy x := 5
+>>> alloc x := 5
 >>> woah ¬¬ x
 5
 >>> maybe x < 10 {
@@ -84,7 +84,7 @@ If you start a block and do not close it, the prompt switches to `...` and the i
 
 The lexer scans the raw text and splits it into a stream of tokens. Each token has a type, value and line number. Token types include:
 
-* **Keywords**: `thingy`, `woah`, `bitchin`, `maybe`, `oractually`, `okthen`, `roundabout`.
+* **Keywords**: `alloc`, `woah`, `bitchin`, `maybe`, `oractually`, `okthen`, `roundabout`.
 * **Operators**:
     * Arithmetic: `+`, `-`, `*`, `/`, `%`
     * Comparison: `==`, `!=`, `<`, `>`, `<=`, `>=`
@@ -152,7 +152,7 @@ Each AST node is represented as a tuple encoding the operation, its operands and
 
 The interpreter walks the AST and evaluates expressions or executes statements. It maintains:
 
-* A **variable environment** (`vars`) for storing values bound by `thingy` declarations.
+* A **variable environment** (`vars`) for storing values bound by `alloc` declarations.
 * A **function environment** (`functions`) for storing user‑defined functions.
 
 ### Expression Evaluation
@@ -163,7 +163,7 @@ Handled by `eval_expr(node)`: literals return their value; variables are looked 
 
 Handled by `execute(statements)`. Supported statements include:
 
-* **thingy** – evaluate an expression and store it in the variable environment.
+* **alloc** – evaluate an expression and store it in the variable environment.
 
 * **woah** – evaluate an expression and print the result.
 
@@ -193,9 +193,9 @@ bitchin greeting(name) {
 woah ¬¬ greeting("World")
 
 # Declare some variables
-thingy x := 5
-thingy y := 10
-thingy z := 0
+alloc x := 5
+alloc y := 10
+alloc z := 0
 
 woah ¬¬ "x = " + x
 woah ¬¬ "y = " + y
@@ -210,7 +210,7 @@ woah ¬¬ "(" + x + " + " + y + ") * 10 / 2 = " + (x + y) * 10 / 2
 
 # Create a loop
 woah ¬¬ "Beginning loop:"
-thingy i := 0
+alloc i := 0
 roundabout i <= 3 {
     maybe i == 3 {
         woah ¬¬ "3 is the magic number."
@@ -219,7 +219,7 @@ roundabout i <= 3 {
     } okthen {
         woah ¬¬ i
     }
-    thingy i := i + 1
+    alloc i := i + 1
 }
 woah ¬¬ "Finished loop."
 ```

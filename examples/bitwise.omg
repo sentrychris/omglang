@@ -3,22 +3,22 @@
 # Demonstrate bitwise operations
 
 # Bitwise AND: 6 & 3 = 2
-thingy a := 6 & 3
+alloc a := 6 & 3
 
 # Bitwise OR: 6 | 3 = 7
-thingy b := 6 | 3
+alloc b := 6 | 3
 
 # Bitwise XOR: 6 ^ 3 = 5
-thingy c := 6 ^ 3
+alloc c := 6 ^ 3
 
 # Bitwise NOT: ~6 = -7
-thingy d := ~6
+alloc d := ~6
 
 # Bit shift left: 3 << 2 = 12
-thingy e := 3 << 2
+alloc e := 3 << 2
 
 # Bit shift right: 8 >> 1 = 4
-thingy f := 8 >> 1
+alloc f := 8 >> 1
 
 # Output the results
 woah ¬¬ a  # 2
@@ -29,13 +29,13 @@ woah ¬¬ e  # 12
 woah ¬¬ f  # 4
 
 # Flag bitmasks
-thingy FLAG_1 := 0b0001  # 1
-thingy FLAG_2 := 0b0010  # 2
-thingy FLAG_3 := 0b0100  # 4
-thingy FLAG_4 := 0b1000  # 8
+alloc FLAG_1 := 0b0001  # 1
+alloc FLAG_2 := 0b0010  # 2
+alloc FLAG_3 := 0b0100  # 4
+alloc FLAG_4 := 0b1000  # 8
 
 # Start with FLAG_1 set
-thingy flags := FLAG_1
+alloc flags := FLAG_1
 
 woah ¬¬ "Initial flags: " + flags
 

@@ -1,7 +1,7 @@
 ;;;omg
 
 # Complex control flow structure
-thingy x := 5
+alloc x := 5
 maybe x == 4 {
     woah ¬¬ "x is 4"
 } oractually x == 5 {
@@ -17,7 +17,7 @@ bitchin is_prime(n) {
     maybe n <= 1 {
         gimme 0
     }
-    thingy i := 2
+    alloc i := 2
     roundabout i * i <= n {
         maybe n % i == 0 {
             gimme 0
@@ -29,8 +29,8 @@ bitchin is_prime(n) {
 
 # Digit sum of a number
 bitchin digit_sum(n) {
-    thingy sum := 0
-    thingy temp := n
+    alloc sum := 0
+    alloc temp := n
     roundabout temp > 0 {
         sum := sum + (temp % 10)
         temp := temp / 10
@@ -40,8 +40,8 @@ bitchin digit_sum(n) {
 
 # Primality, odd/even, and digit sum
 bitchin classify_number(n) {
-    thingy isprime := is_prime(n)
-    thingy dsum := digit_sum(n)
+    alloc isprime := is_prime(n)
+    alloc dsum := digit_sum(n)
 
     maybe isprime == 1 {
         gimme "is prime, sum of digits is " + dsum
@@ -62,9 +62,9 @@ bitchin fibonacci(n) {
 }
 
 # Loop over numbers and rate them, including Fibonacci calculation
-thingy idx := 10
-thingy max := 20
-thingy fnum := 2
+alloc idx := 10
+alloc max := 20
+alloc fnum := 2
 
 roundabout idx <= max {
     woah ¬¬ "Classified number " + idx + " " + classify_number(idx)

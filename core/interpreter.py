@@ -91,7 +91,7 @@ class Interpreter:
 
         Parameters:
             node (tuple): An expression node, structured as a tuple.
-                        The first element is the operation type (e.g., 'add', 'thingy'),
+                        The first element is the operation type (e.g., 'add', 'alloc'),
                         followed by operands and the line number for error reporting.
 
         Returns:
@@ -118,7 +118,7 @@ class Interpreter:
                 return [self.eval_expr(elem) for elem in elements]
 
             # Variables
-            elif op == 'thingy':
+            elif op == 'alloc':
                 varname = node[1]
                 if varname in self.vars:
                     return self.vars[varname]

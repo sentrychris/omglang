@@ -1,7 +1,7 @@
 ;;;omg
 
-thingy a := true
-thingy b := false
+alloc a := true
+alloc b := false
 
 woah ¬¬ a           # should print: true
 woah ¬¬ b           # should print: false
@@ -14,22 +14,22 @@ maybe a {
     woah ¬¬  "neither is true"
 }
 
-thingy xs := [
+alloc xs := [
     1,
     2,
     3
 ]
 
-thingy sxs := "sliced xs (Start: inc. End: exc.): " + xs[1:2]
+alloc sxs := "sliced xs (Start: inc. End: exc.): " + xs[1:2]
 
-thingy ys := [
+alloc ys := [
     true,
     false,
     a,
     b
 ]
 
-thingy empty := []
+alloc empty := []
 
 woah ¬¬  xs          # should print: [1, 2, 3]
 woah ¬¬  sxs         # should print [2]

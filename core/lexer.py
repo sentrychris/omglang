@@ -16,7 +16,7 @@ a type and value and wrapped in a Token object that also stores line number meta
 Whitespace is skipped, and newlines increment the line counter and produce a NEWLINE token.
 
 3. Keyword Differentiation
-The lexer differentiates between identifiers and language keywords (e.g., 'thingy') using a 
+The lexer differentiates between identifiers and language keywords (e.g., 'alloc') using a 
 post-processing check after matching ID tokens. If the value matches a reserved keyword, the 
 token type is replaced accordingly.
 
@@ -143,7 +143,7 @@ def tokenize(code) -> tuple[list[Token], dict[str, str]]:
     tok_regex = '|'.join(f'(?P<{name}>{pattern})' for name, pattern in token_specification)
 
     identifier_keywords = {
-        'thingy',
+        'alloc',
     }
 
     tokens = []

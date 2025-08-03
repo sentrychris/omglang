@@ -20,8 +20,8 @@ bitchin greeting(name, excited) {
 
 # Compose full message combining factorial and greeting
 bitchin compose_message(name, num) {
-    thingy fact := factorial(num)
-    thingy excited := 0
+    alloc fact := factorial(num)
+    alloc excited := 0
 
     maybe num > 5 {
         excited := 1
@@ -31,15 +31,15 @@ bitchin compose_message(name, num) {
 }
 
 # Variables
-thingy user := "Chris"
-thingy number := 6
+alloc user := "Chris"
+alloc number := 6
 
 # Output composed message
-thingy message := compose_message(user, number)
+alloc message := compose_message(user, number)
 woah ¬¬ message
 
 # Loop counting down with conditional inside
-thingy countdown := number
+alloc countdown := number
 roundabout countdown > 0 {
     maybe countdown % 2 == 0 {
         woah ¬¬ countdown + " is even"
@@ -50,8 +50,8 @@ roundabout countdown > 0 {
 }
 
 # Use string concatenation, arithmetic, and facts assertion
-thingy sum := 0
-thingy i := 1
+alloc sum := 0
+alloc i := 1
 roundabout i <= 10 {
     sum := sum + i
     i := i + 1
