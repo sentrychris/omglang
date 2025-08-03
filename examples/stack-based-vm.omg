@@ -2,16 +2,38 @@
 
 # === Bytecode Program ===
 alloc program := [
+    # `push` pushes 5 and 3 onto the stack.
     ["push", 5],                    # push 5   -> stack  = [5]
     ["push", 3],                    # push 3   -> stack  = [5,3]
+
+    # 'add' pops those two and pushes their sum - 8
     ["add"],                        # add      -> stack  = [8]
-    ["store", "x"],                 # store 8  -> memory = [[x,8]]
+
+    # 'store' stores the top of the stack (8) in the variable x and pops the stack 
+    ["store", "x"],                 # store 8  -> memory = [[x,8]] -> stack = []
+
+    # push 10 onto the stack
     ["push", 10],                   # push 10  -> stack  = [10]
+
+    # `load` loads the value of x into the stack
     ["load", "x"],                  # load x   -> stack  = [10,8]
+
+    # `mul` multiplies 10 * 8 and pushes the result - 10
     ["mul"],                        # multiply -> stack  = [80]
+
+    # emit the top of the stack - 80
     ["emit_top"],                   # output top of stack (80)
+
+    # Pop the stack
+    ["pop"],                        # pop the stack -> stack = []
+
+    # start of loop label
     ["label", "loop"],              # loop start
+
+    # load x (8) onto the stack
     ["load", "x"],                  # load x   -> stack  = [8]
+
+    # 
     ["push", 1],                    # push 1   -> stack  = [8,1]
     ["sub"],                        # subtract -> stack  = [7]
     ["store", "x"],                 # store 7  -> memory = [[x,7]]
@@ -89,6 +111,7 @@ loop ptr < length(program) {
 
     if op == "push" {
         stack := stack + [instr[1]]
+        emit "Pushed to stack: [" + instr + "] stack value: " + stack
     } elif op == "pop" {
         stack := stack[0:length(stack) - 1]
     } elif op == "add" {
@@ -97,20 +120,21 @@ loop ptr < length(program) {
         alloc a := stack[length(stack) - 1]
         stack := stack[0:length(stack) - 1]
         stack := stack + [a + b]
+        emit "Add and push sum: [" + instr + "[" + a + ", " + b +"]]" +  " Stack value: " + stack 
+        emit "(Note: `add` pops stack values)"
     } elif op == "sub" {
         alloc b := stack[length(stack) - 1]
         stack := stack[0:length(stack) - 1]
         alloc a := stack[length(stack) - 1]
         stack := stack[0:length(stack) - 1]
         stack := stack + [a - b]
-        # emit "Before load:"
-        # emit memory
     } elif op == "mul" {
         alloc b := stack[length(stack) - 1]
         stack := stack[0:length(stack) - 1]
         alloc a := stack[length(stack) - 1]
         stack := stack[0:length(stack) - 1]
         stack := stack + [a * b]
+        emit "Multiply and push sum: [" + instr + "[" + a + ", " + b +"]]" +  " Stack value: " + stack 
     } elif op == "div" {
         alloc b := stack[length(stack) - 1]
         stack := stack[0:length(stack) - 1]
@@ -121,11 +145,13 @@ loop ptr < length(program) {
         alloc val := stack[length(stack) - 1]
         stack := stack[0:length(stack) - 1]
         memory := store_var(instr[1], val)
+        emit "Stored value: " + val + " in '" + instr[1] + "' (memory) " + " stack value " + stack
+        emit "(Note: `store` pops stack values)"
     } elif op == "load" {
         stack := stack + [load_var(instr[1])]
     } elif op == "emit_top" {
         alloc val := stack[length(stack) - 1]
-        emit val
+        emit "Top of stack: " + val
     } elif op == "jmp" {
         ptr := find_label(instr[1])
     } elif op == "jmp_if_nonzero" {
@@ -134,6 +160,8 @@ loop ptr < length(program) {
         if cond != 0 {
             ptr := find_label(instr[1])
         }
+    } elif op == "pop" {
+        stack := stack[0:length(stack) - 1]
     } elif op == "label" {
         alloc _:=0 # no-op
     } elif op == "halt" {
