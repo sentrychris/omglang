@@ -3,15 +3,15 @@
 thingy a := true
 thingy b := false
 
-woah  a           # should print: true
-woah  b           # should print: false
+woah <- a           # should print: true
+woah <- b           # should print: false
 
 maybe a {
-    woah   "a is true"
+    woah <-  "a is true"
 } oractually b {
-    woah   "b is true"
+    woah <-  "b is true"
 } okthen {
-    woah   "neither is true"
+    woah <-  "neither is true"
 }
 
 thingy xs := [
@@ -31,22 +31,22 @@ thingy ys := [
 
 thingy empty := []
 
-woah   xs          # should print: [1, 2, 3]
-woah   sxs         # should print [2]
-woah   ys          # should print: [true, false, true, false]
-woah   empty       # should print: []
+woah <-  xs          # should print: [1, 2, 3]
+woah <-  sxs         # should print [2]
+woah <-  ys          # should print: [true, false, true, false]
+woah <-  empty       # should print: []
 
 # lists should be truthy if non-empty
 maybe xs {
-    woah   "xs is non-empty"
+    woah <-  "xs is non-empty"
 } okthen {
-    woah   "xs is empty"
+    woah <-  "xs is empty"
 }
 
 maybe empty {
-    woah   "empty list is non-empty"
+    woah <-  "empty list is non-empty"
 } okthen {
-    woah   "empty list is empty"
+    woah <-  "empty list is empty"
 }
 
 facts a

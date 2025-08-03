@@ -394,7 +394,7 @@ class Parser:
         Parse a 'woah' (echo) statement.
 
         Syntax:
-            woah <expression>
+            woah <- <expression>
 
         Returns:
             tuple: ('woah', expression_node, line_number)
@@ -404,6 +404,7 @@ class Parser:
         """
         tok = self._current_token
         self._eat("ECHO")
+        self._eat("CHAIN")
         expr_node = self._expr()
 
         return ("woah", expr_node, tok.line)

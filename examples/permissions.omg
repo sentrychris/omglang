@@ -45,6 +45,6 @@ thingy i := 0
 
 roundabout i < length(codes) {
     thingy mode := codes[i]
-    woah mode + ": " + perms(mode)
+    woah <- mode + ": " + perms(mode)
     i := i + 1
 }

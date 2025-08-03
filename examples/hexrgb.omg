@@ -27,7 +27,7 @@ bitchin hex_to_rgb(hexstr) {
     thingy r := hex_to_byte(hexstr[0:2])
     thingy g := hex_to_byte(hexstr[2:4])
     thingy b := hex_to_byte(hexstr[4:6])
-    woah "R: " + r + " G: " + g + " B: " + b
+    gimme "R: " + r + " G: " + g + " B: " + b
 }
 
 # Convert decimal 0–15 to a hex digit
@@ -49,10 +49,10 @@ bitchin rgb_to_hex(r, g, b) {
 
 # DEMO
 
-woah "RGB:"
-hex_to_rgb("FF8800")   # Outputs: R: 255 G: 136 B: 0
+woah <- "RGB:"
+woah <- hex_to_rgb("FF8800")   # Outputs: R: 255 G: 136 B: 0
 
-woah ""
+woah <- ""
 
-woah "HEX:"
-woah rgb_to_hex(255, 136, 0)   # Outputs: FF8800
+woah <- "HEX:"
+woah <- rgb_to_hex(255, 136, 0)   # Outputs: FF8800
