@@ -73,7 +73,7 @@ def tokenize(code) -> tuple[list[Token], dict[str, str]]:
 
         # Keywords
         ('IF',        r'\bif\b'),
-        ('ELIF',      r'\belif'),
+        ('ELIF',      r'\belif\b'),
         ('ELSE',      r'\belse\b'),
         ('WHILE',     r'\bloop\b'),
         ('BREAK',     r'\bbreak\b'),
