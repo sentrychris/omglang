@@ -18,20 +18,20 @@ alloc program := [
 
 # === VM State ===
 alloc stack := []
-alloc ptr := 0
-alloc instruction := false
+alloc ip := 0
+alloc instr := false
 
 # === VM Loop ===
-loop ptr < length(program) {
-    instruction := program[ptr]
-    ptr := ptr + 1
+loop ip < length(program) {
+    instr := program[ip]
+    ip := ip + 1
 
     # Parse opcode and operand
-    alloc op := instruction[0]
+    alloc op := instr[0]
 
     # Handle PUSH
     if op == "push" {
-        alloc value := instruction[1]
+        alloc value := instr[1]
         stack := stack + [value]
     } elif op == "pop" {
         alloc _ := stack[length(stack) - 1]
@@ -41,25 +41,25 @@ loop ptr < length(program) {
         stack := stack[0:length(stack) - 1]
         alloc a := stack[length(stack) - 1]
         stack := stack[0:length(stack) - 1]
-        stack := stack + [sum(a, b)]
+        stack := stack + [a + b]
     } elif op == "sub" {
         alloc b := stack[length(stack) - 1]
         stack := stack[0:length(stack) - 1]
         alloc a := stack[length(stack) - 1]
         stack := stack[0:length(stack) - 1]
-        stack := stack + [subtract(a, b)]
+        stack := stack + [a - b]
     } elif op == "mul" {
         alloc b := stack[length(stack) - 1]
         stack := stack[0:length(stack) - 1]
         alloc a := stack[length(stack) - 1]
         stack := stack[0:length(stack) - 1]
-        stack := stack + [product(a, b)]
+        stack := stack + [a * b]
     } elif op == "div" {
         alloc b := stack[length(stack) - 1]
         stack := stack[0:length(stack) - 1]
         alloc a := stack[length(stack) - 1]
         stack := stack[0:length(stack) - 1]
-        stack := stack + [quotient(a, b)]
+        stack := stack + [a / b]
     } elif op == "emit_top" {
         alloc top := stack[length(stack) - 1]
         emit top
