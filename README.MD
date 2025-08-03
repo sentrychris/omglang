@@ -144,7 +144,8 @@ Each layer wraps the tighter-binding expressions from below, ensuring proper ope
 Each AST node is represented as a tuple encoding the operation, its operands and the originating line number. For example:
 
 ```python
-('xor_bits', ('number', 6, 3), ('number', 3, 3), 3)
+('add', ('number', 5, 1), ('number', 1, 1), 1)
+('xor_bits', ('number', 6, 3), ('number', 3, 3), 3) 
 ```
 
 ## Interpreter
