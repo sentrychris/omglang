@@ -87,7 +87,7 @@ The lexer scans the raw text and splits it into a stream of tokens. Each token h
 * **Keywords**: `thingy`, `woah`, `bitchin`, `maybe`, `oractually`, `okthen`, `roundabout`.
 * **Operators**:
     * Arithmetic: `+`, `-`, `*`, `/`, `%`
-    * Comparison: `==`, `<`, `>`, `<=`, `>=`
+    * Comparison: `==`, `!=`, `<`, `>`, `<=`, `>=`
     * Assignment: `:=`
     * Output: `<<`
     * Bitwise: `&`, `|`, `^`, `~`, `<<`, `>>`
@@ -112,7 +112,7 @@ The parser is a hand‑written **recursive descent parser** following an LL(1) g
 | 5     | **Bitwise AND**    | `&`                        | `_bitwise_and`  |
 | 6     | **Bitwise XOR**    | `^`                        | `_bitwise_xor`  |
 | 7     | **Bitwise OR**     | `\|`                        | `_bitwise_or`   |
-| 8     | **Comparison**     | `==`, `<`, `>`, `<=`, `>=` | `_comparison`   |
+| 8     | **Comparison**     | `==`, `!=`, `<`, `>`, `<=`, `>=` | `_comparison`   |
 
 Each layer wraps the tighter-binding expressions from below, ensuring proper operator grouping. This model gives OMG clear operator precedence semantics.
 
