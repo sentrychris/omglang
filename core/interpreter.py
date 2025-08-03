@@ -264,6 +264,30 @@ class Interpreter:
                         )
                     return chr(args[0])
 
+                if func_name == 'ascii':
+                    if len(args) != 1 or not isinstance(args[0], str) or len(args[0]) != 1:
+                        raise TypeError(
+                            f"ascii() expects a single-character string argument!\n"
+                            f"on line {line} in {self.file}"
+                        )
+                    return ord(args[0])
+
+                if func_name == 'hex':
+                    if len(args) != 1 or not isinstance(args[0], int):
+                        raise TypeError(
+                            f"hex() expects one integer argument!\n"
+                            f"on line {line} in {self.file}"
+                        )
+                    return str(hex(args[0])[2:]).upper()
+
+                if func_name == 'binary':
+                    if len(args) != 1 or not isinstance(args[0], int):
+                        raise TypeError(
+                            f"binary() expects one integer argument!\n"
+                            f"on line {line} in {self.file}"
+                        )
+                    return bin(args[0])[2:]  # Strip '0b' prefix
+
                 if func_name == 'length':
                     if len(args) != 1:
                         raise TypeError(
