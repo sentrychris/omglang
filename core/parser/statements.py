@@ -1,31 +1,37 @@
-"""Statement parsing utilities for OMGlang.
+"""
+Statement parsing utilities for OMGlang.
 
-These functions operate on a :class:`~core.parser.parser.Parser` instance
-and handle the various statement forms in the language such as blocks,
+These functions operate on a `core.parser.parser.Parser` instance and
+handle the various statement forms in the language such as blocks,
 conditionals, loops, and function definitions.
 """
 
+from typing import TYPE_CHECKING
 
-def parse_block(parser) -> tuple:
+if TYPE_CHECKING:
+    from core.parser import Parser
+
+
+def parse_block(parser: 'Parser') -> tuple:
     """Parse a block of statements enclosed in braces.
 
     Returns:
         tuple: A ('block', list_of_statements, line_number) AST node.
     """
-    tok = parser._current_token
-    parser._eat('LBRACE')
+    tok = parser.curr_token
+    parser.eat('LBRACE')
     statements = []
-    while parser._current_token.type != 'RBRACE':
-        while parser._current_token.type == 'NEWLINE':
-            parser._eat('NEWLINE')
-        statements.append(parser._statement())
-        while parser._current_token.type == 'NEWLINE':
-            parser._eat('NEWLINE')
-    parser._eat('RBRACE')
+    while parser.curr_token.type != 'RBRACE':
+        while parser.curr_token.type == 'NEWLINE':
+            parser.eat('NEWLINE')
+        statements.append(parser.statement())
+        while parser.curr_token.type == 'NEWLINE':
+            parser.eat('NEWLINE')
+    parser.eat('RBRACE')
     return ('block', statements, tok.line)
 
 
-def parse_statement(parser) -> tuple:
+def parse_statement(parser: 'Parser') -> tuple:
     """Parse a single statement.
 
     Returns:
@@ -34,40 +40,40 @@ def parse_statement(parser) -> tuple:
     Raises:
         SyntaxError: If the syntax is invalid or unexpected.
     """
-    tok = parser._current_token
+    tok = parser.curr_token
     if tok.type == "FACTS":
-        return parser._parse_facts()
+        return parser.parse_facts()
     elif tok.type == 'ECHO':
-        return parser._parse_echo()
+        return parser.parse_echo()
     elif tok.type == 'IF':
-        return parser._parse_if()
+        return parser.parse_if()
     elif tok.type == 'WHILE':
-        return parser._parse_while()
+        return parser.parse_while()
     elif tok.type == 'BREAK':
-        return parser._parse_break()
+        return parser.parse_break()
     elif tok.type == 'FUNC':
-        return parser._parse_func_def()
+        return parser.parse_func_def()
     elif tok.type == 'ALLOC':
-        return parser._parse_assignment()
+        return parser.parse_assignment()
     elif tok.type == 'ID':
         if (
-            parser._position + 1 < len(parser._tokens)
-            and parser._tokens[parser._position + 1].type == 'ASSIGN'
+            parser.position + 1 < len(parser.tokens)
+            and parser.tokens[parser.position + 1].type == 'ASSIGN'
         ):
-            return parser._parse_reassignment()
-        expr_node = parser._factor()
+            return parser.parse_reassignment()
+        expr_node = parser.factor()
         return ('expr_stmt', expr_node, expr_node[-1])
     elif tok.type == 'RETURN':
-        return parser._parse_return()
+        return parser.parse_return()
     else:
         raise SyntaxError(
             f"Unexpected token {tok.type} "
             f"on line {tok.line} "
-            f"in {parser._source_file}"
+            f"in {parser.source_file}"
         )
 
 
-def parse_facts(parser) -> tuple:
+def parse_facts(parser: 'Parser') -> tuple:
     """Parse a 'facts' statement.
 
     Syntax:
@@ -79,13 +85,13 @@ def parse_facts(parser) -> tuple:
     Raises:
         SyntaxError: If the expression is malformed.
     """
-    tok = parser._current_token
-    parser._eat("FACTS")
-    expr_node = parser._comparison()
+    tok = parser.curr_token
+    parser.eat("FACTS")
+    expr_node = parser.comparison()
     return ("facts", expr_node, tok.line)
 
 
-def parse_echo(parser) -> tuple:
+def parse_echo(parser: 'Parser') -> tuple:
     """Parse a 'emit' (echo) statement.
 
     Syntax:
@@ -97,30 +103,30 @@ def parse_echo(parser) -> tuple:
     Raises:
         SyntaxError: If the expression is malformed.
     """
-    tok = parser._current_token
-    parser._eat("ECHO")
-    expr_node = parser._expr()
+    tok = parser.curr_token
+    parser.eat("ECHO")
+    expr_node = parser.expr()
     return ("emit", expr_node, tok.line)
 
 
-def parse_if(parser) -> tuple:
+def parse_if(parser: 'Parser') -> tuple:
     """Parse a conditional 'if' statement with optional elif and else blocks."""
-    tok = parser._current_token
-    parser._eat("IF")
-    condition = parser._comparison()
-    then_block = parser._block()
+    tok = parser.curr_token
+    parser.eat("IF")
+    condition = parser.comparison()
+    then_block = parser.block()
 
     elif_cases = []
-    while parser._current_token.type == 'ELIF':
-        parser._eat('ELIF')
-        cond = parser._comparison()
-        block = parser._block()
+    while parser.curr_token.type == 'ELIF':
+        parser.eat('ELIF')
+        cond = parser.comparison()
+        block = parser.block()
         elif_cases.append((cond, block))
 
     else_block = None
-    if parser._current_token.type == 'ELSE':
-        parser._eat('ELSE')
-        else_block = parser._block()
+    if parser.curr_token.type == 'ELSE':
+        parser.eat('ELSE')
+        else_block = parser.block()
 
     tail = else_block
     for cond_node, block_node in reversed(elif_cases):
@@ -130,76 +136,76 @@ def parse_if(parser) -> tuple:
     return ('if', condition, then_block, tail, tok.line)
 
 
-def parse_while(parser) -> tuple:
+def parse_while(parser: 'Parser') -> tuple:
     """Parse a 'loop' (while) loop."""
-    tok = parser._current_token
-    parser._eat('WHILE')
-    condition = parser._comparison()
-    body = parser._block()
+    tok = parser.curr_token
+    parser.eat('WHILE')
+    condition = parser.comparison()
+    body = parser.block()
     return ('loop', condition, body, tok.line)
 
 
-def parse_break(parser) -> tuple:
+def parse_break(parser: 'Parser') -> tuple:
     """Parse a 'break' control statement."""
-    tok = parser._current_token
-    parser._eat("BREAK")
+    tok = parser.curr_token
+    parser.eat("BREAK")
     return ("break", tok.line)
 
 
-def parse_func_def(parser) -> tuple:
+def parse_func_def(parser: 'Parser') -> tuple:
     """Parse a function definition."""
-    start_tok = parser._current_token
-    parser._eat('FUNC')
-    func_name = parser._current_token.value
-    parser._eat('ID')
-    parser._eat('LPAREN')
+    start_tok = parser.curr_token
+    parser.eat('FUNC')
+    func_name = parser.curr_token.value
+    parser.eat('ID')
+    parser.eat('LPAREN')
     params = []
-    if parser._current_token.type != 'RPAREN':
-        params.append(parser._current_token.value)
-        parser._eat('ID')
-        while parser._current_token.type == 'COMMA':
-            parser._eat('COMMA')
-            params.append(parser._current_token.value)
-            parser._eat('ID')
-    parser._eat('RPAREN')
-    body = parser._block()
+    if parser.curr_token.type != 'RPAREN':
+        params.append(parser.curr_token.value)
+        parser.eat('ID')
+        while parser.curr_token.type == 'COMMA':
+            parser.eat('COMMA')
+            params.append(parser.curr_token.value)
+            parser.eat('ID')
+    parser.eat('RPAREN')
+    body = parser.block()
     return ('func_def', func_name, params, body, start_tok.line)
 
 
-def parse_return(parser) -> tuple:
+def parse_return(parser: 'Parser') -> tuple:
     """Parse a 'return' statement."""
-    tok = parser._current_token
-    parser._eat("RETURN")
-    expr_node = parser._expr()
+    tok = parser.curr_token
+    parser.eat("RETURN")
+    expr_node = parser.expr()
     return ("return", expr_node, tok.line)
 
 
-def parse_reassignment(parser) -> tuple:
+def parse_reassignment(parser: 'Parser') -> tuple:
     """Parse reassignment of an existing variable."""
-    id_tok = parser._current_token
-    parser._eat('ID')
-    parser._eat('ASSIGN')
-    expr_node = parser._expr()
+    id_tok = parser.curr_token
+    parser.eat('ID')
+    parser.eat('ASSIGN')
+    expr_node = parser.expr()
     return ('assign', id_tok.value, expr_node, id_tok.line)
 
 
-def parse_assignment(parser) -> tuple:
+def parse_assignment(parser: 'Parser') -> tuple:
     """Parse a 'alloc' variable assignment."""
-    parser._eat('ALLOC')
-    id_tok = parser._current_token
+    parser.eat('ALLOC')
+    id_tok = parser.curr_token
     if id_tok.type != 'ID':
         raise SyntaxError(
             f"Expected identifier after 'alloc' "
             f"on line {id_tok.line} "
-            f"in {parser._source_file}"
+            f"in {parser.source_file}"
         )
     var_name = id_tok.value
-    parser._eat('ID')
-    if parser._current_token.type != 'ASSIGN':
+    parser.eat('ID')
+    if parser.curr_token.type != 'ASSIGN':
         raise SyntaxError(
             f"Expected ':=' after variable name "
-            f"on line {parser._current_token.line} in {parser._source_file}"
+            f"on line {parser.curr_token.line} in {parser.source_file}"
         )
-    parser._eat('ASSIGN')
-    expr_node = parser._expr()
+    parser.eat('ASSIGN')
+    expr_node = parser.expr()
     return ('assign', var_name, expr_node, id_tok.line)
