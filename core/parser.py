@@ -371,7 +371,8 @@ class Parser:
             if (self._position + 1 < len(self._tokens)
                     and self._tokens[self._position + 1].type == 'ASSIGN'):
                 return self._parse_reassignment()
-            return self._parse_func_call_or_error()
+            expr_node = self._factor()
+            return ('expr_stmt', expr_node, expr_node[-1])
         elif tok.type == 'RETURN':
             return self._parse_return()
         else:
@@ -534,40 +535,6 @@ class Parser:
         self._eat('RPAREN')
         body = self._block()
         return ('func_def', func_name, params, body, start_tok.line)
-
-
-    def _parse_func_call_or_error(self) -> tuple:
-        """
-        Parse a function call or raise a syntax error.
-
-        Syntax:
-            <identifier>(<arg1>, <arg2>, ...)
-
-        Returns:
-            tuple: ('func_call', function_name, [arg_exprs], line_number)
-
-        Raises:
-            SyntaxError: If the call syntax is invalid or unexpected tokens follow.
-        """
-        tok = self._current_token
-        func_name = tok.value
-        self._eat('ID')
-        if self._current_token.type == 'LPAREN':
-            self._eat('LPAREN')
-            args = []
-            if self._current_token.type != 'RPAREN':
-                args.append(self._expr())  # parse an expression argument
-                while self._current_token.type == 'COMMA':
-                    self._eat('COMMA')
-                    args.append(self._expr())
-            self._eat('RPAREN')
-            return ('func_call', func_name, args, tok.line)
-        else:
-            # Could be a variable usage statement or error if not expected
-            raise SyntaxError(
-                f"Unexpected token '{tok.value}' after identifier {func_name} "
-                f"on line {tok.line} in {self._source_file}"
-            )
 
 
     def _parse_return(self) -> tuple:

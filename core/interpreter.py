@@ -453,14 +453,15 @@ class Interpreter:
                 self.functions[name] = (params, body)
 
 
-            elif kind == 'func_call':
-                self.eval_expr(stmt)
-
-
             elif kind == 'return':
                 _, expr_node, _ = stmt
                 value = self.eval_expr(expr_node)
                 raise ReturnControlFlow(value)
+
+
+            elif kind == 'expr_stmt':
+                _, expr_node, _ = stmt
+                self.eval_expr(expr_node)
 
 
             else:
