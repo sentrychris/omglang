@@ -1,4 +1,50 @@
 ;;;omg
 
-thingy r := 5 + 2
-woah r
+# Permission bitmasks
+thingy READ := 4      # 100
+thingy WRITE := 2     # 010
+thingy EXECUTE := 1   # 001
+
+# Convert a single digit (0–7) to rwx string
+bitchin to_rwx(bits) {
+    thingy result := ""
+
+    maybe bits & READ != 0 {
+        result := result + "r"
+    } okthen {
+        result := result + "-"
+    }
+
+    maybe bits & WRITE != 0 {
+        result := result + "w"
+    } okthen {
+        result := result + "-"
+    }
+
+    maybe bits & EXECUTE != 0 {
+        result := result + "x"
+    } okthen {
+        result := result + "-"
+    }
+
+    gimme result
+}
+
+# Convert full numeric mode (e.g. 755) to rwxrwxrwx
+bitchin perms(mode) {
+    thingy u := mode / 100
+    thingy g := (mode / 10) % 10
+    thingy o := mode % 10
+
+    gimme to_rwx(u) + to_rwx(g) + to_rwx(o)
+}
+
+# Try a few examples
+thingy codes := [755, 644, 700, 600, 777]
+thingy i := 0
+
+roundabout i < length(codes) {
+    thingy mode := codes[i]
+    woah mode + ": " + perms(mode)
+    i := i + 1
+}
