@@ -335,7 +335,7 @@ class Parser:
 
     def _statement(self) -> tuple:
         """
-        Parse a single statement (woah, alloc assignment, maybe, or while).
+        Parse a single statement (woah, alloc assignment, if, or while).
 
         Returns:
             A tuple representing the statement AST node.
@@ -412,17 +412,17 @@ class Parser:
 
     def _parse_if(self) -> tuple:
         """
-        Parse a conditional 'maybe' (if/else) statement.
+        Parse a conditional 'if' (if/else) statement.
 
         Syntax:
-            maybe <condition> {
+            if <condition> {
                 ...
-            } okthen {
+            } else {
                 ...
             }
 
         Returns:
-            tuple: ('maybe', condition_expr, then_block, else_block_or_None, line_number)
+            tuple: ('if', condition_expr, then_block, else_block_or_None, line_number)
 
         Raises:
             SyntaxError: If condition or blocks are malformed.
@@ -447,9 +447,9 @@ class Parser:
         tail = else_block
         for cond_node, block_node in reversed(elif_cases):
             cond_line = cond_node[-1] if isinstance(cond_node, tuple) else tok.line
-            tail = ('maybe', cond_node, block_node, tail, cond_line)
+            tail = ('if', cond_node, block_node, tail, cond_line)
 
-        return ('maybe', condition, then_block, tail, tok.line)
+        return ('if', condition, then_block, tail, tok.line)
 
 
     def _parse_while(self) -> tuple:

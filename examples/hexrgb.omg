@@ -7,7 +7,7 @@ alloc HEXCHARS := "0123456789ABCDEF"
 bitchin hex_char_to_int(ch) {
     alloc i := 0
     roundabout i < 16 {
-        maybe HEXCHARS[i] == ch {
+        if HEXCHARS[i] == ch {
             gimme i
         }
         i := i + 1

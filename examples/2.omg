@@ -2,18 +2,18 @@
 
 # Recursive factorial function with debugging output
 bitchin factorial(n) {
-    maybe n <= 1 {
+    if n <= 1 {
         gimme 1
-    } okthen {
+    } else {
         gimme n * factorial(n - 1)
     }
 }
 
 # Greeting function with conditional logic
 bitchin greeting(name, excited) {
-    maybe excited == 1 {
+    if excited == 1 {
         gimme "Hey " + name + "! You're awesome!"
-    } okthen {
+    } else {
         gimme "Hello " + name
     }
 }
@@ -23,7 +23,7 @@ bitchin compose_message(name, num) {
     alloc fact := factorial(num)
     alloc excited := 0
 
-    maybe num > 5 {
+    if num > 5 {
         excited := 1
     }
 
@@ -41,9 +41,9 @@ woah ¬¬ message
 # Loop counting down with conditional inside
 alloc countdown := number
 roundabout countdown > 0 {
-    maybe countdown % 2 == 0 {
+    if countdown % 2 == 0 {
         woah ¬¬ countdown + " is even"
-    } okthen {
+    } else {
         woah ¬¬ countdown + " is odd"
     }
     countdown := countdown - 1

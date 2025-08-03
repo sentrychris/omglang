@@ -49,19 +49,19 @@ bitchin rot13(input) {
         alloc index := 0
 
         roundabout j < length(base) {
-            maybe base[j] == c {
+            if base[j] == c {
                 found := true
                 index := j
                 j := length(base)
-            } okthen {
+            } else {
                 j := j + 1
             }
         }
 
-        maybe found {
+        if found {
             alloc rot := table[13]
             result := result + rot[index]
-        } okthen {
+        } else {
             result := result + c
         }
 

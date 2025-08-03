@@ -2,24 +2,24 @@
 
 # Complex control flow structure
 alloc x := 5
-maybe x == 4 {
+if x == 4 {
     woah ¬¬ "x is 4"
-} oractually x == 5 {
+} elif x == 5 {
     woah ¬¬ "x is 5"
-} oractually x == 6 {
+} elif x == 6 {
     woah ¬¬ "x is 6"
-} okthen {
+} else {
     woah ¬¬ "x is something else"
 }
 
 # Primality check using trial division
 bitchin is_prime(n) {
-    maybe n <= 1 {
+    if n <= 1 {
         gimme 0
     }
     alloc i := 2
     roundabout i * i <= n {
-        maybe n % i == 0 {
+        if n % i == 0 {
             gimme 0
         }
         i := i + 1
@@ -43,20 +43,20 @@ bitchin classify_number(n) {
     alloc isprime := is_prime(n)
     alloc dsum := digit_sum(n)
 
-    maybe isprime == 1 {
+    if isprime == 1 {
         gimme "is prime, sum of digits is " + dsum
-    } oractually n % 2 == 0 {
+    } elif n % 2 == 0 {
         gimme "is even, sum of digits is " + dsum
-    } okthen {
+    } else {
         gimme "is odd, sum of digits is " + dsum
     }
 }
 
 # Deep recursive Fibonacci function
 bitchin fibonacci(n) {
-    maybe n <= 1 {
+    if n <= 1 {
         gimme n
-    } okthen {
+    } else {
         gimme fibonacci(n - 1) + fibonacci(n - 2)
     }
 }

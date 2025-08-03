@@ -23,7 +23,7 @@ types (`UndefinedVariableError`, `UnknownOperationError`) are raised on invalid 
 
 4. Control Flow
 Control constructs include:
-- `maybe`/'okthen' (if/else): executes conditional blocks based on boolean evaluation.
+- `if`/'else' (if/else): executes conditional blocks based on boolean evaluation.
 - `roundabout` (while): repeatedly evaluates a block while a condition holds.
 - `block`: executes a nested sequence of statements.
 
@@ -281,7 +281,7 @@ class Interpreter:
 
         Parameters:
             statements (list):
-                A list of ('assign' | 'woah' | 'maybe' | 'block' | 'roundabout', ...) tuples.
+                A list of ('assign' | 'woah' | 'if' | 'block' | 'roundabout', ...) tuples.
 
         Raises:
             Exception: For unknown statement types.
@@ -309,7 +309,7 @@ class Interpreter:
                 assert value
 
 
-            elif kind == 'maybe':
+            elif kind == 'if':
                 _, cond_node, then_block, else_block, _ = stmt
                 if self.eval_expr(cond_node):
                     self.execute([then_block])

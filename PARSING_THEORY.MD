@@ -77,7 +77,7 @@ Handles:
 * `expr == expr`
 * `expr > expr`, etc.
 
-Used in control flow (`maybe`, `roundabout`) for condition evaluation.
+Used in control flow (`if`, `roundabout`) for condition evaluation.
 
 ---
 
@@ -95,7 +95,7 @@ Handles:
 
 * Variable declarations (`alloc`)
 * Output (`woah`)
-* Control flow (`maybe`, `roundabout`)
+* Control flow (`if`, `roundabout`)
 * Function definitions
 * Function calls
 

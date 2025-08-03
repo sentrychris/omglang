@@ -35,11 +35,11 @@ woah ¬¬ "x is now " + x
 woah ¬¬ "Beginning loop:"
 alloc i := 0
 roundabout i <= 3 {
-    maybe i == 3 {
+    if i == 3 {
         woah ¬¬ "3 is the magic number."
-    } oractually i == 2 {
+    } elif i == 2 {
         woah ¬¬ "2 is alright I guess."
-    } okthen {
+    } else {
         woah ¬¬ i
     }
     i := i + 1

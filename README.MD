@@ -16,7 +16,7 @@
 
 ## Overview
 
-The language uses playful keywords like `alloc`, `woah`, `maybe` and `roundabout`, but it's grounded in a well‑defined grammar. All scripts must start with a header line `;;;omg`. Execution proceeds through three stages:
+The language uses playful keywords like `alloc`, `woah`, `if` and `roundabout`, but it's grounded in a well‑defined grammar. All scripts must start with a header line `;;;omg`. Execution proceeds through three stages:
 
 1. **Lexing** – convert raw source code into tokens.
 2. **Parsing** – build an Abstract Syntax Tree (AST) from tokens.
@@ -51,7 +51,7 @@ Options:
 
 * `omg <script.omg>` – run the specified OMG program. The file must include the required `;;;omg` header on the first non‑empty line. Relative paths are resolved from your current working directory.
 
-* `omg` with no arguments – start a Read–Eval–Print Loop (REPL) where you can type OMG statements interactively. Multi‑line constructs such as function definitions or `maybe … { … }` blocks are supported; simply continue entering lines until the braces balance. Type `exit` or `quit` to leave the REPL.
+* `omg` with no arguments – start a Read–Eval–Print Loop (REPL) where you can type OMG statements interactively. Multi‑line constructs such as function definitions or `if … { … }` blocks are supported; simply continue entering lines until the braces balance. Type `exit` or `quit` to leave the REPL.
 
 * `-h` or `--help` – print a short usage summary and exit.
 
@@ -69,9 +69,9 @@ Running `omg` with no arguments launches an interactive session. This REPL lets 
 >>> alloc x := 5
 >>> woah ¬¬ x
 5
->>> maybe x < 10 {
+>>> if x < 10 {
 ...     woah ¬¬ x + " is smaller than 10"
-... } okthen {
+... } else {
 ...     woah ¬¬ x + " is bigger than 10"
 ... }
 x is smaller than 10
@@ -84,7 +84,7 @@ If you start a block and do not close it, the prompt switches to `...` and the i
 
 The lexer scans the raw text and splits it into a stream of tokens. Each token has a type, value and line number. Token types include:
 
-* **Keywords**: `alloc`, `woah`, `bitchin`, `maybe`, `oractually`, `okthen`, `roundabout`.
+* **Keywords**: `alloc`, `woah`, `bitchin`, `if`, `elif`, `else`, `roundabout`.
 * **Operators**:
     * Arithmetic: `+`, `-`, `*`, `/`, `%`
     * Comparison: `==`, `!=`, `<`, `>`, `<=`, `>=`
@@ -167,7 +167,7 @@ Handled by `execute(statements)`. Supported statements include:
 
 * **woah** – evaluate an expression and print the result.
 
-* **maybe/oractually/okthen** – evaluate a condition and execute one of several blocks conditionally.
+* **if/elif/else** – evaluate a condition and execute one of several blocks conditionally.
 
 * **roundabout** – execute a block repeatedly while a condition holds.
 
@@ -212,11 +212,11 @@ woah ¬¬ "(" + x + " + " + y + ") * 10 / 2 = " + (x + y) * 10 / 2
 woah ¬¬ "Beginning loop:"
 alloc i := 0
 roundabout i <= 3 {
-    maybe i == 3 {
+    if i == 3 {
         woah ¬¬ "3 is the magic number."
-    } oractually i == 2 {
+    } elif i == 2 {
         woah ¬¬ "2 is alright I guess."
-    } okthen {
+    } else {
         woah ¬¬ i
     }
     alloc i := i + 1

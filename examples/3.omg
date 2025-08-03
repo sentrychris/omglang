@@ -6,11 +6,11 @@ alloc b := false
 woah ¬¬ a           # should print: true
 woah ¬¬ b           # should print: false
 
-maybe a {
+if a {
     woah ¬¬  "a is true"
-} oractually b {
+} elif b {
     woah ¬¬  "b is true"
-} okthen {
+} else {
     woah ¬¬  "neither is true"
 }
 
@@ -37,15 +37,15 @@ woah ¬¬  ys          # should print: [true, false, true, false]
 woah ¬¬  empty       # should print: []
 
 # lists should be truthy if non-empty
-maybe xs {
+if xs {
     woah ¬¬  "xs is non-empty"
-} okthen {
+} else {
     woah ¬¬  "xs is empty"
 }
 
-maybe empty {
+if empty {
     woah ¬¬  "empty list is non-empty"
-} okthen {
+} else {
     woah ¬¬  "empty list is empty"
 }
 

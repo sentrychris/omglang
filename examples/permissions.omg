@@ -9,21 +9,21 @@ alloc EXECUTE := 1   # 001
 bitchin to_rwx(bits) {
     alloc result := ""
 
-    maybe bits & READ != 0 {
+    if bits & READ != 0 {
         result := result + "r"
-    } okthen {
+    } else {
         result := result + "-"
     }
 
-    maybe bits & WRITE != 0 {
+    if bits & WRITE != 0 {
         result := result + "w"
-    } okthen {
+    } else {
         result := result + "-"
     }
 
-    maybe bits & EXECUTE != 0 {
+    if bits & EXECUTE != 0 {
         result := result + "x"
-    } okthen {
+    } else {
         result := result + "-"
     }
 

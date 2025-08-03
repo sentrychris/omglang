@@ -44,14 +44,14 @@ flags := flags | FLAG_3
 woah ¬¬ "After setting FLAG_3: " + flags
 
 # Check if FLAG_3 is set
-maybe flags & FLAG_3 != 0 {
+if flags & FLAG_3 != 0 {
     woah ¬¬ "FLAG_3 is set"
 }
 
 # Check if FLAG_2 is set
-maybe flags & FLAG_2 != 0 {
+if flags & FLAG_2 != 0 {
     woah ¬¬ "FLAG_2 is set"
-} okthen {
+} else {
     woah ¬¬ "FLAG_2 is not set"
 }
 
