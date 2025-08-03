@@ -18,20 +18,20 @@ alloc program := [
 
 # === VM State ===
 alloc stack := []
-alloc ip := 0
-alloc instr := false
+alloc ptr := 0
+alloc instruction := false
 
 # === VM Loop ===
-loop ip < length(program) {
-    instr := program[ip]
-    ip := ip + 1
+loop ptr < length(program) {
+    instruction := program[ptr]
+    ptr := ptr + 1
 
     # Parse opcode and operand
-    alloc op := instr[0]
+    alloc op := instruction[0]
 
     # Handle PUSH
     if op == "push" {
-        alloc value := instr[1]
+        alloc value := instruction[1]
         stack := stack + [value]
     } elif op == "pop" {
         alloc _ := stack[length(stack) - 1]
