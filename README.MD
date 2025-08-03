@@ -181,7 +181,7 @@ Each function call creates a new scope for its parameters, and the previous vari
 
 Examples can be found in the examples directory.
 
-```php
+```python
 ;;;omg
 
 # Define a function
