@@ -114,27 +114,28 @@ loop ptr < length(program) {
         emit "Pushed to stack: [" + instr + "] stack value: " + stack
     } elif op == "pop" {
         stack := stack[0:length(stack) - 1]
+        emit "Stack popped, stack value: " + stack
     } elif op == "add" {
         alloc b := stack[length(stack) - 1]
         stack := stack[0:length(stack) - 1]
         alloc a := stack[length(stack) - 1]
         stack := stack[0:length(stack) - 1]
         stack := stack + [a + b]
-        emit "Add and push sum: [" + instr + "[" + a + ", " + b +"]]" +  " Stack value: " + stack 
-        emit "(Note: `add` pops stack values)"
+        emit "Added to stack: [" + instr + "[" + a + ", " + b +"]]" +  " Stack value: " + stack 
     } elif op == "sub" {
         alloc b := stack[length(stack) - 1]
         stack := stack[0:length(stack) - 1]
         alloc a := stack[length(stack) - 1]
         stack := stack[0:length(stack) - 1]
         stack := stack + [a - b]
+        emit "Subtract and pushed difference: [" + instr + "[" + a + ", " + b +"]]" +  " Stack value: " + stack 
     } elif op == "mul" {
         alloc b := stack[length(stack) - 1]
         stack := stack[0:length(stack) - 1]
         alloc a := stack[length(stack) - 1]
         stack := stack[0:length(stack) - 1]
         stack := stack + [a * b]
-        emit "Multiply and push sum: [" + instr + "[" + a + ", " + b +"]]" +  " Stack value: " + stack 
+        emit "Multiplied to stack: [" + instr + "[" + a + ", " + b +"]]" +  " Stack value: " + stack
     } elif op == "div" {
         alloc b := stack[length(stack) - 1]
         stack := stack[0:length(stack) - 1]
@@ -145,13 +146,13 @@ loop ptr < length(program) {
         alloc val := stack[length(stack) - 1]
         stack := stack[0:length(stack) - 1]
         memory := store_var(instr[1], val)
-        emit "Stored value: " + val + " in '" + instr[1] + "' (memory) " + " stack value " + stack
-        emit "(Note: `store` pops stack values)"
+        emit "Stored value: " + val + " in '" + instr[1] + "' in memory," + " stack value " + stack
     } elif op == "load" {
         stack := stack + [load_var(instr[1])]
+        emit "Loaded " + instr[1] + " from memory: [" + instr + "] stack value: " + stack
     } elif op == "emit_top" {
         alloc val := stack[length(stack) - 1]
-        emit "Top of stack: " + val
+        emit "Top of stack: " + val + " stack value: "+ stack
     } elif op == "jmp" {
         ptr := find_label(instr[1])
     } elif op == "jmp_if_nonzero" {
@@ -160,8 +161,6 @@ loop ptr < length(program) {
         if cond != 0 {
             ptr := find_label(instr[1])
         }
-    } elif op == "pop" {
-        stack := stack[0:length(stack) - 1]
     } elif op == "label" {
         alloc _:=0 # no-op
     } elif op == "halt" {
