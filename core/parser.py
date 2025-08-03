@@ -21,6 +21,8 @@ occasional lookahead makes the parser technically LL(2) in those specific situat
 overall behavior and structure align with LL(1) principles.
 """
 
+from core.operations import Operation
+
 class Parser:
     """
     OMGlang parser.
@@ -83,7 +85,7 @@ class Parser:
         if tok.type == 'TILDE':
             self._eat('TILDE')
             operand = self._factor()
-            return ('unary', 'not_bits', operand, tok.line)
+            return ('unary', Operation.NOT_BITS, operand, tok.line)
 
         if tok.type == 'NUMBER':
             self._eat('NUMBER')
@@ -178,7 +180,11 @@ class Parser:
         while self._current_token.type in ('MUL', 'DIV', 'MOD'):
             op_tok = self._current_token
             self._eat(op_tok.type)
-            op_map = {'MUL': 'mul', 'DIV': 'div', 'MOD': 'mod'}
+            op_map = {
+                'MUL': Operation.MUL,
+                'DIV': Operation.DIV,
+                'MOD': Operation.MOD,
+            }
             result = (op_map[op_tok.type], result, self._factor(), op_tok.line)
         return result
 
@@ -197,7 +203,7 @@ class Parser:
         while self._current_token.type == 'PIPE':
             tok = self._current_token
             self._eat('PIPE')
-            result = ('or_bits', result, self._bitwise_xor(), tok.line)
+            result = (Operation.OR_BITS, result, self._bitwise_xor(), tok.line)
         return result
 
 
@@ -215,7 +221,7 @@ class Parser:
         while self._current_token.type == 'CARET':
             tok = self._current_token
             self._eat('CARET')
-            result = ('xor_bits', result, self._bitwise_and(), tok.line)
+            result = (Operation.XOR_BITS, result, self._bitwise_and(), tok.line)
         return result
 
 
@@ -233,7 +239,7 @@ class Parser:
         while self._current_token.type == 'AMP':
             tok = self._current_token
             self._eat('AMP')
-            result = ('and_bits', result, self._shift(), tok.line)
+            result = (Operation.AND_BITS, result, self._shift(), tok.line)
         return result
 
 
@@ -253,10 +259,10 @@ class Parser:
             tok = self._current_token
             if tok.type == 'LSHIFT':
                 self._eat('LSHIFT')
-                result = ('shl', result, self._add_sub(), tok.line)
+                result = (Operation.SHL, result, self._add_sub(), tok.line)
             else:
                 self._eat('RSHIFT')
-                result = ('shr', result, self._add_sub(), tok.line)
+                result = (Operation.SHR, result, self._add_sub(), tok.line)
         return result
 
 
@@ -275,7 +281,10 @@ class Parser:
         while self._current_token.type in ('PLUS', 'MINUS'):
             tok = self._current_token
             self._eat(tok.type)
-            op_map = {'PLUS': 'add', 'MINUS': 'sub'}
+            op_map = {
+                'PLUS': Operation.ADD,
+                'MINUS': Operation.SUB,
+            }
             result = (op_map[tok.type], result, self._term(), tok.line)
         return result
 
@@ -302,12 +311,12 @@ class Parser:
             op_tok = self._current_token
             self._eat(op_tok.type)
             op_map = {
-                'EQ': 'eq',
-                'NE': 'ne',
-                'GT': 'gt',
-                'LT': 'lt',
-                'GE': 'ge',
-                'LE': 'le'
+                'EQ': Operation.EQ,
+                'NE': Operation.NE,
+                'GT': Operation.GT,
+                'LT': Operation.LT,
+                'GE': Operation.GE,
+                'LE': Operation.LE,
             }
             result = (op_map[op_tok.type], result, self._expr(), op_tok.line)
         return result
