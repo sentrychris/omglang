@@ -3,15 +3,15 @@
 alloc a := true
 alloc b := false
 
-emit a           # should print: true
-emit b           # should print: false
+emit a   # should print: true
+emit b   # should print: false
 
 if a {
-    emit  "a is true"
+    emit "a is true"
 } elif b {
-    emit  "b is true"
+    emit "b is true"
 } else {
-    emit  "neither is true"
+    emit "neither is true"
 }
 
 alloc xs := [
@@ -31,23 +31,29 @@ alloc ys := [
 
 alloc empty := []
 
-emit  xs          # should print: [1, 2, 3]
-emit  sxs         # should print [2]
-emit  ys          # should print: [true, false, true, false]
-emit  empty       # should print: []
+emit xs          # should print: [1, 2, 3]
+emit sxs         # should print [2]
+emit ys          # should print: [true, false, true, false]
+emit empty       # should print: []
 
 # lists should be truthy if non-empty
 if xs {
-    emit  "xs is non-empty"
+    emit "xs is non-empty"
 } else {
-    emit  "xs is empty"
+    emit "xs is empty"
 }
 
 if empty {
-    emit  "empty list is non-empty"
+    emit "empty list is non-empty"
 } else {
-    emit  "empty list is empty"
+    emit "empty list is empty"
 }
 
+# a is true
 facts a
-facts b
+
+# b is false
+facts b == false
+
+# should raise assertion error
+facts a == false

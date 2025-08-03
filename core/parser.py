@@ -385,7 +385,7 @@ class Parser:
         """
         tok = self._current_token
         self._eat("FACTS")
-        expr_node = self._expr()
+        expr_node = self._comparison()
         return ("facts", expr_node, tok.line)
 
 

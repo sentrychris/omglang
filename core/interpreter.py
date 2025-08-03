@@ -89,10 +89,14 @@ class Interpreter:
         """
         Convert AST back to a readable string for debugging.
         """
+        print(node)
         match node[0]:
             case 'eq': return f"({self._format_expr(node[1])} == {self._format_expr(node[2])})"
-            case 'thingy': return node[1]
-            case 'number': return str(node[1])
+            case 'alloc': return node[1]
+            case 'number' | 'bool' | 'int': return str(node[1])
+            case 'index':
+                args = node[2]
+                return f"{node[1]}[{args[1]}]"
             case 'func_call':
                 fname, args, _ = node[1], node[2], node[3]
                 return f"{fname}({', '.join(self._format_expr(arg) for arg in args)})"
@@ -151,17 +155,25 @@ class Interpreter:
                 if isinstance(target, list):
                     if not 0 <= index < len(target):
                         raise RuntimeError(
-                            f"List index out of bounds on line {line} in {self.file}"
+                            f"List index out of bounds!\n"
+                            f"{self._format_expr(node)}\n"
+                            f"On line {line} in {self.file}"
                         )
                     return target[index]
                 elif isinstance(target, str):
                     if not 0 <= index < len(target):
                         raise RuntimeError(
-                            f"String index out of bounds on line {line} in {self.file}"
+                            f"String index out of bounds!\n"
+                            f"{self._format_expr(node)}\n"
+                            f"On line {line} in {self.file}"
                         )
                     return target[index]
                 else:
-                    raise TypeError(f"{target_name} is not indexable on line {line} in {self.file}")
+                    raise TypeError(
+                        f"{target_name} is not indexable!"
+                        f"{self._format_expr(node)}\n"
+                        f"On line {line} in {self.file}"
+                    )
 
             # Index slicing
             elif op == 'slice':
@@ -178,7 +190,10 @@ class Interpreter:
                     return target[start:end]
                 else:
                     raise TypeError(
-                        f"{target_name} is not sliceable on line {line} in {self.file}")
+                        f"{target_name} is not sliceable!\n"
+                        f"{self._format_expr(node)}\n"
+                        f"On line {line} in {self.file}"
+                    )
 
             # Binary operations
             elif op in ('add', 'sub', 'mul', 'mod', 'div',
@@ -223,12 +238,15 @@ class Interpreter:
                         if not isinstance(operand, int):
                             raise TypeError(
                                 f"Bitwise NOT (~) requires an integer operand "
-                                f"on line {line} in {self.file}"
+                                f"{self._format_expr(node)}\n"
+                                f"On line {line} in {self.file}"
                             )
                         return ~operand
                     case _:
                         raise UnknownOperationError(
-                            f"Unknown unary operator '{operator}' on line {line} in {self.file}"
+                            f"Unknown unary operator '{operator}'!"
+                            f"{self._format_expr(node)}\n"
+                            f"On line {line} in {self.file}"
                         )
 
             # Function calls
@@ -240,7 +258,7 @@ class Interpreter:
                 if func_name == 'chr':
                     if len(args) != 1 or not isinstance(args[0], int):
                         raise TypeError(
-                            f"chr() expects one integer argument "
+                            f"chr() expects one integer argument!\n"
                             f"on line {line} in {self.file}"
                         )
                     return chr(args[0])
@@ -248,19 +266,23 @@ class Interpreter:
                 if func_name == 'length':
                     if len(args) != 1:
                         raise TypeError(
-                            f"length() expects one argument on line {line} in {self.file}"
+                            f"length() expects one argument on line!\n"
+                            f"on line {line} in {self.file}"
                         )
                     arg = args[0]
                     if not isinstance(arg, (list, str)):
                         raise TypeError(
-                            f"length() only works on lists or strings on line {line} in {self.file}"
+                            f"length() only works on lists or strings!\n"
+                            f"on line {line} in {self.file}"
                         )
                     return len(arg)
 
                 # User-defined functions
                 if func_name not in self.functions:
-                    raise NameError(
-                        f"Undefined function '{func_name}' on line {line} in {self.file}"
+                    raise TypeError(
+                        f"Undefined function '{func_name}'!\n"
+                        f"{self._format_expr(node)}\n"
+                        f"On line {line} in {self.file}"
                     )
 
                 params, body = self.functions[func_name]
@@ -268,7 +290,8 @@ class Interpreter:
                 if len(args) != len(params):
                     raise TypeError(
                         f"Function '{func_name}' expects {len(params)} arguments "
-                        f"but got {len(args)} on line {line} in {self.file}"
+                        f"{self._format_expr(node)}\n"
+                        f"On line {line} in {self.file}"
                     )
 
                 saved_vars = self.vars.copy()
@@ -317,16 +340,10 @@ class Interpreter:
                 print(value)
 
 
-            elif kind == 'fact':
+            elif kind == 'facts':
                 _, expr_node, line = stmt
                 value = self.eval_expr(expr_node)
-                if not isinstance(value, bool):
-                    raise RuntimeError(
-                        f"`fact` expected a boolean, got {type(value).__name__} "
-                        f"on line {line}"
-                    )
                 if not value:
-                    # Optionally stringify the expression node
                     raise AssertionError(
                         f"Assertion failed on line {line}: {self._format_expr(expr_node)}"
                     )
@@ -357,37 +374,7 @@ class Interpreter:
 
 
             elif kind == 'func_call':
-                _, func_name, args_nodes, _ = stmt
-                # Evaluate each argument expression
-                args = [self.eval_expr(arg) for arg in args_nodes]
-
-                # Lookup function by name
-                if func_name not in self.functions:
-                    raise NameError(
-                        f"Undefined function '{func_name}' on line {line} in {self.file}"
-                    )
-
-                params, body = self.functions[func_name]
-
-                if len(args) != len(params):
-                    raise TypeError(
-                        f"Function '{func_name}' expects {len(params)} arguments "
-                        f"but got {len(args)} on line {line} in {self.file}"
-                    )
-
-                # Create a new local scope for function execution
-                saved_vars = self.vars.copy()
-                self.vars.update(dict(zip(params, args)))
-
-                try:
-                    if body[0] == "block":
-                        self.execute(body[1])
-                    else:
-                        self.execute([body])
-                except ReturnError:
-                    pass
-                finally:
-                    self.vars = saved_vars
+                self.eval_expr(stmt)
 
 
             elif kind == 'return':
@@ -399,6 +386,6 @@ class Interpreter:
             else:
                 raise TypeError(
                     f"Unknown statement type: {kind} "
-                    f"on line {line} "
-                    f"in {self.file}"
+                    f"{self._format_expr(expr_node)}"
+                    f"On line {line} in {self.file}"
                 )
