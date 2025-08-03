@@ -16,7 +16,7 @@ class UndefinedVariableException(Exception):
         super().__init__(message)
 
 
-class UnknownOperationException(Exception):
+class UnknownOpException(Exception):
     """
     Error for unknown operations.
     """

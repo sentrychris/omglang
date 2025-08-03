@@ -7,7 +7,7 @@ operator precedence and associativity.
 """
 
 from typing import TYPE_CHECKING
-from core.operations import Operation
+from core.operations import Op
 
 if TYPE_CHECKING:
     from core.parser import Parser
@@ -30,7 +30,7 @@ def parse_factor(parser: 'Parser') -> tuple:
     if tok.type == 'TILDE':
         parser.eat('TILDE')
         operand = parser.factor()
-        return ('unary', Operation.NOT_BITS, operand, tok.line)
+        return ('unary', Op.NOT_BITS, operand, tok.line)
 
     if tok.type == 'NUMBER':
         parser.eat('NUMBER')
@@ -126,9 +126,9 @@ def parse_term(parser: 'Parser') -> tuple:
         op_tok = parser.curr_token
         parser.eat(op_tok.type)
         op_map = {
-            'MUL': Operation.MUL,
-            'DIV': Operation.DIV,
-            'MOD': Operation.MOD,
+            'MUL': Op.MUL,
+            'DIV': Op.DIV,
+            'MOD': Op.MOD,
         }
         result = (op_map[op_tok.type], result, parser.factor(), op_tok.line)
     return result
@@ -151,7 +151,7 @@ def parse_bitwise_or(parser: 'Parser') -> tuple:
     while parser.curr_token.type == 'PIPE':
         tok = parser.curr_token
         parser.eat('PIPE')
-        result = (Operation.OR_BITS, result, parser.bitwise_xor(), tok.line)
+        result = (Op.OR_BITS, result, parser.bitwise_xor(), tok.line)
     return result
 
 
@@ -172,7 +172,7 @@ def parse_bitwise_xor(parser: 'Parser') -> tuple:
     while parser.curr_token.type == 'CARET':
         tok = parser.curr_token
         parser.eat('CARET')
-        result = (Operation.XOR_BITS, result, parser.bitwise_and(), tok.line)
+        result = (Op.XOR_BITS, result, parser.bitwise_and(), tok.line)
     return result
 
 
@@ -193,7 +193,7 @@ def parse_bitwise_and(parser: 'Parser') -> tuple:
     while parser.curr_token.type == 'AMP':
         tok = parser.curr_token
         parser.eat('AMP')
-        result = (Operation.AND_BITS, result, parser.shift(), tok.line)
+        result = (Op.AND_BITS, result, parser.shift(), tok.line)
     return result
 
 
@@ -216,10 +216,10 @@ def parse_shift(parser: 'Parser') -> tuple:
         tok = parser.curr_token
         if tok.type == 'LSHIFT':
             parser.eat('LSHIFT')
-            result = (Operation.SHL, result, parser.add_sub(), tok.line)
+            result = (Op.SHL, result, parser.add_sub(), tok.line)
         else:
             parser.eat('RSHIFT')
-            result = (Operation.SHR, result, parser.add_sub(), tok.line)
+            result = (Op.SHR, result, parser.add_sub(), tok.line)
     return result
 
 
@@ -242,8 +242,8 @@ def parse_add_sub(parser: 'Parser') -> tuple:
         tok = parser.curr_token
         parser.eat(tok.type)
         op_map = {
-            'PLUS': Operation.ADD,
-            'MINUS': Operation.SUB,
+            'PLUS': Op.ADD,
+            'MINUS': Op.SUB,
         }
         result = (op_map[tok.type], result, parser.term(), tok.line)
     return result
@@ -277,12 +277,12 @@ def parse_comparison(parser: 'Parser') -> tuple:
         op_tok = parser.curr_token
         parser.eat(op_tok.type)
         op_map = {
-            'EQ': Operation.EQ,
-            'NE': Operation.NE,
-            'GT': Operation.GT,
-            'LT': Operation.LT,
-            'GE': Operation.GE,
-            'LE': Operation.LE,
+            'EQ': Op.EQ,
+            'NE': Op.NE,
+            'GT': Op.GT,
+            'LT': Op.LT,
+            'GE': Op.GE,
+            'LE': Op.LE,
         }
         result = (op_map[op_tok.type], result, parser.expr(), op_tok.line)
     return result
