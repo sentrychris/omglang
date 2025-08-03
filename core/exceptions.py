@@ -1,7 +1,7 @@
 """
 Errors.
 """
-class UndefinedVariableError(Exception):
+class UndefinedVariableException(Exception):
     """
     Error for undefined variables.
     """
@@ -16,7 +16,7 @@ class UndefinedVariableError(Exception):
         super().__init__(message)
 
 
-class UnknownOperationError(Exception):
+class UnknownOperationException(Exception):
     """
     Error for unknown operations.
     """
@@ -31,9 +31,9 @@ class UnknownOperationError(Exception):
         super().__init__(message)
 
 
-class ReturnError(Exception):
+class ReturnControlFlow(Exception):
     """
-    Error for invalid return statements.
+    Control flow handling for return statements.
     """
     def __init__(self, value):
         self.value = value

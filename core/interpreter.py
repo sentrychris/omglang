@@ -19,7 +19,7 @@ it afterward to preserve state between calls.
 3. Expression Evaluation
 Expression nodes (e.g. arithmetic operations, comparisons, literals, variable references, and 
 function calls) are evaluated recursively. Basic type checking is enforced, and custom error 
-types (`UndefinedVariableError`, `UnknownOperationError`) are raised on invalid references.
+types (`UndefinedVariableException`, `UnknownOperationException`) are raised on invalid references.
 
 4. Control Flow
 Control constructs include:
@@ -35,7 +35,8 @@ execution is aborted with a descriptive runtime error.
 Runtime errors during interpretation—, such as undefined variables, unknown operations, or 
 malformed AST nodes, are surfaced as typed exceptions with line numbers and file context.
 """
-from core.errors import UndefinedVariableError, UnknownOperationError, ReturnError
+from core.exceptions import UndefinedVariableException, UnknownOperationException, \
+    ReturnControlFlow
 
 class Interpreter:
     """
@@ -116,8 +117,8 @@ class Interpreter:
             The evaluated result of the expression.
 
         Raises:
-            UndefinedVariableError: If a variable is referenced that has not been defined.
-            UnknownOperationError: If an unrecognized binary operator is encountered.
+            UndefinedVariableException: If a variable is referenced that has not been defined.
+            UnknownOperationException: If an unrecognized binary operator is encountered.
             RuntimeError: If the expression node format is invalid or improperly structured.
         """
         if isinstance(node, tuple):
@@ -140,14 +141,14 @@ class Interpreter:
                 varname = node[1]
                 if varname in self.vars:
                     return self.vars[varname]
-                raise UndefinedVariableError(varname, line, self.file)
+                raise UndefinedVariableException(varname, line, self.file)
 
             # Indexes
             elif op == 'index':
                 _, target_name, index_expr, _ = node
 
                 if target_name not in self.vars:
-                    raise UndefinedVariableError(target_name, line, self.file)
+                    raise UndefinedVariableException(target_name, line, self.file)
 
                 target = self.vars[target_name]
                 index = self.eval_expr(index_expr)
@@ -180,7 +181,7 @@ class Interpreter:
                 _, target_name, start_expr, end_expr, _ = node
 
                 if target_name not in self.vars:
-                    raise UndefinedVariableError(target_name, line, self.file)
+                    raise UndefinedVariableException(target_name, line, self.file)
 
                 target = self.vars[target_name]
                 start = self.eval_expr(start_expr)
@@ -226,7 +227,7 @@ class Interpreter:
                     case 'ge':  term = lhs >= rhs
                     case 'le':  term = lhs <= rhs
                     case _:
-                        raise UnknownOperationError(f"Unknown binary operator '{op}'")
+                        raise UnknownOperationException(f"Unknown binary operator '{op}'")
                 return term
 
             # Unary operator
@@ -243,7 +244,7 @@ class Interpreter:
                             )
                         return ~operand
                     case _:
-                        raise UnknownOperationError(
+                        raise UnknownOperationException(
                             f"Unknown unary operator '{operator}'!"
                             f"{self._format_expr(node)}\n"
                             f"On line {line} in {self.file}"
@@ -303,7 +304,7 @@ class Interpreter:
                     else:
                         self.execute([body])
                     result = None
-                except ReturnError as ret:
+                except ReturnControlFlow as ret:
                     result = ret.value
 
                 self.vars = saved_vars
@@ -380,7 +381,7 @@ class Interpreter:
             elif kind == 'return':
                 _, expr_node, _ = stmt
                 value = self.eval_expr(expr_node)
-                raise ReturnError(value)
+                raise ReturnControlFlow(value)
 
 
             else:
