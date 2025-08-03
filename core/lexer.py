@@ -6,7 +6,7 @@ list of tokens.
 
 1. Token Definitions
 Token types are defined via named regular expressions (token_specification), covering language 
-constructs such as keywords (e.g. if, roundabout), operators (e.g. :=, <<, +), literals 
+constructs such as keywords (e.g. if, loop), operators (e.g. :=, <<, +), literals 
 (numbers, strings), and structural tokens (braces, parentheses, commas, etc.). The combined regex 
 is constructed using named groups to enable type identification during matching.
 
@@ -75,11 +75,11 @@ def tokenize(code) -> tuple[list[Token], dict[str, str]]:
         ('IF',        r'\bif\b'),
         ('ELIF',      r'\belif'),
         ('ELSE',      r'\belse\b'),
-        ('WHILE',     r'\broundabout\b'),
-        ('ECHO',      r'\bwoah\b'),
+        ('WHILE',     r'\bloop\b'),
+        ('ECHO',      r'\bemit\b'),
         ('FACTS',     r'\bfacts\b'),
-        ('FUNC',      r'\bbitchin\b'),
-        ('RETURN',    r'\bgimme\b'),
+        ('FUNC',      r'\bproc\b'),
+        ('RETURN',    r'\breturn\b'),
 
         # Chain
         ('CHAIN',     r'¬¬'),

@@ -1,45 +1,45 @@
 ;;;omg
 
 # Generate alphabet
-bitchin alphabet() {
+proc alphabet() {
     alloc i := 0
     alloc result := []
-    roundabout i < 26 {
+    loop i < 26 {
         result := result + [chr(65 + i)]
         i := i + 1
     }
-    gimme result
+    return result
 }
 
 # Shift the list by n positions
-bitchin shift(a_list, n) {
+proc shift(a_list, n) {
     alloc i := 0
     alloc result := []
     alloc len := length(a_list)
-    roundabout i < len {
+    loop i < len {
         alloc shifted := a_list[(i + n) % len]
         result := result + [shifted]
         i := i + 1
     }
-    gimme result
+    return result
 }
 
 # Generate Tabula Recta (list of 26 shifted alphabets)
-bitchin tabula_recta() {
+proc tabula_recta() {
     alloc i := 0
     alloc base := alphabet()
     alloc result := []
-    roundabout i < 26 {
+    loop i < 26 {
         result := result + [shift(base, i)]
         i := i + 1
     }
-    gimme result
+    return result
 }
 
 # Entry point
 alloc table := tabula_recta()
 alloc i := 0
-roundabout i < length(table) {
-    woah ¬¬ table[i]
+loop i < length(table) {
+    emit ¬¬ table[i]
     i := i + 1
 }

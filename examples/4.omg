@@ -3,61 +3,61 @@
 # Complex control flow structure
 alloc x := 5
 if x == 4 {
-    woah ¬¬ "x is 4"
+    emit ¬¬ "x is 4"
 } elif x == 5 {
-    woah ¬¬ "x is 5"
+    emit ¬¬ "x is 5"
 } elif x == 6 {
-    woah ¬¬ "x is 6"
+    emit ¬¬ "x is 6"
 } else {
-    woah ¬¬ "x is something else"
+    emit ¬¬ "x is something else"
 }
 
 # Primality check using trial division
-bitchin is_prime(n) {
+proc is_prime(n) {
     if n <= 1 {
-        gimme 0
+        return 0
     }
     alloc i := 2
-    roundabout i * i <= n {
+    loop i * i <= n {
         if n % i == 0 {
-            gimme 0
+            return 0
         }
         i := i + 1
     }
-    gimme 1
+    return 1
 }
 
 # Digit sum of a number
-bitchin digit_sum(n) {
+proc digit_sum(n) {
     alloc sum := 0
     alloc temp := n
-    roundabout temp > 0 {
+    loop temp > 0 {
         sum := sum + (temp % 10)
         temp := temp / 10
     }
-    gimme sum
+    return sum
 }
 
 # Primality, odd/even, and digit sum
-bitchin classify_number(n) {
+proc classify_number(n) {
     alloc isprime := is_prime(n)
     alloc dsum := digit_sum(n)
 
     if isprime == 1 {
-        gimme "is prime, sum of digits is " + dsum
+        return "is prime, sum of digits is " + dsum
     } elif n % 2 == 0 {
-        gimme "is even, sum of digits is " + dsum
+        return "is even, sum of digits is " + dsum
     } else {
-        gimme "is odd, sum of digits is " + dsum
+        return "is odd, sum of digits is " + dsum
     }
 }
 
 # Deep recursive Fibonacci function
-bitchin fibonacci(n) {
+proc fibonacci(n) {
     if n <= 1 {
-        gimme n
+        return n
     } else {
-        gimme fibonacci(n - 1) + fibonacci(n - 2)
+        return fibonacci(n - 1) + fibonacci(n - 2)
     }
 }
 
@@ -66,16 +66,16 @@ alloc idx := 10
 alloc max := 20
 alloc fnum := 2
 
-roundabout idx <= max {
-    woah ¬¬ "Classified number " + idx + " " + classify_number(idx)
-    woah ¬¬ "Fibonacci sequence[" + fnum + "] = " + fibonacci(fnum)
+loop idx <= max {
+    emit ¬¬ "Classified number " + idx + " " + classify_number(idx)
+    emit ¬¬ "Fibonacci sequence[" + fnum + "] = " + fibonacci(fnum)
     idx := idx + 1
     fnum := fnum + 2
 }
 
 # Assert primality of 97 for validation
 facts is_prime(97)
-woah ¬¬ "hell yeah"
+emit ¬¬ "hell yeah"
 # Will throw an AssertionFailure as expected
-woah ¬¬ "96 is not prime"
+emit ¬¬ "96 is not prime"
 facts is_prime(96)

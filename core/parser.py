@@ -335,7 +335,7 @@ class Parser:
 
     def _statement(self) -> tuple:
         """
-        Parse a single statement (woah, alloc assignment, if, or while).
+        Parse a single statement (emit, alloc assignment, if, or while).
 
         Returns:
             A tuple representing the statement AST node.
@@ -391,13 +391,13 @@ class Parser:
 
     def _parse_echo(self) -> tuple:
         """
-        Parse a 'woah' (echo) statement.
+        Parse a 'emit' (echo) statement.
 
         Syntax:
-            woah ¬¬ <expression>
+            emit ¬¬ <expression>
 
         Returns:
-            tuple: ('woah', expression_node, line_number)
+            tuple: ('emit', expression_node, line_number)
 
         Raises:
             SyntaxError: If the expression is malformed.
@@ -407,7 +407,7 @@ class Parser:
         self._eat("CHAIN")
         expr_node = self._expr()
 
-        return ("woah", expr_node, tok.line)
+        return ("emit", expr_node, tok.line)
 
 
     def _parse_if(self) -> tuple:
@@ -454,15 +454,15 @@ class Parser:
 
     def _parse_while(self) -> tuple:
         """
-        Parse a 'roundabout' (while) loop.
+        Parse a 'loop' (while) loop.
 
         Syntax:
-            roundabout <condition> {
+            loop <condition> {
                 ...
             }
 
         Returns:
-            tuple: ('roundabout', condition_expr, block_node, line_number)
+            tuple: ('loop', condition_expr, block_node, line_number)
 
         Raises:
             SyntaxError: If the condition or block is invalid.
@@ -471,7 +471,7 @@ class Parser:
         self._eat('WHILE')
         condition = self._comparison()
         body = self._block()
-        return ('roundabout', condition, body, tok.line)
+        return ('loop', condition, body, tok.line)
 
 
     def _parse_func_def(self) -> tuple:
@@ -479,7 +479,7 @@ class Parser:
         Parse a function definition.
 
         Syntax:
-            bitchin <name>(<param1>, <param2>, ...) {
+            proc <name>(<param1>, <param2>, ...) {
                 ...
             }
 
@@ -543,10 +543,10 @@ class Parser:
 
     def _parse_return(self) -> tuple:
         """
-        Parse a 'gimme' return statement.
+        Parse a 'return' return statement.
 
         Syntax:
-            gimme <expression>
+            return <expression>
 
         Returns:
             tuple: ('return', expression_node, line_number)

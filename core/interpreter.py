@@ -24,7 +24,7 @@ types (`UndefinedVariableError`, `UnknownOperationError`) are raised on invalid 
 4. Control Flow
 Control constructs include:
 - `if`/'else' (if/else): executes conditional blocks based on boolean evaluation.
-- `roundabout` (while): repeatedly evaluates a block while a condition holds.
+- `loop` (while): repeatedly evaluates a block while a condition holds.
 - `block`: executes a nested sequence of statements.
 
 5. Header Validation
@@ -281,7 +281,7 @@ class Interpreter:
 
         Parameters:
             statements (list):
-                A list of ('assign' | 'woah' | 'if' | 'block' | 'roundabout', ...) tuples.
+                A list of ('assign' | 'emit' | 'if' | 'block' | 'loop', ...) tuples.
 
         Raises:
             Exception: For unknown statement types.
@@ -297,7 +297,7 @@ class Interpreter:
                 self.vars[var_name] = value
 
 
-            elif kind == 'woah':
+            elif kind == 'emit':
                 _, expr_node, _ = stmt
                 value = self.eval_expr(expr_node)
                 print(value)
@@ -322,7 +322,7 @@ class Interpreter:
                 self.execute(block_statements)
 
 
-            elif kind == 'roundabout':
+            elif kind == 'loop':
                 _, cond_node, block_node, _ = stmt
                 while self.eval_expr(cond_node):
                     self.execute([block_node])

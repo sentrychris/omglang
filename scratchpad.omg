@@ -3,15 +3,15 @@
 alloc a := true
 alloc b := false
 
-woah ¬¬ a           # should print: true
-woah ¬¬ b           # should print: false
+emit ¬¬ a
+emit ¬¬ b
 
 if a {
-    woah ¬¬  "a is true"
+    emit ¬¬  "a is true"
 } elif b {
-    woah ¬¬  "b is true"
+    emit ¬¬  "b is true"
 } else {
-    woah ¬¬  "neither is true"
+    emit ¬¬  "neither is true"
 }
 
 # Permission bitmasks
@@ -20,7 +20,7 @@ alloc WRITE := 2     # 010
 alloc EXECUTE := 1   # 001
 
 # Convert a single digit (0–7) to rwx string
-bitchin to_rwx(bits) {
+proc to_rwx(bits) {
     alloc result := ""
 
     if bits & READ != 0 {
@@ -41,24 +41,24 @@ bitchin to_rwx(bits) {
         result := result + "-"
     }
 
-    gimme result
+    return result
 }
 
 # Convert full numeric mode (e.g. 755) to rwxrwxrwx
-bitchin perms(mode) {
+proc perms(mode) {
     alloc u := mode / 100
     alloc g := (mode / 10) % 10
     alloc o := mode % 10
 
-    gimme to_rwx(u) + to_rwx(g) + to_rwx(o)
+    return to_rwx(u) + to_rwx(g) + to_rwx(o)
 }
 
 # Try a few examples
 alloc codes := [755, 644, 700, 600, 777]
 alloc i := 0
 
-roundabout i < length(codes) {
+loop i < length(codes) {
     alloc mode := codes[i]
-    woah ¬¬ mode + ": " + perms(mode)
+    emit ¬¬ mode + ": " + perms(mode)
     i := i + 1
 }

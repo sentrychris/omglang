@@ -77,7 +77,7 @@ Handles:
 * `expr == expr`
 * `expr > expr`, etc.
 
-Used in control flow (`if`, `roundabout`) for condition evaluation.
+Used in control flow (`if`, `loop`) for condition evaluation.
 
 ---
 
@@ -94,8 +94,8 @@ def statement(self):
 Handles:
 
 * Variable declarations (`alloc`)
-* Output (`woah`)
-* Control flow (`if`, `roundabout`)
+* Output (`emit`)
+* Control flow (`if`, `loop`)
 * Function definitions
 * Function calls
 

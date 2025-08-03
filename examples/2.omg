@@ -1,25 +1,25 @@
 ;;;omg
 
 # Recursive factorial function with debugging output
-bitchin factorial(n) {
+proc factorial(n) {
     if n <= 1 {
-        gimme 1
+        return 1
     } else {
-        gimme n * factorial(n - 1)
+        return n * factorial(n - 1)
     }
 }
 
 # Greeting function with conditional logic
-bitchin greeting(name, excited) {
+proc greeting(name, excited) {
     if excited == 1 {
-        gimme "Hey " + name + "! You're awesome!"
+        return "Hey " + name + "! You're awesome!"
     } else {
-        gimme "Hello " + name
+        return "Hello " + name
     }
 }
 
 # Compose full message combining factorial and greeting
-bitchin compose_message(name, num) {
+proc compose_message(name, num) {
     alloc fact := factorial(num)
     alloc excited := 0
 
@@ -27,7 +27,7 @@ bitchin compose_message(name, num) {
         excited := 1
     }
 
-    gimme greeting(name, excited) + ", your factorial of " + num + " is " + fact
+    return greeting(name, excited) + ", your factorial of " + num + " is " + fact
 }
 
 # Variables
@@ -36,15 +36,15 @@ alloc number := 6
 
 # Output composed message
 alloc message := compose_message(user, number)
-woah ¬¬ message
+emit ¬¬ message
 
 # Loop counting down with conditional inside
 alloc countdown := number
-roundabout countdown > 0 {
+loop countdown > 0 {
     if countdown % 2 == 0 {
-        woah ¬¬ countdown + " is even"
+        emit ¬¬ countdown + " is even"
     } else {
-        woah ¬¬ countdown + " is odd"
+        emit ¬¬ countdown + " is odd"
     }
     countdown := countdown - 1
 }
@@ -52,9 +52,9 @@ roundabout countdown > 0 {
 # Use string concatenation, arithmetic, and facts assertion
 alloc sum := 0
 alloc i := 1
-roundabout i <= 10 {
+loop i <= 10 {
     sum := sum + i
     i := i + 1
 }
 
-woah ¬¬ "Sum of 1 to 10 is " + sum
+emit ¬¬ "Sum of 1 to 10 is " + sum

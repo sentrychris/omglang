@@ -1,47 +1,47 @@
 ;;;omg
 
 # Define a function
-bitchin greeting(name) {
-    gimme "Hello " + name
+proc greeting(name) {
+    return "Hello " + name
 }
 
 # Call a function and print to stdout
-woah ¬¬ greeting("World")
+emit ¬¬ greeting("World")
 
 # Declare some variables
 alloc x := 5
 alloc y := 10
 alloc z := 0
 
-woah ¬¬ "x = " + x
-woah ¬¬ "y = " + y
+emit ¬¬ "x = " + x
+emit ¬¬ "y = " + y
 
-bitchin add(a, b) {
-    gimme a + b
+proc add(a, b) {
+    return a + b
 }
 
 # Do some arithmetic and format for stdout
-woah ¬¬ x + " + " + y + " = " + add(x, y)
-woah ¬¬ "(" + x + " + " + y + ") * 10 / 2 = " + (x + y) * 10 / 2
+emit ¬¬ x + " + " + y + " = " + add(x, y)
+emit ¬¬ "(" + x + " + " + y + ") * 10 / 2 = " + (x + y) * 10 / 2
 
 # Reassign
-woah ¬¬ "Re-assigning x"
-woah ¬¬ "x was " + x
+emit ¬¬ "Re-assigning x"
+emit ¬¬ "x was " + x
 x := 10
-woah ¬¬ "x is now " + x
+emit ¬¬ "x is now " + x
 
 
 # Create a loop
-woah ¬¬ "Beginning loop:"
+emit ¬¬ "Beginning loop:"
 alloc i := 0
-roundabout i <= 3 {
+loop i <= 3 {
     if i == 3 {
-        woah ¬¬ "3 is the magic number."
+        emit ¬¬ "3 is the magic number."
     } elif i == 2 {
-        woah ¬¬ "2 is alright I guess."
+        emit ¬¬ "2 is alright I guess."
     } else {
-        woah ¬¬ i
+        emit ¬¬ i
     }
     i := i + 1
 }
-woah ¬¬ "Finished loop."
+emit ¬¬ "Finished loop."

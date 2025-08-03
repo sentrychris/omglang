@@ -1,6 +1,6 @@
 # OMGlang
 
-**OMG** is a toy programming language with a light‑hearted syntax and basic support for variables, arithmetic, conditionals, loops and functions. It's implemented in Python using a hand‑written lexer, a recursive‑descent parser and a tree‑walk interpreter. The language is intended as an educational exercise rather than a production tool.
+OMG is a toy programming language with a minimal, custom syntax and basic support for variables, arithmetic, conditionals, loops, and functions. It is implemented in Python using a hand‑written lexer, a recursive‑descent parser, and a tree‑walk interpreter.
 
 ## Table of Contents
 
@@ -16,7 +16,7 @@
 
 ## Overview
 
-The language uses playful keywords like `alloc`, `woah`, `if` and `roundabout`, but it's grounded in a well‑defined grammar. All scripts must start with a header line `;;;omg`. Execution proceeds through three stages:
+The language uses keywords like `alloc`, `emit`, `if` and `loop` and is grounded in a well‑defined grammar. All scripts must start with a header line `;;;omg`. Execution proceeds through three stages:
 
 1. **Lexing** – convert raw source code into tokens.
 2. **Parsing** – build an Abstract Syntax Tree (AST) from tokens.
@@ -67,12 +67,12 @@ Running `omg` with no arguments launches an interactive session. This REPL lets 
 
 ```plaintext
 >>> alloc x := 5
->>> woah ¬¬ x
+>>> emit ¬¬ x
 5
 >>> if x < 10 {
-...     woah ¬¬ x + " is smaller than 10"
+...     emit ¬¬ x + " is smaller than 10"
 ... } else {
-...     woah ¬¬ x + " is bigger than 10"
+...     emit ¬¬ x + " is bigger than 10"
 ... }
 x is smaller than 10
 >>> exit
@@ -84,7 +84,7 @@ If you start a block and do not close it, the prompt switches to `...` and the i
 
 The lexer scans the raw text and splits it into a stream of tokens. Each token has a type, value and line number. Token types include:
 
-* **Keywords**: `alloc`, `woah`, `bitchin`, `if`, `elif`, `else`, `roundabout`.
+* **Keywords**: `alloc`, `emit`, `proc`, `if`, `elif`, `else`, `loop`.
 * **Operators**:
     * Arithmetic: `+`, `-`, `*`, `/`, `%`
     * Comparison: `==`, `!=`, `<`, `>`, `<=`, `>=`
@@ -157,7 +157,7 @@ The interpreter walks the AST and evaluates expressions or executes statements. 
 
 ### Expression Evaluation
 
-Handled by `eval_expr(node)`: literals return their value; variables are looked up in the current scope; binary operations are recursively evaluated (with support for `+` for both numeric addition and string concatenation); function calls evaluate their arguments, bind them to parameters, execute the function body and return the result (or `None` if no `gimme` statement is encountered).
+Handled by `eval_expr(node)`: literals return their value; variables are looked up in the current scope; binary operations are recursively evaluated (with support for `+` for both numeric addition and string concatenation); function calls evaluate their arguments, bind them to parameters, execute the function body and return the result (or `None` if no `return` statement is encountered).
 
 ### Statement Execution
 
@@ -165,15 +165,15 @@ Handled by `execute(statements)`. Supported statements include:
 
 * **alloc** – evaluate an expression and store it in the variable environment.
 
-* **woah** – evaluate an expression and print the result.
+* **emit** – evaluate an expression and print the result.
 
 * **if/elif/else** – evaluate a condition and execute one of several blocks conditionally.
 
-* **roundabout** – execute a block repeatedly while a condition holds.
+* **loop** – execute a block repeatedly while a condition holds.
 
-* **bitchin** – define a named function with parameters and body.
+* **proc** – define a named function with parameters and body.
 
-* **gimme** – return a value from a function.
+* **return** – return a value from a function.
 
 Each function call creates a new scope for its parameters, and the previous variable state is restored afterward (there are no closures or first‑class functions yet).
 
@@ -185,43 +185,43 @@ Examples can be found in the examples directory.
 ;;;omg
 
 # Define a function
-bitchin greeting(name) {
-    gimme "Hello " + name
+proc greeting(name) {
+    return "Hello " + name
 }
 
 # Call a function and print to stdout
-woah ¬¬ greeting("World")
+emit ¬¬ greeting("World")
 
 # Declare some variables
 alloc x := 5
 alloc y := 10
 alloc z := 0
 
-woah ¬¬ "x = " + x
-woah ¬¬ "y = " + y
+emit ¬¬ "x = " + x
+emit ¬¬ "y = " + y
 
-bitchin add(a, b) {
-    gimme a + b
+proc add(a, b) {
+    return a + b
 }
 
 # Do some arithmetic and format for stdout
-woah ¬¬ x + " + " + y + " = " + add(x, y)
-woah ¬¬ "(" + x + " + " + y + ") * 10 / 2 = " + (x + y) * 10 / 2
+emit ¬¬ x + " + " + y + " = " + add(x, y)
+emit ¬¬ "(" + x + " + " + y + ") * 10 / 2 = " + (x + y) * 10 / 2
 
 # Create a loop
-woah ¬¬ "Beginning loop:"
+emit ¬¬ "Beginning loop:"
 alloc i := 0
-roundabout i <= 3 {
+loop i <= 3 {
     if i == 3 {
-        woah ¬¬ "3 is the magic number."
+        emit ¬¬ "3 is the magic number."
     } elif i == 2 {
-        woah ¬¬ "2 is alright I guess."
+        emit ¬¬ "2 is alright I guess."
     } else {
-        woah ¬¬ i
+        emit ¬¬ i
     }
     alloc i := i + 1
 }
-woah ¬¬ "Finished loop."
+emit ¬¬ "Finished loop."
 ```
 
 ## Design Notes
