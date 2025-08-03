@@ -3,13 +3,13 @@
 # Complex control flow structure
 alloc x := 5
 if x == 4 {
-    emit ¬¬ "x is 4"
+    emit "x is 4"
 } elif x == 5 {
-    emit ¬¬ "x is 5"
+    emit "x is 5"
 } elif x == 6 {
-    emit ¬¬ "x is 6"
+    emit "x is 6"
 } else {
-    emit ¬¬ "x is something else"
+    emit "x is something else"
 }
 
 # Primality check using trial division
@@ -67,15 +67,15 @@ alloc max := 20
 alloc fnum := 2
 
 loop idx <= max {
-    emit ¬¬ "Classified number " + idx + " " + classify_number(idx)
-    emit ¬¬ "Fibonacci sequence[" + fnum + "] = " + fibonacci(fnum)
+    emit "Classified number " + idx + " " + classify_number(idx)
+    emit "Fibonacci sequence[" + fnum + "] = " + fibonacci(fnum)
     idx := idx + 1
     fnum := fnum + 2
 }
 
 # Assert primality of 97 for validation
 facts is_prime(97)
-emit ¬¬ "hell yeah"
+emit "hell yeah"
 # Will throw an AssertionFailure as expected
-emit ¬¬ "96 is not prime"
+emit "96 is not prime"
 facts is_prime(96)

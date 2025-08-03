@@ -73,4 +73,4 @@ proc rot13(input) {
 # Entry point
 alloc message := ["H", "E", "L", "L", "O"]
 alloc encoded := rot13(message)
-emit ¬¬ encoded
+emit encoded

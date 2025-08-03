@@ -3,15 +3,15 @@
 alloc a := true
 alloc b := false
 
-emit ¬¬ a
-emit ¬¬ b
+emit a
+emit b
 
 if a {
-    emit ¬¬  "a is true"
+    emit  "a is true"
 } elif b {
-    emit ¬¬  "b is true"
+    emit  "b is true"
 } else {
-    emit ¬¬  "neither is true"
+    emit  "neither is true"
 }
 
 # Permission bitmasks
@@ -59,6 +59,6 @@ alloc i := 0
 
 loop i < length(codes) {
     alloc mode := codes[i]
-    emit ¬¬ mode + ": " + perms(mode)
+    emit mode + ": " + perms(mode)
     i := i + 1
 }

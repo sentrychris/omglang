@@ -40,6 +40,6 @@ proc tabula_recta() {
 alloc table := tabula_recta()
 alloc i := 0
 loop i < length(table) {
-    emit ¬¬ table[i]
+    emit table[i]
     i := i + 1
 }

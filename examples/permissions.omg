@@ -31,7 +31,7 @@ proc to_rwx(bits) {
 }
 
 # Convert full numeric mode (e.g. 755) to rwxrwxrwx
-proc perms(mode) {
+proc permissions(mode) {
     alloc u := mode / 100
     alloc g := (mode / 10) % 10
     alloc o := mode % 10
@@ -45,6 +45,6 @@ alloc i := 0
 
 loop i < length(codes) {
     alloc mode := codes[i]
-    emit ¬¬ mode + ": " + perms(mode)
+    emit mode + ": " + permissions(mode)
     i := i + 1
 }

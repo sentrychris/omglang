@@ -394,7 +394,7 @@ class Parser:
         Parse a 'emit' (echo) statement.
 
         Syntax:
-            emit ¬¬ <expression>
+            emit <expression>
 
         Returns:
             tuple: ('emit', expression_node, line_number)
@@ -404,7 +404,7 @@ class Parser:
         """
         tok = self._current_token
         self._eat("ECHO")
-        self._eat("CHAIN")
+        # self._eat("CHAIN")
         expr_node = self._expr()
 
         return ("emit", expr_node, tok.line)

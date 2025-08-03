@@ -82,7 +82,7 @@ def tokenize(code) -> tuple[list[Token], dict[str, str]]:
         ('RETURN',    r'\breturn\b'),
 
         # Chain
-        ('CHAIN',     r'¬¬'),
+        # ('CHAIN',     r''),
 
         # Identifiers
         ('ID',        r'[A-Za-z_][A-Za-z0-9_]*'),

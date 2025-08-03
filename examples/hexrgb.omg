@@ -49,10 +49,10 @@ proc rgb_to_hex(r, g, b) {
 
 # DEMO
 
-emit ¬¬ "RGB:"
-emit ¬¬ hex_to_rgb("FF8800")   # Outputs: R: 255 G: 136 B: 0
+emit "RGB:"
+emit hex_to_rgb("FF8800")   # Outputs: R: 255 G: 136 B: 0
 
-emit ¬¬ ""
+emit ""
 
-emit ¬¬ "HEX:"
-emit ¬¬ rgb_to_hex(255, 136, 0)   # Outputs: FF8800
+emit "HEX:"
+emit rgb_to_hex(255, 136, 0)   # Outputs: FF8800

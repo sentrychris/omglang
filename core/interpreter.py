@@ -85,6 +85,20 @@ class Interpreter:
         )
 
 
+    def _format_expr(self, node) -> str:
+        """
+        Convert AST back to a readable string for debugging.
+        """
+        match node[0]:
+            case 'eq': return f"({self._format_expr(node[1])} == {self._format_expr(node[2])})"
+            case 'thingy': return node[1]
+            case 'number': return str(node[1])
+            case 'func_call':
+                fname, args, _ = node[1], node[2], node[3]
+                return f"{fname}({', '.join(self._format_expr(arg) for arg in args)})"
+            case _: return f"<expr {node[0]}>"
+
+
     def eval_expr(self, node):
         """
         Recursively evaluate an expression node and return its computed value.
@@ -303,10 +317,19 @@ class Interpreter:
                 print(value)
 
 
-            elif kind == 'facts':
-                _, expr_node, _ = stmt
+            elif kind == 'fact':
+                _, expr_node, line = stmt
                 value = self.eval_expr(expr_node)
-                assert value
+                if not isinstance(value, bool):
+                    raise RuntimeError(
+                        f"`fact` expected a boolean, got {type(value).__name__} "
+                        f"on line {line}"
+                    )
+                if not value:
+                    # Optionally stringify the expression node
+                    raise AssertionError(
+                        f"Assertion failed on line {line}: {self._format_expr(expr_node)}"
+                    )
 
 
             elif kind == 'if':

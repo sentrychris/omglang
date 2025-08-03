@@ -67,12 +67,12 @@ Running `omg` with no arguments launches an interactive session. This REPL lets 
 
 ```plaintext
 >>> alloc x := 5
->>> emit ¬¬ x
+>>> emit x
 5
 >>> if x < 10 {
-...     emit ¬¬ x + " is smaller than 10"
+...     emit x + " is smaller than 10"
 ... } else {
-...     emit ¬¬ x + " is bigger than 10"
+...     emit x + " is bigger than 10"
 ... }
 x is smaller than 10
 >>> exit
@@ -190,38 +190,38 @@ proc greeting(name) {
 }
 
 # Call a function and print to stdout
-emit ¬¬ greeting("World")
+emit greeting("World")
 
 # Declare some variables
 alloc x := 5
 alloc y := 10
 alloc z := 0
 
-emit ¬¬ "x = " + x
-emit ¬¬ "y = " + y
+emit "x = " + x
+emit "y = " + y
 
 proc add(a, b) {
     return a + b
 }
 
 # Do some arithmetic and format for stdout
-emit ¬¬ x + " + " + y + " = " + add(x, y)
-emit ¬¬ "(" + x + " + " + y + ") * 10 / 2 = " + (x + y) * 10 / 2
+emit x + " + " + y + " = " + add(x, y)
+emit "(" + x + " + " + y + ") * 10 / 2 = " + (x + y) * 10 / 2
 
 # Create a loop
-emit ¬¬ "Beginning loop:"
+emit "Beginning loop:"
 alloc i := 0
 loop i <= 3 {
     if i == 3 {
-        emit ¬¬ "3 is the magic number."
+        emit "3 is the magic number."
     } elif i == 2 {
-        emit ¬¬ "2 is alright I guess."
+        emit "2 is alright I guess."
     } else {
-        emit ¬¬ i
+        emit i
     }
     alloc i := i + 1
 }
-emit ¬¬ "Finished loop."
+emit "Finished loop."
 ```
 
 ## Design Notes
