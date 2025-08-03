@@ -352,6 +352,8 @@ class Parser:
             return self._parse_if()
         elif tok.type == 'WHILE':
             return self._parse_while()
+        elif tok.type == 'BREAK':
+            return self._parse_break()
         elif tok.type == 'FUNC':
             return self._parse_func_def()
         elif tok.type == 'ALLOC':
@@ -472,6 +474,24 @@ class Parser:
         condition = self._comparison()
         body = self._block()
         return ('loop', condition, body, tok.line)
+
+
+    def _parse_break(self) -> tuple:
+        """
+        Parse a 'break' control statement.
+
+        Syntax:
+            return <expression>
+
+        Returns:
+            tuple: ('break', expression_node, line_number)
+
+        Raises:
+            SyntaxError: If the expression is malformed.
+        """
+        tok = self._current_token
+        self._eat("BREAK")
+        return ("break", tok.line)
 
 
     def _parse_func_def(self) -> tuple:

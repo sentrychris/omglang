@@ -37,3 +37,10 @@ class ReturnControlFlow(Exception):
     """
     def __init__(self, value):
         self.value = value
+
+
+class BreakLoop(Exception):
+    """
+    Control flow handling for return statements.
+    """
+    pass

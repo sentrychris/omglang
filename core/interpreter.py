@@ -36,7 +36,7 @@ Runtime errors during interpretation—, such as undefined variables, unknown op
 malformed AST nodes, are surfaced as typed exceptions with line numbers and file context.
 """
 from core.exceptions import UndefinedVariableException, UnknownOperationException, \
-    ReturnControlFlow
+    BreakLoop, ReturnControlFlow
 
 class Interpreter:
     """
@@ -90,7 +90,6 @@ class Interpreter:
         """
         Convert AST back to a readable string for debugging.
         """
-        print(node)
         match node[0]:
             case 'eq': return f"({self._format_expr(node[1])} == {self._format_expr(node[2])})"
             case 'alloc': return node[1]
@@ -389,8 +388,18 @@ class Interpreter:
 
             elif kind == 'loop':
                 _, cond_node, block_node, _ = stmt
-                while self.eval_expr(cond_node):
-                    self.execute([block_node])
+                try:
+                    while self.eval_expr(cond_node):
+                        try:
+                            self.execute([block_node])
+                        except BreakLoop:
+                            break
+                except BreakLoop:
+                    pass
+
+
+            elif kind == 'break':
+                raise BreakLoop()
 
 
             elif kind == 'func_def':
