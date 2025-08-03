@@ -169,7 +169,7 @@ class Interpreter:
             # Binary operations
             elif op in ('add', 'sub', 'mul', 'mod', 'div',
                         'and_bits', 'or_bits', 'xor_bits', 'shl', 'shr',
-                        'eq', 'gt', 'lt', 'ge', 'le'):
+                        'eq', 'ne', 'gt', 'lt', 'ge', 'le'):
                 lhs = self.eval_expr(node[1])
                 rhs = self.eval_expr(node[2])
                 match op:
@@ -191,6 +191,7 @@ class Interpreter:
                     case 'shr':      term = lhs >> rhs
                     # Comparison
                     case 'eq':  term = lhs == rhs
+                    case 'ne':  term = lhs != rhs
                     case 'gt':  term = lhs > rhs
                     case 'lt':  term = lhs < rhs
                     case 'ge':  term = lhs >= rhs

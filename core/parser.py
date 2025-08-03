@@ -298,10 +298,17 @@ class Parser:
             An AST node representing the comparison.
         """
         result = self._expr()
-        while self._current_token.type in ('EQ', 'GT', 'LT', 'GE', 'LE'):
+        while self._current_token.type in ('EQ', 'NE', 'GT', 'LT', 'GE', 'LE'):
             op_tok = self._current_token
             self._eat(op_tok.type)
-            op_map = {'EQ': 'eq', 'GT': 'gt', 'LT': 'lt', 'GE': 'ge', 'LE': 'le'}
+            op_map = {
+                'EQ': 'eq',
+                'NE': 'ne',
+                'GT': 'gt',
+                'LT': 'lt',
+                'GE': 'ge',
+                'LE': 'le'
+            }
             result = (op_map[op_tok.type], result, self._expr(), op_tok.line)
         return result
 

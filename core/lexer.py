@@ -116,6 +116,7 @@ def tokenize(code) -> tuple[list[Token], dict[str, str]]:
         ('GE',        r'>='),
         ('LE',        r'<='),
         ('EQ',        r'=='),
+        ('NE',        r'!='),
         ('GT',        r'>'),
         ('LT',        r'<'),
 
