@@ -141,7 +141,7 @@ def tokenize(code) -> tuple[list[Token], dict[str, str]]:
     tok_regex = '|'.join(f'(?P<{name}>{pattern})' for name, pattern in token_specification)
 
     tokens = []
-    line_num = 1
+    line_num = 2 # 1 contains the stripped header
 
     for match_obj in re.finditer(tok_regex, code):
         kind = match_obj.lastgroup
