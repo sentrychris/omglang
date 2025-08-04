@@ -59,7 +59,7 @@ def parse_statement(parser: 'Parser') -> tuple:
     elif tok.type == 'FUNC':
         return parser.parse_func_def()
     elif tok.type == 'ALLOC':
-        return parser.parse_assignment()
+        return parser.parse_declaration()
     elif tok.type == 'ID':
         if (
             parser.position + 1 < len(parser.tokens)
@@ -241,15 +241,15 @@ def parse_reassignment(parser: 'Parser') -> tuple:
     return ('assign', id_tok.value, expr_node, id_tok.line)
 
 
-def parse_assignment(parser: 'Parser') -> tuple:
+def parse_declaration(parser: 'Parser') -> tuple:
     """
-    Parse an 'alloc' variable assignment.
-    
+    Parse an ``alloc`` variable declaration.
+
     Args:
         parser: The parser instance.
 
     Returns:
-        tuple: representing the AST node.
+        tuple: ('decl', name, expr, line)
     """
     parser.eat('ALLOC')
     id_tok = parser.curr_token
@@ -268,4 +268,4 @@ def parse_assignment(parser: 'Parser') -> tuple:
         )
     parser.eat('ASSIGN')
     expr_node = parser.expr()
-    return ('assign', var_name, expr_node, id_tok.line)
+    return ('decl', var_name, expr_node, id_tok.line)
