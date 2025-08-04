@@ -179,7 +179,10 @@ Logical `and` short‑circuits: the right‑hand side is evaluated only if the l
 appropriate action. Supported statements include:
 
 * **alloc** – declare a variable.
-* **assign** – update an existing variable.
+    * To update an existing variable, use the variable identifier followed by the assignment operator (`:=`).
+        * If no local binding exists, this
+  mutates the global variable
+        * Attempting to update a variable that hasn't previously been declared with `alloc` will raise an `UndefinedVariableException`.
 * **emit** – evaluate an expression and print the result.
 * **facts** – assert that an expression is truthy.
 * **if/elif/else** – conditional execution.
