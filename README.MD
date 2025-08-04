@@ -84,12 +84,11 @@ If you start a block and do not close it, the prompt switches to `...` and the i
 
 The lexer scans the raw text and splits it into a stream of tokens. Each token has a type, value and line number. Token types include:
 
-* **Keywords**: `alloc`, `emit`, `proc`, `if`, `elif`, `else`, `loop`.
+* **Keywords**: `alloc`, `emit`, `proc`, `if`, `elif`, `else`, `loop`, `break`, `return`.
 * **Operators**:
     * Arithmetic: `+`, `-`, `*`, `/`, `%`
     * Comparison: `==`, `!=`, `<`, `>`, `<=`, `>=`
     * Assignment: `:=`
-    * Output: `<<`
     * Bitwise: `&`, `|`, `^`, `~`, `<<`, `>>`
     * Logical: `and`
 * **Identifiers**: variable and function names.
@@ -117,33 +116,6 @@ The parser is a hand‑written **recursive descent parser** following an LL(1) g
 | 9     | **Logical AND**    | `and`                      | `_logical_and`  |
 
 Each layer wraps the tighter-binding expressions from below, ensuring proper operator grouping. This model gives OMG clear operator precedence semantics.
-
-
-### Parsing Methods:
-
-* `_factor()` – handles literals, variables, function calls, indexing, slicing, and unary `~`.
-
-* `_term()` – handles multiplication, division and modulus.
-
-* `_add_sub()` – handles addition and subtraction.
-
-* `_shift()` – handles `<<`, `>>`.
-
-* `_bitwise_and()` – handles `&`.
-
-* `_bitwise_xor()` – handles `^`.
-
-* `_bitwise_or()` – handles `|`.
-
-* `_comparison()` – handles relational comparisons.
-
-* `_logical_and()` – handles `and`.
-
-* `_expr()` – entry point for expression parsing.
-
-* `_statement()` – parses assignments, output, control flow, etc.
-
-* `_block()` – parses a sequence of statements inside { … }.
 
 Each AST node is represented as a tuple encoding the operation, its operands and the originating line number. For example:
 
@@ -223,7 +195,7 @@ loop i <= 3 {
     } else {
         emit i
     }
-    alloc i := i + 1
+    i := i+1
 }
 emit "Finished loop."
 ```
