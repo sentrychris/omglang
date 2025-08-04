@@ -6,7 +6,7 @@ This is the main entry point for the OMG language interpreter.
 Workflow:
 1. The source script is read from the file specified on the command line.
 2. The Interpreter verifies the script header to ensure validity.
-3. The Lexer tokenizes the stripped source code into meaningful tokens.
+3. The Lexer tokenizes the source code into meaningful tokens.
 4. The Parser processes tokens into an AST following the language grammar.
 5. The Interpreter walks the AST, evaluating expressions and executing statements.
 """
@@ -70,9 +70,8 @@ def run_script(script_name: str):
     try:
         interpreter = Interpreter(script_name)
         interpreter.check_header(code)
-        source = interpreter.strip_header(code)
 
-        tokens, token_map_literals = tokenize(source)
+        tokens, token_map_literals = tokenize(code)
         parser = Parser(tokens, token_map_literals, script_name)
         ast = parser.parse()
 

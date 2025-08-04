@@ -69,7 +69,7 @@ class Interpreter:
             if line.strip() == ';;;omg':
                 return
         raise RuntimeError(
-            f"OMG script missing required header ';;;omg'\n"
+            f"OMG script missing required header ';;;omg' "
             f"in {self.file}"
         )
 
@@ -291,6 +291,22 @@ class Interpreter:
                                 f"On line {line} in {self.file}"
                             )
                         return ~operand
+                    case Op.ADD:
+                        if not isinstance(operand, int):
+                            raise TypeError(
+                                f"Unary plus (+) requires a numeric operand "
+                                f"{self._format_expr(node)}\n"
+                                f"On line {line} in {self.file}"
+                            )
+                        return +operand
+                    case Op.SUB:
+                        if not isinstance(operand, int):
+                            raise TypeError(
+                                f"Unary minus (-) requires a numeric operand "
+                                f"{self._format_expr(node)}\n"
+                                f"On line {line} in {self.file}"
+                            )
+                        return -operand
                     case _:
                         raise UnknownOpException(
                             f"Unknown unary operator '{operator}'!"

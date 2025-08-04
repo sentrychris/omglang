@@ -1,28 +1,13 @@
-"""
-Lexer.
+"""Lexer for OMGlang.
 
-This is a regex-based lexer that performs single-pass tokenization of source code into a flat
-list of tokens.
+This lexer performs a single pass over the source code using a combined
+regular expression of named groups. Each match yields a :class:`Token`
+containing its type, value and source line number.
 
-1. Token Definitions
-Token types are defined via named regular expressions (token_specification), covering language 
-constructs such as keywords (e.g. if, loop), operators (e.g. :=, <<, +), literals 
-(numbers, strings), and structural tokens (braces, parentheses, commas, etc.). The combined regex 
-is constructed using named groups to enable type identification during matching.
-
-2. Tokenization
-Tokenization is performed with re.finditer over the full input string. Each match is assigned 
-a type and value and wrapped in a Token object that also stores line number metadata. 
-Whitespace is skipped, and newlines increment the line counter and produce a NEWLINE token.
-
-3. Keyword Differentiation
-The lexer differentiates between identifiers and language keywords (e.g., 'alloc') using a 
-post-processing check after matching ID tokens. If the value matches a reserved keyword, the 
-token type is replaced accordingly.
-
-4. Comments
-Single-line comments beginning with '#' are removed before tokenization. Only the portion 
-before the comment delimiter is retained per line.
+Tokens cover literals (numbers, strings, booleans), keywords (``if``, ``loop``,
+``emit`` …), operators and delimiters. Comment text beginning with ``#`` is
+skipped during tokenization so line numbers remain accurate. When present, the
+required ``;;;omg`` header is also stripped before lexing.
 """
 import re
 
@@ -63,6 +48,15 @@ def tokenize(code) -> tuple[list[Token], dict[str, str]]:
         RuntimeError: If an unexpected character is encountered.
     """
 
+    # Strip header before tokenizing
+    lines = code.splitlines()
+    for i, line in enumerate(lines):
+        if line.strip() == "":
+            continue
+        if line.strip() == ";;;omg":
+            code = "\n".join(lines[i + 1 :])
+        break
+
     token_specification: list[Token] = [
         # Literals
         ('BINARY',    r'0b[01]+'),
@@ -75,13 +69,14 @@ def tokenize(code) -> tuple[list[Token], dict[str, str]]:
         ('IF',        r'\bif\b'),
         ('ELIF',      r'\belif\b'),
         ('ELSE',      r'\belse\b'),
-        ('WHILE',     r'\bloop\b'),
+        ('LOOP',      r'\bloop\b'),
         ('BREAK',     r'\bbreak\b'),
-        ('ECHO',      r'\bemit\b'),
+        ('EMIT',      r'\bemit\b'),
         ('FACTS',     r'\bfacts\b'),
         ('FUNC',      r'\bproc\b'),
         ('RETURN',    r'\breturn\b'),
         ('AND',       r'\band\b'),
+        ('ALLOC',     r'\balloc\b'),
 
         # Chain
         # ('CHAIN',     r''),
@@ -126,6 +121,7 @@ def tokenize(code) -> tuple[list[Token], dict[str, str]]:
         ('LT',        r'<'),
 
         # Miscellaneous
+        ('COMMENT',   r'\#[^\n]*'),
         ('NEWLINE',   r'\n'),
         ('SKIP',      r'[ \t]+'),
         ('MISMATCH',  r'.'),
@@ -144,19 +140,8 @@ def tokenize(code) -> tuple[list[Token], dict[str, str]]:
 
     tok_regex = '|'.join(f'(?P<{name}>{pattern})' for name, pattern in token_specification)
 
-    identifier_keywords = {
-        'alloc',
-    }
-
     tokens = []
     line_num = 1
-
-    # Remove comments before tokenizing:
-    code_no_comments = []
-    for line in code.splitlines():
-        stripped_line = line.split('#', 1)[0]  # Keep text before #
-        code_no_comments.append(stripped_line)
-    code = '\n'.join(code_no_comments)
 
     for match_obj in re.finditer(tok_regex, code):
         kind = match_obj.lastgroup
@@ -167,6 +152,8 @@ def tokenize(code) -> tuple[list[Token], dict[str, str]]:
             line_num += 1
             continue
         if kind == 'SKIP':
+            continue
+        if kind == 'COMMENT':
             continue
         if kind == 'MISMATCH':
             raise RuntimeError(f'Unexpected character {value} on line {line_num}')
@@ -181,10 +168,7 @@ def tokenize(code) -> tuple[list[Token], dict[str, str]]:
             value = bytes(value, 'utf-8').decode('unicode_escape')
             tokens.append(Token('STRING', value, line_num))
         elif kind == 'ID':
-            if value in identifier_keywords:
-                tokens.append(Token(value.upper(), value, line_num))
-            else:
-                tokens.append(Token('ID', value, line_num))
+            tokens.append(Token('ID', value, line_num))
         else:
             tokens.append(Token(kind, value, line_num))
 

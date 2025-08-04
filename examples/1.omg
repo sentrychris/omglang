@@ -20,6 +20,10 @@ proc add(a, b) {
     return a + b
 }
 
+emit x + y
+
+emit -5 + 5
+
 # Do some arithmetic and format for stdout
 emit x + " + " + y + " = " + add(x, y)
 emit "(" + x + " + " + y + ") * 10 / 2 = " + (x + y) * 10 / 2
@@ -30,15 +34,23 @@ emit "x was " + x
 x := 10
 emit "x is now " + x
 
+# Lists
+alloc xs := [
+    1,
+    2,
+    3
+]
+
+alloc sxs := "sliced xs (Start: inc. End: exc.): " + xs[1:2]
 
 # Create a loop
 emit "Beginning loop:"
 alloc i := 0
 loop i <= 3 {
-    if i == 3 {
-        emit "3 is the magic number."
-    } elif i == 2 {
+    if i < 3 and i > 1  {
         emit "2 is alright I guess."
+    } elif i == 3 {
+        emit "3 is the magic number."
     } else {
         emit i
     }

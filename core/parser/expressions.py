@@ -23,6 +23,14 @@ def parse_factor(parser: 'Parser') -> tuple:
         operand = parser.factor()
         return ('unary', Op.NOT_BITS, operand, tok.line)
 
+    if tok.type in ('PLUS', 'MINUS'):
+        parser.eat(tok.type)
+        op_map = {
+            'PLUS': Op.ADD,
+            'MINUS': Op.SUB,
+        }
+        return ('unary', op_map[tok.type], parser.factor(), tok.line)
+
     if tok.type == 'NUMBER':
         parser.eat('NUMBER')
         return ('number', tok.value, tok.line)
@@ -204,5 +212,3 @@ def parse_logical_and(parser: 'Parser') -> tuple:
 def parse_expr(parser: 'Parser') -> tuple:
     """Parse an expression starting from the lowest-precedence operator."""
     return parser.logical_and()
-
-
