@@ -1,33 +1,5 @@
 ;;;omg
 
-
-alloc a := 1
-emit a
-
-proc rhs(){
-    emit "rhs"
-    return false  
-}
-
-if rhs() == false and true { 
-    emit "bad"
-} else {
-    emit "ok"
-}
-
-
-proc add(a, b) {
-    return a + b
-}
-
-emit (1 + 2) * 3
-emit add(1,2) + 3   # should be a valid expr-stmt (or rejected intentionally); with fix it parses/executes.
-
-
-alloc x := 1
-proc f(){ x := 2 }  # decide: error (assign undeclared in local copy) or no-op on globals?
-f()
-emit x
-
-
-# add(1,2) + 3
+emit binary(42)
+emit binary(-42)  # -101010
+emit binary(-42, 16) # Binary signed 2's complement
