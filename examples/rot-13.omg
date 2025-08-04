@@ -5,8 +5,9 @@ proc shift(a_list, n) {
     alloc i := 0
     alloc result := []
     alloc len := length(a_list)
+    alloc shifted := []
     loop i < len {
-        alloc shifted := a_list[(i + n) % len]
+        shifted := a_list[(i + n) % len]
         result := result + [shifted]
         i := i + 1
     }
@@ -41,17 +42,23 @@ proc rot13(input) {
     alloc base := alphabet()
     alloc table := tabula_recta()
     alloc i := 0
+    alloc j := 0
+    alloc k  := 0
+    alloc char   := 0
+    alloc found  := false
     alloc result := ""
+    alloc rot    := ""
+
     loop i < length(input) {
-        alloc c := input[i]
-        alloc j := 0
-        alloc found := false
-        alloc index := 0
+        char := input[i]
+        j := 0
+        k := 0
+        found := false
 
         loop j < length(base) {
-            if base[j] == c {
+            if base[j] == char {
                 found := true
-                index := j
+                k := j
                 j := length(base)
             } else {
                 j := j + 1
@@ -59,8 +66,8 @@ proc rot13(input) {
         }
 
         if found {
-            alloc rot := table[13]
-            result := result + rot[index]
+            rot := table[13]
+            result := result + rot[k]
         } else {
             result := result + c
         }

@@ -43,8 +43,9 @@ proc permissions(mode) {
 alloc codes := [755, 644, 700, 600, 777]
 alloc i := 0
 
+alloc mode := 0
 loop i < length(codes) {
-    alloc mode := codes[i]
+    mode := codes[i]
     emit mode + ": " + permissions(mode)
     i := i + 1
 }
