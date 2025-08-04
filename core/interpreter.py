@@ -237,6 +237,11 @@ class Interpreter:
                 Op.AND,
             ):
                 lhs = self.eval_expr(node[1])
+                if op == Op.AND:
+                    if not bool(lhs):
+                        return False
+                    rhs = self.eval_expr(node[2])
+                    return bool(rhs)
                 rhs = self.eval_expr(node[2])
                 match op:
                     # Arithmetic
@@ -277,8 +282,6 @@ class Interpreter:
                         term = lhs >= rhs
                     case Op.LE:
                         term = lhs <= rhs
-                    case Op.AND:
-                        term = bool(lhs) and bool(rhs)
                     case _:
                         raise UnknownOpException(
                             f"Unknown binary operator '{op}'"
