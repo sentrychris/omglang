@@ -3,7 +3,9 @@
 @@comments  :: /#.*$/
 @@keywords  :: alloc emit facts if elif else loop break proc return and true false
 
-start = program $ ;
+start = header program $ ;
+
+header = ';;;omg' NL ;
 
 program = { NL } statement { NL+ statement } { NL } ;
 

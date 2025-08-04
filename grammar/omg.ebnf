@@ -1,6 +1,10 @@
 (* OMGlang EBNF grammar *)
 
-program        = { newline } statement { newline statement } { newline } EOF ;
+script         = header program EOF ;
+
+header         = ";;;omg" newline ;
+
+program        = { newline } statement { newline statement } { newline } ;
 
 statement      = facts_stmt
                | emit_stmt
