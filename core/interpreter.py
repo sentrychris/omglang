@@ -227,6 +227,7 @@ class Interpreter:
                 Op.LT,
                 Op.GE,
                 Op.LE,
+                Op.AND,
             ):
                 lhs = self.eval_expr(node[1])
                 rhs = self.eval_expr(node[2])
@@ -269,6 +270,8 @@ class Interpreter:
                         term = lhs >= rhs
                     case Op.LE:
                         term = lhs <= rhs
+                    case Op.AND:
+                        term = bool(lhs) and bool(rhs)
                     case _:
                         raise UnknownOpException(
                             f"Unknown binary operator '{op}'"

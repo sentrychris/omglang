@@ -91,6 +91,7 @@ The lexer scans the raw text and splits it into a stream of tokens. Each token h
     * Assignment: `:=`
     * Output: `<<`
     * Bitwise: `&`, `|`, `^`, `~`, `<<`, `>>`
+    * Logical: `and`
 * **Identifiers**: variable and function names.
 * **Literals**: integers and strings.
 * **Punctuation**: `(`, `)`, `{`, `}`, `[`, `]`, `,`, `:`.
@@ -113,6 +114,7 @@ The parser is a hand‑written **recursive descent parser** following an LL(1) g
 | 6     | **Bitwise XOR**    | `^`                        | `_bitwise_xor`  |
 | 7     | **Bitwise OR**     | `\|`                        | `_bitwise_or`   |
 | 8     | **Comparison**     | `==`, `!=`, `<`, `>`, `<=`, `>=` | `_comparison`   |
+| 9     | **Logical AND**    | `and`                      | `_logical_and`  |
 
 Each layer wraps the tighter-binding expressions from below, ensuring proper operator grouping. This model gives OMG clear operator precedence semantics.
 
@@ -133,9 +135,11 @@ Each layer wraps the tighter-binding expressions from below, ensuring proper ope
 
 * `_bitwise_or()` – handles `|`.
 
-* `_expr()` – entry point for expression parsing.
-
 * `_comparison()` – handles relational comparisons.
+
+* `_logical_and()` – handles `and`.
+
+* `_expr()` – entry point for expression parsing.
 
 * `_statement()` – parses assignments, output, control flow, etc.
 

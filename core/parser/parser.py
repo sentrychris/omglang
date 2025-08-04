@@ -70,23 +70,11 @@ class Parser:
         """
         return _expr.parse_term(self)
 
-    def bitwise_or(self) -> tuple:
+    def add_sub(self) -> tuple:
         """
-        Parse a bitwise OR expression.
+        Parse an addition or subtraction expression.
         """
-        return _expr.parse_bitwise_or(self)
-
-    def bitwise_xor(self) -> tuple:
-        """
-        Parse a bitwise XOR expression.
-        """
-        return _expr.parse_bitwise_xor(self)
-
-    def bitwise_and(self) -> tuple:
-        """
-        Parse a bitwise AND expression.
-        """
-        return _expr.parse_bitwise_and(self)
+        return _expr.parse_add_sub(self)
 
     def shift(self) -> tuple:
         """
@@ -94,23 +82,41 @@ class Parser:
         """
         return _expr.parse_shift(self)
 
-    def add_sub(self) -> tuple:
+    def bitwise_and(self) -> tuple:
         """
-        Parse an addition or subtraction expression.
+        Parse a bitwise AND expression.
         """
-        return _expr.parse_add_sub(self)
+        return _expr.parse_bitwise_and(self)
 
-    def expr(self) -> tuple:
+    def bitwise_xor(self) -> tuple:
         """
-        Parse a full expression with arithmetic or logical operations.
+        Parse a bitwise XOR expression.
         """
-        return _expr.parse_expr(self)
+        return _expr.parse_bitwise_xor(self)
+
+    def bitwise_or(self) -> tuple:
+        """
+        Parse a bitwise OR expression.
+        """
+        return _expr.parse_bitwise_or(self)
 
     def comparison(self) -> tuple:
         """
         Parse a comparison expression using relational operators.
         """
         return _expr.parse_comparison(self)
+
+    def logical_and(self) -> tuple:
+        """
+        Parse a logical AND expression.
+        """
+        return _expr.parse_logical_and(self)
+
+    def expr(self) -> tuple:
+        """
+        Parse a full expression with arithmetic or logical operations.
+        """
+        return _expr.parse_expr(self)
 
 
     # Statement wrappers

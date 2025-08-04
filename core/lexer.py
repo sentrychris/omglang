@@ -81,6 +81,7 @@ def tokenize(code) -> tuple[list[Token], dict[str, str]]:
         ('FACTS',     r'\bfacts\b'),
         ('FUNC',      r'\bproc\b'),
         ('RETURN',    r'\breturn\b'),
+        ('AND',       r'\band\b'),
 
         # Chain
         # ('CHAIN',     r''),
