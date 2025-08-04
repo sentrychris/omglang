@@ -118,9 +118,9 @@ statement forms isolated and easy to extend.
 
 Most production rules are LL(1), meaning the next token alone is sufficient
 to choose the correct parsing function. However, the statement parser
-occasionally peeks one additional token ahead—such as to distinguish
+occasionally peeks one additional token ahead, such as to distinguish
 `name :=` (a reassignment) from `name(` (a function call) or a bare
-expression—making the grammar **sporadic LL(2)** rather than strictly LL(1).
+expression, making the grammar **sporadic LL(2)** rather than strictly LL(1).
 
 Parsing advances through a classic `eat()` routine that verifies the expected
 token type and then consumes it, raising a descriptive `SyntaxError` if the
