@@ -151,7 +151,7 @@ Handled by `execute(statements)`. Supported statements include:
 
 * **return** – return a value from a function.
 
-Each function call creates a new scope for its parameters, and the previous variable state is restored afterward (there are no closures or first‑class functions yet).
+Each function call creates a fresh scope seeded with global variables and its parameters. Locals from the caller are not visible, and the previous variable state is restored afterward (there are no closures or first‑class functions yet).
 
 ## Example
 
@@ -203,7 +203,7 @@ emit "Finished loop."
 ## Design Notes
 
 * **Header requirement** – scripts must begin with `;;;omg` to be valid.
-* **Scope model** – variables are global except during function calls, which create a local scope.
+* **Scope model** – variables are global except during function calls, which create a local scope with access only to globals and parameters.
 - **Operator precedence** – enforced explicitly in the parser via method hierarchy.
 * **Error handling** – line numbers and file names are preserved for better error messages.
 * **Extensibility** – new constructs can be added by expanding the parser and interpreter.
