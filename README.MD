@@ -171,6 +171,8 @@ Unary operators include `+`, `-`, and `~`. Built‑in functions such as
 `chr`, `ascii`, `hex`, `binary`, and `length` are dispatched directly, while
 user‑defined procedures evaluate arguments, bind parameters, execute the body
 and return the resulting value (or `None` if no `return` is encountered).
+`binary` also supports an optional width argument for fixed-width two's
+complement formatting.
 Logical `and` short‑circuits: the right‑hand side is evaluated only if the left‑hand side is truthy, and the operator always produces a boolean value.
 
 ### Statement Execution
