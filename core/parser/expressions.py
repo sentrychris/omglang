@@ -212,5 +212,3 @@ def parse_logical_and(parser: 'Parser') -> tuple:
 def parse_expr(parser: 'Parser') -> tuple:
     """Parse an expression starting from the lowest-precedence operator."""
     return parser.logical_and()
-
-

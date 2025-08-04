@@ -48,7 +48,7 @@ def tokenize(code) -> tuple[list[Token], dict[str, str]]:
         RuntimeError: If an unexpected character is encountered.
     """
 
-    # Strip optional header before tokenizing
+    # Strip header before tokenizing
     lines = code.splitlines()
     for i, line in enumerate(lines):
         if line.strip() == "":

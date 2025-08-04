@@ -69,7 +69,7 @@ class Interpreter:
             if line.strip() == ';;;omg':
                 return
         raise RuntimeError(
-            f"OMG script missing required header ';;;omg'\n"
+            f"OMG script missing required header ';;;omg' "
             f"in {self.file}"
         )
 
