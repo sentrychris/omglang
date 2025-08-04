@@ -1,0 +1,25 @@
+;;;omg
+
+# Assemble and run sample programs
+alloc code := assemble(ADD_SRC)
+run(code)
+code := assemble(FACT_SRC)
+run(code)
+code := assemble(FIB_SRC)
+run(code)
+
+# Negative tests
+alloc NEG_DIV := "push 1\npush 0\ndiv\nemit\nhalt\n"
+code := assemble(NEG_DIV)
+run(code)
+
+alloc BAD_JUMP := "jmp nowhere\n"
+code := assemble(BAD_JUMP)
+# assembler emits error
+
+alloc NEG_STACK := "add\nhalt\n"
+code := assemble(NEG_STACK)
+run(code)
+
+emit "OK: add,fact,fib"
+emit "OK: negatives"

@@ -1,0 +1,57 @@
+;;;omg
+
+# Opcode constants
+alloc PUSH := 1
+alloc POP := 2
+alloc DUP := 3
+alloc SWAP := 4
+
+# Arithmetic
+alloc ADD := 10
+alloc SUB := 11
+alloc MUL := 12
+alloc DIV := 13
+alloc MOD := 14
+
+# Comparison
+alloc EQ := 20
+alloc NE := 21
+alloc LT := 22
+alloc LE := 23
+alloc GT := 24
+alloc GE := 25
+
+# Bitwise
+alloc AND := 30
+alloc OR := 31
+alloc XOR := 32
+alloc SHL := 33
+alloc SHR := 34
+alloc NOT := 35
+
+# Control flow
+alloc JMP := 40
+alloc JZ := 41
+alloc JNZ := 42
+
+# Calls
+alloc CALL := 50
+alloc RET := 51
+
+# Memory
+alloc LOAD := 60
+alloc STORE := 61
+
+# I/O
+alloc EMIT := 70
+
+# System
+alloc HALT := 255
+
+# Helper to expand globals array
+proc ensure_slot(globals, slot) {
+    loop length(globals) <= slot {
+        globals := globals + [0]
+    }
+    return globals
+}

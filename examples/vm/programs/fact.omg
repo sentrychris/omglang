@@ -1,0 +1,2 @@
+;;;omg
+alloc FACT_SRC := "# Compute 5! and print 120\nstart:\n  push 5\n  push 4\n  mul\n  push 3\n  mul\n  push 2\n  mul\n  push 1\n  mul\n  emit\n  halt\n"

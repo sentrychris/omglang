@@ -1,0 +1,344 @@
+;;;omg
+
+# Two-pass assembler: text -> bytecode list[int]
+
+# Split text into lines
+proc split_lines(text) {
+    alloc lines := []
+    alloc current := ""
+    alloc i := 0
+    alloc ch := ""
+    loop i < length(text) {
+        ch := text[i]
+        if ch == "\n" {
+            lines := lines + [current]
+            current := ""
+        } else {
+            current := current + ch
+        }
+        i := i + 1
+    }
+    lines := lines + [current]
+    return lines
+}
+
+proc strip_comment(line) {
+    alloc i := 0
+    alloc ch := ""
+    loop i < length(line) {
+        ch := line[i]
+        if ch == "#" {
+            return line[0:i]
+        }
+        i := i + 1
+    }
+    return line
+}
+
+proc trim(s) {
+    alloc start := 0
+    loop start < length(s) and s[start] == " " {
+        start := start + 1
+    }
+    alloc end := length(s)
+    loop end > start and s[end - 1] == " " {
+        end := end - 1
+    }
+    return s[start:end]
+}
+
+proc split_ws(s) {
+    alloc tokens := []
+    alloc curr := ""
+    alloc i := 0
+    alloc ch := ""
+    loop i < length(s) {
+        ch := s[i]
+        if ch == " " {
+            if curr != "" {
+                tokens := tokens + [curr]
+                curr := ""
+            }
+        } elif ch == "\t" {
+            if curr != "" {
+                tokens := tokens + [curr]
+                curr := ""
+            }
+        } elif ch == "," {
+            if curr != "" {
+                tokens := tokens + [curr]
+                curr := ""
+            }
+        } else {
+            curr := curr + ch
+        }
+        i := i + 1
+    }
+    if curr != "" {
+        tokens := tokens + [curr]
+    }
+    return tokens
+}
+
+proc to_upper(s) {
+    alloc out := ""
+    alloc i := 0
+    alloc ch := ""
+    alloc code := 0
+    loop i < length(s) {
+        ch := s[i]
+        code := ascii(ch)
+        if code >= ascii("a") and code <= ascii("z") {
+            ch := chr(code - 32)
+        }
+        out := out + ch
+        i := i + 1
+    }
+    return out
+}
+
+proc is_label(line) {
+    line := trim(line)
+    if line == "" { return false }
+    if line[length(line) - 1] == ":" {
+        return true
+    }
+    return false
+}
+
+proc digit_value(ch) {
+    return ascii(ch) - ascii("0")
+}
+
+proc parse_int(s) {
+    alloc neg := false
+    alloc i := 0
+    if length(s) > 0 and s[0] == "-" {
+        neg := true
+        i := 1
+    }
+    alloc n := 0
+    loop i < length(s) {
+        n := n * 10 + digit_value(s[i])
+        i := i + 1
+    }
+    if neg { return 0 - n }
+    return n
+}
+
+proc opcode_of(mnemonic) {
+    mnemonic := to_upper(mnemonic)
+    if mnemonic == "PUSH" {
+        return PUSH
+    } elif mnemonic == "POP" {
+        return POP
+    } elif mnemonic == "DUP" {
+        return DUP
+    } elif mnemonic == "SWAP" {
+        return SWAP
+    } elif mnemonic == "ADD" {
+        return ADD
+    } elif mnemonic == "SUB" {
+        return SUB
+    } elif mnemonic == "MUL" {
+        return MUL
+    } elif mnemonic == "DIV" {
+        return DIV
+    } elif mnemonic == "MOD" {
+        return MOD
+    } elif mnemonic == "EQ" {
+        return EQ
+    } elif mnemonic == "NE" {
+        return NE
+    } elif mnemonic == "LT" {
+        return LT
+    } elif mnemonic == "LE" {
+        return LE
+    } elif mnemonic == "GT" {
+        return GT
+    } elif mnemonic == "GE" {
+        return GE
+    } elif mnemonic == "AND" {
+        return AND
+    } elif mnemonic == "OR" {
+        return OR
+    } elif mnemonic == "XOR" {
+        return XOR
+    } elif mnemonic == "SHL" {
+        return SHL
+    } elif mnemonic == "SHR" {
+        return SHR
+    } elif mnemonic == "NOT" {
+        return NOT
+    } elif mnemonic == "JMP" {
+        return JMP
+    } elif mnemonic == "JZ" {
+        return JZ
+    } elif mnemonic == "JNZ" {
+        return JNZ
+    } elif mnemonic == "CALL" {
+        return CALL
+    } elif mnemonic == "RET" {
+        return RET
+    } elif mnemonic == "LOAD" {
+        return LOAD
+    } elif mnemonic == "STORE" {
+        return STORE
+    } elif mnemonic == "EMIT" {
+        return EMIT
+    } elif mnemonic == "HALT" {
+        return HALT
+    }
+    return -1
+}
+
+proc resolve_label(name, label_names, label_addrs) {
+    alloc i := 0
+    loop i < length(label_names) {
+        if label_names[i] == name {
+            return label_addrs[i]
+        }
+        i := i + 1
+    }
+    return -1
+}
+
+proc append_int(lst, x) {
+    return lst + [x]
+}
+
+proc assemble(source_text) {
+    alloc raw := split_lines(source_text)
+    alloc lines := []
+    alloc i := 0
+    alloc line := ""
+    alloc _ := 0
+    loop i < length(raw) {
+        line := strip_comment(raw[i])
+        line := trim(line)
+        lines := lines + [line]
+        i := i + 1
+    }
+
+    alloc label_names := []
+    alloc label_addrs := []
+    alloc addr := 0
+    i := 0
+    alloc name := ""
+    alloc j := 0
+    alloc tokens := []
+    alloc op := ""
+    loop i < length(lines) {
+        line := lines[i]
+        if line != "" {
+            if is_label(line) {
+                name := trim(line[0:length(line) - 1])
+                j := 0
+                loop j < length(label_names) {
+                    if label_names[j] == name {
+                        emit "ASM ERROR: duplicate label " + name
+                        return []
+                    }
+                    j := j + 1
+                }
+                label_names := label_names + [name]
+                label_addrs := label_addrs + [addr]
+            } else {
+                tokens := split_ws(line)
+                if length(tokens) == 0 {
+                    _ := 0
+                } else {
+                    op := to_upper(tokens[0])
+                    if op == "PUSH" {
+                        addr := addr + 2
+                    } elif op == "JMP" {
+                        addr := addr + 2
+                    } elif op == "JZ" {
+                        addr := addr + 2
+                    } elif op == "JNZ" {
+                        addr := addr + 2
+                    } elif op == "CALL" {
+                        addr := addr + 3
+                    } elif op == "LOAD" {
+                        addr := addr + 2
+                    } elif op == "STORE" {
+                        addr := addr + 2
+                    } else {
+                        addr := addr + 1
+                    }
+                }
+            }
+        }
+        i := i + 1
+    }
+
+    alloc bytecode := []
+    i := 0
+    alloc m := ""
+    alloc opcode := 0
+    alloc imm := 0
+    alloc target := 0
+    alloc argc := 0
+    alloc slot := 0
+    loop i < length(lines) {
+        line := lines[i]
+        if line != "" {
+            if is_label(line) {
+                _ := 0
+            } else {
+                tokens := split_ws(line)
+                m := tokens[0]
+                opcode := opcode_of(m)
+                if opcode == -1 {
+                    emit "ASM ERROR: unknown mnemonic " + m
+                    return []
+                }
+                bytecode := append_int(bytecode, opcode)
+                if opcode == PUSH {
+                    imm := parse_int(tokens[1])
+                    bytecode := append_int(bytecode, imm)
+                } elif opcode == JMP {
+                    target := resolve_label(tokens[1], label_names, label_addrs)
+                    if target == -1 {
+                        emit "ASM ERROR: unknown label " + tokens[1]
+                        return []
+                    }
+                    bytecode := append_int(bytecode, target)
+                } elif opcode == JZ {
+                    target := resolve_label(tokens[1], label_names, label_addrs)
+                    if target == -1 {
+                        emit "ASM ERROR: unknown label " + tokens[1]
+                        return []
+                    }
+                    bytecode := append_int(bytecode, target)
+                } elif opcode == JNZ {
+                    target := resolve_label(tokens[1], label_names, label_addrs)
+                    if target == -1 {
+                        emit "ASM ERROR: unknown label " + tokens[1]
+                        return []
+                    }
+                    bytecode := append_int(bytecode, target)
+                } elif opcode == CALL {
+                    target := resolve_label(tokens[1], label_names, label_addrs)
+                    if target == -1 {
+                        emit "ASM ERROR: unknown label " + tokens[1]
+                        return []
+                    }
+                    argc := parse_int(tokens[2])
+                    bytecode := append_int(bytecode, target)
+                    bytecode := append_int(bytecode, argc)
+                } elif opcode == LOAD {
+                    slot := parse_int(tokens[1])
+                    bytecode := append_int(bytecode, slot)
+                } elif opcode == STORE {
+                    slot := parse_int(tokens[1])
+                    bytecode := append_int(bytecode, slot)
+                } else {
+                    _ := 0
+                }
+            }
+        }
+        i := i + 1
+    }
+    return bytecode
+}

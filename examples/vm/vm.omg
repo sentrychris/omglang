@@ -1,0 +1,267 @@
+;;;omg
+
+# Stack-based virtual machine runtime
+
+proc vm_error(msg, ip, code) {
+    emit "VM ERROR: " + msg + " at ip=" + ip + "; next=" + code[ip:ip + 5]
+}
+
+proc push(stack, v) {
+    return stack + [v]
+}
+
+proc ensure_n(stack, n, ip, code) {
+    if length(stack) < n {
+        vm_error("stack underflow", ip, code)
+        return 0
+    }
+    return 1
+}
+
+proc run(code) {
+    alloc ip := 0
+    alloc stack := []
+    alloc globals := []
+    alloc rstack := []
+    alloc op := 0
+    alloc a := 0
+    alloc b := 0
+    alloc curr := 0
+    alloc n := 0
+    alloc target := 0
+    alloc argc := 0
+    loop ip < length(code) {
+        curr := ip
+        op := code[ip]
+        ip := ip + 1
+        if op == PUSH {
+            a := code[ip]
+            ip := ip + 1
+            stack := push(stack, a)
+        } elif op == POP {
+            if ensure_n(stack, 1, curr, code) == 0 { return 0 }
+            stack := stack[0:length(stack) - 1]
+        } elif op == DUP {
+            if ensure_n(stack, 1, curr, code) == 0 { return 0 }
+            a := stack[length(stack) - 1]
+            stack := push(stack, a)
+        } elif op == SWAP {
+            if ensure_n(stack, 2, curr, code) == 0 { return 0 }
+            n := length(stack)
+            a := stack[n - 1]
+            b := stack[n - 2]
+            stack := stack[0:n - 2] + [a] + [b]
+        } elif op == ADD {
+            if ensure_n(stack, 2, curr, code) == 0 { return 0 }
+            a := stack[length(stack) - 1]
+            b := stack[length(stack) - 2]
+            stack := stack[0:length(stack) - 2]
+            stack := push(stack, b + a)
+        } elif op == SUB {
+            if ensure_n(stack, 2, curr, code) == 0 { return 0 }
+            a := stack[length(stack) - 1]
+            b := stack[length(stack) - 2]
+            stack := stack[0:length(stack) - 2]
+            stack := push(stack, b - a)
+        } elif op == MUL {
+            if ensure_n(stack, 2, curr, code) == 0 { return 0 }
+            a := stack[length(stack) - 1]
+            b := stack[length(stack) - 2]
+            stack := stack[0:length(stack) - 2]
+            stack := push(stack, b * a)
+        } elif op == DIV {
+            if ensure_n(stack, 2, curr, code) == 0 { return 0 }
+            a := stack[length(stack) - 1]
+            if a == 0 {
+                vm_error("division by zero", curr, code)
+                return 0
+            }
+            b := stack[length(stack) - 2]
+            stack := stack[0:length(stack) - 2]
+            stack := push(stack, b / a)
+        } elif op == MOD {
+            if ensure_n(stack, 2, curr, code) == 0 { return 0 }
+            a := stack[length(stack) - 1]
+            if a == 0 {
+                vm_error("division by zero", curr, code)
+                return 0
+            }
+            b := stack[length(stack) - 2]
+            stack := stack[0:length(stack) - 2]
+            stack := push(stack, b % a)
+        } elif op == EQ {
+            if ensure_n(stack, 2, curr, code) == 0 { return 0 }
+            a := stack[length(stack) - 1]
+            b := stack[length(stack) - 2]
+            stack := stack[0:length(stack) - 2]
+            if b == a { stack := push(stack, 1) } else { stack := push(stack, 0) }
+        } elif op == NE {
+            if ensure_n(stack, 2, curr, code) == 0 { return 0 }
+            a := stack[length(stack) - 1]
+            b := stack[length(stack) - 2]
+            stack := stack[0:length(stack) - 2]
+            if b != a { stack := push(stack, 1) } else { stack := push(stack, 0) }
+        } elif op == LT {
+            if ensure_n(stack, 2, curr, code) == 0 { return 0 }
+            a := stack[length(stack) - 1]
+            b := stack[length(stack) - 2]
+            stack := stack[0:length(stack) - 2]
+            if b < a { stack := push(stack, 1) } else { stack := push(stack, 0) }
+        } elif op == LE {
+            if ensure_n(stack, 2, curr, code) == 0 { return 0 }
+            a := stack[length(stack) - 1]
+            b := stack[length(stack) - 2]
+            stack := stack[0:length(stack) - 2]
+            if b <= a { stack := push(stack, 1) } else { stack := push(stack, 0) }
+        } elif op == GT {
+            if ensure_n(stack, 2, curr, code) == 0 { return 0 }
+            a := stack[length(stack) - 1]
+            b := stack[length(stack) - 2]
+            stack := stack[0:length(stack) - 2]
+            if b > a { stack := push(stack, 1) } else { stack := push(stack, 0) }
+        } elif op == GE {
+            if ensure_n(stack, 2, curr, code) == 0 { return 0 }
+            a := stack[length(stack) - 1]
+            b := stack[length(stack) - 2]
+            stack := stack[0:length(stack) - 2]
+            if b >= a { stack := push(stack, 1) } else { stack := push(stack, 0) }
+        } elif op == AND {
+            if ensure_n(stack, 2, curr, code) == 0 { return 0 }
+            a := stack[length(stack) - 1]
+            b := stack[length(stack) - 2]
+            stack := stack[0:length(stack) - 2]
+            stack := push(stack, b & a)
+        } elif op == OR {
+            if ensure_n(stack, 2, curr, code) == 0 { return 0 }
+            a := stack[length(stack) - 1]
+            b := stack[length(stack) - 2]
+            stack := stack[0:length(stack) - 2]
+            stack := push(stack, b | a)
+        } elif op == XOR {
+            if ensure_n(stack, 2, curr, code) == 0 { return 0 }
+            a := stack[length(stack) - 1]
+            b := stack[length(stack) - 2]
+            stack := stack[0:length(stack) - 2]
+            stack := push(stack, b ^ a)
+        } elif op == SHL {
+            if ensure_n(stack, 2, curr, code) == 0 { return 0 }
+            a := stack[length(stack) - 1]
+            if a < 0 {
+                vm_error("negative shift", curr, code)
+                return 0
+            }
+            b := stack[length(stack) - 2]
+            stack := stack[0:length(stack) - 2]
+            stack := push(stack, b << a)
+        } elif op == SHR {
+            if ensure_n(stack, 2, curr, code) == 0 { return 0 }
+            a := stack[length(stack) - 1]
+            if a < 0 {
+                vm_error("negative shift", curr, code)
+                return 0
+            }
+            b := stack[length(stack) - 2]
+            stack := stack[0:length(stack) - 2]
+            stack := push(stack, b >> a)
+        } elif op == NOT {
+            if ensure_n(stack, 1, curr, code) == 0 { return 0 }
+            a := stack[length(stack) - 1]
+            stack := stack[0:length(stack) - 1]
+            stack := push(stack, ~a)
+        } elif op == JMP {
+            a := code[ip]
+            ip := ip + 1
+            if a < 0 {
+                vm_error("bad jump", curr, code)
+                return 0
+            }
+            if a >= length(code) {
+                vm_error("bad jump", curr, code)
+                return 0
+            }
+            ip := a
+        } elif op == JZ {
+            a := code[ip]
+            ip := ip + 1
+            if ensure_n(stack, 1, curr, code) == 0 { return 0 }
+            b := stack[length(stack) - 1]
+            stack := stack[0:length(stack) - 1]
+            if b == 0 {
+                if a < 0 {
+                    vm_error("bad jump", curr, code)
+                    return 0
+                }
+                if a >= length(code) {
+                    vm_error("bad jump", curr, code)
+                    return 0
+                }
+                ip := a
+            }
+        } elif op == JNZ {
+            a := code[ip]
+            ip := ip + 1
+            if ensure_n(stack, 1, curr, code) == 0 { return 0 }
+            b := stack[length(stack) - 1]
+            stack := stack[0:length(stack) - 1]
+            if b != 0 {
+                if a < 0 {
+                    vm_error("bad jump", curr, code)
+                    return 0
+                }
+                if a >= length(code) {
+                    vm_error("bad jump", curr, code)
+                    return 0
+                }
+                ip := a
+            }
+        } elif op == CALL {
+            target := code[ip]
+            ip := ip + 1
+            argc := code[ip]
+            ip := ip + 1
+            if ensure_n(stack, argc, curr, code) == 0 { return 0 }
+            if target < 0 {
+                vm_error("bad jump", curr, code)
+                return 0
+            }
+            if target >= length(code) {
+                vm_error("bad jump", curr, code)
+                return 0
+            }
+            rstack := push(rstack, ip)
+            ip := target
+        } elif op == RET {
+            if length(rstack) == 0 {
+                vm_error("empty rstack", curr, code)
+                return 0
+            }
+            a := rstack[length(rstack) - 1]
+            rstack := rstack[0:length(rstack) - 1]
+            ip := a
+        } elif op == LOAD {
+            a := code[ip]
+            ip := ip + 1
+            globals := ensure_slot(globals, a)
+            stack := push(stack, globals[a])
+        } elif op == STORE {
+            a := code[ip]
+            ip := ip + 1
+            if ensure_n(stack, 1, curr, code) == 0 { return 0 }
+            b := stack[length(stack) - 1]
+            stack := stack[0:length(stack) - 1]
+            globals := ensure_slot(globals, a)
+            globals := globals[0:a] + [b] + globals[a + 1:length(globals)]
+        } elif op == EMIT {
+            if ensure_n(stack, 1, curr, code) == 0 { return 0 }
+            a := stack[length(stack) - 1]
+            stack := stack[0:length(stack) - 1]
+            emit a
+        } elif op == HALT {
+            break
+        } else {
+            vm_error("invalid opcode " + op, curr, code)
+            return 0
+        }
+    }
+    return 0
+}

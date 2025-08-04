@@ -1,0 +1,2 @@
+;;;omg
+alloc FIB_SRC := "# Assumes globals[0] holds input n; prints fib(n)\n# fib(n): if n<2 return n else fib(n-1)+fib(n-2)\nstart:\n  push 8\n  store 0\n  load 0\n  call fib, 1\n  emit\n  halt\n\nfib:\n  dup\n  push 2\n  lt\n  jnz base\n  dup\n  push 1\n  sub\n  call fib, 1\n  swap\n  push 2\n  sub\n  call fib, 1\n  add\n  ret\nbase:\n  ret\n"

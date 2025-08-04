@@ -1,0 +1,2 @@
+;;;omg
+alloc ADD_SRC := "# Adds 7 and 8, prints 15\nstart:\n  push 7\n  push 8\n  add\n  emit\n  halt\n"
