@@ -407,7 +407,7 @@ class Interpreter:
 
         Parameters:
             statements (list):
-                A list of ('assign' | 'emit' | 'if' | 'block' | 'loop', ...) tuples.
+                A list of ('decl' | 'assign' | 'emit' | 'if' | 'block' | 'loop', ...) tuples.
 
         Raises:
             Exception: For unknown statement types.
@@ -417,8 +417,19 @@ class Interpreter:
             line = stmt[-1]
 
 
-            if kind == 'assign':
+            if kind == 'decl':
                 _, var_name, expr_node, _ = stmt
+                if var_name in self.vars:
+                    raise RuntimeError(
+                        f"Variable '{var_name}' already declared on line {line} in {self.file}"
+                    )
+                value = self.eval_expr(expr_node)
+                self.vars[var_name] = value
+
+            elif kind == 'assign':
+                _, var_name, expr_node, _ = stmt
+                if var_name not in self.vars:
+                    raise UndefinedVariableException(var_name, line, self.file)
                 value = self.eval_expr(expr_node)
                 self.vars[var_name] = value
 

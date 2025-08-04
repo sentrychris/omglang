@@ -180,11 +180,11 @@ class Parser:
         """
         return _stmt.parse_reassignment(self)
 
-    def parse_assignment(self) -> tuple:
+    def parse_declaration(self) -> tuple:
         """
-        Parse a new variable assignment statement.
+        Parse a new variable declaration statement.
         """
-        return _stmt.parse_assignment(self)
+        return _stmt.parse_declaration(self)
 
 
     def parse(self):
