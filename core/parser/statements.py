@@ -93,7 +93,7 @@ def parse_facts(parser: 'Parser') -> tuple:
     """
     tok = parser.curr_token
     parser.eat("FACTS")
-    expr_node = parser.comparison()
+    expr_node = parser.expr()
     return ("facts", expr_node, tok.line)
 
 
@@ -128,13 +128,13 @@ def parse_if(parser: 'Parser') -> tuple:
     """
     tok = parser.curr_token
     parser.eat("IF")
-    condition = parser.comparison()
+    condition = parser.expr()
     then_block = parser.block()
 
     elif_cases = []
     while parser.curr_token.type == 'ELIF':
         parser.eat('ELIF')
-        cond = parser.comparison()
+        cond = parser.expr()
         block = parser.block()
         elif_cases.append((cond, block))
 
@@ -160,7 +160,7 @@ def parse_while(parser: 'Parser') -> tuple:
     """
     tok = parser.curr_token
     parser.eat('WHILE')
-    condition = parser.comparison()
+    condition = parser.expr()
     body = parser.block()
     return ('loop', condition, body, tok.line)
 

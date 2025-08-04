@@ -37,6 +37,9 @@ class Op(str, Enum):
     # Unary bitwise
     NOT_BITS = "not_bits"
 
+    # Boolean
+    AND = "and"
+
     def __str__(self) -> str:  # pragma: no cover - trivial
         """Return the underlying string value for nicer debug output."""
         return self.value
