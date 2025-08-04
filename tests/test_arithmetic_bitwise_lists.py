@@ -50,6 +50,7 @@ def test_list_index_slice_and_builtins(capsys):
         "emit ascii(\"B\")\n"
         "emit hex(255)\n"
         "emit binary(5)\n"
+        "emit binary(-42,8)\n"
     )
     ast = parse_source(source)
     index_stmt = ast[1]
@@ -60,5 +61,5 @@ def test_list_index_slice_and_builtins(capsys):
     interpreter = Interpreter('<test>')
     interpreter.execute(ast)
     captured = capsys.readouterr().out.strip().splitlines()
-    assert captured == ['3', '[2, 3]', '4', 'A', '66', 'FF', '101']
+    assert captured == ['3', '[2, 3]', '4', 'A', '66', 'FF', '101', '11010110']
 

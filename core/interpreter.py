@@ -355,12 +355,26 @@ class Interpreter:
                     return str(hex(args[0])[2:]).upper()
 
                 if func_name == 'binary':
-                    if len(args) != 1 or not isinstance(args[0], int):
+                    if (
+                        len(args) not in (1, 2)
+                        or not isinstance(args[0], int)
+                        or (len(args) == 2 and not isinstance(args[1], int))
+                    ):
                         raise TypeError(
-                            f"binary() expects one integer argument!\n"
+                            f"binary() expects an integer and optional width integer!\n"
                             f"on line {line} in {self.file}"
                         )
-                    return bin(args[0])[2:]  # Strip '0b' prefix
+                    n = args[0]
+                    if len(args) == 1:
+                        return ('-' + bin(abs(n))[2:]) if n < 0 else bin(n)[2:]
+                    width = args[1]
+                    if width <= 0:
+                        raise ValueError(
+                            f"binary() width must be positive!\n"
+                            f"on line {line} in {self.file}"
+                        )
+                    mask = (1 << width) - 1
+                    return format(n & mask, f'0{width}b')
 
                 if func_name == 'length':
                     if len(args) != 1:
