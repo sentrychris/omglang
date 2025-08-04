@@ -1,0 +1,72 @@
+@@grammar :: OMG
+@@whitespace :: /[ \t]+/
+@@comments  :: /#.*$/
+@@keywords  :: alloc emit facts if elif else loop break proc return and true false
+
+start = program $ ;
+
+program = { NL } statement { NL+ statement } { NL } ;
+
+NL = /\n+/ ;
+
+statement =
+      facts_stmt
+    | emit_stmt
+    | if_stmt
+    | loop_stmt
+    | break_stmt
+    | func_def
+    | decl
+    | assign_stmt
+    | return_stmt
+    | expr_stmt
+    ;
+
+facts_stmt = 'facts' expr ;
+emit_stmt  = 'emit' expr ;
+if_stmt = 'if' expr block { 'elif' expr block } [ 'else' block ] ;
+loop_stmt = 'loop' expr block ;
+break_stmt = 'break' ;
+func_def = 'proc' ID '(' [ params ] ')' block ;
+params = ID { ',' ID } ;
+return_stmt = 'return' expr ;
+decl = 'alloc' ID ':=' expr ;
+assign_stmt = ID ':=' expr ;
+expr_stmt = expr ;
+
+block = '{' { NL } { statement { NL } } '}' ;
+
+expr = logical_and ;
+logical_and = comparison { 'and' comparison } ;
+
+comparison = bitwise_or { comp_op bitwise_or } ;
+comp_op = '==' | '!=' | '<' | '>' | '<=' | '>=' ;
+bitwise_or = bitwise_xor { '|' bitwise_xor } ;
+bitwise_xor = bitwise_and { '^' bitwise_and } ;
+bitwise_and = shift { '&' shift } ;
+shift = add_sub { ('<<' | '>>') add_sub } ;
+add_sub = term { ('+' | '-') term } ;
+term = factor { ('*' | '/' | '%') factor } ;
+
+factor =
+      ('+' | '-' | '~') factor
+    | NUMBER
+    | STRING
+    | 'true'
+    | 'false'
+    | list_literal
+    | func_call
+    | index
+    | slice
+    | ID
+    | '(' expr ')'
+    ;
+
+list_literal = '[' [ NL ] [ expr { [ NL ] ',' [ NL ] expr } [ NL ] ] ']' ;
+func_call = ID '(' [ expr { ',' expr } ] ')' ;
+index = ID '[' expr ']' ;
+slice = ID '[' expr ':' [ expr ] ']' ;
+
+ID = /[A-Za-z_][A-Za-z0-9_]*/ ;
+NUMBER = /0b[01]+|\d+/ ;
+STRING = /"([^"\\]|\\.)*"/ ;
