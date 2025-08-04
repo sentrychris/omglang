@@ -138,11 +138,11 @@ class Parser:
         """
         return _stmt.parse_facts(self)
 
-    def parse_echo(self) -> tuple:
+    def parse_emit(self) -> tuple:
         """
-        Parse an 'echo' statement used for output.
+        Parse an 'emit' statement used for output.
         """
-        return _stmt.parse_echo(self)
+        return _stmt.parse_emit(self)
 
     def parse_if(self) -> tuple:
         """
@@ -150,11 +150,11 @@ class Parser:
         """
         return _stmt.parse_if(self)
 
-    def parse_while(self) -> tuple:
+    def parse_loop(self) -> tuple:
         """
-        Parse a 'while' loop statement.
+        Parse a 'loop' statement.
         """
-        return _stmt.parse_while(self)
+        return _stmt.parse_loop(self)
 
     def parse_break(self) -> tuple:
         """

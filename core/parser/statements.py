@@ -48,12 +48,12 @@ def parse_statement(parser: 'Parser') -> tuple:
     tok = parser.curr_token
     if tok.type == "FACTS":
         return parser.parse_facts()
-    elif tok.type == 'ECHO':
-        return parser.parse_echo()
+    elif tok.type == 'EMIT':
+        return parser.parse_emit()
     elif tok.type == 'IF':
         return parser.parse_if()
-    elif tok.type == 'WHILE':
-        return parser.parse_while()
+    elif tok.type == 'LOOP':
+        return parser.parse_loop()
     elif tok.type == 'BREAK':
         return parser.parse_break()
     elif tok.type == 'FUNC':
@@ -97,9 +97,9 @@ def parse_facts(parser: 'Parser') -> tuple:
     return ("facts", expr_node, tok.line)
 
 
-def parse_echo(parser: 'Parser') -> tuple:
+def parse_emit(parser: 'Parser') -> tuple:
     """
-    Parse an 'emit' (echo) statement.
+    Parse an 'emit' statement.
 
     Syntax:
         emit <expression>
@@ -111,7 +111,7 @@ def parse_echo(parser: 'Parser') -> tuple:
         tuple: ('emit', expression_node, line_number)
     """
     tok = parser.curr_token
-    parser.eat("ECHO")
+    parser.eat("EMIT")
     expr_node = parser.expr()
     return ("emit", expr_node, tok.line)
 
@@ -151,15 +151,15 @@ def parse_if(parser: 'Parser') -> tuple:
     return ('if', condition, then_block, tail, tok.line)
 
 
-def parse_while(parser: 'Parser') -> tuple:
+def parse_loop(parser: 'Parser') -> tuple:
     """
-    Parse a 'loop' (while) loop.
+    Parse a 'loop' statement.
 
     Returns:
         tuple: representing the AST node.
     """
     tok = parser.curr_token
-    parser.eat('WHILE')
+    parser.eat('LOOP')
     condition = parser.expr()
     body = parser.block()
     return ('loop', condition, body, tok.line)
