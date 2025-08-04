@@ -140,8 +140,7 @@ the form `(operation, operands…, line)`.
 | 7     | **Bitwise OR**     | `\|`                        | `_bitwise_or`   |
 | 8     | **Comparison**     | `==`, `!=`, `<`, `>`, `<=`, `>=` | `_comparison`   |
 | 9     | **Logical AND**    | `and`                      | `_logical_and`  |
-
-Each layer wraps the tighter-binding expressions from below, ensuring proper operator grouping. This model gives OMG clear operator precedence semantics.
+Logical AND is left-associative and evaluates with short-circuit semantics, so a chain like `a and b and c` is parsed as `(a and b) and c` and produces a boolean result. Each layer wraps the tighter-binding expressions from below, ensuring proper operator grouping. This model gives OMG clear operator precedence semantics.
 
 Each AST node is represented as a tuple encoding the operation, its operands and the originating line number. For example:
 
@@ -169,6 +168,7 @@ Unary operators include `+`, `-`, and `~`. Built‑in functions such as
 `chr`, `ascii`, `hex`, `binary`, and `length` are dispatched directly, while
 user‑defined procedures evaluate arguments, bind parameters, execute the body
 and return the resulting value (or `None` if no `return` is encountered).
+Logical `and` short‑circuits: the right‑hand side is evaluated only if the left‑hand side is truthy, and the operator always produces a boolean value.
 
 ### Statement Execution
 

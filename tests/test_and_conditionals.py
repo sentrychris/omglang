@@ -62,3 +62,19 @@ def test_comparison_and_precedence(capsys):
     interpreter.execute(ast)
     captured = capsys.readouterr().out.strip().splitlines()
     assert captured == ['1']
+
+
+def test_and_short_circuits(capsys):
+    source = (
+        "proc rhs() {\n"
+        "    emit \"rhs\"\n"
+        "    return true\n"
+        "}\n"
+        "if false and rhs() { emit \"bad\" } else { emit \"ok\" }\n"
+        "if false and (1 / 0) { emit \"bad\" } else { emit \"ok\" }\n"
+    )
+    ast = parse_source(source)
+    interpreter = Interpreter('<test>')
+    interpreter.execute(ast)
+    captured = capsys.readouterr().out.strip().splitlines()
+    assert captured == ['ok', 'ok']
