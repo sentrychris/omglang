@@ -45,3 +45,19 @@ def test_globals_visible(capsys):
     interpreter.execute(ast)
     captured = capsys.readouterr().out.strip().splitlines()
     assert captured == ['5']
+
+
+def test_functions_modify_globals(capsys):
+    source = (
+        "alloc x := 1\n"
+        "proc f() {\n"
+        "    x := 2\n"
+        "}\n"
+        "f()\n"
+        "emit x\n"
+    )
+    ast = parse_source(source)
+    interpreter = Interpreter('<test>')
+    interpreter.execute(ast)
+    captured = capsys.readouterr().out.strip().splitlines()
+    assert captured == ['2']
