@@ -155,16 +155,20 @@ class Interpreter:
                 varname = node[1]
                 if varname in self.vars:
                     return self.vars[varname]
+                if varname in self.global_vars:
+                    return self.global_vars[varname]
                 raise UndefinedVariableException(varname, line, self.file)
 
             # Indexes
             elif op == 'index':
                 _, target_name, index_expr, _ = node
 
-                if target_name not in self.vars:
+                if target_name in self.vars:
+                    target = self.vars[target_name]
+                elif target_name in self.global_vars:
+                    target = self.global_vars[target_name]
+                else:
                     raise UndefinedVariableException(target_name, line, self.file)
-
-                target = self.vars[target_name]
                 index = self.eval_expr(index_expr)
 
                 if isinstance(target, list):
@@ -194,10 +198,12 @@ class Interpreter:
             elif op == 'slice':
                 _, target_name, start_expr, end_expr, _ = node
 
-                if target_name not in self.vars:
+                if target_name in self.vars:
+                    target = self.vars[target_name]
+                elif target_name in self.global_vars:
+                    target = self.global_vars[target_name]
+                else:
                     raise UndefinedVariableException(target_name, line, self.file)
-
-                target = self.vars[target_name]
                 start = self.eval_expr(start_expr)
                 end = self.eval_expr(end_expr) if end_expr is not None else None
 
@@ -385,7 +391,7 @@ class Interpreter:
                     )
 
                 saved_vars = self.vars
-                self.vars = self.global_vars.copy()
+                self.vars = {}
                 self.vars.update(dict(zip(params, args)))
 
                 try:
@@ -430,10 +436,13 @@ class Interpreter:
 
             elif kind == 'assign':
                 _, var_name, expr_node, _ = stmt
-                if var_name not in self.vars:
-                    raise UndefinedVariableException(var_name, line, self.file)
                 value = self.eval_expr(expr_node)
-                self.vars[var_name] = value
+                if var_name in self.vars:
+                    self.vars[var_name] = value
+                elif var_name in self.global_vars:
+                    self.global_vars[var_name] = value
+                else:
+                    raise UndefinedVariableException(var_name, line, self.file)
 
 
             elif kind == 'emit':
