@@ -119,11 +119,11 @@ loop ptr < length(program) {
         stack := stack[0:length(stack) - 1]
         stack := stack + [lhs * rhs]
     } elif op == "div" {
-        rhs := stack[length(stack) - 1]
+        alloc a := stack[length(stack) - 1]
         stack := stack[0:length(stack) - 1]
-        lhs := stack[length(stack) - 1]
+        alloc b := stack[length(stack) - 1]
         stack := stack[0:length(stack) - 1]
-        stack := stack + [lhs / rhs]
+        stack := stack + [b // a]
     } elif op == "store" {
         val := stack[length(stack) - 1]
         stack := stack[0:length(stack) - 1]
