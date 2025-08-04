@@ -23,6 +23,14 @@ def parse_factor(parser: 'Parser') -> tuple:
         operand = parser.factor()
         return ('unary', Op.NOT_BITS, operand, tok.line)
 
+    if tok.type in ('PLUS', 'MINUS'):
+        parser.eat(tok.type)
+        op_map = {
+            'PLUS': Op.ADD,
+            'MINUS': Op.SUB,
+        }
+        return ('unary', op_map[tok.type], parser.factor(), tok.line)
+
     if tok.type == 'NUMBER':
         parser.eat('NUMBER')
         return ('number', tok.value, tok.line)
