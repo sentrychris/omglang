@@ -19,7 +19,7 @@ it afterward to preserve state between calls.
 3. Expression Evaluation
 Expression nodes (e.g. arithmetic operations, comparisons, literals, variable references, and 
 function calls) are evaluated recursively. Basic type checking is enforced, and custom error 
-types (`UndefinedVariableException`, `UnknownOperationException`) are raised on invalid references.
+types (`UndefinedVariableException`, `UnknownOpException`) are raised on invalid references.
 
 4. Control Flow
 Control constructs include:
@@ -37,11 +37,11 @@ malformed AST nodes, are surfaced as typed exceptions with line numbers and file
 """
 from core.exceptions import (
     UndefinedVariableException,
-    UnknownOperationException,
+    UnknownOpException,
     BreakLoop,
     ReturnControlFlow,
 )
-from core.operations import Operation
+from core.operations import Op
 
 class Interpreter:
     """
@@ -97,7 +97,7 @@ class Interpreter:
         """
         op = node[0]
         match op:
-            case Operation.EQ:
+            case Op.EQ:
                 return (
                     f"({self._format_expr(node[1])} == "
                     f"{self._format_expr(node[2])})"
@@ -131,7 +131,7 @@ class Interpreter:
 
         Raises:
             UndefinedVariableException: If a variable is referenced that has not been defined.
-            UnknownOperationException: If an unrecognized binary operator is encountered.
+            UnknownOpException: If an unrecognized binary operator is encountered.
             RuntimeError: If the expression node format is invalid or improperly structured.
         """
         if isinstance(node, tuple):
@@ -211,66 +211,66 @@ class Interpreter:
 
             # Binary operations
             elif op in (
-                Operation.ADD,
-                Operation.SUB,
-                Operation.MUL,
-                Operation.MOD,
-                Operation.DIV,
-                Operation.AND_BITS,
-                Operation.OR_BITS,
-                Operation.XOR_BITS,
-                Operation.SHL,
-                Operation.SHR,
-                Operation.EQ,
-                Operation.NE,
-                Operation.GT,
-                Operation.LT,
-                Operation.GE,
-                Operation.LE,
+                Op.ADD,
+                Op.SUB,
+                Op.MUL,
+                Op.MOD,
+                Op.DIV,
+                Op.AND_BITS,
+                Op.OR_BITS,
+                Op.XOR_BITS,
+                Op.SHL,
+                Op.SHR,
+                Op.EQ,
+                Op.NE,
+                Op.GT,
+                Op.LT,
+                Op.GE,
+                Op.LE,
             ):
                 lhs = self.eval_expr(node[1])
                 rhs = self.eval_expr(node[2])
                 match op:
                     # Arithmetic
-                    case Operation.ADD:
+                    case Op.ADD:
                         if isinstance(lhs, str) or isinstance(rhs, str):
                             term = str(lhs) + str(rhs)
                         else:
                             term = lhs + rhs
-                    case Operation.SUB:
+                    case Op.SUB:
                         term = lhs - rhs
-                    case Operation.MUL:
+                    case Op.MUL:
                         term = lhs * rhs
-                    case Operation.MOD:
+                    case Op.MOD:
                         term = lhs % rhs
-                    case Operation.DIV:
+                    case Op.DIV:
                         term = lhs // rhs
                     # Bitwise
-                    case Operation.AND_BITS:
+                    case Op.AND_BITS:
                         term = lhs & rhs
-                    case Operation.OR_BITS:
+                    case Op.OR_BITS:
                         term = lhs | rhs
-                    case Operation.XOR_BITS:
+                    case Op.XOR_BITS:
                         term = lhs ^ rhs
-                    case Operation.SHL:
+                    case Op.SHL:
                         term = lhs << rhs
-                    case Operation.SHR:
+                    case Op.SHR:
                         term = lhs >> rhs
                     # Comparison
-                    case Operation.EQ:
+                    case Op.EQ:
                         term = lhs == rhs
-                    case Operation.NE:
+                    case Op.NE:
                         term = lhs != rhs
-                    case Operation.GT:
+                    case Op.GT:
                         term = lhs > rhs
-                    case Operation.LT:
+                    case Op.LT:
                         term = lhs < rhs
-                    case Operation.GE:
+                    case Op.GE:
                         term = lhs >= rhs
-                    case Operation.LE:
+                    case Op.LE:
                         term = lhs <= rhs
                     case _:
-                        raise UnknownOperationException(
+                        raise UnknownOpException(
                             f"Unknown binary operator '{op}'"
                         )
                 return term
@@ -280,7 +280,7 @@ class Interpreter:
                 operator = node[1]
                 operand = self.eval_expr(node[2])
                 match operator:
-                    case Operation.NOT_BITS:
+                    case Op.NOT_BITS:
                         if not isinstance(operand, int):
                             raise TypeError(
                                 f"Bitwise NOT (~) requires an integer operand "
@@ -289,7 +289,7 @@ class Interpreter:
                             )
                         return ~operand
                     case _:
-                        raise UnknownOperationException(
+                        raise UnknownOpException(
                             f"Unknown unary operator '{operator}'!"
                             f"{self._format_expr(node)}\n"
                             f"On line {line} in {self.file}"

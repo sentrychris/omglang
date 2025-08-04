@@ -100,21 +100,21 @@ loop ptr < length(program) {
         alloc a := stack[length(stack) - 1]
         stack := stack[0:length(stack) - 1]
         stack := stack + [a + b]
-        emit "Added to stack: [" + instr + "[" + a + ", " + b +"]]" +  " Stack value: " + stack 
+        emit "Added and pushed sum: [" + instr + "[" + a + ", " + b +"]]" +  " Stack value: " + stack 
     } elif op == "sub" {
         alloc b := stack[length(stack) - 1]
         stack := stack[0:length(stack) - 1]
         alloc a := stack[length(stack) - 1]
         stack := stack[0:length(stack) - 1]
         stack := stack + [a - b]
-        emit "Subtract and pushed difference: [" + instr + "[" + a + ", " + b +"]]" +  " Stack value: " + stack 
+        emit "Subtracted and pushed difference: [" + instr + "[" + a + ", " + b +"]]" +  " Stack value: " + stack 
     } elif op == "mul" {
         alloc b := stack[length(stack) - 1]
         stack := stack[0:length(stack) - 1]
         alloc a := stack[length(stack) - 1]
         stack := stack[0:length(stack) - 1]
         stack := stack + [a * b]
-        emit "Multiplied to stack: [" + instr + "[" + a + ", " + b +"]]" +  " Stack value: " + stack
+        emit "Multiplied and pushed product: [" + instr + "[" + a + ", " + b +"]]" +  " Stack value: " + stack
     } elif op == "div" {
         alloc b := stack[length(stack) - 1]
         stack := stack[0:length(stack) - 1]

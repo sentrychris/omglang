@@ -9,7 +9,7 @@ added or existing ones are renamed.
 from enum import Enum
 
 
-class Operation(str, Enum):
+class Op(str, Enum):
     """Enumeration of supported AST operation names."""
 
     # Arithmetic
@@ -42,5 +42,5 @@ class Operation(str, Enum):
         return self.value
 
 
-__all__ = ["Operation"]
+__all__ = ["Op"]
 
