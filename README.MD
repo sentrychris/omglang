@@ -82,24 +82,50 @@ If you start a block and do not close it, the prompt switches to `...` and the i
 
 ## Lexer
 
-The lexer scans the raw text and splits it into a stream of tokens. Each token has a type, value and line number. Token types include:
+The lexer performs a single pass over the source using a combined regular
+expression of named groups. Each match produces a `Token` containing the
+token type, its value, and the original line number for later error
+reporting. Before tokenization the required header `;;;omg` is stripped so
+that line counts remain accurate.
 
-* **Keywords**: `alloc`, `emit`, `proc`, `if`, `elif`, `else`, `loop`, `break`, `return`.
+Token categories include:
+
+* **Keywords**: `alloc`, `emit`, `proc`, `if`, `elif`, `else`, `loop`,
+  `break`, `return`, `facts`.
 * **Operators**:
     * Arithmetic: `+`, `-`, `*`, `/`, `%`
     * Comparison: `==`, `!=`, `<`, `>`, `<=`, `>=`
     * Assignment: `:=`
     * Bitwise: `&`, `|`, `^`, `~`, `<<`, `>>`
     * Logical: `and`
-* **Identifiers**: variable and function names.
-* **Literals**: integers and strings.
+* **Identifiers** for variable and function names.
+* **Literals**: decimal integers, binary integers (e.g. `0b1010`), strings
+  with escape sequences, and the boolean literals `true` and `false`.
 * **Punctuation**: `(`, `)`, `{`, `}`, `[`, `]`, `,`, `:`.
 
-Whitespace and comments (lines starting with `#`) are ignored. The lexer records line numbers to improve error messages.
+Whitespace and comments beginning with `#` are skipped entirely. A mapping of
+literal text back to token types is also generated, allowing the parser to
+emit human‑readable error messages such as “expected `}`” rather than the
+internal token name.
 
 ## Parser
 
-The parser is a hand‑written **recursive descent parser** following an LL(1) grammar. It converts the token stream into an AST using mutually recursive methods that enforce operator precedence.
+OMG uses a hand‑written, modular **recursive‑descent parser**. The top‑level
+`Parser` class (in `core/parser/parser.py`) coordinates the process while the
+actual routines live in two helper modules: `expressions.py` and
+`statements.py`. This separation keeps expression precedence logic and
+statement forms isolated and easy to extend.
+
+Most production rules are LL(1), meaning the next token alone is sufficient
+to choose the correct parsing function. However, the statement parser
+occasionally peeks one additional token ahead—such as to distinguish
+`name :=` (a reassignment) from `name(` (a function call) or a bare
+expression—making the grammar **sporadic LL(2)** rather than strictly LL(1).
+
+Parsing advances through a classic `eat()` routine that verifies the expected
+token type and then consumes it, raising a descriptive `SyntaxError` if the
+stream does not match the grammar. The resulting AST is encoded as tuples of
+the form `(operation, operands…, line)`.
 
 ### Expression Precedence (highest to lowest):
 
@@ -126,32 +152,42 @@ Each AST node is represented as a tuple encoding the operation, its operands and
 
 ## Interpreter
 
-The interpreter walks the AST and evaluates expressions or executes statements. It maintains:
+The interpreter is a tree‑walker that evaluates the tuple‑based AST produced
+by the parser. It maintains two environments:
 
-* A **variable environment** (`vars`) for storing values bound by `alloc` declarations.
-* A **function environment** (`functions`) for storing user‑defined functions.
+* A **variable table** (`vars`) for current scope values. A copy of the global
+  table is preserved so function calls can introduce temporary local scopes
+  without losing global state.
+* A **function table** (`functions`) mapping procedure names to their
+  parameter lists and bodies.
 
 ### Expression Evaluation
 
-Handled by `eval_expr(node)`: literals return their value; variables are looked up in the current scope; binary operations are recursively evaluated (with support for `+` for both numeric addition and string concatenation); function calls evaluate their arguments, bind them to parameters, execute the function body and return the result (or `None` if no `return` statement is encountered).
+`eval_expr(node)` recursively evaluates literals, variables, arithmetic and
+bitwise operations, boolean logic, list indexing/slicing, and function calls.
+Unary operators include `+`, `-`, and `~`. Built‑in functions such as
+`chr`, `ascii`, `hex`, `binary`, and `length` are dispatched directly, while
+user‑defined procedures evaluate arguments, bind parameters, execute the body
+and return the resulting value (or `None` if no `return` is encountered).
 
 ### Statement Execution
 
-Handled by `execute(statements)`. Supported statements include:
+`execute(statements)` walks a list of statement nodes and performs the
+appropriate action. Supported statements include:
 
-* **alloc** – evaluate an expression and store it in the variable environment.
-
+* **alloc** – declare a variable.
+* **assign** – update an existing variable.
 * **emit** – evaluate an expression and print the result.
+* **facts** – assert that an expression is truthy.
+* **if/elif/else** – conditional execution.
+* **loop** and **break** – while loops with early exit support.
+* **proc** – define a function.
+* **return** – exit a function with a value.
 
-* **if/elif/else** – evaluate a condition and execute one of several blocks conditionally.
-
-* **loop** – execute a block repeatedly while a condition holds.
-
-* **proc** – define a named function with parameters and body.
-
-* **return** – return a value from a function.
-
-Each function call creates a fresh scope seeded with global variables and its parameters. Locals from the caller are not visible, and the previous variable state is restored afterward (there are no closures or first‑class functions yet).
+Each function call creates a new local scope populated with global variables
+and the call's parameters. Locals from the caller are hidden, and the previous
+environment is restored when the call completes. The interpreter also verifies
+that scripts start with the required `;;;omg` header before execution.
 
 ## Example
 
