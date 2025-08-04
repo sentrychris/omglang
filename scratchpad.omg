@@ -1,6 +1,9 @@
 ;;;omg
 
 
+alloc a := 1
+emit a
+
 proc rhs(){
     emit "rhs"
     return false  

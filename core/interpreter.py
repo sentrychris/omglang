@@ -103,7 +103,7 @@ class Interpreter:
                     f"({self._format_expr(node[1])} == "
                     f"{self._format_expr(node[2])})"
                 )
-            case 'alloc':
+            case 'ident':
                 return node[1]
             case 'number' | 'bool' | 'int':
                 return str(node[1])
@@ -124,7 +124,7 @@ class Interpreter:
 
         Parameters:
             node (tuple): An expression node, structured as a tuple.
-                        The first element is the operation type (e.g., 'add', 'alloc'),
+                        The first element is the operation type (e.g., 'add', 'ident'),
                         followed by operands and the line number for error reporting.
 
         Returns:
@@ -151,7 +151,7 @@ class Interpreter:
                 return [self.eval_expr(elem) for elem in elements]
 
             # Variables
-            elif op == 'alloc':
+            elif op == 'ident':
                 varname = node[1]
                 if varname in self.vars:
                     return self.vars[varname]

@@ -91,7 +91,7 @@ def parse_factor(parser: 'Parser') -> tuple:
             parser.eat('RBRACKET')
             return ('index', id_tok.value, start_expr, id_tok.line)
 
-        return ('alloc', id_tok.value, id_tok.line)
+        return ('ident', id_tok.value, id_tok.line)
 
     if tok.type == 'LPAREN':
         parser.eat('LPAREN')
