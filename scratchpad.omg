@@ -1,40 +1,30 @@
 ;;;omg
 
-# Define a function
-proc greeting(name) {
-    return "Hello " + name
+
+proc rhs(){
+    emit "rhs"
+    return false  
 }
 
-# Call a function and print to stdout
-emit greeting("World")
+if rhs() == false and true { 
+    emit "bad"
+} else {
+    emit "ok"
+}
 
-# Declare some variables
-alloc x := 5
-alloc y := 10
-alloc z := 0
-
-emit "x = " + x
-emit "y = " + y
 
 proc add(a, b) {
     return a + b
 }
 
-# Do some arithmetic and format for stdout
-emit x + " + " + y + " = " + add(x, y)
-emit "(" + x + " + " + y + ") * 10 / 2 = " + (x + y) * 10 / 2
+emit (1 + 2) * 3
+emit add(1,2) + 3   # should be a valid expr-stmt (or rejected intentionally); with fix it parses/executes.
 
-# Create a loop
-emit "Beginning loop:"
-alloc i := 0
-loop i <= 3 {
-    if i == 3 {
-        emit "3 is the magic number."
-    } elif i == 2 {
-        emit "2 is alright I guess."
-    } else {
-        emit i
-    }
-    i := i+1
-}
-emit "Finished loop."
+
+alloc x := 1
+proc f(){ x := 2 }  # decide: error (assign undeclared in local copy) or no-op on globals?
+f()
+emit x
+
+
+# add(1,2) + 3

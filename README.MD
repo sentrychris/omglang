@@ -131,7 +131,7 @@ the form `(operation, operands…, line)`.
 
 | Level | Category           | Operators                  | Parser Function |
 | ----- | ------------------ | -------------------------- | --------------- |
-| 1     | **Unary**          | `~`                        | `_factor`       |
+| 1     | **Unary**          | `~`, `+`, `-`              | `_factor`       |
 | 2     | **Multiplicative** | `*`, `/`, `%`              | `_term`         |
 | 3     | **Additive**       | `+`, `-`                   | `_add_sub`      |
 | 4     | **Shift**          | `<<`, `>>`                 | `_shift`        |
@@ -140,9 +140,12 @@ the form `(operation, operands…, line)`.
 | 7     | **Bitwise OR**     | `\|`                        | `_bitwise_or`   |
 | 8     | **Comparison**     | `==`, `!=`, `<`, `>`, `<=`, `>=` | `_comparison`   |
 | 9     | **Logical AND**    | `and`                      | `_logical_and`  |
-Logical AND is left-associative and evaluates with short-circuit semantics, so a chain like `a and b and c` is parsed as `(a and b) and c` and produces a boolean result. Each layer wraps the tighter-binding expressions from below, ensuring proper operator grouping. This model gives OMG clear operator precedence semantics.
 
-Each AST node is represented as a tuple encoding the operation, its operands and the originating line number. For example:
+Logical AND is left-associative and evaluates with short-circuit semantics, so a chain like `a and b and c` is parsed as `(a and b) and c`, and produces a boolean result.
+
+Each layer wraps the tighter-binding expressions from below, ensuring proper operator grouping. This model provides clear operator precedence semantics.
+
+Each node is represented as a tuple encoding the operation, its operands and the originating line number. For example:
 
 ```python
 ('add', ('number', 5, 1), ('number', 1, 1), 1)
