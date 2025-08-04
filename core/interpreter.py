@@ -52,6 +52,7 @@ class Interpreter:
         Initialize the interpreter.
         """
         self.vars = {}
+        self.global_vars = self.vars
         self.functions = {}
         self.file = file
 
@@ -383,7 +384,8 @@ class Interpreter:
                         f"On line {line} in {self.file}"
                     )
 
-                saved_vars = self.vars.copy()
+                saved_vars = self.vars
+                self.vars = self.global_vars.copy()
                 self.vars.update(dict(zip(params, args)))
 
                 try:
