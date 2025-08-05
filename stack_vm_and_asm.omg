@@ -264,32 +264,36 @@ alloc prog_add := [
 
 alloc prog_fact := [
     ["push", 5],
-    ["store", "n"],
+    ["store", "n"],       # upper bound
     ["push", 1],
-    ["store", "r"],
+    ["store", "m"],       # current multiplier
+    ["push", 1],
+    ["store", "r"],       # running factorial
     ["label", "loop"],
-    ["load", "n"],
-    ["jnz", "body"],
-    ["jmp", "end"],
-    ["label", "body"],
     ["load", "r"],
-    ["load", "n"],
+    ["load", "m"],
     ["mul"],
     ["store", "r"],
-    ["load", "n"],
-    ["push", 1],
-    ["sub"],
-    ["store", "n"],
-    ["jmp", "loop"],
-    ["label", "end"],
     ["load", "r"],
     ["emit"],
+    ["load", "m"],
+    ["load", "n"],
+    ["sub"],
+    ["jnz", "cont"],
+    ["jmp", "end"],
+    ["label", "cont"],
+    ["load", "m"],
+    ["push", 1],
+    ["add"],
+    ["store", "m"],
+    ["jmp", "loop"],
+    ["label", "end"],
     ["halt"]
 ]
 
 alloc prog_fib := [
-    ["push", 7],
-    ["store", "n"],
+    ["push", 8],
+    ["store", "n"],       # number of terms to emit
     ["push", 0],
     ["store", "a"],
     ["push", 1],
@@ -299,6 +303,8 @@ alloc prog_fib := [
     ["jnz", "body"],
     ["jmp", "end"],
     ["label", "body"],
+    ["load", "a"],
+    ["emit"],
     ["load", "a"],
     ["load", "b"],
     ["add"],
@@ -313,8 +319,6 @@ alloc prog_fib := [
     ["store", "n"],
     ["jmp", "loop"],
     ["label", "end"],
-    ["load", "a"],
-    ["emit"],
     ["halt"]
 ]
 
@@ -360,8 +364,8 @@ proc test(name, prog, expect_status, expect_output) {
 
 proc run_tests() {
     test("prog_add", prog_add, "ok", [5])
-    test("prog_fact", prog_fact, "ok", [120])
-    test("prog_fib", prog_fib, "ok", [13])
+    test("prog_fact", prog_fact, "ok", [1, 2, 6, 24, 120])
+    test("prog_fib", prog_fib, "ok", [0, 1, 1, 2, 3, 5, 8, 13])
     test("prog_div0", prog_div0, "DIV_ZERO", [])
     test("prog_badjump", prog_badjump, "BAD_LABEL", [])
     test("prog_underflow", prog_underflow, "STACK_UNDERFLOW", [])
