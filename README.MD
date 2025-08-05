@@ -34,15 +34,17 @@ The language uses keywords like `alloc`, `emit`, `if` and `loop` and is grounded
 
 ## Running OMG Scripts
 
-Once you've installed or built the interpreter, the command‑line entry point is named `omg`. It can execute a script file or drop you into an interactive session if run with no arguments.
+Once you've installed or built the interpreter, the command‑line entry point is named `omg`.
+
+It can execute a script file or drop you into an interactive session if run with no arguments.
 
 ### Usage
 
 ```
-OLI - OMG Language Interpreter
+OMG Language Interpreter
 
 Usage:
-    oli <script.omg>
+    omg <script.omg>
 
 Arguments:
     <script.omg>
@@ -50,7 +52,7 @@ Arguments:
         include the required header ';;;omg' on the first non-empty line.
 
 Example:
-    oli hello.omg
+    omg hello.omg
 
 Or run with no arguments to enter interactive mode (REPL).
 
@@ -189,24 +191,51 @@ Logical `and` and `or` short‑circuit: for `and`, the right‑hand side is eval
 ### Statement Execution
 
 `execute(statements)` walks a list of statement nodes and performs the
-appropriate action. Supported statements include:
+appropriate action.
 
-* **alloc** – declare a variable.
-    * To update an existing variable, use the variable identifier followed by the assignment operator (`:=`).
-        * If no local binding exists, this
-  mutates the global variable
-        * Attempting to update a variable that hasn't previously been declared with `alloc` will raise an `UndefinedVariableException`.
-* **emit** – evaluate an expression and print the result.
-* **facts** – assert that an expression is truthy.
-* **if/elif/else** – conditional execution.
-* **loop** and **break** – while loops with early exit support.
-* **proc** – define a function.
-* **return** – exit a function with a value.
+Supported statements include:
+
+| Statement      | Purpose                            | Example                           |
+| -------------- | ---------------------------------- | --------------------------------- |
+| `alloc`        | Declare and initialize variable    | `alloc x := 5`                    |
+| `:=`           | Reassign an existing variable      | `x := x + 1`                      |
+| `emit`         | Output value to console            | `emit "Hello"`                    |
+| `facts`        | Assert a condition (like `assert`) | `facts x > 0`                     |
+| `if/elif/else` | Conditional branches               | See below                         |
+| `loop`         | While-style loop                   | `loop x < 5 { ... }`              |
+| `break`        | Exit from current loop             | `break`                           |
+| `proc`         | Define function                    | `proc add(a, b) { return a + b }` |
+| `return`       | Return value from function         | `return result`                   |
 
 Each function call creates a new local scope populated with global variables
 and the call's parameters. Locals from the caller are hidden, and the previous
-environment is restored when the call completes. The interpreter also verifies
-that scripts start with the required `;;;omg` header before execution.
+environment is restored when the call completes.
+
+Functions are values. Defining a function assigns it to a
+variable of the same name. Functions can be stored in variables, passed
+as arguments, and returned from other functions.
+
+```python
+proc call_twice(f, x) { return f(f(x)) }
+proc inc(n) { return n + 1 }
+emit call_twice(inc, 3)   ; prints 5
+```
+
+Nested functions capture variables from the scope where they are
+defined, forming lexical closures. Captured values are preserved even if
+the inner function is returned or stored elsewhere.
+
+```python
+proc make_adder(n) {
+    proc inner(x) { return x + n }
+    return inner
+}
+
+alloc add5 := make_adder(5)
+emit add5(10)   ; prints 15
+```
+
+The interpreter also verifies that scripts start with the required `;;;omg` header before execution.
 
 ## Example
 
