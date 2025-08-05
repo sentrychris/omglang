@@ -20,13 +20,8 @@ proc add(a, b) {
     return a + b
 }
 
-emit x + y
-
-emit -5 + 5
-
-# Do some arithmetic and format for stdout
-emit x + " + " + y + " = " + add(x, y)
-emit "(" + x + " + " + y + ") * 10 / 2 = " + (x + y) * 10 / 2
+emit "x + y is " + (x + y)
+emit "-5 + 5 is " + (-5 + 5)
 
 # Reassign
 emit "Re-assigning x"
@@ -48,7 +43,7 @@ emit "Beginning loop:"
 alloc i := 0
 loop i <= 3 {
     # comparisons and logical "and"
-    if i > 1 and i < 3 and i == 2  {
+    if i > 1 and i < 3 and i == 2 {
         emit "2 is alright I guess."
     } elif i == 3 {
         emit "3 is the magic number."
@@ -58,3 +53,12 @@ loop i <= 3 {
     i := i + 1
 }
 emit "Finished loop."
+
+alloc j := 0
+emit "Beginning another loop and checking if j is 2 or 4:"
+loop j < 5 {
+    if j == 2 or j == 4 {
+        emit "j is " + j
+    }
+    j := j + 1
+}
