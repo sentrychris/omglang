@@ -6,7 +6,7 @@ OMG supports variables, arithmetic, lists, dictionaries, functions, conditionals
 
 #### Documents:
 - [`OMG_SPEC.md`](./spec/OMG_SPEC.md): for the canonical language reference.
-- [`OMG_PARSER.md`](./spec/OMG_PARSING.md): describes the parser's structure, flow, and grammar handling.
+- [`OMG_PARSER.md`](./spec/OMG_PARSER.md): describes the parser's structure, flow, and grammar handling.
 
 ## How to Run OMG Scripts
 
