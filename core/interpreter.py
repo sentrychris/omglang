@@ -1,24 +1,24 @@
 """
 Interpreter.
 
-This is a tree-walk interpreter for evaluating AST nodes produced by the parser. It supports 
+This is a tree-walk interpreter for evaluating AST nodes produced by the parser. It supports
 arithmetic, variables, function definitions and calls, conditionals, loops, and output statements.
 
 1. Execution Model
-The interpreter evaluates an abstract syntax tree (AST) in a top-down, recursive manner. 
-Statements are executed via the `execute()` method, and expressions are evaluated using 
+The interpreter evaluates an abstract syntax tree (AST) in a top-down, recursive manner.
+Statements are executed via the `execute()` method, and expressions are evaluated using
 `eval_expr()`. Both methods operate over structured tuples representing nodes in the AST.
 
 2. Environment
 The interpreter maintains two dictionaries:
     - `vars`: a variable environment (scope) for storing and retrieving user-defined values.
     - `functions`: a function table for storing parameter lists and function bodies by name.
-Function calls temporarily override the variable environment to simulate local scope, and restore 
+Function calls temporarily override the variable environment to simulate local scope, and restore
 it afterward to preserve state between calls.
 
 3. Expression Evaluation
-Expression nodes (e.g. arithmetic operations, comparisons, literals, variable references, and 
-function calls) are evaluated recursively. Basic type checking is enforced, and custom error 
+Expression nodes (e.g. arithmetic operations, comparisons, literals, variable references, and
+function calls) are evaluated recursively. Basic type checking is enforced, and custom error
 types (`UndefinedVariableException`, `UnknownOpException`) are raised on invalid references.
 
 4. Control Flow
@@ -28,11 +28,11 @@ Control constructs include:
 - `block`: executes a nested sequence of statements.
 
 5. Header Validation
-Before evaluation, the interpreter checks for a required script header (`;;;omg`). If not found, 
+Before evaluation, the interpreter checks for a required script header (`;;;omg`). If not found,
 execution is aborted with a descriptive runtime error.
 
 6. Error Handling
-Runtime errors during interpretation—, such as undefined variables, unknown operations, or 
+Runtime errors during interpretation—, such as undefined variables, unknown operations, or
 malformed AST nodes, are surfaced as typed exceptions with line numbers and file context.
 """
 from core.exceptions import (
@@ -42,6 +42,7 @@ from core.exceptions import (
     ReturnControlFlow,
 )
 from core.operations import Op
+
 
 class Interpreter:
     """
@@ -56,11 +57,10 @@ class Interpreter:
         self.functions = {}
         self.file = file
 
-
     def check_header(self, source_code: str):
         """
         Ensure the source code starts with header on the first non-empty line.
-        
+
         Raises:
             RuntimeError: If the header is missing or incorrect.
         """
@@ -73,7 +73,6 @@ class Interpreter:
             f"OMG script missing required header ';;;omg' "
             f"in {self.file}"
         )
-
 
     def strip_header(self, source_code: str) -> str:
         """
@@ -90,7 +89,6 @@ class Interpreter:
             f"OMG script missing required header ';;;omg'\n"
             f"in {self.file}"
         )
-
 
     def _format_expr(self, node) -> str:
         """
@@ -116,7 +114,6 @@ class Interpreter:
             case _:
                 name = op if isinstance(op, str) else op.value
                 return f"<expr {name}>"
-
 
     def eval_expr(self, node):
         """
@@ -425,7 +422,6 @@ class Interpreter:
 
         raise RuntimeError(f"Invalid expression node: {node}")
 
-
     def execute(self, statements: list):
         """
         Executes a list of statements.
@@ -440,7 +436,6 @@ class Interpreter:
         for stmt in statements:
             kind = stmt[0]
             line = stmt[-1]
-
 
             if kind == 'decl':
                 _, var_name, expr_node, _ = stmt
@@ -461,12 +456,10 @@ class Interpreter:
                 else:
                     raise UndefinedVariableException(var_name, line, self.file)
 
-
             elif kind == 'emit':
                 _, expr_node, _ = stmt
                 value = self.eval_expr(expr_node)
                 print(value)
-
 
             elif kind == 'facts':
                 _, expr_node, line = stmt
@@ -476,7 +469,6 @@ class Interpreter:
                         f"Assertion failed on line {line}: {self._format_expr(expr_node)}"
                     )
 
-
             elif kind == 'if':
                 _, cond_node, then_block, else_block, _ = stmt
                 if self.eval_expr(cond_node):
@@ -484,11 +476,9 @@ class Interpreter:
                 elif else_block:
                     self.execute([else_block])
 
-
             elif kind == 'block':
                 _, block_statements, _ = stmt
                 self.execute(block_statements)
-
 
             elif kind == 'loop':
                 _, cond_node, block_node, _ = stmt
@@ -501,26 +491,21 @@ class Interpreter:
                 except BreakLoop:
                     pass
 
-
             elif kind == 'break':
                 raise BreakLoop()
-
 
             elif kind == 'func_def':
                 _, name, params, body, _ = stmt
                 self.functions[name] = (params, body)
-
 
             elif kind == 'return':
                 _, expr_node, _ = stmt
                 value = self.eval_expr(expr_node)
                 raise ReturnControlFlow(value)
 
-
             elif kind == 'expr_stmt':
                 _, expr_node, _ = stmt
                 self.eval_expr(expr_node)
-
 
             else:
                 raise TypeError(

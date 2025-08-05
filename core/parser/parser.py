@@ -29,7 +29,6 @@ class Parser:
         self.curr_token = self.tokens[self.position]
         self.source_file = file
 
-
     def eat(self, token_type: str) -> None:
         """
         Consume the current token if it matches the expected type.
@@ -55,7 +54,6 @@ class Parser:
                 f"but got value '{act_value}' of type {act_type}{mapped_hint} "
                 f"on line {self.curr_token.line} in {self.source_file}"
             )
-
 
     # Expression wrappers
     def factor(self) -> tuple:
@@ -117,7 +115,6 @@ class Parser:
         Parse a full expression with arithmetic or logical operations.
         """
         return _expr.parse_expr(self)
-
 
     # Statement wrappers
     def block(self) -> tuple:
@@ -185,7 +182,6 @@ class Parser:
         Parse a new variable declaration statement.
         """
         return _stmt.parse_declaration(self)
-
 
     def parse(self):
         """

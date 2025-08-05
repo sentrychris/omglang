@@ -11,6 +11,7 @@ required ``;;;omg`` header is also stripped before lexing.
 """
 import re
 
+
 class Token:
     """
     Represents a lexical token with a type and value.
@@ -33,6 +34,7 @@ class Token:
         """
         return f"Token({self.type}, {self.value}, line={self.line})"
 
+
 def tokenize(code) -> tuple[list[Token], dict[str, str]]:
     """
     Convert a string of source code into a list of tokens.
@@ -54,7 +56,7 @@ def tokenize(code) -> tuple[list[Token], dict[str, str]]:
         if line.strip() == "":
             continue
         if line.strip() == ";;;omg":
-            code = "\n".join(lines[i + 1 :])
+            code = "\n".join(lines[i + 1:])
         break
 
     token_specification: list[Token] = [
@@ -141,7 +143,7 @@ def tokenize(code) -> tuple[list[Token], dict[str, str]]:
     tok_regex = '|'.join(f'(?P<{name}>{pattern})' for name, pattern in token_specification)
 
     tokens = []
-    line_num = 2 # 1 contains the stripped header
+    line_num = 2  # 1 contains the stripped header
 
     for match_obj in re.finditer(tok_regex, code):
         kind = match_obj.lastgroup

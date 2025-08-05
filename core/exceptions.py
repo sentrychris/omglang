@@ -1,6 +1,8 @@
 """
 Errors.
 """
+
+
 class UndefinedVariableException(Exception):
     """
     Error for undefined variables.

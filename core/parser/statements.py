@@ -183,7 +183,7 @@ def parse_break(parser: 'Parser') -> tuple:
 def parse_func_def(parser: 'Parser') -> tuple:
     """
     Parse a function definition.
-    
+
     Args:
         parser: The parser instance.
 
@@ -227,7 +227,7 @@ def parse_return(parser: 'Parser') -> tuple:
 def parse_reassignment(parser: 'Parser') -> tuple:
     """
     Parse reassignment of an existing variable.
-    
+
     Args:
         parser: The parser instance.
 
