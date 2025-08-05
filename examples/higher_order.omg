@@ -14,7 +14,7 @@ proc make_adder(n) {
     proc inner(x) {
         return x + n
     }
-    return inner
+    return inner # returns the inner function
 }
 
 alloc add5 := make_adder(5)
