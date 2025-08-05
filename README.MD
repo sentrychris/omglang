@@ -2,7 +2,7 @@
 
 # OMGlang
 
-OMG is a toy programming language with a minimal, custom syntax and basic support for variables, arithmetic, conditionals, loops, and functions. It is implemented in Python using a hand‑written lexer, a recursive‑descent parser, and a tree‑walk interpreter.
+OMG is a personal learning project and educational programming language, created as a way to explore how languages are designed, parsed, and executed. It features a minimal, custom syntax with support for variables, arithmetic, conditionals, loops, functions and more. It is implemented in Python using a hand-written lexer, a recursive-descent parser, and a tree-walk interpreter.
 
 ## Table of Contents
 
