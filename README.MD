@@ -1,3 +1,5 @@
+[![OMGlang](https://github.com/sentrychris/omglang/actions/workflows/python-package.yml/badge.svg)](https://github.com/sentrychris/omglang/actions/workflows/python-package.yml)
+
 # OMGlang
 
 OMG is a toy programming language with a minimal, custom syntax and basic support for variables, arithmetic, conditionals, loops, and functions. It is implemented in Python using a hand‑written lexer, a recursive‑descent parser, and a tree‑walk interpreter.
