@@ -68,19 +68,21 @@ New features must:
 
 ---
 
+## Completed Features
+
+### First-Class Functions
+
+Functions are values: they can be assigned to variables, passed as arguments, and returned from other procedures.
+
+### Closures
+
+Inner procedures capture bindings from their enclosing scope, enabling lexical closures and higher-order patterns.
+
 ## Planned Features
 
 These features are under design and may be introduced incrementally:
 
-### ✅ First-Class Functions
-
-Functions will become values: assignable to variables, passable as arguments, and returnable from other functions.
-
-### ✅ Closures
-
-Inner functions will capture bindings from their enclosing scope, enabling lexical closures and higher-order patterns.
-
-### ✅ Import/Export System
+### Import/Export System
 
 Scripts will be able to import named procedures or constants from other `.omg` files, supporting modularization and reuse. Initially, this may be limited to top-level `proc` and `alloc` declarations.
 
