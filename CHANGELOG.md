@@ -1,6 +1,52 @@
 # CHANGELOG.md
 
+Ordered from top to bottom.
+
+
 ## 2025-08-05
+
+### Added
+
+* **Dictionary support**:
+
+  * New dictionary literal syntax using `{ key: value, ... }`
+    * Example: `alloc person := { name: "Chris", age: 32 }`
+  * Support for both:
+    * **Dot notation** (`person.name`)
+    * **Index notation** (`person["name"]`)
+  * New AST node types and interpreter evaluation logic for:
+    * Dictionary literals
+    * Field access and assignment (`x.key := val`)
+    * Key-based access and mutation (`x["key"] := val`)
+  * Parser now distinguishes between simple identifiers and l-values with chained accessors.
+  * Dot access is desugared into a `'dot'` AST node, and assignments to keys or attributes are translated to `'index_assign'` or `'attr_assign'`.
+
+### Changed
+
+* `interpreter.py`:
+  * Indexing logic generalized to evaluate dynamic expressions and support dictionary lookup.
+  * Slice and dot access logic now evaluates base expressions (not just identifiers).
+  * Assignment handling extended to support nested field/index assignments.
+* `expressions.py`:
+  * Added dictionary literal parsing with support for both string and identifier keys.
+  * Extended factor parsing to support postfix dot/index/call chains.
+* `statements.py`:
+  * Introduced `_parse_lvalue()` for recursive l-value parsing.
+  * Reassignment parsing now recognizes and routes attribute and index assignments.
+* `lexer.py`:
+  * Added support for the dot token `.` as `DOT`.
+
+### Fixed
+
+* AST formatting (`_format_expr`) now renders lists, strings, dictionaries, dot/index expressions more clearly in debug and error messages.
+
+### Tests
+
+* Added `test_dictionaries.py` to validate full range of dictionary functionality:
+
+  * Declaration, mutation, nested structure, function parameter passing, and `facts` assertions.
+
+## 2025-08-04
 
 ### Added
 - Support for first-class functions and lexical closures
@@ -10,7 +56,7 @@
 ### Changed
 - Parser and interpreter updated to treat procedures as values
 
-## 2025-08-05
+## 2025-08-02
 
 ### Added
 - Initial `OMG_SPEC.md` defining core syntax, semantics, and runtime rules

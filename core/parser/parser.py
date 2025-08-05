@@ -6,8 +6,13 @@ descent parsing process. The actual parsing routines are split across
 `core.parser.expressions` and `core.parser.statements`.
 """
 
-from . import expressions as _expr
-from . import statements as _stmt
+from typing import TYPE_CHECKING
+
+from core.parser import expressions as _expr
+from core.parser import statements as _stmt
+
+if TYPE_CHECKING:
+    from core.lexer import Token
 
 
 class Parser:
@@ -28,6 +33,15 @@ class Parser:
         self.position = 0
         self.curr_token = self.tokens[self.position]
         self.source_file = file
+
+    def validate_id_or_raise(self, tok: "Token") -> None:
+        """
+        Raise an error for an invalid identifier.
+        """
+        if tok.type != 'ID':
+            raise SyntaxError(
+                f"Expected identifier after '.' on line {tok.line} in {self.source_file}"
+            )
 
     def eat(self, token_type: str) -> None:
         """

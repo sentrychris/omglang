@@ -98,6 +98,7 @@ def tokenize(code) -> tuple[list[Token], dict[str, str]]:
         ('LBRACKET',  r'\['),
         ('RBRACKET',  r'\]'),
         ('COMMA',     r','),
+        ('DOT',       r'\.'),
         ('COLON',     r':'),
 
         # Arithmetic operators
