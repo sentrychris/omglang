@@ -1,293 +1,189 @@
-[![OMGlang](https://github.com/sentrychris/omglang/actions/workflows/python-package.yml/badge.svg)](https://github.com/sentrychris/omglang/actions/workflows/python-package.yml) &nbsp;&nbsp;&nbsp;[![CodeQL](https://github.com/sentrychris/omglang/actions/workflows/github-code-scanning/codeql/badge.svg)](https://github.com/sentrychris/omglang/actions/workflows/github-code-scanning/codeql)
+# OMG Language
 
-# OMGlang
+OMG is a personal, educational programming language implemented in Python. It provides a minimal but expressive syntax for experimenting with the core components of a programming language, including lexing, parsing, and interpretation.
 
-OMG is a personal learning project and educational programming language, created as a way to explore how languages are designed, parsed, and executed. It features a minimal, custom syntax with support for variables, arithmetic, conditionals, loops, functions and more. It is implemented in Python using a hand-written lexer, a recursive-descent parser, and a tree-walk interpreter.
+OMG supports variables, arithmetic, lists, dictionaries, functions, conditionals, and loops, all executed via a tree-walk interpreter.
 
-### Project Guidance
+See [`OMG_SPEC.md`](./OMG_SPEC.md) for the canonical language reference.
 
-> See the following files for official project guidance:
-> 
-> - `OMG_SPEC.md` – Language specification
-> - `AGENTS.md` – AI Agent usage policy
-> - `DEVELOPMENT.md` – Source structure and dev workflow
+## How to Run OMG Scripts
 
-## Table of Contents
-
-* [Overview](#overview)
-* [Running OMG Scripts](#running-omg-scripts)
-  * [Usage](#usage)
-  * [Interactive REPL](#interactive-repl)
-* [Lexer](#lexer)
-* [Parser](#parser)
-* [Interpreter](#interpreter)
-* [Example](#example)
-* [Design Notes](#design-notes)
-
-## Overview
-
-The language uses keywords like `alloc`, `emit`, `if` and `loop` and is grounded in a well‑defined grammar. All scripts must start with a header line `;;;omg`. Execution proceeds through three stages:
-
-1. **Lexing** – convert raw source code into tokens.
-2. **Parsing** – build an Abstract Syntax Tree (AST) from tokens.
-3. **Interpreting** – walk the AST to evaluate expressions and execute statements.
-
-## Running OMG Scripts
-
-Once you've installed or built the interpreter, the command‑line entry point is named `omg`.
-
-It can execute a script file or drop you into an interactive session if run with no arguments.
-
-### Usage
-
-```
-OMG Language Interpreter
-
-Usage:
-    omg <script.omg>
-
-Arguments:
-    <script.omg>
-        Path to an OMG language source file to execute. The file must
-        include the required header ';;;omg' on the first non-empty line.
-
-Example:
-    omg hello.omg
-
-Or run with no arguments to enter interactive mode (REPL).
-
-Options:
-    -h, --help
-        Show this help message and exit.
-```
-
-* `omg <script.omg>` – run the specified OMG program. The file must include the required `;;;omg` header on the first non‑empty line. Relative paths are resolved from your current working directory.
-
-* `omg` with no arguments – start a Read–Eval–Print Loop (REPL) where you can type OMG statements interactively. Multi‑line constructs such as function definitions or `if … { … }` blocks are supported; simply continue entering lines until the braces balance. Type `exit` or `quit` to leave the REPL.
-
-* `-h` or `--help` – print a short usage summary and exit.
-
-If you prefer not to install the `omg` script, you can also run programs directly via Python:
+You can run OMG scripts from the command line:
 
 ```sh
-py ./omg.py <script>.omg
+python omg.py path/to/script.omg
 ```
+
+The script must begin with the required `;;;omg` header on the first non-empty line.
 
 ### Interactive REPL
 
-Running `omg` with no arguments launches an interactive session. This REPL lets you experiment with the language one statement or block at a time. For example:
+Run without arguments to start an interactive REPL:
+
+```sh
+python omg.py
+```
+
+Example session:
 
 ```plaintext
->>> alloc x := 5
+>>> alloc x := 42
 >>> emit x
-5
->>> if x < 10 {
-...     emit x + " is smaller than 10"
-... } else {
-...     emit x + " is bigger than 10"
+42
+>>> if x > 0 {
+...     emit "positive"
 ... }
-x is smaller than 10
->>> exit
+positive
+>>> quit
 ```
 
-If you start a block and do not close it, the prompt switches to `...` and the interpreter waits for you to finish entering the block.
+---
 
-## Lexer
+## Syntax
 
-The lexer performs a single pass over the source using a combined regular
-expression of named groups. Each match produces a `Token` containing the
-token type, its value, and the original line number for later error
-reporting. Before tokenization the required header `;;;omg` is stripped so
-that line counts remain accurate.
+### Statements
 
-Token categories include:
+| Form             | Purpose                         |
+| ---------------- | ------------------------------- |
+| `alloc x := 1`   | Declare and initialize variable |
+| `x := x + 1`     | Reassign existing variable      |
+| `emit x`         | Output value to console         |
+| `facts x > 0`    | Assert a condition              |
+| `if/elif/else`   | Branching control flow          |
+| `loop cond {}`   | While-style loop                |
+| `break`          | Exit from current loop          |
+| `proc name(...)` | Define a function               |
+| `return`         | Return from a function          |
 
-* **Keywords**: `alloc`, `emit`, `proc`, `if`, `elif`, `else`, `loop`,
-  `break`, `return`, `facts`.
-* **Operators**:
-    * Arithmetic: `+`, `-`, `*`, `/`, `%`
-    * Comparison: `==`, `!=`, `<`, `>`, `<=`, `>=`
-    * Assignment: `:=`
-    * Bitwise: `&`, `|`, `^`, `~`, `<<`, `>>`
-    * Logical: `and`, `or`
-* **Identifiers** for variable and function names.
-* **Literals**: decimal integers, binary integers (e.g. `0b1010`), strings
-  with escape sequences, and the boolean literals `true` and `false`.
-* **Punctuation**: `(`, `)`, `{`, `}`, `[`, `]`, `,`, `:`.
+---
 
-Whitespace and comments beginning with `#` are skipped entirely. A mapping of
-literal text back to token types is also generated, allowing the parser to
-emit human‑readable error messages such as “expected `}`” rather than the
-internal token name.
+## Supported Data Types
 
-## Parser
+| Type       | Example                    | Notes                             |
+| ---------- | -------------------------- | --------------------------------- |
+| Integer    | `42`, `-1`                 | Whole numbers only                |
+| Boolean    | `true`, `false`            | Lowercase literals                |
+| String     | `"Hello\nWorld"`           | Double-quoted, supports escapes   |
+| List       | `[1, 2, 3]`                | Supports indexing and slicing     |
+| Dictionary | `{name: "Chris", age: 32}` | Access with `x.key` or `x["key"]` |
 
-OMG uses a hand‑written, modular **recursive‑descent parser**. The top‑level
-`Parser` class (in `core/parser/parser.py`) coordinates the process while the
-actual routines live in two helper modules: `expressions.py` and
-`statements.py`. This separation keeps expression precedence logic and
-statement forms isolated and easy to extend.
+### Falsy Values
 
-Most production rules are LL(1), meaning the next token alone is sufficient
-to choose the correct parsing function. However, the statement parser
-occasionally peeks one additional token ahead, such as to distinguish
-`name :=` (a reassignment) from `name(` (a function call) or a bare
-expression, making the grammar **sporadic LL(2)** rather than strictly LL(1).
+* `false`
+* `""`
+* `[]`
+* `undefined` (unassigned variables)
 
-Parsing advances through a classic `eat()` routine that verifies the expected
-token type and then consumes it, raising a descriptive `SyntaxError` if the
-stream does not match the grammar. The resulting AST is encoded as tuples of
-the form `(operation, operands…, line)`.
+---
 
-### Expression Precedence (highest to lowest):
+## Language Design
 
-| Level | Category           | Operators                  | Parser Function |
-| ----- | ------------------ | -------------------------- | --------------- |
-| 1     | **Unary**          | `~`, `+`, `-`              | `_factor`       |
-| 2     | **Multiplicative** | `*`, `/`, `%`              | `_term`         |
-| 3     | **Additive**       | `+`, `-`                   | `_add_sub`      |
-| 4     | **Shift**          | `<<`, `>>`                 | `_shift`        |
-| 5     | **Bitwise AND**    | `&`                        | `_bitwise_and`  |
-| 6     | **Bitwise XOR**    | `^`                        | `_bitwise_xor`  |
-| 7     | **Bitwise OR**     | `\|`                        | `_bitwise_or`   |
-| 8     | **Comparison**     | `==`, `!=`, `<`, `>`, `<=`, `>=` | `_comparison`   |
-| 9     | **Logical AND**    | `and`                      | `_logical_and`  |
-| 10    | **Logical OR**     | `or`                       | `_logical_or`   |
+### Lexer
 
-Logical AND and OR are left-associative and evaluate with short-circuit semantics, so chains like `a and b and c` and `a or b or c` are parsed as `(a and b) and c` and `(a or b) or c` respectively, producing boolean results.
+* Uses a single-pass regex-based scanner to tokenize input.
+* Skips whitespace and comments.
+* Produces `Token(type, value, line)` tuples.
+* Strips `;;;omg` header before processing.
 
-Each layer wraps the tighter-binding expressions from below, ensuring proper operator grouping. This model provides clear operator precedence semantics.
+### Parser
 
-Each node is represented as a tuple encoding the operation, its operands and the originating line number. For example:
+* Hand-written recursive-descent parser with LL(1)+ lookahead.
+* Divided into:
+  * `expressions.py`: Precedence-based expression parsing.
+  * `statements.py`: Control flow and structural forms.
+* Produces ASTs as tagged tuples: `(operation, operands..., line)`
 
-```python
-('add', ('number', 5, 1), ('number', 1, 1), 1)
-('xor_bits', ('number', 6, 3), ('number', 3, 3), 3) 
+### Interpreter
+
+* Tree-walk interpreter over the AST.
+* Maintains:
+  * `vars`: Current scope.
+  * `global_vars`: Preserved globals.
+* Function calls isolate scopes, bind parameters, and restore the previous environment.
+* Expression evaluator supports:
+  * Arithmetic, logical, comparison, bitwise ops
+  * Lists, slices, dictionaries
+  * Function calls, built-ins
+
+---
+
+## Example Snippets
+
+### Declaration and Assignment
+
+```omg
+alloc name := "Chris"
+emit name
+name := name + "!"
+emit name
 ```
 
-## Interpreter
+### Arithmetic
 
-The interpreter is a tree‑walker that evaluates the tuple‑based AST produced
-by the parser. It maintains two environments:
-
-* A **variable table** (`vars`) for current scope values. A copy of the global
-  table is preserved so function calls can introduce temporary local scopes
-  without losing global state.
-* A **function table** (`functions`) mapping procedure names to their
-  parameter lists and bodies.
-
-### Expression Evaluation
-
-`eval_expr(node)` recursively evaluates literals, variables, arithmetic and
-bitwise operations, boolean logic, list indexing/slicing, and function calls.
-Unary operators include `+`, `-`, and `~`. Built‑in functions such as
-`chr`, `ascii`, `hex`, `binary`, and `length` are dispatched directly, while
-user‑defined procedures evaluate arguments, bind parameters, execute the body
-and return the resulting value (or `None` if no `return` is encountered).
-`binary` also supports an optional width argument for fixed-width two's
-complement formatting.
-Logical `and` and `or` short‑circuit: for `and`, the right‑hand side is evaluated only if the left‑hand side is truthy; for `or`, the right‑hand side is evaluated only if the left‑hand side is falsy. Both operators always produce a boolean value.
-
-### Statement Execution
-
-`execute(statements)` walks a list of statement nodes and performs the
-appropriate action.
-
-Supported statements include:
-
-| Statement      | Purpose                            | Example                           |
-| -------------- | ---------------------------------- | --------------------------------- |
-| `alloc`        | Declare and initialize variable    | `alloc x := 5`                    |
-| `:=`           | Reassign an existing variable      | `x := x + 1`                      |
-| `emit`         | Output value to console            | `emit "Hello"`                    |
-| `facts`        | Assert a condition (like `assert`) | `facts x > 0`                     |
-| `if/elif/else` | Conditional branches               | See below                         |
-| `loop`         | While-style loop                   | `loop x < 5 { ... }`              |
-| `break`        | Exit from current loop             | `break`                           |
-| `proc`         | Define function                    | `proc add(a, b) { return a + b }` |
-| `return`       | Return value from function         | `return result`                   |
-
-Each function call creates a new local scope populated with global variables
-and the call's parameters. Locals from the caller are hidden, and the previous
-environment is restored when the call completes.
-
-Functions are values. Defining a function assigns it to a
-variable of the same name. Functions can be stored in variables, passed
-as arguments, and returned from other functions.
-
-```python
-proc call_twice(f, x) { return f(f(x)) }
-proc inc(n) { return n + 1 }
-emit call_twice(inc, 3)   ; prints 5
+```omg
+alloc x := 10
+alloc y := 3
+emit x + y
+emit x * y
+emit x % y
 ```
 
-Nested functions capture variables from the scope where they are
-defined, forming lexical closures. Captured values are preserved even if
-the inner function is returned or stored elsewhere.
+### Control Flow and Conditionals
 
-```python
-proc make_adder(n) {
-    proc inner(x) { return x + n }
-    return inner
+```omg
+alloc score := 75
+
+if score >= 90 {
+    emit "A"
+} elif score >= 80 {
+    emit "B"
+} elif score >= 70 {
+    emit "C"
+} else {
+    emit "F"
 }
-
-alloc add5 := make_adder(5)
-emit add5(10)   ; prints 15
 ```
 
-The interpreter also verifies that scripts start with the required `;;;omg` header before execution.
+### Loops
 
-## Example
-
-Examples can be found in the examples directory.
-
-```python
-;;;omg
-
-# Define a function
-proc greeting(name) {
-    return "Hello " + name
-}
-
-# Call a function and print to stdout
-emit greeting("World")
-
-# Declare some variables
-alloc x := 5
-alloc y := 10
-alloc z := 0
-
-emit "x = " + x
-emit "y = " + y
-
-proc add(a, b) {
-    return a + b
-}
-
-# Do some arithmetic and format for stdout
-emit x + " + " + y + " = " + add(x, y)
-emit "(" + x + " + " + y + ") * 10 / 2 = " + (x + y) * 10 / 2
-
-# Create a loop
-emit "Beginning loop:"
+```omg
 alloc i := 0
-loop i <= 3 {
-    if i == 3 {
-        emit "3 is the magic number."
-    } elif i == 2 {
-        emit "2 is alright I guess."
-    } else {
-        emit i
-    }
-    i := i+1
+loop i < 5 {
+    emit i
+    i := i + 1
 }
-emit "Finished loop."
 ```
 
-## Design Notes
+### Binary Ops
 
-* **Header requirement** – scripts must begin with `;;;omg` to be valid.
-* **Scope model** – variables are global except during function calls, which create a local scope with access only to globals and parameters.
-- **Operator precedence** – enforced explicitly in the parser via method hierarchy.
-* **Error handling** – line numbers and file names are preserved for better error messages.
-* **Extensibility** – new constructs can be added by expanding the parser and interpreter.
+```omg
+emit 6 & 3      # 2
+emit 6 | 3      # 7
+emit 6 ^ 3      # 5
+emit ~1         # -2
+emit 1 << 3     # 8
+```
+
+### Function Definitions
+
+```omg
+proc square(x) {
+    return x * x
+}
+
+emit square(4)
+
+proc call_twice(f, x) {
+    return f(f(x))
+}
+
+emit call_twice(square, 2)  # 16
+```
+
+---
+
+## License and Status
+
+OMG is an experimental educational project and not intended for production use. The implementation is stable and complete as a toy language but may evolve to support additional features like import/export or deeper type introspection.
+
+This software is open-sourced software licensed under the [MIT license](./LICENSE).
