@@ -4,6 +4,14 @@
 
 OMG is a personal learning project and educational programming language, created as a way to explore how languages are designed, parsed, and executed. It features a minimal, custom syntax with support for variables, arithmetic, conditionals, loops, functions and more. It is implemented in Python using a hand-written lexer, a recursive-descent parser, and a tree-walk interpreter.
 
+### Project Guidance
+
+> See the following files for official project guidance:
+> 
+> - `OMG_SPEC.md` – Language specification
+> - `AGENTS.md` – AI Agent usage policy
+> - `DEVELOPMENT.md` – Source structure and dev workflow
+
 ## Table of Contents
 
 * [Overview](#overview)
