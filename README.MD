@@ -1,4 +1,4 @@
-[![OMGlang](https://github.com/sentrychris/omglang/actions/workflows/python-package.yml/badge.svg)](https://github.com/sentrychris/omglang/actions/workflows/python-package.yml)
+[![OMGlang](https://github.com/sentrychris/omglang/actions/workflows/python-package.yml/badge.svg)](https://github.com/sentrychris/omglang/actions/workflows/python-package.yml) &nbsp;&nbsp;&nbsp;[![CodeQL](https://github.com/sentrychris/omglang/actions/workflows/github-code-scanning/codeql/badge.svg)](https://github.com/sentrychris/omglang/actions/workflows/github-code-scanning/codeql)
 
 # OMGlang
 
