@@ -54,11 +54,12 @@ def debug_print_tokens_ast(tokens, ast):
     """
     Print tokenized source and AST
     """
-    print ("\nTokens:\n")
+    print("\nTokens:\n")
     print(tokens)
-    print ("\nAST:\n")
+    print("\nAST:\n")
     print(ast)
-    print (" ")
+    print(" ")
+
 
 def run_script(script_name: str):
     """
