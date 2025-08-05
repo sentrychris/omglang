@@ -1,0 +1,370 @@
+;;;omg
+
+# === ISA constants ===
+alloc OP_PUSH  := 1
+alloc OP_POP   := 2
+alloc OP_ADD   := 3
+alloc OP_SUB   := 4
+alloc OP_MUL   := 5
+alloc OP_DIV   := 6
+alloc OP_STORE := 7
+alloc OP_LOAD  := 8
+alloc OP_EMIT  := 9
+alloc OP_JMP   := 10
+alloc OP_JNZ   := 11
+alloc OP_HALT  := 12
+
+
+# === Helper procedures ===
+proc store_var(mem, name, val) {
+    alloc sv_i := 0
+    alloc sv_entry := []
+    alloc sv_new := []
+    loop sv_i < length(mem) {
+        sv_entry := mem[sv_i]
+        if sv_entry[0] == name {
+            sv_new := [name, val]
+            mem := mem[0:sv_i] + [sv_new] + mem[sv_i + 1:length(mem)]
+            return mem
+        }
+        sv_i := sv_i + 1
+    }
+    mem := mem + [[name, val]]
+    return mem
+}
+
+proc load_var(mem, name) {
+    alloc lv_i := 0
+    alloc lv_entry := []
+    loop lv_i < length(mem) {
+        lv_entry := mem[lv_i]
+        if lv_entry[0] == name {
+            return lv_entry[1]
+        }
+        lv_i := lv_i + 1
+    }
+    return 0
+}
+
+proc find_label(labels, name) {
+    alloc fl_i := 0
+    alloc fl_entry := []
+    loop fl_i < length(labels) {
+        fl_entry := labels[fl_i]
+        if fl_entry[0] == name {
+            return fl_entry[1]
+        }
+        fl_i := fl_i + 1
+    }
+    return -1
+}
+
+# === Two-pass assembler ===
+proc assemble(asm) {
+    alloc labels := []
+    alloc pc := 0
+    alloc i := 0
+    alloc inst := []
+    alloc op := false
+    loop i < length(asm) {
+        inst := asm[i]
+        op := inst[0]
+        if op == "label" {
+            labels := labels + [[inst[1], pc]]
+        } else {
+            pc := pc + 1
+        }
+        i := i + 1
+    }
+
+    alloc bytecode := []
+    alloc addr := 0
+    i := 0
+    loop i < length(asm) {
+        inst := asm[i]
+        op := inst[0]
+        if op == "push" {
+            bytecode := bytecode + [[OP_PUSH, inst[1]]]
+        } elif op == "pop" {
+            bytecode := bytecode + [[OP_POP]]
+        } elif op == "add" {
+            bytecode := bytecode + [[OP_ADD]]
+        } elif op == "sub" {
+            bytecode := bytecode + [[OP_SUB]]
+        } elif op == "mul" {
+            bytecode := bytecode + [[OP_MUL]]
+        } elif op == "div" {
+            bytecode := bytecode + [[OP_DIV]]
+        } elif op == "store" {
+            bytecode := bytecode + [[OP_STORE, inst[1]]]
+        } elif op == "load" {
+            bytecode := bytecode + [[OP_LOAD, inst[1]]]
+        } elif op == "emit" {
+            bytecode := bytecode + [[OP_EMIT]]
+        } elif op == "jmp" {
+            addr := find_label(labels, inst[1])
+            if addr == -1 {
+                return ["BAD_LABEL"]
+            }
+            bytecode := bytecode + [[OP_JMP, addr]]
+        } elif op == "jnz" {
+            addr := find_label(labels, inst[1])
+            if addr == -1 {
+                return ["BAD_LABEL"]
+            }
+            bytecode := bytecode + [[OP_JNZ, addr]]
+        } elif op == "halt" {
+            bytecode := bytecode + [[OP_HALT]]
+        } elif op == "label" {
+            pc := pc
+        } else {
+            return ["BAD_OPCODE"]
+        }
+        i := i + 1
+    }
+    return ["ok", bytecode]
+}
+
+# === VM runtime ===
+proc run(program) {
+    alloc pc := 0
+    alloc stack := []
+    alloc memory := []
+    alloc output := []
+    alloc status := "ok"
+    alloc instr := []
+    alloc opcode := 0
+    alloc operand := false
+    alloc lhs := 0
+    alloc rhs := 0
+    alloc cond := 0
+    loop pc < length(program) {
+        instr := program[pc]
+        pc := pc + 1
+        opcode := instr[0]
+        if opcode == OP_PUSH {
+            stack := stack + [instr[1]]
+        } elif opcode == OP_POP {
+            if length(stack) == 0 {
+                status := "STACK_UNDERFLOW"
+                break
+            }
+            stack := stack[0:length(stack) - 1]
+        } elif opcode == OP_ADD {
+            if length(stack) < 2 {
+                status := "STACK_UNDERFLOW"
+                break
+            }
+            rhs := stack[length(stack) - 1]
+            stack := stack[0:length(stack) - 1]
+            lhs := stack[length(stack) - 1]
+            stack := stack[0:length(stack) - 1]
+            stack := stack + [lhs + rhs]
+        } elif opcode == OP_SUB {
+            if length(stack) < 2 {
+                status := "STACK_UNDERFLOW"
+                break
+            }
+            rhs := stack[length(stack) - 1]
+            stack := stack[0:length(stack) - 1]
+            lhs := stack[length(stack) - 1]
+            stack := stack[0:length(stack) - 1]
+            stack := stack + [lhs - rhs]
+        } elif opcode == OP_MUL {
+            if length(stack) < 2 {
+                status := "STACK_UNDERFLOW"
+                break
+            }
+            rhs := stack[length(stack) - 1]
+            stack := stack[0:length(stack) - 1]
+            lhs := stack[length(stack) - 1]
+            stack := stack[0:length(stack) - 1]
+            stack := stack + [lhs * rhs]
+        } elif opcode == OP_DIV {
+            if length(stack) < 2 {
+                status := "STACK_UNDERFLOW"
+                break
+            }
+            rhs := stack[length(stack) - 1]
+            stack := stack[0:length(stack) - 1]
+            if rhs == 0 {
+                status := "DIV_ZERO"
+                break
+            }
+            lhs := stack[length(stack) - 1]
+            stack := stack[0:length(stack) - 1]
+            stack := stack + [lhs / rhs]
+        } elif opcode == OP_STORE {
+            if length(stack) == 0 {
+                status := "STACK_UNDERFLOW"
+                break
+            }
+            operand := instr[1]
+            rhs := stack[length(stack) - 1]
+            stack := stack[0:length(stack) - 1]
+            memory := store_var(memory, operand, rhs)
+        } elif opcode == OP_LOAD {
+            operand := instr[1]
+            stack := stack + [load_var(memory, operand)]
+        } elif opcode == OP_EMIT {
+            if length(stack) == 0 {
+                status := "STACK_UNDERFLOW"
+                break
+            }
+            rhs := stack[length(stack) - 1]
+            output := output + [rhs]
+        } elif opcode == OP_JMP {
+            operand := instr[1]
+            if operand < 0 {
+                status := "BAD_JUMP"
+                break
+            }
+            if operand >= length(program) {
+                status := "BAD_JUMP"
+                break
+            }
+            pc := operand
+        } elif opcode == OP_JNZ {
+            if length(stack) == 0 {
+                status := "STACK_UNDERFLOW"
+                break
+            }
+            cond := stack[length(stack) - 1]
+            stack := stack[0:length(stack) - 1]
+            if cond != 0 {
+                operand := instr[1]
+                if operand < 0 {
+                    status := "BAD_JUMP"
+                    break
+                }
+                if operand >= length(program) {
+                    status := "BAD_JUMP"
+                    break
+                }
+                pc := operand
+            }
+        } elif opcode == OP_HALT {
+            break
+        } else {
+            status := "BAD_OPCODE"
+            break
+        }
+    }
+    return [status, output]
+}
+
+# === Sample assembly programs ===
+alloc prog_add := [
+    ["push", 2],
+    ["push", 3],
+    ["add"],
+    ["emit"],
+    ["halt"]
+]
+
+alloc prog_fact := [
+    ["push", 5],
+    ["store", "n"],
+    ["push", 1],
+    ["store", "r"],
+    ["label", "loop"],
+    ["load", "n"],
+    ["jnz", "body"],
+    ["jmp", "end"],
+    ["label", "body"],
+    ["load", "r"],
+    ["load", "n"],
+    ["mul"],
+    ["store", "r"],
+    ["load", "n"],
+    ["push", 1],
+    ["sub"],
+    ["store", "n"],
+    ["jmp", "loop"],
+    ["label", "end"],
+    ["load", "r"],
+    ["emit"],
+    ["halt"]
+]
+
+alloc prog_fib := [
+    ["push", 7],
+    ["store", "n"],
+    ["push", 0],
+    ["store", "a"],
+    ["push", 1],
+    ["store", "b"],
+    ["label", "loop"],
+    ["load", "n"],
+    ["jnz", "body"],
+    ["jmp", "end"],
+    ["label", "body"],
+    ["load", "a"],
+    ["load", "b"],
+    ["add"],
+    ["store", "t"],
+    ["load", "b"],
+    ["store", "a"],
+    ["load", "t"],
+    ["store", "b"],
+    ["load", "n"],
+    ["push", 1],
+    ["sub"],
+    ["store", "n"],
+    ["jmp", "loop"],
+    ["label", "end"],
+    ["load", "a"],
+    ["emit"],
+    ["halt"]
+]
+
+alloc prog_div0 := [
+    ["push", 1],
+    ["push", 0],
+    ["div"],
+    ["halt"]
+]
+
+alloc prog_badjump := [
+    ["jmp", "missing"],
+    ["halt"]
+]
+
+alloc prog_underflow := [
+    ["add"],
+    ["halt"]
+]
+
+# === Test harness ===
+proc test(name, prog, expect_status, expect_output) {
+    alloc asm_res := assemble(prog)
+    if asm_res[0] != "ok" {
+        if asm_res[0] == expect_status {
+            emit name + ": pass"
+        } else {
+            emit name + ": fail (asm " + asm_res[0] + ")"
+        }
+        return 0
+    }
+    alloc bytecode := asm_res[1]
+    alloc run_res := run(bytecode)
+    alloc status := run_res[0]
+    alloc out := run_res[1]
+    if status == expect_status and out == expect_output {
+        emit name + ": pass"
+    } else {
+        emit name + ": fail (status=" + status + " out=" + out + ")"
+    }
+    return 0
+}
+
+proc run_tests() {
+    test("prog_add", prog_add, "ok", [5])
+    test("prog_fact", prog_fact, "ok", [120])
+    test("prog_fib", prog_fib, "ok", [13])
+    test("prog_div0", prog_div0, "DIV_ZERO", [])
+    test("prog_badjump", prog_badjump, "BAD_LABEL", [])
+    test("prog_underflow", prog_underflow, "STACK_UNDERFLOW", [])
+}
+
+alloc _ := run_tests()
