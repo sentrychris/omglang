@@ -5,11 +5,12 @@ alloc program := [
     ["push", 5],                    # push 5   -> stack  = [5]
     ["push", 3],                    # push 3   -> stack  = [5,3]
     ["add"],                        # add      -> stack  = [8]
-    ["store", "x"],                 # store 8  -> memory = [[x,8]]
+    ["store", "x"],                 # store 8  -> memory = [[x,8]] -> stack = []
     ["push", 10],                   # push 10  -> stack  = [10]
     ["load", "x"],                  # load x   -> stack  = [10,8]
     ["mul"],                        # multiply -> stack  = [80]
     ["emit_top"],                   # output top of stack (80)
+    ["pop"],                        # pop the stack -> stack = []
     ["label", "loop"],              # loop start
     ["load", "x"],                  # load x   -> stack  = [8]
     ["push", 1],                    # push 1   -> stack  = [8,1]
@@ -22,8 +23,8 @@ alloc program := [
 
 # === VM State ===
 alloc ptr := 0
-alloc instr := []
-alloc stack := []
+alloc instr  := []
+alloc stack  := []
 alloc memory := []
 alloc labels := []
 
@@ -60,7 +61,7 @@ proc load_var(name) {
 }
 
 # === Preprocess labels ===
-alloc idx := 0        # emits 0, and 
+alloc idx := 0
 loop idx < length(program) {
     instr := program[idx]
     if instr[0] == "label" {
@@ -96,28 +97,31 @@ loop ptr < length(program) {
 
     if op == "push" {
         stack := stack + [instr[1]]
+        emit "Pushed to stack: [" + instr + "] stack value: " + stack
     } elif op == "pop" {
         stack := stack[0:length(stack) - 1]
+        emit "Stack popped, stack value: " + stack
     } elif op == "add" {
         rhs := stack[length(stack) - 1]
         stack := stack[0:length(stack) - 1]
         lhs := stack[length(stack) - 1]
         stack := stack[0:length(stack) - 1]
         stack := stack + [lhs + rhs]
+        emit "Added and pushed sum: [" + instr + "[" + lhs + ", " + rhs +"]]" +  " Stack value: " + stack 
     } elif op == "sub" {
         rhs := stack[length(stack) - 1]
         stack := stack[0:length(stack) - 1]
         lhs := stack[length(stack) - 1]
         stack := stack[0:length(stack) - 1]
         stack := stack + [lhs - rhs]
-        # emit "Before load:"
-        # emit memory
+        emit "Subtracted and pushed difference: [" + instr + "[" + lhs + ", " + rhs +"]]" +  " Stack value: " + stack 
     } elif op == "mul" {
         rhs := stack[length(stack) - 1]
         stack := stack[0:length(stack) - 1]
         lhs := stack[length(stack) - 1]
         stack := stack[0:length(stack) - 1]
         stack := stack + [lhs * rhs]
+        emit "Multiplied and pushed product: [" + instr + "[" + lhs + ", " + rhs +"]]" +  " Stack value: " + stack
     } elif op == "div" {
         rhs := stack[length(stack) - 1]
         stack := stack[0:length(stack) - 1]
@@ -128,11 +132,13 @@ loop ptr < length(program) {
         val := stack[length(stack) - 1]
         stack := stack[0:length(stack) - 1]
         memory := store_var(instr[1], val)
+        emit "Stored value: " + val + " in '" + instr[1] + "' in memory," + " stack value " + stack
     } elif op == "load" {
         stack := stack + [load_var(instr[1])]
+        emit "Loaded " + instr[1] + " from memory: [" + instr + "] stack value: " + stack
     } elif op == "emit_top" {
         val := stack[length(stack) - 1]
-        emit val
+        emit "Top of stack: " + val + " stack value: "+ stack
     } elif op == "jmp" {
         ptr := find_label(instr[1])
     } elif op == "jmp_if_nonzero" {
@@ -142,7 +148,7 @@ loop ptr < length(program) {
             ptr := find_label(instr[1])
         }
     } elif op == "label" {
-        _ :=0 # no-op
+        _:=0 # no-op
     } elif op == "halt" {
         break
     } else {
