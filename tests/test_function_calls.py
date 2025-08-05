@@ -35,7 +35,9 @@ def test_call_ast_and_runtime(capsys):
     call2 = emit_stmt[1]
     assert call1[0] == 'func_call'
     assert call2[0] == 'func_call'
-    assert call1[:3] == call2[:3]
+    assert call1[1][0] == call2[1][0] == 'ident'
+    assert call1[1][1] == call2[1][1] == 'foo'
+    assert call1[2] == call2[2]
 
     interpreter = Interpreter('<test>')
     interpreter.execute(ast)

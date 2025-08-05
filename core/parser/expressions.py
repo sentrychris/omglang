@@ -76,7 +76,8 @@ def parse_factor(parser: 'Parser') -> tuple:
                     parser.eat('COMMA')
                     args.append(parser.expr())
             parser.eat('RPAREN')
-            return ('func_call', id_tok.value, args, id_tok.line)
+            func_expr = ('ident', id_tok.value, id_tok.line)
+            return ('func_call', func_expr, args, id_tok.line)
 
         if parser.curr_token.type == 'LBRACKET':
             parser.eat('LBRACKET')
