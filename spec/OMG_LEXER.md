@@ -163,12 +163,13 @@ Yields tokens:
 Token(ALLOC, alloc, line=2)
 Token(ID, x, line=2)
 Token(ASSIGN, :=, line=2)
-Token(NUMBER, 10, line=2)
+Token(NUMBER, 5, line=2)
+Token(NEWLINE, \n, line=2)
 Token(EMIT, emit, line=3)
 Token(ID, x, line=3)
 Token(PLUS, +, line=3)
 Token(NUMBER, 5, line=3)
-Token(EOF, None, line=4)
+Token(EOF, None, line=3)
 ```
 
 ## Extending the Lexer
