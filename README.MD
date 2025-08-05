@@ -99,7 +99,7 @@ Token categories include:
     * Comparison: `==`, `!=`, `<`, `>`, `<=`, `>=`
     * Assignment: `:=`
     * Bitwise: `&`, `|`, `^`, `~`, `<<`, `>>`
-    * Logical: `and`
+    * Logical: `and`, `or`
 * **Identifiers** for variable and function names.
 * **Literals**: decimal integers, binary integers (e.g. `0b1010`), strings
   with escape sequences, and the boolean literals `true` and `false`.
@@ -142,8 +142,9 @@ the form `(operation, operands…, line)`.
 | 7     | **Bitwise OR**     | `\|`                        | `_bitwise_or`   |
 | 8     | **Comparison**     | `==`, `!=`, `<`, `>`, `<=`, `>=` | `_comparison`   |
 | 9     | **Logical AND**    | `and`                      | `_logical_and`  |
+| 10    | **Logical OR**     | `or`                       | `_logical_or`   |
 
-Logical AND is left-associative and evaluates with short-circuit semantics, so a chain like `a and b and c` is parsed as `(a and b) and c`, and produces a boolean result.
+Logical AND and OR are left-associative and evaluate with short-circuit semantics, so chains like `a and b and c` and `a or b or c` are parsed as `(a and b) and c` and `(a or b) or c` respectively, producing boolean results.
 
 Each layer wraps the tighter-binding expressions from below, ensuring proper operator grouping. This model provides clear operator precedence semantics.
 
@@ -175,7 +176,7 @@ user‑defined procedures evaluate arguments, bind parameters, execute the body
 and return the resulting value (or `None` if no `return` is encountered).
 `binary` also supports an optional width argument for fixed-width two's
 complement formatting.
-Logical `and` short‑circuits: the right‑hand side is evaluated only if the left‑hand side is truthy, and the operator always produces a boolean value.
+Logical `and` and `or` short‑circuit: for `and`, the right‑hand side is evaluated only if the left‑hand side is truthy; for `or`, the right‑hand side is evaluated only if the left‑hand side is falsy. Both operators always produce a boolean value.
 
 ### Statement Execution
 

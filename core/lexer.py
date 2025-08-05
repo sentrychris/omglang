@@ -78,6 +78,7 @@ def tokenize(code) -> tuple[list[Token], dict[str, str]]:
         ('FUNC',      r'\bproc\b'),
         ('RETURN',    r'\breturn\b'),
         ('AND',       r'\band\b'),
+        ('OR',        r'\bor\b'),
         ('ALLOC',     r'\balloc\b'),
 
         # Chain

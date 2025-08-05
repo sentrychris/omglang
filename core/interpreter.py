@@ -232,11 +232,17 @@ class Interpreter:
                 Op.GE,
                 Op.LE,
                 Op.AND,
+                Op.OR,
             ):
                 lhs = self.eval_expr(node[1])
                 if op == Op.AND:
                     if not bool(lhs):
                         return False
+                    rhs = self.eval_expr(node[2])
+                    return bool(rhs)
+                elif op == Op.OR:
+                    if bool(lhs):
+                        return True
                     rhs = self.eval_expr(node[2])
                     return bool(rhs)
                 rhs = self.eval_expr(node[2])
