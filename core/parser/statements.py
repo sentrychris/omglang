@@ -70,6 +70,8 @@ def parse_statement(parser: 'Parser') -> tuple:
         return parser.parse_facts()
     elif tok.type == 'EMIT':
         return parser.parse_emit()
+    elif tok.type == 'IMPORT':
+        return parser.parse_import()
     elif tok.type == 'IF':
         return parser.parse_if()
     elif tok.type == 'LOOP':
@@ -151,6 +153,27 @@ def parse_emit(parser: 'Parser') -> tuple:
     parser.eat("EMIT")
     expr_node = parser.expr()
     return ("emit", expr_node, tok.line)
+
+
+def parse_import(parser: 'Parser') -> tuple:
+    """Parse an import statement."""
+    tok = parser.curr_token
+    parser.eat("IMPORT")
+    path_tok = parser.curr_token
+    if path_tok.type != "STRING":
+        raise SyntaxError(
+            f"Expected string literal after import on line {tok.line} in {parser.source_file}"
+        )
+    parser.eat("STRING")
+    if parser.curr_token.type != "AS":
+        raise SyntaxError(
+            f"Expected 'as' in import on line {tok.line} in {parser.source_file}"
+        )
+    parser.eat("AS")
+    alias_tok = parser.curr_token
+    parser.validate_id_or_raise(alias_tok)
+    parser.eat("ID")
+    return ("import", path_tok.value, alias_tok.value, tok.line)
 
 
 def parse_if(parser: 'Parser') -> tuple:

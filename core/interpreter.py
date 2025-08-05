@@ -34,6 +34,8 @@ execution is aborted with a descriptive runtime error.
 Runtime errors during interpretation—, such as undefined variables, unknown operations, or
 malformed AST nodes, are surfaced as typed exceptions with line numbers and file context.
 """
+import os
+
 from core.exceptions import (
     UndefinedVariableException,
     UnknownOpException,
@@ -41,6 +43,20 @@ from core.exceptions import (
     ReturnControlFlow,
 )
 from core.operations import Op
+
+
+class FrozenNamespace(dict):
+    """Dictionary that disallows modification."""
+
+    def __readonly(self, *_args, **_kwargs):  # type: ignore[no-untyped-def]
+        raise TypeError("Imported modules are read-only")
+
+    __setitem__ = __readonly  # type: ignore[assignment]
+    __delitem__ = __readonly  # type: ignore[assignment]
+    pop = __readonly  # type: ignore[assignment]
+    popitem = __readonly  # type: ignore[assignment]
+    clear = __readonly  # type: ignore[assignment]
+    update = __readonly  # type: ignore[assignment]
 
 
 class FunctionValue:
@@ -53,16 +69,14 @@ class FunctionValue:
 
 
 class Interpreter:
-    """
-    Tree-walk interpreter for OMGlang.
-    """
-    def __init__(self, file: str):
-        """
-        Initialize the interpreter.
-        """
+    """Tree-walk interpreter for OMGlang."""
+
+    def __init__(self, file: str, loaded_modules: set[str] | None = None):
+        """Initialize the interpreter."""
         self.vars = {}
         self.global_vars = self.vars
         self.file = file
+        self.loaded_modules = loaded_modules if loaded_modules is not None else set()
 
     def check_header(self, source_code: str):
         """
@@ -96,6 +110,52 @@ class Interpreter:
             f"OMG script missing required header ';;;omg'\n"
             f"in {self.file}"
         )
+
+    # ------------------------------------------------------------------
+    # Module system
+    # ------------------------------------------------------------------
+
+    def import_module(self, path: str) -> FrozenNamespace:
+        """Load another OMG script and return its exported namespace."""
+
+        base_dir = os.path.dirname(self.file) if self.file not in {"<stdin>", "<test>"} else os.getcwd()
+        module_path = os.path.normpath(os.path.abspath(os.path.join(base_dir, path)))
+
+        if module_path in self.loaded_modules:
+            raise RuntimeError(f"Recursive import of '{module_path}'")
+        if not os.path.exists(module_path):
+            raise FileNotFoundError(f"Module '{path}' not found relative to '{self.file}'")
+
+        self.loaded_modules.add(module_path)
+        try:
+            from core.lexer import tokenize
+            from core.parser import Parser
+
+            with open(module_path, "r", encoding="utf-8") as f:
+                code = f.read()
+
+            module_interpreter = Interpreter(module_path, self.loaded_modules)
+            module_interpreter.check_header(code)
+
+            tokens, token_map = tokenize(code)
+            parser = Parser(tokens, token_map, module_path)
+            ast = parser.parse()
+
+            exports: set[str] = set()
+            for stmt in ast:
+                if stmt[0] == "decl":
+                    exports.add(stmt[1])
+                elif stmt[0] == "func_def":
+                    exports.add(stmt[1])
+
+            module_interpreter.execute(ast)
+
+            exported_bindings = {name: module_interpreter.vars.get(name) for name in exports}
+            return FrozenNamespace(exported_bindings)
+        except SyntaxError as e:
+            raise SyntaxError(f"Error in module '{module_path}': {e}") from e
+        finally:
+            self.loaded_modules.remove(module_path)
 
     def _format_expr(self, node) -> str:
         """
@@ -520,6 +580,11 @@ class Interpreter:
                     raise TypeError(
                         f"{self._format_expr(obj_expr)} is not indexable on line {line} in {self.file}"
                     )
+
+            elif kind == 'import':
+                _, path, alias, _ = stmt
+                module_ns = self.import_module(path)
+                self.vars[alias] = module_ns
 
             elif kind == 'emit':
                 _, expr_node, _ = stmt
