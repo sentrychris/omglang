@@ -21,10 +21,7 @@ def _parse_lvalue(parser: 'Parser') -> tuple:
         if parser.curr_token.type == 'DOT':
             parser.eat('DOT')
             attr_tok = parser.curr_token
-            if attr_tok.type != 'ID':
-                raise SyntaxError(
-                    f"Expected identifier after '.' on line {attr_tok.line} in {parser.source_file}"
-                )
+            parser.validate_id_or_raise(attr_tok)
             parser.eat('ID')
             result = ('dot', result, attr_tok.value, attr_tok.line)
         else:
