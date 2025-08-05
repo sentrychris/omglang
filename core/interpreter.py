@@ -112,9 +112,20 @@ class Interpreter:
                 return node[1]
             case 'number' | 'bool' | 'int':
                 return str(node[1])
+            case 'string':
+                return repr(node[1])
+            case 'list':
+                return '[' + ', '.join(self._format_expr(e) for e in node[1]) + ']'
+            case 'dict':
+                return '{' + ', '.join(f"{k}: {self._format_expr(v)}" for k, v in node[1]) + '}'
             case 'index':
-                args = node[2]
-                return f"{node[1]}[{args[1]}]"
+                return f"{self._format_expr(node[1])}[{self._format_expr(node[2])}]"
+            case 'slice':
+                start = self._format_expr(node[2])
+                end = '' if node[3] is None else self._format_expr(node[3])
+                return f"{self._format_expr(node[1])}[{start}:{end}]"
+            case 'dot':
+                return f"{self._format_expr(node[1])}.{node[2]}"
             case 'func_call':
                 func_expr, args, _ = node[1], node[2], node[3]
                 return (
@@ -156,6 +167,9 @@ class Interpreter:
             elif op == 'list':
                 _, elements, _ = node
                 return [self.eval_expr(elem) for elem in elements]
+            elif op == 'dict':
+                _, pairs, _ = node
+                return {k: self.eval_expr(v) for k, v in pairs}
 
             # Variables
             elif op == 'ident':
@@ -168,16 +182,9 @@ class Interpreter:
 
             # Indexes
             elif op == 'index':
-                _, target_name, index_expr, _ = node
-
-                if target_name in self.vars:
-                    target = self.vars[target_name]
-                elif target_name in self.global_vars:
-                    target = self.global_vars[target_name]
-                else:
-                    raise UndefinedVariableException(target_name, line, self.file)
+                _, target_node, index_expr, _ = node
+                target = self.eval_expr(target_node)
                 index = self.eval_expr(index_expr)
-
                 if isinstance(target, list):
                     if not 0 <= index < len(target):
                         raise RuntimeError(
@@ -186,7 +193,7 @@ class Interpreter:
                             f"On line {line} in {self.file}"
                         )
                     return target[index]
-                elif isinstance(target, str):
+                if isinstance(target, str):
                     if not 0 <= index < len(target):
                         raise RuntimeError(
                             f"String index out of bounds!\n"
@@ -194,34 +201,44 @@ class Interpreter:
                             f"On line {line} in {self.file}"
                         )
                     return target[index]
-                else:
-                    raise TypeError(
-                        f"{target_name} is not indexable!"
-                        f"{self._format_expr(node)}\n"
-                        f"On line {line} in {self.file}"
-                    )
+                if isinstance(target, dict):
+                    if index not in target:
+                        raise KeyError(
+                            f"Key '{index}' not found on line {line} in {self.file}"
+                        )
+                    return target[index]
+                raise TypeError(
+                    f"{self._format_expr(target_node)} is not indexable!\n"
+                    f"{self._format_expr(node)}\n"
+                    f"On line {line} in {self.file}"
+                )
 
             # Index slicing
             elif op == 'slice':
-                _, target_name, start_expr, end_expr, _ = node
-
-                if target_name in self.vars:
-                    target = self.vars[target_name]
-                elif target_name in self.global_vars:
-                    target = self.global_vars[target_name]
-                else:
-                    raise UndefinedVariableException(target_name, line, self.file)
+                _, target_node, start_expr, end_expr, _ = node
+                target = self.eval_expr(target_node)
                 start = self.eval_expr(start_expr)
                 end = self.eval_expr(end_expr) if end_expr is not None else None
-
                 if isinstance(target, (list, str)):
                     return target[start:end]
-                else:
+                raise TypeError(
+                    f"{self._format_expr(target_node)} is not sliceable!\n"
+                    f"{self._format_expr(node)}\n"
+                    f"On line {line} in {self.file}"
+                )
+            elif op == 'dot':
+                _, target_node, attr_name, _ = node
+                target = self.eval_expr(target_node)
+                if not isinstance(target, dict):
                     raise TypeError(
-                        f"{target_name} is not sliceable!\n"
-                        f"{self._format_expr(node)}\n"
+                        f"{self._format_expr(target_node)} has no attribute '{attr_name}'\n"
                         f"On line {line} in {self.file}"
                     )
+                if attr_name not in target:
+                    raise KeyError(
+                        f"Key '{attr_name}' not found on line {line} in {self.file}"
+                    )
+                return target[attr_name]
 
             # Binary operations
             elif op in (
@@ -473,6 +490,36 @@ class Interpreter:
                     self.global_vars[var_name] = value
                 else:
                     raise UndefinedVariableException(var_name, line, self.file)
+            elif kind == 'attr_assign':
+                _, obj_expr, attr_name, value_expr, _ = stmt
+                target = self.eval_expr(obj_expr)
+                if not isinstance(target, dict):
+                    raise TypeError(
+                        f"{self._format_expr(obj_expr)} has no attribute '{attr_name}'\n"
+                        f"On line {line} in {self.file}"
+                    )
+                target[attr_name] = self.eval_expr(value_expr)
+            elif kind == 'index_assign':
+                _, obj_expr, key_expr, value_expr, _ = stmt
+                target = self.eval_expr(obj_expr)
+                key = self.eval_expr(key_expr)
+                value = self.eval_expr(value_expr)
+                if isinstance(target, dict):
+                    target[key] = value
+                elif isinstance(target, list):
+                    if not isinstance(key, int):
+                        raise TypeError(
+                            f"List index must be int on line {line} in {self.file}"
+                        )
+                    if not 0 <= key < len(target):
+                        raise RuntimeError(
+                            f"List index out of bounds on line {line} in {self.file}"
+                        )
+                    target[key] = value
+                else:
+                    raise TypeError(
+                        f"{self._format_expr(obj_expr)} is not indexable on line {line} in {self.file}"
+                    )
 
             elif kind == 'emit':
                 _, expr_node, _ = stmt

@@ -86,6 +86,7 @@ Logical `and` and `or` use short-circuit evaluation and always return a boolean.
 | String  | `"Hello"`       | Double-quoted, supports escape sequences    |
 | Boolean | `true`, `false` | Lowercase literals                          |
 | List    | `[1, 2, 3]`     | Python-style indexing and slicing supported |
+| Dictionary | `{name: "Chris"}` | Key/value pairs accessed via `x.key` or `x["key"]` |
 
 ### Falsy Values
 

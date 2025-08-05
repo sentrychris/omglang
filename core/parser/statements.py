@@ -12,6 +12,29 @@ if TYPE_CHECKING:
     from core.parser import Parser
 
 
+def _parse_lvalue(parser: 'Parser') -> tuple:
+    """Parse an lvalue for assignment (identifier with optional accessors)."""
+    tok = parser.curr_token
+    parser.eat('ID')
+    result = ('ident', tok.value, tok.line)
+    while parser.curr_token.type in ('DOT', 'LBRACKET'):
+        if parser.curr_token.type == 'DOT':
+            parser.eat('DOT')
+            attr_tok = parser.curr_token
+            if attr_tok.type != 'ID':
+                raise SyntaxError(
+                    f"Expected identifier after '.' on line {attr_tok.line} in {parser.source_file}"
+                )
+            parser.eat('ID')
+            result = ('dot', result, attr_tok.value, attr_tok.line)
+        else:
+            parser.eat('LBRACKET')
+            index_expr = parser.expr()
+            parser.eat('RBRACKET')
+            result = ('index', result, index_expr, tok.line)
+    return result
+
+
 def parse_block(parser: 'Parser') -> tuple:
     """
     Parse a block of statements enclosed in braces.
@@ -66,6 +89,23 @@ def parse_statement(parser: 'Parser') -> tuple:
             and parser.tokens[parser.position + 1].type == 'ASSIGN'
         ):
             return parser.parse_reassignment()
+
+        save_pos = parser.position
+        save_token = parser.curr_token
+        try:
+            lval = _parse_lvalue(parser)
+            if parser.curr_token.type == 'ASSIGN':
+                parser.eat('ASSIGN')
+                value_expr = parser.expr()
+                target = lval
+                if target[0] == 'dot':
+                    return ('attr_assign', target[1], target[2], value_expr, target[-1])
+                if target[0] == 'index':
+                    return ('index_assign', target[1], target[2], value_expr, target[-1])
+        except Exception:
+            pass
+        parser.position = save_pos
+        parser.curr_token = save_token
         expr_node = parser.factor()
         return ('expr_stmt', expr_node, expr_node[-1])
     elif tok.type == 'RETURN':

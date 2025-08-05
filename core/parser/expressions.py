@@ -18,6 +18,8 @@ if TYPE_CHECKING:
 def parse_factor(parser: 'Parser') -> tuple:
     """Parse a factor such as a literal, variable, or parenthesized expression."""
     tok = parser.curr_token
+
+    # Unary operators
     if tok.type == 'TILDE':
         parser.eat('TILDE')
         operand = parser.factor()
@@ -31,20 +33,18 @@ def parse_factor(parser: 'Parser') -> tuple:
         }
         return ('unary', op_map[tok.type], parser.factor(), tok.line)
 
+    # Literals
     if tok.type == 'NUMBER':
         parser.eat('NUMBER')
-        return ('number', tok.value, tok.line)
-
-    if tok.type == 'STRING':
+        result = ('number', tok.value, tok.line)
+    elif tok.type == 'STRING':
         parser.eat('STRING')
-        return ('string', tok.value, tok.line)
-
-    if tok.type in ('TRUE', 'FALSE'):
+        result = ('string', tok.value, tok.line)
+    elif tok.type in ('TRUE', 'FALSE'):
         value = tok.type == 'TRUE'
         parser.eat(tok.type)
-        return ('bool', value, tok.line)
-
-    if tok.type == 'LBRACKET':
+        result = ('bool', value, tok.line)
+    elif tok.type == 'LBRACKET':
         start_tok = tok
         parser.eat('LBRACKET')
         elements = []
@@ -61,13 +61,59 @@ def parse_factor(parser: 'Parser') -> tuple:
                 while parser.curr_token.type == 'NEWLINE':
                     parser.eat('NEWLINE')
         parser.eat('RBRACKET')
-        return ('list', elements, start_tok.line)
-
-    if tok.type == 'ID':
+        result = ('list', elements, start_tok.line)
+    elif tok.type == 'LBRACE':
+        start_tok = tok
+        parser.eat('LBRACE')
+        pairs = []
+        while parser.curr_token.type != 'RBRACE':
+            while parser.curr_token.type == 'NEWLINE':
+                parser.eat('NEWLINE')
+            if parser.curr_token.type == 'RBRACE':
+                break
+            key_tok = parser.curr_token
+            if key_tok.type == 'STRING':
+                parser.eat('STRING')
+                key = key_tok.value
+            elif key_tok.type == 'ID':
+                parser.eat('ID')
+                key = key_tok.value
+            else:
+                raise SyntaxError(
+                    f"Invalid dict key {key_tok.value} on line {key_tok.line} in {parser.source_file}"
+                )
+            parser.eat('COLON')
+            while parser.curr_token.type == 'NEWLINE':
+                parser.eat('NEWLINE')
+            value_expr = parser.expr()
+            pairs.append((key, value_expr))
+            while parser.curr_token.type == 'NEWLINE':
+                parser.eat('NEWLINE')
+            if parser.curr_token.type == 'COMMA':
+                parser.eat('COMMA')
+                while parser.curr_token.type == 'NEWLINE':
+                    parser.eat('NEWLINE')
+        parser.eat('RBRACE')
+        result = ('dict', pairs, start_tok.line)
+    elif tok.type == 'ID':
         id_tok = tok
         parser.eat('ID')
+        result = ('ident', id_tok.value, id_tok.line)
+    elif tok.type == 'LPAREN':
+        parser.eat('LPAREN')
+        result = parser.expr()
+        parser.eat('RPAREN')
+    else:
+        raise SyntaxError(
+            f"Unexpected token {tok.value} - ({tok.type}) "
+            f"on line {tok.line} "
+            f"in {parser.source_file}"
+        )
 
-        if parser.curr_token.type == 'LPAREN':
+    # Postfix operators: calls, indexing, slicing, attribute access
+    while True:
+        tok = parser.curr_token
+        if tok.type == 'LPAREN':
             parser.eat('LPAREN')
             args = []
             if parser.curr_token.type != 'RPAREN':
@@ -76,35 +122,31 @@ def parse_factor(parser: 'Parser') -> tuple:
                     parser.eat('COMMA')
                     args.append(parser.expr())
             parser.eat('RPAREN')
-            func_expr = ('ident', id_tok.value, id_tok.line)
-            return ('func_call', func_expr, args, id_tok.line)
-
-        if parser.curr_token.type == 'LBRACKET':
+            result = ('func_call', result, args, tok.line)
+        elif tok.type == 'LBRACKET':
             parser.eat('LBRACKET')
             start_expr = parser.expr()
-
             if parser.curr_token.type == 'COLON':
                 parser.eat('COLON')
                 end_expr = parser.expr() if parser.curr_token.type != 'RBRACKET' else None
                 parser.eat('RBRACKET')
-                return ('slice', id_tok.value, start_expr, end_expr, id_tok.line)
+                result = ('slice', result, start_expr, end_expr, tok.line)
+            else:
+                parser.eat('RBRACKET')
+                result = ('index', result, start_expr, tok.line)
+        elif tok.type == 'DOT':
+            parser.eat('DOT')
+            attr_tok = parser.curr_token
+            if attr_tok.type != 'ID':
+                raise SyntaxError(
+                    f"Expected identifier after '.' on line {attr_tok.line} in {parser.source_file}"
+                )
+            parser.eat('ID')
+            result = ('dot', result, attr_tok.value, attr_tok.line)
+        else:
+            break
 
-            parser.eat('RBRACKET')
-            return ('index', id_tok.value, start_expr, id_tok.line)
-
-        return ('ident', id_tok.value, id_tok.line)
-
-    if tok.type == 'LPAREN':
-        parser.eat('LPAREN')
-        node = parser.expr()
-        parser.eat('RPAREN')
-        return node
-
-    raise SyntaxError(
-        f"Unexpected token {tok.value} - ({tok.type}) "
-        f"on line {tok.line} "
-        f"in {parser.source_file}"
-    )
+    return result
 
 
 def parse_term(parser: 'Parser') -> tuple:
