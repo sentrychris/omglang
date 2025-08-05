@@ -111,13 +111,40 @@ The following evaluate to false in a boolean context:
 
 ---
 
+## First-Class Functions and Closures
+
+Functions in OMG are values. Defining a function assigns it to a
+variable of the same name. Functions can be stored in variables, passed
+as arguments, and returned from other functions.
+
+```omg
+proc call_twice(f, x) { return f(f(x)) }
+proc inc(n) { return n + 1 }
+emit call_twice(inc, 3)   ; prints 5
+```
+
+Nested functions capture variables from the scope where they are
+defined, forming lexical closures. Captured values are preserved even if
+the inner function is returned or stored elsewhere.
+
+```omg
+proc make_adder(n) {
+    proc inner(x) { return x + n }
+    return inner
+}
+
+alloc add5 := make_adder(5)
+emit add5(10)   ; prints 15
+```
+
+---
+
 ## Interpreter Semantics
 
 ### Environments
 
 * `vars`: The current variable environment (scope)
 * `global_vars`: A preserved copy of global variables for function call isolation
-* `functions`: A map of function names to their (params, body) tuples
 
 ### Expression Evaluation
 

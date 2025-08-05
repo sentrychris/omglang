@@ -10,11 +10,10 @@ Statements are executed via the `execute()` method, and expressions are evaluate
 `eval_expr()`. Both methods operate over structured tuples representing nodes in the AST.
 
 2. Environment
-The interpreter maintains two dictionaries:
-    - `vars`: a variable environment (scope) for storing and retrieving user-defined values.
-    - `functions`: a function table for storing parameter lists and function bodies by name.
-Function calls temporarily override the variable environment to simulate local scope, and restore
-it afterward to preserve state between calls.
+The interpreter maintains a dictionary `vars` representing the current
+variable environment (scope). Function calls temporarily replace this
+environment to simulate local scope and then restore it after the call
+completes.
 
 3. Expression Evaluation
 Expression nodes (e.g. arithmetic operations, comparisons, literals, variable references, and
@@ -44,6 +43,15 @@ from core.exceptions import (
 from core.operations import Op
 
 
+class FunctionValue:
+    """Runtime representation of a function value."""
+
+    def __init__(self, params, body, env):
+        self.params = params
+        self.body = body
+        self.env = env
+
+
 class Interpreter:
     """
     Tree-walk interpreter for OMGlang.
@@ -54,7 +62,6 @@ class Interpreter:
         """
         self.vars = {}
         self.global_vars = self.vars
-        self.functions = {}
         self.file = file
 
     def check_header(self, source_code: str):
@@ -109,8 +116,11 @@ class Interpreter:
                 args = node[2]
                 return f"{node[1]}[{args[1]}]"
             case 'func_call':
-                fname, args, _ = node[1], node[2], node[3]
-                return f"{fname}({', '.join(self._format_expr(arg) for arg in args)})"
+                func_expr, args, _ = node[1], node[2], node[3]
+                return (
+                    f"{self._format_expr(func_expr)}"
+                    f"({', '.join(self._format_expr(arg) for arg in args)})"
+                )
             case _:
                 name = op if isinstance(op, str) else op.value
                 return f"<expr {name}>"
@@ -329,89 +339,91 @@ class Interpreter:
 
             # Function calls
             elif op == 'func_call':
-                _, func_name, args_nodes, line = node
+                _, func_node, args_nodes, line = node
                 args = [self.eval_expr(arg) for arg in args_nodes]
 
-                # Built-in functions
-                if func_name == 'chr':
-                    if len(args) != 1 or not isinstance(args[0], int):
-                        raise TypeError(
-                            f"chr() expects one integer argument!\n"
-                            f"on line {line} in {self.file}"
-                        )
-                    return chr(args[0])
+                # Handle built-in functions before resolving variables
+                if func_node[0] == 'ident':
+                    func_name = func_node[1]
+                    if func_name == 'chr':
+                        if len(args) != 1 or not isinstance(args[0], int):
+                            raise TypeError(
+                                f"chr() expects one integer argument!\n"
+                                f"on line {line} in {self.file}"
+                            )
+                        return chr(args[0])
 
-                if func_name == 'ascii':
-                    if len(args) != 1 or not isinstance(args[0], str) or len(args[0]) != 1:
-                        raise TypeError(
-                            f"ascii() expects a single-character string argument!\n"
-                            f"on line {line} in {self.file}"
-                        )
-                    return ord(args[0])
+                    if func_name == 'ascii':
+                        if len(args) != 1 or not isinstance(args[0], str) or len(args[0]) != 1:
+                            raise TypeError(
+                                f"ascii() expects a single-character string argument!\n"
+                                f"on line {line} in {self.file}"
+                            )
+                        return ord(args[0])
 
-                if func_name == 'hex':
-                    if len(args) != 1 or not isinstance(args[0], int):
-                        raise TypeError(
-                            f"hex() expects one integer argument!\n"
-                            f"on line {line} in {self.file}"
-                        )
-                    return str(hex(args[0])[2:]).upper()
+                    if func_name == 'hex':
+                        if len(args) != 1 or not isinstance(args[0], int):
+                            raise TypeError(
+                                f"hex() expects one integer argument!\n"
+                                f"on line {line} in {self.file}"
+                            )
+                        return str(hex(args[0])[2:]).upper()
 
-                if func_name == 'binary':
-                    if (
-                        len(args) not in (1, 2)
-                        or not isinstance(args[0], int)
-                        or (len(args) == 2 and not isinstance(args[1], int))
-                    ):
-                        raise TypeError(
-                            f"binary() expects an integer and optional width integer!\n"
-                            f"on line {line} in {self.file}"
-                        )
-                    n = args[0]
-                    if len(args) == 1:
-                        return ('-' + bin(abs(n))[2:]) if n < 0 else bin(n)[2:]
-                    width = args[1]
-                    if width <= 0:
-                        raise ValueError(
-                            f"binary() width must be positive!\n"
-                            f"on line {line} in {self.file}"
-                        )
-                    mask = (1 << width) - 1
-                    return format(n & mask, f'0{width}b')
+                    if func_name == 'binary':
+                        if (
+                            len(args) not in (1, 2)
+                            or not isinstance(args[0], int)
+                            or (len(args) == 2 and not isinstance(args[1], int))
+                        ):
+                            raise TypeError(
+                                f"binary() expects an integer and optional width integer!\n"
+                                f"on line {line} in {self.file}"
+                            )
+                        n = args[0]
+                        if len(args) == 1:
+                            return ('-' + bin(abs(n))[2:]) if n < 0 else bin(n)[2:]
+                        width = args[1]
+                        if width <= 0:
+                            raise ValueError(
+                                f"binary() width must be positive!\n"
+                                f"on line {line} in {self.file}"
+                            )
+                        mask = (1 << width) - 1
+                        return format(n & mask, f'0{width}b')
 
-                if func_name == 'length':
-                    if len(args) != 1:
-                        raise TypeError(
-                            f"length() expects one argument on line!\n"
-                            f"on line {line} in {self.file}"
-                        )
-                    arg = args[0]
-                    if not isinstance(arg, (list, str)):
-                        raise TypeError(
-                            f"length() only works on lists or strings!\n"
-                            f"on line {line} in {self.file}"
-                        )
-                    return len(arg)
+                    if func_name == 'length':
+                        if len(args) != 1:
+                            raise TypeError(
+                                f"length() expects one argument on line!\n"
+                                f"on line {line} in {self.file}"
+                            )
+                        arg = args[0]
+                        if not isinstance(arg, (list, str)):
+                            raise TypeError(
+                                f"length() only works on lists or strings!\n"
+                                f"on line {line} in {self.file}"
+                            )
+                        return len(arg)
 
                 # User-defined functions
-                if func_name not in self.functions:
+                func_value = self.eval_expr(func_node)
+                if not isinstance(func_value, FunctionValue):
                     raise TypeError(
-                        f"Undefined function '{func_name}'!\n"
-                        f"{self._format_expr(node)}\n"
+                        f"Attempted to call non-function '{self._format_expr(func_node)}'\n"
                         f"On line {line} in {self.file}"
                     )
 
-                params, body = self.functions[func_name]
+                params, body, env = func_value.params, func_value.body, func_value.env
 
                 if len(args) != len(params):
                     raise TypeError(
-                        f"Function '{func_name}' expects {len(params)} arguments "
+                        f"Function expects {len(params)} arguments "
                         f"{self._format_expr(node)}\n"
                         f"On line {line} in {self.file}"
                     )
 
                 saved_vars = self.vars
-                self.vars = {}
+                self.vars = env.copy()
                 self.vars.update(dict(zip(params, args)))
 
                 try:
@@ -502,7 +514,9 @@ class Interpreter:
 
             elif kind == 'func_def':
                 _, name, params, body, _ = stmt
-                self.functions[name] = (params, body)
+                captured = {} if self.vars is self.global_vars else self.vars.copy()
+                func_value = FunctionValue(params, body, captured)
+                self.vars[name] = func_value
 
             elif kind == 'return':
                 _, expr_node, _ = stmt
