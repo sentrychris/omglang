@@ -12,8 +12,6 @@ The top-level class is `Parser`, defined in `core/parser/parser.py`. Parsing log
 - `expressions.py` – handles all expressions, including literals, operations, and precedence
 - `statements.py` – handles all top-level and block-level statements
 
----
-
 ## Grammar Model
 
 OMG is a line-oriented, block-structured language. The grammar is primarily **LL(1)** with limited **LL(2)** lookahead used to distinguish ambiguous constructs (e.g., `name :=` vs `name(...)`).
@@ -23,7 +21,6 @@ Parsing proceeds in two phases:
 1. **Statement Parsing** – processes constructs like `alloc`, `if`, `loop`, `proc`, etc.
 2. **Expression Parsing** – recursively resolves subexpressions according to operator precedence.
 
----
 
 ## Token Input
 
@@ -31,11 +28,9 @@ The parser consumes a list of `Token` objects produced by the lexer, which inclu
 
 ```python
 Parser(tokens: list, token_map: dict, file: str)
-````
+```
 
 Tokens are consumed using the `eat(expected_type)` method, which either advances the stream or raises a `SyntaxError`.
-
----
 
 ## AST Format
 
@@ -54,8 +49,6 @@ Examples:
 ```
 
 These nodes are later walked by the interpreter.
-
----
 
 ## Statement Parsing
 
