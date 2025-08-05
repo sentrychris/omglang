@@ -371,4 +371,4 @@ proc run_tests() {
     test("prog_underflow", prog_underflow, "STACK_UNDERFLOW", [])
 }
 
-alloc _ := run_tests()
+run_tests()
