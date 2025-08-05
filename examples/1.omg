@@ -47,7 +47,8 @@ alloc sxs := "sliced xs (Start: inc. End: exc.): " + xs[1:2]
 emit "Beginning loop:"
 alloc i := 0
 loop i <= 3 {
-    if i < 3 and i > 1  {
+    # comparisons and logical "and"
+    if i > 1 and i < 3 and i == 2  {
         emit "2 is alright I guess."
     } elif i == 3 {
         emit "3 is the magic number."
