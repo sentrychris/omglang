@@ -110,6 +110,12 @@ class Parser:
         """
         return _expr.parse_logical_and(self)
 
+    def logical_or(self) -> tuple:
+        """
+        Parse a logical OR expression.
+        """
+        return _expr.parse_logical_or(self)
+
     def expr(self) -> tuple:
         """
         Parse a full expression with arithmetic or logical operations.

@@ -39,6 +39,7 @@ class Op(str, Enum):
 
     # Boolean
     AND = "and"
+    OR = "or"
 
     def __str__(self) -> str:  # pragma: no cover - trivial
         """Return the underlying string value for nicer debug output."""
