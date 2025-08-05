@@ -1,4 +1,4 @@
-name: OMGlang
+name: Tests
 
 on:
   push:
