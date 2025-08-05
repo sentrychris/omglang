@@ -4,7 +4,9 @@ OMG is a personal, educational programming language implemented in Python. It pr
 
 OMG supports variables, arithmetic, lists, dictionaries, functions, conditionals, and loops, all executed via a tree-walk interpreter.
 
-See [`OMG_SPEC.md`](./spec/OMG_SPEC.md) for the canonical language reference.
+#### Documents:
+- [`OMG_SPEC.md`](./spec/OMG_SPEC.md): for the canonical language reference.
+- [`OMG_PARSER.md`](./spec/OMG_PARSING.md): describes the parser's structure, flow, and grammar handling.
 
 ## How to Run OMG Scripts
 

@@ -1,5 +1,3 @@
-# DEVELOPMENT.md
-
 ## Overview
 
 This document outlines the development structure, source layout, workflow conventions, and future plans for the OMG programming language project. It serves as a reference for contributors and tools (such as Codex, AGENTS.md) to ensure consistent structure, clear organization, and forward-compatible decisions.
