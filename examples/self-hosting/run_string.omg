@@ -1,0 +1,7 @@
+;;;omg
+
+import "./omg_interpreter.omg" as omg_interp
+
+alloc program := "emit 1 + 2"
+alloc _ := omg_interp.run(program)
+

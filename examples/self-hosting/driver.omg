@@ -1,0 +1,6 @@
+;;;omg
+
+import "./omg_interpreter.omg" as omg_interp
+
+omg_interp.run_file_with_args("examples/self-hosting/omg_interpreter.omg", ["examples/hello.omg"])
+

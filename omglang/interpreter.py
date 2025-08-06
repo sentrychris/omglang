@@ -151,6 +151,7 @@ class Interpreter:
                 code = f.read()
 
             module_interpreter = Interpreter(module_path, self.loaded_modules)
+            module_interpreter.vars["args"] = []
             module_interpreter.check_header(code)
 
             tokens, token_map = tokenize(code)
@@ -503,6 +504,15 @@ class Interpreter:
                                 f"on line {line} in {self.file}"
                             )
                         return len(arg)
+
+                    if func_name == 'read_file':
+                        if len(args) != 1 or not isinstance(args[0], str):
+                            raise TypeError(
+                                f"read_file() expects a file path string!\n"
+                                f"on line {line} in {self.file}"
+                            )
+                        with open(args[0], 'r', encoding='utf-8') as f:
+                            return f.read()
 
                 # User-defined functions
                 func_value = self.eval_expr(func_node)

@@ -2,6 +2,16 @@
 
 Ordered from most recent at the top to oldest at the bottom.
 
+## 2025-08-07
+
+### Added
+- Bundled tokenizer, parser, and interpreter into `omg_interpreter.omg` exposing `run` and `run_file`.
+- File I/O primitive `read_file` and command-line argument forwarding in the Python runtime.
+- Example drivers for string execution, file execution, and self-hosting meta-interpretation.
+
+### Changed
+- CLI now accepts additional arguments passed to scripts as `args`.
+
 ## [0.1.0] - 2025-08-06
 
 ### Added

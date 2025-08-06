@@ -26,22 +26,23 @@ else:
 
 
 def print_usage():
-    """
-    Print usage.
-    """
+    """Print CLI usage."""
     print()
     print("OMG Language Interpreter")
     print()
     print("Usage:")
-    print("    omg <script.omg>")
+    print("    omg <script.omg> [args...]")
     print()
     print("Arguments:")
     print("    <script.omg>")
     print("        Path to an OMG language source file to execute. The file must")
     print("        include the required header ';;;omg' on the first non-empty line.")
+    print("    [args...]")
+    print("        Optional arguments passed to the script as a list named 'args'.")
     print()
     print("Example:")
     print("    omg hello.omg")
+    print("    omg omg_interpreter.omg hello.omg")
     print()
     print("Or run with no arguments to enter interactive mode (REPL).")
     print()
@@ -61,22 +62,21 @@ def debug_print_tokens_ast(tokens, ast):
     print(" ")
 
 
-def run_script(script_name: str):
-    """
-    Run an OMG script
-    """
+def run_script(script_name: str, script_args: list[str] | None = None):
+    """Run an OMG script."""
     with open(script_name, "r", encoding="utf-8") as f:
         code = f.read()
 
     try:
         interpreter = Interpreter(script_name)
+        interpreter.vars["args"] = script_args or []
         interpreter.check_header(code)
 
         tokens, token_map_literals = tokenize(code)
         parser = Parser(tokens, token_map_literals, script_name)
         ast = parser.parse()
 
-        if os.environ.get('OMGDEBUG'):
+        if os.environ.get("OMGDEBUG"):
             debug_print_tokens_ast(tokens, ast)
 
         interpreter.execute(ast)
@@ -136,14 +136,13 @@ def main(argv: list[str]) -> int:
     if not args:
         run_repl()
         return 0
-    if len(args) == 1 and args[0] in ('-h', '--help'):
+    if args[0] in ("-h", "--help"):
         print_usage()
         return 0
-    if len(args) == 1:
-        run_script(args[0])
-        return 0
-    print_usage()
-    return 1
+    script = args[0]
+    script_args = args[1:]
+    run_script(script, script_args)
+    return 0
 
 
 if __name__ == "__main__":
