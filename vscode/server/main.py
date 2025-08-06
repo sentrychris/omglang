@@ -7,7 +7,7 @@ symbol index supporting definition lookup, hover information, and document
 symbols.
 """
 from __future__ import annotations
-
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, List, Optional
@@ -35,10 +35,10 @@ from lsprotocol.types import (
     SymbolKind,
 )
 
+sys.path.append(str(Path(__file__).resolve().parents[2]))
+
 from omglang.lexer import Token, tokenize
 from omglang.parser import Parser
-
-print("hi")
 
 @dataclass
 class OMGSymbol:
