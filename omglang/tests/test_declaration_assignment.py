@@ -1,13 +1,12 @@
 import os
 import sys
 
+from omglang.core.lexer import tokenize, Token
+from omglang.core.parser import Parser
+from omglang.core.interpreter import Interpreter
+from omglang.core.exceptions import UndefinedVariableException
+
 sys.path.append(os.path.dirname(os.path.dirname(__file__)))
-
-from core.lexer import tokenize, Token
-from core.parser import Parser
-from core.interpreter import Interpreter
-from core.exceptions import UndefinedVariableException
-
 
 def parse_source(source: str):
     tokens, token_map = tokenize(source)

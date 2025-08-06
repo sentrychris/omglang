@@ -4,12 +4,11 @@ from pathlib import Path
 
 import pytest
 
+from omglang.core.lexer import tokenize
+from omglang.core.parser import Parser
+from omglang.core.interpreter import Interpreter
+
 sys.path.append(os.path.dirname(os.path.dirname(__file__)))
-
-from core.lexer import tokenize
-from core.parser import Parser
-from core.interpreter import Interpreter
-
 
 def run_file(path: Path) -> Interpreter:
     code = path.read_text()

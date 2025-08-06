@@ -4,3 +4,4 @@ dist
 *.spec
 *.ps1
 scratchpad.omg
+.venv

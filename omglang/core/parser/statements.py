@@ -9,7 +9,7 @@ conditionals, loops, and function definitions.
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from core.parser import Parser
+    from omglang.core.parser import Parser
 
 
 def _parse_lvalue(parser: 'Parser') -> tuple:

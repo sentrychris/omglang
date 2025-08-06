@@ -2,12 +2,11 @@ import os
 import sys
 import pytest
 
+from omglang.core.lexer import tokenize, Token
+from omglang.core.parser import Parser
+from omglang.core.interpreter import Interpreter
+
 sys.path.append(os.path.dirname(os.path.dirname(__file__)))
-
-from core.lexer import tokenize, Token
-from core.parser import Parser
-from core.interpreter import Interpreter
-
 
 def parse_source(source: str):
     tokens, token_map = tokenize(source)
