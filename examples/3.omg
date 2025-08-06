@@ -17,6 +17,7 @@ loop idx <= max {
 # Assert primality of 97 for validation
 facts math.is_prime(97)
 emit "97 is prime"
+
 # Will throw an AssertionFailure as expected
 emit "96 is not prime"
 facts math.is_prime(96)
