@@ -1,6 +1,8 @@
-### **Task Introduction – Import/Export System for OMG**
+### **Module Import System**
 
-We are implementing a module import system for the OMG language. The goal is to allow OMG scripts to explicitly import functions and constants from other `.omg` files under a namespace. Only top-level `proc` and `alloc` declarations are exported; the rest of the file executes normally but cannot be accessed externally.
+Status: Implemented on 2025-08-06.
+
+The module system allows OMG scripts to explicitly import functions and constants from other `.omg` files under a namespace. Only top-level `proc` and `alloc` declarations are exported; the rest of the file executes normally but cannot be accessed externally.
 
 #### Goals and Design Constraints
 

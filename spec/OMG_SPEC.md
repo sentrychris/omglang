@@ -25,12 +25,24 @@ If this header is missing, the interpreter will raise an error and refuse to exe
 | `alloc`        | Declare and initialize variable    | `alloc x := 5`                    |
 | `:=`           | Reassign an existing variable      | `x := x + 1`                      |
 | `emit`         | Output value to console            | `emit "Hello"`                    |
+| `import`       | Load another script under an alias | `import "utils.omg" as utils`     |
 | `facts`        | Assert a condition (like `assert`) | `facts x > 0`                     |
 | `if/elif/else` | Conditional branches               | See below                         |
 | `loop`         | While-style loop                   | `loop x < 5 { ... }`              |
 | `break`        | Exit from current loop             | `break`                           |
 | `proc`         | Define function                    | `proc add(a, b) { return a + b }` |
 | `return`       | Return value from function         | `return result`                   |
+
+### Module Imports
+
+OMG scripts can import top-level procedures and constants from other files:
+
+```omg
+import "utils.omg" as utils
+emit utils.greet("World")
+```
+
+Only top-level `alloc` and `proc` declarations are exported. Imported namespaces are immutable, and recursive imports raise an error.
 
 ### Conditional Example
 
