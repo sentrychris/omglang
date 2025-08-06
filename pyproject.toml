@@ -8,6 +8,7 @@ dependencies = []
 
 [project.optional-dependencies]
 dev = [
+    "pylint",
     "pytest",
     "pygls",
     "flake8"
