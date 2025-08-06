@@ -69,6 +69,7 @@ Recognized with word boundaries (`\b`) to avoid false positives:
 
 * `if`, `elif`, `else`
 * `loop`, `break`
+* `import`, `as`
 * `alloc`, `emit`, `facts`, `proc`, `return`
 * `and`, `or`
 

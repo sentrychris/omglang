@@ -2,7 +2,7 @@
 
 OMG is a personal, educational programming language implemented in Python. It provides a minimal but expressive syntax for experimenting with the core components of a programming language, including lexing, parsing, and interpretation.
 
-OMG supports variables, arithmetic, lists, dictionaries, functions, conditionals, and loops, all executed via a tree-walk interpreter.
+OMG supports variables, arithmetic, lists, dictionaries, functions, conditionals, loops, and modules, all executed via a tree-walk interpreter.
 
 #### Documents:
 - [`OMG_SPEC.md`](./spec/OMG_SPEC.md): for the canonical language reference.
@@ -51,12 +51,15 @@ positive
 | `alloc x := 1`   | Declare and initialize variable |
 | `x := x + 1`     | Reassign existing variable      |
 | `emit x`         | Output value to console         |
+| `import "file.omg" as name` | Load another script under an alias |
 | `facts x > 0`    | Assert a condition              |
 | `if/elif/else`   | Branching control flow          |
 | `loop cond {}`   | While-style loop                |
 | `break`          | Exit from current loop          |
 | `proc name(...)` | Define a function               |
 | `return`         | Return from a function          |
+
+Module imports run another `.omg` script and expose its top-level `proc` and `alloc` bindings under a read-only namespace.
 
 ---
 
@@ -183,10 +186,17 @@ proc call_twice(f, x) {
 emit call_twice(square, 2)  # 16
 ```
 
+### Module Imports
+
+```omg
+import "utils.omg" as utils
+emit utils.greet("world")
+```
+
 ---
 
 ## License and Status
 
-OMG is an experimental educational project and not intended for production use. The implementation is stable and complete as a toy language but may evolve to support additional features like import/export or deeper type introspection.
+OMG is an experimental educational project and not intended for production use. The implementation is stable and complete as a toy language but may evolve to support additional features like deeper type introspection.
 
 This software is open-sourced software licensed under the [MIT license](./LICENSE).
