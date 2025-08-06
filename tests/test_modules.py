@@ -79,3 +79,31 @@ def test_circular_import(tmp_path: Path):
     with pytest.raises(RuntimeError):
         run_file(main_file)
 
+
+def test_recursive_import_function(tmp_path: Path):
+    """Functions from imported modules should support recursion and be callable inside other functions."""
+    math_source = (
+        ";;;omg\n"
+        "proc factorial(n) {\n"
+        "    if n <= 1 {\n"
+        "        return 1\n"
+        "    } else {\n"
+        "        return n * factorial(n - 1)\n"
+        "    }\n"
+        "}\n"
+    )
+    math_file = tmp_path / "math.omg"
+    math_file.write_text(math_source)
+
+    main_source = (
+        ";;;omg\n"
+        f"import \"{math_file.name}\" as math\n"
+        "facts math.factorial(5) == 120\n"
+        "proc apply(n) { return math.factorial(n) }\n"
+        "facts apply(3) == 6\n"
+    )
+    main_file = tmp_path / "main.omg"
+    main_file.write_text(main_source)
+
+    run_file(main_file)
+

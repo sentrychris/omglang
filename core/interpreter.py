@@ -62,10 +62,12 @@ class FrozenNamespace(dict):
 class FunctionValue:
     """Runtime representation of a function value."""
 
-    def __init__(self, params, body, env):
+    def __init__(self, params, body, env, global_env):
         self.params = params
         self.body = body
         self.env = env
+        # Reference to the global namespace in which the function was defined.
+        self.global_env = global_env
 
 
 class Interpreter:
@@ -490,7 +492,12 @@ class Interpreter:
                         f"On line {line} in {self.file}"
                     )
 
-                params, body, env = func_value.params, func_value.body, func_value.env
+                params, body, env = (
+                    func_value.params,
+                    func_value.body,
+                    func_value.env,
+                )
+                func_globals = func_value.global_env
 
                 if len(args) != len(params):
                     raise TypeError(
@@ -500,8 +507,10 @@ class Interpreter:
                     )
 
                 saved_vars = self.vars
+                saved_globals = self.global_vars
                 self.vars = env.copy()
                 self.vars.update(dict(zip(params, args)))
+                self.global_vars = func_globals
 
                 try:
                     if body[0] == "block":
@@ -511,8 +520,10 @@ class Interpreter:
                     result = None
                 except ReturnControlFlow as ret:
                     result = ret.value
+                finally:
+                    self.vars = saved_vars
+                    self.global_vars = saved_globals
 
-                self.vars = saved_vars
                 return result
 
         raise RuntimeError(f"Invalid expression node: {node}")
@@ -627,7 +638,9 @@ class Interpreter:
             elif kind == 'func_def':
                 _, name, params, body, _ = stmt
                 captured = {} if self.vars is self.global_vars else self.vars.copy()
-                func_value = FunctionValue(params, body, captured)
+                # Preserve the global namespace where the function was defined so that
+                # recursive calls and references to module-level bindings resolve correctly.
+                func_value = FunctionValue(params, body, captured, self.global_vars)
                 self.vars[name] = func_value
 
             elif kind == 'return':
