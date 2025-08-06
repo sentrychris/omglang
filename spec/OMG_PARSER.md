@@ -6,7 +6,7 @@ This document explains the internal design of the OMG language parser. It covers
 
 The OMG parser is a **modular, hand-written recursive-descent parser**. It is designed for clarity and flexibility, using explicit function calls to represent grammar rules. The parser converts a list of tokens (produced by the lexer) into a sequence of AST nodes that can be directly interpreted.
 
-The top-level class is `Parser`, defined in `core/parser/parser.py`. Parsing logic is divided across:
+The top-level class is `Parser`, defined in `omglang/parser/parser.py`. Parsing logic is divided across:
 
 - `parser.py` – coordinates parsing and manages state
 - `expressions.py` – handles all expressions, including literals, operations, and precedence
