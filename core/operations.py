@@ -10,7 +10,9 @@ from enum import Enum
 
 
 class Op(str, Enum):
-    """Enumeration of supported AST operation names."""
+    """
+    Enumeration of supported AST operation names.
+    """
 
     # Arithmetic
     ADD = "add"
@@ -42,7 +44,9 @@ class Op(str, Enum):
     OR = "or"
 
     def __str__(self) -> str:  # pragma: no cover - trivial
-        """Return the underlying string value for nicer debug output."""
+        """
+        Return the underlying string value for nicer debug output.
+        """
         return self.value
 
 

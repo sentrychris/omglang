@@ -118,8 +118,15 @@ class Interpreter:
     # ------------------------------------------------------------------
 
     def import_module(self, path: str) -> FrozenNamespace:
-        """Load another OMG script and return its exported namespace."""
+        """
+        Load another OMG script and return its exported namespace.
 
+        Args:
+            path (str): The relative or absolute path to the module.
+
+        Returns:
+            FrozenNamespace: A read-only namespace containing the module's exported variables.
+        """
         base_dir = os.path.dirname(self.file) if self.file not in {"<stdin>", "<test>"} else os.getcwd()
         module_path = os.path.normpath(os.path.abspath(os.path.join(base_dir, path)))
 
@@ -162,6 +169,12 @@ class Interpreter:
     def _format_expr(self, node) -> str:
         """
         Convert AST back to a readable string for debugging.
+
+        Args:
+            node (tuple): An expression node, structured as a tuple.
+
+        Returns:
+            str: A string representation of the expression.
         """
         op = node[0]
         match op:

@@ -16,7 +16,21 @@ if TYPE_CHECKING:
 # ---- Highest precedence ----
 
 def parse_factor(parser: 'Parser') -> tuple:
-    """Parse a factor such as a literal, variable, or parenthesized expression."""
+    """
+    Parse a factor such as a literal, variable, or parenthesized expression.
+    This handles unary operators, literals, identifiers, and parenthesized
+    expressions, as well as postfix operations like function calls, indexing,
+    slicing, and attribute access.
+
+    Args:
+        parser: The parser instance.
+
+    Returns:
+        tuple: A tuple representing the parsed factor expression.
+
+    Raises:
+        SyntaxError: If an unexpected token is encountered or if the syntax is invalid.
+    """
     tok = parser.curr_token
 
     # Unary operators
@@ -147,7 +161,18 @@ def parse_factor(parser: 'Parser') -> tuple:
 
 
 def parse_term(parser: 'Parser') -> tuple:
-    """Parse multiplication, division, and modulus expressions."""
+    """
+    Parse multiplication, division, and modulus expressions.
+
+    Syntax:
+        <factor> (('*' | '/' | '%') <factor>)*
+
+    Args:
+        parser: The parser instance.
+
+    Returns:
+        tuple: A tuple representing the parsed term expression.
+    """
     result = parser.factor()
     while parser.curr_token.type in ('MUL', 'DIV', 'MOD'):
         op_tok = parser.curr_token
@@ -162,7 +187,18 @@ def parse_term(parser: 'Parser') -> tuple:
 
 
 def parse_add_sub(parser: 'Parser') -> tuple:
-    """Parse addition and subtraction expressions."""
+    """
+    Parse addition and subtraction expressions.
+
+    Syntax:
+        <term> (('+' | '-') <term>)*
+
+    Args:
+        parser: The parser instance.
+
+    Returns:
+        tuple: A tuple representing the parsed addition or subtraction expression.
+    """
     result = parser.term()
     while parser.curr_token.type in ('PLUS', 'MINUS'):
         tok = parser.curr_token
@@ -176,7 +212,18 @@ def parse_add_sub(parser: 'Parser') -> tuple:
 
 
 def parse_shift(parser: 'Parser') -> tuple:
-    """Parse bitwise shift expressions using '<<' or '>>'."""
+    """
+    Parse bitwise shift expressions using '<<' or '>>'.
+
+    Syntax:
+        <add_sub> (('<<' | '>>') <add_sub>)*
+
+    Args:
+        parser: The parser instance.
+
+    Returns:
+        tuple: A tuple representing the parsed shift expression.
+    """
     result = parser.add_sub()
     while parser.curr_token.type in ('LSHIFT', 'RSHIFT'):
         tok = parser.curr_token
@@ -190,7 +237,18 @@ def parse_shift(parser: 'Parser') -> tuple:
 
 
 def parse_bitwise_and(parser: 'Parser') -> tuple:
-    """Parse bitwise AND expressions using '&'."""
+    """
+    Parse bitwise AND expressions using '&'.
+
+    Syntax:
+        <shift> ('&' <shift>)*
+
+    Args:
+        parser: The parser instance.
+
+    Returns:
+        tuple: A tuple representing the parsed bitwise AND expression.
+    """
     result = parser.shift()
     while parser.curr_token.type == 'AMP':
         tok = parser.curr_token
@@ -200,7 +258,18 @@ def parse_bitwise_and(parser: 'Parser') -> tuple:
 
 
 def parse_bitwise_xor(parser: 'Parser') -> tuple:
-    """Parse bitwise XOR expressions using '^'."""
+    """
+    Parse bitwise XOR expressions using '^'.
+
+    Syntax:
+        <bitwise_and> ('^' <bitwise_and>)*
+
+    Args:
+        parser: The parser instance.
+
+    Returns:
+        tuple: A tuple representing the parsed bitwise XOR expression.
+    """
     result = parser.bitwise_and()
     while parser.curr_token.type == 'CARET':
         tok = parser.curr_token
@@ -210,7 +279,18 @@ def parse_bitwise_xor(parser: 'Parser') -> tuple:
 
 
 def parse_bitwise_or(parser: 'Parser') -> tuple:
-    """Parse bitwise OR expressions using '|'."""
+    """
+    Parse bitwise OR expressions using '|'.
+
+    Syntax:
+        <bitwise_xor> ('|' <bitwise_xor>)*
+
+    Args:
+        parser: The parser instance.
+
+    Returns:
+        tuple: A tuple representing the parsed bitwise OR expression.
+    """
     result = parser.bitwise_xor()
     while parser.curr_token.type == 'PIPE':
         tok = parser.curr_token
@@ -220,7 +300,18 @@ def parse_bitwise_or(parser: 'Parser') -> tuple:
 
 
 def parse_comparison(parser: 'Parser') -> tuple:
-    """Parse comparison expressions (==, !=, <, >, <=, >=)."""
+    """
+    Parse comparison expressions (==, !=, <, >, <=, >=).
+
+    Syntax:
+        <bitwise_or> (('==' | '!=' | '<' | '>' | '<=' | '>=') <bitwise_or>)*
+
+    Args:
+        parser: The parser instance.
+
+    Returns:
+        tuple: A tuple representing the parsed comparison expression.
+    """
     result = parser.bitwise_or()
     while parser.curr_token.type in ('EQ', 'NE', 'GT', 'LT', 'GE', 'LE'):
         op_tok = parser.curr_token
@@ -238,7 +329,18 @@ def parse_comparison(parser: 'Parser') -> tuple:
 
 
 def parse_logical_and(parser: 'Parser') -> tuple:
-    """Parse logical AND expressions using the 'and' keyword."""
+    """
+    Parse logical AND expressions using the 'and' keyword.
+
+    Syntax:
+        <comparison> ('and' <comparison>)*
+
+    Args:
+        parser: The parser instance.
+
+    Returns:
+        tuple: A tuple representing the parsed logical AND expression.
+    """
     result = parser.comparison()
     while parser.curr_token.type == 'AND':
         tok = parser.curr_token
@@ -248,7 +350,18 @@ def parse_logical_and(parser: 'Parser') -> tuple:
 
 
 def parse_logical_or(parser: 'Parser') -> tuple:
-    """Parse logical OR expressions using the 'or' keyword."""
+    """
+    Parse logical OR expressions using the 'or' keyword.
+
+    Syntax:
+        <logical_and> ('or' <logical_and>)*
+
+    Args:
+        parser: The parser instance.
+
+    Returns:
+        tuple: A tuple representing the parsed logical OR expression.
+    """
     result = parser.logical_and()
     while parser.curr_token.type == 'OR':
         tok = parser.curr_token
@@ -260,5 +373,13 @@ def parse_logical_or(parser: 'Parser') -> tuple:
 # ---- Entry point ----
 
 def parse_expr(parser: 'Parser') -> tuple:
-    """Parse an expression starting from the lowest-precedence operator."""
+    """
+    Parse an expression starting from the lowest-precedence operator
+
+    Args:
+        parser: The parser instance.
+
+    Returns:
+        tuple: A tuple representing the parsed expression.
+    """
     return parser.logical_or()

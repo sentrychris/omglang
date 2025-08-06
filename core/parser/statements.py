@@ -13,7 +13,22 @@ if TYPE_CHECKING:
 
 
 def _parse_lvalue(parser: 'Parser') -> tuple:
-    """Parse an lvalue for assignment (identifier with optional accessors)."""
+    """
+    Parse an lvalue for assignment (identifier with optional accessors).
+    This handles identifiers, attribute access (dot notation), and
+    index access (bracket notation).
+
+    Syntax:
+        <identifier> | <identifier>.<identifier> | <identifier>[<expression>]
+
+    Args:
+        parser: The parser instance.
+
+    Returns:
+        tuple: representing the lvalue, e.g. ('ident', 'var_name', line_number)
+               or ('dot', ('ident', 'obj_name', line_number), 'attr_name', line_number)
+               or ('index', ('ident', 'obj_name', line_number), <expr>, line_number)
+    """
     tok = parser.curr_token
     parser.eat('ID')
     result = ('ident', tok.value, tok.line)
@@ -35,6 +50,9 @@ def _parse_lvalue(parser: 'Parser') -> tuple:
 def parse_block(parser: 'Parser') -> tuple:
     """
     Parse a block of statements enclosed in braces.
+
+    Syntax:
+        { <statement>* }
 
     Args:
         parser: The parser instance.
@@ -58,6 +76,9 @@ def parse_block(parser: 'Parser') -> tuple:
 def parse_statement(parser: 'Parser') -> tuple:
     """
     Parse a single statement.
+
+    Syntax:
+        <statement>
 
     Args:
         parser: The parser instance.
@@ -156,7 +177,18 @@ def parse_emit(parser: 'Parser') -> tuple:
 
 
 def parse_import(parser: 'Parser') -> tuple:
-    """Parse an import statement."""
+    """
+    Parse an import statement.
+    
+    Syntax:
+        import <string> as <identifier>
+
+    Args:
+        parser: The parser instance.
+
+    Returns:
+        tuple: representing the AST node.
+    """
     tok = parser.curr_token
     parser.eat("IMPORT")
     path_tok = parser.curr_token
@@ -179,6 +211,11 @@ def parse_import(parser: 'Parser') -> tuple:
 def parse_if(parser: 'Parser') -> tuple:
     """
     Parse a conditional 'if' statement with optional elif and else blocks.
+
+    Syntax:
+        if <condition> { <block> }
+        elif <condition> { <block> }
+        else { <block> }
 
     Args:
         parser: The parser instance.
@@ -215,6 +252,12 @@ def parse_loop(parser: 'Parser') -> tuple:
     """
     Parse a 'loop' statement.
 
+    Syntax:
+        loop <condition> { <block> }
+
+    Args:
+        parser: The parser instance.
+
     Returns:
         tuple: representing the AST node.
     """
@@ -228,6 +271,9 @@ def parse_loop(parser: 'Parser') -> tuple:
 def parse_break(parser: 'Parser') -> tuple:
     """
     Parse a 'break' control statement.
+
+    Syntax:
+        break
 
     Args:
         parser: The parser instance.
@@ -243,6 +289,9 @@ def parse_break(parser: 'Parser') -> tuple:
 def parse_func_def(parser: 'Parser') -> tuple:
     """
     Parse a function definition.
+
+    Syntax:
+        proc <name>(<params>) { <block> }
 
     Args:
         parser: The parser instance.
@@ -272,6 +321,9 @@ def parse_return(parser: 'Parser') -> tuple:
     """
     Parse a 'return' statement.
 
+    Syntax:
+        return <expression>
+
     Args:
         parser: The parser instance.
 
@@ -288,6 +340,9 @@ def parse_reassignment(parser: 'Parser') -> tuple:
     """
     Parse reassignment of an existing variable.
 
+    Syntax:
+        <identifier> := <expression>
+
     Args:
         parser: The parser instance.
 
@@ -303,7 +358,10 @@ def parse_reassignment(parser: 'Parser') -> tuple:
 
 def parse_declaration(parser: 'Parser') -> tuple:
     """
-    Parse an ``alloc`` variable declaration.
+    Parse an `alloc` variable declaration.
+
+    Syntax:
+        alloc <identifier> := <expression>
 
     Args:
         parser: The parser instance.
