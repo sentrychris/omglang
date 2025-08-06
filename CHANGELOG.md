@@ -2,6 +2,36 @@
 
 Ordered from top to bottom.
 
+## 2025-08-06
+
+### Added
+
+* **Module import system**:
+  * New `import "<file>" as <alias>` syntax for loading other OMG scripts.
+  * Top-level `alloc` and `proc` bindings are exported automatically.
+  * Imported namespaces are read-only via `FrozenNamespace`.
+  * Interpreter tracks loaded modules to prevent recursive imports.
+* **Examples** demonstrating module usage in `examples/modules`.
+
+### Changed
+
+* Lexer recognizes `import` and `as` keywords.
+* Parser supports `'import'` statements through a dedicated `parse_import`.
+* `FunctionValue` retains defining global scope so imported functions can recurse or call other module-level bindings.
+
+### Fixed
+
+* Circular imports now raise a `RuntimeError`.
+* Imported modules reject attempts to reassign exported values.
+
+### Tests
+
+* Added `test_modules.py` covering:
+  * Basic import and usage of exported bindings.
+  * Enforcement of read-only modules.
+  * Circular import detection.
+  * Recursive functions across modules.
+
 
 ## 2025-08-05
 
