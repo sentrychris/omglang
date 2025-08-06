@@ -75,6 +75,7 @@ enum Instr {
     Jump(usize),
     JumpIfFalse(usize),
     Call(String),
+    TailCall(String),
     Ret,
     Emit,
     Halt,
@@ -161,6 +162,8 @@ fn parse_bytecode(src: &str) -> (Vec<Instr>, HashMap<String, Function>) {
             }
         } else if let Some(rest) = trimmed.strip_prefix("CALL ") {
             code.push(Instr::Call(rest.to_string()));
+        } else if let Some(rest) = trimmed.strip_prefix("TCALL ") {
+            code.push(Instr::TailCall(rest.to_string()));
         } else if trimmed == "RET" {
             code.push(Instr::Ret);
         } else if trimmed == "EMIT" {
@@ -315,6 +318,20 @@ fn run(code: &[Instr], funcs: &HashMap<String, Function>) {
                     }
                     env_stack.push(env);
                     ret_stack.push(pc + 1);
+                    env = new_env;
+                    pc = func.address;
+                    continue;
+                } else {
+                    panic!("Unknown function: {}", name);
+                }
+            }
+            Instr::TailCall(name) => {
+                if let Some(func) = funcs.get(name) {
+                    let mut new_env = HashMap::new();
+                    for param in func.params.iter().rev() {
+                        let arg = stack.pop().unwrap();
+                        new_env.insert(param.clone(), arg);
+                    }
                     env = new_env;
                     pc = func.address;
                     continue;

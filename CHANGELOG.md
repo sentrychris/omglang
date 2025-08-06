@@ -2,6 +2,15 @@
 
 Ordered from most recent at the top to oldest at the bottom.
 
+## 2025-08-12
+
+### Added
+- Tail-call optimization to the bytecode compiler and native VM via a new `TCALL` instruction.
+- Example OMG program demonstrating tail-recursive factorial compilation.
+
+### Changed
+- `return` statements now emit `TCALL` when the returned expression is a direct function call, avoiding extra stack frames.
+
 ## 2025-08-11
 
 ### Changed

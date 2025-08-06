@@ -63,7 +63,11 @@ class Compiler:
         for name, params, body in self.pending_funcs:
             addr = len(final_code)
             self.funcs.append(FunctionEntry(name, params, addr))
-            final_code.extend(body)
+            for op, arg in body:
+                if op in {"JUMP", "JUMP_IF_FALSE"} and isinstance(arg, int):
+                    final_code.append((op, arg + addr))
+                else:
+                    final_code.append((op, arg))
         lines: List[str] = []
         for f in self.funcs:
             params = " ".join(f.params)
@@ -134,8 +138,19 @@ class Compiler:
             body_code = self._compile_function_body(body)
             self.pending_funcs.append((name, params, body_code))
         elif kind == "return":
-            self.compile_expr(stmt[1])
-            self.emit("RET")
+            expr = stmt[1]
+            if (
+                isinstance(expr, tuple)
+                and expr[0] == "func_call"
+                and expr[1][0] == "ident"
+            ):
+                func_node, args = expr[1], expr[2]
+                for arg in args:
+                    self.compile_expr(arg)
+                self.emit("TCALL", func_node[1])
+            else:
+                self.compile_expr(expr)
+                self.emit("RET")
         elif kind == "block":
             self.compile_block(stmt[1])
         else:
