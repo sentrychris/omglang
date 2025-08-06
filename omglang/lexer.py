@@ -8,7 +8,15 @@ Tokens cover literals (numbers, strings, booleans), keywords (``if``, ``loop``,
 ``emit`` …), operators and delimiters. Comment text beginning with ``#`` is
 skipped during tokenization so line numbers remain accurate. When present, the
 required ``;;;omg`` header is also stripped before lexing.
+
+
+File: lexer.py
+Author: Chris Rowles <christopher.rowles@outlook.com>
+Copyright: © 2025 Chris Rowles. All rights reserved.
+Version: 0.1.0
+License: MIT
 """
+
 import re
 
 

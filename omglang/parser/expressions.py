@@ -1,9 +1,15 @@
-"""
-Expression parsing utilities for OMGlang.
+"""Expression parsing utilities for OMGlang.
 
 These functions operate on an `omglang.parser.parser.Parser` instance
 and implement the recursive descent logic for expressions, maintaining
 operator precedence and associativity.
+
+
+File: expressions.py
+Author: Chris Rowles <christopher.rowles@outlook.com>
+Copyright: © 2025 Chris Rowles. All rights reserved.
+Version: 0.1.0
+License: MIT
 """
 
 from typing import TYPE_CHECKING

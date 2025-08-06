@@ -4,6 +4,13 @@ This module centralizes the string constants used by the parser and
 interpreter to label nodes in the abstract syntax tree.  Keeping them in one
 place prevents the two components from drifting apart when new operations are
 added or existing ones are renamed.
+
+
+File: operations.py
+Author: Chris Rowles <christopher.rowles@outlook.com>
+Copyright: © 2025 Chris Rowles. All rights reserved.
+Version: 0.1.0
+License: MIT
 """
 
 from enum import Enum

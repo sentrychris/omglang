@@ -1,9 +1,15 @@
-"""
-Statement parsing utilities for OMGlang.
+"""Statement parsing utilities for OMGlang.
 
 These functions operate on a `omglang.parser.parser.Parser` instance and
 handle the various statement forms in the language such as blocks,
 conditionals, loops, and function definitions.
+
+
+File: statements.py
+Author: Chris Rowles <christopher.rowles@outlook.com>
+Copyright: © 2025 Chris Rowles. All rights reserved.
+Version: 0.1.0
+License: MIT
 """
 
 from typing import TYPE_CHECKING

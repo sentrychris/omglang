@@ -1,5 +1,4 @@
-"""
-Interpreter.
+"""Interpreter.
 
 This is a tree-walk interpreter for evaluating AST nodes produced by the parser. It supports
 arithmetic, variables, function definitions and calls, conditionals, loops, and output statements.
@@ -33,7 +32,15 @@ execution is aborted with a descriptive runtime error.
 6. Error Handling
 Runtime errors during interpretation—, such as undefined variables, unknown operations, or
 malformed AST nodes, are surfaced as typed exceptions with line numbers and file context.
+
+
+File: interpreter.py
+Author: Chris Rowles <christopher.rowles@outlook.com>
+Copyright: © 2025 Chris Rowles. All rights reserved.
+Version: 0.1.0
+License: MIT
 """
+
 import os
 
 from omglang.exceptions import (

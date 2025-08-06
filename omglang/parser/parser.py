@@ -1,9 +1,15 @@
-"""
-Main parser entry point for OMGlang.
+"""Main parser entry point for OMGlang.
 
 This module defines the `Parser` class, which coordinates the recursive
 descent parsing process. The actual parsing routines are split across
 `omglang.parser.expressions` and `omglang.parser.statements`.
+
+
+File: parser.py
+Author: Chris Rowles <christopher.rowles@outlook.com>
+Copyright: © 2025 Chris Rowles. All rights reserved.
+Version: 0.1.0
+License: MIT
 """
 
 from typing import TYPE_CHECKING
