@@ -7,6 +7,7 @@ Ordered from most recent at the top to oldest at the bottom.
 ### Added
 - Minimal OMG bytecode compiler emitting stack-based instructions.
 - Native Rust stack VM executing OMG bytecode without Python.
+- Arithmetic, variables, and load/store support in the bytecode compiler and native VM.
 
 ### Changed
 - N/A
