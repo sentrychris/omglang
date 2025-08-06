@@ -44,7 +44,6 @@ proc tokenize(src) {
     alloc tokens := {}
     alloc n := 0
     alloc i := 0
-    alloc line := 1
     alloc c := ""
     alloc res := []
     alloc word := ""
@@ -61,43 +60,42 @@ proc tokenize(src) {
         if c == " " or c == "\t" {
             i := i + 1
         } elif c == "\n" {
-            line := line + 1
             i := i + 1
         } elif c == "#" {
             loop i < length(src) and src[i] != "\n" {
                 i := i + 1
             }
         } elif c == ":" and i + 1 < length(src) and src[i + 1] == "=" {
-            tokens[n] := ["symbol", ":=", line]
+            tokens[n] := ["symbol", ":="]
             n := n + 1
             i := i + 2
         } elif c == ":" {
-            tokens[n] := ["symbol", ":", line]
+            tokens[n] := ["symbol", ":"]
             n := n + 1
             i := i + 1
         } elif c == "=" and i + 1 < length(src) and src[i + 1] == "=" {
-            tokens[n] := ["symbol", "==", line]
+            tokens[n] := ["symbol", "=="]
             n := n + 1
             i := i + 2
         } elif c == "!" and i + 1 < length(src) and src[i + 1] == "=" {
-            tokens[n] := ["symbol", "!=", line]
+            tokens[n] := ["symbol", "!="]
             n := n + 1
             i := i + 2
         } elif c == "<" and i + 1 < length(src) and src[i + 1] == "=" {
-            tokens[n] := ["symbol", "<=", line]
+            tokens[n] := ["symbol", "<="]
             n := n + 1
             i := i + 2
         } elif c == ">" and i + 1 < length(src) and src[i + 1] == "=" {
-            tokens[n] := ["symbol", ">=", line]
+            tokens[n] := ["symbol", ">="]
             n := n + 1
             i := i + 2
         } elif c == "(" or c == ")" or c == "{" or c == "}" or c == "," or c == "+" or c == "-" or c == "*" or c == "/" or c == "<" or c == ">" or c == "[" or c == "]" {
-            tokens[n] := ["symbol", c, line]
+            tokens[n] := ["symbol", c]
             n := n + 1
             i := i + 1
         } elif is_digit(c) {
             res := read_number(src, i)
-            tokens[n] := ["number", res[0], line]
+            tokens[n] := ["number", res[0]]
             n := n + 1
             i := res[1]
         } elif c == "\"" {
@@ -113,23 +111,23 @@ proc tokenize(src) {
                 }
             }
             i := i + 1
-            tokens[n] := ["string", s, line]
+            tokens[n] := ["string", s]
             n := n + 1
         } else {
             res := read_ident(src, i)
             word := res[0]
             i := res[1]
             if word == "alloc" or word == "emit" or word == "proc" or word == "return" or word == "if" or word == "else" or word == "loop" or word == "break" or word == "and" or word == "or" {
-                tokens[n] := ["kw", word, line]
+                tokens[n] := ["kw", word]
                 n := n + 1
             } elif word == "true" {
-                tokens[n] := ["bool", true, line]
+                tokens[n] := ["bool", true]
                 n := n + 1
             } elif word == "false" {
-                tokens[n] := ["bool", false, line]
+                tokens[n] := ["bool", false]
                 n := n + 1
             } else {
-                tokens[n] := ["ident", word, line]
+                tokens[n] := ["ident", word]
                 n := n + 1
             }
         }
@@ -163,19 +161,19 @@ proc parse_statement(tokens, i) {
     if t[0] == "kw" and t[1] == "alloc" {
         alloc name := tokens[i + 1]
         alloc res := parse_expression(tokens, i + 3)
-        return [["decl", name[1], res[0], t[2]], res[1]]
+        return [["decl", name[1], res[0]], res[1]]
     } elif t[0] == "kw" and t[1] == "emit" {
         alloc res := parse_expression(tokens, i + 1)
-        return [["emit", res[0], t[2]], res[1]]
+        return [["emit", res[0]], res[1]]
     } elif t[0] == "kw" and t[1] == "return" {
         alloc res := parse_expression(tokens, i + 1)
-        return [["return", res[0], t[2]], res[1]]
+        return [["return", res[0]], res[1]]
     } elif t[0] == "kw" and t[1] == "break" {
-        return [["break", t[2]], i + 1]
+        return [["break"], i + 1]
     } elif t[0] == "kw" and t[1] == "loop" {
         alloc res_cond := parse_expression(tokens, i + 1)
         alloc res_block := parse_block(tokens, res_cond[1])
-        return [["loop", res_cond[0], res_block[0], t[2]], res_block[1]]
+        return [["loop", res_cond[0], res_block[0]], res_block[1]]
     } elif t[0] == "kw" and t[1] == "if" {
         alloc res_cond := parse_expression(tokens, i + 1)
         alloc res_then := parse_block(tokens, res_cond[1])
@@ -186,7 +184,7 @@ proc parse_statement(tokens, i) {
             else_block := res_else[0]
             j := res_else[1]
         }
-        return [["if", res_cond[0], res_then[0], else_block, t[2]], j]
+        return [["if", res_cond[0], res_then[0], else_block], j]
     } elif t[0] == "kw" and t[1] == "proc" {
         alloc name := tokens[i + 1][1]
         alloc j := i + 3
@@ -204,12 +202,12 @@ proc parse_statement(tokens, i) {
         }
         j := j + 1
         alloc res_block := parse_block(tokens, j)
-        return [["func_def", name, params, res_block[0], t[2]], res_block[1]]
+        return [["func_def", name, params, res_block[0]], res_block[1]]
     } else {
         alloc next := tokens[i + 1]
         if next[0] == "symbol" and next[1] == ":=" {
             alloc res := parse_expression(tokens, i + 2)
-            return [["assign", t[1], res[0], t[2]], res[1]]
+            return [["assign", t[1], res[0]], res[1]]
         } else {
             alloc res := parse_expression(tokens, i)
             return [res[0], res[1]]
@@ -240,7 +238,7 @@ proc parse_or(tokens, i) {
     alloc j := res[1]
     loop j < tok_len and tokens[j][0] == "kw" and tokens[j][1] == "or" {
         alloc right_res := parse_and(tokens, j + 1)
-        left := ["or", left, right_res[0], tokens[j][2]]
+        left := ["or", left, right_res[0]]
         j := right_res[1]
     }
     return [left, j]
@@ -252,7 +250,7 @@ proc parse_and(tokens, i) {
     alloc j := res[1]
     loop j < tok_len and tokens[j][0] == "kw" and tokens[j][1] == "and" {
         alloc right_res := parse_comparison(tokens, j + 1)
-        left := ["and", left, right_res[0], tokens[j][2]]
+        left := ["and", left, right_res[0]]
         j := right_res[1]
     }
     return [left, j]
@@ -266,17 +264,17 @@ proc parse_comparison(tokens, i) {
         alloc op := tokens[j]
         alloc right_res := parse_add_sub(tokens, j + 1)
         if op[1] == "<" {
-            left := ["lt", left, right_res[0], op[2]]
+            left := ["lt", left, right_res[0]]
         } elif op[1] == ">" {
-            left := ["gt", left, right_res[0], op[2]]
+            left := ["gt", left, right_res[0]]
         } elif op[1] == "<=" {
-            left := ["le", left, right_res[0], op[2]]
+            left := ["le", left, right_res[0]]
         } elif op[1] == ">=" {
-            left := ["ge", left, right_res[0], op[2]]
+            left := ["ge", left, right_res[0]]
         } elif op[1] == "==" {
-            left := ["eq", left, right_res[0], op[2]]
+            left := ["eq", left, right_res[0]]
         } else {
-            left := ["ne", left, right_res[0], op[2]]
+            left := ["ne", left, right_res[0]]
         }
         j := right_res[1]
     }
@@ -291,9 +289,9 @@ proc parse_add_sub(tokens, i) {
         alloc op := tokens[j]
         alloc right_res := parse_term(tokens, j + 1)
         if op[1] == "+" {
-            left := ["add", left, right_res[0], op[2]]
+            left := ["add", left, right_res[0]]
         } else {
-            left := ["sub", left, right_res[0], op[2]]
+            left := ["sub", left, right_res[0]]
         }
         j := right_res[1]
     }
@@ -308,9 +306,9 @@ proc parse_term(tokens, i) {
         alloc op := tokens[j]
         alloc right_res := parse_factor(tokens, j + 1)
         if op[1] == "*" {
-            left := ["mul", left, right_res[0], op[2]]
+            left := ["mul", left, right_res[0]]
         } else {
-            left := ["div", left, right_res[0], op[2]]
+            left := ["div", left, right_res[0]]
         }
         j := right_res[1]
     }
@@ -323,15 +321,15 @@ proc parse_factor(tokens, i) {
     alloc j := i
     if t[0] == "symbol" and t[1] == "-" {
         alloc res := parse_factor(tokens, i + 1)
-        return [["unary", "sub", res[0], t[2]], res[1]]
+        return [["unary", "sub", res[0]], res[1]]
     } elif t[0] == "number" {
-        node := ["number", t[1], t[2]]
+        node := ["number", t[1]]
         j := i + 1
     } elif t[0] == "bool" {
-        node := ["bool", t[1], t[2]]
+        node := ["bool", t[1]]
         j := i + 1
     } elif t[0] == "string" {
-        node := ["string", t[1], t[2]]
+        node := ["string", t[1]]
         j := i + 1
     } elif t[0] == "ident" {
         if i + 1 < length(tokens) and tokens[i + 1][0] == "symbol" and tokens[i + 1][1] == "(" {
@@ -350,10 +348,10 @@ proc parse_factor(tokens, i) {
                     }
                 }
             }
-            node := ["func_call", ["ident", t[1], t[2]], args, t[2]]
+            node := ["func_call", ["ident", t[1]], args]
             j := k + 1
         } else {
-            node := ["ident", t[1], t[2]]
+            node := ["ident", t[1]]
             j := i + 1
         }
     } elif t[0] == "symbol" and t[1] == "[" {
@@ -372,7 +370,7 @@ proc parse_factor(tokens, i) {
                 }
             }
         }
-        node := ["list", elems, t[2]]
+        node := ["list", elems]
         j := k + 1
     } elif t[0] == "symbol" and t[1] == "{" {
         alloc pairs := []
@@ -393,14 +391,14 @@ proc parse_factor(tokens, i) {
                 }
             }
         }
-        node := ["dict", pairs, t[2]]
+        node := ["dict", pairs]
         j := k + 1
     } elif t[0] == "symbol" and t[1] == "(" {
         alloc res := parse_expression(tokens, i + 1)
         node := res[0]
         j := res[1] + 1
     } else {
-        node := ["number", 0, t[2]]
+        node := ["number", 0]
         j := i + 1
     }
 
@@ -409,15 +407,15 @@ proc parse_factor(tokens, i) {
         alloc k := inner[1]
         if tokens[k][0] == "symbol" and tokens[k][1] == ":" {
             if tokens[k + 1][0] == "symbol" and tokens[k + 1][1] == "]" {
-                node := ["slice", node, inner[0], false, tokens[j][2]]
+                node := ["slice", node, inner[0], false]
                 j := k + 2
             } else {
                 alloc end_res := parse_expression(tokens, k + 1)
-                node := ["slice", node, inner[0], end_res[0], tokens[j][2]]
+                node := ["slice", node, inner[0], end_res[0]]
                 j := end_res[1] + 1
             }
         } else {
-            node := ["index", node, inner[0], tokens[j][2]]
+            node := ["index", node, inner[0]]
             j := k + 1
         }
     }

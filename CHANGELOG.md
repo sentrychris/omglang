@@ -13,6 +13,7 @@ Ordered from most recent at the top to oldest at the bottom.
 ### Changed
 - CLI now accepts additional arguments passed to scripts as `args`.
 - Self-hosting interpreter now skips headers/comments in-tokenizer and uses dictionary-based token storage for faster meta interpretation.
+- Removed line-number bookkeeping from self-hosted tokens and AST to streamline Stage 3 execution.
 
 ## [0.1.0] - 2025-08-06
 
