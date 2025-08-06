@@ -30,8 +30,8 @@ jobs:
         if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
     - name: Lint with flake8 and pylint
       run: |
-        flake8 ./core ./omg.py
-        pylint ./core ./omg.py
+        flake8 ./omglang ./omg.py
+        pylint ./omglang ./omg.py
     - name: Test with pytest
       run: |
         pytest

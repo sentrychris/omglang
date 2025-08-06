@@ -4,7 +4,7 @@ This document describes the lexical analysis stage of the OMG language toolchain
 
 ## Overview
 
-The OMG lexer is implemented in `core/lexer.py`. It performs a **single-pass scan** over the source code using a **combined regular expression** with named groups. Each match is transformed into a `Token(type, value, line)` object.
+The OMG lexer is implemented in `omglang/lexer.py`. It performs a **single-pass scan** over the source code using a **combined regular expression** with named groups. Each match is transformed into a `Token(type, value, line)` object.
 
 Key features:
 - Skips whitespace and comments
