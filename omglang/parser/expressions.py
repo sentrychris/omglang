@@ -7,10 +7,10 @@ operator precedence and associativity.
 """
 
 from typing import TYPE_CHECKING
-from omglang.core.operations import Op
+from omglang.operations import Op
 
 if TYPE_CHECKING:
-    from omglang.core.parser import Parser
+    from omglang.parser import Parser
 
 
 # ---- Highest precedence ----

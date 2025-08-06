@@ -36,13 +36,13 @@ malformed AST nodes, are surfaced as typed exceptions with line numbers and file
 """
 import os
 
-from omglang.core.exceptions import (
+from omglang.exceptions import (
     UndefinedVariableException,
     UnknownOpException,
     BreakLoop,
     ReturnControlFlow,
 )
-from omglang.core.operations import Op
+from omglang.operations import Op
 
 
 class FrozenNamespace(dict):
@@ -137,8 +137,8 @@ class Interpreter:
 
         self.loaded_modules.add(module_path)
         try:
-            from omglang.core.lexer import tokenize
-            from omglang.core.parser import Parser
+            from omglang.lexer import tokenize
+            from omglang.parser import Parser
 
             with open(module_path, "r", encoding="utf-8") as f:
                 code = f.read()

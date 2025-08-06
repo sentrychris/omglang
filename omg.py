@@ -13,9 +13,9 @@ Workflow:
 import os
 import sys
 
-from omglang.core.lexer import tokenize
-from omglang.core.parser import Parser
-from omglang.core.interpreter import Interpreter
+from omglang.lexer import tokenize
+from omglang.parser import Parser
+from omglang.interpreter import Interpreter
 
 if getattr(sys, "frozen", False):
     # Running in a bundled executable

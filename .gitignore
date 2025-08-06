@@ -1,8 +1,17 @@
-__pycache__
-build
-dist
-*.spec
-*.ps1
-scratchpad.omg
-.venv
+# Python cache
+__pycache__/
+*.py[cod]
 *.egg-info/
+*.log
+
+# VS Code and Python environment
+.vscode/
+.env/
+.venv/
+
+# Output and structure tools
+project_structure.txt
+
+# OS junk
+.DS_Store
+Thumbs.db

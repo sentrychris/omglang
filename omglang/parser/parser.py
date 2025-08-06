@@ -8,11 +8,11 @@ descent parsing process. The actual parsing routines are split across
 
 from typing import TYPE_CHECKING
 
-from omglang.core.parser import expressions as _expr
-from omglang.core.parser import statements as _stmt
+from omglang.parser import expressions as _expr
+from omglang.parser import statements as _stmt
 
 if TYPE_CHECKING:
-    from omglang.core.lexer import Token
+    from omglang.lexer import Token
 
 
 class Parser:

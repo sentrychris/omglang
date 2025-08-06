@@ -1,10 +1,10 @@
 import os
 import sys
 
-from omglang.core.lexer import tokenize, Token
-from omglang.core.parser import Parser
-from omglang.core.interpreter import Interpreter
-from omglang.core.exceptions import UndefinedVariableException
+from omglang.lexer import tokenize, Token
+from omglang.parser import Parser
+from omglang.interpreter import Interpreter
+from omglang.exceptions import UndefinedVariableException
 
 sys.path.append(os.path.dirname(os.path.dirname(__file__)))
 
