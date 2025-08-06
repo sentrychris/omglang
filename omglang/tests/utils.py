@@ -37,4 +37,3 @@ def run_file(path: Path) -> Interpreter:
     ast = parser.parse()
     interpreter.execute(ast)
     return interpreter
-
