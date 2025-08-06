@@ -179,7 +179,7 @@ def parse_emit(parser: 'Parser') -> tuple:
 def parse_import(parser: 'Parser') -> tuple:
     """
     Parse an import statement.
-    
+
     Syntax:
         import <string> as <identifier>
 
