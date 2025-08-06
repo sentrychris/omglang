@@ -2,6 +2,14 @@
 
 Ordered from most recent at the top to oldest at the bottom.
 
+## 2025-08-11
+
+### Changed
+- Cached source and token lengths in the self-hosted interpreter to reduce Stage 3 parsing overhead.
+
+### Notes
+- Meta-circular driver runtime is improved but remains lengthy during full self-interpretation.
+
 ## 2025-08-10
 
 ### Added

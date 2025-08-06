@@ -23,7 +23,8 @@ proc is_alnum(ch) {
 proc read_number(src, i) {
     alloc num := 0
     alloc c := ""
-    loop i < length(src) and is_digit(src[i]) {
+    alloc n := length(src)
+    loop i < n and is_digit(src[i]) {
         c := src[i]
         num := num * 10 + ascii(c) - ascii("0")
         i := i + 1
@@ -33,7 +34,8 @@ proc read_number(src, i) {
 
 proc read_ident(src, i) {
     alloc s := ""
-    loop i < length(src) and is_alnum(src[i]) {
+    alloc n := length(src)
+    loop i < n and is_alnum(src[i]) {
         s := s + src[i]
         i := i + 1
     }
@@ -48,24 +50,25 @@ proc tokenize(src) {
     alloc res := []
     alloc word := ""
     alloc s := ""
+    alloc src_len := length(src)
     # Skip header if present
-    if length(src) >= 6 and src[0] == ";" and src[1] == ";" and src[2] == ";" and src[3] == "o" and src[4] == "m" and src[5] == "g" {
+    if src_len >= 6 and src[0] == ";" and src[1] == ";" and src[2] == ";" and src[3] == "o" and src[4] == "m" and src[5] == "g" {
         i := 6
-        if i < length(src) and src[i] == "\n" {
+        if i < src_len and src[i] == "\n" {
             i := i + 1
         }
     }
-    loop i < length(src) {
+    loop i < src_len {
         c := src[i]
         if c == " " or c == "\t" {
             i := i + 1
         } elif c == "\n" {
             i := i + 1
         } elif c == "#" {
-            loop i < length(src) and src[i] != "\n" {
+            loop i < src_len and src[i] != "\n" {
                 i := i + 1
             }
-        } elif c == ":" and i + 1 < length(src) and src[i + 1] == "=" {
+        } elif c == ":" and i + 1 < src_len and src[i + 1] == "=" {
             tokens[n] := ["symbol", ":="]
             n := n + 1
             i := i + 2
@@ -73,19 +76,19 @@ proc tokenize(src) {
             tokens[n] := ["symbol", ":"]
             n := n + 1
             i := i + 1
-        } elif c == "=" and i + 1 < length(src) and src[i + 1] == "=" {
+        } elif c == "=" and i + 1 < src_len and src[i + 1] == "=" {
             tokens[n] := ["symbol", "=="]
             n := n + 1
             i := i + 2
-        } elif c == "!" and i + 1 < length(src) and src[i + 1] == "=" {
+        } elif c == "!" and i + 1 < src_len and src[i + 1] == "=" {
             tokens[n] := ["symbol", "!="]
             n := n + 1
             i := i + 2
-        } elif c == "<" and i + 1 < length(src) and src[i + 1] == "=" {
+        } elif c == "<" and i + 1 < src_len and src[i + 1] == "=" {
             tokens[n] := ["symbol", "<="]
             n := n + 1
             i := i + 2
-        } elif c == ">" and i + 1 < length(src) and src[i + 1] == "=" {
+        } elif c == ">" and i + 1 < src_len and src[i + 1] == "=" {
             tokens[n] := ["symbol", ">="]
             n := n + 1
             i := i + 2
@@ -101,7 +104,7 @@ proc tokenize(src) {
         } elif c == "\"" {
             i := i + 1
             s := ""
-            loop i < length(src) and src[i] != "\"" {
+            loop i < src_len and src[i] != "\"" {
                 if src[i] == "\\" and src[i + 1] == "n" {
                     s := s + "\n"
                     i := i + 2
@@ -332,7 +335,7 @@ proc parse_factor(tokens, i) {
         node := ["string", t[1]]
         j := i + 1
     } elif t[0] == "ident" {
-        if i + 1 < length(tokens) and tokens[i + 1][0] == "symbol" and tokens[i + 1][1] == "(" {
+        if i + 1 < tok_len and tokens[i + 1][0] == "symbol" and tokens[i + 1][1] == "(" {
             alloc k := i + 2
             alloc args := []
             alloc res := [false, 0]
@@ -432,7 +435,8 @@ alloc global_env := []
 proc lookup_var(env, name) {
     alloc i := 0
     alloc entry := false
-    loop i < length(env) {
+    alloc env_len := length(env)
+    loop i < env_len {
         entry := env[i]
         if entry[0] == name {
             return [true, entry[1]]
@@ -441,7 +445,8 @@ proc lookup_var(env, name) {
     }
     i := 0
     entry := false
-    loop i < length(global_env) {
+    alloc global_len := length(global_env)
+    loop i < global_len {
         entry := global_env[i]
         if entry[0] == name {
             return [true, entry[1]]
@@ -454,7 +459,8 @@ proc lookup_var(env, name) {
 proc env_set(env, name, value) {
     alloc i := 0
     alloc entry := false
-    loop i < length(env) {
+    alloc env_len := length(env)
+    loop i < env_len {
         entry := env[i]
         if entry[0] == name {
             env[i] := [name, value]
@@ -470,7 +476,8 @@ proc copy_env(env) {
     alloc result := []
     alloc i := 0
     alloc entry := false
-    loop i < length(env) {
+    alloc env_len := length(env)
+    loop i < env_len {
         entry := env[i]
         result := result + [entry]
         i := i + 1
@@ -485,7 +492,8 @@ proc call_function(func, args, env) {
         alloc captured := func[3]
         alloc local := copy_env(captured)
         alloc i := 0
-        loop i < length(params) {
+        alloc params_len := length(params)
+        loop i < params_len {
             local := env_set(local, params[i], args[i])
             i := i + 1
         }
@@ -567,7 +575,8 @@ proc eval_expr(expr, env) {
         alloc nodes := expr[1]
         alloc result := []
         alloc i := 0
-        loop i < length(nodes) {
+        alloc nodes_len := length(nodes)
+        loop i < nodes_len {
             result := result + [eval_expr(nodes[i], env)]
             i := i + 1
         }
@@ -579,7 +588,8 @@ proc eval_expr(expr, env) {
         alloc pair := false
         alloc key := false
         alloc val := false
-        loop i < length(pairs) {
+        alloc pairs_len := length(pairs)
+        loop i < pairs_len {
             pair := pairs[i]
             key := eval_expr(pair[0], env)
             val := eval_expr(pair[1], env)
@@ -605,7 +615,8 @@ proc eval_expr(expr, env) {
         alloc arg_nodes := expr[2]
         alloc args := []
         alloc i := 0
-        loop i < length(arg_nodes) {
+        alloc arg_len := length(arg_nodes)
+        loop i < arg_len {
             args := args + [eval_expr(arg_nodes[i], env)]
             i := i + 1
         }
@@ -621,7 +632,8 @@ proc execute(stmts, env, is_global) {
     alloc stmt := false
     alloc kind := false
     alloc res := ["normal", false]
-    loop i < length(stmts) {
+    alloc stmts_len := length(stmts)
+    loop i < stmts_len {
         stmt := stmts[i]
         kind := stmt[0]
         if kind == "decl" {
@@ -673,7 +685,8 @@ proc execute(stmts, env, is_global) {
             alloc arg_nodes := stmt[2]
             alloc args := []
             alloc j := 0
-            loop j < length(arg_nodes) {
+            alloc arg_len := length(arg_nodes)
+            loop j < arg_len {
                 args := args + [eval_expr(arg_nodes[j], env)]
                 j := j + 1
             }
@@ -702,9 +715,10 @@ proc run_file_with_args(path, file_args) {
     alloc saved := args
     args := file_args
     alloc source := read_file(path)
-    if length(source) >= 6 and source[0] == ";" and source[1] == ";" and source[2] == ";" and source[3] == "o" and source[4] == "m" and source[5] == "g" {
+    alloc src_len := length(source)
+    if src_len >= 6 and source[0] == ";" and source[1] == ";" and source[2] == ";" and source[3] == "o" and source[4] == "m" and source[5] == "g" {
         alloc j := 6
-        if j < length(source) and source[j] == "\n" {
+        if j < src_len and source[j] == "\n" {
             j := j + 1
         }
         source := source[j:]
