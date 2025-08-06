@@ -1,0 +1,253 @@
+;;;omg
+
+# AST-based interpreter implemented in OMG
+# Supports core statement and expression types
+
+alloc global_env := []
+
+proc lookup_var(env, name) {
+    alloc i := 0
+    alloc entry := false
+    loop i < length(env) {
+        entry := env[i]
+        if entry[0] == name {
+            return [true, entry[1]]
+        }
+        i := i + 1
+    }
+    i := 0
+    entry := false
+    loop i < length(global_env) {
+        entry := global_env[i]
+        if entry[0] == name {
+            return [true, entry[1]]
+        }
+        i := i + 1
+    }
+    return [false, false]
+}
+
+proc env_set(env, name, value) {
+    alloc i := 0
+    alloc entry := false
+    loop i < length(env) {
+        entry := env[i]
+        if entry[0] == name {
+            env[i] := [name, value]
+            return env
+        }
+        i := i + 1
+    }
+    env := env + [[name, value]]
+    return env
+}
+
+proc copy_env(env) {
+    alloc result := []
+    alloc i := 0
+    alloc entry := false
+    loop i < length(env) {
+        entry := env[i]
+        result := result + [entry]
+        i := i + 1
+    }
+    return result
+}
+
+proc call_function(func, args, env) {
+    if func[0] == "function" {
+        alloc params := func[1]
+        alloc body := func[2]
+        alloc captured := func[3]
+        alloc local := copy_env(captured)
+        alloc i := 0
+        loop i < length(params) {
+            local := env_set(local, params[i], args[i])
+            i := i + 1
+        }
+        alloc res := []
+        res := execute(body, local, false)
+        if res[0] == "return" {
+            return res[1]
+        }
+        return false
+    } elif func[0] == "builtin" {
+        alloc name := func[1]
+        if name == "length" {
+            return length(args[0])
+        }
+        emit "Unknown builtin: " + name
+        return false
+    } else {
+        emit "Not a function value"
+        return false
+    }
+}
+
+proc eval_expr(expr, env) {
+    alloc kind := expr[0]
+    if kind == "number" {
+        return expr[1]
+    } elif kind == "string" {
+        return expr[1]
+    } elif kind == "ident" {
+        alloc name := expr[1]
+        alloc res := lookup_var(env, name)
+        if res[0] {
+            return res[1]
+        }
+        emit "Undefined variable: " + name
+        return false
+    } elif kind == "add" {
+        return eval_expr(expr[1], env) + eval_expr(expr[2], env)
+    } elif kind == "sub" {
+        return eval_expr(expr[1], env) - eval_expr(expr[2], env)
+    } elif kind == "mul" {
+        return eval_expr(expr[1], env) * eval_expr(expr[2], env)
+    } elif kind == "div" {
+        return eval_expr(expr[1], env) / eval_expr(expr[2], env)
+    } elif kind == "lt" {
+        return eval_expr(expr[1], env) < eval_expr(expr[2], env)
+    } elif kind == "and" {
+        alloc left := eval_expr(expr[1], env)
+        if left {
+            return eval_expr(expr[2], env)
+        }
+        return false
+    } elif kind == "unary" {
+        alloc op := expr[1]
+        alloc val := eval_expr(expr[2], env)
+        if op == "sub" {
+            return 0 - val
+        }
+        return val
+    } elif kind == "list" {
+        alloc nodes := expr[1]
+        alloc result := []
+        alloc i := 0
+        loop i < length(nodes) {
+            result := result + [eval_expr(nodes[i], env)]
+            i := i + 1
+        }
+        return result
+    } elif kind == "dict" {
+        alloc pairs := expr[1]
+        alloc result := {}
+        alloc i := 0
+        alloc pair := false
+        alloc key := false
+        alloc val := false
+        loop i < length(pairs) {
+            pair := pairs[i]
+            key := eval_expr(pair[0], env)
+            val := eval_expr(pair[1], env)
+            result[key] := val
+            i := i + 1
+        }
+        return result
+    } elif kind == "index" {
+        alloc base := eval_expr(expr[1], env)
+        alloc idx := eval_expr(expr[2], env)
+        return base[idx]
+    } elif kind == "func_call" {
+        alloc func_val := eval_expr(expr[1], env)
+        alloc arg_nodes := expr[2]
+        alloc args := []
+        alloc i := 0
+        loop i < length(arg_nodes) {
+            args := args + [eval_expr(arg_nodes[i], env)]
+            i := i + 1
+        }
+        return call_function(func_val, args, env)
+    } else {
+        emit "Unknown expr kind: " + kind
+        return false
+    }
+}
+
+proc execute(stmts, env, is_global) {
+    alloc i := 0
+    alloc stmt := false
+    alloc kind := false
+    alloc res := ["normal", false]
+    loop i < length(stmts) {
+        stmt := stmts[i]
+        kind := stmt[0]
+        if kind == "decl" {
+            env := env_set(env, stmt[1], eval_expr(stmt[2], env))
+            if is_global { global_env := env }
+        } elif kind == "assign" {
+            env := env_set(env, stmt[1], eval_expr(stmt[2], env))
+            if is_global { global_env := env }
+        } elif kind == "emit" {
+            emit eval_expr(stmt[1], env)
+        } elif kind == "if" {
+            alloc cond := eval_expr(stmt[1], env)
+            res := ["normal", false]
+            if cond {
+                res := execute(stmt[2], env, is_global)
+            } elif length(stmt) > 3 {
+                res := execute(stmt[3], env, is_global)
+            }
+            if res[0] != "normal" {
+                return res
+            }
+        } elif kind == "loop" {
+            alloc loop_res := ["normal", false]
+            loop eval_expr(stmt[1], env) {
+                loop_res := execute(stmt[2], env, is_global)
+                if loop_res[0] == "break" {
+                    break
+                } elif loop_res[0] == "return" {
+                    return loop_res
+                }
+            }
+        } elif kind == "break" {
+            return ["break", false]
+        } elif kind == "return" {
+            alloc val := eval_expr(stmt[1], env)
+            return ["return", val]
+        } elif kind == "func_def" {
+            alloc name := stmt[1]
+            alloc params := stmt[2]
+            alloc body := stmt[3]
+            alloc func_val := ["function", params, body, []]
+            env := env_set(env, name, func_val)
+            if is_global { global_env := env }
+            res := lookup_var(env, name)
+            func_val := res[1]
+            func_val[3] := copy_env(env)
+        } elif kind == "func_call" {
+            alloc func_val := eval_expr(stmt[1], env)
+            alloc arg_nodes := stmt[2]
+            alloc args := []
+            alloc j := 0
+            loop j < length(arg_nodes) {
+                args := args + [eval_expr(arg_nodes[j], env)]
+                j := j + 1
+            }
+            _ := call_function(func_val, args, env)
+        } else {
+            emit "Unknown statement: " + kind
+        }
+        i := i + 1
+    }
+    return ["normal", false]
+}
+
+# Example program: factorial of 5
+alloc sample := [
+    ["func_def", "fact", ["n"], [
+        ["if", ["lt", ["ident", "n", 1], ["number", 2, 1], 1], [
+            ["return", ["number", 1, 1], 1]
+        ], [
+            ["return", ["mul", ["ident", "n", 1], ["func_call", ["ident", "fact", 1], [["sub", ["ident", "n", 1], ["number", 1, 1], 1]], 1], 1], 1]
+        ], 1]
+    ], 1],
+    ["decl", "result", ["func_call", ["ident", "fact", 1], [["number", 5, 1]], 1], 1],
+    ["emit", ["ident", "result", 1], 1]
+]
+
+alloc env := [["length", ["builtin", "length"]]]
+global_env := env
+alloc _ := execute(sample, env, true)
