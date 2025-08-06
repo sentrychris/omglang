@@ -1,0 +1,189 @@
+;;;omg
+
+# Simple parser that builds AST from source code
+import "./tokenizer.omg" as tokenizer
+
+proc parse(source) {
+    alloc tokens := tokenizer.tokenize(source)
+    alloc res := parse_program(tokens, 0)
+    return res[0]
+}
+
+proc parse_program(tokens, i) {
+    alloc stmts := []
+    alloc res := [false, i]
+    loop res[1] < length(tokens) {
+        res := parse_statement(tokens, res[1])
+        stmts := stmts + [res[0]]
+    }
+    return [stmts, res[1]]
+}
+
+proc parse_statement(tokens, i) {
+    alloc t := tokens[i]
+    if t[0] == "kw" and t[1] == "alloc" {
+        alloc name := tokens[i + 1]
+        alloc res := parse_expression(tokens, i + 3)
+        return [["decl", name[1], res[0], t[2]], res[1]]
+    } elif t[0] == "kw" and t[1] == "emit" {
+        alloc res := parse_expression(tokens, i + 1)
+        return [["emit", res[0], t[2]], res[1]]
+    } elif t[0] == "kw" and t[1] == "return" {
+        alloc res := parse_expression(tokens, i + 1)
+        return [["return", res[0], t[2]], res[1]]
+    } elif t[0] == "kw" and t[1] == "break" {
+        return [["break", t[2]], i + 1]
+    } elif t[0] == "kw" and t[1] == "loop" {
+        alloc res_cond := parse_expression(tokens, i + 1)
+        alloc res_block := parse_block(tokens, res_cond[1])
+        return [["loop", res_cond[0], res_block[0], t[2]], res_block[1]]
+    } elif t[0] == "kw" and t[1] == "if" {
+        alloc res_cond := parse_expression(tokens, i + 1)
+        alloc res_then := parse_block(tokens, res_cond[1])
+        alloc else_block := []
+        alloc j := res_then[1]
+        if j < length(tokens) and tokens[j][0] == "kw" and tokens[j][1] == "else" {
+            alloc res_else := parse_block(tokens, j + 1)
+            else_block := res_else[0]
+            j := res_else[1]
+        }
+        return [["if", res_cond[0], res_then[0], else_block, t[2]], j]
+    } elif t[0] == "kw" and t[1] == "proc" {
+        alloc name := tokens[i + 1][1]
+        alloc j := i + 3
+        alloc params := []
+        if tokens[j][0] != "symbol" or tokens[j][1] != ")" {
+            loop true {
+                params := params + [tokens[j][1]]
+                j := j + 1
+                if tokens[j][0] == "symbol" and tokens[j][1] == "," {
+                    j := j + 1
+                } else {
+                    break
+                }
+            }
+        }
+        j := j + 1
+        alloc res_block := parse_block(tokens, j)
+        return [["func_def", name, params, res_block[0], t[2]], res_block[1]]
+    } else {
+        # assignment or function call
+        alloc next := tokens[i + 1]
+        if next[0] == "symbol" and next[1] == ":=" {
+            alloc res := parse_expression(tokens, i + 2)
+            return [["assign", t[1], res[0], t[2]], res[1]]
+        } else {
+            alloc res := parse_expression(tokens, i)
+            return [res[0], res[1]]
+        }
+    }
+}
+
+proc parse_block(tokens, i) {
+    # assumes current token is '{'
+    alloc stmts := []
+    alloc j := i
+    alloc res := [false, 0]
+    j := j + 1
+    loop tokens[j][0] != "symbol" or tokens[j][1] != "}" {
+        res := parse_statement(tokens, j)
+        stmts := stmts + [res[0]]
+        j := res[1]
+    }
+    return [stmts, j + 1]
+}
+
+proc parse_expression(tokens, i) {
+    return parse_comparison(tokens, i)
+}
+
+proc parse_comparison(tokens, i) {
+    alloc res := parse_add_sub(tokens, i)
+    alloc left := res[0]
+    alloc j := res[1]
+    loop j < length(tokens) and tokens[j][0] == "symbol" and (tokens[j][1] == "<" or tokens[j][1] == "==") {
+        alloc op := tokens[j]
+        alloc right_res := parse_add_sub(tokens, j + 1)
+        if op[1] == "<" {
+            left := ["lt", left, right_res[0], op[2]]
+        } else {
+            left := ["eq", left, right_res[0], op[2]]
+        }
+        j := right_res[1]
+    }
+    return [left, j]
+}
+
+proc parse_add_sub(tokens, i) {
+    alloc res := parse_term(tokens, i)
+    alloc left := res[0]
+    alloc j := res[1]
+    loop j < length(tokens) and tokens[j][0] == "symbol" and (tokens[j][1] == "+" or tokens[j][1] == "-") {
+        alloc op := tokens[j]
+        alloc right_res := parse_term(tokens, j + 1)
+        if op[1] == "+" {
+            left := ["add", left, right_res[0], op[2]]
+        } else {
+            left := ["sub", left, right_res[0], op[2]]
+        }
+        j := right_res[1]
+    }
+    return [left, j]
+}
+
+proc parse_term(tokens, i) {
+    alloc res := parse_factor(tokens, i)
+    alloc left := res[0]
+    alloc j := res[1]
+    loop j < length(tokens) and tokens[j][0] == "symbol" and (tokens[j][1] == "*" or tokens[j][1] == "/") {
+        alloc op := tokens[j]
+        alloc right_res := parse_factor(tokens, j + 1)
+        if op[1] == "*" {
+            left := ["mul", left, right_res[0], op[2]]
+        } else {
+            left := ["div", left, right_res[0], op[2]]
+        }
+        j := right_res[1]
+    }
+    return [left, j]
+}
+
+proc parse_factor(tokens, i) {
+    alloc t := tokens[i]
+    if t[0] == "symbol" and t[1] == "-" {
+        alloc res := parse_factor(tokens, i + 1)
+        return [["unary", "sub", res[0], t[2]], res[1]]
+    } elif t[0] == "number" {
+        return [["number", t[1], t[2]], i + 1]
+    } elif t[0] == "bool" {
+        return [["bool", t[1], t[2]], i + 1]
+    } elif t[0] == "string" {
+        return [["string", t[1], t[2]], i + 1]
+    } elif t[0] == "ident" {
+        if i + 1 < length(tokens) and tokens[i + 1][0] == "symbol" and tokens[i + 1][1] == "(" {
+            alloc j := i + 2
+            alloc args := []
+            alloc res := [false, 0]
+            if tokens[j][0] != "symbol" or tokens[j][1] != ")" {
+                loop true {
+                    res := parse_expression(tokens, j)
+                    args := args + [res[0]]
+                    j := res[1]
+                    if tokens[j][0] == "symbol" and tokens[j][1] == "," {
+                        j := j + 1
+                    } else {
+                        break
+                    }
+                }
+            }
+            return [["func_call", ["ident", t[1], t[2]], args, t[2]], j + 1]
+        }
+        return [["ident", t[1], t[2]], i + 1]
+    } elif t[0] == "symbol" and t[1] == "(" {
+        alloc res := parse_expression(tokens, i + 1)
+        return [res[0], res[1] + 1]
+    }
+    # fallback
+    return [["number", 0, t[2]], i + 1]
+}
+

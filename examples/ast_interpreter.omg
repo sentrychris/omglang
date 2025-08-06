@@ -231,23 +231,34 @@ proc execute(stmts, env, is_global) {
             emit "Unknown statement: " + kind
         }
         i := i + 1
-    }
+    }    
     return ["normal", false]
 }
 
-# Example program: factorial of 5
-alloc sample := [
-    ["func_def", "fact", ["n"], [
-        ["if", ["lt", ["ident", "n", 1], ["number", 2, 1], 1], [
-            ["return", ["number", 1, 1], 1]
-        ], [
-            ["return", ["mul", ["ident", "n", 1], ["func_call", ["ident", "fact", 1], [["sub", ["ident", "n", 1], ["number", 1, 1], 1]], 1], 1], 1]
-        ], 1]
-    ], 1],
-    ["decl", "result", ["func_call", ["ident", "fact", 1], [["number", 5, 1]], 1], 1],
-    ["emit", ["ident", "result", 1], 1]
-]
+# Parse and execute a sample program using the parser module
+import "./modules/ast_parser.omg" as parser
 
+# Sample program source: computes factorial of 5
+alloc lines := [
+    "proc fact(n) {",
+    "    if n < 1 {",
+    "        return 1",
+    "    } else {",
+    "        return n * fact(n - 1)",
+    "    }",
+    "}",
+    "alloc result := fact(5)",
+    "emit result",
+]
+alloc source := ""
+alloc i := 0
+loop i < length(lines) {
+    source := source + lines[i] + "\n"
+    i := i + 1
+}
+
+alloc ast := parser.parse(source)
 alloc env := [["length", ["builtin", "length"]]]
 global_env := env
-alloc _ := execute(sample, env, true)
+alloc _ := execute(ast, env, true)
+
