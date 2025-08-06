@@ -1,3 +1,6 @@
+"""
+Tests for the 'or' conditionals in OMG Language
+"""
 import os
 import sys
 
@@ -8,7 +11,11 @@ from omglang.interpreter import Interpreter
 
 sys.path.append(os.path.dirname(os.path.dirname(__file__)))
 
+
 def parse_source(source: str):
+    """
+    Parse the source code and return the AST.
+    """
     tokens, token_map = tokenize(source)
     eof_line = tokens[-1].line if tokens else 1
     tokens.append(Token('EOF', None, eof_line))
@@ -17,6 +24,9 @@ def parse_source(source: str):
 
 
 def test_if_or_ast_and_runtime(capsys):
+    """
+    Test that the AST for an `if` statement with an `or` condition is correct.
+    """
     source = (
         "alloc a := false\n"
         "alloc b := true\n"
@@ -33,6 +43,9 @@ def test_if_or_ast_and_runtime(capsys):
 
 
 def test_elif_or_runtime(capsys):
+    """
+    Test that an `elif` with an `or` condition executes correctly.
+    """
     source = (
         "alloc a := false\n"
         "alloc b := false\n"
@@ -47,6 +60,9 @@ def test_elif_or_runtime(capsys):
 
 
 def test_comparison_or_precedence(capsys):
+    """
+    Test that comparisons with `or` have the correct precedence.
+    """
     source = (
         "alloc a := 1\n"
         "alloc b := 2\n"
@@ -64,6 +80,9 @@ def test_comparison_or_precedence(capsys):
 
 
 def test_or_and_precedence(capsys):
+    """
+    Test that `or` has lower precedence than `and`.
+    """
     source = (
         "alloc a := false\n"
         "alloc b := true\n"
@@ -81,6 +100,9 @@ def test_or_and_precedence(capsys):
 
 
 def test_or_short_circuits(capsys):
+    """
+    Test that `or` short-circuits evaluation.
+    """
     source = (
         "proc rhs() {\n"
         "    emit \"rhs\"\n"

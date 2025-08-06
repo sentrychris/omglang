@@ -1,3 +1,6 @@
+"""
+Tests for loops, breaks, return statements, and facts in OMG Language.
+"""
 import os
 import sys
 import pytest
@@ -8,7 +11,11 @@ from omglang.interpreter import Interpreter
 
 sys.path.append(os.path.dirname(os.path.dirname(__file__)))
 
+
 def parse_source(source: str):
+    """
+    Parse the source code and return the AST.
+    """
     tokens, token_map = tokenize(source)
     eof_line = tokens[-1].line if tokens else 1
     tokens.append(Token('EOF', None, eof_line))
@@ -17,6 +24,9 @@ def parse_source(source: str):
 
 
 def test_loop_and_break_runtime(capsys):
+    """
+    Test that loops with breaks execute correctly in OMG Language.
+    """
     source = (
         "alloc i := 0\n"
         "loop i < 5 {\n"
@@ -35,6 +45,9 @@ def test_loop_and_break_runtime(capsys):
 
 
 def test_return_and_facts(capsys):
+    """
+    Test that return statements and facts work correctly in OMG Language.
+    """
     source = (
         "proc inc(x) { return x + 1 }\n"
         "alloc v := inc(5)\n"
@@ -55,9 +68,11 @@ def test_return_and_facts(capsys):
 
 
 def test_facts_failure():
+    """
+    Test that a fact that fails raises an AssertionError.
+    """
     source = "facts 1 == 0\n"
     ast = parse_source(source)
     interpreter = Interpreter('<test>')
     with pytest.raises(AssertionError):
         interpreter.execute(ast)
-

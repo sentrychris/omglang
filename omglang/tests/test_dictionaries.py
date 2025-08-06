@@ -1,4 +1,6 @@
-
+"""
+Tests for dictionary literals and usage in OMG Language.
+"""
 import os
 import sys
 
@@ -8,7 +10,11 @@ from omglang.interpreter import Interpreter
 
 sys.path.append(os.path.dirname(os.path.dirname(__file__)))
 
+
 def parse_source(source: str):
+    """
+    Parse the source code and return the AST.
+    """
     tokens, token_map = tokenize(source)
     eof_line = tokens[-1].line if tokens else 1
     tokens.append(Token('EOF', None, eof_line))
@@ -17,6 +23,8 @@ def parse_source(source: str):
 
 
 def test_dict_literal_and_usage():
+    """
+    Test that dictionary literals can be created and used correctly."""
     source = (
         "alloc person := {\n"
         "    name: \"Chris\",\n"
