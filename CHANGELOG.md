@@ -8,6 +8,7 @@ Ordered from most recent at the top to oldest at the bottom.
 - Bundled tokenizer, parser, and interpreter into `omg_interpreter.omg` exposing `run` and `run_file`.
 - File I/O primitive `read_file` and command-line argument forwarding in the Python runtime.
 - Example drivers for string execution, file execution, and self-hosting meta-interpretation.
+- Expanded OMG self-hosting interpreter with boolean logic, comparison, slice/index syntax and `ascii` builtin for meta-circular runs.
 
 ### Changed
 - CLI now accepts additional arguments passed to scripts as `args`.
