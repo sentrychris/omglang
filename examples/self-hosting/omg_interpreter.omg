@@ -6,6 +6,8 @@
 # Tokenizer
 # --------------------
 
+alloc tok_len := 0
+
 proc is_digit(ch) {
     return ch >= "0" and ch <= "9"
 }
@@ -39,13 +41,21 @@ proc read_ident(src, i) {
 }
 
 proc tokenize(src) {
-    alloc tokens := []
+    alloc tokens := {}
+    alloc n := 0
     alloc i := 0
     alloc line := 1
     alloc c := ""
     alloc res := []
     alloc word := ""
     alloc s := ""
+    # Skip header if present
+    if length(src) >= 6 and src[0] == ";" and src[1] == ";" and src[2] == ";" and src[3] == "o" and src[4] == "m" and src[5] == "g" {
+        i := 6
+        if i < length(src) and src[i] == "\n" {
+            i := i + 1
+        }
+    }
     loop i < length(src) {
         c := src[i]
         if c == " " or c == "\t" {
@@ -53,30 +63,42 @@ proc tokenize(src) {
         } elif c == "\n" {
             line := line + 1
             i := i + 1
+        } elif c == "#" {
+            loop i < length(src) and src[i] != "\n" {
+                i := i + 1
+            }
         } elif c == ":" and i + 1 < length(src) and src[i + 1] == "=" {
-            tokens := tokens + [["symbol", ":=", line]]
+            tokens[n] := ["symbol", ":=", line]
+            n := n + 1
             i := i + 2
         } elif c == ":" {
-            tokens := tokens + [["symbol", ":", line]]
+            tokens[n] := ["symbol", ":", line]
+            n := n + 1
             i := i + 1
         } elif c == "=" and i + 1 < length(src) and src[i + 1] == "=" {
-            tokens := tokens + [["symbol", "==", line]]
+            tokens[n] := ["symbol", "==", line]
+            n := n + 1
             i := i + 2
         } elif c == "!" and i + 1 < length(src) and src[i + 1] == "=" {
-            tokens := tokens + [["symbol", "!=", line]]
+            tokens[n] := ["symbol", "!=", line]
+            n := n + 1
             i := i + 2
         } elif c == "<" and i + 1 < length(src) and src[i + 1] == "=" {
-            tokens := tokens + [["symbol", "<=", line]]
+            tokens[n] := ["symbol", "<=", line]
+            n := n + 1
             i := i + 2
         } elif c == ">" and i + 1 < length(src) and src[i + 1] == "=" {
-            tokens := tokens + [["symbol", ">=", line]]
+            tokens[n] := ["symbol", ">=", line]
+            n := n + 1
             i := i + 2
         } elif c == "(" or c == ")" or c == "{" or c == "}" or c == "," or c == "+" or c == "-" or c == "*" or c == "/" or c == "<" or c == ">" or c == "[" or c == "]" {
-            tokens := tokens + [["symbol", c, line]]
+            tokens[n] := ["symbol", c, line]
+            n := n + 1
             i := i + 1
         } elif is_digit(c) {
             res := read_number(src, i)
-            tokens := tokens + [["number", res[0], line]]
+            tokens[n] := ["number", res[0], line]
+            n := n + 1
             i := res[1]
         } elif c == "\"" {
             i := i + 1
@@ -91,22 +113,28 @@ proc tokenize(src) {
                 }
             }
             i := i + 1
-            tokens := tokens + [["string", s, line]]
+            tokens[n] := ["string", s, line]
+            n := n + 1
         } else {
             res := read_ident(src, i)
             word := res[0]
             i := res[1]
             if word == "alloc" or word == "emit" or word == "proc" or word == "return" or word == "if" or word == "else" or word == "loop" or word == "break" or word == "and" or word == "or" {
-                tokens := tokens + [["kw", word, line]]
+                tokens[n] := ["kw", word, line]
+                n := n + 1
             } elif word == "true" {
-                tokens := tokens + [["bool", true, line]]
+                tokens[n] := ["bool", true, line]
+                n := n + 1
             } elif word == "false" {
-                tokens := tokens + [["bool", false, line]]
+                tokens[n] := ["bool", false, line]
+                n := n + 1
             } else {
-                tokens := tokens + [["ident", word, line]]
+                tokens[n] := ["ident", word, line]
+                n := n + 1
             }
         }
     }
+    tok_len := n
     return tokens
 }
 
@@ -123,7 +151,7 @@ proc parse(source) {
 proc parse_program(tokens, i) {
     alloc stmts := []
     alloc res := [false, i]
-    loop res[1] < length(tokens) {
+    loop res[1] < tok_len {
         res := parse_statement(tokens, res[1])
         stmts := stmts + [res[0]]
     }
@@ -153,7 +181,7 @@ proc parse_statement(tokens, i) {
         alloc res_then := parse_block(tokens, res_cond[1])
         alloc else_block := []
         alloc j := res_then[1]
-        if j < length(tokens) and tokens[j][0] == "kw" and tokens[j][1] == "else" {
+        if j < tok_len and tokens[j][0] == "kw" and tokens[j][1] == "else" {
             alloc res_else := parse_block(tokens, j + 1)
             else_block := res_else[0]
             j := res_else[1]
@@ -210,7 +238,7 @@ proc parse_or(tokens, i) {
     alloc res := parse_and(tokens, i)
     alloc left := res[0]
     alloc j := res[1]
-    loop j < length(tokens) and tokens[j][0] == "kw" and tokens[j][1] == "or" {
+    loop j < tok_len and tokens[j][0] == "kw" and tokens[j][1] == "or" {
         alloc right_res := parse_and(tokens, j + 1)
         left := ["or", left, right_res[0], tokens[j][2]]
         j := right_res[1]
@@ -222,7 +250,7 @@ proc parse_and(tokens, i) {
     alloc res := parse_comparison(tokens, i)
     alloc left := res[0]
     alloc j := res[1]
-    loop j < length(tokens) and tokens[j][0] == "kw" and tokens[j][1] == "and" {
+    loop j < tok_len and tokens[j][0] == "kw" and tokens[j][1] == "and" {
         alloc right_res := parse_comparison(tokens, j + 1)
         left := ["and", left, right_res[0], tokens[j][2]]
         j := right_res[1]
@@ -234,7 +262,7 @@ proc parse_comparison(tokens, i) {
     alloc res := parse_add_sub(tokens, i)
     alloc left := res[0]
     alloc j := res[1]
-    loop j < length(tokens) and tokens[j][0] == "symbol" and (tokens[j][1] == "<" or tokens[j][1] == "==" or tokens[j][1] == ">" or tokens[j][1] == "<=" or tokens[j][1] == ">=" or tokens[j][1] == "!=") {
+    loop j < tok_len and tokens[j][0] == "symbol" and (tokens[j][1] == "<" or tokens[j][1] == "==" or tokens[j][1] == ">" or tokens[j][1] == "<=" or tokens[j][1] == ">=" or tokens[j][1] == "!=") {
         alloc op := tokens[j]
         alloc right_res := parse_add_sub(tokens, j + 1)
         if op[1] == "<" {
@@ -259,7 +287,7 @@ proc parse_add_sub(tokens, i) {
     alloc res := parse_term(tokens, i)
     alloc left := res[0]
     alloc j := res[1]
-    loop j < length(tokens) and tokens[j][0] == "symbol" and (tokens[j][1] == "+" or tokens[j][1] == "-") {
+    loop j < tok_len and tokens[j][0] == "symbol" and (tokens[j][1] == "+" or tokens[j][1] == "-") {
         alloc op := tokens[j]
         alloc right_res := parse_term(tokens, j + 1)
         if op[1] == "+" {
@@ -276,7 +304,7 @@ proc parse_term(tokens, i) {
     alloc res := parse_factor(tokens, i)
     alloc left := res[0]
     alloc j := res[1]
-    loop j < length(tokens) and tokens[j][0] == "symbol" and (tokens[j][1] == "*" or tokens[j][1] == "/") {
+    loop j < tok_len and tokens[j][0] == "symbol" and (tokens[j][1] == "*" or tokens[j][1] == "/") {
         alloc op := tokens[j]
         alloc right_res := parse_factor(tokens, j + 1)
         if op[1] == "*" {
@@ -376,7 +404,7 @@ proc parse_factor(tokens, i) {
         j := i + 1
     }
 
-    loop j < length(tokens) and tokens[j][0] == "symbol" and tokens[j][1] == "[" {
+    loop j < tok_len and tokens[j][0] == "symbol" and tokens[j][1] == "[" {
         alloc inner := parse_expression(tokens, j + 1)
         alloc k := inner[1]
         if tokens[k][0] == "symbol" and tokens[k][1] == ":" {
@@ -676,32 +704,13 @@ proc run_file_with_args(path, file_args) {
     alloc saved := args
     args := file_args
     alloc source := read_file(path)
-    if length(source) >= 6 and source[0:6] == ";;;omg" {
-        alloc j := 0
-        loop j < length(source) and source[j] != "\n" {
+    if length(source) >= 6 and source[0] == ";" and source[1] == ";" and source[2] == ";" and source[3] == "o" and source[4] == "m" and source[5] == "g" {
+        alloc j := 6
+        if j < length(source) and source[j] == "\n" {
             j := j + 1
         }
-        source := source[j + 1:]
+        source := source[j:]
     }
-    alloc cleaned := ""
-    alloc i := 0
-    alloc c := ""
-    loop i < length(source) {
-        c := source[i]
-        if c == "#" {
-            loop i < length(source) and source[i] != "\n" {
-                i := i + 1
-            }
-            if i < length(source) {
-                cleaned := cleaned + "\n"
-                i := i + 1
-            }
-        } else {
-            cleaned := cleaned + c
-            i := i + 1
-        }
-    }
-    source := cleaned
     alloc res := run(source)
     args := saved
     return res
