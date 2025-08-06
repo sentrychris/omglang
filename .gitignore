@@ -12,8 +12,12 @@ __pycache__/
 
 # Output and structure tools
 project_structure.txt
-scratchpad.omg
+package_resources/upx*
+output/
 
 # OS junk
 .DS_Store
 Thumbs.db
+
+# Misc
+scratchpad.omg
