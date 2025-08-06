@@ -11,7 +11,7 @@ __pycache__/
 .venv/
 
 # Output and structure tools
-project_structure.txt
+project_tree.txt
 package_resources/upx*
 output/
 

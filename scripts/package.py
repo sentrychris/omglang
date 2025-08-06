@@ -18,7 +18,7 @@ Usage:
     python build.py --third-party-licenses
 
     # To generate the project directory tree (no build):
-    python build.py --generate-project-tree
+    python build.py --project-tree
 
 Arguments:
     --build TYPE                 Specify the build type: "gui" or "headless"
@@ -27,7 +27,7 @@ Arguments:
     --upx-clean                  Delete the UPX directory in package_resources after building
     --insert-docstrings          Insert docstrings into .py source files (no build)
     --third-party-licenses       Generate third-party licenses file (no build)
-    --generate-project-tree      Generate project directory tree (no build)
+    --project-tree               Generate project directory tree (no build)
 
 The script handles platform differences for UPX download URLs and extraction.
 """
@@ -42,7 +42,7 @@ import argparse
 
 from scripts.generate_docstring_headers import insert_docstrings
 from scripts.generate_third_party_licenses_file import generate_third_party_licenses
-from scripts.generate_project_structure import write_tree_to_file
+from scripts.generate_project_tree import write_tree_to_file
 
 DEFAULT_UPX_VER="5.0.2"
 
@@ -244,7 +244,7 @@ def cli():
     )
 
     parser.add_argument(
-        "--generate-project-tree",
+        "--project-tree",
         action="store_true",
         help="Generate project directory tree"
     )
@@ -258,7 +258,7 @@ def cli():
         upx_ver=args.upx,
         insert_docstrings_only=args.insert_docstrings,
         third_party_licenses_only=args.third_party_licenses,
-        generate_project_tree_only=args.generate_project_tree
+        generate_project_tree_only=args.project_tree
     )
 
 

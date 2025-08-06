@@ -11,14 +11,12 @@ def main():
     subprocess.run([
         "flake8",
         "./omglang",
-        "./omg.py",
-        "--exclude=omglang/tests"
+        "./omg.py"
     ], check=True)
 
     print("Running pylint...")
     subprocess.run([
         "pylint",
         "./omglang",
-        "./omg.py",
-        "--ignore=tests"
+        "./omg.py"
     ], check=True)
