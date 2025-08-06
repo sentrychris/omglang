@@ -1,8 +1,8 @@
 """
 Expression parsing utilities for OMGlang.
 
-These functions operate on a `core.parser.parser.Parser` instance and
-implement the recursive descent logic for expressions, maintaining
+These functions operate on an `omglang.parser.parser.Parser` instance
+and implement the recursive descent logic for expressions, maintaining
 operator precedence and associativity.
 """
 

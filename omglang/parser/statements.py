@@ -1,7 +1,7 @@
 """
 Statement parsing utilities for OMGlang.
 
-These functions operate on a `core.parser.parser.Parser` instance and
+These functions operate on a `omglang.parser.parser.Parser` instance and
 handle the various statement forms in the language such as blocks,
 conditionals, loops, and function definitions.
 """

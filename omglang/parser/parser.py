@@ -3,7 +3,7 @@ Main parser entry point for OMGlang.
 
 This module defines the `Parser` class, which coordinates the recursive
 descent parsing process. The actual parsing routines are split across
-`core.parser.expressions` and `core.parser.statements`.
+`omglang.parser.expressions` and `omglang.parser.statements`.
 """
 
 from typing import TYPE_CHECKING

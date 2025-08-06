@@ -4,33 +4,6 @@ This document outlines the development structure, source layout, workflow conven
 
 ---
 
-## Source Layout
-
-The OMG codebase is structured as follows:
-
-```
-core/
-├── lexer.py           # Tokenization logic
-├── parser/
-│   ├── parser.py      # Main Parser class
-│   ├── expressions.py # Expression parsing routines
-│   └── statements.py  # Statement parsing routines
-├── interpreter.py     # Tree-walk interpreter
-├── operations.py      # Operator enums
-├── exceptions.py      # Custom runtime exceptions
-│
-examples/
-├── hello.omg          # Basic usage example
-├── testsuite.omg      # Integration-level test cases
-omg.py                 # Entry point
-spec/
-├── OMG_SPEC.md        # Canonical language specification
-├── AGENTS.md          # Agent behavior and usage policy
-├── DEVELOPMENT.md     # This file
-```
-
----
-
 ## Development Workflow
 
 ### 1. Branch Strategy
