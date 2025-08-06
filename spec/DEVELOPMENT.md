@@ -2,15 +2,13 @@
 
 This document outlines the development structure, source layout, workflow conventions, and future plans for the OMG programming language project. It serves as a reference for contributors and tools (such as Codex, AGENTS.md) to ensure consistent structure, clear organization, and forward-compatible decisions.
 
----
-
 ## Development Workflow
 
 ### 1. Branch Strategy
 
 * Use the `main` branch for stable, documented features.
+* Use the `development` branch for staging work in progress.
 * Use feature branches (`feature/xyz`) for experimental syntax or runtime behavior.
-* Use a `dev` branch for staging work in progress.
 
 ### 2. Testing
 
@@ -23,11 +21,9 @@ This document outlines the development structure, source layout, workflow conven
 New features must:
 
 * Be consistent with the educational scope of OMG
-* Be documented in `OMG_SPEC.md`
+* Be documented in `spec/OMG_SPEC.md`
 * Include at least one usage example
 * Avoid introducing unnecessary complexity
-
----
 
 ## Style Conventions
 
@@ -37,16 +33,6 @@ New features must:
 * Use descriptive names over abbreviations
 * Keep modules small and cohesive
 
----
-
-## Feature Status
-
-### Implemented
-
-* Import/Export System – Scripts can import named procedures or constants from other `.omg` files using `import "<file>" as <alias>`. Only top-level `proc` and `alloc` declarations are exported, and imported namespaces are read-only.
-
----
-
 ## Contributing
 
 Contributors are expected to:
@@ -55,8 +41,6 @@ Contributors are expected to:
 * Use `OMG_SPEC.md` as the source of truth
 * Communicate clearly when proposing feature changes
 * Maintain simplicity and clarity in all code
-
----
 
 ## Final Note
 
