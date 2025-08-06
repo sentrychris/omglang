@@ -60,6 +60,8 @@ Statement parsing functions are defined in `statements.py`. The main dispatcher 
 
 * `emit x` → `('emit', expr_node, line)`
 
+* `import "utils.omg" as utils` → `('import', "utils.omg", "utils", line)`
+
 * `facts cond` → `('facts', expr_node, line)`
 
 * `loop cond { ... }` → `('loop', cond_node, block_node, line)`
