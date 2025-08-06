@@ -66,13 +66,11 @@ New features must:
 
 ---
 
-## Planned Features
+## Feature Status
 
-These features are under design and may be introduced incrementally:
+### Implemented
 
-### ✅ Import/Export System
-
-Scripts will be able to import named procedures or constants from other `.omg` files, supporting modularization and reuse. Initially, this may be limited to top-level `proc` and `alloc` declarations.
+* Import/Export System – Scripts can import named procedures or constants from other `.omg` files using `import "<file>" as <alias>`. Only top-level `proc` and `alloc` declarations are exported, and imported namespaces are read-only.
 
 ---
 
