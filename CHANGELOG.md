@@ -2,6 +2,15 @@
 
 Ordered from most recent at the top to oldest at the bottom.
 
+## 2025-08-10
+
+### Added
+- Comprehensive Python bytecode compiler that lowers any OMG program to stack-based instructions.
+- Expanded Rust VM with booleans, lists, control flow, and function calls to execute compiled bytecode.
+
+### Changed
+- Replaced minimal OMG bytecode example with full compiler module and richer native runtime.
+
 ## 2025-08-09
 
 ### Added
