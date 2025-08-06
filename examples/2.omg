@@ -1,60 +1,15 @@
 ;;;omg
 
-# Recursive factorial function with debugging output
-proc factorial(n) {
-    if n <= 1 {
-        return 1
-    } else {
-        return n * factorial(n - 1)
-    }
-}
-
-# Greeting function with conditional logic
-proc greeting(name, excited) {
-    if excited == 1 {
-        return "Hey " + name + "! You're awesome!"
-    } else {
-        return "Hello " + name
-    }
-}
+# Import modules for utility functions and math operations
+import "./modules/math.omg" as math
+import "./modules/utils.omg" as utils
 
 # Compose full message combining factorial and greeting
-proc compose_message(name, num) {
-    alloc fact := factorial(num)
-    alloc excited := 0
-
-    if num > 5 {
-        excited := 1
-    }
-
-    return greeting(name, excited) + ", your factorial of " + num + " is " + fact
+proc message(name, num) {
+    alloc factorial := math.factorial(num)
+    alloc greeting := utils.greeting(name)
+    return greeting + ", the factorial of " + num + " is " + factorial
 }
 
-# Variables
-alloc user := "Chris"
-alloc number := 6
-
-# Output composed message
-alloc message := compose_message(user, number)
-emit message
-
-# Loop counting down with conditional inside
-alloc countdown := number
-loop countdown > 0 {
-    if countdown % 2 == 0 {
-        emit countdown + " is even"
-    } else {
-        emit countdown + " is odd"
-    }
-    countdown := countdown - 1
-}
-
-# Use string concatenation, arithmetic, and facts assertion
-alloc sum := 0
-alloc i := 1
-loop i <= 10 {
-    sum := sum + i
-    i := i + 1
-}
-
-emit "Sum of 1 to 10 is " + sum
+# Output
+emit message("Chris", 5)

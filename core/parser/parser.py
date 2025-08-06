@@ -161,6 +161,12 @@ class Parser:
         """
         return _stmt.parse_emit(self)
 
+    def parse_import(self) -> tuple:
+        """
+        Parse an import statement.
+        """
+        return _stmt.parse_import(self)
+
     def parse_if(self) -> tuple:
         """
         Parse an 'if' conditional statement.
