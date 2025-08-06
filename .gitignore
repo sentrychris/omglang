@@ -1,6 +1,9 @@
 __pycache__
 build
 dist
+!ext/vscode-server/vscode-extension/dist/
+!ext/vscode-server/vscode-extension/dist/extension.js
 *.spec
 *.ps1
 scratchpad.omg
+node_modules

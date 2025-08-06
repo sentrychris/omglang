@@ -1,0 +1,34 @@
+{
+  "name": "omg-language-support",
+  "displayName": "OMG Language Support",
+  "version": "0.0.1",
+  "publisher": "omg",
+  "engines": {
+    "vscode": "^1.82.0"
+  },
+  "activationEvents": [
+    "onLanguage:omg"
+  ],
+  "main": "./dist/extension.js",
+  "contributes": {
+    "languages": [
+      {
+        "id": "omg",
+        "aliases": ["OMG", "omg"],
+        "extensions": [".omg"]
+      }
+    ]
+  },
+  "scripts": {
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./"
+  },
+  "dependencies": {
+    "vscode-languageclient": "^9.0.1"
+  },
+  "devDependencies": {
+    "typescript": "^5.0.0",
+    "@types/node": "^18.0.0",
+    "@types/vscode": "^1.82.0"
+  }
+}
