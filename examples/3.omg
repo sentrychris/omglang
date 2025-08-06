@@ -1,59 +1,22 @@
 ;;;omg
 
-alloc a := true
-alloc b := false
+import "./modules/math.omg" as math
 
-emit a   # should print: true
-emit b   # should print: false
+# Loop over numbers and rate them, including Fibonacci calculation
+alloc idx := 10
+alloc max := 20
+alloc fnum := 2
 
-if a {
-    emit "a is true"
-} elif b {
-    emit "b is true"
-} else {
-    emit "neither is true"
+loop idx <= max {
+    emit "Classified number " + idx + " " + math.classify_number(idx)
+    emit "Fibonacci sequence[" + fnum + "] = " + math.fibonacci(fnum)
+    idx := idx + 1
+    fnum := fnum + 2
 }
 
-alloc xs := [
-    1,
-    2,
-    3
-]
-
-alloc sxs := "sliced xs (Start: inc. End: exc.): " + xs[1:2]
-
-alloc ys := [
-    true,
-    false,
-    a,
-    b
-]
-
-alloc empty := []
-
-emit xs          # should print: [1, 2, 3]
-emit sxs         # should print [2]
-emit ys          # should print: [true, false, true, false]
-emit empty       # should print: []
-
-# lists should be truthy if non-empty
-if xs {
-    emit "xs is non-empty"
-} else {
-    emit "xs is empty"
-}
-
-if empty {
-    emit "empty list is non-empty"
-} else {
-    emit "empty list is empty"
-}
-
-# a is true
-facts a
-
-# b is false
-facts b == false
-
-# should raise assertion error
-facts a == false
+# Assert primality of 97 for validation
+facts math.is_prime(97)
+emit "97 is prime"
+# Will throw an AssertionFailure as expected
+emit "96 is not prime"
+facts math.is_prime(96)
