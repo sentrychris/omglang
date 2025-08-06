@@ -27,8 +27,8 @@ jobs:
         python -m pip install -e .[dev]
     - name: Lint with flake8 and pylint
       run: |
-        flake8 ./omglang ./omg.py --exclude=omglang/tests
-        pylint ./omglang ./omg.py --ignore=tests
+        flake8 ./omglang ./omg.py
+        pylint ./omglang ./omg.py
     - name: Test with pytest
       run: |
         pytest

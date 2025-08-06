@@ -11,9 +11,13 @@ __pycache__/
 .venv/
 
 # Output and structure tools
-project_structure.txt
-scratchpad.omg
+project_tree.txt
+package_resources/upx*
+output/
 
 # OS junk
 .DS_Store
 Thumbs.db
+
+# Misc
+scratchpad.omg

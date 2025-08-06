@@ -1,3 +1,6 @@
+"""
+Tests for module imports in OMG Language
+"""
 import os
 import sys
 from pathlib import Path
@@ -10,7 +13,11 @@ from omglang.interpreter import Interpreter
 
 sys.path.append(os.path.dirname(os.path.dirname(__file__)))
 
+
 def run_file(path: Path) -> Interpreter:
+    """
+    Run a file and return the interpreter instance after execution.
+    """
     code = path.read_text()
     interpreter = Interpreter(str(path))
     interpreter.check_header(code)
@@ -22,6 +29,9 @@ def run_file(path: Path) -> Interpreter:
 
 
 def test_basic_import(tmp_path: Path):
+    """
+    Test that a basic import works correctly.
+    """
     utils_source = (
         ";;;omg\n"
         "alloc MAGIC := 40\n"
@@ -44,6 +54,9 @@ def test_basic_import(tmp_path: Path):
 
 
 def test_import_read_only(tmp_path: Path):
+    """
+    Test that imported modules are read-only and cannot be modified.
+    """
     mod_source = ";;;omg\nalloc X := 1\n"
     mod_file = tmp_path / "mod.omg"
     mod_file.write_text(mod_source)
@@ -61,6 +74,9 @@ def test_import_read_only(tmp_path: Path):
 
 
 def test_circular_import(tmp_path: Path):
+    """
+    Test that circular imports raise a RuntimeError.
+    """
     a_file = tmp_path / "a.omg"
     b_file = tmp_path / "b.omg"
 
@@ -80,7 +96,9 @@ def test_circular_import(tmp_path: Path):
 
 
 def test_recursive_import_function(tmp_path: Path):
-    """Functions from imported modules should support recursion and be callable inside other functions."""
+    """
+    Functions from imported modules should support recursion and be callable inside other functions.
+    """
     math_source = (
         ";;;omg\n"
         "proc factorial(n) {\n"
@@ -105,4 +123,3 @@ def test_recursive_import_function(tmp_path: Path):
     main_file.write_text(main_source)
 
     run_file(main_file)
-

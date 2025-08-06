@@ -1,8 +1,33 @@
 # CHANGELOG.md
 
-Ordered from top to bottom.
+Ordered from most recent at the top to oldest at the bottom.
 
-## 2025-08-06
+## [0.1.0] - 2025-08-06
+
+### Added
+- Introduced a full-featured VSCode extension for OMG:
+  - Syntax highlighting via `omg.tmLanguage.json`
+  - Language configuration (brackets, comments, etc.)
+  - Build output via `.vsix` included for local installation
+  - Scaffolded language server entry point at `vscode/server/main.py` for future LSP support
+
+### Changed
+- Restructured project layout for better modularity and maintainability:
+  - All core components moved under `omglang/` (parser, lexer, interpreter, etc.)
+  - Test suite relocated to `omglang/tests/`
+  - OMG examples organized into subfolders: `examples/modules/`, `examples/self-hosting/`, etc.
+  - New `scripts/` folder for build, packaging, and automation utilities
+  - Output artifacts from PyInstaller now live under `output/`
+
+### Build System
+- Switched to using `pyproject.toml` for unified build configuration and packaging metadata.
+  - Using fresh virtualenv for development.
+  - `setup.cfg` retained for backward compatibility and linting options
+
+### Notes
+- Existing CLI and interpreter functionality remains unchanged.
+
+## [0.0.0] - 2025-08-06
 
 ### Added
 
@@ -33,7 +58,7 @@ Ordered from top to bottom.
   * Recursive functions across modules.
 
 
-## 2025-08-05
+## [0.0.0] - 2025-08-05
 
 ### Added
 
@@ -76,7 +101,7 @@ Ordered from top to bottom.
 
   * Declaration, mutation, nested structure, function parameter passing, and `facts` assertions.
 
-## 2025-08-04
+## [0.0.0] - 2025-08-04
 
 ### Added
 - Support for first-class functions and lexical closures

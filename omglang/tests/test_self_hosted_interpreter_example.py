@@ -1,10 +1,15 @@
-import os
+"""
+Test for the self-hosted interpreter example in OMG Language
+"""
 import subprocess
 import sys
 from pathlib import Path
 
+
 def find_project_root(marker: str = "omg.py") -> Path:
-    """Walk up the directory tree to find the project root (contains omg.py)."""
+    """
+    Walk up the directory tree to find the project root (contains omg.py).
+    """
     path = Path(__file__).resolve()
     for parent in path.parents:
         if (parent / marker).exists():
@@ -13,7 +18,9 @@ def find_project_root(marker: str = "omg.py") -> Path:
 
 
 def test_ast_interpreter_parses_source():
-    """Ensure the OMG-based AST interpreter can parse and execute source code."""
+    """
+    Ensure the OMG-based AST interpreter can parse and execute source code.
+    """
     root = find_project_root()
     script = root / 'examples' / 'self-hosting' / 'interpreter.omg'
     omg_runner = root / 'omg.py'
