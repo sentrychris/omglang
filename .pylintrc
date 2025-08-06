@@ -1,5 +1,21 @@
 [MESSAGES CONTROL]
-disable=broad-except,consider-using-with,too-many-arguments,too-many-instance-attributes,too-many-positional-arguments,unnecessary-pass,too-few-public-methods,too-many-locals,too-many-branches,too-many-statements,too-many-return-statements,too-many-public-methods,no-else-return,no-else-raise,duplicate-code,import-outside-toplevel
+disable =
+    broad-except,
+    duplicate-code,
+    import-outside-toplevel,
+    no-else-raise,
+    no-else-return,
+    too-few-public-methods,
+    too-many-arguments,
+    too-many-branches,
+    too-many-instance-attributes,
+    too-many-locals,
+    too-many-positional-arguments,
+    too-many-public-methods,
+    too-many-return-statements,
+    too-many-statements,
+    unbalanced-tuple-unpacking,
+    unnecessary-pass
 
 [FORMAT]
-max-line-length=105
+max-line-length = 105

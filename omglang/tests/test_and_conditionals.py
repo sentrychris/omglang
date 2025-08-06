@@ -1,3 +1,6 @@
+"""
+Tests for `if` statements with `and` conditions in OMG Language.
+"""
 import os
 import sys
 
@@ -8,7 +11,11 @@ from omglang.interpreter import Interpreter
 
 sys.path.append(os.path.dirname(os.path.dirname(__file__)))
 
+
 def parse_source(source: str):
+    """
+    Parse the source code and return the AST.
+    """
     tokens, token_map = tokenize(source)
     eof_line = tokens[-1].line if tokens else 1
     tokens.append(Token('EOF', None, eof_line))
@@ -17,6 +24,9 @@ def parse_source(source: str):
 
 
 def test_if_and_ast_and_runtime(capsys):
+    """
+    Test that the AST for an `if` statement with an `and` condition is correct
+    """
     source = (
         "alloc a := true\n"
         "alloc b := true\n"
@@ -33,6 +43,9 @@ def test_if_and_ast_and_runtime(capsys):
 
 
 def test_elif_and_runtime(capsys):
+    """
+    Test that an `elif` with an `and` condition executes correctly.
+    """
     source = (
         "alloc a := true\n"
         "alloc b := false\n"
@@ -47,6 +60,8 @@ def test_elif_and_runtime(capsys):
 
 
 def test_comparison_and_precedence(capsys):
+    """
+    Test that `and` has lower precedence than comparison operators."""
     source = (
         "alloc a := 1\n"
         "alloc b := 2\n"
@@ -64,6 +79,9 @@ def test_comparison_and_precedence(capsys):
 
 
 def test_and_short_circuits(capsys):
+    """
+    Test that `and` short-circuits and does not evaluate the right-hand side
+    """
     source = (
         "proc rhs() {\n"
         "    emit \"rhs\"\n"
