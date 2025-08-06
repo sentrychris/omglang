@@ -5,3 +5,4 @@ dist
 *.ps1
 scratchpad.omg
 .venv
+*.egg-info/
