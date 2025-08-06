@@ -1,0 +1,11 @@
+[project]
+name = "omglang"
+version = "0.1.0"
+description = "OMG language runtime and tools"
+readme = "README.MD"
+requires-python = ">=3.10"
+dependencies = []
+
+[build-system]
+requires = ["setuptools"]
+build-backend = "setuptools.build_meta"

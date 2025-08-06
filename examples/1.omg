@@ -1,0 +1,64 @@
+;;;omg
+
+# Define a function
+proc greeting(name) {
+    return "Hello " + name
+}
+
+# Call a function and print to stdout
+emit greeting("World")
+
+# Declare some variables
+alloc x := 5
+alloc y := 10
+alloc z := 0
+
+emit "x = " + x
+emit "y = " + y
+
+proc add(a, b) {
+    return a + b
+}
+
+emit "x + y is " + (x + y)
+emit "-5 + 5 is " + (-5 + 5)
+
+# Reassign
+emit "Re-assigning x"
+emit "x was " + x
+x := 10
+emit "x is now " + x
+
+# Lists
+alloc xs := [
+    1,
+    2,
+    3
+]
+
+alloc sxs := "sliced xs (Start: inc. End: exc.): " + xs[1:2]
+
+# Create a loop
+emit "Beginning loop:"
+alloc i := 0
+loop i <= 3 {
+    # comparisons and logical "and"
+    if i > 1 and i < 3 and i == 2 {
+        emit "2 is alright I guess."
+    } elif i == 3 {
+        emit "3 is the magic number."
+    } else {
+        emit i
+    }
+    i := i + 1
+}
+emit "Finished loop."
+
+alloc j := 0
+emit "Beginning another loop and checking if j is 2 or 4:"
+loop j < 5 {
+    if j == 2 or j == 4 {
+        emit "j is " + j
+    }
+    j := j + 1
+}

@@ -1,0 +1,21 @@
+;;;omg
+
+proc double(x) {
+    return x + x
+}
+
+proc apply_twice(f, x) {
+    return f(f(x))
+}
+
+emit apply_twice(double, 3)
+
+proc make_adder(n) {
+    proc inner(x) {
+        return x + n
+    }
+    return inner # returns the inner function
+}
+
+alloc add5 := make_adder(5)
+emit add5(10)

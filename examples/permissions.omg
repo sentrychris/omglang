@@ -1,0 +1,51 @@
+;;;omg
+
+# Permission bitmasks
+alloc READ := 4      # 100
+alloc WRITE := 2     # 010
+alloc EXECUTE := 1   # 001
+
+# Convert a single digit (0–7) to rwx string
+proc to_rwx(bits) {
+    alloc result := ""
+
+    if bits & READ != 0 {
+        result := result + "r"
+    } else {
+        result := result + "-"
+    }
+
+    if bits & WRITE != 0 {
+        result := result + "w"
+    } else {
+        result := result + "-"
+    }
+
+    if bits & EXECUTE != 0 {
+        result := result + "x"
+    } else {
+        result := result + "-"
+    }
+
+    return result
+}
+
+# Convert full numeric mode (e.g. 755) to rwxrwxrwx
+proc permissions(mode) {
+    alloc u := mode / 100
+    alloc g := (mode / 10) % 10
+    alloc o := mode % 10
+
+    return to_rwx(u) + to_rwx(g) + to_rwx(o)
+}
+
+# Try a few examples
+alloc codes := [755, 644, 700, 600, 777]
+alloc i := 0
+
+alloc mode := 0
+loop i < length(codes) {
+    mode := codes[i]
+    emit mode + ": " + permissions(mode)
+    i := i + 1
+}

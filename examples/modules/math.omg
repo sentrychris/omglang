@@ -1,0 +1,74 @@
+;;;omg
+
+proc add(a, b) {
+    return a + b
+}
+
+proc subtract(a, b) {
+    return a - b
+}
+
+proc multiply(a, b) {
+    return a * b
+}
+
+proc divide(a, b) {
+    if b == 0 {
+        return "Error: Division by zero"
+    }
+    return a / b
+}
+
+proc is_prime(n) {
+    if n <= 1 {
+        return 0
+    }
+    alloc i := 2
+    loop i * i <= n {
+        if n % i == 0 {
+            return 0
+        }
+        i := i + 1
+    }
+    return 1
+}
+
+proc factorial(n) {
+    if n <= 1 {
+        return 1
+    } else {
+        return n * factorial(n - 1)
+    }
+}
+
+proc fibonacci(n) {
+    if n <= 1 {
+        return n
+    } else {
+        return fibonacci(n - 1) + fibonacci(n - 2)
+    }
+}
+
+proc digit_sum(n) {
+    alloc sum := 0
+    alloc temp := n
+    loop temp > 0 {
+        sum := sum + (temp % 10)
+        temp := temp / 10
+    }
+    return sum
+}
+
+# Primality, odd/even, and digit sum
+proc classify_number(n) {
+    alloc isprime := is_prime(n)
+    alloc dsum := digit_sum(n)
+
+    if isprime == 1 {
+        return "is prime, sum of digits is " + dsum
+    } elif n % 2 == 0 {
+        return "is even, sum of digits is " + dsum
+    } else {
+        return "is odd, sum of digits is " + dsum
+    }
+}

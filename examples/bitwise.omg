@@ -1,0 +1,67 @@
+;;;omg
+
+# Demonstrate bitwise operations
+
+# Bitwise AND: 6 & 3 = 2
+alloc a := 6 & 3
+
+# Bitwise OR: 6 | 3 = 7
+alloc b := 6 | 3
+
+# Bitwise XOR: 6 ^ 3 = 5
+alloc c := 6 ^ 3
+
+# Bitwise NOT: ~6 = -7
+alloc d := ~6
+
+# Bit shift left: 3 << 2 = 12
+alloc e := 3 << 2
+
+# Bit shift right: 8 >> 1 = 4
+alloc f := 8 >> 1
+
+# Output the results
+emit a  # 2
+emit b  # 7
+emit c  # 5
+emit d  # -7
+emit e  # 12
+emit f  # 4
+
+# Flag bitmasks
+alloc FLAG_1 := 0b0001  # 1
+alloc FLAG_2 := 0b0010  # 2
+alloc FLAG_3 := 0b0100  # 4
+alloc FLAG_4 := 0b1000  # 8
+
+# Start with FLAG_1 set
+alloc flags := FLAG_1
+
+emit "Initial flags: " + flags
+
+# Set FLAG_3
+flags := flags | FLAG_3
+emit "After setting FLAG_3: " + flags
+
+# Check if FLAG_3 is set
+if flags & FLAG_3 != 0 {
+    emit "FLAG_3 is set"
+}
+
+# Check if FLAG_2 is set
+if flags & FLAG_2 != 0 {
+    emit "FLAG_2 is set"
+} else {
+    emit "FLAG_2 is not set"
+}
+
+# Toggle FLAG_1 (should unset it)
+flags := flags ^ FLAG_1
+emit "After toggling FLAG_1: " + flags
+
+# Clear FLAG_3 (using bitwise AND with complement)
+flags := flags & ~FLAG_3
+emit "After clearing FLAG_3: " + flags
+
+# Final flag state
+emit "Final flags: " + flags
