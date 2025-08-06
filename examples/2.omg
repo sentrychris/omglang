@@ -8,6 +8,7 @@ import "./modules/utils.omg" as utils
 proc message(name, num) {
     alloc factorial := math.factorial(num)
     alloc greeting := utils.greeting(name)
+
     return greeting + ", the factorial of " + num + " is " + factorial
 }
 

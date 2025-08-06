@@ -3,6 +3,9 @@
 # AST-based interpreter implemented in OMG
 # Supports core statement and expression types
 
+# Parse and execute a sample program using the parser module
+import "./parser.omg" as parser
+
 alloc global_env := []
 
 proc lookup_var(env, name) {
@@ -234,9 +237,6 @@ proc execute(stmts, env, is_global) {
     }    
     return ["normal", false]
 }
-
-# Parse and execute a sample program using the parser module
-import "./modules/ast_parser.omg" as parser
 
 # Sample program source: computes factorial of 5
 alloc lines := [
