@@ -1,0 +1,59 @@
+;;;omg
+
+# Minimal OMG bytecode compiler for demonstration.
+# Translates `emit "text"` statements into stack VM instructions.
+
+proc starts_with(text, prefix) {
+    alloc plen := length(prefix)
+    return text[0:plen] == prefix
+}
+
+proc compile_line(line) {
+    if length(line) == 0 or starts_with(line, ";;;") {
+        return 0
+    }
+    if starts_with(line, "emit ") {
+        alloc i := 5
+        # Skip leading spaces after emit
+        loop i < length(line) and line[i:i+1] == " " {
+            i := i + 1
+        }
+        # Expect opening quote
+        if line[i:i+1] != "\"" {
+            return 0
+        }
+        i := i + 1
+        alloc text := ""
+        loop i < length(line) and line[i:i+1] != "\"" {
+            text := text + line[i:i+1]
+            i := i + 1
+        }
+        emit "PUSH_CONST " + text
+        emit "EMIT"
+    }
+}
+
+proc run_file_with_args(args) {
+    alloc path := args[0]
+    alloc src := read_file(path)
+    alloc line := ""
+    alloc idx := 0
+    alloc ch := ""
+    loop idx < length(src) {
+        ch := src[idx:idx+1]
+        if ch == "\n" {
+            compile_line(line)
+            line := ""
+        } else {
+            line := line + ch
+        }
+        idx := idx + 1
+    }
+    compile_line(line)
+    emit "HALT"
+}
+
+if length(args) > 0 {
+    run_file_with_args(args)
+}
+

@@ -1,37 +1,56 @@
 use std::env;
-use pyo3::prelude::*;
-use pyo3::types::PyList;
+use std::fs;
 
-/// Native host runtime that forwards execution to the Python-based OMG interpreter
-/// and bootstraps the self-hosted interpreter written in OMG.
-fn main() -> PyResult<()> {
+/// Simple instruction set for the OMG stack VM.
+enum Instr {
+    PushConst(String),
+    Emit,
+    Halt,
+}
+
+/// Parse a textual bytecode file into instructions.
+fn parse_bytecode(src: &str) -> Vec<Instr> {
+    let mut code = Vec::new();
+    for line in src.lines() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        if let Some(rest) = trimmed.strip_prefix("PUSH_CONST ") {
+            code.push(Instr::PushConst(rest.to_string()));
+        } else if trimmed == "EMIT" {
+            code.push(Instr::Emit);
+        } else if trimmed == "HALT" {
+            code.push(Instr::Halt);
+        }
+    }
+    code
+}
+
+/// Execute bytecode on a stack-based virtual machine.
+fn run(code: &[Instr]) {
+    let mut stack: Vec<String> = Vec::new();
+    for instr in code {
+        match instr {
+            Instr::PushConst(v) => stack.push(v.clone()),
+            Instr::Emit => {
+                if let Some(v) = stack.pop() {
+                    println!("{}", v);
+                }
+            }
+            Instr::Halt => break,
+        }
+    }
+}
+
+fn main() {
     let args: Vec<String> = env::args().collect();
-    if args.len() < 3 {
-        eprintln!("Usage: omg_native <interpreter.omg> <script.omg> [args...]");
+    if args.len() < 2 {
+        eprintln!("Usage: omg_native <bytecode_file>");
         std::process::exit(1);
     }
-
-    let interpreter_path = &args[1];
-    let script_path = &args[2];
-    let script_args = &args[3..];
-
-    Python::with_gil(|py| -> PyResult<()> {
-        // Ensure repository root is on sys.path so Python modules can be imported.
-        let sys = PyModule::import(py, "sys")?;
-        sys.getattr("path")?.call_method1("append", ("..",))?;
-
-        // Import the existing Python driver and reuse its run_script helper.
-        let omg = PyModule::import(py, "omg")?;
-        let run_script = omg.getattr("run_script")?;
-
-        // Assemble arguments passed to the self-hosted interpreter.
-        let mut full_args = Vec::new();
-        full_args.push(script_path.clone());
-        full_args.extend(script_args.iter().cloned());
-        let py_args = PyList::new(py, &full_args);
-
-        // Execute the interpreter source file with the provided arguments.
-        run_script.call1((interpreter_path, py_args))?;
-        Ok(())
-    })
+    let src = fs::read_to_string(&args[1]).expect("failed to read bytecode file");
+    let code = parse_bytecode(&src);
+    run(&code);
 }
+
