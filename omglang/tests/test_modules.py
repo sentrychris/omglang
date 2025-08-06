@@ -1,31 +1,11 @@
 """
 Tests for module imports in OMG Language
 """
-import os
-import sys
 from pathlib import Path
 
 import pytest
 
-from omglang.lexer import tokenize
-from omglang.parser import Parser
-from omglang.interpreter import Interpreter
-
-sys.path.append(os.path.dirname(os.path.dirname(__file__)))
-
-
-def run_file(path: Path) -> Interpreter:
-    """
-    Run a file and return the interpreter instance after execution.
-    """
-    code = path.read_text()
-    interpreter = Interpreter(str(path))
-    interpreter.check_header(code)
-    tokens, token_map = tokenize(code)
-    parser = Parser(tokens, token_map, str(path))
-    ast = parser.parse()
-    interpreter.execute(ast)
-    return interpreter
+from omglang.tests.utils import run_file
 
 
 def test_basic_import(tmp_path: Path):
