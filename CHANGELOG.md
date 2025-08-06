@@ -2,6 +2,15 @@
 
 Ordered from most recent at the top to oldest at the bottom.
 
+## 2025-08-08
+
+### Added
+- Initial native Rust host runtime (`/native`) embedding the Python driver to launch the self-hosted OMG interpreter.
+- `.gitignore` entry to exclude Rust build artifacts under `native/target`.
+
+### Changed
+- N/A
+
 ## 2025-08-07
 
 ### Added
