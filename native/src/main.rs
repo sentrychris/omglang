@@ -688,7 +688,6 @@ fn run(code: &[Instr], funcs: &HashMap<String, Function>, program_args: &[String
                     },
                     "read_file" => match args.as_slice() {
                         [Value::Str(path)] => {
-                            println!("read_file path: {}", path);
                             let mut path_buf = PathBuf::from(path.replace("\\", "/"));
                             if path_buf.is_relative() && !path_buf.exists() {
                                 if let Some(Value::Str(cur)) = env
