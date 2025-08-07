@@ -413,11 +413,12 @@ proc parse_factor(tokens, i) {
     alloc node := false
     alloc j := i
     alloc k := 0
+    alloc res := [false, 0]
     if t[0] == "symbol" and t[1] == "-" {
-        alloc res := parse_factor(tokens, i + 1)
+        res := parse_factor(tokens, i + 1)
         return [["unary", "sub", res[0]], res[1]]
     } elif t[0] == "symbol" and t[1] == "~" {
-        alloc res := parse_factor(tokens, i + 1)
+        res := parse_factor(tokens, i + 1)
         return [["bitnot", res[0]], res[1]]
     } elif t[0] == "number" {
         node := ["number", t[1]]
@@ -434,7 +435,7 @@ proc parse_factor(tokens, i) {
     } elif t[0] == "symbol" and t[1] == "[" {
         alloc elems := []
         k := i + 1
-        alloc res := [false, 0]
+        res := [false, 0]
         if tokens[k][0] != "symbol" or tokens[k][1] != "]" {
             loop true {
                 res := parse_expression(tokens, k)
@@ -481,7 +482,7 @@ proc parse_factor(tokens, i) {
         node := ["dict", pairs]
         j := k + 1
     } elif t[0] == "symbol" and t[1] == "(" {
-        alloc res := parse_expression(tokens, i + 1)
+        res := parse_expression(tokens, i + 1)
         node := res[0]
         j := res[1] + 1
     } else {
@@ -491,7 +492,7 @@ proc parse_factor(tokens, i) {
     alloc inner := [false, 0]
     alloc end_res := [false, 0]
     alloc args := []
-    alloc res := [false, 0]
+    res := [false, 0]
     alloc attr := [false, false]
     loop j < tok_len and tokens[j][0] == "symbol" {
         if tokens[j][1] == "(" {

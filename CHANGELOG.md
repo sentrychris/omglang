@@ -16,6 +16,9 @@ Ordered from most recent at the top to oldest at the bottom.
   optional output path to avoid shell re-encoding on Windows.
 
 ### Fixed
+- Reused temporary result variables in the self-hosted interpreter's
+  `parse_factor` routine to avoid "Variable already declared" errors when
+  running example scripts.
 - Refactored self-hosting interpreter example to declare loop variables
   outside loops in both parser and executor, preventing "already declared"
   errors.
