@@ -25,7 +25,7 @@ FUNC env_set 3 env name value 3181
 FUNC copy_env 1 env 3226
 FUNC dirname 1 path 3256
 FUNC join_path 2 base rel 3289
-FUNC call_function 3 func args env 3310
+FUNC call_function 3 func arg_values env 3310
 FUNC import_module 1 path 3442
 FUNC eval_expr 2 expr env 3711
 FUNC execute 3 stmts env is_global 4340
@@ -2905,7 +2905,7 @@ PUSH_INT 0
 BUILD_LIST 2
 STORE end_res
 BUILD_LIST 0
-STORE args
+STORE call_args
 PUSH_BOOL 0
 PUSH_INT 0
 BUILD_LIST 2
@@ -2939,7 +2939,7 @@ PUSH_INT 1
 ADD
 STORE k
 BUILD_LIST 0
-STORE args
+STORE call_args
 LOAD tokens
 LOAD k
 INDEX
@@ -2962,13 +2962,13 @@ LOAD tokens
 LOAD k
 CALL parse_expression
 STORE res
-LOAD args
+LOAD call_args
 LOAD res
 PUSH_INT 0
 INDEX
 BUILD_LIST 1
 ADD
-STORE args
+STORE call_args
 LOAD res
 PUSH_INT 1
 INDEX
@@ -2999,7 +2999,7 @@ JUMP 2924
 JUMP 2965
 PUSH_STR "func_call"
 LOAD node
-LOAD args
+LOAD call_args
 BUILD_LIST 3
 STORE node
 LOAD k
@@ -3385,7 +3385,7 @@ LOAD local
 LOAD params
 LOAD i
 INDEX
-LOAD args
+LOAD arg_values
 LOAD i
 INDEX
 CALL env_set
@@ -3430,7 +3430,7 @@ LOAD name
 PUSH_STR "length"
 EQ
 JUMP_IF_FALSE 3403
-LOAD args
+LOAD arg_values
 PUSH_INT 0
 INDEX
 TCALL length
@@ -3439,7 +3439,7 @@ LOAD name
 PUSH_STR "read_file"
 EQ
 JUMP_IF_FALSE 3412
-LOAD args
+LOAD arg_values
 PUSH_INT 0
 INDEX
 TCALL read_file
@@ -3448,7 +3448,7 @@ LOAD name
 PUSH_STR "ascii"
 EQ
 JUMP_IF_FALSE 3421
-LOAD args
+LOAD arg_values
 PUSH_INT 0
 INDEX
 TCALL ascii
@@ -3457,7 +3457,7 @@ LOAD name
 PUSH_STR "chr"
 EQ
 JUMP_IF_FALSE 3430
-LOAD args
+LOAD arg_values
 PUSH_INT 0
 INDEX
 TCALL chr
@@ -4336,7 +4336,7 @@ PUSH_INT 2
 INDEX
 STORE arg_nodes
 BUILD_LIST 0
-STORE args
+STORE arg_values
 PUSH_INT 0
 STORE i
 LOAD arg_nodes
@@ -4346,7 +4346,7 @@ LOAD i
 LOAD arg_len
 LT
 JUMP_IF_FALSE 4328
-LOAD args
+LOAD arg_values
 LOAD arg_nodes
 LOAD i
 INDEX
@@ -4354,14 +4354,14 @@ LOAD env
 CALL eval_expr
 BUILD_LIST 1
 ADD
-STORE args
+STORE arg_values
 LOAD i
 PUSH_INT 1
 ADD
 STORE i
 JUMP 4310
 LOAD func_val
-LOAD args
+LOAD arg_values
 LOAD env
 TCALL call_function
 JUMP 4339
