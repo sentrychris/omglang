@@ -2,6 +2,7 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::env;
 use std::fs;
+use std::path::PathBuf;
 use std::rc::Rc;
 use serde_json;
 
@@ -673,7 +674,26 @@ fn run(code: &[Instr], funcs: &HashMap<String, Function>, program_args: &[String
                     "read_file" => match args.as_slice() {
                         [Value::Str(path)] => {
                             println!("read_file path: {}", path);
-                            let content = fs::read_to_string(path).expect("failed to read file");
+                            let mut path_buf = PathBuf::from(path.replace("\\", "/"));
+                            if path_buf.is_relative() && !path_buf.exists() {
+                                if let Some(Value::Str(cur)) = env
+                                    .get("current_dir")
+                                    .or_else(|| globals.get("current_dir"))
+                                {
+                                    let base = PathBuf::from(cur.replace("\\", "/"));
+                                    path_buf = base.join(path_buf);
+                                }
+                            }
+                            let content = fs::read_to_string(&path_buf)
+                                .expect("failed to read file");
+                            if let Some(parent) = path_buf.parent() {
+                                let parent_str = parent.to_string_lossy().replace("\\", "/");
+                                if env.contains_key("current_dir") {
+                                    env.insert("current_dir".to_string(), Value::Str(parent_str));
+                                } else {
+                                    globals.insert("current_dir".to_string(), Value::Str(parent_str));
+                                }
+                            }
                             Value::Str(content)
                         }
                         _ => panic!("read_file() expects a file path"),
