@@ -1,0 +1,7 @@
+;;;omg
+
+proc add(a, b) {
+  return a + b
+}
+
+emit add(3, 4)
