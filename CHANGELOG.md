@@ -2,6 +2,14 @@
 
 Ordered from most recent at the top to oldest at the bottom.
 
+## 2025-08-13
+
+### Added
+- Minimal `omg_interpreter_boot.omg` bundling tokenizer, parser, and evaluator without dictionaries for bootstrap.
+
+### Changed
+- Self-hosting driver now uses the low-level interpreter for Stage 3 meta-circular evaluation.
+
 ## 2025-08-12
 
 ### Added
