@@ -502,17 +502,17 @@ proc parse_factor(tokens, i) {
     }
     alloc inner := [false, 0]
     alloc end_res := [false, 0]
-    alloc args := []
+    alloc call_args := []
     res := [false, 0]
     alloc attr := [false, false]
     loop j < tok_len and tokens[j][0] == "symbol" {
         if tokens[j][1] == "(" {
             k := j + 1
-            args := []
+            call_args := []
             if tokens[k][0] != "symbol" or tokens[k][1] != ")" {
                 loop true {
                     res := parse_expression(tokens, k)
-                    args := args + [res[0]]
+                    call_args := call_args + [res[0]]
                     k := res[1]
                     if tokens[k][0] == "symbol" and tokens[k][1] == "," {
                         k := k + 1
@@ -521,7 +521,7 @@ proc parse_factor(tokens, i) {
                     }
                 }
             }
-            node := ["func_call", node, args]
+            node := ["func_call", node, call_args]
             j := k + 1
         } elif tokens[j][1] == "[" {
             inner := parse_expression(tokens, j + 1)
@@ -620,7 +620,7 @@ proc join_path(base, rel) {
     }
     return base + "/" + rel
 }
-proc call_function(func, args, env) {
+proc call_function(func, arg_values, env) {
     if func[0] == "function" {
         alloc params := func[1]
         alloc body := func[2]
@@ -633,7 +633,7 @@ proc call_function(func, args, env) {
         alloc i := 0
         alloc params_len := length(params)
         loop i < params_len {
-            local := env_set(local, params[i], args[i])
+            local := env_set(local, params[i], arg_values[i])
             i := i + 1
         }
         alloc res := []
@@ -645,13 +645,13 @@ proc call_function(func, args, env) {
     } elif func[0] == "builtin" {
         alloc name := func[1]
         if name == "length" {
-            return length(args[0])
+            return length(arg_values[0])
         } elif name == "read_file" {
-            return read_file(args[0])
+            return read_file(arg_values[0])
         } elif name == "ascii" {
-            return ascii(args[0])
+            return ascii(arg_values[0])
         } elif name == "chr" {
-            return chr(args[0])
+            return chr(arg_values[0])
         }
         emit "Unknown builtin: " + name
         return false
@@ -838,14 +838,14 @@ proc eval_expr(expr, env) {
     } elif kind == "func_call" {
         alloc func_val := eval_expr(expr[1], env)
         alloc arg_nodes := expr[2]
-        alloc args := []
+        alloc arg_values := []
         alloc i := 0
         alloc arg_len := length(arg_nodes)
         loop i < arg_len {
-            args := args + [eval_expr(arg_nodes[i], env)]
+            arg_values := arg_values + [eval_expr(arg_nodes[i], env)]
             i := i + 1
         }
-        return call_function(func_val, args, env)
+        return call_function(func_val, arg_values, env)
     } else {
         emit "Unknown expr kind: " + kind
         return false

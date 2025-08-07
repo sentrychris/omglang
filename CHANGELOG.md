@@ -61,6 +61,9 @@ Ordered from most recent at the top to oldest at the bottom.
   running OMG scripts under the native VM.
 - Increased Python recursion limit so the self-hosted interpreter can run
   deeply recursive programs without hitting `RecursionError`.
+- Renamed internal argument variables so the native VM no longer conflates
+  function call arguments with the global `args` list, fixing incorrect
+  output in scripts like `hexrgb.omg`.
 
 ## [0.1.0] - 2025-08-06
 
