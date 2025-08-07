@@ -1,0 +1,658 @@
+FUNC store_var 2 name val 526
+FUNC load_var 1 name 585
+FUNC find_label 1 label 621
+PUSH_STR push
+PUSH_INT 5
+BUILD_LIST 2
+PUSH_STR push
+PUSH_INT 3
+BUILD_LIST 2
+PUSH_STR add
+BUILD_LIST 1
+PUSH_STR store
+PUSH_STR x
+BUILD_LIST 2
+PUSH_STR push
+PUSH_INT 10
+BUILD_LIST 2
+PUSH_STR load
+PUSH_STR x
+BUILD_LIST 2
+PUSH_STR mul
+BUILD_LIST 1
+PUSH_STR emit_top
+BUILD_LIST 1
+PUSH_STR pop
+BUILD_LIST 1
+PUSH_STR label
+PUSH_STR loop
+BUILD_LIST 2
+PUSH_STR load
+PUSH_STR x
+BUILD_LIST 2
+PUSH_STR push
+PUSH_INT 1
+BUILD_LIST 2
+PUSH_STR sub
+BUILD_LIST 1
+PUSH_STR store
+PUSH_STR x
+BUILD_LIST 2
+PUSH_STR load
+PUSH_STR x
+BUILD_LIST 2
+PUSH_STR jmp_if_nonzero
+PUSH_STR loop
+BUILD_LIST 2
+PUSH_STR halt
+BUILD_LIST 1
+BUILD_LIST 17
+STORE program
+PUSH_INT 0
+STORE ptr
+BUILD_LIST 0
+STORE instr
+BUILD_LIST 0
+STORE stack
+BUILD_LIST 0
+STORE memory
+BUILD_LIST 0
+STORE labels
+PUSH_INT 0
+STORE idx
+LOAD idx
+LOAD program
+BUILTIN length 1
+LT
+JUMP_IF_FALSE 89
+LOAD program
+LOAD idx
+INDEX
+STORE instr
+LOAD instr
+PUSH_INT 0
+INDEX
+PUSH_STR label
+EQ
+JUMP_IF_FALSE 84
+LOAD labels
+LOAD instr
+PUSH_INT 1
+INDEX
+LOAD idx
+BUILD_LIST 2
+BUILD_LIST 1
+ADD
+STORE labels
+JUMP 84
+LOAD idx
+PUSH_INT 1
+ADD
+STORE idx
+JUMP 59
+PUSH_BOOL 0
+STORE _
+PUSH_BOOL 0
+STORE lhs
+PUSH_BOOL 0
+STORE rhs
+PUSH_BOOL 0
+STORE op
+PUSH_BOOL 0
+STORE val
+PUSH_BOOL 0
+STORE cond
+LOAD ptr
+LOAD program
+BUILTIN length 1
+LT
+JUMP_IF_FALSE 525
+LOAD program
+LOAD ptr
+INDEX
+STORE instr
+LOAD ptr
+PUSH_INT 1
+ADD
+STORE ptr
+LOAD instr
+PUSH_INT 0
+INDEX
+STORE op
+LOAD op
+PUSH_STR push
+EQ
+JUMP_IF_FALSE 138
+LOAD stack
+LOAD instr
+PUSH_INT 1
+INDEX
+BUILD_LIST 1
+ADD
+STORE stack
+PUSH_STR Pushed to stack: [
+LOAD instr
+ADD
+PUSH_STR ] stack value: 
+ADD
+LOAD stack
+ADD
+EMIT
+JUMP 524
+LOAD op
+PUSH_STR pop
+EQ
+JUMP_IF_FALSE 155
+LOAD stack
+PUSH_INT 0
+LOAD stack
+BUILTIN length 1
+PUSH_INT 1
+SUB
+SLICE
+STORE stack
+PUSH_STR Stack popped, stack value: 
+LOAD stack
+ADD
+EMIT
+JUMP 524
+LOAD op
+PUSH_STR add
+EQ
+JUMP_IF_FALSE 215
+LOAD stack
+LOAD stack
+BUILTIN length 1
+PUSH_INT 1
+SUB
+INDEX
+STORE rhs
+LOAD stack
+PUSH_INT 0
+LOAD stack
+BUILTIN length 1
+PUSH_INT 1
+SUB
+SLICE
+STORE stack
+LOAD stack
+LOAD stack
+BUILTIN length 1
+PUSH_INT 1
+SUB
+INDEX
+STORE lhs
+LOAD stack
+PUSH_INT 0
+LOAD stack
+BUILTIN length 1
+PUSH_INT 1
+SUB
+SLICE
+STORE stack
+LOAD stack
+LOAD lhs
+LOAD rhs
+ADD
+BUILD_LIST 1
+ADD
+STORE stack
+PUSH_STR Added and pushed sum: [
+LOAD instr
+ADD
+PUSH_STR [
+ADD
+LOAD lhs
+ADD
+PUSH_STR , 
+ADD
+LOAD rhs
+ADD
+PUSH_STR ]]
+ADD
+PUSH_STR  Stack value: 
+ADD
+LOAD stack
+ADD
+EMIT
+JUMP 524
+LOAD op
+PUSH_STR sub
+EQ
+JUMP_IF_FALSE 275
+LOAD stack
+LOAD stack
+BUILTIN length 1
+PUSH_INT 1
+SUB
+INDEX
+STORE rhs
+LOAD stack
+PUSH_INT 0
+LOAD stack
+BUILTIN length 1
+PUSH_INT 1
+SUB
+SLICE
+STORE stack
+LOAD stack
+LOAD stack
+BUILTIN length 1
+PUSH_INT 1
+SUB
+INDEX
+STORE lhs
+LOAD stack
+PUSH_INT 0
+LOAD stack
+BUILTIN length 1
+PUSH_INT 1
+SUB
+SLICE
+STORE stack
+LOAD stack
+LOAD lhs
+LOAD rhs
+SUB
+BUILD_LIST 1
+ADD
+STORE stack
+PUSH_STR Subtracted and pushed difference: [
+LOAD instr
+ADD
+PUSH_STR [
+ADD
+LOAD lhs
+ADD
+PUSH_STR , 
+ADD
+LOAD rhs
+ADD
+PUSH_STR ]]
+ADD
+PUSH_STR  Stack value: 
+ADD
+LOAD stack
+ADD
+EMIT
+JUMP 524
+LOAD op
+PUSH_STR mul
+EQ
+JUMP_IF_FALSE 335
+LOAD stack
+LOAD stack
+BUILTIN length 1
+PUSH_INT 1
+SUB
+INDEX
+STORE rhs
+LOAD stack
+PUSH_INT 0
+LOAD stack
+BUILTIN length 1
+PUSH_INT 1
+SUB
+SLICE
+STORE stack
+LOAD stack
+LOAD stack
+BUILTIN length 1
+PUSH_INT 1
+SUB
+INDEX
+STORE lhs
+LOAD stack
+PUSH_INT 0
+LOAD stack
+BUILTIN length 1
+PUSH_INT 1
+SUB
+SLICE
+STORE stack
+LOAD stack
+LOAD lhs
+LOAD rhs
+MUL
+BUILD_LIST 1
+ADD
+STORE stack
+PUSH_STR Multiplied and pushed product: [
+LOAD instr
+ADD
+PUSH_STR [
+ADD
+LOAD lhs
+ADD
+PUSH_STR , 
+ADD
+LOAD rhs
+ADD
+PUSH_STR ]]
+ADD
+PUSH_STR  Stack value: 
+ADD
+LOAD stack
+ADD
+EMIT
+JUMP 524
+LOAD op
+PUSH_STR div
+EQ
+JUMP_IF_FALSE 377
+LOAD stack
+LOAD stack
+BUILTIN length 1
+PUSH_INT 1
+SUB
+INDEX
+STORE rhs
+LOAD stack
+PUSH_INT 0
+LOAD stack
+BUILTIN length 1
+PUSH_INT 1
+SUB
+SLICE
+STORE stack
+LOAD stack
+LOAD stack
+BUILTIN length 1
+PUSH_INT 1
+SUB
+INDEX
+STORE lhs
+LOAD stack
+PUSH_INT 0
+LOAD stack
+BUILTIN length 1
+PUSH_INT 1
+SUB
+SLICE
+STORE stack
+LOAD stack
+LOAD lhs
+LOAD rhs
+DIV
+BUILD_LIST 1
+ADD
+STORE stack
+JUMP 524
+LOAD op
+PUSH_STR store
+EQ
+JUMP_IF_FALSE 419
+LOAD stack
+LOAD stack
+BUILTIN length 1
+PUSH_INT 1
+SUB
+INDEX
+STORE val
+LOAD stack
+PUSH_INT 0
+LOAD stack
+BUILTIN length 1
+PUSH_INT 1
+SUB
+SLICE
+STORE stack
+LOAD instr
+PUSH_INT 1
+INDEX
+LOAD val
+CALL store_var
+STORE memory
+PUSH_STR Stored value: 
+LOAD val
+ADD
+PUSH_STR  in '
+ADD
+LOAD instr
+PUSH_INT 1
+INDEX
+ADD
+PUSH_STR ' in memory,
+ADD
+PUSH_STR  stack value 
+ADD
+LOAD stack
+ADD
+EMIT
+JUMP 524
+LOAD op
+PUSH_STR load
+EQ
+JUMP_IF_FALSE 446
+LOAD stack
+LOAD instr
+PUSH_INT 1
+INDEX
+CALL load_var
+BUILD_LIST 1
+ADD
+STORE stack
+PUSH_STR Loaded 
+LOAD instr
+PUSH_INT 1
+INDEX
+ADD
+PUSH_STR  from memory: [
+ADD
+LOAD instr
+ADD
+PUSH_STR ] stack value: 
+ADD
+LOAD stack
+ADD
+EMIT
+JUMP 524
+LOAD op
+PUSH_STR emit_top
+EQ
+JUMP_IF_FALSE 466
+LOAD stack
+LOAD stack
+BUILTIN length 1
+PUSH_INT 1
+SUB
+INDEX
+STORE val
+PUSH_STR Top of stack: 
+LOAD val
+ADD
+PUSH_STR  stack value: 
+ADD
+LOAD stack
+ADD
+EMIT
+JUMP 524
+LOAD op
+PUSH_STR jmp
+EQ
+JUMP_IF_FALSE 476
+LOAD instr
+PUSH_INT 1
+INDEX
+CALL find_label
+STORE ptr
+JUMP 524
+LOAD op
+PUSH_STR jmp_if_nonzero
+EQ
+JUMP_IF_FALSE 506
+LOAD stack
+LOAD stack
+BUILTIN length 1
+PUSH_INT 1
+SUB
+INDEX
+STORE cond
+LOAD stack
+PUSH_INT 0
+LOAD stack
+BUILTIN length 1
+PUSH_INT 1
+SUB
+SLICE
+STORE stack
+LOAD cond
+PUSH_INT 0
+NE
+JUMP_IF_FALSE 505
+LOAD instr
+PUSH_INT 1
+INDEX
+CALL find_label
+STORE ptr
+JUMP 505
+JUMP 524
+LOAD op
+PUSH_STR label
+EQ
+JUMP_IF_FALSE 513
+PUSH_INT 0
+STORE _
+JUMP 524
+LOAD op
+PUSH_STR halt
+EQ
+JUMP_IF_FALSE 519
+JUMP 525
+JUMP 524
+PUSH_STR Unknown instruction: 
+LOAD op
+ADD
+EMIT
+JUMP 525
+JUMP 101
+HALT
+PUSH_INT 0
+STORE i
+LOAD i
+LOAD memory
+BUILTIN length 1
+LT
+JUMP_IF_FALSE 573
+LOAD memory
+LOAD i
+INDEX
+STORE entry
+LOAD entry
+PUSH_INT 0
+INDEX
+STORE key
+LOAD key
+LOAD name
+EQ
+JUMP_IF_FALSE 568
+LOAD name
+LOAD val
+BUILD_LIST 2
+STORE new_entry
+LOAD memory
+PUSH_INT 0
+LOAD i
+SLICE
+LOAD new_entry
+BUILD_LIST 1
+ADD
+LOAD memory
+LOAD i
+PUSH_INT 1
+ADD
+LOAD memory
+BUILTIN length 1
+SLICE
+ADD
+STORE memory
+LOAD memory
+RET
+JUMP 568
+LOAD i
+PUSH_INT 1
+ADD
+STORE i
+JUMP 528
+LOAD name
+LOAD val
+BUILD_LIST 2
+STORE pair
+LOAD memory
+LOAD pair
+BUILD_LIST 1
+ADD
+STORE memory
+LOAD memory
+RET
+RET
+PUSH_INT 0
+STORE i
+LOAD i
+LOAD memory
+BUILTIN length 1
+LT
+JUMP_IF_FALSE 614
+LOAD memory
+LOAD i
+INDEX
+STORE entry
+LOAD entry
+PUSH_INT 0
+INDEX
+STORE key
+LOAD key
+LOAD name
+EQ
+JUMP_IF_FALSE 609
+LOAD entry
+PUSH_INT 1
+INDEX
+RET
+JUMP 609
+LOAD i
+PUSH_INT 1
+ADD
+STORE i
+JUMP 587
+PUSH_STR Undefined variable: 
+LOAD name
+ADD
+EMIT
+PUSH_INT 0
+RET
+RET
+PUSH_INT 0
+STORE j
+LOAD j
+LOAD labels
+BUILTIN length 1
+LT
+JUMP_IF_FALSE 648
+LOAD labels
+LOAD j
+INDEX
+STORE entry
+LOAD entry
+PUSH_INT 0
+INDEX
+LOAD label
+EQ
+JUMP_IF_FALSE 643
+LOAD entry
+PUSH_INT 1
+INDEX
+RET
+JUMP 643
+LOAD j
+PUSH_INT 1
+ADD
+STORE j
+JUMP 623
+PUSH_STR Missing label: 
+LOAD label
+ADD
+EMIT
+PUSH_INT 0
+RET
+RET
