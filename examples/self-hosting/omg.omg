@@ -215,8 +215,9 @@ proc parse_or(tokens, i) {
     alloc res := parse_and(tokens, i)
     alloc left := res[0]
     alloc j := res[1]
+    alloc right_res := [false, 0]
     loop j < tok_len and tokens[j][0] == "kw" and tokens[j][1] == "or" {
-        alloc right_res := parse_and(tokens, j + 1)
+        right_res := parse_and(tokens, j + 1)
         left := ["or", left, right_res[0]]
         j := right_res[1]
     }
@@ -226,8 +227,9 @@ proc parse_and(tokens, i) {
     alloc res := parse_comparison(tokens, i)
     alloc left := res[0]
     alloc j := res[1]
+    alloc right_res := [false, 0]
     loop j < tok_len and tokens[j][0] == "kw" and tokens[j][1] == "and" {
-        alloc right_res := parse_comparison(tokens, j + 1)
+        right_res := parse_comparison(tokens, j + 1)
         left := ["and", left, right_res[0]]
         j := right_res[1]
     }
@@ -237,9 +239,11 @@ proc parse_comparison(tokens, i) {
     alloc res := parse_add_sub(tokens, i)
     alloc left := res[0]
     alloc j := res[1]
+    alloc op := [false, false]
+    alloc right_res := [false, 0]
     loop j < tok_len and tokens[j][0] == "symbol" and (tokens[j][1] == "<" or tokens[j][1] == "==" or tokens[j][1] == ">" or tokens[j][1] == "<=" or tokens[j][1] == ">=" or tokens[j][1] == "!=") {
-        alloc op := tokens[j]
-        alloc right_res := parse_add_sub(tokens, j + 1)
+        op := tokens[j]
+        right_res := parse_add_sub(tokens, j + 1)
         if op[1] == "<" {
             left := ["lt", left, right_res[0]]
         } elif op[1] == ">" {
@@ -261,9 +265,11 @@ proc parse_add_sub(tokens, i) {
     alloc res := parse_term(tokens, i)
     alloc left := res[0]
     alloc j := res[1]
+    alloc op := [false, false]
+    alloc right_res := [false, 0]
     loop j < tok_len and tokens[j][0] == "symbol" and (tokens[j][1] == "+" or tokens[j][1] == "-") {
-        alloc op := tokens[j]
-        alloc right_res := parse_term(tokens, j + 1)
+        op := tokens[j]
+        right_res := parse_term(tokens, j + 1)
         if op[1] == "+" {
             left := ["add", left, right_res[0]]
         } else {
@@ -277,9 +283,11 @@ proc parse_term(tokens, i) {
     alloc res := parse_factor(tokens, i)
     alloc left := res[0]
     alloc j := res[1]
+    alloc op := [false, false]
+    alloc right_res := [false, 0]
     loop j < tok_len and tokens[j][0] == "symbol" and (tokens[j][1] == "*" or tokens[j][1] == "/") {
-        alloc op := tokens[j]
-        alloc right_res := parse_factor(tokens, j + 1)
+        op := tokens[j]
+        right_res := parse_factor(tokens, j + 1)
         if op[1] == "*" {
             left := ["mul", left, right_res[0]]
         } else {
@@ -293,6 +301,7 @@ proc parse_factor(tokens, i) {
     alloc t := tokens[i]
     alloc node := false
     alloc j := i
+    alloc k := 0
     if t[0] == "symbol" and t[1] == "-" {
         alloc res := parse_factor(tokens, i + 1)
         return [["unary", "sub", res[0]], res[1]]
@@ -307,7 +316,7 @@ proc parse_factor(tokens, i) {
         j := i + 1
     } elif t[0] == "ident" {
         if i + 1 < tok_len and tokens[i + 1][0] == "symbol" and tokens[i + 1][1] == "(" {
-            alloc k := i + 2
+            k := i + 2
             alloc args := []
             alloc res := [false, 0]
             if tokens[k][0] != "symbol" or tokens[k][1] != ")" {
@@ -330,7 +339,7 @@ proc parse_factor(tokens, i) {
         }
     } elif t[0] == "symbol" and t[1] == "[" {
         alloc elems := []
-        alloc k := i + 1
+        k := i + 1
         alloc res := [false, 0]
         if tokens[k][0] != "symbol" or tokens[k][1] != "]" {
             loop true {
@@ -348,7 +357,7 @@ proc parse_factor(tokens, i) {
         j := k + 1
     } elif t[0] == "symbol" and t[1] == "{" {
         alloc pairs := []
-        alloc k := i + 1
+        k := i + 1
         alloc key_res := [false, 0]
         alloc val_res := [false, 0]
         if tokens[k][0] != "symbol" or tokens[k][1] != "}" {
@@ -375,15 +384,18 @@ proc parse_factor(tokens, i) {
         node := ["number", 0]
         j := i + 1
     }
+    alloc inner := [false, 0]
+    k := 0
+    alloc end_res := [false, 0]
     loop j < tok_len and tokens[j][0] == "symbol" and tokens[j][1] == "[" {
-        alloc inner := parse_expression(tokens, j + 1)
-        alloc k := inner[1]
+        inner := parse_expression(tokens, j + 1)
+        k := inner[1]
         if tokens[k][0] == "symbol" and tokens[k][1] == ":" {
             if tokens[k + 1][0] == "symbol" and tokens[k + 1][1] == "]" {
                 node := ["slice", node, inner[0], false]
                 j := k + 2
             } else {
-                alloc end_res := parse_expression(tokens, k + 1)
+                end_res := parse_expression(tokens, k + 1)
                 node := ["slice", node, inner[0], end_res[0]]
                 j := end_res[1] + 1
             }

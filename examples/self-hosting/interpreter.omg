@@ -1,0 +1,27 @@
+;;;omg
+
+import "./omg.omg" as OMGInterpreter
+
+alloc lines := [
+    "proc fact(n) {",
+    "    if n < 1 {",
+    "        return 1",
+    "    } else {",
+    "        return n * fact(n - 1)",
+    "    }",
+    "}",
+    "alloc result := fact(5)",
+    "emit result",
+]
+
+alloc i := 0
+alloc source_code := ""
+
+loop i < length(lines) {
+    source_code := source_code + lines[i] + "\n"
+    i := i + 1
+}
+
+# Example calling the interpreter with a source string
+OMGInterpreter.run(source_code)
+
