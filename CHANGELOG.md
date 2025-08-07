@@ -24,6 +24,10 @@ Ordered from most recent at the top to oldest at the bottom.
   compiled OMG programs.
 
 ### Fixed
+- Native VM resolves module paths with forward or backward slashes so
+  Windows-style imports load correctly.
+- Guarded native VM value formatting against cyclic structures to prevent
+  stack overflows when importing modules.
 - Reused temporary result variables in the self-hosted interpreter's
   `parse_factor` routine to avoid "Variable already declared" errors when
   running example scripts.

@@ -1,7 +1,8 @@
 use std::cell::RefCell;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::env;
 use std::fs;
+use std::path::PathBuf;
 use std::rc::Rc;
 use serde_json;
 
@@ -51,28 +52,40 @@ impl Value {
         }
     }
     fn to_string(&self) -> String {
-        match self {
-            Value::Int(i) => i.to_string(),
-            Value::Str(s) => s.clone(),
-            Value::Bool(b) => b.to_string(),
-            Value::List(list) => {
-                let inner: Vec<String> = list
-                    .borrow()
-                    .iter()
-                    .map(|v| v.to_string())
-                    .collect();
-                format!("[{}]", inner.join(", "))
+        fn helper(val: &Value, seen: &mut HashSet<usize>) -> String {
+            match val {
+                Value::Int(i) => i.to_string(),
+                Value::Str(s) => s.clone(),
+                Value::Bool(b) => b.to_string(),
+                Value::List(list) => {
+                    let ptr = Rc::as_ptr(list) as usize;
+                    if !seen.insert(ptr) {
+                        return "[...]".to_string();
+                    }
+                    let inner: Vec<String> = list
+                        .borrow()
+                        .iter()
+                        .map(|v| helper(v, seen))
+                        .collect();
+                    format!("[{}]", inner.join(", "))
+                }
+                Value::Dict(map) => {
+                    let ptr = Rc::as_ptr(map) as usize;
+                    if !seen.insert(ptr) {
+                        return "{...}".to_string();
+                    }
+                    let inner: Vec<String> = map
+                        .borrow()
+                        .iter()
+                        .map(|(k, v)| format!("{}: {}", k, helper(v, seen)))
+                        .collect();
+                    format!("{{{}}}", inner.join(", "))
+                }
+                Value::None => "".to_string(),
             }
-            Value::Dict(map) => {
-                let inner: Vec<String> = map
-                    .borrow()
-                    .iter()
-                    .map(|(k, v)| format!("{}: {}", k, v.to_string()))
-                    .collect();
-                format!("{{{}}}", inner.join(", "))
-            }
-            Value::None => "".to_string(),
         }
+        let mut seen = HashSet::new();
+        helper(self, &mut seen)
     }
 }
 
@@ -672,8 +685,18 @@ fn run(code: &[Instr], funcs: &HashMap<String, Function>, program_args: &[String
                     },
                     "read_file" => match args.as_slice() {
                         [Value::Str(path)] => {
-                            println!("read_file path: {}", path);
-                            let content = fs::read_to_string(path).expect("failed to read file");
+                            let mut path_buf = PathBuf::from(path.replace("\\", "/"));
+                            if path_buf.is_relative() && !path_buf.exists() {
+                                if let Some(Value::Str(cur)) = env
+                                    .get("current_dir")
+                                    .or_else(|| globals.get("current_dir"))
+                                {
+                                    let base = PathBuf::from(cur.replace("\\", "/"));
+                                    path_buf = base.join(path_buf);
+                                }
+                            }
+                            let content = fs::read_to_string(&path_buf)
+                                .expect("failed to read file");
                             Value::Str(content)
                         }
                         _ => panic!("read_file() expects a file path"),
