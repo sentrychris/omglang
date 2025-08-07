@@ -2,8 +2,685 @@ use std::collections::{HashMap, HashSet};
 use std::env;
 use std::fs;
 use std::path::PathBuf;
-use std::process::Command;
 use serde_json::Value;
+
+#[derive(Clone)]
+enum Token {
+    Symbol(String),
+    Kw(String),
+    Ident(String),
+    Number(i64),
+    Bool(bool),
+    Str(String),
+}
+
+fn is_digit(ch: char) -> bool {
+    ch >= '0' && ch <= '9'
+}
+
+fn is_alpha(ch: char) -> bool {
+    (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') || ch == '_'
+}
+
+fn is_alnum(ch: char) -> bool {
+    is_alpha(ch) || is_digit(ch)
+}
+
+fn read_number(src: &[char], mut i: usize) -> (i64, usize) {
+    let mut num: i64 = 0;
+    while i < src.len() && is_digit(src[i]) {
+        num = num * 10 + (src[i] as i64 - '0' as i64);
+        i += 1;
+    }
+    (num, i)
+}
+
+fn read_binary(src: &[char], mut i: usize) -> (i64, usize) {
+    let mut num: i64 = 0;
+    while i < src.len() && (src[i] == '0' || src[i] == '1') {
+        num = num * 2 + (src[i] as i64 - '0' as i64);
+        i += 1;
+    }
+    (num, i)
+}
+
+fn read_ident(src: &[char], mut i: usize) -> (String, usize) {
+    let mut s = String::new();
+    while i < src.len() && is_alnum(src[i]) {
+        s.push(src[i]);
+        i += 1;
+    }
+    (s, i)
+}
+
+fn tokenize(source: &str) -> Vec<Token> {
+    let chars: Vec<char> = source.chars().collect();
+    let mut tokens = Vec::new();
+    let mut i = 0usize;
+    let mut src = &chars[..];
+    if chars.len() >= 6
+        && chars[0] == ';'
+        && chars[1] == ';'
+        && chars[2] == ';'
+        && chars[3] == 'o'
+        && chars[4] == 'm'
+        && chars[5] == 'g'
+    {
+        i = 6;
+        if i < chars.len() && chars[i] == '\r' {
+            i += 1;
+        }
+        if i < chars.len() && chars[i] == '\n' {
+            i += 1;
+        }
+        src = &chars[i..];
+        i = 0;
+    }
+    let src_len = src.len();
+    while i < src_len {
+        let c = src[i];
+        if c == ' ' || c == '\t' || c == '\r' || c == '\n' {
+            i += 1;
+        } else if c == '#' {
+            while i < src_len && src[i] != '\n' {
+                i += 1;
+            }
+        } else if c == ':' && i + 1 < src_len && src[i + 1] == '=' {
+            tokens.push(Token::Symbol(":=".to_string()));
+            i += 2;
+        } else if c == ':' {
+            tokens.push(Token::Symbol(":".to_string()));
+            i += 1;
+        } else if c == '=' && i + 1 < src_len && src[i + 1] == '=' {
+            tokens.push(Token::Symbol("==".to_string()));
+            i += 2;
+        } else if c == '!' && i + 1 < src_len && src[i + 1] == '=' {
+            tokens.push(Token::Symbol("!=".to_string()));
+            i += 2;
+        } else if c == '<' && i + 1 < src_len && src[i + 1] == '=' {
+            tokens.push(Token::Symbol("<=".to_string()));
+            i += 2;
+        } else if c == '>' && i + 1 < src_len && src[i + 1] == '=' {
+            tokens.push(Token::Symbol(">=".to_string()));
+            i += 2;
+        } else if c == '<' && i + 1 < src_len && src[i + 1] == '<' {
+            tokens.push(Token::Symbol("<<".to_string()));
+            i += 2;
+        } else if c == '>' && i + 1 < src_len && src[i + 1] == '>' {
+            tokens.push(Token::Symbol(">>".to_string()));
+            i += 2;
+        } else if c == '/' && i + 1 < src_len && src[i + 1] == '*' {
+            i += 2;
+            while i + 1 < src_len && !(src[i] == '*' && src[i + 1] == '/') {
+                i += 1;
+            }
+            i += 2;
+        } else if [ '(', ')', '{', '}', ',', '+', '-', '*', '/', '%', '<', '>', '[', ']', '&', '|', '^', '~', '.' ].contains(&c) {
+            tokens.push(Token::Symbol(c.to_string()));
+            i += 1;
+        } else if c == '0' && i + 1 < src_len && (src[i + 1] == 'b' || src[i + 1] == 'B') {
+            i += 2;
+            let (num, ni) = read_binary(src, i);
+            tokens.push(Token::Number(num));
+            i = ni;
+        } else if is_digit(c) {
+            let (num, ni) = read_number(src, i);
+            tokens.push(Token::Number(num));
+            i = ni;
+        } else if c == '"' {
+            i += 1;
+            let mut s = String::new();
+            while i < src_len && src[i] != '"' {
+                if src[i] == '\\' && i + 1 < src_len && src[i + 1] == 'n' {
+                    s.push('\n');
+                    i += 2;
+                } else {
+                    s.push(src[i]);
+                    i += 1;
+                }
+            }
+            i += 1;
+            tokens.push(Token::Str(s));
+        } else {
+            let (word, ni) = read_ident(src, i);
+            i = ni;
+            match word.as_str() {
+                "alloc" | "emit" | "proc" | "return" | "if" | "else" | "elif" | "loop" | "break" | "and" | "or" | "facts" | "import" | "as" => {
+                    tokens.push(Token::Kw(word));
+                }
+                "true" => tokens.push(Token::Bool(true)),
+                "false" => tokens.push(Token::Bool(false)),
+                _ => tokens.push(Token::Ident(word)),
+            }
+        }
+    }
+    tokens
+}
+
+fn ast_node(kind: &str, parts: Vec<Value>) -> Value {
+    let mut v = Vec::with_capacity(1 + parts.len());
+    v.push(Value::String(kind.to_string()));
+    v.extend(parts);
+    Value::Array(v)
+}
+
+fn parse(source: &str) -> Vec<Value> {
+    let tokens = tokenize(source);
+    parse_program(&tokens, 0).0
+}
+
+fn parse_program(tokens: &[Token], mut i: usize) -> (Vec<Value>, usize) {
+    let mut stmts = Vec::new();
+    while i < tokens.len() {
+        let (stmt, ni) = parse_statement(tokens, i);
+        stmts.push(stmt);
+        i = ni;
+    }
+    (stmts, i)
+}
+
+fn parse_block(tokens: &[Token], i: usize) -> (Value, usize) {
+    let mut j = i + 1; // skip '{'
+    let mut stmts = Vec::new();
+    while j < tokens.len() {
+        if let Token::Symbol(s) = &tokens[j] {
+            if s == "}" {
+                return (ast_node("block", vec![Value::Array(stmts)]), j + 1);
+            }
+        }
+        let (stmt, nj) = parse_statement(tokens, j);
+        stmts.push(stmt);
+        j = nj;
+    }
+    (ast_node("block", vec![Value::Array(stmts)]), j)
+}
+
+fn parse_statement(tokens: &[Token], i: usize) -> (Value, usize) {
+    match &tokens[i] {
+        Token::Kw(k) if k == "alloc" => {
+            if let Token::Ident(name) = &tokens[i + 1] {
+                let (expr, j) = parse_expression(tokens, i + 3);
+                (ast_node("decl", vec![Value::String(name.clone()), expr]), j)
+            } else {
+                panic!("expected identifier after alloc");
+            }
+        }
+        Token::Kw(k) if k == "emit" => {
+            let (expr, j) = parse_expression(tokens, i + 1);
+            (ast_node("emit", vec![expr]), j)
+        }
+        Token::Kw(k) if k == "return" => {
+            let (expr, j) = parse_expression(tokens, i + 1);
+            (ast_node("return", vec![expr]), j)
+        }
+        Token::Kw(k) if k == "break" => (ast_node("break", vec![]), i + 1),
+        Token::Kw(k) if k == "loop" => {
+            let (cond, j) = parse_expression(tokens, i + 1);
+            let (block, k) = parse_block(tokens, j);
+            (ast_node("loop", vec![cond, block]), k)
+        }
+        Token::Kw(k) if k == "if" => parse_if(tokens, i),
+        Token::Kw(k) if k == "proc" => {
+            if let Token::Ident(name) = &tokens[i + 1] {
+                let mut j = i + 3; // skip name and '('
+                let mut params = Vec::new();
+                while let Token::Ident(p) = &tokens[j] {
+                    params.push(Value::String(p.clone()));
+                    j += 1;
+                    if let Token::Symbol(s) = &tokens[j] {
+                        if s == "," {
+                            j += 1;
+                            continue;
+                        }
+                    }
+                    break;
+                }
+                if let Token::Symbol(s) = &tokens[j] {
+                    if s != ")" {
+                        panic!("expected ')' after parameters");
+                    }
+                }
+                let (body, k) = parse_block(tokens, j + 1);
+                (ast_node("func_def", vec![Value::String(name.clone()), Value::Array(params), body]), k)
+            } else {
+                panic!("expected function name");
+            }
+        }
+        Token::Kw(k) if k == "import" => {
+            if let Token::Str(path) = &tokens[i + 1] {
+                if let Token::Kw(as_kw) = &tokens[i + 2] {
+                    if as_kw != "as" {
+                        panic!("expected 'as' in import");
+                    }
+                } else {
+                    panic!("expected 'as' in import");
+                }
+                if let Token::Ident(alias) = &tokens[i + 3] {
+                    (
+                        ast_node(
+                            "import",
+                            vec![Value::String(path.clone()), Value::String(alias.clone())],
+                        ),
+                        i + 4,
+                    )
+                } else {
+                    panic!("expected alias ident");
+                }
+            } else {
+                panic!("expected string path");
+            }
+        }
+        Token::Kw(k) if k == "facts" => {
+            let (expr, j) = parse_expression(tokens, i + 1);
+            (ast_node("facts", vec![expr]), j)
+        }
+        Token::Ident(_) => {
+            let (lval, j) = parse_factor(tokens, i);
+            if j < tokens.len() {
+                if let Token::Symbol(s) = &tokens[j] {
+                    if s == ":=" {
+                        let (rhs, k) = parse_expression(tokens, j + 1);
+                        let arr = lval.as_array().unwrap();
+                        let res = match arr[0].as_str().unwrap() {
+                            "ident" => ast_node(
+                                "assign",
+                                vec![arr[1].clone(), rhs],
+                            ),
+                            "dot" => ast_node(
+                                "attr_assign",
+                                vec![arr[1].clone(), arr[2].clone(), rhs],
+                            ),
+                            "index" => ast_node(
+                                "index_assign",
+                                vec![arr[1].clone(), arr[2].clone(), rhs],
+                            ),
+                            _ => panic!("invalid assignment target"),
+                        };
+                        return (res, k);
+                    }
+                }
+            }
+            let (expr, k) = parse_expression(tokens, i);
+            (ast_node("expr_stmt", vec![expr]), k)
+        }
+        _ => {
+            let (expr, j) = parse_expression(tokens, i);
+            (ast_node("expr_stmt", vec![expr]), j)
+        }
+    }
+}
+
+fn parse_if(tokens: &[Token], i: usize) -> (Value, usize) {
+    let (cond, j) = parse_expression(tokens, i + 1);
+    let (then_block, mut k) = parse_block(tokens, j);
+    let mut elifs: Vec<(Value, Value)> = Vec::new();
+    let mut else_block: Value = Value::Null;
+    while k < tokens.len() {
+        match &tokens[k] {
+            Token::Kw(s) if s == "elif" => {
+                let (c, j2) = parse_expression(tokens, k + 1);
+                let (b, j3) = parse_block(tokens, j2);
+                elifs.push((c, b));
+                k = j3;
+            }
+            Token::Kw(s) if s == "else" => {
+                let (b, j2) = parse_block(tokens, k + 1);
+                else_block = b;
+                k = j2;
+                break;
+            }
+            _ => break,
+        }
+    }
+    let mut tail = else_block;
+    for (c, b) in elifs.into_iter().rev() {
+        tail = ast_node("if", vec![c, b, tail]);
+    }
+    (ast_node("if", vec![cond, then_block, tail]), k)
+}
+
+fn parse_expression(tokens: &[Token], i: usize) -> (Value, usize) {
+    parse_or(tokens, i)
+}
+
+fn parse_or(tokens: &[Token], i: usize) -> (Value, usize) {
+    let (mut left, mut j) = parse_and(tokens, i);
+    while j < tokens.len() {
+        if let Token::Kw(op) = &tokens[j] {
+            if op == "or" {
+                let (right, nj) = parse_and(tokens, j + 1);
+                left = ast_node("or", vec![left, right]);
+                j = nj;
+                continue;
+            }
+        }
+        break;
+    }
+    (left, j)
+}
+
+fn parse_and(tokens: &[Token], i: usize) -> (Value, usize) {
+    let (mut left, mut j) = parse_comparison(tokens, i);
+    while j < tokens.len() {
+        if let Token::Kw(op) = &tokens[j] {
+            if op == "and" {
+                let (right, nj) = parse_comparison(tokens, j + 1);
+                left = ast_node("and", vec![left, right]);
+                j = nj;
+                continue;
+            }
+        }
+        break;
+    }
+    (left, j)
+}
+
+fn parse_comparison(tokens: &[Token], i: usize) -> (Value, usize) {
+    let (mut left, mut j) = parse_bit_or(tokens, i);
+    while j < tokens.len() {
+        if let Token::Symbol(op) = &tokens[j] {
+            let op_name = match op.as_str() {
+                "<" => Some("lt"),
+                ">" => Some("gt"),
+                "<=" => Some("le"),
+                ">=" => Some("ge"),
+                "==" => Some("eq"),
+                "!=" => Some("ne"),
+                _ => None,
+            };
+            if let Some(name) = op_name {
+                let (right, nj) = parse_bit_or(tokens, j + 1);
+                left = ast_node(name, vec![left, right]);
+                j = nj;
+                continue;
+            }
+        }
+        break;
+    }
+    (left, j)
+}
+
+fn parse_bit_or(tokens: &[Token], i: usize) -> (Value, usize) {
+    let (mut left, mut j) = parse_bit_xor(tokens, i);
+    while j < tokens.len() {
+        if let Token::Symbol(s) = &tokens[j] {
+            if s == "|" {
+                let (right, nj) = parse_bit_xor(tokens, j + 1);
+                left = ast_node("bor", vec![left, right]);
+                j = nj;
+                continue;
+            }
+        }
+        break;
+    }
+    (left, j)
+}
+
+fn parse_bit_xor(tokens: &[Token], i: usize) -> (Value, usize) {
+    let (mut left, mut j) = parse_bit_and(tokens, i);
+    while j < tokens.len() {
+        if let Token::Symbol(s) = &tokens[j] {
+            if s == "^" {
+                let (right, nj) = parse_bit_and(tokens, j + 1);
+                left = ast_node("bxor", vec![left, right]);
+                j = nj;
+                continue;
+            }
+        }
+        break;
+    }
+    (left, j)
+}
+
+fn parse_bit_and(tokens: &[Token], i: usize) -> (Value, usize) {
+    let (mut left, mut j) = parse_shift(tokens, i);
+    while j < tokens.len() {
+        if let Token::Symbol(s) = &tokens[j] {
+            if s == "&" {
+                let (right, nj) = parse_shift(tokens, j + 1);
+                left = ast_node("band", vec![left, right]);
+                j = nj;
+                continue;
+            }
+        }
+        break;
+    }
+    (left, j)
+}
+
+fn parse_shift(tokens: &[Token], i: usize) -> (Value, usize) {
+    let (mut left, mut j) = parse_add_sub(tokens, i);
+    while j < tokens.len() {
+        if let Token::Symbol(s) = &tokens[j] {
+            if s == "<<" || s == ">>" {
+                let op_name = if s == "<<" { "shl" } else { "shr" };
+                let (right, nj) = parse_add_sub(tokens, j + 1);
+                left = ast_node(op_name, vec![left, right]);
+                j = nj;
+                continue;
+            }
+        }
+        break;
+    }
+    (left, j)
+}
+
+fn parse_add_sub(tokens: &[Token], i: usize) -> (Value, usize) {
+    let (mut left, mut j) = parse_term(tokens, i);
+    while j < tokens.len() {
+        if let Token::Symbol(s) = &tokens[j] {
+            if s == "+" || s == "-" {
+                let op_name = if s == "+" { "add" } else { "sub" };
+                let (right, nj) = parse_term(tokens, j + 1);
+                left = ast_node(op_name, vec![left, right]);
+                j = nj;
+                continue;
+            }
+        }
+        break;
+    }
+    (left, j)
+}
+
+fn parse_term(tokens: &[Token], i: usize) -> (Value, usize) {
+    let (mut left, mut j) = parse_factor(tokens, i);
+    while j < tokens.len() {
+        if let Token::Symbol(s) = &tokens[j] {
+            if s == "*" || s == "/" || s == "%" {
+                let op_name = match s.as_str() {
+                    "*" => "mul",
+                    "/" => "div",
+                    _ => "mod",
+                };
+                let (right, nj) = parse_factor(tokens, j + 1);
+                left = ast_node(op_name, vec![left, right]);
+                j = nj;
+                continue;
+            }
+        }
+        break;
+    }
+    (left, j)
+}
+
+fn parse_factor(tokens: &[Token], i: usize) -> (Value, usize) {
+    let (mut node, mut j) = match &tokens[i] {
+        Token::Symbol(s) if s == "-" => {
+            let (expr, j) = parse_factor(tokens, i + 1);
+            (ast_node("unary", vec![Value::String("sub".to_string()), expr]), j)
+        }
+        Token::Symbol(s) if s == "~" => {
+            let (expr, j) = parse_factor(tokens, i + 1);
+            (
+                ast_node(
+                    "unary",
+                    vec![Value::String("not_bits".to_string()), expr],
+                ),
+                j,
+            )
+        }
+        Token::Number(n) => (ast_node("number", vec![Value::Number((*n).into())]), i + 1),
+        Token::Bool(b) => (ast_node("bool", vec![Value::Bool(*b)]), i + 1),
+        Token::Str(s) => (ast_node("string", vec![Value::String(s.clone())]), i + 1),
+        Token::Ident(name) => (ast_node("ident", vec![Value::String(name.clone())]), i + 1),
+        Token::Symbol(s) if s == "[" => {
+            let mut elems = Vec::new();
+            let mut k = i + 1;
+            if let Token::Symbol(sym) = &tokens[k] {
+                if sym == "]" {
+                    return (ast_node("list", vec![Value::Array(elems)]), k + 1);
+                }
+            }
+            loop {
+                let (expr, nk) = parse_expression(tokens, k);
+                elems.push(expr);
+                k = nk;
+                if let Token::Symbol(sym) = &tokens[k] {
+                    if sym == "," {
+                        k += 1;
+                        continue;
+                    } else if sym == "]" {
+                        break;
+                    }
+                }
+            }
+            (ast_node("list", vec![Value::Array(elems)]), k + 1)
+        }
+        Token::Symbol(s) if s == "{" => {
+            let mut pairs = Vec::new();
+            let mut k = i + 1;
+            if let Token::Symbol(sym) = &tokens[k] {
+                if sym == "}" {
+                    return (ast_node("dict", vec![Value::Array(pairs)]), k + 1);
+                }
+            }
+            loop {
+                let key = match &tokens[k] {
+                    Token::Str(s) => {
+                        k += 1;
+                        s.clone()
+                    }
+                    Token::Ident(s) => {
+                        k += 1;
+                        s.clone()
+                    }
+                    _ => panic!("invalid dict key"),
+                };
+                k += 1; // skip ':'
+                let (value, nk) = parse_expression(tokens, k);
+                pairs.push(Value::Array(vec![Value::String(key), value]));
+                k = nk;
+                if let Token::Symbol(sym) = &tokens[k] {
+                    if sym == "," {
+                        k += 1;
+                        continue;
+                    } else if sym == "}" {
+                        break;
+                    }
+                }
+            }
+            (ast_node("dict", vec![Value::Array(pairs)]), k + 1)
+        }
+        Token::Symbol(s) if s == "(" => {
+            let (expr, k) = parse_expression(tokens, i + 1);
+            (expr, k + 1)
+        }
+        _ => panic!("unexpected token in factor"),
+    };
+
+    loop {
+        if j >= tokens.len() {
+            break;
+        }
+        match &tokens[j] {
+            Token::Symbol(s) if s == "(" => {
+                let mut k = j + 1;
+                let mut args = Vec::new();
+                if let Token::Symbol(sym) = &tokens[k] {
+                    if sym == ")" {
+                        j = k + 1;
+                        node = ast_node("func_call", vec![node.clone(), Value::Array(args)]);
+                        continue;
+                    }
+                }
+                loop {
+                    let (arg, nk) = parse_expression(tokens, k);
+                    args.push(arg);
+                    k = nk;
+                    if let Token::Symbol(sym) = &tokens[k] {
+                        if sym == "," {
+                            k += 1;
+                            continue;
+                        } else if sym == ")" {
+                            break;
+                        }
+                    }
+                }
+                j = k + 1;
+                node = ast_node("func_call", vec![node, Value::Array(args)]);
+            }
+            Token::Symbol(s) if s == "[" => {
+                let (start, mut k) = parse_expression(tokens, j + 1);
+                if let Token::Symbol(sym) = &tokens[k] {
+                    if sym == ":" {
+                        k += 1;
+                        let end = if let Token::Symbol(sym2) = &tokens[k] {
+                            if sym2 == "]" {
+                                Value::Null
+                            } else {
+                                let (e, nk) = parse_expression(tokens, k);
+                                k = nk;
+                                e
+                            }
+                        } else {
+                            let (e, nk) = parse_expression(tokens, k);
+                            k = nk;
+                            e
+                        };
+                        if let Token::Symbol(sym3) = &tokens[k] {
+                            if sym3 != "]" {
+                                panic!("expected ']' after slice");
+                            }
+                        } else {
+                            panic!("expected ']' after slice");
+                        }
+                        j = k + 1;
+                        node = ast_node("slice", vec![node, start, end]);
+                    } else if sym == "]" {
+                        j = k + 1;
+                        node = ast_node("index", vec![node, start]);
+                    } else {
+                        let (idx_expr, nk) = parse_expression(tokens, k);
+                        k = nk;
+                        if let Token::Symbol(sym2) = &tokens[k] {
+                            if sym2 != "]" {
+                                panic!("expected ']' after index");
+                            }
+                        } else {
+                            panic!("expected ']' after index");
+                        }
+                        j = k + 1;
+                        node = ast_node("index", vec![node, idx_expr]);
+                    }
+                } else {
+                    panic!("expected ']' or ':' in index/slice");
+                }
+            }
+            Token::Symbol(s) if s == "." => {
+                if let Token::Ident(name) = &tokens[j + 1] {
+                    node = ast_node("dot", vec![node, Value::String(name.clone())]);
+                    j += 2;
+                } else {
+                    panic!("expected identifier after '.'");
+                }
+            }
+            _ => break,
+        }
+    }
+
+    (node, j)
+}
+
 
 #[derive(Clone)]
 struct Instr {
@@ -395,28 +1072,14 @@ fn main() {
     fs::create_dir_all(&out_dir).expect("create bytecode dir");
     let out_bc = out_dir.join("interpreter.bc");
 
-    // Parse source via Python to obtain AST JSON
-    let output = Command::new("python")
-        .arg("-c")
-        .arg("import json,sys;from omglang.lexer import tokenize;from omglang.parser import Parser;path=sys.argv[1];src=open(path,encoding='utf-8').read();tok,tm=tokenize(src);ast=Parser(tok,tm,path).parse();json.dump(ast,sys.stdout)")
-        .arg(&source_path)
-        .current_dir(repo_root)
-        .output()
-        .expect("failed to run python parser");
-    if !output.status.success() {
-        panic!("python parser failed: {}", String::from_utf8_lossy(&output.stderr));
-    }
-    let ast_json = String::from_utf8(output.stdout).expect("non utf8 ast");
-    let ast_val: Value = serde_json::from_str(&ast_json).expect("invalid ast json");
-    let ast_array = ast_val.as_array().expect("ast not array").clone();
+    let src = fs::read_to_string(&source_path).expect("read source");
+    let ast = parse(&src);
 
     let mut compiler = Compiler::new();
-    compiler.compile(&ast_array);
+    compiler.compile(&ast);
     let bc_str = compiler.to_string();
 
     fs::write(&out_bc, bc_str).expect("write bytecode");
 
     println!("cargo:rerun-if-changed={}", source_path.display());
-    println!("cargo:rerun-if-changed={}/omglang/lexer.py", repo_root.display());
-    println!("cargo:rerun-if-changed={}/omglang/parser", repo_root.display());
 }
