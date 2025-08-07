@@ -5,9 +5,10 @@ regular expression of named groups. Each match yields a :class:`Token`
 containing its type, value and source line number.
 
 Tokens cover literals (numbers, strings, booleans), keywords (``if``, ``loop``,
-``emit`` …), operators and delimiters. Comment text beginning with ``#`` is
-skipped during tokenization so line numbers remain accurate. When present, the
-required ``;;;omg`` header is also stripped before lexing.
+``emit`` …), operators and delimiters. Comment text beginning with ``#`` or
+enclosed within ``/** … */`` docblocks is skipped during tokenization so line
+numbers remain accurate. When present, the required ``;;;omg`` header is also
+stripped before lexing.
 
 
 File: lexer.py
@@ -111,6 +112,9 @@ def tokenize(code) -> tuple[list[Token], dict[str, str]]:
         ('DOT',       r'\.'),
         ('COLON',     r':'),
 
+        # Comments
+        ('DOCBLOCK',  r'/\*\*(?:.|\n)*?\*/'),
+
         # Arithmetic operators
         ('PLUS',      r'\+'),
         ('MINUS',     r'-'),
@@ -168,6 +172,9 @@ def tokenize(code) -> tuple[list[Token], dict[str, str]]:
         if kind == 'SKIP':
             continue
         if kind == 'COMMENT':
+            continue
+        if kind == 'DOCBLOCK':
+            line_num += value.count('\n')
             continue
         if kind == 'MISMATCH':
             raise RuntimeError(f'Unexpected character {value} on line {line_num}')

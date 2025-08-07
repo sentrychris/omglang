@@ -1,0 +1,996 @@
+;;;omg
+
+alloc tok_len := 0
+proc is_digit(ch) {
+    return ch >= "0" and ch <= "9"
+}
+proc is_alpha(ch) {
+    return (ch >= "a" and ch <= "z") or (ch >= "A" and ch <= "Z") or ch == "_"
+}
+proc is_alnum(ch) {
+    return is_alpha(ch) or is_digit(ch)
+}
+proc read_number(src, i) {
+    alloc num := 0
+    alloc c := ""
+    alloc n := length(src)
+    loop i < n and is_digit(src[i]) {
+        c := src[i]
+        num := num * 10 + ascii(c) - ascii("0")
+        i := i + 1
+    }
+    return [num, i]
+}
+proc read_binary(src, i) {
+    alloc num := 0
+    alloc c := ""
+    alloc n := length(src)
+    loop i < n and (src[i] == "0" or src[i] == "1") {
+        c := src[i]
+        num := num * 2 + ascii(c) - ascii("0")
+        i := i + 1
+    }
+    return [num, i]
+}
+proc read_ident(src, i) {
+    alloc s := ""
+    alloc n := length(src)
+    loop i < n and is_alnum(src[i]) {
+        s := s + src[i]
+        i := i + 1
+    }
+    return [s, i]
+}
+proc tokenize(src) {
+    alloc tokens := {}
+    alloc n := 0
+    alloc i := 0
+    alloc c := ""
+    alloc res := []
+    alloc word := ""
+    alloc s := ""
+    alloc src_len := length(src)
+    if src_len >= 6 and src[0] == ";" and src[1] == ";" and src[2] == ";" and src[3] == "o" and src[4] == "m" and src[5] == "g" {
+        i := 6
+        if i < src_len and src[i] == "\r" {
+            i := i + 1
+        }
+        if i < src_len and src[i] == "\n" {
+            i := i + 1
+        }
+    }
+    loop i < src_len {
+        c := src[i]
+        if c == " " or c == "\t" or c == "\r" or c == "\n" {
+            i := i + 1
+        } elif c == "#" {
+            loop i < src_len and src[i] != "\n" {
+                i := i + 1
+            }
+        } elif c == ":" and i + 1 < src_len and src[i + 1] == "=" {
+            tokens[n] := ["symbol", ":="]
+            n := n + 1
+            i := i + 2
+        } elif c == ":" {
+            tokens[n] := ["symbol", ":"]
+            n := n + 1
+            i := i + 1
+        } elif c == "=" and i + 1 < src_len and src[i + 1] == "=" {
+            tokens[n] := ["symbol", "=="]
+            n := n + 1
+            i := i + 2
+        } elif c == "!" and i + 1 < src_len and src[i + 1] == "=" {
+            tokens[n] := ["symbol", "!="]
+            n := n + 1
+            i := i + 2
+        } elif c == "<" and i + 1 < src_len and src[i + 1] == "=" {
+            tokens[n] := ["symbol", "<="]
+            n := n + 1
+            i := i + 2
+        } elif c == ">" and i + 1 < src_len and src[i + 1] == "=" {
+            tokens[n] := ["symbol", ">="]
+            n := n + 1
+            i := i + 2
+        } elif c == "<" and i + 1 < src_len and src[i + 1] == "<" {
+            tokens[n] := ["symbol", "<<"]
+            n := n + 1
+            i := i + 2
+        } elif c == ">" and i + 1 < src_len and src[i + 1] == ">" {
+            tokens[n] := ["symbol", ">>"]
+            n := n + 1
+            i := i + 2
+        } elif c == "/" and i + 1 < src_len and src[i + 1] == "*" {
+            i := i + 2
+            loop i + 1 < src_len and (src[i] != "*" or src[i + 1] != "/") {
+                i := i + 1
+            }
+            i := i + 2
+        } elif c == "(" or c == ")" or c == "{" or c == "}" or c == "," or c == "+" or c == "-" or c == "*" or c == "/" or c == "%" or c == "<" or c == ">" or c == "[" or c == "]" or c == "&" or c == "|" or c == "^" or c == "~" or c == "." {
+            tokens[n] := ["symbol", c]
+            n := n + 1
+            i := i + 1
+        } elif c == "0" and i + 1 < src_len and (src[i + 1] == "b" or src[i + 1] == "B") {
+            i := i + 2
+            res := read_binary(src, i)
+            tokens[n] := ["number", res[0]]
+            n := n + 1
+            i := res[1]
+        } elif is_digit(c) {
+            res := read_number(src, i)
+            tokens[n] := ["number", res[0]]
+            n := n + 1
+            i := res[1]
+        } elif c == "\"" {
+            i := i + 1
+            s := ""
+            loop i < src_len and src[i] != "\"" {
+                if src[i] == "\\" and src[i + 1] == "n" {
+                    s := s + "\n"
+                    i := i + 2
+                } else {
+                    s := s + src[i]
+                    i := i + 1
+                }
+            }
+            i := i + 1
+            tokens[n] := ["string", s]
+            n := n + 1
+        } else {
+            res := read_ident(src, i)
+            word := res[0]
+            i := res[1]
+            if word == "alloc" or word == "emit" or word == "proc" or word == "return" or word == "if" or word == "else" or word == "elif" or word == "loop" or word == "break" or word == "and" or word == "or" or word == "facts" or word == "import" or word == "as" {
+                tokens[n] := ["kw", word]
+                n := n + 1
+            } elif word == "true" {
+                tokens[n] := ["bool", true]
+                n := n + 1
+            } elif word == "false" {
+                tokens[n] := ["bool", false]
+                n := n + 1
+            } else {
+                tokens[n] := ["ident", word]
+                n := n + 1
+            }
+        }
+    }
+    tok_len := n
+    return tokens
+}
+proc parse(source) {
+    alloc tokens := tokenize(source)
+    alloc res := parse_program(tokens, 0)
+    return res[0]
+}
+proc parse_program(tokens, i) {
+    alloc stmts := []
+    alloc res := [false, i]
+    loop res[1] < tok_len {
+        res := parse_statement(tokens, res[1])
+        stmts := stmts + [res[0]]
+    }
+    return [stmts, res[1]]
+}
+proc parse_statement(tokens, i) {
+    alloc t := tokens[i]
+    if t[0] == "kw" and t[1] == "alloc" {
+        alloc name := tokens[i + 1]
+        alloc res := parse_expression(tokens, i + 3)
+        return [["decl", name[1], res[0]], res[1]]
+    } elif t[0] == "kw" and t[1] == "emit" {
+        alloc res := parse_expression(tokens, i + 1)
+        return [["emit", res[0]], res[1]]
+    } elif t[0] == "kw" and t[1] == "return" {
+        alloc res := parse_expression(tokens, i + 1)
+        return [["return", res[0]], res[1]]
+    } elif t[0] == "kw" and t[1] == "break" {
+        return [["break"], i + 1]
+    } elif t[0] == "kw" and t[1] == "loop" {
+        alloc res_cond := parse_expression(tokens, i + 1)
+        alloc res_block := parse_block(tokens, res_cond[1])
+        return [["loop", res_cond[0], res_block[0]], res_block[1]]
+    } elif t[0] == "kw" and t[1] == "if" {
+        alloc res_cond := parse_expression(tokens, i + 1)
+        alloc res_then := parse_block(tokens, res_cond[1])
+        alloc j := res_then[1]
+        alloc elifs := []
+        alloc res_elif := [false, 0]
+        alloc res_block := [false, 0]
+        alloc else_block := []
+        alloc k := 0
+        alloc pair := false
+        loop j < tok_len and tokens[j][0] == "kw" and tokens[j][1] == "elif" {
+            res_elif := parse_expression(tokens, j + 1)
+            res_block := parse_block(tokens, res_elif[1])
+            elifs := elifs + [[res_elif[0], res_block[0]]]
+            j := res_block[1]
+        }
+        if j < tok_len and tokens[j][0] == "kw" and tokens[j][1] == "else" {
+            res_block := parse_block(tokens, j + 1)
+            else_block := res_block[0]
+            j := res_block[1]
+        }
+        k := length(elifs) - 1
+        loop k >= 0 {
+            pair := elifs[k]
+            else_block := [["if", pair[0], pair[1], else_block]]
+            k := k - 1
+        }
+        return [["if", res_cond[0], res_then[0], else_block], j]
+    } elif t[0] == "kw" and t[1] == "proc" {
+        alloc name := tokens[i + 1][1]
+        alloc j := i + 3
+        alloc params := []
+        if tokens[j][0] != "symbol" or tokens[j][1] != ")" {
+            loop true {
+                params := params + [tokens[j][1]]
+                j := j + 1
+                if tokens[j][0] == "symbol" and tokens[j][1] == "," {
+                    j := j + 1
+                } else {
+                    break
+                }
+            }
+        }
+        j := j + 1
+        alloc res_block := parse_block(tokens, j)
+        return [["func_def", name, params, res_block[0]], res_block[1]]
+    } elif t[0] == "kw" and t[1] == "import" {
+        alloc path := tokens[i + 1][1]
+        alloc alias := tokens[i + 3][1]
+        return [["import", path, alias], i + 4]
+    } elif t[0] == "kw" and t[1] == "facts" {
+        alloc res := parse_expression(tokens, i + 1)
+        return [["facts", res[0]], res[1]]
+    } else {
+        alloc lval_res := parse_factor(tokens, i)
+        alloc j := lval_res[1]
+        if j < tok_len and tokens[j][0] == "symbol" and tokens[j][1] == ":=" {
+            alloc val_res := parse_expression(tokens, j + 1)
+            alloc target := lval_res[0]
+            if target[0] == "ident" {
+                return [["assign", target[1], val_res[0]], val_res[1]]
+            } elif target[0] == "dot" {
+                return [["attr_assign", target[1], target[2], val_res[0]], val_res[1]]
+            } elif target[0] == "index" {
+                return [["index_assign", target[1], target[2], val_res[0]], val_res[1]]
+            }
+        }
+        return [lval_res[0], lval_res[1]]
+    }
+}
+proc parse_block(tokens, i) {
+    alloc stmts := []
+    alloc j := i
+    alloc res := [false, 0]
+    j := j + 1
+    loop tokens[j][0] != "symbol" or tokens[j][1] != "}" {
+        res := parse_statement(tokens, j)
+        stmts := stmts + [res[0]]
+        j := res[1]
+    }
+    return [stmts, j + 1]
+}
+proc parse_expression(tokens, i) {
+    return parse_or(tokens, i)
+}
+proc parse_or(tokens, i) {
+    alloc res := parse_and(tokens, i)
+    alloc left := res[0]
+    alloc j := res[1]
+    alloc right_res := [false, 0]
+    loop j < tok_len and tokens[j][0] == "kw" and tokens[j][1] == "or" {
+        right_res := parse_and(tokens, j + 1)
+        left := ["or", left, right_res[0]]
+        j := right_res[1]
+    }
+    return [left, j]
+}
+proc parse_and(tokens, i) {
+    alloc res := parse_comparison(tokens, i)
+    alloc left := res[0]
+    alloc j := res[1]
+    alloc right_res := [false, 0]
+    loop j < tok_len and tokens[j][0] == "kw" and tokens[j][1] == "and" {
+        right_res := parse_comparison(tokens, j + 1)
+        left := ["and", left, right_res[0]]
+        j := right_res[1]
+    }
+    return [left, j]
+}
+proc parse_comparison(tokens, i) {
+    alloc res := parse_bit_or(tokens, i)
+    alloc left := res[0]
+    alloc j := res[1]
+    alloc op := [false, false]
+    alloc right_res := [false, 0]
+    loop j < tok_len and tokens[j][0] == "symbol" and (tokens[j][1] == "<" or tokens[j][1] == "==" or tokens[j][1] == ">" or tokens[j][1] == "<=" or tokens[j][1] == ">=" or tokens[j][1] == "!=") {
+        op := tokens[j]
+        right_res := parse_bit_or(tokens, j + 1)
+        if op[1] == "<" {
+            left := ["lt", left, right_res[0]]
+        } elif op[1] == ">" {
+            left := ["gt", left, right_res[0]]
+        } elif op[1] == "<=" {
+            left := ["le", left, right_res[0]]
+        } elif op[1] == ">=" {
+            left := ["ge", left, right_res[0]]
+        } elif op[1] == "==" {
+            left := ["eq", left, right_res[0]]
+        } else {
+            left := ["ne", left, right_res[0]]
+        }
+        j := right_res[1]
+    }
+    return [left, j]
+}
+proc parse_add_sub(tokens, i) {
+    alloc res := parse_term(tokens, i)
+    alloc left := res[0]
+    alloc j := res[1]
+    alloc op := [false, false]
+    alloc right_res := [false, 0]
+    loop j < tok_len and tokens[j][0] == "symbol" and (tokens[j][1] == "+" or tokens[j][1] == "-") {
+        op := tokens[j]
+        right_res := parse_term(tokens, j + 1)
+        if op[1] == "+" {
+            left := ["add", left, right_res[0]]
+        } else {
+            left := ["sub", left, right_res[0]]
+        }
+        j := right_res[1]
+    }
+    return [left, j]
+}
+proc parse_term(tokens, i) {
+    alloc res := parse_factor(tokens, i)
+    alloc left := res[0]
+    alloc j := res[1]
+    alloc op := [false, false]
+    alloc right_res := [false, 0]
+    loop j < tok_len and tokens[j][0] == "symbol" and (tokens[j][1] == "*" or tokens[j][1] == "/" or tokens[j][1] == "%") {
+        op := tokens[j]
+        right_res := parse_factor(tokens, j + 1)
+        if op[1] == "*" {
+            left := ["mul", left, right_res[0]]
+        } elif op[1] == "/" {
+            left := ["div", left, right_res[0]]
+        } else {
+            left := ["mod", left, right_res[0]]
+        }
+        j := right_res[1]
+    }
+    return [left, j]
+}
+
+proc parse_shift(tokens, i) {
+    alloc res := parse_add_sub(tokens, i)
+    alloc left := res[0]
+    alloc j := res[1]
+    alloc op := [false, false]
+    alloc right_res := [false, 0]
+    loop j < tok_len and tokens[j][0] == "symbol" and (tokens[j][1] == "<<" or tokens[j][1] == ">>") {
+        op := tokens[j]
+        right_res := parse_add_sub(tokens, j + 1)
+        if op[1] == "<<" {
+            left := ["shl", left, right_res[0]]
+        } else {
+            left := ["shr", left, right_res[0]]
+        }
+        j := right_res[1]
+    }
+    return [left, j]
+}
+
+proc parse_bit_and(tokens, i) {
+    alloc res := parse_shift(tokens, i)
+    alloc left := res[0]
+    alloc j := res[1]
+    alloc right_res := [false, 0]
+    loop j < tok_len and tokens[j][0] == "symbol" and tokens[j][1] == "&" {
+        right_res := parse_shift(tokens, j + 1)
+        left := ["band", left, right_res[0]]
+        j := right_res[1]
+    }
+    return [left, j]
+}
+
+proc parse_bit_xor(tokens, i) {
+    alloc res := parse_bit_and(tokens, i)
+    alloc left := res[0]
+    alloc j := res[1]
+    alloc right_res := [false, 0]
+    loop j < tok_len and tokens[j][0] == "symbol" and tokens[j][1] == "^" {
+        right_res := parse_bit_and(tokens, j + 1)
+        left := ["bxor", left, right_res[0]]
+        j := right_res[1]
+    }
+    return [left, j]
+}
+
+proc parse_bit_or(tokens, i) {
+    alloc res := parse_bit_xor(tokens, i)
+    alloc left := res[0]
+    alloc j := res[1]
+    alloc right_res := [false, 0]
+    loop j < tok_len and tokens[j][0] == "symbol" and tokens[j][1] == "|" {
+        right_res := parse_bit_xor(tokens, j + 1)
+        left := ["bor", left, right_res[0]]
+        j := right_res[1]
+    }
+    return [left, j]
+}
+proc parse_factor(tokens, i) {
+    alloc t := tokens[i]
+    alloc node := false
+    alloc j := i
+    alloc k := 0
+    alloc res := [false, 0]
+    if t[0] == "symbol" and t[1] == "-" {
+        res := parse_factor(tokens, i + 1)
+        return [["unary", "sub", res[0]], res[1]]
+    } elif t[0] == "symbol" and t[1] == "~" {
+        res := parse_factor(tokens, i + 1)
+        return [["bitnot", res[0]], res[1]]
+    } elif t[0] == "number" {
+        node := ["number", t[1]]
+        j := i + 1
+    } elif t[0] == "bool" {
+        node := ["bool", t[1]]
+        j := i + 1
+    } elif t[0] == "string" {
+        node := ["string", t[1]]
+        j := i + 1
+    } elif t[0] == "ident" {
+        node := ["ident", t[1]]
+        j := i + 1
+    } elif t[0] == "symbol" and t[1] == "[" {
+        alloc elems := []
+        k := i + 1
+        res := [false, 0]
+        if tokens[k][0] != "symbol" or tokens[k][1] != "]" {
+            loop true {
+                res := parse_expression(tokens, k)
+                elems := elems + [res[0]]
+                k := res[1]
+                if tokens[k][0] == "symbol" and tokens[k][1] == "," {
+                    k := k + 1
+                } else {
+                    break
+                }
+            }
+        }
+        node := ["list", elems]
+        j := k + 1
+    } elif t[0] == "symbol" and t[1] == "{" {
+        alloc pairs := []
+        k := i + 1
+        alloc val_res := [false, 0]
+        alloc key_node := ["string", ""]
+        if tokens[k][0] != "symbol" or tokens[k][1] != "}" {
+            loop true {
+                if tokens[k][0] == "string" {
+                    key_node := ["string", tokens[k][1]]
+                    k := k + 1
+                } elif tokens[k][0] == "ident" {
+                    key_node := ["string", tokens[k][1]]
+                    k := k + 1
+                } else {
+                    val_res := parse_expression(tokens, k)
+                    key_node := val_res[0]
+                    k := val_res[1]
+                }
+                k := k + 1
+                val_res := parse_expression(tokens, k)
+                pairs := pairs + [[key_node, val_res[0]]]
+                k := val_res[1]
+                if tokens[k][0] == "symbol" and tokens[k][1] == "," {
+                    k := k + 1
+                } else {
+                    break
+                }
+            }
+        }
+        node := ["dict", pairs]
+        j := k + 1
+    } elif t[0] == "symbol" and t[1] == "(" {
+        res := parse_expression(tokens, i + 1)
+        node := res[0]
+        j := res[1] + 1
+    } else {
+        node := ["number", 0]
+        j := i + 1
+    }
+    alloc inner := [false, 0]
+    alloc end_res := [false, 0]
+    alloc call_args := []
+    res := [false, 0]
+    alloc attr := [false, false]
+    loop j < tok_len and tokens[j][0] == "symbol" {
+        if tokens[j][1] == "(" {
+            k := j + 1
+            call_args := []
+            if tokens[k][0] != "symbol" or tokens[k][1] != ")" {
+                loop true {
+                    res := parse_expression(tokens, k)
+                    call_args := call_args + [res[0]]
+                    k := res[1]
+                    if tokens[k][0] == "symbol" and tokens[k][1] == "," {
+                        k := k + 1
+                    } else {
+                        break
+                    }
+                }
+            }
+            node := ["func_call", node, call_args]
+            j := k + 1
+        } elif tokens[j][1] == "[" {
+            inner := parse_expression(tokens, j + 1)
+            k := inner[1]
+            if tokens[k][0] == "symbol" and tokens[k][1] == ":" {
+                if tokens[k + 1][0] == "symbol" and tokens[k + 1][1] == "]" {
+                    node := ["slice", node, inner[0], false]
+                    j := k + 2
+                } else {
+                    end_res := parse_expression(tokens, k + 1)
+                    node := ["slice", node, inner[0], end_res[0]]
+                    j := end_res[1] + 1
+                }
+            } else {
+                node := ["index", node, inner[0]]
+                j := k + 1
+            }
+        } elif tokens[j][1] == "." {
+            attr := tokens[j + 1]
+            node := ["dot", node, attr[1]]
+            j := j + 2
+        } else {
+            break
+        }
+    }
+    return [node, j]
+}
+alloc global_env := []
+alloc current_dir := "."
+alloc loaded_modules := []
+proc lookup_var(env, name) {
+    alloc i := 0
+    alloc entry := false
+    alloc env_len := length(env)
+    loop i < env_len {
+        entry := env[i]
+        if entry[0] == name {
+            return [true, entry[1]]
+        }
+        i := i + 1
+    }
+    i := 0
+    entry := false
+    alloc global_len := length(global_env)
+    loop i < global_len {
+        entry := global_env[i]
+        if entry[0] == name {
+            return [true, entry[1]]
+        }
+        i := i + 1
+    }
+    return [false, false]
+}
+proc env_set(env, name, value) {
+    alloc i := 0
+    alloc entry := false
+    alloc env_len := length(env)
+    loop i < env_len {
+        entry := env[i]
+        if entry[0] == name {
+            env[i] := [name, value]
+            return env
+        }
+        i := i + 1
+    }
+    env := env + [[name, value]]
+    return env
+}
+proc copy_env(env) {
+    alloc result := []
+    alloc i := 0
+    alloc entry := false
+    alloc env_len := length(env)
+    loop i < env_len {
+        entry := env[i]
+        result := result + [entry]
+        i := i + 1
+    }
+    return result
+}
+
+proc dirname(path) {
+    alloc i := length(path) - 1
+    loop i >= 0 and path[i] != "/" {
+        i := i - 1
+    }
+    if i >= 0 {
+        return path[0:i]
+    }
+    return "."
+}
+
+proc join_path(base, rel) {
+    if length(rel) > 0 and rel[0] == "/" {
+        return rel
+    }
+    return base + "/" + rel
+}
+proc call_function(func, arg_values, env) {
+    if func[0] == "function" {
+        alloc params := func[1]
+        alloc body := func[2]
+        alloc captured := func[3]
+        alloc base := captured
+        if captured == "global" {
+            base := global_env
+        }
+        alloc local := copy_env(base)
+        alloc i := 0
+        alloc params_len := length(params)
+        loop i < params_len {
+            local := env_set(local, params[i], arg_values[i])
+            i := i + 1
+        }
+        alloc res := []
+        res := execute(body, local, false)
+        if res[0] == "return" {
+            return res[1]
+        }
+        return false
+    } elif func[0] == "builtin" {
+        alloc name := func[1]
+        if name == "length" {
+            return length(arg_values[0])
+        } elif name == "read_file" {
+            return read_file(arg_values[0])
+        } elif name == "ascii" {
+            return ascii(arg_values[0])
+        } elif name == "chr" {
+            return chr(arg_values[0])
+        }
+        emit "Unknown builtin: " + name
+        return false
+    } else {
+        emit "Not a function value"
+        return false
+    }
+}
+
+proc import_module(path) {
+    alloc full := join_path(current_dir, path)
+    alloc k := 0
+    alloc lm_len := length(loaded_modules)
+    loop k < lm_len {
+        if loaded_modules[k] == full {
+            emit "Recursive import: " + full
+            return {}
+        }
+        k := k + 1
+    }
+    loaded_modules := loaded_modules + [full]
+    alloc source := read_file(full)
+    alloc src_len := length(source)
+    if src_len >= 6 and source[0] == ";" and source[1] == ";" and source[2] == ";" and source[3] == "o" and source[4] == "m" and source[5] == "g" {
+        alloc j := 6
+        if j < src_len and source[j] == "\n" {
+            j := j + 1
+        }
+        source := source[j:]
+    }
+    alloc saved_dir := current_dir
+    current_dir := dirname(full)
+    alloc saved_global := global_env
+    alloc ast := parse(source)
+    alloc env := [["length", ["builtin", "length"]], ["read_file", ["builtin", "read_file"]], ["ascii", ["builtin", "ascii"]], ["chr", ["builtin", "chr"]]]
+    env := env_set(env, "args", [])
+    global_env := env
+    alloc exports := []
+    alloc i := 0
+    alloc stmt := false
+    alloc ast_len := length(ast)
+    loop i < ast_len {
+        stmt := ast[i]
+        if stmt[0] == "decl" or stmt[0] == "func_def" {
+            exports := exports + [stmt[1]]
+        }
+        i := i + 1
+    }
+    alloc _ := false
+    _ := execute(ast, env, true)
+    alloc module_env := global_env
+    alloc module_ns := {}
+    alloc name := ""
+    alloc val := false
+    i := 0
+    alloc exp_len := length(exports)
+    loop i < exp_len {
+        name := exports[i]
+        val := lookup_var(module_env, name)[1]
+        if val[0] == "function" and val[3] == "global" {
+            val := ["function", val[1], val[2], module_env]
+            module_env := env_set(module_env, name, val)
+        }
+        module_ns[name] := val
+        i := i + 1
+    }
+    current_dir := saved_dir
+    global_env := saved_global
+    loaded_modules := loaded_modules[0:lm_len]
+    return module_ns
+}
+proc eval_expr(expr, env) {
+    alloc kind := expr[0]
+    if kind == "number" {
+        return expr[1]
+    } elif kind == "string" {
+        return expr[1]
+    } elif kind == "bool" {
+        return expr[1]
+    } elif kind == "ident" {
+        alloc name := expr[1]
+        alloc res := lookup_var(env, name)
+        if res[0] {
+            return res[1]
+        }
+        emit "Undefined variable: " + name
+        return false
+    } elif kind == "add" {
+        return eval_expr(expr[1], env) + eval_expr(expr[2], env)
+    } elif kind == "sub" {
+        return eval_expr(expr[1], env) - eval_expr(expr[2], env)
+    } elif kind == "mul" {
+        return eval_expr(expr[1], env) * eval_expr(expr[2], env)
+    } elif kind == "div" {
+        return eval_expr(expr[1], env) / eval_expr(expr[2], env)
+    } elif kind == "mod" {
+        return eval_expr(expr[1], env) % eval_expr(expr[2], env)
+    } elif kind == "band" {
+        return eval_expr(expr[1], env) & eval_expr(expr[2], env)
+    } elif kind == "bor" {
+        return eval_expr(expr[1], env) | eval_expr(expr[2], env)
+    } elif kind == "bxor" {
+        return eval_expr(expr[1], env) ^ eval_expr(expr[2], env)
+    } elif kind == "shl" {
+        return eval_expr(expr[1], env) << eval_expr(expr[2], env)
+    } elif kind == "shr" {
+        return eval_expr(expr[1], env) >> eval_expr(expr[2], env)
+    } elif kind == "bitnot" {
+        return ~eval_expr(expr[1], env)
+    } elif kind == "eq" {
+        return eval_expr(expr[1], env) == eval_expr(expr[2], env)
+    } elif kind == "ne" {
+        return eval_expr(expr[1], env) != eval_expr(expr[2], env)
+    } elif kind == "lt" {
+        return eval_expr(expr[1], env) < eval_expr(expr[2], env)
+    } elif kind == "gt" {
+        return eval_expr(expr[1], env) > eval_expr(expr[2], env)
+    } elif kind == "le" {
+        return eval_expr(expr[1], env) <= eval_expr(expr[2], env)
+    } elif kind == "ge" {
+        return eval_expr(expr[1], env) >= eval_expr(expr[2], env)
+    } elif kind == "and" {
+        alloc left := eval_expr(expr[1], env)
+        if left {
+            return eval_expr(expr[2], env)
+        }
+        return false
+    } elif kind == "or" {
+        alloc left := eval_expr(expr[1], env)
+        if left {
+            return left
+        }
+        return eval_expr(expr[2], env)
+    } elif kind == "unary" {
+        alloc op := expr[1]
+        alloc val := eval_expr(expr[2], env)
+        if op == "sub" {
+            return 0 - val
+        }
+        return val
+    } elif kind == "list" {
+        alloc nodes := expr[1]
+        alloc result := []
+        alloc i := 0
+        alloc nodes_len := length(nodes)
+        loop i < nodes_len {
+            result := result + [eval_expr(nodes[i], env)]
+            i := i + 1
+        }
+        return result
+    } elif kind == "dict" {
+        alloc pairs := expr[1]
+        alloc result := {}
+        alloc i := 0
+        alloc pair := false
+        alloc key := false
+        alloc val := false
+        alloc pairs_len := length(pairs)
+        loop i < pairs_len {
+            pair := pairs[i]
+            key := eval_expr(pair[0], env)
+            val := eval_expr(pair[1], env)
+            result[key] := val
+            i := i + 1
+        }
+        return result
+    } elif kind == "slice" {
+        alloc base := eval_expr(expr[1], env)
+        alloc start := eval_expr(expr[2], env)
+        alloc end_node := expr[3]
+        if end_node {
+            alloc end := eval_expr(end_node, env)
+            return base[start:end]
+        }
+        return base[start:]
+    } elif kind == "index" {
+        alloc base := eval_expr(expr[1], env)
+        alloc idx := eval_expr(expr[2], env)
+        return base[idx]
+    } elif kind == "dot" {
+        alloc base := eval_expr(expr[1], env)
+        alloc attr := expr[2]
+        return base[attr]
+    } elif kind == "func_call" {
+        alloc func_val := eval_expr(expr[1], env)
+        alloc arg_nodes := expr[2]
+        alloc arg_values := []
+        alloc i := 0
+        alloc arg_len := length(arg_nodes)
+        loop i < arg_len {
+            arg_values := arg_values + [eval_expr(arg_nodes[i], env)]
+            i := i + 1
+        }
+        return call_function(func_val, arg_values, env)
+    } else {
+        emit "Unknown expr kind: " + kind
+        return false
+    }
+}
+proc execute(stmts, env, is_global) {
+    alloc i := 0
+    alloc stmt := false
+    alloc kind := false
+    alloc res := ["normal", false]
+    alloc stmts_len := length(stmts)
+    alloc cond := false
+    alloc loop_res := ["normal", false]
+    alloc val := false
+    alloc name := ""
+    alloc params := []
+    alloc body := []
+    alloc func_val := false
+    alloc arg_nodes := []
+    alloc call_args := []
+    alloc j := 0
+    alloc arg_len := 0
+    alloc obj := false
+    alloc attr := ""
+    alloc idx := false
+    alloc _ := false
+    loop i < stmts_len {
+        stmt := stmts[i]
+        kind := stmt[0]
+        if kind == "decl" {
+            env := env_set(env, stmt[1], eval_expr(stmt[2], env))
+            if is_global { global_env := env }
+        } elif kind == "assign" {
+            env := env_set(env, stmt[1], eval_expr(stmt[2], env))
+            if is_global { global_env := env }
+        } elif kind == "attr_assign" {
+            obj := eval_expr(stmt[1], env)
+            attr := stmt[2]
+            obj[attr] := eval_expr(stmt[3], env)
+        } elif kind == "index_assign" {
+            obj := eval_expr(stmt[1], env)
+            idx := eval_expr(stmt[2], env)
+            obj[idx] := eval_expr(stmt[3], env)
+        } elif kind == "emit" {
+            emit eval_expr(stmt[1], env)
+        } elif kind == "facts" {
+            cond := eval_expr(stmt[1], env)
+            if cond {
+                _ := false
+            } else {
+                emit "Assertion failed"
+            }
+        } elif kind == "if" {
+            cond := eval_expr(stmt[1], env)
+            res := ["normal", false]
+            if cond {
+                res := execute(stmt[2], env, is_global)
+            } elif length(stmt) > 3 {
+                res := execute(stmt[3], env, is_global)
+            }
+            if res[0] != "normal" {
+                return res
+            }
+        } elif kind == "loop" {
+            loop_res := ["normal", false]
+            loop eval_expr(stmt[1], env) {
+                loop_res := execute(stmt[2], env, is_global)
+                if loop_res[0] == "break" {
+                    break
+                } elif loop_res[0] == "return" {
+                    return loop_res
+                }
+            }
+        } elif kind == "break" {
+            return ["break", false]
+        } elif kind == "return" {
+            val := eval_expr(stmt[1], env)
+            return ["return", val]
+        } elif kind == "func_def" {
+            name := stmt[1]
+            params := stmt[2]
+            body := stmt[3]
+            if is_global {
+                func_val := ["function", params, body, "global"]
+            } else {
+                func_val := ["function", params, body, env]
+            }
+            env := env_set(env, name, func_val)
+            if is_global { global_env := env }
+        } elif kind == "import" {
+            obj := import_module(stmt[1])
+            env := env_set(env, stmt[2], obj)
+            if is_global { global_env := env }
+        } elif kind == "func_call" {
+            func_val := eval_expr(stmt[1], env)
+            arg_nodes := stmt[2]
+            call_args := []
+            j := 0
+            arg_len := length(arg_nodes)
+            loop j < arg_len {
+                call_args := call_args + [eval_expr(arg_nodes[j], env)]
+                j := j + 1
+            }
+            _ := call_function(func_val, call_args, env)
+        } else {
+            emit "Unknown statement: " + kind
+        }
+        i := i + 1
+    }
+    return ["normal", false]
+}
+proc run(source) {
+    alloc ast := parse(source)
+    alloc env := [["length", ["builtin", "length"]], ["read_file", ["builtin", "read_file"]], ["ascii", ["builtin", "ascii"]], ["chr", ["builtin", "chr"]]]
+    env := env_set(env, "args", args)
+    global_env := env
+    return execute(ast, env, true)
+}
+proc run_file_with_args(path, file_args) {
+    alloc saved := args
+    alloc old_dir := current_dir
+    args := file_args
+    current_dir := dirname(path)
+    alloc source := read_file(path)
+    alloc src_len := length(source)
+    if src_len >= 6 and source[0] == ";" and source[1] == ";" and source[2] == ";" and source[3] == "o" and source[4] == "m" and source[5] == "g" {
+        source := source[6:]
+        if length(source) > 0 {
+            if source[0] == "\r" {
+                source := source[1:]
+            }
+            if length(source) > 0 and source[0] == "\n" {
+                source := source[1:]
+            }
+        }
+    }
+    alloc res := run(source)
+    current_dir := old_dir
+    args := saved
+    return res
+}
+proc run_file(path) {
+    return run_file_with_args(path, args)
+}
+if length(args) > 0 {
+    run_file(args[0])
+}
