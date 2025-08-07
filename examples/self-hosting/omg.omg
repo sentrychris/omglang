@@ -971,11 +971,12 @@ proc run_file_with_args(path, file_args) {
     alloc source := read_file(path)
     alloc src_len := length(source)
     if src_len >= 6 and source[0] == ";" and source[1] == ";" and source[2] == ";" and source[3] == "o" and source[4] == "m" and source[5] == "g" {
-        alloc j := 6
-        if j < src_len and source[j] == "\n" {
-            j := j + 1
+        source := source[6:]
+        if length(source) > 0 {
+            if source[0] == "\n" {
+                source := source[1:]
+            }
         }
-        source := source[j:]
     }
     alloc res := run(source)
     current_dir := old_dir

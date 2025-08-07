@@ -8,6 +8,7 @@ Usage:
 
 from __future__ import annotations
 import sys
+import json
 
 from dataclasses import dataclass
 from typing import List, Tuple
@@ -87,6 +88,8 @@ class Compiler:
             if op == "BUILTIN" and isinstance(arg, tuple):
                 name, argc = arg
                 lines.append(f"BUILTIN {name} {argc}")
+            elif op == "PUSH_STR" and isinstance(arg, str):
+                lines.append(f"PUSH_STR {json.dumps(arg)}")
             elif arg is None:
                 lines.append(op)
             else:

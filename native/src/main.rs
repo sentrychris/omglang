@@ -3,6 +3,7 @@ use std::collections::HashMap;
 use std::env;
 use std::fs;
 use std::rc::Rc;
+use serde_json;
 
 /// Representation of a compiled function.
 #[derive(Clone)]
@@ -151,7 +152,9 @@ fn parse_bytecode(src: &str) -> (Vec<Instr>, HashMap<String, Function>) {
                 code.push(Instr::PushInt(v));
             }
         } else if let Some(rest) = trimmed.strip_prefix("PUSH_STR ") {
-            code.push(Instr::PushStr(rest.to_string()));
+            if let Ok(s) = serde_json::from_str::<String>(rest) {
+                code.push(Instr::PushStr(s));
+            }
         } else if let Some(rest) = trimmed.strip_prefix("PUSH_BOOL ") {
             let b = rest.trim() == "1" || rest.trim().eq_ignore_ascii_case("true");
             code.push(Instr::PushBool(b));
