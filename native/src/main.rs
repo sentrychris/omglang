@@ -1,6 +1,8 @@
+use std::cell::RefCell;
 use std::collections::HashMap;
 use std::env;
 use std::fs;
+use std::rc::Rc;
 
 /// Representation of a compiled function.
 #[derive(Clone)]
@@ -15,7 +17,9 @@ enum Value {
     Int(i64),
     Str(String),
     Bool(bool),
-    List(Vec<Value>),
+    List(Rc<RefCell<Vec<Value>>>),
+    Dict(Rc<RefCell<HashMap<String, Value>>>),
+    None,
 }
 
 impl Value {
@@ -30,7 +34,9 @@ impl Value {
                     0
                 }
             }
-            Value::List(l) => l.len() as i64,
+            Value::List(l) => l.borrow().len() as i64,
+            Value::Dict(d) => d.borrow().len() as i64,
+            Value::None => 0,
         }
     }
     fn as_bool(&self) -> bool {
@@ -38,7 +44,9 @@ impl Value {
             Value::Bool(b) => *b,
             Value::Int(i) => *i != 0,
             Value::Str(s) => !s.is_empty(),
-            Value::List(l) => !l.is_empty(),
+            Value::List(l) => !l.borrow().is_empty(),
+            Value::Dict(d) => !d.borrow().is_empty(),
+            Value::None => false,
         }
     }
     fn to_string(&self) -> String {
@@ -47,9 +55,22 @@ impl Value {
             Value::Str(s) => s.clone(),
             Value::Bool(b) => b.to_string(),
             Value::List(list) => {
-                let inner: Vec<String> = list.iter().map(|v| v.to_string()).collect();
+                let inner: Vec<String> = list
+                    .borrow()
+                    .iter()
+                    .map(|v| v.to_string())
+                    .collect();
                 format!("[{}]", inner.join(", "))
             }
+            Value::Dict(map) => {
+                let inner: Vec<String> = map
+                    .borrow()
+                    .iter()
+                    .map(|(k, v)| format!("{}: {}", k, v.to_string()))
+                    .collect();
+                format!("{{{}}}", inner.join(", "))
+            }
+            Value::None => "".to_string(),
         }
     }
 }
@@ -60,6 +81,7 @@ enum Instr {
     PushStr(String),
     PushBool(bool),
     BuildList(usize),
+    BuildDict(usize),
     Load(String),
     Store(String),
     Add,
@@ -90,9 +112,11 @@ enum Instr {
     TailCall(String),
     CallBuiltin(String, usize),
     Pop,
+    PushNone,
     Ret,
     Emit,
     Halt,
+    StoreIndex,
 }
 
 /// Parse a textual bytecode file into instructions.
@@ -129,6 +153,10 @@ fn parse_bytecode(src: &str) -> (Vec<Instr>, HashMap<String, Function>) {
         } else if let Some(rest) = trimmed.strip_prefix("BUILD_LIST ") {
             if let Ok(n) = rest.parse::<usize>() {
                 code.push(Instr::BuildList(n));
+            }
+        } else if let Some(rest) = trimmed.strip_prefix("BUILD_DICT ") {
+            if let Ok(n) = rest.parse::<usize>() {
+                code.push(Instr::BuildDict(n));
             }
         } else if let Some(rest) = trimmed.strip_prefix("LOAD ") {
             code.push(Instr::Load(rest.to_string()));
@@ -178,6 +206,8 @@ fn parse_bytecode(src: &str) -> (Vec<Instr>, HashMap<String, Function>) {
             code.push(Instr::Index);
         } else if trimmed == "SLICE" {
             code.push(Instr::Slice);
+        } else if trimmed == "STORE_INDEX" {
+            code.push(Instr::StoreIndex);
         } else if let Some(rest) = trimmed.strip_prefix("JUMP_IF_FALSE ") {
             if let Ok(t) = rest.parse::<usize>() {
                 code.push(Instr::JumpIfFalse(t));
@@ -205,15 +235,26 @@ fn parse_bytecode(src: &str) -> (Vec<Instr>, HashMap<String, Function>) {
             code.push(Instr::Halt);
         } else if trimmed == "POP" {
             code.push(Instr::Pop);
+        } else if trimmed == "PUSH_NONE" {
+            code.push(Instr::PushNone);
         }
     }
     (code, funcs)
 }
 
 /// Execute bytecode on a stack-based virtual machine.
-fn run(code: &[Instr], funcs: &HashMap<String, Function>) {
+fn run(code: &[Instr], funcs: &HashMap<String, Function>, program_args: &[String]) {
     let mut stack: Vec<Value> = Vec::new();
     let mut globals: HashMap<String, Value> = HashMap::new();
+    // Expose command line arguments to bytecode programs via the global `args` list
+    let arg_values: Vec<Value> = program_args
+        .iter()
+        .map(|s| Value::Str(s.clone()))
+        .collect();
+    globals.insert(
+        "args".to_string(),
+        Value::List(Rc::new(RefCell::new(arg_values))),
+    );
     let mut env: HashMap<String, Value> = HashMap::new();
     let mut env_stack: Vec<HashMap<String, Value>> = Vec::new();
     let mut ret_stack: Vec<usize> = Vec::new();
@@ -229,7 +270,16 @@ fn run(code: &[Instr], funcs: &HashMap<String, Function>) {
                     elements.push(stack.pop().unwrap());
                 }
                 elements.reverse();
-                stack.push(Value::List(elements));
+                stack.push(Value::List(Rc::new(RefCell::new(elements))));
+            }
+            Instr::BuildDict(n) => {
+                let mut map: HashMap<String, Value> = HashMap::new();
+                for _ in 0..*n {
+                    let val = stack.pop().unwrap();
+                    let key = stack.pop().unwrap().to_string();
+                    map.insert(key, val);
+                }
+                stack.push(Value::Dict(Rc::new(RefCell::new(map))));
             }
             Instr::Load(name) => {
                 if let Some(v) = env.get(name) {
@@ -260,8 +310,11 @@ fn run(code: &[Instr], funcs: &HashMap<String, Function>) {
                     (Value::Str(sa), Value::Str(sb)) => stack.push(Value::Str(sa + &sb)),
                     (Value::Str(sa), v) => stack.push(Value::Str(sa + &v.to_string())),
                     (v, Value::Str(sb)) => stack.push(Value::Str(v.to_string() + &sb)),
-                    (Value::List(mut la), Value::List(lb)) => {
-                        la.extend(lb);
+                    (Value::List(la), Value::List(lb)) => {
+                        {
+                            let mut la_mut = la.borrow_mut();
+                            la_mut.extend(lb.borrow().iter().cloned());
+                        }
                         stack.push(Value::List(la));
                     }
                     (a, b) => stack.push(Value::Int(a.as_int() + b.as_int())),
@@ -275,7 +328,7 @@ fn run(code: &[Instr], funcs: &HashMap<String, Function>) {
             Instr::Mul => {
                 let b = stack.pop().unwrap().as_int();
                 let a = stack.pop().unwrap().as_int();
-                stack.push(Value::Int(a * b));
+                stack.push(Value::Int(a.checked_mul(b).unwrap_or(0)));
             }
             Instr::Div => {
                 let b = stack.pop().unwrap().as_int();
@@ -361,22 +414,82 @@ fn run(code: &[Instr], funcs: &HashMap<String, Function>) {
                 stack.push(Value::Int(-v));
             }
             Instr::Index => {
-                let idx = stack.pop().unwrap().as_int() as usize;
-                if let Value::List(list) = stack.pop().unwrap() {
-                    stack.push(list[idx].clone());
-                } else {
-                    stack.push(Value::Int(0));
+                let idx = stack.pop().unwrap();
+                let base = stack.pop().unwrap();
+                match (base, idx) {
+                    (Value::List(list), Value::Int(i)) => {
+                        let l = list.borrow();
+                        let idx = i as usize;
+                        if idx < l.len() {
+                            stack.push(l[idx].clone());
+                        } else {
+                            stack.push(Value::Int(0));
+                        }
+                    }
+                    (Value::Dict(map), Value::Str(k)) => {
+                        stack.push(map.borrow().get(&k).cloned().unwrap_or(Value::Int(0)));
+                    }
+                    (Value::Dict(map), Value::Int(i)) => {
+                        let key = i.to_string();
+                        stack.push(map.borrow().get(&key).cloned().unwrap_or(Value::Int(0)));
+                    }
+                    (Value::Str(s), Value::Int(i)) => {
+                        let ch = s.chars().nth(i as usize).unwrap_or('\0');
+                        stack.push(Value::Str(ch.to_string()));
+                    }
+                    _ => stack.push(Value::Int(0)),
                 }
             }
             Instr::Slice => {
-                let end = stack.pop().unwrap().as_int() as usize;
+                let end_val = stack.pop().unwrap();
                 let start = stack.pop().unwrap().as_int() as usize;
-                if let Value::List(list) = stack.pop().unwrap() {
-                    let slice = list[start..end].to_vec();
-                    stack.push(Value::List(slice));
-                } else {
-                    stack.push(Value::List(vec![]));
+                let base = stack.pop().unwrap();
+                match base {
+                    Value::List(list) => {
+                        let list_ref = list.borrow();
+                        let end = match end_val {
+                            Value::None => list_ref.len(),
+                            v => v.as_int() as usize,
+                        };
+                        let slice = list_ref[start..end].to_vec();
+                        stack.push(Value::List(Rc::new(RefCell::new(slice))));
+                    }
+                    Value::Str(s) => {
+                        let chars: Vec<char> = s.chars().collect();
+                        let end = match end_val {
+                            Value::None => chars.len(),
+                            v => v.as_int() as usize,
+                        };
+                        let slice: String = chars[start..end].iter().collect();
+                        stack.push(Value::Str(slice));
+                    }
+                    _ => stack.push(Value::Int(0)),
                 }
+            }
+            Instr::StoreIndex => {
+                let val = stack.pop().unwrap();
+                let idx = stack.pop().unwrap();
+                let base = stack.pop().unwrap();
+                match (base, idx) {
+                    (Value::List(list), Value::Int(i)) => {
+                        let mut l = list.borrow_mut();
+                        let idx_usize = i as usize;
+                        if idx_usize >= l.len() {
+                            l.resize(idx_usize + 1, Value::Int(0));
+                        }
+                        l[idx_usize] = val;
+                    }
+                    (Value::Dict(map), Value::Str(k)) => {
+                        map.borrow_mut().insert(k, val);
+                    }
+                    (Value::Dict(map), Value::Int(i)) => {
+                        map.borrow_mut().insert(i.to_string(), val);
+                    }
+                    _ => {}
+                }
+            }
+            Instr::PushNone => {
+                stack.push(Value::None);
             }
             Instr::Jump(target) => {
                 pc = *target;
@@ -452,9 +565,10 @@ fn run(code: &[Instr], funcs: &HashMap<String, Function>) {
                         _ => panic!("binary() expects one or two integers"),
                     },
                     "length" => match args.as_slice() {
-                        [Value::List(list)] => Value::Int(list.len() as i64),
+                        [Value::List(list)] => Value::Int(list.borrow().len() as i64),
                         [Value::Str(s)] => Value::Int(s.chars().count() as i64),
-                        _ => panic!("length() expects a list or string"),
+                        [Value::Dict(map)] => Value::Int(map.borrow().len() as i64),
+                        _ => panic!("length() expects a list, dict or string"),
                     },
                     "read_file" => match args.as_slice() {
                         [Value::Str(path)] => {
@@ -491,10 +605,20 @@ fn run(code: &[Instr], funcs: &HashMap<String, Function>) {
 fn main() {
     let args: Vec<String> = env::args().collect();
     if args.len() < 2 {
-        eprintln!("Usage: omg_native <bytecode_file>");
+        eprintln!("Usage: omg_native <bytecode_file> [--] [program args]");
         std::process::exit(1);
     }
-    let src = fs::read_to_string(&args[1]).expect("failed to read bytecode file");
+    let bc_path = &args[1];
+    let program_args: &[String] = if args.len() > 2 {
+        if args[2] == "--" {
+            &args[3..]
+        } else {
+            &args[2..]
+        }
+    } else {
+        &[]
+    };
+    let src = fs::read_to_string(bc_path).expect("failed to read bytecode file");
     let (code, funcs) = parse_bytecode(&src);
-    run(&code, &funcs);
+    run(&code, &funcs, program_args);
 }

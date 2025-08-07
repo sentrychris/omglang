@@ -16,6 +16,8 @@ Ordered from most recent at the top to oldest at the bottom.
   optional output path to avoid shell re-encoding on Windows.
 - Self-hosted interpreter loads external modules via `import "<file>" as <alias>`,
   so examples like `2.omg` run successfully.
+- Native VM forwards command-line arguments to bytecode programs via a global
+  `args` list, allowing compiled interpreters to execute scripts.
 
 ### Fixed
 - Reused temporary result variables in the self-hosted interpreter's
