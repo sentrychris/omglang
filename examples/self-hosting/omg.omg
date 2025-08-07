@@ -97,6 +97,12 @@ proc tokenize(src) {
             tokens[n] := ["symbol", ">>"]
             n := n + 1
             i := i + 2
+        } elif c == "/" and i + 1 < src_len and src[i + 1] == "*" {
+            i := i + 2
+            loop i + 1 < src_len and (src[i] != "*" or src[i + 1] != "/") {
+                i := i + 1
+            }
+            i := i + 2
         } elif c == "(" or c == ")" or c == "{" or c == "}" or c == "," or c == "+" or c == "-" or c == "*" or c == "/" or c == "%" or c == "<" or c == ">" or c == "[" or c == "]" or c == "&" or c == "|" or c == "^" or c == "~" or c == "." {
             tokens[n] := ["symbol", c]
             n := n + 1
@@ -131,7 +137,7 @@ proc tokenize(src) {
             res := read_ident(src, i)
             word := res[0]
             i := res[1]
-            if word == "alloc" or word == "emit" or word == "proc" or word == "return" or word == "if" or word == "else" or word == "elif" or word == "loop" or word == "break" or word == "and" or word == "or" or word == "facts" {
+            if word == "alloc" or word == "emit" or word == "proc" or word == "return" or word == "if" or word == "else" or word == "elif" or word == "loop" or word == "break" or word == "and" or word == "or" or word == "facts" or word == "import" or word == "as" {
                 tokens[n] := ["kw", word]
                 n := n + 1
             } elif word == "true" {
@@ -227,6 +233,10 @@ proc parse_statement(tokens, i) {
         j := j + 1
         alloc res_block := parse_block(tokens, j)
         return [["func_def", name, params, res_block[0]], res_block[1]]
+    } elif t[0] == "kw" and t[1] == "import" {
+        alloc path := tokens[i + 1][1]
+        alloc alias := tokens[i + 3][1]
+        return [["import", path, alias], i + 4]
     } elif t[0] == "kw" and t[1] == "facts" {
         alloc res := parse_expression(tokens, i + 1)
         return [["facts", res[0]], res[1]]
@@ -539,6 +549,8 @@ proc parse_factor(tokens, i) {
     return [node, j]
 }
 alloc global_env := []
+alloc current_dir := "."
+alloc loaded_modules := []
 proc lookup_var(env, name) {
     alloc i := 0
     alloc entry := false
@@ -589,6 +601,24 @@ proc copy_env(env) {
     }
     return result
 }
+
+proc dirname(path) {
+    alloc i := length(path) - 1
+    loop i >= 0 and path[i] != "/" {
+        i := i - 1
+    }
+    if i >= 0 {
+        return path[0:i]
+    }
+    return "."
+}
+
+proc join_path(base, rel) {
+    if length(rel) > 0 and rel[0] == "/" {
+        return rel
+    }
+    return base + "/" + rel
+}
 proc call_function(func, args, env) {
     if func[0] == "function" {
         alloc params := func[1]
@@ -628,6 +658,69 @@ proc call_function(func, args, env) {
         emit "Not a function value"
         return false
     }
+}
+
+proc import_module(path) {
+    alloc full := join_path(current_dir, path)
+    alloc k := 0
+    alloc lm_len := length(loaded_modules)
+    loop k < lm_len {
+        if loaded_modules[k] == full {
+            emit "Recursive import: " + full
+            return {}
+        }
+        k := k + 1
+    }
+    loaded_modules := loaded_modules + [full]
+    alloc source := read_file(full)
+    alloc src_len := length(source)
+    if src_len >= 6 and source[0] == ";" and source[1] == ";" and source[2] == ";" and source[3] == "o" and source[4] == "m" and source[5] == "g" {
+        alloc j := 6
+        if j < src_len and source[j] == "\n" {
+            j := j + 1
+        }
+        source := source[j:]
+    }
+    alloc saved_dir := current_dir
+    current_dir := dirname(full)
+    alloc saved_global := global_env
+    alloc ast := parse(source)
+    alloc env := [["length", ["builtin", "length"]], ["read_file", ["builtin", "read_file"]], ["ascii", ["builtin", "ascii"]], ["chr", ["builtin", "chr"]]]
+    env := env_set(env, "args", [])
+    global_env := env
+    alloc exports := []
+    alloc i := 0
+    alloc stmt := false
+    alloc ast_len := length(ast)
+    loop i < ast_len {
+        stmt := ast[i]
+        if stmt[0] == "decl" or stmt[0] == "func_def" {
+            exports := exports + [stmt[1]]
+        }
+        i := i + 1
+    }
+    alloc _ := false
+    _ := execute(ast, env, true)
+    alloc module_env := global_env
+    alloc module_ns := {}
+    alloc name := ""
+    alloc val := false
+    i := 0
+    alloc exp_len := length(exports)
+    loop i < exp_len {
+        name := exports[i]
+        val := lookup_var(module_env, name)[1]
+        if val[0] == "function" and val[3] == "global" {
+            val := ["function", val[1], val[2], module_env]
+            module_env := env_set(module_env, name, val)
+        }
+        module_ns[name] := val
+        i := i + 1
+    }
+    current_dir := saved_dir
+    global_env := saved_global
+    loaded_modules := loaded_modules[0:lm_len]
+    return module_ns
 }
 proc eval_expr(expr, env) {
     alloc kind := expr[0]
@@ -841,6 +934,10 @@ proc execute(stmts, env, is_global) {
             }
             env := env_set(env, name, func_val)
             if is_global { global_env := env }
+        } elif kind == "import" {
+            obj := import_module(stmt[1])
+            env := env_set(env, stmt[2], obj)
+            if is_global { global_env := env }
         } elif kind == "func_call" {
             func_val := eval_expr(stmt[1], env)
             arg_nodes := stmt[2]
@@ -868,7 +965,9 @@ proc run(source) {
 }
 proc run_file_with_args(path, file_args) {
     alloc saved := args
+    alloc old_dir := current_dir
     args := file_args
+    current_dir := dirname(path)
     alloc source := read_file(path)
     alloc src_len := length(source)
     if src_len >= 6 and source[0] == ";" and source[1] == ";" and source[2] == ";" and source[3] == "o" and source[4] == "m" and source[5] == "g" {
@@ -879,6 +978,7 @@ proc run_file_with_args(path, file_args) {
         source := source[j:]
     }
     alloc res := run(source)
+    current_dir := old_dir
     args := saved
     return res
 }

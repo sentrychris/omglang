@@ -14,6 +14,8 @@ Ordered from most recent at the top to oldest at the bottom.
   directly.
 - Command line compiler writes bytecode using UTF-8 encoding and accepts an
   optional output path to avoid shell re-encoding on Windows.
+- Self-hosted interpreter loads external modules via `import "<file>" as <alias>`,
+  so examples like `2.omg` run successfully.
 
 ### Fixed
 - Reused temporary result variables in the self-hosted interpreter's
