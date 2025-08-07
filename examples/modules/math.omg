@@ -1,17 +1,54 @@
 ;;;omg
 
+/**
+ * Math Module
+ * Provides basic arithmetic operations, primality testing, and number classification.
+ *
+ * @module math
+ * @version 1.0
+ */
+
+/**
+ * Adds two numbers.
+ *
+ * @param a First number
+ * @param b Second number
+ * @return Sum of a and b
+ */
 proc add(a, b) {
     return a + b
 }
 
+/**
+ * Subtracts second number from first.
+ *
+ * @param a First number
+ * @param b Second number
+ * @return Difference of a and b
+ */
 proc subtract(a, b) {
     return a - b
 }
 
+/**
+ * Multiplies two numbers.
+ *
+ * @param a First number
+ * @param b Second number
+ * @return Product of a and b
+ */
 proc multiply(a, b) {
     return a * b
 }
 
+/**
+ * Divides first number by second.
+ * Returns an error message if division by zero is attempted.
+ *
+ * @param a Numerator
+ * @param b Denominator
+ * @return Quotient of a and b or error message
+ */
 proc divide(a, b) {
     if b == 0 {
         return "Error: Division by zero"
@@ -19,6 +56,28 @@ proc divide(a, b) {
     return a / b
 }
 
+/**
+ * Raises a number to a power.
+ *
+ * @param base Base number
+ * @param exp Exponent
+ * @return Result of base raised to the power of exp
+ */
+proc power(base, exp) {
+    alloc result := 1
+    loop exp > 0 {
+        result := result * base
+        exp := exp - 1
+    }
+    return result
+}
+
+/**
+ * Checks if a number is prime.
+ *
+ * @param n Number to check
+ * @return 1 if n is prime, 0 otherwise
+ */
 proc is_prime(n) {
     if n <= 1 {
         return 0
@@ -33,6 +92,12 @@ proc is_prime(n) {
     return 1
 }
 
+/**
+ * Computes the factorial of a number.
+ *
+ * @param n Number to compute factorial for
+ * @return Factorial of n
+ */
 proc factorial(n) {
     if n <= 1 {
         return 1
@@ -41,6 +106,12 @@ proc factorial(n) {
     }
 }
 
+/**
+ * Computes the nth Fibonacci number.
+ *
+ * @param n Position in Fibonacci sequence
+ * @return nth Fibonacci number
+ */
 proc fibonacci(n) {
     if n <= 1 {
         return n
@@ -49,6 +120,12 @@ proc fibonacci(n) {
     }
 }
 
+/**
+ * Computes the sum of digits of a number.
+ *
+ * @param n Number to compute digit sum for
+ * @return Sum of digits of n
+ */
 proc digit_sum(n) {
     alloc sum := 0
     alloc temp := n

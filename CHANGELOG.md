@@ -5,6 +5,7 @@ Ordered from most recent at the top to oldest at the bottom.
 ## [0.1.0] - 2025-08-06
 
 ### Added
+- Support for multiline `/** ... */` docblock comments in the lexer and VSCode syntax highlighting.
 - Introduced a full-featured VSCode extension for OMG:
   - Syntax highlighting via `omg.tmLanguage.json`
   - Language configuration (brackets, comments, etc.)
