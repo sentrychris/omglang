@@ -5,6 +5,8 @@ Ordered from most recent at the top to oldest at the bottom.
 ## [Unreleased]
 
 ### Added
+- Ported the bytecode compiler to OMG so the self-hosted interpreter can
+  generate bytecode without relying on Python.
 - Expanded `bytecode.py` to compile the full OMG language including imports,
   dictionary operations, assertions, and break handling.
 - Added a bootstrap interpreter in `bootstrap/` written in OMG capable of
