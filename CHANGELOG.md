@@ -45,6 +45,8 @@ Ordered from most recent at the top to oldest at the bottom.
 - Self-hosted interpreter handles dot access, dictionary assignments, and
   `facts` assertions so examples like `dictionaries.omg` execute without
   hanging.
+- Increased Python recursion limit so the self-hosted interpreter can run
+  deeply recursive programs without hitting `RecursionError`.
 
 ## [0.1.0] - 2025-08-06
 

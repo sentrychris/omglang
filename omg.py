@@ -13,6 +13,9 @@ Workflow:
 import os
 import sys
 
+# Allow deeply recursive OMG programs to run under the self-hosted interpreter
+sys.setrecursionlimit(10000)
+
 from omglang.lexer import tokenize
 from omglang.parser import Parser
 from omglang.interpreter import Interpreter
