@@ -34,6 +34,18 @@ class Compiler:
         self.code: List[Instr] = []
         self.pending_funcs: List[Tuple[str, List[str], List[Instr]]] = []
         self.funcs: List[FunctionEntry] = []
+        # Track outstanding `break` statements within loops.  Each entry on
+        # the stack holds placeholder jump indices that should be patched to
+        # the end of the current loop.
+        self.break_stack: List[List[int]] = []
+        self.builtins = {
+            "chr",
+            "ascii",
+            "hex",
+            "binary",
+            "length",
+            "read_file",
+        }
 
     # ------------------------------------------------------------------
     # Helper utilities
@@ -72,7 +84,10 @@ class Compiler:
             params = " ".join(f.params)
             lines.append(f"FUNC {f.name} {len(f.params)} {params} {f.address}")
         for op, arg in final_code:
-            if arg is None:
+            if op == "BUILTIN" and isinstance(arg, tuple):
+                name, argc = arg
+                lines.append(f"BUILTIN {name} {argc}")
+            elif arg is None:
                 lines.append(op)
             else:
                 lines.append(f"{op} {arg}")
@@ -94,6 +109,28 @@ class Compiler:
             name, expr = stmt[1], stmt[2]
             self.compile_expr(expr)
             self.emit("STORE", name)
+        elif kind == "attr_assign":
+            base, attr, expr = stmt[1], stmt[2], stmt[3]
+            self.compile_expr(base)
+            self.compile_expr(expr)
+            self.emit("STORE_ATTR", attr)
+        elif kind == "index_assign":
+            base, index_expr, value_expr = stmt[1], stmt[2], stmt[3]
+            self.compile_expr(base)
+            self.compile_expr(index_expr)
+            self.compile_expr(value_expr)
+            self.emit("STORE_INDEX")
+        elif kind == "expr_stmt":
+            self.compile_expr(stmt[1])
+            self.emit("POP")
+        elif kind == "import":
+            path, alias = stmt[1], stmt[2]
+            self.emit("PUSH_STR", path)
+            self.emit("IMPORT")
+            self.emit("STORE", alias)
+        elif kind == "facts":
+            self.compile_expr(stmt[1])
+            self.emit("ASSERT")
         elif kind == "if":
             # Unroll nested if/elif chain
             cond_blocks: List[Tuple[tuple, List[tuple]]] = []
@@ -128,9 +165,13 @@ class Compiler:
             start = len(self.code)
             self.compile_expr(cond)
             jf = self.emit_placeholder("JUMP_IF_FALSE")
+            self.break_stack.append([])
             self.compile_block(body)
             self.emit("JUMP", start)
             self.patch(jf, len(self.code))
+            # Patch any breaks that occurred inside the loop
+            for idx in self.break_stack.pop():
+                self.patch(idx, len(self.code))
         elif kind == "func_def":
             name, params, body_node = stmt[1], stmt[2], stmt[3]
             body = body_node[1] if body_node[0] == "block" else []
@@ -150,6 +191,11 @@ class Compiler:
             else:
                 self.compile_expr(expr)
                 self.emit("RET")
+        elif kind == "break":
+            if not self.break_stack:
+                raise SyntaxError("'break' used outside of loop")
+            j = self.emit_placeholder("JUMP")
+            self.break_stack[-1].append(j)
         elif kind == "block":
             self.compile_block(stmt[1])
         else:
@@ -182,6 +228,12 @@ class Compiler:
             for elem in elements:
                 self.compile_expr(elem)
             self.emit("BUILD_LIST", len(elements))
+        elif op == "dict":
+            pairs = node[1]
+            for key, val in pairs:
+                self.emit("PUSH_STR", key)
+                self.compile_expr(val)
+            self.emit("BUILD_DICT", len(pairs))
         elif op == "index":
             self.compile_expr(node[1])
             self.compile_expr(node[2])
@@ -189,15 +241,31 @@ class Compiler:
         elif op == "slice":
             self.compile_expr(node[1])
             self.compile_expr(node[2])
-            self.compile_expr(node[3])
+            end = node[3]
+            if end is None:
+                self.emit("PUSH_NONE")
+            else:
+                self.compile_expr(end)
             self.emit("SLICE")
+        elif op == "dot":
+            self.compile_expr(node[1])
+            self.emit("ATTR", node[2])
         elif op == "func_call":
             func_node, args = node[1], node[2]
-            for arg in args:
-                self.compile_expr(arg)
-            if func_node[0] != "ident":
-                raise NotImplementedError("Only direct function calls are supported")
-            self.emit("CALL", func_node[1])
+            if func_node[0] == "ident":
+                name = func_node[1]
+                for arg in args:
+                    self.compile_expr(arg)
+                if name in self.builtins:
+                    self.emit("BUILTIN", (name, len(args)))
+                else:
+                    self.emit("CALL", name)
+            else:
+                # General case: evaluate function expression then call indirectly
+                self.compile_expr(func_node)
+                for arg in args:
+                    self.compile_expr(arg)
+                self.emit("CALL_VALUE", len(args))
         elif op == "unary":
             unary_op = node[1]
             self.compile_expr(node[2])
@@ -205,6 +273,8 @@ class Compiler:
                 self.emit("NEG")
             elif unary_op == Op.NOT_BITS:
                 self.emit("NOT")
+            elif unary_op == Op.ADD:
+                pass
         elif isinstance(op, Op):
             self.compile_expr(node[1])
             self.compile_expr(node[2])
@@ -222,6 +292,11 @@ class Compiler:
                 Op.LE: "LE",
                 Op.AND: "AND",
                 Op.OR: "OR",
+                Op.AND_BITS: "BAND",
+                Op.OR_BITS: "BOR",
+                Op.XOR_BITS: "BXOR",
+                Op.SHL: "SHL",
+                Op.SHR: "SHR",
             }
             self.emit(op_map[op])
         else:
@@ -245,7 +320,7 @@ def main(argv: List[str]) -> int:
     with open(path, "r", encoding="utf-8") as f:
         src = f.read()
     bc = compile_source(src, path)
-    sys.stdout.write(bc)
+    sys.stdout.buffer.write(bc.encode("utf-8"))
     return 0
 
 

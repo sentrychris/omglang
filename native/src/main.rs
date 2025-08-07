@@ -76,6 +76,7 @@ enum Instr {
     JumpIfFalse(usize),
     Call(String),
     TailCall(String),
+    CallBuiltin(String, usize),
     Ret,
     Emit,
     Halt,
@@ -164,6 +165,13 @@ fn parse_bytecode(src: &str) -> (Vec<Instr>, HashMap<String, Function>) {
             code.push(Instr::Call(rest.to_string()));
         } else if let Some(rest) = trimmed.strip_prefix("TCALL ") {
             code.push(Instr::TailCall(rest.to_string()));
+        } else if let Some(rest) = trimmed.strip_prefix("BUILTIN ") {
+            let parts: Vec<&str> = rest.split_whitespace().collect();
+            if parts.len() == 2 {
+                if let Ok(argc) = parts[1].parse::<usize>() {
+                    code.push(Instr::CallBuiltin(parts[0].to_string(), argc));
+                }
+            }
         } else if trimmed == "RET" {
             code.push(Instr::Ret);
         } else if trimmed == "EMIT" {
@@ -338,6 +346,54 @@ fn run(code: &[Instr], funcs: &HashMap<String, Function>) {
                 } else {
                     panic!("Unknown function: {}", name);
                 }
+            }
+            Instr::CallBuiltin(name, argc) => {
+                let mut args: Vec<Value> = Vec::new();
+                for _ in 0..*argc {
+                    args.push(stack.pop().unwrap());
+                }
+                args.reverse();
+                let result = match name.as_str() {
+                    "chr" => match args.as_slice() {
+                        [Value::Int(i)] => Value::Str((*i as u8 as char).to_string()),
+                        _ => panic!("chr() expects one integer"),
+                    },
+                    "ascii" => match args.as_slice() {
+                        [Value::Str(s)] if s.chars().count() == 1 => {
+                            Value::Int(s.chars().next().unwrap() as i64)
+                        }
+                        _ => panic!("ascii() expects a single character"),
+                    },
+                    "hex" => match args.as_slice() {
+                        [Value::Int(i)] => Value::Str(format!("{:x}", i)),
+                        _ => panic!("hex() expects one integer"),
+                    },
+                    "binary" => match args.as_slice() {
+                        [Value::Int(n)] => Value::Str(format!("{:b}", n)),
+                        [Value::Int(n), Value::Int(width)] => {
+                            if *width <= 0 {
+                                panic!("binary() width must be positive");
+                            }
+                            let mask = (1_i64 << width) - 1;
+                            Value::Str(format!("{:0width$b}", n & mask, width = *width as usize))
+                        }
+                        _ => panic!("binary() expects one or two integers"),
+                    },
+                    "length" => match args.as_slice() {
+                        [Value::List(list)] => Value::Int(list.len() as i64),
+                        [Value::Str(s)] => Value::Int(s.chars().count() as i64),
+                        _ => panic!("length() expects a list or string"),
+                    },
+                    "read_file" => match args.as_slice() {
+                        [Value::Str(path)] => {
+                            let content = fs::read_to_string(path).expect("failed to read file");
+                            Value::Str(content)
+                        }
+                        _ => panic!("read_file() expects a file path"),
+                    },
+                    _ => panic!("unknown builtin: {}", name),
+                };
+                stack.push(result);
             }
             Instr::Ret => {
                 let ret_val = stack.pop().unwrap_or(Value::Int(0));

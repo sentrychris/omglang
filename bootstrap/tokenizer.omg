@@ -1,0 +1,95 @@
+;;;omg
+
+# Simple tokenizer for OMG subset
+
+proc is_digit(ch) {
+    return ch >= "0" and ch <= "9"
+}
+
+proc is_alpha(ch) {
+    return (ch >= "a" and ch <= "z") or (ch >= "A" and ch <= "Z") or ch == "_"
+}
+
+proc is_alnum(ch) {
+    return is_alpha(ch) or is_digit(ch)
+}
+
+proc read_number(src, i) {
+    alloc num := 0
+    alloc c := ""
+    loop i < length(src) and is_digit(src[i]) {
+        c := src[i]
+        num := num * 10 + ascii(c) - ascii("0")
+        i := i + 1
+    }
+    return [num, i]
+}
+
+proc read_ident(src, i) {
+    alloc s := ""
+    loop i < length(src) and is_alnum(src[i]) {
+        s := s + src[i]
+        i := i + 1
+    }
+    return [s, i]
+}
+
+proc tokenize(src) {
+    alloc tokens := []
+    alloc i := 0
+    alloc line := 1
+    alloc c := ""
+    alloc res := []
+    alloc word := ""
+    loop i < length(src) {
+        c := src[i]
+        if c == " " or c == "\t" {
+            i := i + 1
+        } elif c == "\n" {
+            line := line + 1
+            i := i + 1
+        } elif c == ":" and src[i + 1] == "=" {
+            tokens := tokens + [["symbol", ":=", line]]
+            i := i + 2
+        } elif c == "=" and src[i + 1] == "=" {
+            tokens := tokens + [["symbol", "==", line]]
+            i := i + 2
+        } elif c == "(" or c == ")" or c == "{" or c == "}" or c == "," or c == "+" or c == "-" or c == "*" or c == "/" or c == "<" {
+            tokens := tokens + [["symbol", c, line]]
+            i := i + 1
+        } elif is_digit(c) {
+            res := read_number(src, i)
+            tokens := tokens + [["number", res[0], line]]
+            i := res[1]
+        } elif c == "\"" {
+            i := i + 1
+            alloc s := ""
+            loop i < length(src) and src[i] != "\"" {
+                if src[i] == "\\" and src[i + 1] == "n" {
+                    s := s + "\n"
+                    i := i + 2
+                } else {
+                    s := s + src[i]
+                    i := i + 1
+                }
+            }
+            i := i + 1
+            tokens := tokens + [["string", s, line]]
+        } else {
+            res := read_ident(src, i)
+            word := res[0]
+            i := res[1]
+            if word == "alloc" or word == "emit" or word == "proc" or word == "return" or word == "if" or word == "else" or word == "loop" or word == "break" {
+                tokens := tokens + [["kw", word, line]]
+            } elif word == "true" {
+                tokens := tokens + [["bool", true, line]]
+            } elif word == "false" {
+                tokens := tokens + [["bool", false, line]]
+            } else {
+                tokens := tokens + [["ident", word, line]]
+            }
+        }
+    }
+    return tokens
+}
+
