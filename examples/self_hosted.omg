@@ -1,6 +1,6 @@
 ;;;omg
 
-import "./omg.omg" as OMGInterpreter
+import "./self-hosting/omg.omg" as OMGInterpreter
 
 alloc lines := [
     "proc fact(n) {",
@@ -15,16 +15,18 @@ alloc lines := [
 ]
 
 alloc i := 0
-alloc source := ""
+alloc source_code := ""
 
 loop i < length(lines) {
-    source := source + lines[i] + "\n"
+    source_code := source_code + lines[i] + "\n"
     i := i + 1
 }
 
 # Example calling the interpreter with a source string
-OMGInterpreter.run(source)
+OMGInterpreter.run(source_code)
+
+alloc source_script := "examples/1.omg"
 
 # Example calling the interpreter with a file
-OMGInterpreter.run_file_with_args("examples/self-hosting/program.omg", [])
+OMGInterpreter.run_file_with_args(source_script, [])
 

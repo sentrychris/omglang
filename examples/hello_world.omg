@@ -1,0 +1,7 @@
+;;;omg
+
+proc message(message) {
+  return "Hello, " + message + "!"
+}
+
+emit message("World")
