@@ -8,6 +8,8 @@ Ordered from most recent at the top to oldest at the bottom.
 - Native VM now embeds the OMG interpreter bytecode and can execute `.omg`
   scripts directly; the bytecode is generated at build time via a Rust build
   script.
+- Build script recompiles `bootstrap/interpreter.omg` using a Rust bytecode
+  compiler, removing the dependency on the Python `omglang.bytecode` module.
 - Ported the bytecode compiler to OMG so the self-hosted interpreter can
   generate bytecode without relying on Python.
 - Expanded `bytecode.py` to compile the full OMG language including imports,

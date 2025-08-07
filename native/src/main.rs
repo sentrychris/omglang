@@ -6,8 +6,7 @@ use std::path::PathBuf;
 use std::rc::Rc;
 use serde_json;
 
-/// Embedded interpreter bytecode generated at build time.
-const INTERPRETER_BC: &str = include_str!(concat!(env!("OUT_DIR"), "/interpreter.bc"));
+mod embedded;
 
 /// Representation of a compiled function.
 #[derive(Clone)]
@@ -772,7 +771,13 @@ fn main() {
         let mut full_args = Vec::with_capacity(program_args_slice.len() + 1);
         full_args.push(prog_path.clone());
         full_args.extend_from_slice(program_args_slice);
-        let (code, funcs) = parse_bytecode(INTERPRETER_BC);
+        let interpreter_bytes: Vec<u8> = if let Ok(p) = env::var("OMG_INTERPRETER_BC_PATH") {
+            fs::read(p).expect("failed to read interpreter bytecode")
+        } else {
+            embedded::OMG_INTERPRETER_BC.to_vec()
+        };
+        let interpreter_src = String::from_utf8(interpreter_bytes).expect("interpreter bytecode not utf-8");
+        let (code, funcs) = parse_bytecode(&interpreter_src);
         run(&code, &funcs, &full_args);
     }
 }
