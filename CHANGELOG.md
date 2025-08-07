@@ -18,6 +18,9 @@ Ordered from most recent at the top to oldest at the bottom.
 ### Fixed
 - Native VM now concatenates lists when using `ADD`, preventing `length()`
   from receiving integers instead of lists.
+- Built-in calls in the native VM can access and modify global variables,
+  so `length()` inside functions operates on lists rather than defaulting
+  to integers.
 
 ## [0.1.0] - 2025-08-06
 

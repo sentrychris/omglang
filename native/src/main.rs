@@ -77,6 +77,7 @@ enum Instr {
     Call(String),
     TailCall(String),
     CallBuiltin(String, usize),
+    Pop,
     Ret,
     Emit,
     Halt,
@@ -178,6 +179,8 @@ fn parse_bytecode(src: &str) -> (Vec<Instr>, HashMap<String, Function>) {
             code.push(Instr::Emit);
         } else if trimmed == "HALT" {
             code.push(Instr::Halt);
+        } else if trimmed == "POP" {
+            code.push(Instr::Pop);
         }
     }
     (code, funcs)
@@ -186,6 +189,7 @@ fn parse_bytecode(src: &str) -> (Vec<Instr>, HashMap<String, Function>) {
 /// Execute bytecode on a stack-based virtual machine.
 fn run(code: &[Instr], funcs: &HashMap<String, Function>) {
     let mut stack: Vec<Value> = Vec::new();
+    let mut globals: HashMap<String, Value> = HashMap::new();
     let mut env: HashMap<String, Value> = HashMap::new();
     let mut env_stack: Vec<HashMap<String, Value>> = Vec::new();
     let mut ret_stack: Vec<usize> = Vec::new();
@@ -206,13 +210,23 @@ fn run(code: &[Instr], funcs: &HashMap<String, Function>) {
             Instr::Load(name) => {
                 if let Some(v) = env.get(name) {
                     stack.push(v.clone());
+                } else if let Some(v) = globals.get(name) {
+                    stack.push(v.clone());
                 } else {
                     stack.push(Value::Int(0));
                 }
             }
             Instr::Store(name) => {
                 if let Some(v) = stack.pop() {
-                    env.insert(name.clone(), v);
+                    if env_stack.is_empty() {
+                        globals.insert(name.clone(), v);
+                    } else if env.contains_key(name) {
+                        env.insert(name.clone(), v);
+                    } else if globals.contains_key(name) {
+                        globals.insert(name.clone(), v);
+                    } else {
+                        env.insert(name.clone(), v);
+                    }
                 }
             }
             Instr::Add => {
@@ -398,6 +412,9 @@ fn run(code: &[Instr], funcs: &HashMap<String, Function>) {
                     _ => panic!("unknown builtin: {}", name),
                 };
                 stack.push(result);
+            }
+            Instr::Pop => {
+                stack.pop();
             }
             Instr::Ret => {
                 let ret_val = stack.pop().unwrap_or(Value::Int(0));
