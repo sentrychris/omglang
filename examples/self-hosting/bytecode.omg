@@ -1,0 +1,438 @@
+;;;omg
+
+import "./omg.omg" as OMG
+
+# Compiler state
+alloc code := []
+alloc pending_funcs := []
+alloc funcs := []
+alloc break_stack := []
+alloc builtins := ["chr", "ascii", "hex", "binary", "length", "read_file"]
+
+proc reset_state() {
+    code := []
+    pending_funcs := []
+    funcs := []
+    break_stack := []
+}
+
+proc comp_emit(op, arg) {
+    code := code + [[op, arg]]
+}
+
+proc comp_emit_placeholder(op) {
+    alloc idx := length(code)
+    code := code + [[op, false]]
+    return idx
+}
+
+proc comp_patch(idx, target) {
+    code[idx] := [code[idx][0], target]
+}
+
+proc compile_block(block) {
+    alloc i := 0
+    loop i < length(block) {
+        compile_stmt(block[i])
+        i := i + 1
+    }
+}
+
+proc compile_stmt(stmt) {
+    alloc kind := stmt[0]
+    if kind == "emit" {
+        compile_expr(stmt[1])
+        comp_emit("EMIT", false)
+    } elif kind == "decl" or kind == "assign" {
+        alloc name := stmt[1]
+        compile_expr(stmt[2])
+        comp_emit("STORE", name)
+    } elif kind == "attr_assign" {
+        compile_expr(stmt[1])
+        compile_expr(stmt[3])
+        comp_emit("STORE_ATTR", stmt[2])
+    } elif kind == "index_assign" {
+        compile_expr(stmt[1])
+        compile_expr(stmt[2])
+        compile_expr(stmt[3])
+        comp_emit("STORE_INDEX", false)
+    } elif kind == "expr_stmt" {
+        compile_expr(stmt[1])
+        comp_emit("POP", false)
+    } elif kind == "import" {
+        comp_emit("PUSH_STR", stmt[1])
+        comp_emit("IMPORT", false)
+        comp_emit("STORE", stmt[2])
+    } elif kind == "facts" {
+        compile_expr(stmt[1])
+        comp_emit("ASSERT", false)
+    } elif kind == "if" {
+        alloc cond_blocks := []
+        alloc else_block := stmt[3]
+        alloc current := stmt
+        alloc cond := false
+        alloc block := []
+        alloc tail := false
+        loop true {
+            cond := current[1]
+            block := current[2]
+            cond_blocks := cond_blocks + [[cond, block]]
+            tail := current[3]
+            if tail != false and tail[0] == "if" {
+                current := tail
+                else_block := tail[3]
+            } else {
+                else_block := tail
+                break
+            }
+        }
+        alloc end_jumps := []
+        alloc i := 0
+        alloc jf := 0
+        alloc pair := []
+        loop i < length(cond_blocks) {
+            pair := cond_blocks[i]
+            compile_expr(pair[0])
+            jf := comp_emit_placeholder("JUMP_IF_FALSE")
+            compile_block(pair[1])
+            end_jumps := end_jumps + [comp_emit_placeholder("JUMP")]
+            comp_patch(jf, length(code))
+            i := i + 1
+        }
+        if else_block != false {
+            compile_block(else_block)
+        }
+        i := 0
+        loop i < length(end_jumps) {
+            comp_patch(end_jumps[i], length(code))
+            i := i + 1
+        }
+    } elif kind == "loop" {
+        alloc cond := stmt[1]
+        alloc body := stmt[2]
+        alloc start := length(code)
+        compile_expr(cond)
+        alloc jf := comp_emit_placeholder("JUMP_IF_FALSE")
+        break_stack := break_stack + [[]]
+        compile_block(body)
+        comp_emit("JUMP", start)
+        comp_patch(jf, length(code))
+        alloc breaks := break_stack[length(break_stack) - 1]
+        alloc b := 0
+        loop b < length(breaks) {
+            comp_patch(breaks[b], length(code))
+            b := b + 1
+        }
+        break_stack := break_stack[0:length(break_stack) - 1]
+    } elif kind == "func_def" {
+        alloc name := stmt[1]
+        alloc params := stmt[2]
+        alloc body := stmt[3]
+        alloc body_code := compile_function_body(body)
+        pending_funcs := pending_funcs + [[name, params, body_code]]
+    } elif kind == "return" {
+        alloc expr := stmt[1]
+        if expr[0] == "func_call" and expr[1][0] == "ident" {
+            alloc args_list := expr[2]
+            alloc j := 0
+            loop j < length(args_list) {
+                compile_expr(args_list[j])
+                j := j + 1
+            }
+            comp_emit("TCALL", expr[1][1])
+        } else {
+            compile_expr(expr)
+            comp_emit("RET", false)
+        }
+    } elif kind == "break" {
+        if length(break_stack) == 0 {
+            comp_emit("HALT", false)
+        } else {
+            alloc j := comp_emit_placeholder("JUMP")
+            alloc top := break_stack[length(break_stack) - 1]
+            top := top + [j]
+            break_stack[length(break_stack) - 1] := top
+        }
+    } elif kind == "block" {
+        compile_block(stmt[1])
+    }
+}
+
+proc compile_function_body(body) {
+    alloc saved_code := code
+    code := []
+    compile_block(body)
+    comp_emit("RET", false)
+    alloc func_code := code
+    code := saved_code
+    return func_code
+}
+
+proc compile_expr(node) {
+    alloc op := node[0]
+    if op == "number" {
+        comp_emit("PUSH_INT", node[1])
+    } elif op == "string" {
+        comp_emit("PUSH_STR", node[1])
+    } elif op == "bool" {
+        if node[1] {
+            comp_emit("PUSH_BOOL", 1)
+        } else {
+            comp_emit("PUSH_BOOL", 0)
+        }
+    } elif op == "ident" {
+        comp_emit("LOAD", node[1])
+    } elif op == "list" {
+        alloc elements := node[1]
+        alloc i := 0
+        loop i < length(elements) {
+            compile_expr(elements[i])
+            i := i + 1
+        }
+        comp_emit("BUILD_LIST", length(elements))
+    } elif op == "dict" {
+        alloc pairs := node[1]
+        alloc i := 0
+        alloc pair := []
+        loop i < length(pairs) {
+            pair := pairs[i]
+            comp_emit("PUSH_STR", pair[0])
+            compile_expr(pair[1])
+            i := i + 1
+        }
+        comp_emit("BUILD_DICT", length(pairs))
+    } elif op == "index" {
+        compile_expr(node[1])
+        compile_expr(node[2])
+        comp_emit("INDEX", false)
+    } elif op == "slice" {
+        compile_expr(node[1])
+        compile_expr(node[2])
+        alloc end := node[3]
+        if end == false {
+            comp_emit("PUSH_NONE", false)
+        } else {
+            compile_expr(end)
+        }
+        comp_emit("SLICE", false)
+    } elif op == "dot" {
+        compile_expr(node[1])
+        comp_emit("ATTR", node[2])
+    } elif op == "func_call" {
+        alloc func_node := node[1]
+        alloc args_list := node[2]
+        alloc i := 0
+        if func_node[0] == "ident" {
+            alloc name := func_node[1]
+            loop i < length(args_list) {
+                compile_expr(args_list[i])
+                i := i + 1
+            }
+            alloc j := 0
+            alloc is_builtin := false
+            loop j < length(builtins) {
+                if builtins[j] == name {
+                    is_builtin := true
+                    break
+                }
+                j := j + 1
+            }
+            if is_builtin {
+                comp_emit("BUILTIN", [name, length(args_list)])
+            } else {
+                comp_emit("CALL", name)
+            }
+        } else {
+            compile_expr(func_node)
+            loop i < length(args_list) {
+                compile_expr(args_list[i])
+                i := i + 1
+            }
+            comp_emit("CALL_VALUE", length(args_list))
+        }
+    } elif op == "unary" {
+        alloc unary_op := node[1]
+        compile_expr(node[2])
+        if unary_op == "sub" {
+            comp_emit("NEG", false)
+        } elif unary_op == "not_bits" {
+            comp_emit("NOT", false)
+        }
+    } else {
+        compile_expr(node[1])
+        compile_expr(node[2])
+        if op == "add" {
+            comp_emit("ADD", false)
+        } elif op == "sub" {
+            comp_emit("SUB", false)
+        } elif op == "mul" {
+            comp_emit("MUL", false)
+        } elif op == "div" {
+            comp_emit("DIV", false)
+        } elif op == "mod" {
+            comp_emit("MOD", false)
+        } elif op == "eq" {
+            comp_emit("EQ", false)
+        } elif op == "ne" {
+            comp_emit("NE", false)
+        } elif op == "gt" {
+            comp_emit("GT", false)
+        } elif op == "lt" {
+            comp_emit("LT", false)
+        } elif op == "ge" {
+            comp_emit("GE", false)
+        } elif op == "le" {
+            comp_emit("LE", false)
+        } elif op == "and" {
+            comp_emit("AND", false)
+        } elif op == "or" {
+            comp_emit("OR", false)
+        } elif op == "band" {
+            comp_emit("BAND", false)
+        } elif op == "bor" {
+            comp_emit("BOR", false)
+        } elif op == "bxor" {
+            comp_emit("BXOR", false)
+        } elif op == "shl" {
+            comp_emit("SHL", false)
+        } else {
+            comp_emit("SHR", false)
+        }
+    }
+}
+
+proc json_escape(s) {
+    alloc res := "\""
+    alloc i := 0
+    alloc ch := ""
+    loop i < length(s) {
+        ch := s[i]
+        if ch == "\\" {
+            res := res + "\\\\"
+        } elif ch == "\"" {
+            res := res + "\\\""
+        } elif ch == "\n" {
+            res := res + "\\n"
+        } elif ch == "\r" {
+            res := res + "\\r"
+        } elif ch == "\t" {
+            res := res + "\\t"
+        } else {
+            res := res + ch
+        }
+        i := i + 1
+    }
+    res := res + "\""
+    return res
+}
+
+proc join_lines(lines) {
+    alloc res := ""
+    alloc i := 0
+    loop i < length(lines) {
+        if i == 0 {
+            res := lines[0]
+        } else {
+            res := res + "\n" + lines[i]
+        }
+        i := i + 1
+    }
+    return res
+}
+
+proc compile(ast) {
+    reset_state()
+    alloc i := 0
+    loop i < length(ast) {
+        compile_stmt(ast[i])
+        i := i + 1
+    }
+    comp_emit("HALT", false)
+    alloc final_code := code
+    alloc j := 0
+    alloc name := ""
+    alloc params := []
+    alloc body_code := []
+    alloc addr := 0
+    alloc instr := []
+    loop j < length(pending_funcs) {
+        name := pending_funcs[j][0]
+        params := pending_funcs[j][1]
+        body_code := pending_funcs[j][2]
+        addr := length(final_code)
+        funcs := funcs + [[name, params, addr]]
+        alloc k := 0
+        loop k < length(body_code) {
+            instr := body_code[k]
+            if instr[0] == "JUMP" or instr[0] == "JUMP_IF_FALSE" {
+                final_code := final_code + [[instr[0], instr[1] + addr]]
+            } else {
+                final_code := final_code + [instr]
+            }
+            k := k + 1
+        }
+        j := j + 1
+    }
+    alloc lines := []
+    j := 0
+    alloc f := []
+    alloc params_str := ""
+    alloc p := ""
+    alloc m := 0
+    loop j < length(funcs) {
+        f := funcs[j]
+        params := f[1]
+        params_str := ""
+        m := 0
+        loop m < length(params) {
+            p := params[m]
+            if m == 0 {
+                params_str := p
+            } else {
+                params_str := params_str + " " + p
+            }
+            m := m + 1
+        }
+        lines := lines + ["FUNC " + f[0] + " " + length(params) + " " + params_str + " " + f[2]]
+        j := j + 1
+    }
+    j := 0
+    alloc op := ""
+    alloc arg := false
+    alloc line := ""
+    loop j < length(final_code) {
+        op := final_code[j][0]
+        arg := final_code[j][1]
+        if op == "BUILTIN" {
+            line := "BUILTIN " + arg[0] + " " + arg[1]
+        } elif op == "PUSH_STR" {
+            line := "PUSH_STR " + json_escape(arg)
+        } elif arg == false {
+            line := op
+        } else {
+            line := op + " " + arg
+        }
+        lines := lines + [line]
+        j := j + 1
+    }
+    return lines
+}
+
+proc compile_source(src) {
+    alloc ast := OMG.parse(src)
+    return compile(ast)
+}
+
+if length(args) == 0 {
+    emit "Usage: bytecode.omg <script.omg>"
+} else {
+    alloc path := args[0]
+    alloc src := read_file(path)
+    alloc bc := compile_source(src)
+    alloc i := 0
+    loop i < length(bc) {
+        emit bc[i]
+        i := i + 1
+    }
+}
+
