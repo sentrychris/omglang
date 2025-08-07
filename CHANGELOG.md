@@ -5,6 +5,8 @@ Ordered from most recent at the top to oldest at the bottom.
 ## [Unreleased]
 
 ### Added
+- Native VM displays usage information when run without arguments or with
+  `-h`/`--help`.
 - Native VM now embeds the OMG interpreter bytecode and can execute `.omg`
   scripts directly; the bytecode is generated at build time via a Rust build
   script.

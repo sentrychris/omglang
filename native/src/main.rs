@@ -1,13 +1,31 @@
+use serde_json;
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 use std::env;
 use std::fs;
 use std::path::PathBuf;
 use std::rc::Rc;
-use serde_json;
 
 /// Embedded interpreter bytecode generated at build time.
 const INTERPRETER_BC: &str = include_str!(concat!(env!("OUT_DIR"), "/interpreter.bc"));
+
+/// Help text displayed when the VM is invoked incorrectly or with `--help`.
+const USAGE: &str = r#"OMG Language Interpreter
+
+Usage:
+    omg <script.omg>
+
+Arguments:
+    <script.omg>
+        Path to an OMG language source file to execute. The file must
+        include the required header ';;;omg' on the first non-empty line.
+
+Example:
+    omg hello.omg
+
+Options:
+    -h, --help
+        Show this help message and exit."#;
 
 /// Representation of a compiled function.
 #[derive(Clone)]
@@ -65,11 +83,8 @@ impl Value {
                     if !seen.insert(ptr) {
                         return "[...]".to_string();
                     }
-                    let inner: Vec<String> = list
-                        .borrow()
-                        .iter()
-                        .map(|v| helper(v, seen))
-                        .collect();
+                    let inner: Vec<String> =
+                        list.borrow().iter().map(|v| helper(v, seen)).collect();
                     format!("[{}]", inner.join(", "))
                 }
                 Value::Dict(map) => {
@@ -283,10 +298,7 @@ fn run(code: &[Instr], funcs: &HashMap<String, Function>, program_args: &[String
     let mut stack: Vec<Value> = Vec::new();
     let mut globals: HashMap<String, Value> = HashMap::new();
     // Expose command line arguments to bytecode programs via the global `args` list
-    let arg_values: Vec<Value> = program_args
-        .iter()
-        .map(|s| Value::Str(s.clone()))
-        .collect();
+    let arg_values: Vec<Value> = program_args.iter().map(|s| Value::Str(s.clone())).collect();
     globals.insert(
         "args".to_string(),
         Value::List(Rc::new(RefCell::new(arg_values))),
@@ -544,11 +556,7 @@ fn run(code: &[Instr], funcs: &HashMap<String, Function>, program_args: &[String
                 let base = stack.pop().unwrap();
                 match base {
                     Value::Dict(map) => {
-                        let v = map
-                            .borrow()
-                            .get(attr)
-                            .cloned()
-                            .unwrap_or(Value::Int(0));
+                        let v = map.borrow().get(attr).cloned().unwrap_or(Value::Int(0));
                         stack.push(v);
                     }
                     _ => stack.push(Value::Int(0)),
@@ -698,14 +706,15 @@ fn run(code: &[Instr], funcs: &HashMap<String, Function>, program_args: &[String
                                     path_buf = base.join(path_buf);
                                 }
                             }
-                            let content = fs::read_to_string(&path_buf)
-                                .expect("failed to read file");
+                            let content =
+                                fs::read_to_string(&path_buf).expect("failed to read file");
                             if let Some(parent) = path_buf.parent() {
                                 let parent_str = parent.to_string_lossy().replace("\\", "/");
                                 if env.contains_key("current_dir") {
                                     env.insert("current_dir".to_string(), Value::Str(parent_str));
                                 } else {
-                                    globals.insert("current_dir".to_string(), Value::Str(parent_str));
+                                    globals
+                                        .insert("current_dir".to_string(), Value::Str(parent_str));
                                 }
                             }
                             Value::Str(content)
@@ -739,9 +748,9 @@ fn run(code: &[Instr], funcs: &HashMap<String, Function>, program_args: &[String
 
 fn main() {
     let args: Vec<String> = env::args().collect();
-    if args.len() < 2 {
-        eprintln!("Usage: omg_native <script.omg|bytecode.bc> [--] [program args]");
-        std::process::exit(1);
+    if args.len() < 2 || args[1] == "-h" || args[1] == "--help" {
+        println!("{}", USAGE);
+        return;
     }
     if args[1].ends_with(".bc") {
         let bc_path = &args[1];
