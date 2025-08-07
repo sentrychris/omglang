@@ -23,6 +23,7 @@ Instr = Tuple[str, object | None]
 
 @dataclass
 class FunctionEntry:
+    """Metadata for a compiled function."""
     name: str
     params: List[str]
     address: int
@@ -32,6 +33,9 @@ class Compiler:
     """Compile OMG AST nodes into bytecode instructions."""
 
     def __init__(self) -> None:
+        """
+        Initialize the compiler state.
+        """
         self.code: List[Instr] = []
         self.pending_funcs: List[Tuple[str, List[str], List[Instr]]] = []
         self.funcs: List[FunctionEntry] = []
@@ -52,14 +56,23 @@ class Compiler:
     # Helper utilities
     # ------------------------------------------------------------------
     def emit(self, op: str, arg: object | None = None) -> None:
+        """
+        Emit a bytecode instruction.
+        """
         self.code.append((op, arg))
 
     def emit_placeholder(self, op: str) -> int:
+        """
+        Emit a placeholder bytecode instruction.
+        """
         idx = len(self.code)
         self.code.append((op, None))
         return idx
 
     def patch(self, idx: int, target: int) -> None:
+        """
+        Patch a placeholder instruction with a target address.
+        """
         op, _ = self.code[idx]
         self.code[idx] = (op, target)
 
@@ -67,6 +80,9 @@ class Compiler:
     # Compilation entry points
     # ------------------------------------------------------------------
     def compile(self, ast: List[tuple]) -> str:
+        """
+        Compile the given AST into bytecode.
+        """
         for stmt in ast:
             self.compile_stmt(stmt)
         self.emit("HALT")
@@ -100,10 +116,16 @@ class Compiler:
     # Statement compilation
     # ------------------------------------------------------------------
     def compile_block(self, block: List[tuple]) -> None:
+        """
+        Compile a block of statements.
+        """
         for stmt in block:
             self.compile_stmt(stmt)
 
     def compile_stmt(self, stmt: tuple) -> None:
+        """
+        Compile a single statement node.
+        """
         kind = stmt[0]
         if kind == "emit":
             self.compile_expr(stmt[1])
@@ -210,6 +232,10 @@ class Compiler:
             raise NotImplementedError(f"Unsupported statement: {stmt}")
 
     def _compile_function_body(self, body: List[tuple]) -> List[Instr]:
+        """
+        Compile the body of a function into bytecode.
+        This is used to handle function definitions separately.
+        """
         saved_code = self.code
         self.code = []
         self.compile_block(body)
@@ -222,6 +248,9 @@ class Compiler:
     # Expression compilation
     # ------------------------------------------------------------------
     def compile_expr(self, node: tuple) -> None:
+        """
+        Compile an expression node into bytecode.
+        """
         op = node[0]
         if op == "number":
             self.emit("PUSH_INT", node[1])
@@ -312,7 +341,9 @@ class Compiler:
 
 
 def compile_source(source: str, file: str = "<stdin>") -> str:
-    """Compile OMG source string to bytecode."""
+    """
+    Compile OMG source string to bytecode.
+    """
     tokens, token_map = tokenize(source)
     parser = Parser(tokens, token_map, file)
     ast = parser.parse()
@@ -321,6 +352,9 @@ def compile_source(source: str, file: str = "<stdin>") -> str:
 
 
 def main(argv: List[str]) -> int:
+    """
+    Entry point for the CLI.
+    """
     if not argv:
         print("Usage: python -m omglang.bytecode <script.omg> [output.bc]")
         return 1

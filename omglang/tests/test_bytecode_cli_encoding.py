@@ -13,4 +13,3 @@ def test_bytecode_cli_writes_utf8(tmp_path):
     data = out_path.read_bytes()
     text = data.decode("utf-8")
     assert "BUILTIN chr 1" in text
-

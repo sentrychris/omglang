@@ -1,7 +1,11 @@
-from pathlib import Path
+"""
+# Test for the global length built-in function in OMG language
+"""
 import subprocess
+from pathlib import Path
 
 from omglang.bytecode import compile_source
+
 
 def find_project_root(marker: str = "omg.py") -> Path:
     """Locate project root by ascending directories until marker file is found."""
