@@ -17,7 +17,8 @@ Ordered from most recent at the top to oldest at the bottom.
 
 ### Fixed
 - Refactored self-hosting interpreter example to declare loop variables
-  outside loops, preventing "already declared" errors.
+  outside loops in both parser and executor, preventing "already declared"
+  errors.
 - Native VM now concatenates lists when using `ADD`, preventing `length()`
   from receiving integers instead of lists.
 - Built-in calls in the native VM can access and modify global variables,

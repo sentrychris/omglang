@@ -603,6 +603,19 @@ proc execute(stmts, env, is_global) {
     alloc kind := false
     alloc res := ["normal", false]
     alloc stmts_len := length(stmts)
+    alloc cond := false
+    alloc loop_res := ["normal", false]
+    alloc val := false
+    alloc name := ""
+    alloc params := []
+    alloc body := []
+    alloc func_val := false
+    alloc res_lookup := [false, false]
+    alloc arg_nodes := []
+    alloc call_args := []
+    alloc j := 0
+    alloc arg_len := 0
+    alloc _ := false
     loop i < stmts_len {
         stmt := stmts[i]
         kind := stmt[0]
@@ -615,7 +628,7 @@ proc execute(stmts, env, is_global) {
         } elif kind == "emit" {
             emit eval_expr(stmt[1], env)
         } elif kind == "if" {
-            alloc cond := eval_expr(stmt[1], env)
+            cond := eval_expr(stmt[1], env)
             res := ["normal", false]
             if cond {
                 res := execute(stmt[2], env, is_global)
@@ -626,7 +639,7 @@ proc execute(stmts, env, is_global) {
                 return res
             }
         } elif kind == "loop" {
-            alloc loop_res := ["normal", false]
+            loop_res := ["normal", false]
             loop eval_expr(stmt[1], env) {
                 loop_res := execute(stmt[2], env, is_global)
                 if loop_res[0] == "break" {
@@ -638,29 +651,29 @@ proc execute(stmts, env, is_global) {
         } elif kind == "break" {
             return ["break", false]
         } elif kind == "return" {
-            alloc val := eval_expr(stmt[1], env)
+            val := eval_expr(stmt[1], env)
             return ["return", val]
         } elif kind == "func_def" {
-            alloc name := stmt[1]
-            alloc params := stmt[2]
-            alloc body := stmt[3]
-            alloc func_val := ["function", params, body, []]
+            name := stmt[1]
+            params := stmt[2]
+            body := stmt[3]
+            func_val := ["function", params, body, []]
             env := env_set(env, name, func_val)
             if is_global { global_env := env }
-            alloc res_lookup := lookup_var(env, name)
+            res_lookup := lookup_var(env, name)
             func_val := res_lookup[1]
             func_val[3] := copy_env(env)
         } elif kind == "func_call" {
-            alloc func_val := eval_expr(stmt[1], env)
-            alloc arg_nodes := stmt[2]
-            alloc args := []
-            alloc j := 0
-            alloc arg_len := length(arg_nodes)
+            func_val := eval_expr(stmt[1], env)
+            arg_nodes := stmt[2]
+            call_args := []
+            j := 0
+            arg_len := length(arg_nodes)
             loop j < arg_len {
-                args := args + [eval_expr(arg_nodes[j], env)]
+                call_args := call_args + [eval_expr(arg_nodes[j], env)]
                 j := j + 1
             }
-            _ := call_function(func_val, args, env)
+            _ := call_function(func_val, call_args, env)
         } else {
             emit "Unknown statement: " + kind
         }
