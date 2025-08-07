@@ -1,5 +1,5 @@
 use std::cell::RefCell;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::env;
 use std::fs;
 use std::path::PathBuf;
@@ -52,28 +52,40 @@ impl Value {
         }
     }
     fn to_string(&self) -> String {
-        match self {
-            Value::Int(i) => i.to_string(),
-            Value::Str(s) => s.clone(),
-            Value::Bool(b) => b.to_string(),
-            Value::List(list) => {
-                let inner: Vec<String> = list
-                    .borrow()
-                    .iter()
-                    .map(|v| v.to_string())
-                    .collect();
-                format!("[{}]", inner.join(", "))
+        fn helper(val: &Value, seen: &mut HashSet<usize>) -> String {
+            match val {
+                Value::Int(i) => i.to_string(),
+                Value::Str(s) => s.clone(),
+                Value::Bool(b) => b.to_string(),
+                Value::List(list) => {
+                    let ptr = Rc::as_ptr(list) as usize;
+                    if !seen.insert(ptr) {
+                        return "[...]".to_string();
+                    }
+                    let inner: Vec<String> = list
+                        .borrow()
+                        .iter()
+                        .map(|v| helper(v, seen))
+                        .collect();
+                    format!("[{}]", inner.join(", "))
+                }
+                Value::Dict(map) => {
+                    let ptr = Rc::as_ptr(map) as usize;
+                    if !seen.insert(ptr) {
+                        return "{...}".to_string();
+                    }
+                    let inner: Vec<String> = map
+                        .borrow()
+                        .iter()
+                        .map(|(k, v)| format!("{}: {}", k, helper(v, seen)))
+                        .collect();
+                    format!("{{{}}}", inner.join(", "))
+                }
+                Value::None => "".to_string(),
             }
-            Value::Dict(map) => {
-                let inner: Vec<String> = map
-                    .borrow()
-                    .iter()
-                    .map(|(k, v)| format!("{}: {}", k, v.to_string()))
-                    .collect();
-                format!("{{{}}}", inner.join(", "))
-            }
-            Value::None => "".to_string(),
         }
+        let mut seen = HashSet::new();
+        helper(self, &mut seen)
     }
 }
 
