@@ -9,6 +9,25 @@ use serde_json;
 /// Embedded interpreter bytecode generated at build time.
 const INTERPRETER_BC: &str = include_str!(concat!(env!("OUT_DIR"), "/interpreter.bc"));
 
+/// Help text displayed when the VM is invoked incorrectly or with `--help`.
+const USAGE: &str = r#"
+OMG Language Runtime v0.1.0
+
+Usage:
+    omg <script.omg>
+
+Arguments:
+    <script.omg>
+        Path to an OMG language source file to execute. The file must
+        include the required header ';;;omg' on the first non-empty line.
+
+Example:
+    omg hello.omg
+
+Options:
+    -h, --help
+        Show this help message and exit."#;
+
 /// Representation of a compiled function.
 #[derive(Clone)]
 struct Function {
@@ -737,11 +756,112 @@ fn run(code: &[Instr], funcs: &HashMap<String, Function>, program_args: &[String
     }
 }
 
+fn repl() {
+    use std::io::{self, Write};
+    use std::process::Command;
+    println!("OMG Language Interpreter - REPL");
+    println!("Type `exit` or `quit` to leave.");
+    let mut history = String::new();
+    let mut last_output = String::new();
+    let mut buffer: Vec<String> = Vec::new();
+    let mut brace_depth: i32 = 0;
+    loop {
+        let prompt = if buffer.is_empty() { ">>> " } else { "... " };
+        print!("{}", prompt);
+        io::stdout().flush().unwrap();
+        let mut line = String::new();
+        if io::stdin().read_line(&mut line).unwrap() == 0 {
+            println!();
+            break;
+        }
+        let trimmed = line.trim();
+        if buffer.is_empty() && (trimmed == "exit" || trimmed == "quit") {
+            break;
+        }
+
+        // Track nested braces to allow multiline input before execution.
+        let mut string_char: Option<char> = None;
+        let mut escape = false;
+        for ch in line.chars() {
+            if escape {
+                escape = false;
+                continue;
+            }
+            match ch {
+                '\\' => escape = true,
+                '"' | '\'' => {
+                    if string_char == Some(ch) {
+                        string_char = None;
+                    } else if string_char.is_none() {
+                        string_char = Some(ch);
+                    }
+                }
+                '{' if string_char.is_none() => brace_depth += 1,
+                '}' if string_char.is_none() => brace_depth -= 1,
+                _ => {}
+            }
+        }
+
+        buffer.push(line);
+        if brace_depth > 0 {
+            continue;
+        }
+
+        let block = buffer.join("");
+        let source = format!(";;;omg\n{}{}", history, block);
+        let temp_path = std::env::temp_dir().join("omg_repl.omg");
+        if fs::write(&temp_path, &source).is_err() {
+            println!("failed to write temp file");
+            buffer.clear();
+            brace_depth = 0;
+            continue;
+        }
+        let output = Command::new(std::env::current_exe().unwrap())
+            .arg(temp_path.to_string_lossy().to_string())
+            .output();
+        let _ = fs::remove_file(&temp_path);
+        match output {
+            Ok(out) => {
+                let stderr = String::from_utf8_lossy(&out.stderr).to_string();
+                if !stderr.is_empty() {
+                    if stderr.contains("EOF") {
+                        continue;
+                    } else {
+                        print!("{}", stderr);
+                        buffer.clear();
+                        brace_depth = 0;
+                        continue;
+                    }
+                }
+                let stdout = String::from_utf8_lossy(&out.stdout).to_string();
+                if stdout.starts_with(&last_output) {
+                    print!("{}", &stdout[last_output.len()..]);
+                } else {
+                    print!("{}", stdout);
+                }
+                last_output = stdout;
+                history.push_str(&block);
+                buffer.clear();
+                brace_depth = 0;
+            }
+            Err(_) => {
+                println!("failed to run script");
+                buffer.clear();
+                brace_depth = 0;
+            }
+        }
+    }
+}
+
 fn main() {
     let args: Vec<String> = env::args().collect();
-    if args.len() < 2 {
-        eprintln!("Usage: omg_native <script.omg|bytecode.bc> [--] [program args]");
-        std::process::exit(1);
+    if args.len() == 1 {
+        repl();
+        return;
+    }
+    if args[1] == "-h" || args[1] == "--help"{
+        println!("{}", USAGE);
+        return;
     }
     if args[1].ends_with(".bc") {
         let bc_path = &args[1];
