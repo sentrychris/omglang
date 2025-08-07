@@ -23,7 +23,13 @@ impl Value {
         match self {
             Value::Int(i) => *i,
             Value::Str(s) => s.parse::<i64>().unwrap_or(0),
-            Value::Bool(b) => if *b { 1 } else { 0 },
+            Value::Bool(b) => {
+                if *b {
+                    1
+                } else {
+                    0
+                }
+            }
             Value::List(l) => l.len() as i64,
         }
     }
@@ -60,6 +66,7 @@ enum Instr {
     Sub,
     Mul,
     Div,
+    Mod,
     Eq,
     Ne,
     Lt,
@@ -130,6 +137,8 @@ fn parse_bytecode(src: &str) -> (Vec<Instr>, HashMap<String, Function>) {
             code.push(Instr::Mul);
         } else if trimmed == "DIV" {
             code.push(Instr::Div);
+        } else if trimmed == "MOD" {
+            code.push(Instr::Mod);
         } else if trimmed == "EQ" {
             code.push(Instr::Eq);
         } else if trimmed == "NE" {
@@ -257,6 +266,11 @@ fn run(code: &[Instr], funcs: &HashMap<String, Function>) {
                 let b = stack.pop().unwrap().as_int();
                 let a = stack.pop().unwrap().as_int();
                 stack.push(Value::Int(a / b));
+            }
+            Instr::Mod => {
+                let b = stack.pop().unwrap().as_int();
+                let a = stack.pop().unwrap().as_int();
+                stack.push(Value::Int(a % b));
             }
             Instr::Eq => {
                 let b = stack.pop().unwrap().to_string();
