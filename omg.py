@@ -17,6 +17,9 @@ from omglang.lexer import tokenize
 from omglang.parser import Parser
 from omglang.interpreter import Interpreter
 
+# Allow deeply recursive OMG programs to run under the self-hosted interpreter
+sys.setrecursionlimit(10000)
+
 if getattr(sys, "frozen", False):
     # Running in a bundled executable
     LAUNCH_ENV = os.getcwd()
@@ -61,7 +64,7 @@ def debug_print_tokens_ast(tokens, ast):
     print(" ")
 
 
-def run_script(script_name: str):
+def run_script(script_name: str, script_args: list[str] | None = None):
     """
     Run an OMG script
     """
@@ -70,13 +73,14 @@ def run_script(script_name: str):
 
     try:
         interpreter = Interpreter(script_name)
+        interpreter.vars["args"] = script_args or []
         interpreter.check_header(code)
 
         tokens, token_map_literals = tokenize(code)
         parser = Parser(tokens, token_map_literals, script_name)
         ast = parser.parse()
 
-        if os.environ.get('OMGDEBUG'):
+        if os.environ.get("OMGDEBUG"):
             debug_print_tokens_ast(tokens, ast)
 
         interpreter.execute(ast)
@@ -136,14 +140,13 @@ def main(argv: list[str]) -> int:
     if not args:
         run_repl()
         return 0
-    if len(args) == 1 and args[0] in ('-h', '--help'):
+    if args[0] in ('-h', '--help'):
         print_usage()
         return 0
-    if len(args) == 1:
-        run_script(args[0])
-        return 0
-    print_usage()
-    return 1
+    script = args[0]
+    script_args = args[1:]
+    run_script(script, script_args)
+    return 0
 
 
 if __name__ == "__main__":

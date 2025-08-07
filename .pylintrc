@@ -1,6 +1,7 @@
 [MESSAGES CONTROL]
 disable =
     broad-except,
+    consider-using-in,
     duplicate-code,
     import-outside-toplevel,
     no-else-raise,

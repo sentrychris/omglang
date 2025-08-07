@@ -1,13 +1,5 @@
 ;;;omg
 
-# Define a function
-proc greeting(name) {
-    return "Hello " + name
-}
-
-# Call a function and print to stdout
-emit greeting("World")
-
 # Declare some variables
 alloc x := 5
 alloc y := 10

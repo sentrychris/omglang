@@ -1,0 +1,375 @@
+"""OMG bytecode compiler.
+This module compiles OMG source code into a textual bytecode format consumed by the
+native Rust virtual machine.  It relies on the existing lexer and parser to produce
+an AST and then lowers that tree into a simple stack-based instruction set.
+Usage:
+    python -m omglang.bytecode path/to/script.omg [output.bc]
+"""
+
+from __future__ import annotations
+import sys
+import json
+
+from dataclasses import dataclass
+from typing import List, Tuple
+
+from omglang.lexer import tokenize
+from omglang.parser import Parser
+from omglang.operations import Op
+
+
+Instr = Tuple[str, object | None]
+
+
+@dataclass
+class FunctionEntry:
+    """Metadata for a compiled function."""
+    name: str
+    params: List[str]
+    address: int
+
+
+class Compiler:
+    """Compile OMG AST nodes into bytecode instructions."""
+
+    def __init__(self) -> None:
+        """
+        Initialize the compiler state.
+        """
+        self.code: List[Instr] = []
+        self.pending_funcs: List[Tuple[str, List[str], List[Instr]]] = []
+        self.funcs: List[FunctionEntry] = []
+        # Track outstanding `break` statements within loops.  Each entry on
+        # the stack holds placeholder jump indices that should be patched to
+        # the end of the current loop.
+        self.break_stack: List[List[int]] = []
+        self.builtins = {
+            "chr",
+            "ascii",
+            "hex",
+            "binary",
+            "length",
+            "read_file",
+        }
+
+    # ------------------------------------------------------------------
+    # Helper utilities
+    # ------------------------------------------------------------------
+    def emit(self, op: str, arg: object | None = None) -> None:
+        """
+        Emit a bytecode instruction.
+        """
+        self.code.append((op, arg))
+
+    def emit_placeholder(self, op: str) -> int:
+        """
+        Emit a placeholder bytecode instruction.
+        """
+        idx = len(self.code)
+        self.code.append((op, None))
+        return idx
+
+    def patch(self, idx: int, target: int) -> None:
+        """
+        Patch a placeholder instruction with a target address.
+        """
+        op, _ = self.code[idx]
+        self.code[idx] = (op, target)
+
+    # ------------------------------------------------------------------
+    # Compilation entry points
+    # ------------------------------------------------------------------
+    def compile(self, ast: List[tuple]) -> str:
+        """
+        Compile the given AST into bytecode.
+        """
+        for stmt in ast:
+            self.compile_stmt(stmt)
+        self.emit("HALT")
+        # Append function bodies and record their addresses
+        final_code = list(self.code)
+        for name, params, body in self.pending_funcs:
+            addr = len(final_code)
+            self.funcs.append(FunctionEntry(name, params, addr))
+            for op, arg in body:
+                if op in {"JUMP", "JUMP_IF_FALSE"} and isinstance(arg, int):
+                    final_code.append((op, arg + addr))
+                else:
+                    final_code.append((op, arg))
+        lines: List[str] = []
+        for f in self.funcs:
+            params = " ".join(f.params)
+            lines.append(f"FUNC {f.name} {len(f.params)} {params} {f.address}")
+        for op, arg in final_code:
+            if op == "BUILTIN" and isinstance(arg, tuple):
+                name, argc = arg
+                lines.append(f"BUILTIN {name} {argc}")
+            elif op == "PUSH_STR" and isinstance(arg, str):
+                lines.append(f"PUSH_STR {json.dumps(arg)}")
+            elif arg is None:
+                lines.append(op)
+            else:
+                lines.append(f"{op} {arg}")
+        return "\n".join(lines)
+
+    # ------------------------------------------------------------------
+    # Statement compilation
+    # ------------------------------------------------------------------
+    def compile_block(self, block: List[tuple]) -> None:
+        """
+        Compile a block of statements.
+        """
+        for stmt in block:
+            self.compile_stmt(stmt)
+
+    def compile_stmt(self, stmt: tuple) -> None:
+        """
+        Compile a single statement node.
+        """
+        kind = stmt[0]
+        if kind == "emit":
+            self.compile_expr(stmt[1])
+            self.emit("EMIT")
+        elif kind == "decl" or kind == "assign":
+            name, expr = stmt[1], stmt[2]
+            self.compile_expr(expr)
+            self.emit("STORE", name)
+        elif kind == "attr_assign":
+            base, attr, expr = stmt[1], stmt[2], stmt[3]
+            self.compile_expr(base)
+            self.compile_expr(expr)
+            self.emit("STORE_ATTR", attr)
+        elif kind == "index_assign":
+            base, index_expr, value_expr = stmt[1], stmt[2], stmt[3]
+            self.compile_expr(base)
+            self.compile_expr(index_expr)
+            self.compile_expr(value_expr)
+            self.emit("STORE_INDEX")
+        elif kind == "expr_stmt":
+            self.compile_expr(stmt[1])
+            self.emit("POP")
+        elif kind == "import":
+            path, alias = stmt[1], stmt[2]
+            self.emit("PUSH_STR", path)
+            self.emit("IMPORT")
+            self.emit("STORE", alias)
+        elif kind == "facts":
+            self.compile_expr(stmt[1])
+            self.emit("ASSERT")
+        elif kind == "if":
+            # Unroll nested if/elif chain
+            cond_blocks: List[Tuple[tuple, List[tuple]]] = []
+            else_block: List[tuple] | None = None
+            current = stmt
+            while True:
+                cond = current[1]
+                block_node = current[2]
+                block_stmts = block_node[1] if block_node[0] == "block" else []
+                cond_blocks.append((cond, block_stmts))
+                tail = current[3]
+                if tail and isinstance(tail, tuple) and tail[0] == "if":
+                    current = tail
+                else:
+                    if tail:
+                        else_block = tail[1] if tail[0] == "block" else None
+                    break
+            end_jumps: List[int] = []
+            for cond, block in cond_blocks:
+                self.compile_expr(cond)
+                jf = self.emit_placeholder("JUMP_IF_FALSE")
+                self.compile_block(block)
+                end_jumps.append(self.emit_placeholder("JUMP"))
+                self.patch(jf, len(self.code))
+            if else_block:
+                self.compile_block(else_block)
+            for j in end_jumps:
+                self.patch(j, len(self.code))
+        elif kind == "loop":
+            cond, body_node = stmt[1], stmt[2]
+            body = body_node[1] if body_node[0] == "block" else []
+            start = len(self.code)
+            self.compile_expr(cond)
+            jf = self.emit_placeholder("JUMP_IF_FALSE")
+            self.break_stack.append([])
+            self.compile_block(body)
+            self.emit("JUMP", start)
+            self.patch(jf, len(self.code))
+            # Patch any breaks that occurred inside the loop
+            for idx in self.break_stack.pop():
+                self.patch(idx, len(self.code))
+        elif kind == "func_def":
+            name, params, body_node = stmt[1], stmt[2], stmt[3]
+            body = body_node[1] if body_node[0] == "block" else []
+            body_code = self._compile_function_body(body)
+            self.pending_funcs.append((name, params, body_code))
+        elif kind == "return":
+            expr = stmt[1]
+            if (
+                isinstance(expr, tuple)
+                and expr[0] == "func_call"
+                and expr[1][0] == "ident"
+            ):
+                func_node, args = expr[1], expr[2]
+                name = func_node[1]
+                for arg in args:
+                    self.compile_expr(arg)
+                if name in self.builtins:
+                    self.emit("BUILTIN", (name, len(args)))
+                    self.emit("RET")
+                else:
+                    self.emit("TCALL", name)
+            else:
+                self.compile_expr(expr)
+                self.emit("RET")
+        elif kind == "break":
+            if not self.break_stack:
+                raise SyntaxError("'break' used outside of loop")
+            j = self.emit_placeholder("JUMP")
+            self.break_stack[-1].append(j)
+        elif kind == "block":
+            self.compile_block(stmt[1])
+        else:
+            raise NotImplementedError(f"Unsupported statement: {stmt}")
+
+    def _compile_function_body(self, body: List[tuple]) -> List[Instr]:
+        """
+        Compile the body of a function into bytecode.
+        This is used to handle function definitions separately.
+        """
+        saved_code = self.code
+        self.code = []
+        self.compile_block(body)
+        self.emit("RET")
+        func_code = self.code
+        self.code = saved_code
+        return func_code
+
+    # ------------------------------------------------------------------
+    # Expression compilation
+    # ------------------------------------------------------------------
+    def compile_expr(self, node: tuple) -> None:
+        """
+        Compile an expression node into bytecode.
+        """
+        op = node[0]
+        if op == "number":
+            self.emit("PUSH_INT", node[1])
+        elif op == "string":
+            self.emit("PUSH_STR", node[1])
+        elif op == "bool":
+            self.emit("PUSH_BOOL", 1 if node[1] else 0)
+        elif op == "ident":
+            self.emit("LOAD", node[1])
+        elif op == "list":
+            elements = node[1]
+            for elem in elements:
+                self.compile_expr(elem)
+            self.emit("BUILD_LIST", len(elements))
+        elif op == "dict":
+            pairs = node[1]
+            for key, val in pairs:
+                self.emit("PUSH_STR", key)
+                self.compile_expr(val)
+            self.emit("BUILD_DICT", len(pairs))
+        elif op == "index":
+            self.compile_expr(node[1])
+            self.compile_expr(node[2])
+            self.emit("INDEX")
+        elif op == "slice":
+            self.compile_expr(node[1])
+            self.compile_expr(node[2])
+            end = node[3]
+            if end is None:
+                self.emit("PUSH_NONE")
+            else:
+                self.compile_expr(end)
+            self.emit("SLICE")
+        elif op == "dot":
+            self.compile_expr(node[1])
+            self.emit("ATTR", node[2])
+        elif op == "func_call":
+            func_node, args = node[1], node[2]
+            if func_node[0] == "ident":
+                name = func_node[1]
+                for arg in args:
+                    self.compile_expr(arg)
+                if name in self.builtins:
+                    self.emit("BUILTIN", (name, len(args)))
+                else:
+                    self.emit("CALL", name)
+            else:
+                # General case: evaluate function expression then call indirectly
+                self.compile_expr(func_node)
+                for arg in args:
+                    self.compile_expr(arg)
+                self.emit("CALL_VALUE", len(args))
+        elif op == "unary":
+            unary_op = node[1]
+            self.compile_expr(node[2])
+            if unary_op == Op.SUB:
+                self.emit("NEG")
+            elif unary_op == Op.NOT_BITS:
+                self.emit("NOT")
+            elif unary_op == Op.ADD:
+                pass
+        elif isinstance(op, Op):
+            self.compile_expr(node[1])
+            self.compile_expr(node[2])
+            op_map = {
+                Op.ADD: "ADD",
+                Op.SUB: "SUB",
+                Op.MUL: "MUL",
+                Op.DIV: "DIV",
+                Op.MOD: "MOD",
+                Op.EQ: "EQ",
+                Op.NE: "NE",
+                Op.GT: "GT",
+                Op.LT: "LT",
+                Op.GE: "GE",
+                Op.LE: "LE",
+                Op.AND: "AND",
+                Op.OR: "OR",
+                Op.AND_BITS: "BAND",
+                Op.OR_BITS: "BOR",
+                Op.XOR_BITS: "BXOR",
+                Op.SHL: "SHL",
+                Op.SHR: "SHR",
+            }
+            self.emit(op_map[op])
+        else:
+            raise NotImplementedError(f"Unsupported expression node: {node}")
+
+
+def compile_source(source: str, file: str = "<stdin>") -> str:
+    """
+    Compile OMG source string to bytecode.
+    """
+    tokens, token_map = tokenize(source)
+    parser = Parser(tokens, token_map, file)
+    ast = parser.parse()
+    compiler = Compiler()
+    return compiler.compile(ast)
+
+
+def main(argv: List[str]) -> int:
+    """
+    Entry point for the CLI.
+    """
+    if not argv:
+        print("Usage: python -m omglang.bytecode <script.omg> [output.bc]")
+        return 1
+    path = argv[0]
+    with open(path, "r", encoding="utf-8") as f:
+        src = f.read()
+    bc = compile_source(src, path)
+    if len(argv) > 1:
+        out_path = argv[1]
+        with open(out_path, "w", encoding="utf-8") as f:
+            f.write(bc)
+    else:
+        sys.stdout.buffer.write(bc.encode("utf-8"))
+    return 0
+
+
+if __name__ == "__main__":  # pragma: no cover - CLI entry point
+    raise SystemExit(main(sys.argv[1:]))

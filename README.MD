@@ -4,8 +4,6 @@ OMG is a personal, educational programming language implemented in Python. It pr
 
 OMG supports variables, arithmetic, lists, dictionaries, functions, conditionals, loops, and modules, all executed via a tree-walk interpreter.
 
-OMG is Partially self-hosting: it can parse and interpret OMG programs from source using code written in OMG itself, but still depends on a host environment (Python) to bootstrap execution. View the self-hosted example at [./examples/self-hosting](./examples/self-hosting).
-
 #### Documents:
 - [`OMG_SPEC.md`](./spec/OMG_SPEC.md): for the canonical language reference.
 - [`OMG_LEXER.md`](./spec/OMG_LEXER.md): describes the lexical analysis stage of execution.
