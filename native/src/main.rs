@@ -6,6 +6,9 @@ use std::path::PathBuf;
 use std::rc::Rc;
 use serde_json;
 
+/// Embedded interpreter bytecode generated at build time.
+const INTERPRETER_BC: &str = include_str!(concat!(env!("OUT_DIR"), "/interpreter.bc"));
+
 /// Representation of a compiled function.
 #[derive(Clone)]
 struct Function {
@@ -738,20 +741,38 @@ fn run(code: &[Instr], funcs: &HashMap<String, Function>, program_args: &[String
 fn main() {
     let args: Vec<String> = env::args().collect();
     if args.len() < 2 {
-        eprintln!("Usage: omg_native <bytecode_file> [--] [program args]");
+        eprintln!("Usage: omg_native <script.omg|bytecode.bc> [--] [program args]");
         std::process::exit(1);
     }
-    let bc_path = &args[1];
-    let program_args: &[String] = if args.len() > 2 {
-        if args[2] == "--" {
-            &args[3..]
+    if args[1].ends_with(".bc") {
+        let bc_path = &args[1];
+        let program_args: &[String] = if args.len() > 2 {
+            if args[2] == "--" {
+                &args[3..]
+            } else {
+                &args[2..]
+            }
         } else {
-            &args[2..]
-        }
+            &[]
+        };
+        let src = fs::read_to_string(bc_path).expect("failed to read bytecode file");
+        let (code, funcs) = parse_bytecode(&src);
+        run(&code, &funcs, program_args);
     } else {
-        &[]
-    };
-    let src = fs::read_to_string(bc_path).expect("failed to read bytecode file");
-    let (code, funcs) = parse_bytecode(&src);
-    run(&code, &funcs, program_args);
+        let prog_path = &args[1];
+        let program_args_slice: &[String] = if args.len() > 2 {
+            if args[2] == "--" {
+                &args[3..]
+            } else {
+                &args[2..]
+            }
+        } else {
+            &[]
+        };
+        let mut full_args = Vec::with_capacity(program_args_slice.len() + 1);
+        full_args.push(prog_path.clone());
+        full_args.extend_from_slice(program_args_slice);
+        let (code, funcs) = parse_bytecode(INTERPRETER_BC);
+        run(&code, &funcs, &full_args);
+    }
 }
