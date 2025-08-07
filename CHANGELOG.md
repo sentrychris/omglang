@@ -18,6 +18,9 @@ Ordered from most recent at the top to oldest at the bottom.
   so examples like `2.omg` run successfully.
 - Native VM forwards command-line arguments to bytecode programs via a global
   `args` list, allowing compiled interpreters to execute scripts.
+- Native VM understands additional bytecode operations like attribute access,
+  assertions, imports, and indirect function calls, paving the way for fully
+  compiled OMG programs.
 
 ### Fixed
 - Reused temporary result variables in the self-hosted interpreter's
@@ -47,6 +50,8 @@ Ordered from most recent at the top to oldest at the bottom.
 - Self-hosted interpreter handles dot access, dictionary assignments, and
   `facts` assertions so examples like `dictionaries.omg` execute without
   hanging.
+- Compiled interpreter no longer fails with "Unknown statement: number" when
+  running OMG scripts under the native VM.
 - Increased Python recursion limit so the self-hosted interpreter can run
   deeply recursive programs without hitting `RecursionError`.
 

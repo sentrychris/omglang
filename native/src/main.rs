@@ -117,6 +117,11 @@ enum Instr {
     Emit,
     Halt,
     StoreIndex,
+    Attr(String),
+    StoreAttr(String),
+    Import,
+    Assert,
+    CallValue(usize),
 }
 
 /// Parse a textual bytecode file into instructions.
@@ -208,6 +213,18 @@ fn parse_bytecode(src: &str) -> (Vec<Instr>, HashMap<String, Function>) {
             code.push(Instr::Slice);
         } else if trimmed == "STORE_INDEX" {
             code.push(Instr::StoreIndex);
+        } else if let Some(rest) = trimmed.strip_prefix("ATTR ") {
+            code.push(Instr::Attr(rest.to_string()));
+        } else if let Some(rest) = trimmed.strip_prefix("STORE_ATTR ") {
+            code.push(Instr::StoreAttr(rest.to_string()));
+        } else if trimmed == "IMPORT" {
+            code.push(Instr::Import);
+        } else if trimmed == "ASSERT" {
+            code.push(Instr::Assert);
+        } else if let Some(rest) = trimmed.strip_prefix("CALL_VALUE ") {
+            if let Ok(n) = rest.parse::<usize>() {
+                code.push(Instr::CallValue(n));
+            }
         } else if let Some(rest) = trimmed.strip_prefix("JUMP_IF_FALSE ") {
             if let Ok(t) = rest.parse::<usize>() {
                 code.push(Instr::JumpIfFalse(t));
@@ -351,24 +368,40 @@ fn run(code: &[Instr], funcs: &HashMap<String, Function>, program_args: &[String
                 stack.push(Value::Bool(a != b));
             }
             Instr::Lt => {
-                let b = stack.pop().unwrap().as_int();
-                let a = stack.pop().unwrap().as_int();
-                stack.push(Value::Bool(a < b));
+                let b = stack.pop().unwrap();
+                let a = stack.pop().unwrap();
+                let res = match (&a, &b) {
+                    (Value::Str(sa), Value::Str(sb)) => sa < sb,
+                    _ => a.as_int() < b.as_int(),
+                };
+                stack.push(Value::Bool(res));
             }
             Instr::Le => {
-                let b = stack.pop().unwrap().as_int();
-                let a = stack.pop().unwrap().as_int();
-                stack.push(Value::Bool(a <= b));
+                let b = stack.pop().unwrap();
+                let a = stack.pop().unwrap();
+                let res = match (&a, &b) {
+                    (Value::Str(sa), Value::Str(sb)) => sa <= sb,
+                    _ => a.as_int() <= b.as_int(),
+                };
+                stack.push(Value::Bool(res));
             }
             Instr::Gt => {
-                let b = stack.pop().unwrap().as_int();
-                let a = stack.pop().unwrap().as_int();
-                stack.push(Value::Bool(a > b));
+                let b = stack.pop().unwrap();
+                let a = stack.pop().unwrap();
+                let res = match (&a, &b) {
+                    (Value::Str(sa), Value::Str(sb)) => sa > sb,
+                    _ => a.as_int() > b.as_int(),
+                };
+                stack.push(Value::Bool(res));
             }
             Instr::Ge => {
-                let b = stack.pop().unwrap().as_int();
-                let a = stack.pop().unwrap().as_int();
-                stack.push(Value::Bool(a >= b));
+                let b = stack.pop().unwrap();
+                let a = stack.pop().unwrap();
+                let res = match (&a, &b) {
+                    (Value::Str(sa), Value::Str(sb)) => sa >= sb,
+                    _ => a.as_int() >= b.as_int(),
+                };
+                stack.push(Value::Bool(res));
             }
             Instr::BAnd => {
                 let b = stack.pop().unwrap().as_int();
@@ -486,6 +519,70 @@ fn run(code: &[Instr], funcs: &HashMap<String, Function>, program_args: &[String
                         map.borrow_mut().insert(i.to_string(), val);
                     }
                     _ => {}
+                }
+            }
+            Instr::Attr(attr) => {
+                let base = stack.pop().unwrap();
+                match base {
+                    Value::Dict(map) => {
+                        let v = map
+                            .borrow()
+                            .get(attr)
+                            .cloned()
+                            .unwrap_or(Value::Int(0));
+                        stack.push(v);
+                    }
+                    _ => stack.push(Value::Int(0)),
+                }
+            }
+            Instr::StoreAttr(attr) => {
+                let val = stack.pop().unwrap();
+                let base = stack.pop().unwrap();
+                if let Value::Dict(map) = base {
+                    map.borrow_mut().insert(attr.clone(), val);
+                }
+            }
+            Instr::Import => {
+                let path_val = stack.pop().unwrap();
+                if let Value::Str(path) = path_val {
+                    let src = fs::read_to_string(&path).expect("failed to read module");
+                    let (code2, funcs2) = parse_bytecode(&src);
+                    run(&code2, &funcs2, &[]);
+                    stack.push(Value::Dict(Rc::new(RefCell::new(HashMap::new()))));
+                } else {
+                    panic!("IMPORT expects string path");
+                }
+            }
+            Instr::Assert => {
+                let cond = stack.pop().unwrap().as_bool();
+                if !cond {
+                    panic!("Assertion failed");
+                }
+            }
+            Instr::CallValue(argc) => {
+                let mut args_vec: Vec<Value> = Vec::new();
+                for _ in 0..*argc {
+                    args_vec.push(stack.pop().unwrap());
+                }
+                args_vec.reverse();
+                let func_val = stack.pop().unwrap();
+                if let Value::Str(name) = func_val {
+                    if let Some(func) = funcs.get(&name) {
+                        let mut new_env = HashMap::new();
+                        for param in func.params.iter().rev() {
+                            let arg = args_vec.pop().unwrap();
+                            new_env.insert(param.clone(), arg);
+                        }
+                        env_stack.push(env);
+                        ret_stack.push(pc + 1);
+                        env = new_env;
+                        pc = func.address;
+                        continue;
+                    } else {
+                        panic!("Unknown function: {}", name);
+                    }
+                } else {
+                    panic!("CALL_VALUE expects function name");
                 }
             }
             Instr::PushNone => {
