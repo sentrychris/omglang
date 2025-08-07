@@ -1,0 +1,168 @@
+;;;omg
+
+# Bytecode compiler implemented in OMG.
+# This is a minimal bootstrap compiler that mirrors the behaviour of the
+# Python implementation for a subset of the language.  It relies on the
+# tokenizer and parser modules in this directory to produce an AST and then
+# lowers that tree into a textual bytecode format compatible with the native
+# VM.  The design purposely mirrors `omglang/bytecode.py` but uses plain lists
+# in place of Python classes.
+
+import "./parser.omg" as parser
+
+proc emit(code, op, arg) {
+    if arg == false and arg != 0 {
+        return code + [[op]]
+    }
+    return code + [[op, arg]]
+}
+
+proc emit_placeholder(code, op) {
+    return [code + [[op, 0]], length(code)]
+}
+
+proc patch(code, idx, target) {
+    alloc before := code[0:idx]
+    alloc after := code[idx + 1:length(code)]
+    alloc inst := code[idx]
+    return before + [[inst[0], target]] + after
+}
+
+proc compile_expr(node, code) {
+    alloc kind := node[0]
+    if kind == "number" {
+        code := emit(code, "PUSH_INT", node[1])
+    } elif kind == "string" {
+        code := emit(code, "PUSH_STR", node[1])
+    } elif kind == "bool" {
+        alloc v := 0
+        if node[1] { v := 1 }
+        code := emit(code, "PUSH_BOOL", v)
+    } elif kind == "ident" {
+        code := emit(code, "LOAD", node[1])
+    } elif kind == "add" or kind == "sub" or kind == "mul" or kind == "div" or kind == "lt" or kind == "eq" {
+        code := compile_expr(node[1], code)
+        code := compile_expr(node[2], code)
+        if kind == "add" { code := emit(code, "ADD", false) }
+        elif kind == "sub" { code := emit(code, "SUB", false) }
+        elif kind == "mul" { code := emit(code, "MUL", false) }
+        elif kind == "div" { code := emit(code, "DIV", false) }
+        elif kind == "lt" { code := emit(code, "LT", false) }
+        elif kind == "eq" { code := emit(code, "EQ", false) }
+    } elif kind == "unary" {
+        code := compile_expr(node[2], code)
+        code := emit(code, "NEG", false)
+    } elif kind == "func_call" {
+        alloc func := node[1]
+        alloc args := node[2]
+        alloc i := 0
+        loop i < length(args) {
+            code := compile_expr(args[i], code)
+            i := i + 1
+        }
+        if func[0] == "ident" {
+            code := emit(code, "CALL", func[1])
+        }
+    }
+    return code
+}
+
+proc compile_block(block, code, break_stack) {
+    alloc i := 0
+    loop i < length(block) {
+        alloc res := compile_stmt(block[i], code, break_stack)
+        code := res[0]
+        break_stack := res[1]
+        i := i + 1
+    }
+    return [code, break_stack]
+}
+
+proc compile_stmt(stmt, code, break_stack) {
+    alloc kind := stmt[0]
+    if kind == "emit" {
+        code := compile_expr(stmt[1], code)
+        code := emit(code, "EMIT", false)
+    } elif kind == "decl" or kind == "assign" {
+        code := compile_expr(stmt[2], code)
+        code := emit(code, "STORE", stmt[1])
+    } elif kind == "if" {
+        code := compile_expr(stmt[1], code)
+        alloc res := emit_placeholder(code, "JUMP_IF_FALSE")
+        code := res[0]
+        alloc jf := res[1]
+        alloc result := compile_block(stmt[2], code, break_stack)
+        code := result[0]
+        break_stack := result[1]
+        res := emit_placeholder(code, "JUMP")
+        code := res[0]
+        alloc end_j := res[1]
+        code := patch(code, jf, length(code))
+        if length(stmt) > 3 and length(stmt[3]) > 0 {
+            result := compile_block(stmt[3], code, break_stack)
+            code := result[0]
+            break_stack := result[1]
+        }
+        code := patch(code, end_j, length(code))
+    } elif kind == "loop" {
+        alloc start := length(code)
+        code := compile_expr(stmt[1], code)
+        alloc res := emit_placeholder(code, "JUMP_IF_FALSE")
+        code := res[0]
+        alloc jf := res[1]
+        break_stack := break_stack + [[]]
+        alloc r := compile_block(stmt[2], code, break_stack)
+        code := r[0]
+        break_stack := r[1]
+        code := emit(code, "JUMP", start)
+        code := patch(code, jf, length(code))
+        alloc breaks := break_stack[length(break_stack)-1]
+        alloc bi := 0
+        loop bi < length(breaks) {
+            code := patch(code, breaks[bi], length(code))
+            bi := bi + 1
+        }
+        break_stack := break_stack[0:length(break_stack)-1]
+    } elif kind == "break" {
+        alloc j := length(code)
+        code := code + [["JUMP", 0]]
+        alloc last := length(break_stack) - 1
+        alloc lst := break_stack[last]
+        lst := lst + [j]
+        break_stack[last] := lst
+    } elif kind == "return" {
+        code := compile_expr(stmt[1], code)
+        code := emit(code, "RET", false)
+    } elif kind == "block" {
+        alloc res := compile_block(stmt[1], code, break_stack)
+        code := res[0]
+        break_stack := res[1]
+    }
+    return [code, break_stack]
+}
+
+proc compile_source(src) {
+    alloc ast := parser.parse(src)
+    alloc res := compile_block(ast, [], [])
+    alloc code := res[0]
+    code := emit(code, "HALT", false)
+    return code
+}
+
+# When executed directly, read lines from a hard coded program (for bootstrap
+# demonstration) and emit the bytecode as newline separated text.
+if length(args) > 0 {
+    # Build source from args[0] if present (no file I/O so expects literal code)
+    alloc src := args[0]
+    alloc code := compile_source(src)
+    alloc i := 0
+    loop i < length(code) {
+        alloc inst := code[i]
+        if length(inst) == 1 {
+            emit inst[0]
+        } else {
+            emit inst[0] + " " + inst[1]
+        }
+        i := i + 1
+    }
+}

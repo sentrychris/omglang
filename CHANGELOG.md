@@ -2,6 +2,14 @@
 
 Ordered from most recent at the top to oldest at the bottom.
 
+## [Unreleased]
+
+### Added
+- Expanded `bytecode.py` to compile the full OMG language including imports,
+  dictionary operations, assertions, and break handling.
+- Added a bootstrap interpreter in `bootstrap/` written in OMG capable of
+  emitting bytecode, demonstrating self-hosting of the compiler.
+
 ## [0.1.0] - 2025-08-06
 
 ### Added
