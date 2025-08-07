@@ -36,6 +36,9 @@ Ordered from most recent at the top to oldest at the bottom.
 - Built-in calls in the native VM can access and modify global variables,
   so `length()` inside functions operates on lists rather than defaulting
   to integers.
+- Bytecode compiler emits built-in calls in tail positions as `BUILTIN`
+  instructions instead of `TCALL`, preventing "Unknown function" errors
+  when running compiled interpreters under the native VM.
 - The native VM parses and executes the `MOD` instruction so modulo
   operations in bytecode (e.g., in `rot_13.omg`) run without crashing.
 - Self-hosted interpreter handles `elif` branches and boolean literals,

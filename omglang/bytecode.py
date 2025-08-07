@@ -188,9 +188,14 @@ class Compiler:
                 and expr[1][0] == "ident"
             ):
                 func_node, args = expr[1], expr[2]
+                name = func_node[1]
                 for arg in args:
                     self.compile_expr(arg)
-                self.emit("TCALL", func_node[1])
+                if name in self.builtins:
+                    self.emit("BUILTIN", (name, len(args)))
+                    self.emit("RET")
+                else:
+                    self.emit("TCALL", name)
             else:
                 self.compile_expr(expr)
                 self.emit("RET")
