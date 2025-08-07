@@ -73,6 +73,11 @@ enum Instr {
     Le,
     Gt,
     Ge,
+    BAnd,
+    BOr,
+    BXor,
+    Shl,
+    Shr,
     And,
     Or,
     Not,
@@ -151,6 +156,16 @@ fn parse_bytecode(src: &str) -> (Vec<Instr>, HashMap<String, Function>) {
             code.push(Instr::Gt);
         } else if trimmed == "GE" {
             code.push(Instr::Ge);
+        } else if trimmed == "BAND" {
+            code.push(Instr::BAnd);
+        } else if trimmed == "BOR" {
+            code.push(Instr::BOr);
+        } else if trimmed == "BXOR" {
+            code.push(Instr::BXor);
+        } else if trimmed == "SHL" {
+            code.push(Instr::Shl);
+        } else if trimmed == "SHR" {
+            code.push(Instr::Shr);
         } else if trimmed == "AND" {
             code.push(Instr::And);
         } else if trimmed == "OR" {
@@ -302,6 +317,31 @@ fn run(code: &[Instr], funcs: &HashMap<String, Function>) {
                 let a = stack.pop().unwrap().as_int();
                 stack.push(Value::Bool(a >= b));
             }
+            Instr::BAnd => {
+                let b = stack.pop().unwrap().as_int();
+                let a = stack.pop().unwrap().as_int();
+                stack.push(Value::Int(a & b));
+            }
+            Instr::BOr => {
+                let b = stack.pop().unwrap().as_int();
+                let a = stack.pop().unwrap().as_int();
+                stack.push(Value::Int(a | b));
+            }
+            Instr::BXor => {
+                let b = stack.pop().unwrap().as_int();
+                let a = stack.pop().unwrap().as_int();
+                stack.push(Value::Int(a ^ b));
+            }
+            Instr::Shl => {
+                let b = stack.pop().unwrap().as_int() as u32;
+                let a = stack.pop().unwrap().as_int();
+                stack.push(Value::Int(a << b));
+            }
+            Instr::Shr => {
+                let b = stack.pop().unwrap().as_int() as u32;
+                let a = stack.pop().unwrap().as_int();
+                stack.push(Value::Int(a >> b));
+            }
             Instr::And => {
                 let b = stack.pop().unwrap().as_bool();
                 let a = stack.pop().unwrap().as_bool();
@@ -313,8 +353,8 @@ fn run(code: &[Instr], funcs: &HashMap<String, Function>) {
                 stack.push(Value::Bool(a || b));
             }
             Instr::Not => {
-                let v = stack.pop().unwrap().as_bool();
-                stack.push(Value::Bool(!v));
+                let v = stack.pop().unwrap().as_int();
+                stack.push(Value::Int(!v));
             }
             Instr::Neg => {
                 let v = stack.pop().unwrap().as_int();
