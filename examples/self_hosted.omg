@@ -25,7 +25,7 @@ loop i < length(lines) {
 # Example calling the interpreter with a source string
 OMGInterpreter.run(source_code)
 
-alloc source_script := "examples/1.omg"
+alloc source_script := "examples/hello_world.omg"
 
 # Example calling the interpreter with a file
 OMGInterpreter.run_file_with_args(source_script, [])
