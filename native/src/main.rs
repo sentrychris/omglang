@@ -9,6 +9,25 @@ use serde_json;
 /// Embedded interpreter bytecode generated at build time.
 const INTERPRETER_BC: &str = include_str!(concat!(env!("OUT_DIR"), "/interpreter.bc"));
 
+/// Help text displayed when the VM is invoked incorrectly or with `--help`.
+const USAGE: &str = r#"
+OMG Language Runtime v0.1.0
+
+Usage:
+    omg <script.omg>
+
+Arguments:
+    <script.omg>
+        Path to an OMG language source file to execute. The file must
+        include the required header ';;;omg' on the first non-empty line.
+
+Example:
+    omg hello.omg
+
+Options:
+    -h, --help
+        Show this help message and exit."#;
+
 /// Representation of a compiled function.
 #[derive(Clone)]
 struct Function {
@@ -739,9 +758,9 @@ fn run(code: &[Instr], funcs: &HashMap<String, Function>, program_args: &[String
 
 fn main() {
     let args: Vec<String> = env::args().collect();
-    if args.len() < 2 {
-        eprintln!("Usage: omg_native <script.omg|bytecode.bc> [--] [program args]");
-        std::process::exit(1);
+    if args.len() < 2 || args[1] == "-h" || args[1] == "--help"{
+        println!("{}", USAGE);
+        return;
     }
     if args[1].ends_with(".bc") {
         let bc_path = &args[1];
