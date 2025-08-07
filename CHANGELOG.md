@@ -2,6 +2,14 @@
 
 Ordered from most recent at the top to oldest at the bottom.
 
+## 2025-08-14
+
+### Fixed
+- Tokenizer in `omg_interpreter_boot.omg` now skips comments and header markers so self-hosted sources no longer emit stray tokens or trigger missing `read_number` errors.
+
+### Changed
+- Predeclared temporaries in the bootstrap interpreter's executor to avoid repeated `alloc` declarations during meta-circular evaluation.
+
 ## 2025-08-13
 
 ### Added
