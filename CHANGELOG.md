@@ -31,6 +31,9 @@ Ordered from most recent at the top to oldest at the bottom.
 - Self-hosted interpreter updates function environments at call time so
   global state remains visible across calls (fixes "Undefined variable" in
   `stack_vm.omg`).
+- Self-hosted interpreter parses and evaluates modulo and bitwise
+  operators, allowing examples like `permissions.omg` and `bitwise.omg` to
+  run.
 
 ## [0.1.0] - 2025-08-06
 

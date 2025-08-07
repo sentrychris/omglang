@@ -20,6 +20,17 @@ proc read_number(src, i) {
     }
     return [num, i]
 }
+proc read_binary(src, i) {
+    alloc num := 0
+    alloc c := ""
+    alloc n := length(src)
+    loop i < n and (src[i] == "0" or src[i] == "1") {
+        c := src[i]
+        num := num * 2 + ascii(c) - ascii("0")
+        i := i + 1
+    }
+    return [num, i]
+}
 proc read_ident(src, i) {
     alloc s := ""
     alloc n := length(src)
@@ -78,10 +89,24 @@ proc tokenize(src) {
             tokens[n] := ["symbol", ">="]
             n := n + 1
             i := i + 2
-        } elif c == "(" or c == ")" or c == "{" or c == "}" or c == "," or c == "+" or c == "-" or c == "*" or c == "/" or c == "<" or c == ">" or c == "[" or c == "]" {
+        } elif c == "<" and i + 1 < src_len and src[i + 1] == "<" {
+            tokens[n] := ["symbol", "<<"]
+            n := n + 1
+            i := i + 2
+        } elif c == ">" and i + 1 < src_len and src[i + 1] == ">" {
+            tokens[n] := ["symbol", ">>"]
+            n := n + 1
+            i := i + 2
+        } elif c == "(" or c == ")" or c == "{" or c == "}" or c == "," or c == "+" or c == "-" or c == "*" or c == "/" or c == "%" or c == "<" or c == ">" or c == "[" or c == "]" or c == "&" or c == "|" or c == "^" or c == "~" {
             tokens[n] := ["symbol", c]
             n := n + 1
             i := i + 1
+        } elif c == "0" and i + 1 < src_len and (src[i + 1] == "b" or src[i + 1] == "B") {
+            i := i + 2
+            res := read_binary(src, i)
+            tokens[n] := ["number", res[0]]
+            n := n + 1
+            i := res[1]
         } elif is_digit(c) {
             res := read_number(src, i)
             tokens[n] := ["number", res[0]]
@@ -253,14 +278,14 @@ proc parse_and(tokens, i) {
     return [left, j]
 }
 proc parse_comparison(tokens, i) {
-    alloc res := parse_add_sub(tokens, i)
+    alloc res := parse_bit_or(tokens, i)
     alloc left := res[0]
     alloc j := res[1]
     alloc op := [false, false]
     alloc right_res := [false, 0]
     loop j < tok_len and tokens[j][0] == "symbol" and (tokens[j][1] == "<" or tokens[j][1] == "==" or tokens[j][1] == ">" or tokens[j][1] == "<=" or tokens[j][1] == ">=" or tokens[j][1] == "!=") {
         op := tokens[j]
-        right_res := parse_add_sub(tokens, j + 1)
+        right_res := parse_bit_or(tokens, j + 1)
         if op[1] == "<" {
             left := ["lt", left, right_res[0]]
         } elif op[1] == ">" {
@@ -302,14 +327,74 @@ proc parse_term(tokens, i) {
     alloc j := res[1]
     alloc op := [false, false]
     alloc right_res := [false, 0]
-    loop j < tok_len and tokens[j][0] == "symbol" and (tokens[j][1] == "*" or tokens[j][1] == "/") {
+    loop j < tok_len and tokens[j][0] == "symbol" and (tokens[j][1] == "*" or tokens[j][1] == "/" or tokens[j][1] == "%") {
         op := tokens[j]
         right_res := parse_factor(tokens, j + 1)
         if op[1] == "*" {
             left := ["mul", left, right_res[0]]
-        } else {
+        } elif op[1] == "/" {
             left := ["div", left, right_res[0]]
+        } else {
+            left := ["mod", left, right_res[0]]
         }
+        j := right_res[1]
+    }
+    return [left, j]
+}
+
+proc parse_shift(tokens, i) {
+    alloc res := parse_add_sub(tokens, i)
+    alloc left := res[0]
+    alloc j := res[1]
+    alloc op := [false, false]
+    alloc right_res := [false, 0]
+    loop j < tok_len and tokens[j][0] == "symbol" and (tokens[j][1] == "<<" or tokens[j][1] == ">>") {
+        op := tokens[j]
+        right_res := parse_add_sub(tokens, j + 1)
+        if op[1] == "<<" {
+            left := ["shl", left, right_res[0]]
+        } else {
+            left := ["shr", left, right_res[0]]
+        }
+        j := right_res[1]
+    }
+    return [left, j]
+}
+
+proc parse_bit_and(tokens, i) {
+    alloc res := parse_shift(tokens, i)
+    alloc left := res[0]
+    alloc j := res[1]
+    alloc right_res := [false, 0]
+    loop j < tok_len and tokens[j][0] == "symbol" and tokens[j][1] == "&" {
+        right_res := parse_shift(tokens, j + 1)
+        left := ["band", left, right_res[0]]
+        j := right_res[1]
+    }
+    return [left, j]
+}
+
+proc parse_bit_xor(tokens, i) {
+    alloc res := parse_bit_and(tokens, i)
+    alloc left := res[0]
+    alloc j := res[1]
+    alloc right_res := [false, 0]
+    loop j < tok_len and tokens[j][0] == "symbol" and tokens[j][1] == "^" {
+        right_res := parse_bit_and(tokens, j + 1)
+        left := ["bxor", left, right_res[0]]
+        j := right_res[1]
+    }
+    return [left, j]
+}
+
+proc parse_bit_or(tokens, i) {
+    alloc res := parse_bit_xor(tokens, i)
+    alloc left := res[0]
+    alloc j := res[1]
+    alloc right_res := [false, 0]
+    loop j < tok_len and tokens[j][0] == "symbol" and tokens[j][1] == "|" {
+        right_res := parse_bit_xor(tokens, j + 1)
+        left := ["bor", left, right_res[0]]
         j := right_res[1]
     }
     return [left, j]
@@ -322,6 +407,9 @@ proc parse_factor(tokens, i) {
     if t[0] == "symbol" and t[1] == "-" {
         alloc res := parse_factor(tokens, i + 1)
         return [["unary", "sub", res[0]], res[1]]
+    } elif t[0] == "symbol" and t[1] == "~" {
+        alloc res := parse_factor(tokens, i + 1)
+        return [["bitnot", res[0]], res[1]]
     } elif t[0] == "number" {
         node := ["number", t[1]]
         j := i + 1
@@ -534,6 +622,20 @@ proc eval_expr(expr, env) {
         return eval_expr(expr[1], env) * eval_expr(expr[2], env)
     } elif kind == "div" {
         return eval_expr(expr[1], env) / eval_expr(expr[2], env)
+    } elif kind == "mod" {
+        return eval_expr(expr[1], env) % eval_expr(expr[2], env)
+    } elif kind == "band" {
+        return eval_expr(expr[1], env) & eval_expr(expr[2], env)
+    } elif kind == "bor" {
+        return eval_expr(expr[1], env) | eval_expr(expr[2], env)
+    } elif kind == "bxor" {
+        return eval_expr(expr[1], env) ^ eval_expr(expr[2], env)
+    } elif kind == "shl" {
+        return eval_expr(expr[1], env) << eval_expr(expr[2], env)
+    } elif kind == "shr" {
+        return eval_expr(expr[1], env) >> eval_expr(expr[2], env)
+    } elif kind == "bitnot" {
+        return ~eval_expr(expr[1], env)
     } elif kind == "eq" {
         return eval_expr(expr[1], env) == eval_expr(expr[2], env)
     } elif kind == "ne" {
