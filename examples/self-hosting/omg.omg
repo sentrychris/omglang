@@ -590,6 +590,10 @@ proc call_function(func, args, env) {
             return length(args[0])
         } elif name == "read_file" {
             return read_file(args[0])
+        } elif name == "ascii" {
+            return ascii(args[0])
+        } elif name == "chr" {
+            return chr(args[0])
         }
         emit "Unknown builtin: " + name
         return false
@@ -808,7 +812,7 @@ proc execute(stmts, env, is_global) {
 }
 proc run(source) {
     alloc ast := parse(source)
-    alloc env := [["length", ["builtin", "length"]], ["read_file", ["builtin", "read_file"]], ["ascii", ["builtin", "ascii"]]]
+    alloc env := [["length", ["builtin", "length"]], ["read_file", ["builtin", "read_file"]], ["ascii", ["builtin", "ascii"]], ["chr", ["builtin", "chr"]]]
     env := env_set(env, "args", args)
     global_env := env
     return execute(ast, env, true)

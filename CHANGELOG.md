@@ -34,6 +34,9 @@ Ordered from most recent at the top to oldest at the bottom.
 - Self-hosted interpreter parses and evaluates modulo and bitwise
   operators, allowing examples like `permissions.omg` and `bitwise.omg` to
   run.
+- Self-hosted interpreter exposes `ascii` and `chr` built-ins so
+  `rot_13.omg` and other scripts relying on character conversion run
+  correctly.
 
 ## [0.1.0] - 2025-08-06
 
