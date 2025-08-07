@@ -2,6 +2,11 @@
 
 Ordered from most recent at the top to oldest at the bottom.
 
+## 2025-08-15
+
+### Fixed
+- Bootstrap interpreter now tokenizes and parses boolean operators and `elif` clauses, enabling the meta-circular driver to run without undefined variable errors.
+
 ## 2025-08-14
 
 ### Fixed
