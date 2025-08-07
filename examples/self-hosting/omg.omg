@@ -479,7 +479,11 @@ proc call_function(func, args, env) {
         alloc params := func[1]
         alloc body := func[2]
         alloc captured := func[3]
-        alloc local := copy_env(captured)
+        alloc base := captured
+        if captured == "global" {
+            base := global_env
+        }
+        alloc local := copy_env(base)
         alloc i := 0
         alloc params_len := length(params)
         loop i < params_len {
@@ -629,7 +633,6 @@ proc execute(stmts, env, is_global) {
     alloc params := []
     alloc body := []
     alloc func_val := false
-    alloc res_lookup := [false, false]
     alloc arg_nodes := []
     alloc call_args := []
     alloc j := 0
@@ -676,12 +679,13 @@ proc execute(stmts, env, is_global) {
             name := stmt[1]
             params := stmt[2]
             body := stmt[3]
-            func_val := ["function", params, body, []]
+            if is_global {
+                func_val := ["function", params, body, "global"]
+            } else {
+                func_val := ["function", params, body, env]
+            }
             env := env_set(env, name, func_val)
             if is_global { global_env := env }
-            res_lookup := lookup_var(env, name)
-            func_val := res_lookup[1]
-            func_val[3] := copy_env(env)
         } elif kind == "func_call" {
             func_val := eval_expr(stmt[1], env)
             arg_nodes := stmt[2]

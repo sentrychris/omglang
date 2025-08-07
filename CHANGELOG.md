@@ -28,6 +28,9 @@ Ordered from most recent at the top to oldest at the bottom.
   operations in bytecode (e.g., in `rot_13.omg`) run without crashing.
 - Self-hosted interpreter handles `elif` branches and boolean literals,
   allowing it to run all example programs.
+- Self-hosted interpreter updates function environments at call time so
+  global state remains visible across calls (fixes "Undefined variable" in
+  `stack_vm.omg`).
 
 ## [0.1.0] - 2025-08-06
 
