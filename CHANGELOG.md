@@ -12,8 +12,8 @@ Ordered from most recent at the top to oldest at the bottom.
 - Bytecode compiler and native VM now recognize built-in functions like
   `length` and `chr`, emitting `BUILTIN` instructions and executing them
   directly.
-- Command line compiler writes bytecode using UTF-8 encoding to ensure
-  portable output files.
+- Command line compiler writes bytecode using UTF-8 encoding and accepts an
+  optional output path to avoid shell re-encoding on Windows.
 
 ### Fixed
 - Native VM now concatenates lists when using `ADD`, preventing `length()`
