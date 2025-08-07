@@ -38,6 +38,8 @@ Ordered from most recent at the top to oldest at the bottom.
   operations in bytecode (e.g., in `rot_13.omg`) run without crashing.
 - Self-hosted interpreter handles `elif` branches and boolean literals,
   allowing it to run all example programs.
+- Tokenizer and file loader skip carriage returns so bytecode programs
+  run correctly on Windows CRLF line endings without hanging.
 - String literals in bytecode are JSON-encoded and decoded, preventing
   newline characters from corrupting control flow and hanging the
   compiled interpreter.

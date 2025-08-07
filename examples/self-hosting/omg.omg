@@ -51,15 +51,16 @@ proc tokenize(src) {
     alloc src_len := length(src)
     if src_len >= 6 and src[0] == ";" and src[1] == ";" and src[2] == ";" and src[3] == "o" and src[4] == "m" and src[5] == "g" {
         i := 6
+        if i < src_len and src[i] == "\r" {
+            i := i + 1
+        }
         if i < src_len and src[i] == "\n" {
             i := i + 1
         }
     }
     loop i < src_len {
         c := src[i]
-        if c == " " or c == "\t" {
-            i := i + 1
-        } elif c == "\n" {
+        if c == " " or c == "\t" or c == "\r" or c == "\n" {
             i := i + 1
         } elif c == "#" {
             loop i < src_len and src[i] != "\n" {
@@ -973,7 +974,10 @@ proc run_file_with_args(path, file_args) {
     if src_len >= 6 and source[0] == ";" and source[1] == ";" and source[2] == ";" and source[3] == "o" and source[4] == "m" and source[5] == "g" {
         source := source[6:]
         if length(source) > 0 {
-            if source[0] == "\n" {
+            if source[0] == "\r" {
+                source := source[1:]
+            }
+            if length(source) > 0 and source[0] == "\n" {
                 source := source[1:]
             }
         }
