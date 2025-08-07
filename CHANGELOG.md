@@ -15,6 +15,10 @@ Ordered from most recent at the top to oldest at the bottom.
 - Command line compiler writes bytecode using UTF-8 encoding to ensure
   portable output files.
 
+### Fixed
+- Native VM now concatenates lists when using `ADD`, preventing `length()`
+  from receiving integers instead of lists.
+
 ## [0.1.0] - 2025-08-06
 
 ### Added

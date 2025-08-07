@@ -222,6 +222,10 @@ fn run(code: &[Instr], funcs: &HashMap<String, Function>) {
                     (Value::Str(sa), Value::Str(sb)) => stack.push(Value::Str(sa + &sb)),
                     (Value::Str(sa), v) => stack.push(Value::Str(sa + &v.to_string())),
                     (v, Value::Str(sb)) => stack.push(Value::Str(v.to_string() + &sb)),
+                    (Value::List(mut la), Value::List(lb)) => {
+                        la.extend(lb);
+                        stack.push(Value::List(la));
+                    }
                     (a, b) => stack.push(Value::Int(a.as_int() + b.as_int())),
                 }
             }
