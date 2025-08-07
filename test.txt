@@ -1,0 +1,3 @@
+py -m omglang.bytecode .\examples\self-hosting\omg.omg > .\bytecode\omg.bc
+
+cargo run --manifest-path native/Cargo.toml -- bytecode/omg.bc -- examples/hello_world.omg

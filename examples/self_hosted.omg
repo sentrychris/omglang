@@ -16,7 +16,6 @@ alloc lines := [
 
 alloc i := 0
 alloc source_code := ""
-
 loop i < length(lines) {
     source_code := source_code + lines[i] + "\n"
     i := i + 1
@@ -25,8 +24,29 @@ loop i < length(lines) {
 # Example calling the interpreter with a source string
 OMGInterpreter.run(source_code)
 
-alloc source_script := "examples/hello_world.omg"
+alloc source_scripts := [
+    "examples/hello_world.omg",
+    "examples/assignment.omg",
+    "examples/dictionaries.omg",
+    "examples/higher_order.omg",
+    "examples/import_modules.omg",
+    "examples/bitwise.omg",
+    "examples/permissions.omg",
+    "examples/hex_to_rgb.omg",
+    "examples/rot_13.omg",
+    "examples/tabula_recta.omg",
+    "examples/stack_vm.omg",
+    "examples/stack_vm_and_asm.omg"
+]
 
-# Example calling the interpreter with a file
-OMGInterpreter.run_file_with_args(source_script, [])
+i := 0
+loop i < length(source_scripts) {
+    # Example calling the interpreter with a file
+    emit "-----------------------------------------------------"
+    emit "Running script: " + source_scripts[i]
+    emit "-----------------------------------------------------"
+    OMGInterpreter.run_file(source_scripts[i])
+    emit " "
 
+    i := i + 1
+}

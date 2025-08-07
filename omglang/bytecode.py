@@ -333,6 +333,4 @@ def main(argv: List[str]) -> int:
 
 
 if __name__ == "__main__":  # pragma: no cover - CLI entry point
-    import sys
-
     raise SystemExit(main(sys.argv[1:]))

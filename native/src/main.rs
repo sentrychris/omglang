@@ -672,6 +672,7 @@ fn run(code: &[Instr], funcs: &HashMap<String, Function>, program_args: &[String
                     },
                     "read_file" => match args.as_slice() {
                         [Value::Str(path)] => {
+                            println!("read_file path: {}", path);
                             let content = fs::read_to_string(path).expect("failed to read file");
                             Value::Str(content)
                         }
