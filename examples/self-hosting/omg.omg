@@ -106,7 +106,7 @@ proc tokenize(src) {
             res := read_ident(src, i)
             word := res[0]
             i := res[1]
-            if word == "alloc" or word == "emit" or word == "proc" or word == "return" or word == "if" or word == "else" or word == "loop" or word == "break" or word == "and" or word == "or" {
+            if word == "alloc" or word == "emit" or word == "proc" or word == "return" or word == "if" or word == "else" or word == "elif" or word == "loop" or word == "break" or word == "and" or word == "or" {
                 tokens[n] := ["kw", word]
                 n := n + 1
             } elif word == "true" {
@@ -159,12 +159,29 @@ proc parse_statement(tokens, i) {
     } elif t[0] == "kw" and t[1] == "if" {
         alloc res_cond := parse_expression(tokens, i + 1)
         alloc res_then := parse_block(tokens, res_cond[1])
-        alloc else_block := []
         alloc j := res_then[1]
+        alloc elifs := []
+        alloc res_elif := [false, 0]
+        alloc res_block := [false, 0]
+        alloc else_block := []
+        alloc k := 0
+        alloc pair := false
+        loop j < tok_len and tokens[j][0] == "kw" and tokens[j][1] == "elif" {
+            res_elif := parse_expression(tokens, j + 1)
+            res_block := parse_block(tokens, res_elif[1])
+            elifs := elifs + [[res_elif[0], res_block[0]]]
+            j := res_block[1]
+        }
         if j < tok_len and tokens[j][0] == "kw" and tokens[j][1] == "else" {
-            alloc res_else := parse_block(tokens, j + 1)
-            else_block := res_else[0]
-            j := res_else[1]
+            res_block := parse_block(tokens, j + 1)
+            else_block := res_block[0]
+            j := res_block[1]
+        }
+        k := length(elifs) - 1
+        loop k >= 0 {
+            pair := elifs[k]
+            else_block := [["if", pair[0], pair[1], else_block]]
+            k := k - 1
         }
         return [["if", res_cond[0], res_then[0], else_block], j]
     } elif t[0] == "kw" and t[1] == "proc" {
@@ -494,6 +511,8 @@ proc eval_expr(expr, env) {
     if kind == "number" {
         return expr[1]
     } elif kind == "string" {
+        return expr[1]
+    } elif kind == "bool" {
         return expr[1]
     } elif kind == "ident" {
         alloc name := expr[1]

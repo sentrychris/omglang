@@ -26,6 +26,8 @@ Ordered from most recent at the top to oldest at the bottom.
   to integers.
 - The native VM parses and executes the `MOD` instruction so modulo
   operations in bytecode (e.g., in `rot_13.omg`) run without crashing.
+- Self-hosted interpreter handles `elif` branches and boolean literals,
+  allowing it to run all example programs.
 
 ## [0.1.0] - 2025-08-06
 
