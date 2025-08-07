@@ -22,7 +22,7 @@ def test_ast_interpreter_parses_source():
     Ensure the OMG-based AST interpreter can parse and execute source code.
     """
     root = find_project_root()
-    script = root / 'examples' / 'self-hosting' / 'test_interpret.omg'
+    script = root / 'bootstrap' / 'test_interpret.omg'
     omg_runner = root / 'omg.py'
 
     result = subprocess.run(

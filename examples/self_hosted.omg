@@ -1,6 +1,6 @@
 ;;;omg
 
-import "./self-hosting/omg.omg" as OMGInterpreter
+import "../bootstrap/interpreter.omg" as OMGInterpreter
 
 alloc lines := [
     "proc fact(n) {",

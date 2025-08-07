@@ -9,8 +9,7 @@ Ordered from most recent at the top to oldest at the bottom.
   generate bytecode without relying on Python.
 - Expanded `bytecode.py` to compile the full OMG language including imports,
   dictionary operations, assertions, and break handling.
-- Added a bootstrap interpreter in `bootstrap/` written in OMG capable of
-  emitting bytecode, demonstrating self-hosting of the compiler.
+- Added a bootstrap interpreter in `bootstrap/`, demonstrating self-hosting of the compiler.
 - Bytecode compiler and native VM now recognize built-in functions like
   `length` and `chr`, emitting `BUILTIN` instructions and executing them
   directly.
@@ -82,7 +81,6 @@ Ordered from most recent at the top to oldest at the bottom.
 - Restructured project layout for better modularity and maintainability:
   - All core components moved under `omglang/` (parser, lexer, interpreter, etc.)
   - Test suite relocated to `omglang/tests/`
-  - OMG examples organized into subfolders: `examples/modules/`, `examples/self-hosting/`, etc.
   - New `scripts/` folder for build, packaging, and automation utilities
   - Output artifacts from PyInstaller now live under `output/`
 
