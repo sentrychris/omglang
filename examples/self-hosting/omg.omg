@@ -97,7 +97,7 @@ proc tokenize(src) {
             tokens[n] := ["symbol", ">>"]
             n := n + 1
             i := i + 2
-        } elif c == "(" or c == ")" or c == "{" or c == "}" or c == "," or c == "+" or c == "-" or c == "*" or c == "/" or c == "%" or c == "<" or c == ">" or c == "[" or c == "]" or c == "&" or c == "|" or c == "^" or c == "~" {
+        } elif c == "(" or c == ")" or c == "{" or c == "}" or c == "," or c == "+" or c == "-" or c == "*" or c == "/" or c == "%" or c == "<" or c == ">" or c == "[" or c == "]" or c == "&" or c == "|" or c == "^" or c == "~" or c == "." {
             tokens[n] := ["symbol", c]
             n := n + 1
             i := i + 1
@@ -131,7 +131,7 @@ proc tokenize(src) {
             res := read_ident(src, i)
             word := res[0]
             i := res[1]
-            if word == "alloc" or word == "emit" or word == "proc" or word == "return" or word == "if" or word == "else" or word == "elif" or word == "loop" or word == "break" or word == "and" or word == "or" {
+            if word == "alloc" or word == "emit" or word == "proc" or word == "return" or word == "if" or word == "else" or word == "elif" or word == "loop" or word == "break" or word == "and" or word == "or" or word == "facts" {
                 tokens[n] := ["kw", word]
                 n := n + 1
             } elif word == "true" {
@@ -227,15 +227,24 @@ proc parse_statement(tokens, i) {
         j := j + 1
         alloc res_block := parse_block(tokens, j)
         return [["func_def", name, params, res_block[0]], res_block[1]]
+    } elif t[0] == "kw" and t[1] == "facts" {
+        alloc res := parse_expression(tokens, i + 1)
+        return [["facts", res[0]], res[1]]
     } else {
-        alloc next := tokens[i + 1]
-        if next[0] == "symbol" and next[1] == ":=" {
-            alloc res := parse_expression(tokens, i + 2)
-            return [["assign", t[1], res[0]], res[1]]
-        } else {
-            alloc res := parse_expression(tokens, i)
-            return [res[0], res[1]]
+        alloc lval_res := parse_factor(tokens, i)
+        alloc j := lval_res[1]
+        if j < tok_len and tokens[j][0] == "symbol" and tokens[j][1] == ":=" {
+            alloc val_res := parse_expression(tokens, j + 1)
+            alloc target := lval_res[0]
+            if target[0] == "ident" {
+                return [["assign", target[1], val_res[0]], val_res[1]]
+            } elif target[0] == "dot" {
+                return [["attr_assign", target[1], target[2], val_res[0]], val_res[1]]
+            } elif target[0] == "index" {
+                return [["index_assign", target[1], target[2], val_res[0]], val_res[1]]
+            }
         }
+        return [lval_res[0], lval_res[1]]
     }
 }
 proc parse_block(tokens, i) {
@@ -420,28 +429,8 @@ proc parse_factor(tokens, i) {
         node := ["string", t[1]]
         j := i + 1
     } elif t[0] == "ident" {
-        if i + 1 < tok_len and tokens[i + 1][0] == "symbol" and tokens[i + 1][1] == "(" {
-            k := i + 2
-            alloc args := []
-            alloc res := [false, 0]
-            if tokens[k][0] != "symbol" or tokens[k][1] != ")" {
-                loop true {
-                    res := parse_expression(tokens, k)
-                    args := args + [res[0]]
-                    k := res[1]
-                    if tokens[k][0] == "symbol" and tokens[k][1] == "," {
-                        k := k + 1
-                    } else {
-                        break
-                    }
-                }
-            }
-            node := ["func_call", ["ident", t[1]], args]
-            j := k + 1
-        } else {
-            node := ["ident", t[1]]
-            j := i + 1
-        }
+        node := ["ident", t[1]]
+        j := i + 1
     } elif t[0] == "symbol" and t[1] == "[" {
         alloc elems := []
         k := i + 1
@@ -463,14 +452,24 @@ proc parse_factor(tokens, i) {
     } elif t[0] == "symbol" and t[1] == "{" {
         alloc pairs := []
         k := i + 1
-        alloc key_res := [false, 0]
         alloc val_res := [false, 0]
+        alloc key_node := ["string", ""]
         if tokens[k][0] != "symbol" or tokens[k][1] != "}" {
             loop true {
-                key_res := parse_expression(tokens, k)
-                k := key_res[1] + 1
+                if tokens[k][0] == "string" {
+                    key_node := ["string", tokens[k][1]]
+                    k := k + 1
+                } elif tokens[k][0] == "ident" {
+                    key_node := ["string", tokens[k][1]]
+                    k := k + 1
+                } else {
+                    val_res := parse_expression(tokens, k)
+                    key_node := val_res[0]
+                    k := val_res[1]
+                }
+                k := k + 1
                 val_res := parse_expression(tokens, k)
-                pairs := pairs + [[key_res[0], val_res[0]]]
+                pairs := pairs + [[key_node, val_res[0]]]
                 k := val_res[1]
                 if tokens[k][0] == "symbol" and tokens[k][1] == "," {
                     k := k + 1
@@ -490,23 +489,50 @@ proc parse_factor(tokens, i) {
         j := i + 1
     }
     alloc inner := [false, 0]
-    k := 0
     alloc end_res := [false, 0]
-    loop j < tok_len and tokens[j][0] == "symbol" and tokens[j][1] == "[" {
-        inner := parse_expression(tokens, j + 1)
-        k := inner[1]
-        if tokens[k][0] == "symbol" and tokens[k][1] == ":" {
-            if tokens[k + 1][0] == "symbol" and tokens[k + 1][1] == "]" {
-                node := ["slice", node, inner[0], false]
-                j := k + 2
-            } else {
-                end_res := parse_expression(tokens, k + 1)
-                node := ["slice", node, inner[0], end_res[0]]
-                j := end_res[1] + 1
+    alloc args := []
+    alloc res := [false, 0]
+    alloc attr := [false, false]
+    loop j < tok_len and tokens[j][0] == "symbol" {
+        if tokens[j][1] == "(" {
+            k := j + 1
+            args := []
+            if tokens[k][0] != "symbol" or tokens[k][1] != ")" {
+                loop true {
+                    res := parse_expression(tokens, k)
+                    args := args + [res[0]]
+                    k := res[1]
+                    if tokens[k][0] == "symbol" and tokens[k][1] == "," {
+                        k := k + 1
+                    } else {
+                        break
+                    }
+                }
             }
-        } else {
-            node := ["index", node, inner[0]]
+            node := ["func_call", node, args]
             j := k + 1
+        } elif tokens[j][1] == "[" {
+            inner := parse_expression(tokens, j + 1)
+            k := inner[1]
+            if tokens[k][0] == "symbol" and tokens[k][1] == ":" {
+                if tokens[k + 1][0] == "symbol" and tokens[k + 1][1] == "]" {
+                    node := ["slice", node, inner[0], false]
+                    j := k + 2
+                } else {
+                    end_res := parse_expression(tokens, k + 1)
+                    node := ["slice", node, inner[0], end_res[0]]
+                    j := end_res[1] + 1
+                }
+            } else {
+                node := ["index", node, inner[0]]
+                j := k + 1
+            }
+        } elif tokens[j][1] == "." {
+            attr := tokens[j + 1]
+            node := ["dot", node, attr[1]]
+            j := j + 2
+        } else {
+            break
         }
     }
     return [node, j]
@@ -710,6 +736,10 @@ proc eval_expr(expr, env) {
         alloc base := eval_expr(expr[1], env)
         alloc idx := eval_expr(expr[2], env)
         return base[idx]
+    } elif kind == "dot" {
+        alloc base := eval_expr(expr[1], env)
+        alloc attr := expr[2]
+        return base[attr]
     } elif kind == "func_call" {
         alloc func_val := eval_expr(expr[1], env)
         alloc arg_nodes := expr[2]
@@ -743,6 +773,9 @@ proc execute(stmts, env, is_global) {
     alloc call_args := []
     alloc j := 0
     alloc arg_len := 0
+    alloc obj := false
+    alloc attr := ""
+    alloc idx := false
     alloc _ := false
     loop i < stmts_len {
         stmt := stmts[i]
@@ -753,8 +786,23 @@ proc execute(stmts, env, is_global) {
         } elif kind == "assign" {
             env := env_set(env, stmt[1], eval_expr(stmt[2], env))
             if is_global { global_env := env }
+        } elif kind == "attr_assign" {
+            obj := eval_expr(stmt[1], env)
+            attr := stmt[2]
+            obj[attr] := eval_expr(stmt[3], env)
+        } elif kind == "index_assign" {
+            obj := eval_expr(stmt[1], env)
+            idx := eval_expr(stmt[2], env)
+            obj[idx] := eval_expr(stmt[3], env)
         } elif kind == "emit" {
             emit eval_expr(stmt[1], env)
+        } elif kind == "facts" {
+            cond := eval_expr(stmt[1], env)
+            if cond {
+                _ := false
+            } else {
+                emit "Assertion failed"
+            }
         } elif kind == "if" {
             cond := eval_expr(stmt[1], env)
             res := ["normal", false]
