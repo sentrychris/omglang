@@ -107,7 +107,8 @@ Used for variable and function names. Keywords take precedence over identifiers 
 
 ## Special Tokens
 
-* `COMMENT`: `# ...` (skipped entirely)
+* `COMMENT`: `# ...` (single-line, skipped entirely)
+* `DOCBLOCK`: `/** ... */` (multiline docblock, skipped with line count preserved)
 * `SKIP`: spaces and tabs (ignored)
 * `NEWLINE`: triggers line number increment and emits a `NEWLINE` token
 * `MISMATCH`: catches unexpected characters and raises a `RuntimeError`

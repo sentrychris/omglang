@@ -24,6 +24,11 @@
         {
           "name": "comment.line.number-sign.omg",
           "match": "#.*$"
+        },
+        {
+          "name": "comment.block.documentation.omg",
+          "begin": "/\\*\\*",
+          "end": "\\*/"
         }
       ]
     },
