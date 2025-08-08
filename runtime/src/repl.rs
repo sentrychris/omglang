@@ -3,7 +3,7 @@ use std::io::{self, Write};
 use std::process::Command;
 
 /// Run an interactive REPL for the OMG language.
-pub fn repl() {
+pub fn interpret() {
     println!("OMG Language Interpreter - REPL");
     println!("Type `exit` or `quit` to leave.");
     let mut history = String::new();

@@ -7,7 +7,7 @@ mod value;
 mod vm;
 
 use bytecode::parse_bytecode;
-use repl::repl;
+use repl::interpret;
 use vm::run;
 
 /// Embedded interpreter bytecode generated at build time.
@@ -34,7 +34,7 @@ Options:
 fn main() {
     let args: Vec<String> = env::args().collect();
     if args.len() == 1 {
-        repl();
+        interpret();
         return;
     }
     if args[1] == "-h" || args[1] == "--help" {
