@@ -1,7 +1,7 @@
 """Tests for builtin function compilation to bytecode."""
 import pytest
 
-from omglang.bytecode import compile_source
+from omglang.compiler import compile_source
 
 
 @pytest.mark.parametrize(

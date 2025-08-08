@@ -4,7 +4,7 @@
 import subprocess
 from pathlib import Path
 
-from omglang.bytecode import compile_source
+from omglang.compiler import compile_source
 
 
 def find_project_root(marker: str = "omg.py") -> Path:

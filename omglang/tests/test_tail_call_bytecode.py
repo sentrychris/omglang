@@ -1,7 +1,7 @@
 """
 Tests for tail-call optimization in bytecode compiler.
 """
-from omglang.bytecode import compile_source
+from omglang.compiler import compile_source
 
 
 def test_tail_call_emits_tcall():
