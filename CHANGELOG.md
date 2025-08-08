@@ -26,6 +26,9 @@ Ordered from most recent at the top to oldest at the bottom.
   assertions, imports, and indirect function calls, paving the way for fully
   compiled OMG programs.
 
+### Changed
+- Split native VM runtime into separate modules for easier development.
+
 ### Fixed
 - Native VM resolves module paths with forward or backward slashes so
   Windows-style imports load correctly.
