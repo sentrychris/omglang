@@ -15,6 +15,7 @@ import argparse
 from scripts.generate_docstring_headers import insert_docstrings
 from scripts.generate_third_party_licenses_file import generate_third_party_licenses
 from scripts.generate_project_tree import write_tree_to_file
+from scripts.verify_binary import verify_interpreter
 
 from omglang.compiler import main as compile_interp, disassemble
 
@@ -108,7 +109,7 @@ def _disassemble_native_interpreter(bin_path: str) -> None:
     print("...\n" + source[1500:1600] + "\n...")
 
 
-def cli():
+def main():
     """
     Command-line interface for the OMG build script.
     """
@@ -118,8 +119,30 @@ def cli():
     )
     sub = parser.add_subparsers(dest="command", required=True)
 
-    # build
-    p_build = sub.add_parser("build", help="Build the OMG runtime executable")
+    # docstring-headers
+    sub.add_parser("docstring-headers", help="Insert docstring headers into .py sources")
+
+    # third-party-licenses
+    sub.add_parser("third-party-lics", help="Generate third-party licenses file")
+
+    # project-tree
+    sub.add_parser("project-tree", help="Generate project directory tree representation")
+
+    # compile native interpreter
+    p_compile = sub.add_parser("compile", help="Compile the OMG interpreter for the runtime VM")
+    p_compile.add_argument("src", nargs="?", default=OMG_INTERPRETER_SRC, help=f"Path to interpreter source (default: {OMG_INTERPRETER_SRC})")
+    p_compile.add_argument("-o", "--out", dest="out_bin", default=OMG_INTERPRETER_BIN, help=f"Output binary path (default: {OMG_INTERPRETER_BIN})")
+
+    # verify compiled interpreter
+    p_verify = sub.add_parser("verify", help="Verify the compiled interpreter binary for the runtime VM")
+    p_verify.add_argument("bin", nargs="?", default=OMG_INTERPRETER_BIN, help=f"Path to interpreter binary (default: {OMG_INTERPRETER_BIN})")
+
+    # disassemble native interpreter
+    p_dis = sub.add_parser("disassemble", help="Disassemble a compiled OMG interpreter binary")
+    p_dis.add_argument("bin", nargs="?", default=OMG_INTERPRETER_BIN, help=f"Path to interpreter binary (default: {OMG_INTERPRETER_BIN})")
+
+    # Legacy Python runtime embedded build
+    p_build = sub.add_parser("legacy-build", help="Legacy Python-based OMG interpreter (embeds the Python runtime)")
 
     p_build.add_argument(
         "--clean",
@@ -141,26 +164,6 @@ def cli():
         help="Delete the downloaded UPX directory after building"
     )
 
-    # clean-only
-    sub.add_parser("clean", help="Remove previous build artifacts")
-
-    # insert-docstrings
-    sub.add_parser("insert-docstrings", help="Insert docstring headers into .py sources (no build)")
-
-    # third-party-licenses
-    sub.add_parser("third-party-licenses", help="Generate third-party licenses file (no build)")
-
-    # project-tree
-    sub.add_parser("project-tree", help="Generate project directory tree (no build)")
-
-    # compile native interpreter
-    p_compile = sub.add_parser("compile", help="Compile the OMG interpreter for the runtime VM")
-    p_compile.add_argument("src", nargs="?", default=OMG_INTERPRETER_SRC, help=f"Path to interpreter source (default: {OMG_INTERPRETER_SRC})")
-    p_compile.add_argument("-o", "--out", dest="out_bin", default=OMG_INTERPRETER_BIN, help=f"Output binary path (default: {OMG_INTERPRETER_BIN})")
-
-    # disassemble native interpreter
-    p_dis = sub.add_parser("disassemble", help="Disassemble a compiled OMG interpreter binary")
-    p_dis.add_argument("bin", nargs="?", default=OMG_INTERPRETER_BIN, help=f"Path to interpreter binary (default: {OMG_INTERPRETER_BIN})")
 
     args = parser.parse_args()
 
@@ -172,12 +175,12 @@ def cli():
     package_resources = os.path.join(root, "package_resources")
     build_spec = os.path.join(package_resources, "omg.spec")
 
-    if args.command == "insert-docstrings":
+    if args.command == "docstring-headers":
         print("Inserting docstrings into source .py files...")
         insert_docstrings()
         return
 
-    if args.command == "third-party-licenses":
+    if args.command == "third-party-lics":
         print("Generating third-party licenses file...")
         generate_third_party_licenses()
         return
@@ -187,17 +190,17 @@ def cli():
         write_tree_to_file()
         return
 
-    if args.command == "clean":
-        print("Cleaning previous build directories...")
-        _clean_dir(out_dir)
-        return
-
     if args.command == "compile":
         _compile_native_interpreter(args.src, args.out_bin)
         return
 
     if args.command == "disassemble":
         _disassemble_native_interpreter(args.bin)
+        return
+
+    if args.command == "verify":
+        print(args)
+        verify_interpreter(args.bin)
         return
 
     # build
@@ -221,4 +224,4 @@ def cli():
             _clean_dir(upx_dir)
 
 if __name__ == "__main__":
-    cli()
+    main()

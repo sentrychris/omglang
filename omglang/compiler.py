@@ -4,6 +4,12 @@ native Rust virtual machine.  It relies on the existing lexer and parser to prod
 an AST and then lowers that tree into a simple stack-based instruction set.
 Usage:
     python -m omglang.compiler path/to/script.omg [output.omgb]
+
+File: compiler.py
+Author: Chris Rowles <christopher.rowles@outlook.com>
+Copyright: © 2025 Chris Rowles. All rights reserved.
+Version: 0.1.1
+License: MIT
 """
 
 from __future__ import annotations
