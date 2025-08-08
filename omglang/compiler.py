@@ -3,7 +3,7 @@ This module compiles OMG source code into a textual bytecode format consumed by 
 native Rust virtual machine.  It relies on the existing lexer and parser to produce
 an AST and then lowers that tree into a simple stack-based instruction set.
 Usage:
-    python -m omglang.compiler path/to/script.omg [output.bc]
+    python -m omglang.compiler path/to/script.omg [output.omgb]
 """
 
 from __future__ import annotations
@@ -356,7 +356,7 @@ def main(argv: List[str]) -> int:
     Entry point for the CLI.
     """
     if not argv:
-        print("Usage: python -m omglang.compiler <script.omg> [output.bc]")
+        print("Usage: python -m omglang.compiler <script.omg> [output.omgb]")
         return 1
     path = argv[0]
     with open(path, "r", encoding="utf-8") as f:

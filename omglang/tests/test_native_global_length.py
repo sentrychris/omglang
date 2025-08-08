@@ -24,7 +24,7 @@ def test_builtin_length_sees_global_list(tmp_path):
         "show()\n"
     )
     bc = compile_source(source, "<test>")
-    bc_file = tmp_path / "prog.bc"
+    bc_file = tmp_path / "prog.omgb"
     bc_file.write_bytes(bc.encode("utf-8"))
 
     root = find_project_root()

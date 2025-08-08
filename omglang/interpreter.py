@@ -37,7 +37,7 @@ malformed AST nodes, are surfaced as typed exceptions with line numbers and file
 File: interpreter.py
 Author: Chris Rowles <christopher.rowles@outlook.com>
 Copyright: © 2025 Chris Rowles. All rights reserved.
-Version: 0.1.0
+Version: 0.1.1
 License: MIT
 """
 
