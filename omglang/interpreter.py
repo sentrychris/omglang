@@ -536,6 +536,19 @@ class Interpreter:
                         except OSError:
                             return False
 
+                    if func_name == 'freeze':
+                        if len(args) != 1 or not isinstance(args[0], dict):
+                            raise TypeError(
+                                f"freeze() expects a dict!\n"
+                                f"on line {line} in {self.file}"
+                            )
+
+                        # Shallowly freeze the namespace to prevent external
+                        # mutation while avoiding deep recursion on structures
+                        # that may reference themselves (e.g. function
+                        # environments).
+                        return FrozenNamespace(args[0])
+
                 # User-defined functions
                 func_value = self.eval_expr(func_node)
                 if not isinstance(func_value, FunctionValue):
@@ -597,10 +610,6 @@ class Interpreter:
 
             if kind == 'decl':
                 _, var_name, expr_node, _ = stmt
-                if var_name in self.vars:
-                    raise RuntimeError(
-                        f"Variable '{var_name}' already declared on line {line} in {self.file}"
-                    )
                 value = self.eval_expr(expr_node)
                 self.vars[var_name] = value
 
