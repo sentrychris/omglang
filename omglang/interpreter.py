@@ -37,11 +37,12 @@ malformed AST nodes, are surfaced as typed exceptions with line numbers and file
 File: interpreter.py
 Author: Chris Rowles <christopher.rowles@outlook.com>
 Copyright: © 2025 Chris Rowles. All rights reserved.
-Version: 0.1.0
+Version: 0.1.1
 License: MIT
 """
 
 import os
+from pathlib import Path
 
 from omglang.exceptions import (
     UndefinedVariableException,
@@ -511,8 +512,42 @@ class Interpreter:
                                 f"read_file() expects a file path string!\n"
                                 f"on line {line} in {self.file}"
                             )
-                        with open(args[0], 'r', encoding='utf-8') as f:
-                            return f.read()
+
+                        # PATCH: Since bootstrapping OMG with a native runtime, the original
+                        # interpreter fails to resolve modules which are handled relative from
+                        # the execution script. In order to fix this, we need to adjust the
+                        # module path accordingly.
+                        # with open(args[0], 'r', encoding='utf-8') as f:
+                        #     return f.read()
+                        path = Path(args[0])
+                        if not path.is_absolute():
+                            base = None
+                            for scope in (self.vars, self.global_vars):
+                                if not scope:
+                                    continue
+                                cur = scope.get("current_dir")
+                                if isinstance(cur, str):
+                                    base = Path(cur.replace("\\", "/"))
+                                    break
+                            if base is not None:
+                                path = base / path
+                        try:
+                            return path.read_text(encoding="utf-8")
+                        except OSError:
+                            return False
+
+                    if func_name == 'freeze':
+                        if len(args) != 1 or not isinstance(args[0], dict):
+                            raise TypeError(
+                                f"freeze() expects a dict!\n"
+                                f"on line {line} in {self.file}"
+                            )
+
+                        # Shallowly freeze the namespace to prevent external
+                        # mutation while avoiding deep recursion on structures
+                        # that may reference themselves (e.g. function
+                        # environments).
+                        return FrozenNamespace(args[0])
 
                 # User-defined functions
                 func_value = self.eval_expr(func_node)
@@ -575,10 +610,6 @@ class Interpreter:
 
             if kind == 'decl':
                 _, var_name, expr_node, _ = stmt
-                if var_name in self.vars:
-                    raise RuntimeError(
-                        f"Variable '{var_name}' already declared on line {line} in {self.file}"
-                    )
                 value = self.eval_expr(expr_node)
                 self.vars[var_name] = value
 

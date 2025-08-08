@@ -8,8 +8,11 @@ def test_bytecode_cli_writes_utf8(tmp_path):
     src = 'emit chr(65)'
     src_path = tmp_path / "t.omg"
     src_path.write_text(src, encoding="utf-8")
-    out_path = tmp_path / "t.bc"
+    out_path = tmp_path / "t.omgb"
     subprocess.check_call([sys.executable, "-m", "omglang.compiler", str(src_path), str(out_path)])
     data = out_path.read_bytes()
-    text = data.decode("utf-8")
+    # Compiled bytecode should start with the magic header
+    assert data[:4] == b"OMGB"
+    from omglang.compiler import disassemble
+    text = disassemble(data)
     assert "BUILTIN chr 1" in text

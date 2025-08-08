@@ -11,10 +11,10 @@ use repl::interpret;
 use vm::run;
 
 /// Embedded interpreter bytecode generated at build time.
-const INTERPRETER_BC: &str = include_str!(concat!(env!("OUT_DIR"), "/interpreter.bc"));
+const INTERPRETER_BC: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/interpreter.omgb"));
 
 /// Help text displayed when the VM is invoked incorrectly or with `--help`.
-const USAGE: &str = r#"OMG Language Runtime v0.1.0
+const USAGE: &str = r#"OMG Language Runtime v0.1.1
 
 Usage:
     omg <script.omg>
@@ -41,7 +41,7 @@ fn main() {
         println!("{}", USAGE);
         return;
     }
-    if args[1].ends_with(".bc") {
+    if args[1].ends_with(".omgb") {
         let bc_path = &args[1];
         let program_args: &[String] = if args.len() > 2 {
             if args[2] == "--" {
@@ -52,7 +52,7 @@ fn main() {
         } else {
             &[]
         };
-        let src = fs::read_to_string(bc_path).expect("failed to read bytecode file");
+        let src = fs::read(bc_path).expect("failed to read bytecode file");
         let (code, funcs) = parse_bytecode(&src);
         run(&code, &funcs, program_args);
     } else {

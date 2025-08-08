@@ -19,8 +19,8 @@ def test_native_handles_modulo(tmp_path):
     """Ensure the native VM supports the MOD instruction."""
     source = "emit 10 % 3\n"
     bc = compile_source(source, "<test>")
-    bc_file = tmp_path / "prog.bc"
-    bc_file.write_bytes(bc.encode("utf-8"))
+    bc_file = tmp_path / "prog.omgb"
+    bc_file.write_bytes(bc)
 
     root = find_project_root()
     result = subprocess.run(

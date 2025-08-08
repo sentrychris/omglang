@@ -23,8 +23,8 @@ def test_native_handles_list_concat(tmp_path):
         "emit length(stack)\n"
     )
     bc = compile_source(source, "<test>")
-    bc_file = tmp_path / "prog.bc"
-    bc_file.write_bytes(bc.encode("utf-8"))
+    bc_file = tmp_path / "prog.omgb"
+    bc_file.write_bytes(bc)
 
     root = find_project_root()
     result = subprocess.run(

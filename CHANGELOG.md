@@ -2,75 +2,42 @@
 
 Ordered from most recent at the top to oldest at the bottom.
 
-## [Unreleased]
+## [0.1.1] - 2025-08-08
 
 ### Added
 - Native VM now embeds the OMG interpreter bytecode and can execute `.omg`
   scripts directly; the bytecode is generated at build time via a Rust build
   script.
-- Ported the bytecode compiler to OMG so the self-hosted interpreter can
-  generate bytecode without relying on Python.
-- Expanded `bytecode.py` to compile the full OMG language including imports,
-  dictionary operations, assertions, and break handling.
-- Added a bootstrap interpreter in `bootstrap/`, demonstrating self-hosting of the compiler.
-- Bytecode compiler and native VM now recognize built-in functions like
-  `length` and `chr`, emitting `BUILTIN` instructions and executing them
-  directly.
-- Command line compiler writes bytecode using UTF-8 encoding and accepts an
-  optional output path to avoid shell re-encoding on Windows.
-- Self-hosted interpreter loads external modules via `import "<file>" as <alias>`,
-  so examples like `2.omg` run successfully.
+- Bytecode compiler emits binary `.omgb` files and the native VM loads these
+  binary bytecode programs directly instead of parsing textual mnemonics.
+- OMG interpreter is written in OMG, compiled ahead of time to `.omgb` and embedded into the runtime
+- `FrozenDict` value type in the VM to expose read-only module exports.
 - Native VM forwards command-line arguments to bytecode programs via a global
   `args` list, allowing compiled interpreters to execute scripts.
-- Native VM understands additional bytecode operations like attribute access,
-  assertions, imports, and indirect function calls, paving the way for fully
-  compiled OMG programs.
 
 ### Changed
 - Split native VM runtime into separate modules for easier development.
+- Removed VM-level `IMPORT` instruction; all `.omg` module loading is handled by
+  the interpreter.
+- Bytecode compiler now rejects `import` statements, deferring module resolution
+  to the interpreter.
 
 ### Fixed
-- Native VM resolves module paths with forward or backward slashes so
-  Windows-style imports load correctly.
+- Bytecode compiler wrote boolean literals as integers without an operand
+  byte, causing the native runtime to panic when parsing `.omgb` files.
+  Boolean literals are now encoded correctly.
+- `read_file` no longer panics on missing files; the interpreter reports a
+  clear error message instead.
+- Interpreter normalizes script paths before resolving imports, preventing
+  missing module errors on Windows.
 - Guarded native VM value formatting against cyclic structures to prevent
   stack overflows when importing modules.
-- Reused temporary result variables in the self-hosted interpreter's
-  `parse_factor` routine to avoid "Variable already declared" errors when
-  running example scripts.
 - Refactored self-hosting interpreter example to declare loop variables
   outside loops in both parser and executor, preventing "already declared"
   errors.
-- Native VM now concatenates lists when using `ADD`, preventing `length()`
-  from receiving integers instead of lists.
-- Built-in calls in the native VM can access and modify global variables,
-  so `length()` inside functions operates on lists rather than defaulting
-  to integers.
 - Bytecode compiler emits built-in calls in tail positions as `BUILTIN`
   instructions instead of `TCALL`, preventing "Unknown function" errors
   when running compiled interpreters under the native VM.
-- The native VM parses and executes the `MOD` instruction so modulo
-  operations in bytecode (e.g., in `rot_13.omg`) run without crashing.
-- Self-hosted interpreter handles `elif` branches and boolean literals,
-  allowing it to run all example programs.
-- Tokenizer and file loader skip carriage returns so bytecode programs
-  run correctly on Windows CRLF line endings without hanging.
-- String literals in bytecode are JSON-encoded and decoded, preventing
-  newline characters from corrupting control flow and hanging the
-  compiled interpreter.
-- Self-hosted interpreter updates function environments at call time so
-  global state remains visible across calls (fixes "Undefined variable" in
-  `stack_vm.omg`).
-- Self-hosted interpreter parses and evaluates modulo and bitwise
-  operators, allowing examples like `permissions.omg` and `bitwise.omg` to
-  run.
-- Self-hosted interpreter exposes `ascii` and `chr` built-ins so
-  `rot_13.omg` and other scripts relying on character conversion run
-  correctly.
-- Self-hosted interpreter handles dot access, dictionary assignments, and
-  `facts` assertions so examples like `dictionaries.omg` execute without
-  hanging.
-- Compiled interpreter no longer fails with "Unknown statement: number" when
-  running OMG scripts under the native VM.
 - Increased Python recursion limit so the self-hosted interpreter can run
   deeply recursive programs without hitting `RecursionError`.
 - Renamed internal argument variables so the native VM no longer conflates

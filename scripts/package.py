@@ -1,33 +1,5 @@
 """
-Build script for the OMG runtime.
-
-This script automates the process of downloading UPX (if needed), cleaning previous build 
-artifacts, and building the OMG runtime executable.
-
-Usage:
-    To build runtime executable:
-    python build.py --build [--clean] [--upx VERSION] [--upx-clean]
-
-    To clean previous builds without building new executables:
-    python build.py --clean
-
-    To insert docstring headers into source files (no build):
-    python build.py --insert-docstrings
-
-    # To generate the third party licenses file (no build):
-    python build.py --third-party-licenses
-
-    # To generate the project directory tree (no build):
-    python build.py --project-tree
-
-Arguments:
-    --build TYPE                 Specify the build type: "gui" or "headless"
-    --clean                      Delete previous build and dist directories before building
-    --upx VERSION                Specify the UPX version to download and use (default: 5.0.1)
-    --upx-clean                  Delete the UPX directory in package_resources after building
-    --insert-docstrings          Insert docstrings into .py source files (no build)
-    --third-party-licenses       Generate third-party licenses file (no build)
-    --project-tree               Generate project directory tree (no build)
+Build utilities for OMG.
 
 The script handles platform differences for UPX download URLs and extraction.
 """
@@ -44,10 +16,15 @@ from scripts.generate_docstring_headers import insert_docstrings
 from scripts.generate_third_party_licenses_file import generate_third_party_licenses
 from scripts.generate_project_tree import write_tree_to_file
 
+from omglang.compiler import main as compile_interp, disassemble
+
+BASE_DIR=os.path.dirname(os.path.dirname(__file__))
 DEFAULT_UPX_VER="5.0.2"
+OMG_INTERPRETER_SRC=os.path.join(BASE_DIR, 'bootstrap', 'interpreter.omg')
+OMG_INTERPRETER_BIN=os.path.join(BASE_DIR, 'runtime', 'interpreter.omgb')
 
 
-def get_upx(package_resources: str, upx_pkg: str, upx_url: str, is_windows: bool) -> str:
+def _get_upx(package_resources: str, upx_pkg: str, upx_url: str, is_windows: bool) -> str:
     """
     Checks for the presence of UPX, downloads and extracts it if not present.
 
@@ -82,7 +59,7 @@ def get_upx(package_resources: str, upx_pkg: str, upx_url: str, is_windows: bool
     return upx_dir
 
 
-def clean_dir(directory: str) -> None:
+def _clean_dir(directory: str) -> None:
     """
     Deletes the specified directory and all its contents if it exists.
 
@@ -95,7 +72,7 @@ def clean_dir(directory: str) -> None:
         shutil.rmtree(directory)
 
 
-def build_exe(spec_file: str, upx_dir: str, dist_dir: str, build_dir: str) -> None:
+def _build_exe(spec_file: str, upx_dir: str, dist_dir: str, build_dir: str) -> None:
     """
     Builds the OMG runtime using PyInstaller.
 
@@ -116,151 +93,132 @@ def build_exe(spec_file: str, upx_dir: str, dist_dir: str, build_dir: str) -> No
     ], check=True)
 
 
-def main(
-        is_building: bool,
-        clean_build: bool,
-        clean_upx: bool,
-        upx_ver: str,
-        insert_docstrings_only: bool = False,
-        third_party_licenses_only: bool = False,
-        generate_project_tree_only: bool = False
-    ) -> None:
-    """
-    Main function that orchestrates the build process for OMG.
+def _compile_native_interpreter(src: str, out_bin: str) -> None:
+    print(f"Compiling native {src} for runtime...")
+    compile_interp([src, out_bin])
+    print(f"Compiled to {out_bin}")
 
-    Args:
-        is_building (bool): True if building the project, False otherwise.
-        clean_build (bool): Clean `build` and `dist` directories.
-        clean_upx (bool): Delete the UPX directory after building
-        upx_ver (str): The version of UPX to use to compress the executable.
-        insert_docstrings_only (bool): Insert docstrings into source files instead.
-        third_party_licenses_only (bool): Generate third-party licenses instead.
-        generate_project_tree_only (bool): Generate project directory tree instead.
-    """
-    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    out_dir = os.path.join(root, "output")
 
-    # Handle insert docstrings only (no build)
-    if insert_docstrings_only:
-        print("Inserting docstrings into source .py files...")
-        insert_docstrings()
-        return
-
-    # Handle generating licenses only (no build)
-    if third_party_licenses_only:
-        print("Generating third-party licenses file...")
-        generate_third_party_licenses()
-        return
-
-    # Handle clean previous builds only (no build)
-    if clean_build and not is_building:
-        print("Cleaning previous build directories...")
-        clean_dir(out_dir)
-        return
-
-    # Handle generating project directory tree only (no build)
-    if generate_project_tree_only:
-        print("Generating project directory tree...")
-        write_tree_to_file()
-        return
-
-    if not is_building:
-        return
-
-    # Right... Now we're building... Make sure the build type is valid
-    package_resources = os.path.join(root, "package_resources")
-    build_spec = os.path.join(package_resources, "omg.spec")
-
-    if not os.path.exists(build_spec):
-        raise FileNotFoundError(f".spec file not found: {build_spec}")
-
-    dist_dir = os.path.join(out_dir, "dist")
-    build_dir = os.path.join(out_dir, "build")
-
-    # Handle clean previous builds before new build
-    if clean_build:
-        print("Cleaning previous build directories...")
-        clean_dir(dist_dir)
-        clean_dir(build_dir)
-
-    # Handle fetching UPX
-    if os.name == "nt":
-        upx_pkg = f"upx-{upx_ver}-win64"
-        upx_url = f"https://github.com/upx/upx/releases/download/v{upx_ver}/{upx_pkg}.zip"
-    else:
-        upx_pkg = f"upx-{upx_ver}-amd64_linux"
-        upx_url = f"https://github.com/upx/upx/releases/download/v{upx_ver}/{upx_pkg}.tar.xz"
-
-    upx_dir = get_upx(package_resources, upx_pkg, upx_url, os.name == "nt")
-
-    build_exe(build_spec, upx_dir, dist_dir, build_dir)
-
-    if clean_upx:
-        clean_dir(upx_dir)
+def _disassemble_native_interpreter(bin_path: str) -> None:
+    print("Disassembling the compiled native interpreter...")
+    with open(bin_path, "rb") as b:
+        data = b.read()
+    source = disassemble(data)
+    # Avoid dumping the whole thing
+    print("...\n" + source[1500:1600] + "\n...")
 
 
 def cli():
     """
     Command-line interface for the OMG build script.
     """
-    parser = argparse.ArgumentParser(description="OMG packaging & utilities.")
-
-    parser.add_argument(
-        "--build",
-        action="store_true",
-        help="Build type (gui or headless)"
+    parser = argparse.ArgumentParser(
+        description="OMG packaging & utilities.",
+        allow_abbrev=False,
     )
+    sub = parser.add_subparsers(dest="command", required=True)
 
-    parser.add_argument(
+    # build
+    p_build = sub.add_parser("build", help="Build the OMG runtime executable")
+
+    p_build.add_argument(
         "--clean",
         action="store_true",
         help="Clean build and dist directories before building"
     )
 
-    parser.add_argument(
+    p_build.add_argument(
         "--upx",
         metavar="VERSION",
         type=str,
         default=DEFAULT_UPX_VER,
-        help="Specify UPX version (default: 5.0.1)"
+        help=f"Specify UPX version (default: {DEFAULT_UPX_VER})"
     )
 
-    parser.add_argument(
+    p_build.add_argument(
         "--upx-clean",
         action="store_true",
-        help="Clean copy of UPX before building"
+        help="Delete the downloaded UPX directory after building"
     )
 
-    parser.add_argument(
-        "--insert-docstrings",
-        action="store_true",
-        help="Insert docstrings into source files instead of building"
-    )
+    # clean-only
+    sub.add_parser("clean", help="Remove previous build artifacts")
 
-    parser.add_argument(
-        "--third-party-licenses",
-        action="store_true",
-        help="Generate third-party licenses file instead of building"
-    )
+    # insert-docstrings
+    sub.add_parser("insert-docstrings", help="Insert docstring headers into .py sources (no build)")
 
-    parser.add_argument(
-        "--project-tree",
-        action="store_true",
-        help="Generate project directory tree"
-    )
+    # third-party-licenses
+    sub.add_parser("third-party-licenses", help="Generate third-party licenses file (no build)")
+
+    # project-tree
+    sub.add_parser("project-tree", help="Generate project directory tree (no build)")
+
+    # compile native interpreter
+    p_compile = sub.add_parser("compile", help="Compile the OMG interpreter for the runtime VM")
+    p_compile.add_argument("src", nargs="?", default=OMG_INTERPRETER_SRC, help=f"Path to interpreter source (default: {OMG_INTERPRETER_SRC})")
+    p_compile.add_argument("-o", "--out", dest="out_bin", default=OMG_INTERPRETER_BIN, help=f"Output binary path (default: {OMG_INTERPRETER_BIN})")
+
+    # disassemble native interpreter
+    p_dis = sub.add_parser("disassemble", help="Disassemble a compiled OMG interpreter binary")
+    p_dis.add_argument("bin", nargs="?", default=OMG_INTERPRETER_BIN, help=f"Path to interpreter binary (default: {OMG_INTERPRETER_BIN})")
 
     args = parser.parse_args()
 
-    main(
-        is_building=args.build,
-        clean_build=args.clean,
-        clean_upx=args.upx_clean,
-        upx_ver=args.upx,
-        insert_docstrings_only=args.insert_docstrings,
-        third_party_licenses_only=args.third_party_licenses,
-        generate_project_tree_only=args.project_tree
-    )
+    # Common paths
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    out_dir = os.path.join(root, "output")
+    dist_dir = os.path.join(out_dir, "dist")
+    build_dir = os.path.join(out_dir, "build")
+    package_resources = os.path.join(root, "package_resources")
+    build_spec = os.path.join(package_resources, "omg.spec")
 
+    if args.command == "insert-docstrings":
+        print("Inserting docstrings into source .py files...")
+        insert_docstrings()
+        return
+
+    if args.command == "third-party-licenses":
+        print("Generating third-party licenses file...")
+        generate_third_party_licenses()
+        return
+
+    if args.command == "project-tree":
+        print("Generating project directory tree...")
+        write_tree_to_file()
+        return
+
+    if args.command == "clean":
+        print("Cleaning previous build directories...")
+        _clean_dir(out_dir)
+        return
+
+    if args.command == "compile":
+        _compile_native_interpreter(args.src, args.out_bin)
+        return
+
+    if args.command == "disassemble":
+        _disassemble_native_interpreter(args.bin)
+        return
+
+    # build
+    if args.command == "build":
+        if not os.path.exists(build_spec):
+            raise FileNotFoundError(f".spec file not found: {build_spec}")
+        if args.clean:
+            print("Cleaning previous build directories...")
+            _clean_dir(dist_dir)
+            _clean_dir(build_dir)
+        # Fetch UPX (scoped to build only)
+        if os.name == "nt":
+            upx_pkg = f"upx-{args.upx}-win64"
+            upx_url = f"https://github.com/upx/upx/releases/download/v{args.upx}/{upx_pkg}.zip"
+        else:
+            upx_pkg = f"upx-{args.upx}-amd64_linux"
+            upx_url = f"https://github.com/upx/upx/releases/download/v{args.upx}/{upx_pkg}.tar.xz"
+        upx_dir = _get_upx(package_resources, upx_pkg, upx_url, os.name == "nt")
+        _build_exe(build_spec, upx_dir, dist_dir, build_dir)
+        if args.upx_clean:
+            _clean_dir(upx_dir)
 
 if __name__ == "__main__":
     cli()

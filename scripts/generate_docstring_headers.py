@@ -31,7 +31,7 @@ def prepend_header_to_file(filepath: str) -> None:
     new_footer = f"""File: {filename}
 Author: Chris Rowles <christopher.rowles@outlook.com>
 Copyright: © {current_year} Chris Rowles. All rights reserved.
-Version: 0.1.0
+Version: 0.1.1
 License: MIT"""
 
     with open(filepath, "r", encoding="utf-8") as file:

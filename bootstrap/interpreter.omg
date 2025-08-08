@@ -552,6 +552,7 @@ proc parse_factor(tokens, i) {
 }
 alloc global_env := []
 alloc current_dir := "."
+alloc module_file := "<stdin>"
 alloc loaded_modules := []
 proc lookup_var(env, name) {
     alloc i := 0
@@ -604,7 +605,23 @@ proc copy_env(env) {
     return result
 }
 
+proc normalize_path(path) {
+    alloc res := ""
+    alloc i := 0
+    alloc n := length(path)
+    loop i < n {
+        if path[i] == "\\" {
+            res := res + "/"
+        } else {
+            res := res + path[i]
+        }
+        i := i + 1
+    }
+    return res
+}
+
 proc dirname(path) {
+    path := normalize_path(path)
     alloc i := length(path) - 1
     loop i >= 0 and path[i] != "/" {
         i := i - 1
@@ -616,10 +633,68 @@ proc dirname(path) {
 }
 
 proc join_path(base, rel) {
+    base := normalize_path(base)
+    rel := normalize_path(rel)
+    alloc path := ""
     if length(rel) > 0 and rel[0] == "/" {
-        return rel
+        path := rel
+    } else {
+        path := base + "/" + rel
     }
-    return base + "/" + rel
+    alloc parts := []
+    alloc part := ""
+    alloc i := 0
+    alloc n := length(path)
+    alloc abs := false
+    if n > 0 and path[0] == "/" {
+        abs := true
+    }
+    loop i < n {
+        if path[i] == "/" {
+            if part == ".." {
+                if length(parts) > 0 and parts[length(parts)-1] != ".." {
+                    parts := parts[0:length(parts)-1]
+                } else {
+                    parts := parts + [".."]
+                }
+            } elif part != "" and part != "." {
+                parts := parts + [part]
+            }
+            part := ""
+        } else {
+            part := part + path[i]
+        }
+        i := i + 1
+    }
+    if part == ".." {
+        if length(parts) > 0 and parts[length(parts)-1] != ".." {
+            parts := parts[0:length(parts)-1]
+        } else {
+            parts := parts + [".."]
+        }
+    } elif part != "" and part != "." {
+        parts := parts + [part]
+    }
+    alloc res := ""
+    i := 0
+    alloc p_len := length(parts)
+    loop i < p_len {
+        if res != "" {
+            res := res + "/"
+        }
+        res := res + parts[i]
+        i := i + 1
+    }
+    if abs {
+        res := "/" + res
+    }
+    if res == "" {
+        if abs {
+            return "/"
+        }
+        return "."
+    }
+    return res
 }
 proc call_function(func, arg_values, env) {
     if func[0] == "function" {
@@ -653,6 +728,8 @@ proc call_function(func, arg_values, env) {
             return ascii(arg_values[0])
         } elif name == "chr" {
             return chr(arg_values[0])
+        } elif name == "freeze" {
+            return freeze(arg_values[0])
         }
         emit "Unknown builtin: " + name
         return false
@@ -674,7 +751,28 @@ proc import_module(path) {
         k := k + 1
     }
     loaded_modules := loaded_modules + [full]
-    alloc source := read_file(full)
+    alloc saved_dir := current_dir
+    alloc saved_file := module_file
+    alloc saved_global := global_env
+    current_dir := dirname(full)
+    module_file := full
+    alloc name := full
+    alloc i := length(name) - 1
+    loop i >= 0 and name[i] != "/" {
+        i := i - 1
+    }
+    if i >= 0 {
+        name := name[i+1:]
+    }
+    alloc source := read_file(name)
+    if source == false {
+        emit "Failed to read file: " + full
+        current_dir := saved_dir
+        module_file := saved_file
+        global_env := saved_global
+        loaded_modules := loaded_modules[0:lm_len]
+        return {}
+    }
     alloc src_len := length(source)
     if src_len >= 6 and source[0] == ";" and source[1] == ";" and source[2] == ";" and source[3] == "o" and source[4] == "m" and source[5] == "g" {
         alloc j := 6
@@ -683,11 +781,8 @@ proc import_module(path) {
         }
         source := source[j:]
     }
-    alloc saved_dir := current_dir
-    current_dir := dirname(full)
-    alloc saved_global := global_env
     alloc ast := parse(source)
-    alloc env := [["length", ["builtin", "length"]], ["read_file", ["builtin", "read_file"]], ["ascii", ["builtin", "ascii"]], ["chr", ["builtin", "chr"]]]
+    alloc env := [["length", ["builtin", "length"]], ["read_file", ["builtin", "read_file"]], ["ascii", ["builtin", "ascii"]], ["chr", ["builtin", "chr"]], ["freeze", ["builtin", "freeze"]]]
     env := env_set(env, "args", [])
     global_env := env
     alloc exports := []
@@ -719,7 +814,9 @@ proc import_module(path) {
         module_ns[name] := val
         i := i + 1
     }
+    module_ns := freeze(module_ns)
     current_dir := saved_dir
+    module_file := saved_file
     global_env := saved_global
     loaded_modules := loaded_modules[0:lm_len]
     return module_ns
@@ -960,7 +1057,7 @@ proc execute(stmts, env, is_global) {
 }
 proc run(source) {
     alloc ast := parse(source)
-    alloc env := [["length", ["builtin", "length"]], ["read_file", ["builtin", "read_file"]], ["ascii", ["builtin", "ascii"]], ["chr", ["builtin", "chr"]]]
+    alloc env := [["length", ["builtin", "length"]], ["read_file", ["builtin", "read_file"]], ["ascii", ["builtin", "ascii"]], ["chr", ["builtin", "chr"]], ["freeze", ["builtin", "freeze"]]]
     env := env_set(env, "args", args)
     global_env := env
     return execute(ast, env, true)
@@ -968,9 +1065,27 @@ proc run(source) {
 proc run_file_with_args(path, file_args) {
     alloc saved := args
     alloc old_dir := current_dir
+    alloc old_file := module_file
+    path := normalize_path(path)
     args := file_args
+    module_file := path
     current_dir := dirname(path)
-    alloc source := read_file(path)
+    alloc name := path
+    alloc i := length(name) - 1
+    loop i >= 0 and name[i] != "/" {
+        i := i - 1
+    }
+    if i >= 0 {
+        name := name[i+1:]
+    }
+    alloc source := read_file(name)
+    if source == false {
+        emit "Failed to read file: " + path
+        current_dir := old_dir
+        module_file := old_file
+        args := saved
+        return ["error", false]
+    }
     alloc src_len := length(source)
     if src_len >= 6 and source[0] == ";" and source[1] == ";" and source[2] == ";" and source[3] == "o" and source[4] == "m" and source[5] == "g" {
         source := source[6:]
@@ -985,6 +1100,7 @@ proc run_file_with_args(path, file_args) {
     }
     alloc res := run(source)
     current_dir := old_dir
+    module_file := old_file
     args := saved
     return res
 }
