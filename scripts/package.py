@@ -1,36 +1,5 @@
 """
-Build script for the OMG runtime.
-
-This script automates the process of downloading UPX (if needed), cleaning previous build 
-artifacts, and building the OMG runtime executable.
-
-Usage:
-    To build runtime executable:
-    python build.py build [--clean] [--upx VERSION] [--upx-clean]
-
-    To clean previous builds without building new executables:
-    python build.py clean
-
-    To insert docstring headers into source files (no build):
-    python build.py insert-docstrings
-
-    # To generate the third party licenses file (no build):
-    python build.py third-party-licenses
-
-    # To generate the project directory tree (no build):
-    python build.py project-tree
-
-Arguments:
-    --build TYPE                 Specify the build type: "gui" or "headless"
-    --clean                      Delete previous build and dist directories before building
-    --upx VERSION                Specify the UPX version to download and use (default: 5.0.1)
-    --upx-clean                  Delete the UPX directory in package_resources after building
-    --insert-docstrings          Insert docstrings into .py source files (no build)
-    --third-party-licenses       Generate third-party licenses file (no build)
-    --project-tree               Generate project directory tree (no build)
-
-    --compile                    Compile the interpreter for the native runtime
-    --disassemble                Disassemble the interpreter binary
+Build utilities for OMG.
 
 The script handles platform differences for UPX download URLs and extraction.
 """
