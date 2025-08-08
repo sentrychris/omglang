@@ -605,7 +605,23 @@ proc copy_env(env) {
     return result
 }
 
+proc normalize_path(path) {
+    alloc res := ""
+    alloc i := 0
+    alloc n := length(path)
+    loop i < n {
+        if path[i] == "\\" {
+            res := res + "/"
+        } else {
+            res := res + path[i]
+        }
+        i := i + 1
+    }
+    return res
+}
+
 proc dirname(path) {
+    path := normalize_path(path)
     alloc i := length(path) - 1
     loop i >= 0 and path[i] != "/" {
         i := i - 1
@@ -617,6 +633,8 @@ proc dirname(path) {
 }
 
 proc join_path(base, rel) {
+    base := normalize_path(base)
+    rel := normalize_path(rel)
     alloc path := ""
     if length(rel) > 0 and rel[0] == "/" {
         path := rel
@@ -634,8 +652,10 @@ proc join_path(base, rel) {
     loop i < n {
         if path[i] == "/" {
             if part == ".." {
-                if length(parts) > 0 {
+                if length(parts) > 0 and parts[length(parts)-1] != ".." {
                     parts := parts[0:length(parts)-1]
+                } else {
+                    parts := parts + [".."]
                 }
             } elif part != "" and part != "." {
                 parts := parts + [part]
@@ -647,8 +667,10 @@ proc join_path(base, rel) {
         i := i + 1
     }
     if part == ".." {
-        if length(parts) > 0 {
+        if length(parts) > 0 and parts[length(parts)-1] != ".." {
             parts := parts[0:length(parts)-1]
+        } else {
+            parts := parts + [".."]
         }
     } elif part != "" and part != "." {
         parts := parts + [part]
@@ -733,7 +755,15 @@ proc import_module(path) {
     alloc saved_file := module_file
     current_dir := dirname(full)
     module_file := full
-    alloc source := read_file(full)
+    alloc name := full
+    alloc i := length(name) - 1
+    loop i >= 0 and name[i] != "/" {
+        i := i - 1
+    }
+    if i >= 0 {
+        name := name[i+1:]
+    }
+    alloc source := read_file(name)
     alloc src_len := length(source)
     if src_len >= 6 and source[0] == ";" and source[1] == ";" and source[2] == ";" and source[3] == "o" and source[4] == "m" and source[5] == "g" {
         alloc j := 6
@@ -1028,10 +1058,19 @@ proc run_file_with_args(path, file_args) {
     alloc saved := args
     alloc old_dir := current_dir
     alloc old_file := module_file
+    path := normalize_path(path)
     args := file_args
     module_file := path
     current_dir := dirname(path)
-    alloc source := read_file(path)
+    alloc name := path
+    alloc i := length(name) - 1
+    loop i >= 0 and name[i] != "/" {
+        i := i - 1
+    }
+    if i >= 0 {
+        name := name[i+1:]
+    }
+    alloc source := read_file(name)
     alloc src_len := length(source)
     if src_len >= 6 and source[0] == ";" and source[1] == ";" and source[2] == ";" and source[3] == "o" and source[4] == "m" and source[5] == "g" {
         source := source[6:]

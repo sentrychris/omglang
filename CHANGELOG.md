@@ -37,6 +37,8 @@ Ordered from most recent at the top to oldest at the bottom.
 ### Fixed
 - Native VM resolves module paths with forward or backward slashes so
   Windows-style imports load correctly.
+- Interpreter normalizes script paths before resolving imports, preventing
+  missing module errors on Windows.
 - Guarded native VM value formatting against cyclic structures to prevent
   stack overflows when importing modules.
 - Reused temporary result variables in the self-hosted interpreter's
