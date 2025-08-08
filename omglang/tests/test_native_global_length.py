@@ -34,7 +34,7 @@ def test_builtin_length_sees_global_list(tmp_path):
             "run",
             "--quiet",
             "--manifest-path",
-            str(root / "native" / "Cargo.toml"),
+            str(root / "runtime" / "Cargo.toml"),
             str(bc_file),
         ],
         capture_output=True,

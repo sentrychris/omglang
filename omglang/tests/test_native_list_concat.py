@@ -33,7 +33,7 @@ def test_native_handles_list_concat(tmp_path):
             "run",
             "--quiet",
             "--manifest-path",
-            str(root / "native" / "Cargo.toml"),
+            str(root / "runtime" / "Cargo.toml"),
             str(bc_file),
         ],
         capture_output=True,
