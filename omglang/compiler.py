@@ -149,10 +149,9 @@ class Compiler:
             self.compile_expr(stmt[1])
             self.emit("POP")
         elif kind == "import":
-            path, alias = stmt[1], stmt[2]
-            self.emit("PUSH_STR", path)
-            self.emit("IMPORT")
-            self.emit("STORE", alias)
+            raise NotImplementedError(
+                "Module imports are resolved by the interpreter and cannot be compiled",
+            )
         elif kind == "facts":
             self.compile_expr(stmt[1])
             self.emit("ASSERT")

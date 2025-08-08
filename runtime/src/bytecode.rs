@@ -53,7 +53,6 @@ pub enum Instr {
     StoreIndex,
     Attr(String),
     StoreAttr(String),
-    Import,
     Assert,
     CallValue(usize),
 }
@@ -153,8 +152,6 @@ pub fn parse_bytecode(src: &str) -> (Vec<Instr>, HashMap<String, Function>) {
             code.push(Instr::Attr(rest.to_string()));
         } else if let Some(rest) = trimmed.strip_prefix("STORE_ATTR ") {
             code.push(Instr::StoreAttr(rest.to_string()));
-        } else if trimmed == "IMPORT" {
-            code.push(Instr::Import);
         } else if trimmed == "ASSERT" {
             code.push(Instr::Assert);
         } else if let Some(rest) = trimmed.strip_prefix("CALL_VALUE ") {

@@ -10,6 +10,7 @@ pub enum Value {
     Bool(bool),
     List(Rc<RefCell<Vec<Value>>>),
     Dict(Rc<RefCell<HashMap<String, Value>>>),
+    FrozenDict(Rc<HashMap<String, Value>>),
     None,
 }
 
@@ -28,6 +29,7 @@ impl Value {
             }
             Value::List(l) => l.borrow().len() as i64,
             Value::Dict(d) => d.borrow().len() as i64,
+            Value::FrozenDict(d) => d.len() as i64,
             Value::None => 0,
         }
     }
@@ -40,6 +42,7 @@ impl Value {
             Value::Str(s) => !s.is_empty(),
             Value::List(l) => !l.borrow().is_empty(),
             Value::Dict(d) => !d.borrow().is_empty(),
+            Value::FrozenDict(d) => !d.is_empty(),
             Value::None => false,
         }
     }
@@ -67,6 +70,17 @@ impl Value {
                     }
                     let inner: Vec<String> = map
                         .borrow()
+                        .iter()
+                        .map(|(k, v)| format!("{}: {}", k, helper(v, seen)))
+                        .collect();
+                    format!("{{{}}}", inner.join(", "))
+                }
+                Value::FrozenDict(map) => {
+                    let ptr = Rc::as_ptr(map) as usize;
+                    if !seen.insert(ptr) {
+                        return "{...}".to_string();
+                    }
+                    let inner: Vec<String> = map
                         .iter()
                         .map(|(k, v)| format!("{}: {}", k, helper(v, seen)))
                         .collect();

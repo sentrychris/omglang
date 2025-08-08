@@ -18,6 +18,7 @@ Ordered from most recent at the top to oldest at the bottom.
   directly.
 - Command line compiler writes bytecode using UTF-8 encoding and accepts an
   optional output path to avoid shell re-encoding on Windows.
+- `FrozenDict` value type in the VM to expose read-only module exports.
 - Self-hosted interpreter loads external modules via `import "<file>" as <alias>`,
   so examples like `2.omg` run successfully.
 - Native VM forwards command-line arguments to bytecode programs via a global
@@ -28,6 +29,10 @@ Ordered from most recent at the top to oldest at the bottom.
 
 ### Changed
 - Split native VM runtime into separate modules for easier development.
+- Removed VM-level `IMPORT` instruction; all `.omg` module loading is handled by
+  the interpreter.
+- Bytecode compiler now rejects `import` statements, deferring module resolution
+  to the interpreter.
 
 ### Fixed
 - Native VM resolves module paths with forward or backward slashes so

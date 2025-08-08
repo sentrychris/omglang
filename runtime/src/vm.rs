@@ -4,7 +4,7 @@ use std::fs;
 use std::path::PathBuf;
 use std::rc::Rc;
 
-use crate::bytecode::{parse_bytecode, Function, Instr};
+use crate::bytecode::{Function, Instr};
 use crate::value::Value;
 
 /// Execute bytecode on a stack-based virtual machine.
@@ -17,6 +17,24 @@ pub fn run(code: &[Instr], funcs: &HashMap<String, Function>, program_args: &[St
         "args".to_string(),
         Value::List(Rc::new(RefCell::new(arg_values))),
     );
+    if let Some(first) = program_args.first() {
+        let path = PathBuf::from(first.replace("\\", "/"));
+        globals.insert(
+            "module_file".to_string(),
+            Value::Str(path.to_string_lossy().replace("\\", "/")),
+        );
+        if let Some(parent) = path.parent() {
+            globals.insert(
+                "current_dir".to_string(),
+                Value::Str(parent.to_string_lossy().replace("\\", "/")),
+            );
+        } else {
+            globals.insert("current_dir".to_string(), Value::Str(".".to_string()));
+        }
+    } else {
+        globals.insert("module_file".to_string(), Value::Str("<stdin>".to_string()));
+        globals.insert("current_dir".to_string(), Value::Str(".".to_string()));
+    }
     let mut env: HashMap<String, Value> = HashMap::new();
     let mut env_stack: Vec<HashMap<String, Value>> = Vec::new();
     let mut ret_stack: Vec<usize> = Vec::new();
@@ -211,6 +229,13 @@ pub fn run(code: &[Instr], funcs: &HashMap<String, Function>, program_args: &[St
                         let key = i.to_string();
                         stack.push(map.borrow().get(&key).cloned().unwrap_or(Value::Int(0)));
                     }
+                    (Value::FrozenDict(map), Value::Str(k)) => {
+                        stack.push(map.get(&k).cloned().unwrap_or(Value::Int(0)));
+                    }
+                    (Value::FrozenDict(map), Value::Int(i)) => {
+                        let key = i.to_string();
+                        stack.push(map.get(&key).cloned().unwrap_or(Value::Int(0)));
+                    }
                     (Value::Str(s), Value::Int(i)) => {
                         let ch = s.chars().nth(i as usize).unwrap_or('\0');
                         stack.push(Value::Str(ch.to_string()));
@@ -263,6 +288,9 @@ pub fn run(code: &[Instr], funcs: &HashMap<String, Function>, program_args: &[St
                     (Value::Dict(map), Value::Int(i)) => {
                         map.borrow_mut().insert(i.to_string(), val);
                     }
+                    (Value::FrozenDict(_), _) => {
+                        panic!("cannot modify frozen dict");
+                    }
                     _ => {}
                 }
             }
@@ -273,25 +301,24 @@ pub fn run(code: &[Instr], funcs: &HashMap<String, Function>, program_args: &[St
                         let v = map.borrow().get(attr).cloned().unwrap_or(Value::Int(0));
                         stack.push(v);
                     }
+                    Value::FrozenDict(map) => {
+                        let v = map.get(attr).cloned().unwrap_or(Value::Int(0));
+                        stack.push(v);
+                    }
                     _ => stack.push(Value::Int(0)),
                 }
             }
             Instr::StoreAttr(attr) => {
                 let val = stack.pop().unwrap();
                 let base = stack.pop().unwrap();
-                if let Value::Dict(map) = base {
-                    map.borrow_mut().insert(attr.clone(), val);
-                }
-            }
-            Instr::Import => {
-                let path_val = stack.pop().unwrap();
-                if let Value::Str(path) = path_val {
-                    let src = fs::read_to_string(&path).expect("failed to read module");
-                    let (code2, funcs2) = parse_bytecode(&src);
-                    run(&code2, &funcs2, &[]);
-                    stack.push(Value::Dict(Rc::new(RefCell::new(HashMap::new()))));
-                } else {
-                    panic!("IMPORT expects string path");
+                match base {
+                    Value::Dict(map) => {
+                        map.borrow_mut().insert(attr.clone(), val);
+                    }
+                    Value::FrozenDict(_) => {
+                        panic!("cannot modify frozen dict");
+                    }
+                    _ => {}
                 }
             }
             Instr::Assert => {
@@ -406,12 +433,21 @@ pub fn run(code: &[Instr], funcs: &HashMap<String, Function>, program_args: &[St
                         [Value::List(list)] => Value::Int(list.borrow().len() as i64),
                         [Value::Str(s)] => Value::Int(s.chars().count() as i64),
                         [Value::Dict(map)] => Value::Int(map.borrow().len() as i64),
+                        [Value::FrozenDict(map)] => Value::Int(map.len() as i64),
                         _ => panic!("length() expects a list, dict or string"),
+                    },
+                    "freeze" => match args.as_slice() {
+                        [Value::Dict(map)] => {
+                            let frozen = map.borrow().clone();
+                            Value::FrozenDict(Rc::new(frozen))
+                        }
+                        [Value::FrozenDict(map)] => Value::FrozenDict(map.clone()),
+                        _ => panic!("freeze() expects a dict"),
                     },
                     "read_file" => match args.as_slice() {
                         [Value::Str(path)] => {
                             let mut path_buf = PathBuf::from(path.replace("\\", "/"));
-                            if path_buf.is_relative() && !path_buf.exists() {
+                            if path_buf.is_relative() {
                                 if let Some(Value::Str(cur)) = env
                                     .get("current_dir")
                                     .or_else(|| globals.get("current_dir"))
@@ -422,15 +458,6 @@ pub fn run(code: &[Instr], funcs: &HashMap<String, Function>, program_args: &[St
                             }
                             let content =
                                 fs::read_to_string(&path_buf).expect("failed to read file");
-                            if let Some(parent) = path_buf.parent() {
-                                let parent_str = parent.to_string_lossy().replace("\\", "/");
-                                if env.contains_key("current_dir") {
-                                    env.insert("current_dir".to_string(), Value::Str(parent_str));
-                                } else {
-                                    globals
-                                        .insert("current_dir".to_string(), Value::Str(parent_str));
-                                }
-                            }
                             Value::Str(content)
                         }
                         _ => panic!("read_file() expects a file path"),
