@@ -4,11 +4,15 @@ Parse step binary
 
 import os
 import struct
+import sys
 
 from omglang.compiler import REV_OPCODES
 
-BASE_DIR = os.path.dirname(os.path.dirname(__file__))
-INTERP_BINARY = os.path.join(BASE_DIR, 'runtime', 'interpreter.omgb')
+INTERP_BINARY = os.path.join(
+    os.path.dirname(os.path.dirname(__file__)),
+    'runtime',
+    'interpreter.omgb'
+) if len(sys.argv) == 1 else sys.argv[1]
 
 with open(INTERP_BINARY, 'rb') as f:
     data=f.read()
