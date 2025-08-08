@@ -1,0 +1,520 @@
+;;;omg
+
+# OMG bytecode compiler implemented in OMG.
+# Usage: compiler <input.omg>
+#
+# Reuses tokenizer and parser from interpreter.omg to produce bytecode.
+
+import "./interpreter.omg" as omg
+
+# Utility helpers -------------------------------------------------
+
+proc contains(lst, item) {
+    alloc i := 0
+    alloc n := length(lst)
+    loop i < n {
+        if lst[i] == item {
+            return true
+        }
+        i := i + 1
+    }
+    return false
+}
+
+proc int_to_string(num) {
+    if num == 0 { return "0" }
+    alloc n := num
+    alloc neg := false
+    if n < 0 {
+        neg := true
+        n := 0 - n
+    }
+    alloc digits := ""
+    alloc d := 0
+    loop n > 0 {
+        d := n % 10
+        digits := chr(ascii("0") + d) + digits
+        n := n / 10
+    }
+    if neg { return "-" + digits }
+    return digits
+}
+
+proc escape_string(s) {
+    alloc res := ""
+    alloc i := 0
+    alloc n := length(s)
+    alloc c := ""
+    loop i < n {
+        c := s[i]
+        if c == "\\" {
+            res := res + "\\\\"
+        } elif c == "\"" {
+            res := res + "\\\""
+        } elif c == "\n" {
+            res := res + "\\n"
+        } elif c == "\r" {
+            res := res + "\\r"
+        } elif c == "\t" {
+            res := res + "\\t"
+        } else {
+            res := res + c
+        }
+        i := i + 1
+    }
+    return res
+}
+
+proc quote_string(s) {
+    return "\"" + escape_string(s) + "\""
+}
+
+# Compiler state --------------------------------------------------
+
+alloc code := []
+alloc pending_funcs := []
+alloc funcs := []
+alloc break_stack := []
+alloc builtins := ["chr", "ascii", "hex", "binary", "length", "read_file"]
+
+proc reset_state() {
+    code := []
+    pending_funcs := []
+    funcs := []
+    break_stack := []
+}
+
+proc emit_inst(op, arg) {
+    code[length(code)] := [op, arg]
+}
+
+proc emit_placeholder(op) {
+    alloc idx := length(code)
+    code[idx] := [op, 0]
+    return idx
+}
+
+proc patch(idx, target) { code[idx][1] := target }
+
+# Statement compilation ------------------------------------------
+
+proc compile_block(block) {
+    alloc i := 0
+    alloc n := length(block)
+    loop i < n {
+        compile_stmt(block[i])
+        i := i + 1
+    }
+}
+
+proc compile_stmt(stmt) {
+    alloc kind := stmt[0]
+    if kind == "emit" {
+        compile_expr(stmt[1])
+        emit_inst("EMIT", 0)
+    } elif kind == "decl" or kind == "assign" {
+        compile_expr(stmt[2])
+        emit_inst("STORE", stmt[1])
+    } elif kind == "attr_assign" {
+        compile_expr(stmt[1])
+        compile_expr(stmt[3])
+        emit_inst("STORE_ATTR", stmt[2])
+    } elif kind == "index_assign" {
+        compile_expr(stmt[1])
+        compile_expr(stmt[2])
+        compile_expr(stmt[3])
+        emit_inst("STORE_INDEX", 0)
+    } elif kind == "import" {
+        emit_inst("PUSH_STR", stmt[1])
+        emit_inst("IMPORT", 0)
+        emit_inst("STORE", stmt[2])
+    } elif kind == "facts" {
+        compile_expr(stmt[1])
+        emit_inst("ASSERT", 0)
+    } elif kind == "if" {
+        alloc cond_blocks := []
+        alloc else_block := []
+        alloc current := stmt
+        alloc cond := false
+        alloc block := []
+        alloc tail := false
+        loop true {
+            cond := current[1]
+            block := current[2]
+            cond_blocks[length(cond_blocks)] := [cond, block]
+            tail := current[3]
+            if length(tail) > 0 and tail[0] == "if" {
+                current := tail
+            } else {
+                if length(tail) > 0 { else_block := tail }
+                break
+            }
+        }
+        alloc end_jumps := []
+        alloc pair := false
+        alloc jf := 0
+        alloc i := 0
+        alloc n := length(cond_blocks)
+        loop i < n {
+            pair := cond_blocks[i]
+            compile_expr(pair[0])
+            jf := emit_placeholder("JUMP_IF_FALSE")
+            compile_block(pair[1])
+            end_jumps[length(end_jumps)] := emit_placeholder("JUMP")
+            patch(jf, length(code))
+            i := i + 1
+        }
+        if length(else_block) > 0 {
+            if else_block[0] == "if" {
+                compile_stmt(else_block)
+            } else {
+                compile_block(else_block)
+            }
+        }
+        i := 0
+        n := length(end_jumps)
+        loop i < n {
+            patch(end_jumps[i], length(code))
+            i := i + 1
+        }
+    } elif kind == "loop" {
+        alloc cond := stmt[1]
+        alloc body := stmt[2]
+        alloc start := length(code)
+        compile_expr(cond)
+        alloc jf := emit_placeholder("JUMP_IF_FALSE")
+        break_stack[length(break_stack)] := []
+        compile_block(body)
+        emit_inst("JUMP", start)
+        patch(jf, length(code))
+        alloc breaks := break_stack[length(break_stack) - 1]
+        alloc i := 0
+        alloc bn := length(breaks)
+        loop i < bn {
+            patch(breaks[i], length(code))
+            i := i + 1
+        }
+        break_stack := break_stack[0:length(break_stack) - 1]
+    } elif kind == "func_def" {
+        alloc name := stmt[1]
+        alloc params := stmt[2]
+        alloc body := stmt[3]
+        alloc body_code := compile_function_body(body)
+        pending_funcs[length(pending_funcs)] := [name, params, body_code]
+    } elif kind == "return" {
+        alloc expr := stmt[1]
+        if expr[0] == "func_call" and expr[1][0] == "ident" {
+            alloc func_name := expr[1][1]
+            alloc args := expr[2]
+            alloc j := 0
+            alloc m := length(args)
+            loop j < m {
+                compile_expr(args[j])
+                j := j + 1
+            }
+            if contains(builtins, func_name) {
+                emit_inst("BUILTIN", [func_name, m])
+                emit_inst("RET", 0)
+            } else {
+                emit_inst("TCALL", func_name)
+            }
+        } else {
+            compile_expr(expr)
+            emit_inst("RET", 0)
+        }
+    } elif kind == "break" {
+        alloc depth := length(break_stack)
+        if depth == 0 {
+            emit_inst("JUMP", length(code))
+        } else {
+            alloc idx := emit_placeholder("JUMP")
+            alloc top := break_stack[depth - 1]
+            top[length(top)] := idx
+            break_stack[depth - 1] := top
+        }
+    } else {
+        compile_expr(stmt)
+        emit_inst("POP", 0)
+    }
+}
+
+proc compile_function_body(body) {
+    alloc saved_code := code
+    alloc saved_break := break_stack
+    code := []
+    break_stack := []
+    compile_block(body)
+    emit_inst("RET", 0)
+    alloc body_code := code
+    code := saved_code
+    break_stack := saved_break
+    return body_code
+}
+
+
+# Expression compilation -----------------------------------------
+
+proc compile_expr(node) {
+    alloc op := node[0]
+    if op == "number" {
+        emit_inst("PUSH_INT", node[1])
+    } elif op == "string" {
+        emit_inst("PUSH_STR", node[1])
+    } elif op == "bool" {
+        if node[1] { emit_inst("PUSH_BOOL", 1) } else { emit_inst("PUSH_BOOL", 0) }
+    } elif op == "ident" {
+        emit_inst("LOAD", node[1])
+    } elif op == "list" {
+        alloc elems := node[1]
+        alloc i := 0
+        alloc n := length(elems)
+        loop i < n {
+            compile_expr(elems[i])
+            i := i + 1
+        }
+        emit_inst("BUILD_LIST", n)
+    } elif op == "dict" {
+        alloc pairs := node[1]
+        alloc i := 0
+        alloc n := length(pairs)
+        alloc pair := false
+        loop i < n {
+            pair := pairs[i]
+            emit_inst("PUSH_STR", pair[0][1])
+            compile_expr(pair[1])
+            i := i + 1
+        }
+        emit_inst("BUILD_DICT", n)
+    } elif op == "index" {
+        compile_expr(node[1])
+        compile_expr(node[2])
+        emit_inst("INDEX", 0)
+    } elif op == "slice" {
+        compile_expr(node[1])
+        compile_expr(node[2])
+        alloc end := node[3]
+        if end {
+            compile_expr(end)
+        } else {
+            emit_inst("PUSH_NONE", 0)
+        }
+        emit_inst("SLICE", 0)
+    } elif op == "dot" {
+        compile_expr(node[1])
+        emit_inst("ATTR", node[2])
+    } elif op == "func_call" {
+        alloc func_node := node[1]
+        alloc args := node[2]
+        alloc j := 0
+        alloc m := length(args)
+        if func_node[0] == "ident" {
+            alloc name := func_node[1]
+            loop j < m {
+                compile_expr(args[j])
+                j := j + 1
+            }
+            if contains(builtins, name) {
+                emit_inst("BUILTIN", [name, m])
+            } else {
+                emit_inst("CALL", name)
+            }
+        } else {
+            compile_expr(func_node)
+            loop j < m {
+                compile_expr(args[j])
+                j := j + 1
+            }
+            emit_inst("CALL_VALUE", m)
+        }
+    } elif op == "unary" {
+        alloc uop := node[1]
+        compile_expr(node[2])
+        if uop == "sub" { emit_inst("NEG", 0) }
+    } elif op == "bitnot" {
+        compile_expr(node[1])
+        emit_inst("NOT", 0)
+    } elif op == "add" {
+        compile_expr(node[1])
+        compile_expr(node[2])
+        emit_inst("ADD", 0)
+    } elif op == "sub" {
+        compile_expr(node[1])
+        compile_expr(node[2])
+        emit_inst("SUB", 0)
+    } elif op == "mul" {
+        compile_expr(node[1])
+        compile_expr(node[2])
+        emit_inst("MUL", 0)
+    } elif op == "div" {
+        compile_expr(node[1])
+        compile_expr(node[2])
+        emit_inst("DIV", 0)
+    } elif op == "mod" {
+        compile_expr(node[1])
+        compile_expr(node[2])
+        emit_inst("MOD", 0)
+    } elif op == "eq" {
+        compile_expr(node[1])
+        compile_expr(node[2])
+        emit_inst("EQ", 0)
+    } elif op == "ne" {
+        compile_expr(node[1])
+        compile_expr(node[2])
+        emit_inst("NE", 0)
+    } elif op == "lt" {
+        compile_expr(node[1])
+        compile_expr(node[2])
+        emit_inst("LT", 0)
+    } elif op == "gt" {
+        compile_expr(node[1])
+        compile_expr(node[2])
+        emit_inst("GT", 0)
+    } elif op == "le" {
+        compile_expr(node[1])
+        compile_expr(node[2])
+        emit_inst("LE", 0)
+    } elif op == "ge" {
+        compile_expr(node[1])
+        compile_expr(node[2])
+        emit_inst("GE", 0)
+    } elif op == "and" {
+        compile_expr(node[1])
+        compile_expr(node[2])
+        emit_inst("AND", 0)
+    } elif op == "or" {
+        compile_expr(node[1])
+        compile_expr(node[2])
+        emit_inst("OR", 0)
+    } elif op == "band" {
+        compile_expr(node[1])
+        compile_expr(node[2])
+        emit_inst("BAND", 0)
+    } elif op == "bor" {
+        compile_expr(node[1])
+        compile_expr(node[2])
+        emit_inst("BOR", 0)
+    } elif op == "bxor" {
+        compile_expr(node[1])
+        compile_expr(node[2])
+        emit_inst("BXOR", 0)
+    } elif op == "shl" {
+        compile_expr(node[1])
+        compile_expr(node[2])
+        emit_inst("SHL", 0)
+    } elif op == "shr" {
+        compile_expr(node[1])
+        compile_expr(node[2])
+        emit_inst("SHR", 0)
+    }
+}
+
+# Finalization ----------------------------------------------------
+
+proc finalize_code() {
+    alloc final_code := code
+    alloc i := 0
+    alloc n := length(pending_funcs)
+    alloc entry := false
+    alloc addr := 0
+    alloc body := []
+    loop i < n {
+        entry := pending_funcs[i]
+        addr := length(final_code)
+        funcs[length(funcs)] := [entry[0], entry[1], addr]
+        body := entry[2]
+        alloc j := 0
+        alloc m := length(body)
+        alloc instr := []
+        alloc op := ""
+        alloc arg := false
+        loop j < m {
+            instr := body[j]
+            op := instr[0]
+            arg := instr[1]
+            if (op == "JUMP" or op == "JUMP_IF_FALSE") and arg {
+                final_code[length(final_code)] := [op, arg + addr]
+            } else {
+                final_code[length(final_code)] := [op, arg]
+            }
+            j := j + 1
+        }
+        i := i + 1
+    }
+    return final_code
+}
+
+proc emit_code(final_code) {
+    alloc i := 0
+    alloc n := length(funcs)
+    alloc f := []
+    alloc line := ""
+    alloc params := []
+    alloc j := 0
+    alloc m := 0
+    loop i < n {
+        f := funcs[i]
+        line := "FUNC " + f[0] + " " + int_to_string(length(f[1]))
+        params := f[1]
+        j := 0
+        m := length(params)
+        loop j < m {
+            line := line + " " + params[j]
+            j := j + 1
+        }
+        line := line + " " + int_to_string(f[2])
+        emit line
+        i := i + 1
+    }
+    i := 0
+    n := length(final_code)
+    alloc instr := []
+    alloc op := ""
+    alloc arg := false
+    loop i < n {
+        instr := final_code[i]
+        op := instr[0]
+        arg := instr[1]
+        if op == "BUILTIN" {
+            line := "BUILTIN " + arg[0] + " " + int_to_string(arg[1])
+        } elif op == "PUSH_STR" {
+            line := "PUSH_STR " + quote_string(arg)
+        } elif op == "STORE" or op == "LOAD" or op == "CALL" or op == "TCALL" or op == "ATTR" or op == "STORE_ATTR" {
+            line := op + " " + arg
+        } elif arg == 0 {
+            line := op
+        } else {
+            line := op + " " + int_to_string(arg)
+        }
+        emit line
+        i := i + 1
+    }
+}
+
+proc compile(ast) {
+    alloc i := 0
+    alloc n := length(ast)
+    loop i < n {
+        compile_stmt(ast[i])
+        i := i + 1
+    }
+    emit_inst("HALT", 0)
+    alloc final_code := finalize_code()
+    emit_code(final_code)
+}
+
+proc compile_source(source) {
+    reset_state()
+    alloc ast := omg.parse(source)
+    compile(ast)
+}
+
+# CLI ------------------------------------------------------------
+
+if length(args) > 0 {
+    alloc path := args[0]
+    alloc src := read_file(path)
+    compile_source(src)
+} else {
+    emit "Usage: compiler <input.omg>"
+}
+

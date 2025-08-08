@@ -612,11 +612,14 @@ class Interpreter:
                         raise TypeError(
                             f"List index must be int on line {line} in {self.file}"
                         )
-                    if not 0 <= key < len(target):
+                    if key == len(target):
+                        target.append(value)
+                    elif 0 <= key < len(target):
+                        target[key] = value
+                    else:
                         raise RuntimeError(
                             f"List index out of bounds on line {line} in {self.file}"
                         )
-                    target[key] = value
                 else:
                     raise TypeError(
                         f"{self._format_expr(obj_expr)} is not indexable on line {line} in {self.file}"

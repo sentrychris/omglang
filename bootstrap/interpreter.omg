@@ -167,7 +167,7 @@ proc parse_program(tokens, i) {
     alloc res := [false, i]
     loop res[1] < tok_len {
         res := parse_statement(tokens, res[1])
-        stmts := stmts + [res[0]]
+        stmts[length(stmts)] := res[0]
     }
     return [stmts, res[1]]
 }
@@ -202,7 +202,7 @@ proc parse_statement(tokens, i) {
         loop j < tok_len and tokens[j][0] == "kw" and tokens[j][1] == "elif" {
             res_elif := parse_expression(tokens, j + 1)
             res_block := parse_block(tokens, res_elif[1])
-            elifs := elifs + [[res_elif[0], res_block[0]]]
+            elifs[length(elifs)] := [res_elif[0], res_block[0]]
             j := res_block[1]
         }
         if j < tok_len and tokens[j][0] == "kw" and tokens[j][1] == "else" {
@@ -223,7 +223,7 @@ proc parse_statement(tokens, i) {
         alloc params := []
         if tokens[j][0] != "symbol" or tokens[j][1] != ")" {
             loop true {
-                params := params + [tokens[j][1]]
+                params[length(params)] := tokens[j][1]
                 j := j + 1
                 if tokens[j][0] == "symbol" and tokens[j][1] == "," {
                     j := j + 1
@@ -266,7 +266,7 @@ proc parse_block(tokens, i) {
     j := j + 1
     loop tokens[j][0] != "symbol" or tokens[j][1] != "}" {
         res := parse_statement(tokens, j)
-        stmts := stmts + [res[0]]
+        stmts[length(stmts)] := res[0]
         j := res[1]
     }
     return [stmts, j + 1]
@@ -451,7 +451,7 @@ proc parse_factor(tokens, i) {
         if tokens[k][0] != "symbol" or tokens[k][1] != "]" {
             loop true {
                 res := parse_expression(tokens, k)
-                elems := elems + [res[0]]
+                elems[length(elems)] := res[0]
                 k := res[1]
                 if tokens[k][0] == "symbol" and tokens[k][1] == "," {
                     k := k + 1
@@ -482,7 +482,7 @@ proc parse_factor(tokens, i) {
                 }
                 k := k + 1
                 val_res := parse_expression(tokens, k)
-                pairs := pairs + [[key_node, val_res[0]]]
+                pairs[length(pairs)] := [key_node, val_res[0]]
                 k := val_res[1]
                 if tokens[k][0] == "symbol" and tokens[k][1] == "," {
                     k := k + 1
@@ -503,7 +503,7 @@ proc parse_factor(tokens, i) {
     }
     alloc inner := [false, 0]
     alloc end_res := [false, 0]
-    alloc call_args := []
+        alloc call_args := []
     res := [false, 0]
     alloc attr := [false, false]
     loop j < tok_len and tokens[j][0] == "symbol" {
@@ -513,7 +513,7 @@ proc parse_factor(tokens, i) {
             if tokens[k][0] != "symbol" or tokens[k][1] != ")" {
                 loop true {
                     res := parse_expression(tokens, k)
-                    call_args := call_args + [res[0]]
+                    call_args[length(call_args)] := res[0]
                     k := res[1]
                     if tokens[k][0] == "symbol" and tokens[k][1] == "," {
                         k := k + 1
@@ -588,7 +588,7 @@ proc env_set(env, name, value) {
         }
         i := i + 1
     }
-    env := env + [[name, value]]
+    env[length(env)] := [name, value]
     return env
 }
 proc copy_env(env) {
@@ -598,7 +598,7 @@ proc copy_env(env) {
     alloc env_len := length(env)
     loop i < env_len {
         entry := env[i]
-        result := result + [entry]
+        result[length(result)] := entry
         i := i + 1
     }
     return result
@@ -673,7 +673,7 @@ proc import_module(path) {
         }
         k := k + 1
     }
-    loaded_modules := loaded_modules + [full]
+    loaded_modules[length(loaded_modules)] := full
     alloc source := read_file(full)
     alloc src_len := length(source)
     if src_len >= 6 and source[0] == ";" and source[1] == ";" and source[2] == ";" and source[3] == "o" and source[4] == "m" and source[5] == "g" {
@@ -697,7 +697,7 @@ proc import_module(path) {
     loop i < ast_len {
         stmt := ast[i]
         if stmt[0] == "decl" or stmt[0] == "func_def" {
-            exports := exports + [stmt[1]]
+            exports[length(exports)] := stmt[1]
         }
         i := i + 1
     }
@@ -799,7 +799,7 @@ proc eval_expr(expr, env) {
         alloc i := 0
         alloc nodes_len := length(nodes)
         loop i < nodes_len {
-            result := result + [eval_expr(nodes[i], env)]
+            result[length(result)] := eval_expr(nodes[i], env)
             i := i + 1
         }
         return result
@@ -843,7 +843,7 @@ proc eval_expr(expr, env) {
         alloc i := 0
         alloc arg_len := length(arg_nodes)
         loop i < arg_len {
-            arg_values := arg_values + [eval_expr(arg_nodes[i], env)]
+            arg_values[length(arg_values)] := eval_expr(arg_nodes[i], env)
             i := i + 1
         }
         return call_function(func_val, arg_values, env)
@@ -947,7 +947,7 @@ proc execute(stmts, env, is_global) {
             j := 0
             arg_len := length(arg_nodes)
             loop j < arg_len {
-                call_args := call_args + [eval_expr(arg_nodes[j], env)]
+                call_args[length(call_args)] := eval_expr(arg_nodes[j], env)
                 j := j + 1
             }
             _ := call_function(func_val, call_args, env)
