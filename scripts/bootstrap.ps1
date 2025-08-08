@@ -1,2 +1,2 @@
 # Compile the native runtime VM
-cargo build --release --manifest-path ./native/Cargo.toml
+cargo build --release --manifest-path ./runtime/Cargo.toml

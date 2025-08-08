@@ -13,17 +13,17 @@ fn main() {
 
     let status = Command::new("python")
         .arg("-m")
-        .arg("omglang.bytecode")
+        .arg("omglang.compiler")
         .arg("bootstrap/interpreter.omg")
         .arg(&out_bc)
         .current_dir(&root)
         .status()
-        .expect("failed to run bytecode compiler");
+        .expect("failed to run compiler");
 
     if !status.success() {
-        panic!("bytecode compilation failed");
+        panic!("compilation failed");
     }
 
     println!("cargo:rerun-if-changed={}", root.join("bootstrap/interpreter.omg").display());
-    println!("cargo:rerun-if-changed={}", root.join("omglang/bytecode.py").display());
+    println!("cargo:rerun-if-changed={}", root.join("omglang/compiler.py").display());
 }
