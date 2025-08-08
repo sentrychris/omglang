@@ -753,6 +753,7 @@ proc import_module(path) {
     loaded_modules := loaded_modules + [full]
     alloc saved_dir := current_dir
     alloc saved_file := module_file
+    alloc saved_global := global_env
     current_dir := dirname(full)
     module_file := full
     alloc name := full
@@ -764,6 +765,14 @@ proc import_module(path) {
         name := name[i+1:]
     }
     alloc source := read_file(name)
+    if source == false {
+        emit "Failed to read file: " + full
+        current_dir := saved_dir
+        module_file := saved_file
+        global_env := saved_global
+        loaded_modules := loaded_modules[0:lm_len]
+        return {}
+    }
     alloc src_len := length(source)
     if src_len >= 6 and source[0] == ";" and source[1] == ";" and source[2] == ";" and source[3] == "o" and source[4] == "m" and source[5] == "g" {
         alloc j := 6
@@ -772,7 +781,6 @@ proc import_module(path) {
         }
         source := source[j:]
     }
-    alloc saved_global := global_env
     alloc ast := parse(source)
     alloc env := [["length", ["builtin", "length"]], ["read_file", ["builtin", "read_file"]], ["ascii", ["builtin", "ascii"]], ["chr", ["builtin", "chr"]], ["freeze", ["builtin", "freeze"]]]
     env := env_set(env, "args", [])
@@ -1071,6 +1079,13 @@ proc run_file_with_args(path, file_args) {
         name := name[i+1:]
     }
     alloc source := read_file(name)
+    if source == false {
+        emit "Failed to read file: " + path
+        current_dir := old_dir
+        module_file := old_file
+        args := saved
+        return ["error", false]
+    }
     alloc src_len := length(source)
     if src_len >= 6 and source[0] == ";" and source[1] == ";" and source[2] == ";" and source[3] == "o" and source[4] == "m" and source[5] == "g" {
         source := source[6:]

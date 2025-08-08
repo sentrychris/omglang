@@ -456,9 +456,10 @@ pub fn run(code: &[Instr], funcs: &HashMap<String, Function>, program_args: &[St
                                     path_buf = base.join(path_buf);
                                 }
                             }
-                            let content =
-                                fs::read_to_string(&path_buf).expect("failed to read file");
-                            Value::Str(content)
+                            match fs::read_to_string(&path_buf) {
+                                Ok(content) => Value::Str(content),
+                                Err(_) => Value::Bool(false),
+                            }
                         }
                         _ => panic!("read_file() expects a file path"),
                     },
