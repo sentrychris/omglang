@@ -12,6 +12,13 @@ alloc lines := [
     "}",
     "alloc result := fact(5)",
     "emit result",
+    "",
+    "alloc i := 0",
+    "loop i < 3 {",
+    "    alloc x := i",
+    "    emit x",
+    "    i := i + 1",
+    "}",
 ]
 
 alloc i := 0

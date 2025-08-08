@@ -65,6 +65,10 @@ loop x > 0 {
 }
 ```
 
+Variables declared with `alloc` inside a loop are scoped to each iteration.
+They can be redeclared on subsequent iterations and are not visible after the
+loop completes.
+
 ---
 
 ## Expressions

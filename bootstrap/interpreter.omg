@@ -854,28 +854,10 @@ proc eval_expr(expr, env) {
 }
 proc execute(stmts, env, is_global) {
     alloc i := 0
-    alloc stmt := false
-    alloc kind := false
-    alloc res := ["normal", false]
     alloc stmts_len := length(stmts)
-    alloc cond := false
-    alloc loop_res := ["normal", false]
-    alloc val := false
-    alloc name := ""
-    alloc params := []
-    alloc body := []
-    alloc func_val := false
-    alloc arg_nodes := []
-    alloc call_args := []
-    alloc j := 0
-    alloc arg_len := 0
-    alloc obj := false
-    alloc attr := ""
-    alloc idx := false
-    alloc _ := false
     loop i < stmts_len {
-        stmt := stmts[i]
-        kind := stmt[0]
+        alloc stmt := stmts[i]
+        alloc kind := stmt[0]
         if kind == "decl" {
             env := env_set(env, stmt[1], eval_expr(stmt[2], env))
             if is_global { global_env := env }
@@ -883,25 +865,25 @@ proc execute(stmts, env, is_global) {
             env := env_set(env, stmt[1], eval_expr(stmt[2], env))
             if is_global { global_env := env }
         } elif kind == "attr_assign" {
-            obj := eval_expr(stmt[1], env)
-            attr := stmt[2]
+            alloc obj := eval_expr(stmt[1], env)
+            alloc attr := stmt[2]
             obj[attr] := eval_expr(stmt[3], env)
         } elif kind == "index_assign" {
-            obj := eval_expr(stmt[1], env)
-            idx := eval_expr(stmt[2], env)
+            alloc obj := eval_expr(stmt[1], env)
+            alloc idx := eval_expr(stmt[2], env)
             obj[idx] := eval_expr(stmt[3], env)
         } elif kind == "emit" {
             emit eval_expr(stmt[1], env)
         } elif kind == "facts" {
-            cond := eval_expr(stmt[1], env)
+            alloc cond := eval_expr(stmt[1], env)
             if cond {
-                _ := false
+                alloc _ := false
             } else {
                 emit "Assertion failed"
             }
         } elif kind == "if" {
-            cond := eval_expr(stmt[1], env)
-            res := ["normal", false]
+            alloc cond := eval_expr(stmt[1], env)
+            alloc res := ["normal", false]
             if cond {
                 res := execute(stmt[2], env, is_global)
             } elif length(stmt) > 3 {
@@ -911,9 +893,11 @@ proc execute(stmts, env, is_global) {
                 return res
             }
         } elif kind == "loop" {
-            loop_res := ["normal", false]
             loop eval_expr(stmt[1], env) {
-                loop_res := execute(stmt[2], env, is_global)
+                alloc pre_len := length(env)
+                alloc loop_res := execute(stmt[2], env, is_global)
+                env := env[0:pre_len]
+                if is_global { global_env := env }
                 if loop_res[0] == "break" {
                     break
                 } elif loop_res[0] == "return" {
@@ -923,12 +907,13 @@ proc execute(stmts, env, is_global) {
         } elif kind == "break" {
             return ["break", false]
         } elif kind == "return" {
-            val := eval_expr(stmt[1], env)
+            alloc val := eval_expr(stmt[1], env)
             return ["return", val]
         } elif kind == "func_def" {
-            name := stmt[1]
-            params := stmt[2]
-            body := stmt[3]
+            alloc name := stmt[1]
+            alloc params := stmt[2]
+            alloc body := stmt[3]
+            alloc func_val := false
             if is_global {
                 func_val := ["function", params, body, "global"]
             } else {
@@ -937,20 +922,20 @@ proc execute(stmts, env, is_global) {
             env := env_set(env, name, func_val)
             if is_global { global_env := env }
         } elif kind == "import" {
-            obj := import_module(stmt[1])
+            alloc obj := import_module(stmt[1])
             env := env_set(env, stmt[2], obj)
             if is_global { global_env := env }
         } elif kind == "func_call" {
-            func_val := eval_expr(stmt[1], env)
-            arg_nodes := stmt[2]
-            call_args := []
-            j := 0
-            arg_len := length(arg_nodes)
+            alloc func_val := eval_expr(stmt[1], env)
+            alloc arg_nodes := stmt[2]
+            alloc call_args := []
+            alloc j := 0
+            alloc arg_len := length(arg_nodes)
             loop j < arg_len {
                 call_args := call_args + [eval_expr(arg_nodes[j], env)]
                 j := j + 1
             }
-            _ := call_function(func_val, call_args, env)
+            alloc _ := call_function(func_val, call_args, env)
         } else {
             emit "Unknown statement: " + kind
         }

@@ -61,3 +61,20 @@ def test_facts_failure():
     interpreter = Interpreter('<test>')
     with pytest.raises(AssertionError):
         interpreter.execute(ast)
+
+
+def test_loop_allows_redeclaration(capsys):
+    """Variables declared with ``alloc`` inside loops can be redeclared each iteration."""
+    source = (
+        "alloc i := 0\n"
+        "loop i < 3 {\n"
+        "    alloc x := i\n"
+        "    emit x\n"
+        "    i := i + 1\n"
+        "}\n"
+    )
+    ast = parse_source(source)
+    interpreter = Interpreter('<test>')
+    interpreter.execute(ast)
+    captured = capsys.readouterr().out.strip().splitlines()
+    assert captured == ['0', '1', '2']

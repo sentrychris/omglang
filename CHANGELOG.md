@@ -25,6 +25,8 @@ Ordered from most recent at the top to oldest at the bottom.
 - Native VM understands additional bytecode operations like attribute access,
   assertions, imports, and indirect function calls, paving the way for fully
   compiled OMG programs.
+- Loop bodies now create a fresh scope each iteration, allowing variables
+  declared with `alloc` to be redeclared inside loops.
 
 ### Fixed
 - Native VM resolves module paths with forward or backward slashes so

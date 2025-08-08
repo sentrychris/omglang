@@ -655,10 +655,20 @@ class Interpreter:
                 _, cond_node, block_node, _ = stmt
                 try:
                     while self.eval_expr(cond_node):
+                        pre_loop_vars = set(self.vars.keys())
                         try:
                             self.execute([block_node])
                         except BreakLoop:
+                            # Clean up iteration-scoped variables before exiting the loop
+                            for name in list(self.vars.keys()):
+                                if name not in pre_loop_vars:
+                                    del self.vars[name]
                             break
+                        # Remove variables declared during this iteration so the next
+                        # iteration sees a fresh environment for loop-local variables.
+                        for name in list(self.vars.keys()):
+                            if name not in pre_loop_vars:
+                                del self.vars[name]
                 except BreakLoop:
                     pass
 
