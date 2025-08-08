@@ -37,6 +37,9 @@ Ordered from most recent at the top to oldest at the bottom.
   binary bytecode programs directly instead of parsing textual mnemonics.
 
 ### Fixed
+- Bytecode compiler wrote boolean literals as integers without an operand
+  byte, causing the native runtime to panic when parsing `.omgb` files.
+  Boolean literals are now encoded correctly.
 - Native VM resolves module paths with forward or backward slashes so
   Windows-style imports load correctly.
 - `read_file` no longer panics on missing files; the interpreter reports a

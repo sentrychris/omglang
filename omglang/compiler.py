@@ -334,7 +334,7 @@ class Compiler:
         elif op == "string":
             self.emit("PUSH_STR", node[1])
         elif op == "bool":
-            self.emit("PUSH_BOOL", 1 if node[1] else 0)
+            self.emit("PUSH_BOOL", bool(node[1]))
         elif op == "ident":
             self.emit("LOAD", node[1])
         elif op == "list":
