@@ -1,7 +1,7 @@
 """Tests for builtin function compilation to bytecode."""
 import pytest
 
-from omglang.compiler import compile_source
+from omglang.compiler import compile_source, disassemble
 
 
 @pytest.mark.parametrize(
@@ -19,7 +19,7 @@ from omglang.compiler import compile_source
 def test_builtin_emits_builtin_instruction(src: str, expected: str) -> None:
     """Ensure calls to builtins compile to BUILTIN instructions."""
     bc = compile_source(src)
-    lines = bc.splitlines()
+    lines = disassemble(bc).splitlines()
     assert expected in lines
     name = expected.split()[1]
     assert f"CALL {name}" not in lines

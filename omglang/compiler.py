@@ -8,7 +8,7 @@ Usage:
 
 from __future__ import annotations
 import sys
-import json
+import struct
 
 from dataclasses import dataclass
 from typing import List, Tuple
@@ -19,6 +19,56 @@ from omglang.operations import Op
 
 
 Instr = Tuple[str, object | None]
+
+# Mapping of instruction mnemonics to opcode numbers.
+OPCODES: dict[str, int] = {
+    "PUSH_INT": 0,
+    "PUSH_STR": 1,
+    "PUSH_BOOL": 2,
+    "BUILD_LIST": 3,
+    "BUILD_DICT": 4,
+    "LOAD": 5,
+    "STORE": 6,
+    "ADD": 7,
+    "SUB": 8,
+    "MUL": 9,
+    "DIV": 10,
+    "MOD": 11,
+    "EQ": 12,
+    "NE": 13,
+    "LT": 14,
+    "LE": 15,
+    "GT": 16,
+    "GE": 17,
+    "BAND": 18,
+    "BOR": 19,
+    "BXOR": 20,
+    "SHL": 21,
+    "SHR": 22,
+    "AND": 23,
+    "OR": 24,
+    "NOT": 25,
+    "NEG": 26,
+    "INDEX": 27,
+    "SLICE": 28,
+    "JUMP": 29,
+    "JUMP_IF_FALSE": 30,
+    "CALL": 31,
+    "TCALL": 32,
+    "BUILTIN": 33,
+    "POP": 34,
+    "PUSH_NONE": 35,
+    "RET": 36,
+    "EMIT": 37,
+    "HALT": 38,
+    "STORE_INDEX": 39,
+    "ATTR": 40,
+    "STORE_ATTR": 41,
+    "ASSERT": 42,
+    "CALL_VALUE": 43,
+}
+
+REV_OPCODES = {v: k for k, v in OPCODES.items()}
 
 
 @dataclass
@@ -80,9 +130,9 @@ class Compiler:
     # ------------------------------------------------------------------
     # Compilation entry points
     # ------------------------------------------------------------------
-    def compile(self, ast: List[tuple]) -> str:
+    def compile(self, ast: List[tuple]) -> bytes:
         """
-        Compile the given AST into bytecode.
+        Compile the given AST into binary bytecode.
         """
         for stmt in ast:
             self.compile_stmt(stmt)
@@ -97,21 +147,48 @@ class Compiler:
                     final_code.append((op, arg + addr))
                 else:
                     final_code.append((op, arg))
-        lines: List[str] = []
+
+        out = bytearray(b"OMGB")
+        out.extend(struct.pack("<I", len(self.funcs)))
         for f in self.funcs:
-            params = " ".join(f.params)
-            lines.append(f"FUNC {f.name} {len(f.params)} {params} {f.address}")
+            name_bytes = f.name.encode("utf-8")
+            out.extend(struct.pack("<I", len(name_bytes)))
+            out.extend(name_bytes)
+            out.extend(struct.pack("<I", len(f.params)))
+            for p in f.params:
+                pb = p.encode("utf-8")
+                out.extend(struct.pack("<I", len(pb)))
+                out.extend(pb)
+            out.extend(struct.pack("<I", f.address))
+
+        out.extend(struct.pack("<I", len(final_code)))
         for op, arg in final_code:
-            if op == "BUILTIN" and isinstance(arg, tuple):
-                name, argc = arg
-                lines.append(f"BUILTIN {name} {argc}")
+            out.append(OPCODES[op])
+            if op == "PUSH_INT" and isinstance(arg, int):
+                out.extend(struct.pack("<q", arg))
             elif op == "PUSH_STR" and isinstance(arg, str):
-                lines.append(f"PUSH_STR {json.dumps(arg)}")
-            elif arg is None:
-                lines.append(op)
-            else:
-                lines.append(f"{op} {arg}")
-        return "\n".join(lines)
+                sb = arg.encode("utf-8")
+                out.extend(struct.pack("<I", len(sb)))
+                out.extend(sb)
+            elif op == "PUSH_BOOL" and isinstance(arg, bool):
+                out.append(1 if arg else 0)
+            elif op in {"BUILD_LIST", "BUILD_DICT", "CALL_VALUE"} and isinstance(arg, int):
+                out.extend(struct.pack("<I", arg))
+            elif op in {"LOAD", "STORE", "CALL", "TCALL", "ATTR", "STORE_ATTR"} and isinstance(arg, str):
+                sb = arg.encode("utf-8")
+                out.extend(struct.pack("<I", len(sb)))
+                out.extend(sb)
+            elif op == "BUILTIN" and isinstance(arg, tuple):
+                name, argc = arg
+                sb = name.encode("utf-8")
+                out.extend(struct.pack("<I", len(sb)))
+                out.extend(sb)
+                out.extend(struct.pack("<I", argc))
+            elif op in {"JUMP", "JUMP_IF_FALSE"} and isinstance(arg, int):
+                out.extend(struct.pack("<I", arg))
+            # Remaining instructions carry no operands.
+
+        return bytes(out)
 
     # ------------------------------------------------------------------
     # Statement compilation
@@ -340,15 +417,90 @@ class Compiler:
             raise NotImplementedError(f"Unsupported expression node: {node}")
 
 
-def compile_source(source: str, file: str = "<stdin>") -> str:
+def compile_source(source: str, file: str = "<stdin>") -> bytes:
     """
-    Compile OMG source string to bytecode.
+    Compile OMG source string to binary bytecode.
     """
     tokens, token_map = tokenize(source)
     parser = Parser(tokens, token_map, file)
     ast = parser.parse()
     compiler = Compiler()
     return compiler.compile(ast)
+
+
+def disassemble(data: bytes) -> str:
+    """Convert binary bytecode back to a textual representation."""
+    idx = 0
+    if data[:4] != b"OMGB":
+        raise ValueError("Invalid bytecode header")
+    idx = 4
+    func_count = struct.unpack_from("<I", data, idx)[0]
+    idx += 4
+    lines: List[str] = []
+    for _ in range(func_count):
+        name_len = struct.unpack_from("<I", data, idx)[0]
+        idx += 4
+        name = data[idx:idx + name_len].decode("utf-8")
+        idx += name_len
+        param_count = struct.unpack_from("<I", data, idx)[0]
+        idx += 4
+        params = []
+        for _ in range(param_count):
+            p_len = struct.unpack_from("<I", data, idx)[0]
+            idx += 4
+            param = data[idx:idx + p_len].decode("utf-8")
+            idx += p_len
+            params.append(param)
+        addr = struct.unpack_from("<I", data, idx)[0]
+        idx += 4
+        lines.append(
+            f"FUNC {name} {param_count} {' '.join(params)} {addr}"
+        )
+    code_len = struct.unpack_from("<I", data, idx)[0]
+    idx += 4
+    for _ in range(code_len):
+        op = data[idx]
+        idx += 1
+        name = REV_OPCODES[op]
+        if name == "PUSH_INT":
+            (v,) = struct.unpack_from("<q", data, idx)
+            idx += 8
+            lines.append(f"PUSH_INT {v}")
+        elif name == "PUSH_STR":
+            slen = struct.unpack_from("<I", data, idx)[0]
+            idx += 4
+            s = data[idx:idx + slen].decode("utf-8")
+            idx += slen
+            lines.append(f"PUSH_STR {s}")
+        elif name == "PUSH_BOOL":
+            b = data[idx] != 0
+            idx += 1
+            lines.append(f"PUSH_BOOL {int(b)}")
+        elif name in {"BUILD_LIST", "BUILD_DICT", "CALL_VALUE"}:
+            (n,) = struct.unpack_from("<I", data, idx)
+            idx += 4
+            lines.append(f"{name} {n}")
+        elif name in {"LOAD", "STORE", "CALL", "TCALL", "ATTR", "STORE_ATTR"}:
+            slen = struct.unpack_from("<I", data, idx)[0]
+            idx += 4
+            s = data[idx:idx + slen].decode("utf-8")
+            idx += slen
+            lines.append(f"{name} {s}")
+        elif name == "BUILTIN":
+            slen = struct.unpack_from("<I", data, idx)[0]
+            idx += 4
+            s = data[idx:idx + slen].decode("utf-8")
+            idx += slen
+            argc = struct.unpack_from("<I", data, idx)[0]
+            idx += 4
+            lines.append(f"BUILTIN {s} {argc}")
+        elif name in {"JUMP", "JUMP_IF_FALSE"}:
+            (t,) = struct.unpack_from("<I", data, idx)
+            idx += 4
+            lines.append(f"{name} {t}")
+        else:
+            lines.append(name)
+    return "\n".join(lines)
 
 
 def main(argv: List[str]) -> int:
@@ -364,10 +516,10 @@ def main(argv: List[str]) -> int:
     bc = compile_source(src, path)
     if len(argv) > 1:
         out_path = argv[1]
-        with open(out_path, "w", encoding="utf-8") as f:
+        with open(out_path, "wb") as f:
             f.write(bc)
     else:
-        sys.stdout.buffer.write(bc.encode("utf-8"))
+        sys.stdout.buffer.write(bc)
     return 0
 
 

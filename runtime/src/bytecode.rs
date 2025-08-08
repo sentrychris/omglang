@@ -1,4 +1,3 @@
-use serde_json;
 use std::collections::HashMap;
 
 /// Representation of a compiled function.
@@ -57,137 +56,143 @@ pub enum Instr {
     CallValue(usize),
 }
 
-/// Parse a textual bytecode file into instructions.
-pub fn parse_bytecode(src: &str) -> (Vec<Instr>, HashMap<String, Function>) {
-    let mut code = Vec::new();
+fn read_u32(data: &[u8], idx: &mut usize) -> u32 {
+    let bytes: [u8; 4] = data[*idx..*idx + 4].try_into().unwrap();
+    *idx += 4;
+    u32::from_le_bytes(bytes)
+}
+
+fn read_i64(data: &[u8], idx: &mut usize) -> i64 {
+    let bytes: [u8; 8] = data[*idx..*idx + 8].try_into().unwrap();
+    *idx += 8;
+    i64::from_le_bytes(bytes)
+}
+
+fn read_string(data: &[u8], idx: &mut usize) -> String {
+    let len = read_u32(data, idx) as usize;
+    let s = String::from_utf8(data[*idx..*idx + len].to_vec()).unwrap();
+    *idx += len;
+    s
+}
+
+/// Parse binary bytecode into instructions and function table.
+pub fn parse_bytecode(data: &[u8]) -> (Vec<Instr>, HashMap<String, Function>) {
+    let mut idx = 0;
+    assert!(&data[0..4] == b"OMGB");
+    idx += 4;
+    let func_count = read_u32(data, &mut idx) as usize;
     let mut funcs: HashMap<String, Function> = HashMap::new();
-    for line in src.lines() {
-        let trimmed = line.trim_start();
-        if trimmed.is_empty() {
-            continue;
+    for _ in 0..func_count {
+        let name = read_string(data, &mut idx);
+        let param_count = read_u32(data, &mut idx) as usize;
+        let mut params = Vec::new();
+        for _ in 0..param_count {
+            params.push(read_string(data, &mut idx));
         }
-        if let Some(rest) = trimmed.strip_prefix("FUNC ") {
-            let parts: Vec<&str> = rest.split_whitespace().collect();
-            if parts.len() >= 3 {
-                let name = parts[0].to_string();
-                let param_count: usize = parts[1].parse().unwrap_or(0);
-                let params = parts[2..2 + param_count]
-                    .iter()
-                    .map(|s| (*s).to_string())
-                    .collect::<Vec<_>>();
-                let addr_idx = 2 + param_count;
-                let address: usize = parts[addr_idx].parse().unwrap_or(0);
-                funcs.insert(name, Function { params, address });
-            }
-        } else if let Some(rest) = trimmed.strip_prefix("PUSH_INT ") {
-            if let Ok(v) = rest.parse::<i64>() {
+        let address = read_u32(data, &mut idx) as usize;
+        funcs.insert(name.clone(), Function { params, address });
+    }
+
+    let code_len = read_u32(data, &mut idx) as usize;
+    let mut code = Vec::with_capacity(code_len);
+    for _ in 0..code_len {
+        let op = data[idx];
+        idx += 1;
+        match op {
+            0 => {
+                let v = read_i64(data, &mut idx);
                 code.push(Instr::PushInt(v));
             }
-        } else if let Some(rest) = trimmed.strip_prefix("PUSH_STR ") {
-            if let Ok(s) = serde_json::from_str::<String>(rest) {
+            1 => {
+                let s = read_string(data, &mut idx);
                 code.push(Instr::PushStr(s));
             }
-        } else if let Some(rest) = trimmed.strip_prefix("PUSH_BOOL ") {
-            let b = rest.trim() == "1" || rest.trim().eq_ignore_ascii_case("true");
-            code.push(Instr::PushBool(b));
-        } else if let Some(rest) = trimmed.strip_prefix("BUILD_LIST ") {
-            if let Ok(n) = rest.parse::<usize>() {
+            2 => {
+                let b = data[idx] != 0;
+                idx += 1;
+                code.push(Instr::PushBool(b));
+            }
+            3 => {
+                let n = read_u32(data, &mut idx) as usize;
                 code.push(Instr::BuildList(n));
             }
-        } else if let Some(rest) = trimmed.strip_prefix("BUILD_DICT ") {
-            if let Ok(n) = rest.parse::<usize>() {
+            4 => {
+                let n = read_u32(data, &mut idx) as usize;
                 code.push(Instr::BuildDict(n));
             }
-        } else if let Some(rest) = trimmed.strip_prefix("LOAD ") {
-            code.push(Instr::Load(rest.to_string()));
-        } else if let Some(rest) = trimmed.strip_prefix("STORE ") {
-            code.push(Instr::Store(rest.to_string()));
-        } else if trimmed == "ADD" {
-            code.push(Instr::Add);
-        } else if trimmed == "SUB" {
-            code.push(Instr::Sub);
-        } else if trimmed == "MUL" {
-            code.push(Instr::Mul);
-        } else if trimmed == "DIV" {
-            code.push(Instr::Div);
-        } else if trimmed == "MOD" {
-            code.push(Instr::Mod);
-        } else if trimmed == "EQ" {
-            code.push(Instr::Eq);
-        } else if trimmed == "NE" {
-            code.push(Instr::Ne);
-        } else if trimmed == "LT" {
-            code.push(Instr::Lt);
-        } else if trimmed == "LE" {
-            code.push(Instr::Le);
-        } else if trimmed == "GT" {
-            code.push(Instr::Gt);
-        } else if trimmed == "GE" {
-            code.push(Instr::Ge);
-        } else if trimmed == "BAND" {
-            code.push(Instr::BAnd);
-        } else if trimmed == "BOR" {
-            code.push(Instr::BOr);
-        } else if trimmed == "BXOR" {
-            code.push(Instr::BXor);
-        } else if trimmed == "SHL" {
-            code.push(Instr::Shl);
-        } else if trimmed == "SHR" {
-            code.push(Instr::Shr);
-        } else if trimmed == "AND" {
-            code.push(Instr::And);
-        } else if trimmed == "OR" {
-            code.push(Instr::Or);
-        } else if trimmed == "NOT" {
-            code.push(Instr::Not);
-        } else if trimmed == "NEG" {
-            code.push(Instr::Neg);
-        } else if trimmed == "INDEX" {
-            code.push(Instr::Index);
-        } else if trimmed == "SLICE" {
-            code.push(Instr::Slice);
-        } else if trimmed == "STORE_INDEX" {
-            code.push(Instr::StoreIndex);
-        } else if let Some(rest) = trimmed.strip_prefix("ATTR ") {
-            code.push(Instr::Attr(rest.to_string()));
-        } else if let Some(rest) = trimmed.strip_prefix("STORE_ATTR ") {
-            code.push(Instr::StoreAttr(rest.to_string()));
-        } else if trimmed == "ASSERT" {
-            code.push(Instr::Assert);
-        } else if let Some(rest) = trimmed.strip_prefix("CALL_VALUE ") {
-            if let Ok(n) = rest.parse::<usize>() {
-                code.push(Instr::CallValue(n));
+            5 => {
+                let s = read_string(data, &mut idx);
+                code.push(Instr::Load(s));
             }
-        } else if let Some(rest) = trimmed.strip_prefix("JUMP_IF_FALSE ") {
-            if let Ok(t) = rest.parse::<usize>() {
-                code.push(Instr::JumpIfFalse(t));
+            6 => {
+                let s = read_string(data, &mut idx);
+                code.push(Instr::Store(s));
             }
-        } else if let Some(rest) = trimmed.strip_prefix("JUMP ") {
-            if let Ok(t) = rest.parse::<usize>() {
+            7 => code.push(Instr::Add),
+            8 => code.push(Instr::Sub),
+            9 => code.push(Instr::Mul),
+            10 => code.push(Instr::Div),
+            11 => code.push(Instr::Mod),
+            12 => code.push(Instr::Eq),
+            13 => code.push(Instr::Ne),
+            14 => code.push(Instr::Lt),
+            15 => code.push(Instr::Le),
+            16 => code.push(Instr::Gt),
+            17 => code.push(Instr::Ge),
+            18 => code.push(Instr::BAnd),
+            19 => code.push(Instr::BOr),
+            20 => code.push(Instr::BXor),
+            21 => code.push(Instr::Shl),
+            22 => code.push(Instr::Shr),
+            23 => code.push(Instr::And),
+            24 => code.push(Instr::Or),
+            25 => code.push(Instr::Not),
+            26 => code.push(Instr::Neg),
+            27 => code.push(Instr::Index),
+            28 => code.push(Instr::Slice),
+            29 => {
+                let t = read_u32(data, &mut idx) as usize;
                 code.push(Instr::Jump(t));
             }
-        } else if let Some(rest) = trimmed.strip_prefix("CALL ") {
-            code.push(Instr::Call(rest.to_string()));
-        } else if let Some(rest) = trimmed.strip_prefix("TCALL ") {
-            code.push(Instr::TailCall(rest.to_string()));
-        } else if let Some(rest) = trimmed.strip_prefix("BUILTIN ") {
-            let parts: Vec<&str> = rest.split_whitespace().collect();
-            if parts.len() == 2 {
-                if let Ok(argc) = parts[1].parse::<usize>() {
-                    code.push(Instr::CallBuiltin(parts[0].to_string(), argc));
-                }
+            30 => {
+                let t = read_u32(data, &mut idx) as usize;
+                code.push(Instr::JumpIfFalse(t));
             }
-        } else if trimmed == "RET" {
-            code.push(Instr::Ret);
-        } else if trimmed == "EMIT" {
-            code.push(Instr::Emit);
-        } else if trimmed == "HALT" {
-            code.push(Instr::Halt);
-        } else if trimmed == "POP" {
-            code.push(Instr::Pop);
-        } else if trimmed == "PUSH_NONE" {
-            code.push(Instr::PushNone);
+            31 => {
+                let s = read_string(data, &mut idx);
+                code.push(Instr::Call(s));
+            }
+            32 => {
+                let s = read_string(data, &mut idx);
+                code.push(Instr::TailCall(s));
+            }
+            33 => {
+                let name = read_string(data, &mut idx);
+                let argc = read_u32(data, &mut idx) as usize;
+                code.push(Instr::CallBuiltin(name, argc));
+            }
+            34 => code.push(Instr::Pop),
+            35 => code.push(Instr::PushNone),
+            36 => code.push(Instr::Ret),
+            37 => code.push(Instr::Emit),
+            38 => code.push(Instr::Halt),
+            39 => code.push(Instr::StoreIndex),
+            40 => {
+                let s = read_string(data, &mut idx);
+                code.push(Instr::Attr(s));
+            }
+            41 => {
+                let s = read_string(data, &mut idx);
+                code.push(Instr::StoreAttr(s));
+            }
+            42 => code.push(Instr::Assert),
+            43 => {
+                let n = read_u32(data, &mut idx) as usize;
+                code.push(Instr::CallValue(n));
+            }
+            _ => {}
         }
     }
     (code, funcs)
 }
+

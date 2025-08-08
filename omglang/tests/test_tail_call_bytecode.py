@@ -1,7 +1,7 @@
 """
 Tests for tail-call optimization in bytecode compiler.
 """
-from omglang.compiler import compile_source
+from omglang.compiler import compile_source, disassemble
 
 
 def test_tail_call_emits_tcall():
@@ -17,7 +17,7 @@ proc fact(n, acc) {
 }
 """
     bc = compile_source(src)
-    lines = bc.splitlines()
+    lines = disassemble(bc).splitlines()
     assert "TCALL fact" in lines
     # ensure no regular call/ret sequence for tail recursive call
     assert "CALL fact" not in lines
