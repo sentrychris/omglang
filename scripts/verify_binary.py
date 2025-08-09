@@ -6,13 +6,12 @@ then the bytecode stream, advancing an index accroding to each opcode’s operan
 Any overrun or unknown opcode is reported.
 
 Verifies:
-- Header layout: 4 bytes magic (implicit), then function table, then a <I `code_len`,
-                 then `code_len` opcodes with well-formed operands.
+- Header layout: 4 bytes magic, then function table, then a <I `code_len`, then `code_len`
+  opcodes with well-formed operands.
 - All operand lengths are within bounds.
 - All opcodes are known (warns on unknown).
 
 Assumes:
-- The first 4 bytes are valid magic/version.
 - Function names/param names are UTF-8 and sensible.
 - `addr` values actually point inside the code section.
 - `code_len` is the instruction count, not byte size.
