@@ -14,15 +14,23 @@ import zipfile
 import tarfile
 import argparse
 
+from omglang.compiler import main as compile_interp, disassemble
+
 from scripts.generate_docstring_headers import insert_docstrings
 from scripts.generate_third_party_licenses_file import generate_third_party_licenses
 from scripts.generate_project_tree import write_tree_to_file
-from scripts.verify_binary import verify_interpreter
+from scripts.verify_omgb_file_bytes import verify_interpreter
 
-from omglang.compiler import main as compile_interp, disassemble
 
+# Project root
 BASE_DIR=os.path.dirname(os.path.dirname(__file__))
-DEFAULT_UPX_VER="5.0.2"
+
+# OMG python runtime + interpreter (Python + Python)
+OMG_PY_ENTRYPOINT=os.path.join(BASE_DIR, 'omg.py')
+OMG_PY_INTERPRETER_SRC=os.path.join(BASE_DIR, 'omglang')
+DEFAULT_UPX_VER="5.0.2" # used by Pyinstaller for compression (check CFG)
+
+# OMG native runtime + interpreter (Rust + OMG)
 OMG_INTERPRETER_SRC=os.path.join(BASE_DIR, 'bootstrap', 'interpreter.omg')
 OMG_INTERPRETER_BIN=os.path.join(BASE_DIR, 'runtime', 'interpreter.omgb')
 RUNTIME_MANIFEST_PATH=os.path.join(BASE_DIR, 'runtime', 'Cargo.toml')
@@ -157,15 +165,18 @@ def main():
     sub = parser.add_subparsers(dest="command", required=True)
 
     # docstring-headers
-    sub.add_parser("docstring-headers", help="Insert docstring headers into .py sources")
+    sub.add_parser("docstring-headers", help="Insert docstring headers into .py source files")
 
     # third-party-licenses
-    sub.add_parser("third-party-lics", help="Generate third-party licenses file")
+    sub.add_parser("third-party-lics", help="Generate project third-party licenses file")
 
     # project-tree
     sub.add_parser("project-tree", help="Generate project directory tree representation")
 
-    # Build OMG runtime
+    # lint-python
+    sub.add_parser("lint-python", help="Lint .py source files with flake8 and pylint")
+
+    # runtime-build
     r_build = sub.add_parser(
         "runtime-build", help="Build the OMG native runtime (with embedded interpreter.omgb).",
         description=(
@@ -185,7 +196,7 @@ def main():
         help="Build the runtime with symbols and info for debugging"
     )
 
-    # compile .omgb binary
+    # compile-omgb
     p_compile = sub.add_parser(
         "compile-omgb", help="Compile an .omgb binary (interpreter by default)"
     )
@@ -202,7 +213,7 @@ def main():
         help=f"Output binary path (default: {OMG_INTERPRETER_BIN})"
     )
 
-    # verify compiled .omgb
+    # verify-omgb
     p_verify = sub.add_parser(
         "verify-omgb", help="Verify .omgb binary for the runtime (interpreter by default)"
     )
@@ -213,7 +224,7 @@ def main():
         help=f"Path to .omgb binary (default: {OMG_INTERPRETER_BIN})"
     )
 
-    # disassemble compiled .omgb
+    # disassemble-omgb
     p_dis = sub.add_parser(
         "disassemble-omgb", help="Disassemble a compiled .omgb binary (interpreter by default)"
     )
@@ -287,6 +298,19 @@ def main():
         print("Generating project directory tree...")
         write_tree_to_file()
         return
+
+    if args.command == "lint-python":
+        print("Running flake8...")
+        subprocess.run(
+            ["flake8", OMG_PY_INTERPRETER_SRC, OMG_PY_ENTRYPOINT],
+            check=True
+        )
+
+        print("Running pylint...")
+        subprocess.run(
+            ["pylint", OMG_PY_INTERPRETER_SRC, OMG_PY_ENTRYPOINT],
+            check=True
+        )
 
     if args.command == "compile-omgb":
         _compile_native_interpreter(args.src, args.out_bin)
