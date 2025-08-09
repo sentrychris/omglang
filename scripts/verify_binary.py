@@ -34,9 +34,9 @@ def _read_str(data: bytes, idx: int) -> tuple[str, int]:
     return data[idx:idx + slen].decode("utf-8"), idx + slen
 
 def verify_interpreter(interp_bin: str) -> None:
-    """Decode and validate ``interpreter.omgb``.
+    """Decode and validate `interpreter.omgb`.
 
-    The function raises ``ValueError`` if any structural check fails.  On
+    The function raises `ValueError` if any structural check fails.  On
     success, a few details about the binary are printed.
     """
 
