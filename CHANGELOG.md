@@ -14,6 +14,8 @@ Ordered from most recent at the top to oldest at the bottom.
 - `FrozenDict` value type in the VM to expose read-only module exports.
 - Native VM forwards command-line arguments to bytecode programs via a global
   `args` list, allowing compiled interpreters to execute scripts.
+- `verify_binary.py` now performs comprehensive validation of interpreter
+  binaries, checking jump targets and function references.
 
 ### Changed
 - Split native VM runtime into separate modules for easier development.
