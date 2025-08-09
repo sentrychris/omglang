@@ -42,22 +42,22 @@ def verify_interpreter(interp_bin: str) -> None:
 
     with open(interp_bin, "rb") as f:
         data = f.read()
-    print("len", len(data))
+    print("[+] bytes", len(data))
 
     # ------------------------------------------------------------------
     # Decode pass
     # ------------------------------------------------------------------
     if data[:4] != MAGIC_HEADER:
         raise ValueError(f"Bad magic: {data[:4]!r}")
-    print(f"4-byte header {data[:4]!r} is valid")
+    print(f"[+] 4-byte header {data[:4]!r} is valid")
     idx = 4
     version, idx = _read_u32(data, idx)
     if version != BC_VERSION:
         raise ValueError(f"Bad version: {version}")
-    print("Version major-minor is valid")
+    print("[+] Version major-minor is valid")
 
     func_count, idx = _read_u32(data, idx)
-    print("func_count", func_count)
+    print("[+] func_count", func_count)
     functions: dict[str, int] = {}
     for _ in range(func_count):
         name, idx = _read_str(data, idx)
@@ -66,10 +66,10 @@ def verify_interpreter(interp_bin: str) -> None:
             _, idx = _read_str(data, idx)
         addr, idx = _read_u32(data, idx)
         functions[name] = addr
-        print("func", name, param_count, addr)
+        print("[+] func", name, param_count, addr)
 
     code_len, idx = _read_u32(data, idx)
-    print("code_len", code_len)
+    print("[+] total instruction length", code_len)
     instructions: list[dict[str, object]] = []
     for ins in range(code_len):
         if idx >= len(data):
@@ -128,9 +128,9 @@ def verify_interpreter(interp_bin: str) -> None:
                 )
 
     if instructions and instructions[-1]["name"] != "RET":
-        print("warning: last instruction is not RET")
+        print("[*] warning: last instruction is not RET")
 
-    print(f"Verified {len(functions)} functions and {len(instructions)} instructions")
+    print(f"[✓] {len(functions)} functions and {len(instructions)} instructions")
     print("[✓] Binary is verified")
 
 
