@@ -1,5 +1,6 @@
 use std::cell::RefCell;
 use std::collections::HashMap;
+use std::fmt;
 use std::fs;
 use std::path::PathBuf;
 use std::rc::Rc;
@@ -7,8 +8,27 @@ use std::rc::Rc;
 use crate::bytecode::{Function, Instr};
 use crate::value::Value;
 
+/// Errors that can occur while executing bytecode.
+#[derive(Debug, PartialEq, Eq)]
+pub enum VmError {
+    /// Attempted to modify a frozen dictionary.
+    FrozenWriteError(String),
+}
+
+impl fmt::Display for VmError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            VmError::FrozenWriteError(msg) => write!(f, "FrozenWriteError: {}", msg),
+        }
+    }
+}
+
 /// Execute bytecode on a stack-based virtual machine.
-pub fn run(code: &[Instr], funcs: &HashMap<String, Function>, program_args: &[String]) {
+pub fn run(
+    code: &[Instr],
+    funcs: &HashMap<String, Function>,
+    program_args: &[String],
+) -> Result<(), VmError> {
     let mut stack: Vec<Value> = Vec::new();
     let mut globals: HashMap<String, Value> = HashMap::new();
     // Expose command line arguments to bytecode programs via the global `args` list
@@ -289,7 +309,9 @@ pub fn run(code: &[Instr], funcs: &HashMap<String, Function>, program_args: &[St
                         map.borrow_mut().insert(i.to_string(), val);
                     }
                     (Value::FrozenDict(_), _) => {
-                        panic!("cannot modify frozen dict");
+                        return Err(VmError::FrozenWriteError(
+                            "Imported modules are read-only".to_string(),
+                        ));
                     }
                     _ => {}
                 }
@@ -316,7 +338,9 @@ pub fn run(code: &[Instr], funcs: &HashMap<String, Function>, program_args: &[St
                         map.borrow_mut().insert(attr.clone(), val);
                     }
                     Value::FrozenDict(_) => {
-                        panic!("cannot modify frozen dict");
+                        return Err(VmError::FrozenWriteError(
+                            "Imported modules are read-only".to_string(),
+                        ));
                     }
                     _ => {}
                 }
@@ -485,5 +509,30 @@ pub fn run(code: &[Instr], funcs: &HashMap<String, Function>, program_args: &[St
             Instr::Halt => break,
         }
         pc += 1;
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{run, VmError};
+    use crate::bytecode::{Function, Instr};
+    use std::collections::HashMap;
+
+    #[test]
+    fn writing_to_frozen_dict_returns_error() {
+        let code = vec![
+            Instr::BuildDict(0),
+            Instr::CallBuiltin("freeze".to_string(), 1),
+            Instr::PushInt(1),
+            Instr::StoreAttr("x".to_string()),
+        ];
+        let funcs: HashMap<String, Function> = HashMap::new();
+        let err = run(&code, &funcs, &[]).unwrap_err();
+        match err {
+            VmError::FrozenWriteError(msg) => {
+                assert_eq!(msg, "Imported modules are read-only")
+            }
+        }
     }
 }

@@ -16,7 +16,8 @@ const INTERPRETER_BC: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/interpre
 const VERSION: &str = "0.1.1";
 
 fn usage() -> String {
-    format!(r#"OMG Language Runtime v{0}
+    format!(
+        r#"OMG Language Runtime v{0}
 
 Usage:
     omg <script.omg>
@@ -33,7 +34,9 @@ Options:
     -h, --help
         Show this help message and exit.
     --version
-        Show runtime version."#, VERSION)
+        Show runtime version."#,
+        VERSION
+    )
 }
 
 fn main() {
@@ -68,7 +71,10 @@ fn main() {
         };
         let src = fs::read(bc_path).expect("failed to read bytecode file");
         let (code, funcs) = parse_bytecode(&src);
-        run(&code, &funcs, program_args);
+        if let Err(e) = run(&code, &funcs, program_args) {
+            eprintln!("{}", e);
+            std::process::exit(1);
+        }
     } else {
         let prog_path = &args[1];
         let program_args_slice: &[String] = if args.len() > 2 {
@@ -84,6 +90,9 @@ fn main() {
         full_args.push(prog_path.clone());
         full_args.extend_from_slice(program_args_slice);
         let (code, funcs) = parse_bytecode(INTERPRETER_BC);
-        run(&code, &funcs, &full_args);
+        if let Err(e) = run(&code, &funcs, &full_args) {
+            eprintln!("{}", e);
+            std::process::exit(1);
+        }
     }
 }
