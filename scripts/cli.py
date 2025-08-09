@@ -14,12 +14,12 @@ import zipfile
 import tarfile
 import argparse
 
+from omglang.compiler import main as compile_interp, disassemble
+
 from scripts.generate_docstring_headers import insert_docstrings
 from scripts.generate_third_party_licenses_file import generate_third_party_licenses
 from scripts.generate_project_tree import write_tree_to_file
-from scripts.verify_binary import verify_interpreter
-
-from omglang.compiler import main as compile_interp, disassemble
+from scripts.verify_omgb_file_bytes import verify_interpreter
 
 
 # Project root
