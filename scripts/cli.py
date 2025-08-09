@@ -24,6 +24,7 @@ BASE_DIR=os.path.dirname(os.path.dirname(__file__))
 DEFAULT_UPX_VER="5.0.2"
 OMG_INTERPRETER_SRC=os.path.join(BASE_DIR, 'bootstrap', 'interpreter.omg')
 OMG_INTERPRETER_BIN=os.path.join(BASE_DIR, 'runtime', 'interpreter.omgb')
+RUNTIME_MANIFEST_PATH=os.path.join(BASE_DIR, 'runtime', 'Cargo.toml')
 
 
 def _get_upx(package_resources: str, upx_pkg: str, upx_url: str, is_windows: bool) -> str:
@@ -163,15 +164,35 @@ def main():
     # project-tree
     sub.add_parser("project-tree", help="Generate project directory tree representation")
 
-    # compile native interpreter
+    # Build OMG runtime
+    r_build = sub.add_parser(
+        "runtime-build", help="Build the OMG native runtime (with embedded interpreter.omgb).",
+        description=(
+            "This command builds the Rust-based runtime that OMG executes in. Runtime contains "
+            "The VM, opcode instruction set, handlers and the compiled .omgb interpreter. "
+            "The .omgb interpreter is compiled during the cargo build process and embedded."
+        )
+    )
+    r_build.add_argument(
+        "--dump-omgb",
+        action="store_true",
+        help=f"Dump the compiled interpreter.omgb binary to {OMG_INTERPRETER_BIN}"
+    )
+    r_build.add_argument(
+        "--with-symbols",
+        action="store_true",
+        help="Build the runtime with symbols and info for debugging"
+    )
+
+    # compile .omgb binary
     p_compile = sub.add_parser(
-        "compile", help="Compile the OMG interpreter for the runtime VM"
+        "compile-omgb", help="Compile an .omgb binary (interpreter by default)"
     )
     p_compile.add_argument(
         "src",
         nargs="?",
         default=OMG_INTERPRETER_SRC,
-        help=f"Path to interpreter source (default: {OMG_INTERPRETER_SRC})"
+        help=f"Path to .omg source (default: {OMG_INTERPRETER_SRC})"
     )
     p_compile.add_argument(
         "-o", "--out",
@@ -180,26 +201,26 @@ def main():
         help=f"Output binary path (default: {OMG_INTERPRETER_BIN})"
     )
 
-    # verify compiled interpreter
+    # verify compiled .omgb
     p_verify = sub.add_parser(
-        "verify", help="Verify the compiled interpreter binary for the runtime VM"
+        "verify-omgb", help="Verify .omgb binary for the runtime (interpreter by default)"
     )
     p_verify.add_argument(
         "bin",
         nargs="?",
         default=OMG_INTERPRETER_BIN,
-        help=f"Path to interpreter binary (default: {OMG_INTERPRETER_BIN})"
+        help=f"Path to .omgb binary (default: {OMG_INTERPRETER_BIN})"
     )
 
-    # disassemble native interpreter
+    # disassemble compiled .omgb
     p_dis = sub.add_parser(
-        "disassemble", help="Disassemble a compiled OMG interpreter binary"
+        "disassemble-omgb", help="Disassemble a compiled .omgb binary (interpreter by default)"
     )
     p_dis.add_argument(
         "bin",
         nargs="?",
         default=OMG_INTERPRETER_BIN,
-        help=f"Path to interpreter binary (default: {OMG_INTERPRETER_BIN})",
+        help=f"Path to .omgb binary (default: {OMG_INTERPRETER_BIN})",
     )
     p_dis.add_argument(
         "--start",
@@ -216,7 +237,12 @@ def main():
 
     # Legacy Python runtime embedded build
     p_build = sub.add_parser(
-        "legacy-build", help="Legacy Python-based OMG interpreter (embeds the Python runtime)"
+        "legacy-build", help="Legacy Python-based OMG interpreter",
+        description=(
+            "This command builds the original OMG interpreter which was implemented in "
+            "Python (using PyInstaller). The resulting build embeds the entire Python "
+            "runtime and is therefore quite a bit larger than the native runtime!"
+        )
     )
     p_build.add_argument(
         "--clean",
@@ -261,21 +287,30 @@ def main():
         write_tree_to_file()
         return
 
-    if args.command == "compile":
+    if args.command == "compile-omgb":
         _compile_native_interpreter(args.src, args.out_bin)
         return
 
-    if args.command == "disassemble":
+    if args.command == "disassemble-omgb":
         _disassemble_native_interpreter(args.bin, args.start, args.end)
         return
 
-    if args.command == "verify":
+    if args.command == "verify-omgb":
         print(f"[*] Verifying {args.bin}")
         verify_interpreter(args.bin)
         return
 
-    # build
-    if args.command == "build":
+    if args.command == "runtime-build":
+        env = os.environ.copy()
+        if args.dump_omgb:
+            env["DUMP_BC"] = "1"
+        cmd = ["cargo", "build", "--release", "--manifest-path", RUNTIME_MANIFEST_PATH]
+        if args.with_symbols:
+            extra = "-C debuginfo=2 -C panic=abort"
+            env["RUSTFLAGS"] = (env.get("RUSTFLAGS", "") + " " + extra).strip()
+        subprocess.run(cmd, check=True, env=env)
+
+    if args.command == "legacy-build":
         if not os.path.exists(build_spec):
             raise FileNotFoundError(f".spec file not found: {build_spec}")
         if args.clean:
