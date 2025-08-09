@@ -15,7 +15,6 @@ dev = [
 ]
 
 [project.scripts]
-omg-lint = "scripts.lint:main"
 omg-cli = "scripts.cli:main"
 
 [build-system]
