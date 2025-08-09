@@ -835,7 +835,7 @@ proc eval_expr(expr, env) {
         if res[0] {
             return res[1]
         }
-        emit "Undefined variable: " + name
+        panic("Undefined variable: " + name)
         return false
     } elif kind == "add" {
         return eval_expr(expr[1], env) + eval_expr(expr[2], env)
@@ -977,8 +977,14 @@ proc execute(stmts, env, is_global) {
             env := env_set(env, stmt[1], eval_expr(stmt[2], env))
             if is_global { global_env := env }
         } elif kind == "assign" {
-            env := env_set(env, stmt[1], eval_expr(stmt[2], env))
-            if is_global { global_env := env }
+            alloc name := stmt[1]
+            alloc res := lookup_var(env, name)
+            if res[0] {
+                env := env_set(env, name, eval_expr(stmt[2], env))
+                if is_global { global_env := env }
+            } else {
+                panic("Undefined variable: " + name)
+            }
         } elif kind == "attr_assign" {
             obj := eval_expr(stmt[1], env)
             attr := stmt[2]
