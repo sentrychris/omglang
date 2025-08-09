@@ -18,7 +18,7 @@ import os
 import struct
 import sys
 
-from omglang.compiler import MAGIC_HEADER, REV_OPCODES
+from omglang.compiler import MAGIC_HEADER, BC_VERSION, REV_OPCODES
 
 
 def _read_u32(data: bytes, idx: int) -> tuple[int, int]:
@@ -51,6 +51,10 @@ def verify_interpreter(interp_bin: str) -> None:
         raise ValueError(f"Bad magic: {data[:4]!r}")
     print(f"4-byte header {data[:4]!r} is valid")
     idx = 4
+    version, idx = _read_u32(data, idx)
+    if version != BC_VERSION:
+        raise ValueError(f"Bad version: {version}")
+    print("Version major-minor is valid")
 
     func_count, idx = _read_u32(data, idx)
     print("func_count", func_count)
