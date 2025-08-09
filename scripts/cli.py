@@ -6,6 +6,7 @@ The script handles platform differences for UPX download URLs and extraction.
 
 import os
 import shutil
+import struct
 import subprocess
 import urllib.request
 import zipfile
@@ -95,18 +96,52 @@ def _build_exe(spec_file: str, upx_dir: str, dist_dir: str, build_dir: str) -> N
 
 
 def _compile_native_interpreter(src: str, out_bin: str) -> None:
-    print(f"Compiling native {src} for runtime...")
+    print(f"[*] Compiling native {src} for runtime...")
     compile_interp([src, out_bin])
-    print(f"Compiled to {out_bin}")
+    print(f"[✓] Compiled to {out_bin}")
+    print("\n[?] Verify the binary with `omg-cli verify <path>`")
+    print("    <path> will default to `./runtime/interpreter.omgb` if not set.")
 
 
-def _disassemble_native_interpreter(bin_path: str) -> None:
-    print("Disassembling the compiled native interpreter...")
+def _disassemble_native_interpreter(
+    bin_path: str, start: int | None, end: int | None
+) -> None:
+    print(f"[*] Disassembling {bin_path}..\n")
     with open(bin_path, "rb") as b:
         data = b.read()
     source = disassemble(data)
-    # Avoid dumping the whole thing
-    print("...\n" + source[1500:1600] + "\n...")
+    if start is None and end is None:
+        print("----------------------------------------------")
+        print("[+]     File Header and Function Table     [+]")
+        print("----------------------------------------------")
+        header = data[:4]
+        version = struct.unpack_from("<I", data, 4)[0]
+        func_count = struct.unpack_from("<I", data, 8)[0]
+        idx = 12
+        print(f"magic {header!r}")
+        print(f"version {version}")
+        for _ in range(func_count):
+            name_len = struct.unpack_from("<I", data, idx)[0]
+            idx += 4
+            name = data[idx:idx + name_len].decode("utf-8")
+            idx += name_len
+            param_count = struct.unpack_from("<I", data, idx)[0]
+            idx += 4
+            params = []
+            for _ in range(param_count):
+                p_len = struct.unpack_from("<I", data, idx)[0]
+                idx += 4
+                param = data[idx:idx + p_len].decode("utf-8")
+                idx += p_len
+                params.append(param)
+            addr = struct.unpack_from("<I", data, idx)[0]
+            idx += 4
+            print(f"FUNC {name} {param_count} {' '.join(params)} {addr}")
+    else:
+        source = disassemble(data)
+        s = 0 if start is None else start
+        e = len(source) if end is None else end
+        print(source[s:e])
 
 
 def main():
@@ -129,27 +164,65 @@ def main():
     sub.add_parser("project-tree", help="Generate project directory tree representation")
 
     # compile native interpreter
-    p_compile = sub.add_parser("compile", help="Compile the OMG interpreter for the runtime VM")
-    p_compile.add_argument("src", nargs="?", default=OMG_INTERPRETER_SRC, help=f"Path to interpreter source (default: {OMG_INTERPRETER_SRC})")
-    p_compile.add_argument("-o", "--out", dest="out_bin", default=OMG_INTERPRETER_BIN, help=f"Output binary path (default: {OMG_INTERPRETER_BIN})")
+    p_compile = sub.add_parser(
+        "compile", help="Compile the OMG interpreter for the runtime VM"
+    )
+    p_compile.add_argument(
+        "src",
+        nargs="?",
+        default=OMG_INTERPRETER_SRC,
+        help=f"Path to interpreter source (default: {OMG_INTERPRETER_SRC})"
+    )
+    p_compile.add_argument(
+        "-o", "--out",
+        dest="out_bin",
+        default=OMG_INTERPRETER_BIN,
+        help=f"Output binary path (default: {OMG_INTERPRETER_BIN})"
+    )
 
     # verify compiled interpreter
-    p_verify = sub.add_parser("verify", help="Verify the compiled interpreter binary for the runtime VM")
-    p_verify.add_argument("bin", nargs="?", default=OMG_INTERPRETER_BIN, help=f"Path to interpreter binary (default: {OMG_INTERPRETER_BIN})")
+    p_verify = sub.add_parser(
+        "verify", help="Verify the compiled interpreter binary for the runtime VM"
+    )
+    p_verify.add_argument(
+        "bin",
+        nargs="?",
+        default=OMG_INTERPRETER_BIN,
+        help=f"Path to interpreter binary (default: {OMG_INTERPRETER_BIN})"
+    )
 
     # disassemble native interpreter
-    p_dis = sub.add_parser("disassemble", help="Disassemble a compiled OMG interpreter binary")
-    p_dis.add_argument("bin", nargs="?", default=OMG_INTERPRETER_BIN, help=f"Path to interpreter binary (default: {OMG_INTERPRETER_BIN})")
+    p_dis = sub.add_parser(
+        "disassemble", help="Disassemble a compiled OMG interpreter binary"
+    )
+    p_dis.add_argument(
+        "bin",
+        nargs="?",
+        default=OMG_INTERPRETER_BIN,
+        help=f"Path to interpreter binary (default: {OMG_INTERPRETER_BIN})",
+    )
+    p_dis.add_argument(
+        "--start",
+        type=int,
+        default=None,
+        help="Start index into disassembly output",
+    )
+    p_dis.add_argument(
+        "--end",
+        type=int,
+        default=None,
+        help="End index into disassembly output",
+    )
 
     # Legacy Python runtime embedded build
-    p_build = sub.add_parser("legacy-build", help="Legacy Python-based OMG interpreter (embeds the Python runtime)")
-
+    p_build = sub.add_parser(
+        "legacy-build", help="Legacy Python-based OMG interpreter (embeds the Python runtime)"
+    )
     p_build.add_argument(
         "--clean",
         action="store_true",
         help="Clean build and dist directories before building"
     )
-
     p_build.add_argument(
         "--upx",
         metavar="VERSION",
@@ -157,13 +230,11 @@ def main():
         default=DEFAULT_UPX_VER,
         help=f"Specify UPX version (default: {DEFAULT_UPX_VER})"
     )
-
     p_build.add_argument(
         "--upx-clean",
         action="store_true",
         help="Delete the downloaded UPX directory after building"
     )
-
 
     args = parser.parse_args()
 
@@ -195,11 +266,11 @@ def main():
         return
 
     if args.command == "disassemble":
-        _disassemble_native_interpreter(args.bin)
+        _disassemble_native_interpreter(args.bin, args.start, args.end)
         return
 
     if args.command == "verify":
-        print(f"Verifying {args.bin}")
+        print(f"[*] Verifying {args.bin}")
         verify_interpreter(args.bin)
         return
 
