@@ -74,7 +74,11 @@ OPCODES: dict[str, int] = {
     "CALL_VALUE": 43,
 }
 
-REV_OPCODES = {v: k for k, v in OPCODES.items()}
+# Reverse-mapped opcode mnemonics
+REV_OPCODES: dict[int, str] = {v: k for k, v in OPCODES.items()}
+
+# Bytecode header
+MAGIC_HEADER = b"OMGB"
 
 
 @dataclass
@@ -154,7 +158,7 @@ class Compiler:
                 else:
                     final_code.append((op, arg))
 
-        out = bytearray(b"OMGB")
+        out = bytearray(MAGIC_HEADER)
         out.extend(struct.pack("<I", len(self.funcs)))
         for f in self.funcs:
             name_bytes = f.name.encode("utf-8")
@@ -437,7 +441,7 @@ def compile_source(source: str, file: str = "<stdin>") -> bytes:
 def disassemble(data: bytes) -> str:
     """Convert binary bytecode back to a textual representation."""
     idx = 0
-    if data[:4] != b"OMGB":
+    if data[:4] != MAGIC_HEADER:
         raise ValueError("Invalid bytecode header")
     idx = 4
     func_count = struct.unpack_from("<I", data, idx)[0]

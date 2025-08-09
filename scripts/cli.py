@@ -199,7 +199,7 @@ def main():
         return
 
     if args.command == "verify":
-        print(args)
+        print(f"Verifying {args.bin}")
         verify_interpreter(args.bin)
         return
 
