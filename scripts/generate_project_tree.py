@@ -2,7 +2,7 @@ import os
 from pathlib import Path
 
 # Directories to skip entirely
-SKIP_DIRS = {"__pycache__", "node_modules", ".git", ".venv", ".github", ".pytest_cache", "script"}
+SKIP_DIRS = {"__pycache__", "node_modules", ".git", ".venv", ".github", ".pytest_cache", "target"}
 
 def tree(dir_path: Path, prefix: str = "", file_lines: list[str] = []) -> None:
     """Recursively build a tree structure of the directory."""

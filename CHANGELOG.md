@@ -5,6 +5,9 @@ Ordered from most recent at the top to oldest at the bottom.
 ## [0.1.1] - 2025-08-08
 
 ### Added
+- `verify_binary.py` now performs a two-pass decode/validate of the
+  interpreter bytecode, checking jump targets, function addresses and
+  `CALL`/`TCALL` references for validity.
 - Native VM now embeds the OMG interpreter bytecode and can execute `.omg`
   scripts directly; the bytecode is generated at build time via a Rust build
   script.
