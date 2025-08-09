@@ -1,22 +1,17 @@
 """verify_binary
 =================
 
-Perform basic sanity checks on a compiled OMG interpreter binary.  The
-previous version of this script simply walked the byte stream and ensured
-operand sizes fit within the file.  This revision performs a two-pass
-decode/validate process and performs additional semantic checks:
+Perform basic sanity checks on a compiled OMG interpreter binary.
 
-* Decode the entire function table and instruction stream into Python data
-  structures.
+performs a two-pass decode/validate process and additional semantic checks:
+
+* Decode the entire function table and instruction stream
 * Ensure function entry point addresses and jump targets point to valid
   instruction indices.
-* Confirm that ``CALL`` and ``TCALL`` instructions reference functions that
+* Confirm that `CALL` and `TCALL` instructions reference functions that
   exist in the function table.
-* Verify that the final instruction is ``HALT`` and that the file contains no
+* Verify that the final instruction is `RET` and that the file contains no
   trailing bytes.
-
-The goal isn’t to prove the interpreter correct, merely to catch malformed
-or truncated binaries that would otherwise crash the native runtime.
 """
 
 import os
@@ -128,10 +123,11 @@ def verify_interpreter(interp_bin: str) -> None:
                     f"{name} at {inst['idx']} references unknown function {arg!r}"
                 )
 
-    if instructions and instructions[-1]["name"] != "HALT":
-        print("warning: last instruction is not HALT")
+    if instructions and instructions[-1]["name"] != "RET":
+        print("warning: last instruction is not RET")
 
-    print("finished all instructions; binary verified")
+    print(f"Verified {len(functions)} functions and {len(instructions)} instructions")
+    print("[✓] Binary is verified")
 
 
 if __name__ == "__main__":
