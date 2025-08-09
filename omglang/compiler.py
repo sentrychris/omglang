@@ -80,6 +80,9 @@ REV_OPCODES: dict[int, str] = {v: k for k, v in OPCODES.items()}
 # Bytecode header
 MAGIC_HEADER = b"OMGB"
 
+# Encoded as 0x00MMmmpp where MM=major, mm=minor, pp=patch
+BC_VERSION = (0 << 16) | (1 << 8) | 1
+
 
 @dataclass
 class FunctionEntry:
@@ -159,6 +162,7 @@ class Compiler:
                     final_code.append((op, arg))
 
         out = bytearray(MAGIC_HEADER)
+        out.extend(struct.pack("<I", BC_VERSION))
         out.extend(struct.pack("<I", len(self.funcs)))
         for f in self.funcs:
             name_bytes = f.name.encode("utf-8")
@@ -444,6 +448,10 @@ def disassemble(data: bytes) -> str:
     if data[:4] != MAGIC_HEADER:
         raise ValueError("Invalid bytecode header")
     idx = 4
+    version = struct.unpack_from("<I", data, idx)[0]
+    if version != BC_VERSION:
+        raise ValueError(f"unsupported version: {version}")
+    idx += 4
     func_count = struct.unpack_from("<I", data, idx)[0]
     idx += 4
     lines: List[str] = []

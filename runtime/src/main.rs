@@ -13,8 +13,10 @@ use vm::run;
 /// Embedded interpreter bytecode generated at build time.
 const INTERPRETER_BC: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/interpreter.omgb"));
 
-/// Help text displayed when the VM is invoked incorrectly or with `--help`.
-const USAGE: &str = r#"OMG Language Runtime v0.1.1
+const VERSION: &str = "0.1.1";
+
+fn usage() -> String {
+    format!(r#"OMG Language Runtime v{0}
 
 Usage:
     omg <script.omg>
@@ -29,7 +31,10 @@ Example:
 
 Options:
     -h, --help
-        Show this help message and exit."#;
+        Show this help message and exit.
+    --version
+        Show runtime version."#, VERSION)
+}
 
 fn main() {
     let args: Vec<String> = env::args().collect();
@@ -38,7 +43,16 @@ fn main() {
         return;
     }
     if args[1] == "-h" || args[1] == "--help" {
-        println!("{}", USAGE);
+        println!("{}", usage());
+        return;
+    }
+    if args[1] == "--version" {
+        println!(
+            "omg-runtime-build-{}-{}: v{}",
+            env::consts::OS,
+            env::consts::ARCH,
+            VERSION
+        );
         return;
     }
     if args[1].ends_with(".omgb") {
