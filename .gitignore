@@ -14,7 +14,6 @@ __pycache__/
 project_tree.txt
 package_resources/upx*
 output/
-runtime/interpreter.omgb
 
 # OS junk
 .DS_Store
