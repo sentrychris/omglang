@@ -58,6 +58,7 @@ def verify_interpreter(interp_bin: str) -> None:
 
     func_count, idx = _read_u32(data, idx)
     print("[+] func_count", func_count)
+    raise OSError("test")
     functions: dict[str, int] = {}
     for _ in range(func_count):
         name, idx = _read_str(data, idx)
