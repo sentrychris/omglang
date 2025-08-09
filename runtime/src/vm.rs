@@ -72,7 +72,7 @@ pub fn run(
                 } else if let Some(v) = globals.get(name) {
                     stack.push(v.clone());
                 } else {
-                    stack.push(Value::Int(0));
+                    return Err(RuntimeError::UndefinedVariable(name.clone()));
                 }
             }
             Instr::Store(name) => {

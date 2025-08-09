@@ -70,3 +70,14 @@ fn dict_missing_key_errors() {
     let result = run(&code, &funcs, &[]);
     assert!(matches!(result, Err(RuntimeError::KeyError(_))));
 }
+
+#[test]
+fn load_undefined_variable_errors() {
+    let code = vec![Instr::Load("x".to_string()), Instr::Halt];
+    let funcs = HashMap::new();
+    let result = run(&code, &funcs, &[]);
+    assert_eq!(
+        result,
+        Err(RuntimeError::UndefinedVariable("x".to_string()))
+    );
+}
