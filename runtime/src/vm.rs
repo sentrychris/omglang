@@ -5,10 +5,15 @@ use std::path::PathBuf;
 use std::rc::Rc;
 
 use crate::bytecode::{Function, Instr};
+use crate::error::RuntimeError;
 use crate::value::Value;
 
 /// Execute bytecode on a stack-based virtual machine.
-pub fn run(code: &[Instr], funcs: &HashMap<String, Function>, program_args: &[String]) {
+pub fn run(
+    code: &[Instr],
+    funcs: &HashMap<String, Function>,
+    program_args: &[String],
+) -> Result<(), RuntimeError> {
     let mut stack: Vec<Value> = Vec::new();
     let mut globals: HashMap<String, Value> = HashMap::new();
     // Expose command line arguments to bytecode programs via the global `args` list
@@ -289,7 +294,7 @@ pub fn run(code: &[Instr], funcs: &HashMap<String, Function>, program_args: &[St
                         map.borrow_mut().insert(i.to_string(), val);
                     }
                     (Value::FrozenDict(_), _) => {
-                        panic!("cannot modify frozen dict");
+                        return Err(RuntimeError::FrozenWriteError);
                     }
                     _ => {}
                 }
@@ -316,7 +321,7 @@ pub fn run(code: &[Instr], funcs: &HashMap<String, Function>, program_args: &[St
                         map.borrow_mut().insert(attr.clone(), val);
                     }
                     Value::FrozenDict(_) => {
-                        panic!("cannot modify frozen dict");
+                        return Err(RuntimeError::FrozenWriteError);
                     }
                     _ => {}
                 }
@@ -485,5 +490,43 @@ pub fn run(code: &[Instr], funcs: &HashMap<String, Function>, program_args: &[St
             Instr::Halt => break,
         }
         pc += 1;
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::bytecode::Instr;
+    use crate::error::RuntimeError;
+    use std::collections::HashMap;
+
+    #[test]
+    fn store_attr_on_frozen_dict_errors() {
+        let code = vec![
+            Instr::BuildDict(0),
+            Instr::CallBuiltin("freeze".to_string(), 1),
+            Instr::PushInt(1),
+            Instr::StoreAttr("a".to_string()),
+            Instr::Halt,
+        ];
+        let funcs = HashMap::new();
+        let result = run(&code, &funcs, &[]);
+        assert_eq!(result, Err(RuntimeError::FrozenWriteError));
+    }
+
+    #[test]
+    fn store_index_on_frozen_dict_errors() {
+        let code = vec![
+            Instr::BuildDict(0),
+            Instr::CallBuiltin("freeze".to_string(), 1),
+            Instr::PushStr("a".to_string()),
+            Instr::PushInt(1),
+            Instr::StoreIndex,
+            Instr::Halt,
+        ];
+        let funcs = HashMap::new();
+        let result = run(&code, &funcs, &[]);
+        assert_eq!(result, Err(RuntimeError::FrozenWriteError));
     }
 }
