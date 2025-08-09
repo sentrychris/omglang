@@ -1,5 +1,7 @@
 use std::collections::HashMap;
 
+const BC_VERSION: u32 = (0 << 16) | (1 << 8) | 1;
+
 /// Representation of a compiled function.
 #[derive(Clone)]
 pub struct Function {
@@ -80,6 +82,8 @@ pub fn parse_bytecode(data: &[u8]) -> (Vec<Instr>, HashMap<String, Function>) {
     let mut idx = 0;
     assert!(&data[0..4] == b"OMGB");
     idx += 4;
+    let version = read_u32(data, &mut idx);
+    assert_eq!(version, BC_VERSION, "unsupported version");
     let func_count = read_u32(data, &mut idx) as usize;
     let mut funcs: HashMap<String, Function> = HashMap::new();
     for _ in 0..func_count {
