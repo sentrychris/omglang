@@ -5,6 +5,7 @@ The script handles platform differences for UPX download URLs and extraction.
 """
 
 import os
+import sys
 import shutil
 import struct
 import subprocess
@@ -297,7 +298,11 @@ def main():
 
     if args.command == "verify-omgb":
         print(f"[*] Verifying {args.bin}")
-        verify_interpreter(args.bin)
+        try:
+            verify_interpreter(args.bin)
+        except ValueError as e:
+            print(f"ERROR! Failed to verify binary: {e}")
+            sys.exit(1)
         return
 
     if args.command == "runtime-build":
