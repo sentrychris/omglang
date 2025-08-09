@@ -1,5 +1,5 @@
 """
-# package.py omg.spec
+# omg.spec
 """
 import os
 import sys

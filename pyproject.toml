@@ -15,8 +15,8 @@ dev = [
 ]
 
 [project.scripts]
-lint = "scripts.lint:main"
-pkg = "scripts.package:cli"
+omg-lint = "scripts.lint:main"
+omg-cli = "scripts.cli:main"
 
 [build-system]
 requires = ["setuptools"]
