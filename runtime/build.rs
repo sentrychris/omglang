@@ -25,7 +25,7 @@ fn main() {
         panic!("compilation failed");
     }
 
-    if env::var("DUMP_BC").map(|v| v == "1").unwrap_or(false) {
+    if env::var("DUMP_OMGB").map(|v| v == "1").unwrap_or(false) {
         let cwd = env::current_dir().expect("failed to get current dir");
         let dest = cwd.join("interpreter.omgb");
         fs::copy(&out_bc, &dest).expect("failed to copy .omgb file");

@@ -8,11 +8,11 @@ mod value;
 mod vm;
 
 use bytecode::parse_bytecode;
-use repl::interpret;
+use repl::repl_interpret;
 use vm::run;
 
-/// Embedded interpreter bytecode generated at build time.
-const INTERPRETER_BC: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/interpreter.omgb"));
+/// Embedded interpreter.omgb generated at build time.
+const INTERP_OMGBC: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/interpreter.omgb"));
 
 const VERSION: &str = "0.1.1";
 
@@ -43,7 +43,7 @@ Options:
 fn main() {
     let args: Vec<String> = env::args().collect();
     if args.len() == 1 {
-        interpret();
+        repl_interpret();
         return;
     }
     if args[1] == "-h" || args[1] == "--help" {
@@ -90,7 +90,7 @@ fn main() {
         let mut full_args = Vec::with_capacity(program_args_slice.len() + 1);
         full_args.push(prog_path.clone());
         full_args.extend_from_slice(program_args_slice);
-        let (code, funcs) = parse_bytecode(INTERPRETER_BC);
+        let (code, funcs) = parse_bytecode(INTERP_OMGBC);
         if let Err(e) = run(&code, &funcs, &full_args) {
             eprintln!("{}", e);
             std::process::exit(1);

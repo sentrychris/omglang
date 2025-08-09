@@ -308,7 +308,7 @@ def main():
     if args.command == "runtime-build":
         env = os.environ.copy()
         if args.dump_omgb:
-            env["DUMP_BC"] = "1"
+            env["DUMP_OMGB"] = "1"
         cmd = ["cargo", "build", "--release", "--manifest-path", RUNTIME_MANIFEST_PATH]
         if args.with_symbols:
             extra = "-C debuginfo=2 -C panic=abort"
