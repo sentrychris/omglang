@@ -5,10 +5,15 @@ use std::path::PathBuf;
 use std::rc::Rc;
 
 use crate::bytecode::{Function, Instr};
+use crate::error::RuntimeError;
 use crate::value::Value;
 
 /// Execute bytecode on a stack-based virtual machine.
-pub fn run(code: &[Instr], funcs: &HashMap<String, Function>, program_args: &[String]) {
+pub fn run(
+    code: &[Instr],
+    funcs: &HashMap<String, Function>,
+    program_args: &[String],
+) -> Result<(), RuntimeError> {
     let mut stack: Vec<Value> = Vec::new();
     let mut globals: HashMap<String, Value> = HashMap::new();
     // Expose command line arguments to bytecode programs via the global `args` list
@@ -289,7 +294,7 @@ pub fn run(code: &[Instr], funcs: &HashMap<String, Function>, program_args: &[St
                         map.borrow_mut().insert(i.to_string(), val);
                     }
                     (Value::FrozenDict(_), _) => {
-                        panic!("cannot modify frozen dict");
+                        return Err(RuntimeError::FrozenWriteError);
                     }
                     _ => {}
                 }
@@ -316,7 +321,7 @@ pub fn run(code: &[Instr], funcs: &HashMap<String, Function>, program_args: &[St
                         map.borrow_mut().insert(attr.clone(), val);
                     }
                     Value::FrozenDict(_) => {
-                        panic!("cannot modify frozen dict");
+                        return Err(RuntimeError::FrozenWriteError);
                     }
                     _ => {}
                 }
@@ -486,4 +491,7 @@ pub fn run(code: &[Instr], funcs: &HashMap<String, Function>, program_args: &[St
         }
         pc += 1;
     }
+    Ok(())
 }
+#[cfg(test)]
+mod tests;
