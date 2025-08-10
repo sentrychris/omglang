@@ -693,6 +693,18 @@ class Interpreter:
                 except BreakLoop:
                     pass
 
+            elif kind == 'try':
+                _, try_block, err_name, except_block, _ = stmt
+                try:
+                    self.execute([try_block])
+                except ReturnControlFlow:
+                    raise
+                except BreakLoop:
+                    raise
+                except Exception as e:
+                    if err_name:
+                        self.vars[err_name] = str(e)
+                    self.execute([except_block])
             elif kind == 'break':
                 raise BreakLoop()
 

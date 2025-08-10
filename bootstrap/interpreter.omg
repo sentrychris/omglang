@@ -96,7 +96,7 @@ proc tokenize(src) {
             n := n + 1
             i := i + 2
         } elif c == "=" {
-            panic("RuntimeError: Unexpected character =")
+            raise("RuntimeError: Unexpected character =")
         } elif c == "!" and i + 1 < src_len and src[i + 1] == "=" {
             tokens[n] := ["symbol", "!="]
             n := n + 1
@@ -118,7 +118,7 @@ proc tokenize(src) {
             n := n + 1
             i := i + 2
         } elif c == "/" and i + 1 < src_len and src[i + 1] == "/" {
-            panic("RuntimeError: Unexpected / after /")
+            raise("RuntimeError: Unexpected / after /")
         } elif c == "/" and i + 1 < src_len and src[i + 1] == "*" {
             i := i + 2
             loop i + 1 < src_len and (src[i] != "*" or src[i + 1] != "/") {
@@ -159,7 +159,7 @@ proc tokenize(src) {
             res := read_ident(src, i)
             word := res[0]
             i := res[1]
-            if word == "alloc" or word == "emit" or word == "proc" or word == "return" or word == "if" or word == "else" or word == "elif" or word == "loop" or word == "break" or word == "and" or word == "or" or word == "facts" or word == "import" or word == "as" {
+            if word == "alloc" or word == "emit" or word == "proc" or word == "return" or word == "if" or word == "else" or word == "elif" or word == "loop" or word == "break" or word == "and" or word == "or" or word == "facts" or word == "import" or word == "as" or word == "try" or word == "except" {
                 tokens[n] := ["kw", word]
                 n := n + 1
             } elif word == "true" {
@@ -268,6 +268,19 @@ proc parse_statement(tokens, i) {
     } elif t[0] == "kw" and t[1] == "facts" {
         alloc res := parse_expression(tokens, i + 1)
         return [["facts", res[0]], res[1]]
+    } elif t[0] == "kw" and t[1] == "try" {
+        alloc try_res := parse_block(tokens, i + 1)
+        alloc j := try_res[1]
+        if tokens[j][0] == "kw" and tokens[j][1] == "except" {
+            j := j + 1
+            alloc name := ""
+            if tokens[j][0] == "ident" {
+                name := tokens[j][1]
+                j := j + 1
+            }
+            alloc exc_res := parse_block(tokens, j)
+            return [["try", try_res[0], name, exc_res[0]], exc_res[1]]
+        }
     } else {
         alloc lval_res := parse_factor(tokens, i)
         alloc j := lval_res[1]
@@ -366,9 +379,9 @@ proc parse_add_sub(tokens, i) {
         op := tokens[j]
         if tokens[j + 1][0] == "symbol" and (tokens[j + 1][1] == "+" or tokens[j + 1][1] == "-") {
             if op[1] == "+" and tokens[j + 1][1] == "-" {
-                panic("RuntimeError: unexpected - after + unary operator")
+                raise("RuntimeError: unexpected - after + unary operator")
             } elif op[1] == "-" and tokens[j + 1][1] == "+" {
-                panic("RuntimeError: unexpected + after - unary operator")
+                raise("RuntimeError: unexpected + after - unary operator")
             }
         }
         right_res := parse_term(tokens, j + 1)
@@ -469,13 +482,13 @@ proc parse_factor(tokens, i) {
     alloc res := [false, 0]
     if t[0] == "symbol" and t[1] == "+" {
         if tokens[i + 1][0] == "symbol" and tokens[i + 1][1] == "-" {
-            panic("RuntimeError: unexpected - after + unary operator")
+            raise("RuntimeError: unexpected - after + unary operator")
         }
         res := parse_factor(tokens, i + 1)
         return [["unary", "add", res[0]], res[1]]
     } elif t[0] == "symbol" and t[1] == "-" {
         if tokens[i + 1][0] == "symbol" and tokens[i + 1][1] == "+" {
-            panic("RuntimeError: unexpected + after - unary operator")
+            raise("RuntimeError: unexpected + after - unary operator")
         }
         res := parse_factor(tokens, i + 1)
         return [["unary", "sub", res[0]], res[1]]
@@ -769,7 +782,7 @@ proc strip_header(source, path) {
             return source[i:]
         }
     }
-    panic("RuntimeError: OMG script missing required header ';;;omg' in " + path)
+    raise("RuntimeError: OMG script missing required header ';;;omg' in " + path)
     return source
 }
 
@@ -787,7 +800,7 @@ proc call_function(func, arg_values, env) {
         alloc params_len := length(params)
         alloc arg_len := length(arg_values)
         if arg_len != params_len {
-            panic("TypeError: Function expects " + params_len + " arguments")
+            raise("TypeError: Function expects " + params_len + " arguments")
         }
         loop i < params_len {
             local := env_set(local, params[i], arg_values[i])
@@ -803,35 +816,35 @@ proc call_function(func, arg_values, env) {
         alloc name := func[1]
         if name == "length" {
             if length(arg_values) != 1 {
-                panic("RuntimeError: length() expects one positional argument")
+                raise("RuntimeError: length() expects one positional argument")
             }
             return length(arg_values[0])
         } elif name == "read_file" {
             if length(arg_values) != 1 {
-                panic("RuntimeError: read_file() expects one positional argument")
+                raise("RuntimeError: read_file() expects one positional argument")
             }
             return read_file(arg_values[0])
         } elif name == "ascii" {
             if length(arg_values) != 1 {
-                panic("RuntimeError: ascii() expects one positional argument")
+                raise("RuntimeError: ascii() expects one positional argument")
             }
             return ascii(arg_values[0])
         } elif name == "chr" {
             if length(arg_values) != 1 {
-                panic("RuntimeError: chr() expects one positional argument")
+                raise("RuntimeError: chr() expects one positional argument")
             }
             return chr(arg_values[0])
         } elif name == "freeze" {
             if length(arg_values) != 1 {
-                panic("RuntimeError: freeze() expects one positional argument")
+                raise("RuntimeError: freeze() expects one positional argument")
             }
             return freeze(arg_values[0])
-        } elif name == "panic" {
-            panic(arg_values[0])
+        } elif name == "raise" {
+            raise(arg_values[0])
             return false
         } elif name == "hex" {
             if length(arg_values) != 1 {
-                panic("RuntimeError: hex() expects one integer")
+                raise("RuntimeError: hex() expects one integer")
             }
             return hex(arg_values[0])
         } elif name == "binary" {
@@ -840,12 +853,12 @@ proc call_function(func, arg_values, env) {
             } elif length(arg_values) == 2 {
                 return binary(arg_values[0], arg_values[1])
             }
-            panic("RuntimeError: binary() expects one or two integers")
+            raise("RuntimeError: binary() expects one or two integers")
         }
-        panic("RuntimeError: Unknown builtin: " + name)
+        raise("RuntimeError: Unknown builtin: " + name)
         return false
     } else {
-        panic("TypeError: Not a function value")
+        raise("TypeError: Not a function value")
         return false
     }
 }
@@ -856,7 +869,7 @@ proc import_module(path) {
     alloc lm_len := length(loaded_modules)
     loop k < lm_len {
         if loaded_modules[k] == full {
-            panic("RuntimeError: Recursive import of '" + full + "'")
+            raise("RuntimeError: Recursive import of '" + full + "'")
         }
         k := k + 1
     }
@@ -876,7 +889,7 @@ proc import_module(path) {
     }
     alloc source := read_file(name)
     if source == false {
-        panic("FileNotFoundError: Module '" + path + "' not found relative to '" + saved_file + "'")
+        raise("FileNotFoundError: Module '" + path + "' not found relative to '" + saved_file + "'")
     }
     source := strip_header(source, full)
     alloc ast := parse(source)
@@ -886,9 +899,9 @@ proc import_module(path) {
         ["ascii", ["builtin", "ascii"]],
         ["binary", ["builtin", "binary"]],
         ["chr", ["builtin", "chr"]],
-        ["hex", ["builtin", "hex"]]
+        ["hex", ["builtin", "hex"]],
         ["freeze", ["builtin", "freeze"]],
-        ["panic", ["builtin", "panic"]]
+        ["raise", ["builtin", "raise"]]
     ]
     env := env_set(env, "args", [])
     global_env := env
@@ -943,7 +956,7 @@ proc eval_expr(expr, env) {
         if res[0] {
             return res[1]
         }
-        panic("UndefinedVariableException: Undefined variable '" + name + "'")
+        raise("UndefinedVariableException: Undefined variable '" + name + "'")
         return false
     } elif kind == "add" {
         return eval_expr(expr[1], env) + eval_expr(expr[2], env)
@@ -1053,7 +1066,7 @@ proc eval_expr(expr, env) {
         }
         return call_function(func_val, arg_values, env)
     } else {
-        panic("RuntimeError: Unknown expr kind: " + kind)
+        raise("RuntimeError: Unknown expr kind: " + kind)
         return false
     }
 }
@@ -1093,7 +1106,7 @@ proc execute(stmts, env, is_global) {
                 env := env_set(env, name, val)
                 if is_global { global_env := env }
             } else {
-                panic("UndefinedVariableException: Undefined variable '" + name + "'")
+                raise("UndefinedVariableException: Undefined variable '" + name + "'")
             }
         } elif kind == "attr_assign" {
             obj := eval_expr(stmt[1], env)
@@ -1110,7 +1123,19 @@ proc execute(stmts, env, is_global) {
             if cond {
                 _ := false
             } else {
-                panic("AssertionError: Assertion failed")
+                raise("AssertionError: Assertion failed")
+            }
+        } elif kind == "try" {
+            res := execute(stmt[1], env, is_global)
+            if res[0] == "error" {
+                if stmt[2] != "" {
+                    env := env_set(env, stmt[2], res[1])
+                    if is_global { global_env := env }
+                }
+                res := execute(stmt[3], env, is_global)
+            }
+            if res[0] != "normal" {
+                return res
             }
         } elif kind == "if" {
             cond := eval_expr(stmt[1], env)
@@ -1165,7 +1190,7 @@ proc execute(stmts, env, is_global) {
             }
             _ := call_function(func_val, call_args, env)
         } else {
-            panic("RuntimeError: Unknown statement: " + kind)
+            raise("RuntimeError: Unknown statement: " + kind)
         }
         i := i + 1
     }
@@ -1182,7 +1207,7 @@ proc run(source) {
         ["chr", ["builtin", "chr"]],
         ["hex", ["builtin", "hex"]]
         ["freeze", ["builtin", "freeze"]],
-        ["panic", ["builtin", "panic"]]
+        ["raise", ["builtin", "raise"]]
     ]
     env := env_set(env, "args", args)
     global_env := env
@@ -1207,7 +1232,7 @@ proc run_file_with_args(path, file_args) {
     }
     alloc source := read_file(name)
     if source == false {
-        panic("RuntimeError: Failed to read file: " + path)
+        raise("RuntimeError: Failed to read file: " + path)
     }
     source := strip_header(source, path)
     alloc res := run(source)

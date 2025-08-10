@@ -191,6 +191,10 @@ class Parser:
         """
         return _stmt.parse_break(self)
 
+    def parse_try(self) -> tuple:
+        """Parse a try/except statement."""
+        return _stmt.parse_try(self)
+
     def parse_func_def(self) -> tuple:
         """
         Parse a function definition statement.
