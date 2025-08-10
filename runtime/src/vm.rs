@@ -16,6 +16,12 @@ struct Block {
     ret_depth: usize,
 }
 
+fn pop(stack: &mut Vec<Value>) -> Result<Value, RuntimeError> {
+    stack
+        .pop()
+        .ok_or_else(|| RuntimeError::VmInvariant("stack underflow".to_string()))
+}
+
 fn call_builtin(
     name: &str,
     args: &[Value],
@@ -26,8 +32,8 @@ fn call_builtin(
         "chr" => match args {
             [Value::Int(i)] => Ok(Value::Str((*i as u8 as char).to_string())),
             _ => Err(RuntimeError::TypeError(
-                "chr() expects one integer".to_string())
-            ),
+                "chr() expects one integer".to_string(),
+            )),
         },
         "ascii" => match args {
             [Value::Str(s)] if s.chars().count() == 1 => {
@@ -40,8 +46,8 @@ fn call_builtin(
         "hex" => match args {
             [Value::Int(i)] => Ok(Value::Str(format!("{:x}", i))),
             _ => Err(RuntimeError::TypeError(
-                "hex() expects one integer (arity mismatch)".to_string())
-            ),
+                "hex() expects one integer (arity mismatch)".to_string(),
+            )),
         },
         "binary" => match args {
             [Value::Int(n)] => Ok(Value::Str(format!("{:b}", n))),
@@ -85,17 +91,18 @@ fn call_builtin(
             }
             [Value::FrozenDict(map)] => Ok(Value::FrozenDict(map.clone())),
             _ => Err(RuntimeError::TypeError(
-                "freeze() expects a dict (type mismatch)".to_string())
-            ),
+                "freeze() expects a dict (type mismatch)".to_string(),
+            )),
         },
-        "panic" => match args { // TODO depracated in favour of raise
+        "panic" => match args {
+            // TODO depracated in favour of raise
             [Value::Str(msg)] => {
                 eprintln!("{}", msg);
                 process::exit(1);
             }
             _ => Err(RuntimeError::TypeError(
-                "panic() expects a string (type mismatch)".to_string())
-            ),
+                "panic() expects a string (type mismatch)".to_string(),
+            )),
         },
         "read_file" => match args {
             [Value::Str(path)] => {
@@ -115,8 +122,8 @@ fn call_builtin(
                 }
             }
             _ => Err(RuntimeError::TypeError(
-                "read_file() expects a file path".to_string())
-            ),
+                "read_file() expects a file path".to_string(),
+            )),
         },
         "call_builtin" => match args {
             [Value::Str(inner), Value::List(list)] => {
@@ -182,7 +189,7 @@ pub fn run(
                 Instr::BuildList(n) => {
                     let mut elements = Vec::new();
                     for _ in 0..*n {
-                        elements.push(stack.pop().unwrap());
+                        elements.push(pop(&mut stack)?);
                     }
                     elements.reverse();
                     stack.push(Value::List(Rc::new(RefCell::new(elements))));
@@ -190,8 +197,8 @@ pub fn run(
                 Instr::BuildDict(n) => {
                     let mut map: HashMap<String, Value> = HashMap::new();
                     for _ in 0..*n {
-                        let val = stack.pop().unwrap();
-                        let key = stack.pop().unwrap().to_string();
+                        let val = pop(&mut stack)?;
+                        let key = pop(&mut stack)?.to_string();
                         map.insert(key, val);
                     }
                     stack.push(Value::Dict(Rc::new(RefCell::new(map))));
@@ -219,8 +226,8 @@ pub fn run(
                     }
                 }
                 Instr::Add => {
-                    let b = stack.pop().unwrap();
-                    let a = stack.pop().unwrap();
+                    let b = pop(&mut stack)?;
+                    let a = pop(&mut stack)?;
                     match (a, b) {
                         (Value::Str(sa), Value::Str(sb)) => stack.push(Value::Str(sa + &sb)),
                         (Value::Str(sa), v) => stack.push(Value::Str(sa + &v.to_string())),
@@ -236,44 +243,44 @@ pub fn run(
                     }
                 }
                 Instr::Sub => {
-                    let b = stack.pop().unwrap().as_int();
-                    let a = stack.pop().unwrap().as_int();
+                    let b = pop(&mut stack)?.as_int();
+                    let a = pop(&mut stack)?.as_int();
                     stack.push(Value::Int(a - b));
                 }
                 Instr::Mul => {
-                    let b = stack.pop().unwrap().as_int();
-                    let a = stack.pop().unwrap().as_int();
+                    let b = pop(&mut stack)?.as_int();
+                    let a = pop(&mut stack)?.as_int();
                     stack.push(Value::Int(a.checked_mul(b).unwrap_or(0)));
                 }
                 Instr::Div => {
-                    let b = stack.pop().unwrap().as_int();
+                    let b = pop(&mut stack)?.as_int();
                     if b == 0 {
                         break Err(RuntimeError::ZeroDivisionError);
                     }
-                    let a = stack.pop().unwrap().as_int();
+                    let a = pop(&mut stack)?.as_int();
                     stack.push(Value::Int(a / b));
                 }
                 Instr::Mod => {
-                    let b = stack.pop().unwrap().as_int();
+                    let b = pop(&mut stack)?.as_int();
                     if b == 0 {
                         break Err(RuntimeError::ZeroDivisionError);
                     }
-                    let a = stack.pop().unwrap().as_int();
+                    let a = pop(&mut stack)?.as_int();
                     stack.push(Value::Int(a % b));
                 }
                 Instr::Eq => {
-                    let b = stack.pop().unwrap().to_string();
-                    let a = stack.pop().unwrap().to_string();
+                    let b = pop(&mut stack)?.to_string();
+                    let a = pop(&mut stack)?.to_string();
                     stack.push(Value::Bool(a == b));
                 }
                 Instr::Ne => {
-                    let b = stack.pop().unwrap().to_string();
-                    let a = stack.pop().unwrap().to_string();
+                    let b = pop(&mut stack)?.to_string();
+                    let a = pop(&mut stack)?.to_string();
                     stack.push(Value::Bool(a != b));
                 }
                 Instr::Lt => {
-                    let b = stack.pop().unwrap();
-                    let a = stack.pop().unwrap();
+                    let b = pop(&mut stack)?;
+                    let a = pop(&mut stack)?;
                     let res = match (&a, &b) {
                         (Value::Str(sa), Value::Str(sb)) => sa < sb,
                         _ => a.as_int() < b.as_int(),
@@ -281,8 +288,8 @@ pub fn run(
                     stack.push(Value::Bool(res));
                 }
                 Instr::Le => {
-                    let b = stack.pop().unwrap();
-                    let a = stack.pop().unwrap();
+                    let b = pop(&mut stack)?;
+                    let a = pop(&mut stack)?;
                     let res = match (&a, &b) {
                         (Value::Str(sa), Value::Str(sb)) => sa <= sb,
                         _ => a.as_int() <= b.as_int(),
@@ -290,8 +297,8 @@ pub fn run(
                     stack.push(Value::Bool(res));
                 }
                 Instr::Gt => {
-                    let b = stack.pop().unwrap();
-                    let a = stack.pop().unwrap();
+                    let b = pop(&mut stack)?;
+                    let a = pop(&mut stack)?;
                     let res = match (&a, &b) {
                         (Value::Str(sa), Value::Str(sb)) => sa > sb,
                         _ => a.as_int() > b.as_int(),
@@ -299,8 +306,8 @@ pub fn run(
                     stack.push(Value::Bool(res));
                 }
                 Instr::Ge => {
-                    let b = stack.pop().unwrap();
-                    let a = stack.pop().unwrap();
+                    let b = pop(&mut stack)?;
+                    let a = pop(&mut stack)?;
                     let res = match (&a, &b) {
                         (Value::Str(sa), Value::Str(sb)) => sa >= sb,
                         _ => a.as_int() >= b.as_int(),
@@ -308,51 +315,51 @@ pub fn run(
                     stack.push(Value::Bool(res));
                 }
                 Instr::BAnd => {
-                    let b = stack.pop().unwrap().as_int();
-                    let a = stack.pop().unwrap().as_int();
+                    let b = pop(&mut stack)?.as_int();
+                    let a = pop(&mut stack)?.as_int();
                     stack.push(Value::Int(a & b));
                 }
                 Instr::BOr => {
-                    let b = stack.pop().unwrap().as_int();
-                    let a = stack.pop().unwrap().as_int();
+                    let b = pop(&mut stack)?.as_int();
+                    let a = pop(&mut stack)?.as_int();
                     stack.push(Value::Int(a | b));
                 }
                 Instr::BXor => {
-                    let b = stack.pop().unwrap().as_int();
-                    let a = stack.pop().unwrap().as_int();
+                    let b = pop(&mut stack)?.as_int();
+                    let a = pop(&mut stack)?.as_int();
                     stack.push(Value::Int(a ^ b));
                 }
                 Instr::Shl => {
-                    let b = stack.pop().unwrap().as_int() as u32;
-                    let a = stack.pop().unwrap().as_int();
+                    let b = pop(&mut stack)?.as_int() as u32;
+                    let a = pop(&mut stack)?.as_int();
                     stack.push(Value::Int(a << b));
                 }
                 Instr::Shr => {
-                    let b = stack.pop().unwrap().as_int() as u32;
-                    let a = stack.pop().unwrap().as_int();
+                    let b = pop(&mut stack)?.as_int() as u32;
+                    let a = pop(&mut stack)?.as_int();
                     stack.push(Value::Int(a >> b));
                 }
                 Instr::And => {
-                    let b = stack.pop().unwrap().as_bool();
-                    let a = stack.pop().unwrap().as_bool();
+                    let b = pop(&mut stack)?.as_bool();
+                    let a = pop(&mut stack)?.as_bool();
                     stack.push(Value::Bool(a && b));
                 }
                 Instr::Or => {
-                    let b = stack.pop().unwrap().as_bool();
-                    let a = stack.pop().unwrap().as_bool();
+                    let b = pop(&mut stack)?.as_bool();
+                    let a = pop(&mut stack)?.as_bool();
                     stack.push(Value::Bool(a || b));
                 }
                 Instr::Not => {
-                    let v = stack.pop().unwrap().as_int();
+                    let v = pop(&mut stack)?.as_int();
                     stack.push(Value::Int(!v));
                 }
                 Instr::Neg => {
-                    let v = stack.pop().unwrap().as_int();
+                    let v = pop(&mut stack)?.as_int();
                     stack.push(Value::Int(-v));
                 }
                 Instr::Index => {
-                    let idx = stack.pop().unwrap();
-                    let base = stack.pop().unwrap();
+                    let idx = pop(&mut stack)?;
+                    let base = pop(&mut stack)?;
                     match (base, idx) {
                         (Value::List(list), Value::Int(i)) => {
                             if i < 0 {
@@ -425,9 +432,9 @@ pub fn run(
                     }
                 }
                 Instr::Slice => {
-                    let end_val = stack.pop().unwrap();
-                    let start = stack.pop().unwrap().as_int() as usize;
-                    let base = stack.pop().unwrap();
+                    let end_val = pop(&mut stack)?;
+                    let start = pop(&mut stack)?.as_int() as usize;
+                    let base = pop(&mut stack)?;
                     match base {
                         Value::List(list) => {
                             let list_ref = list.borrow();
@@ -451,9 +458,9 @@ pub fn run(
                     }
                 }
                 Instr::StoreIndex => {
-                    let val = stack.pop().unwrap();
-                    let idx = stack.pop().unwrap();
-                    let base = stack.pop().unwrap();
+                    let val = pop(&mut stack)?;
+                    let idx = pop(&mut stack)?;
+                    let base = pop(&mut stack)?;
                     match (base, idx) {
                         (Value::List(list), Value::Int(i)) => {
                             let mut l = list.borrow_mut();
@@ -476,7 +483,7 @@ pub fn run(
                     }
                 }
                 Instr::Attr(attr) => {
-                    let base = stack.pop().unwrap();
+                    let base = pop(&mut stack)?;
                     match base {
                         Value::Dict(map) => {
                             if let Some(v) = map.borrow().get(attr).cloned() {
@@ -502,8 +509,8 @@ pub fn run(
                     }
                 }
                 Instr::StoreAttr(attr) => {
-                    let val = stack.pop().unwrap();
-                    let base = stack.pop().unwrap();
+                    let val = pop(&mut stack)?;
+                    let base = pop(&mut stack)?;
                     match base {
                         Value::Dict(map) => {
                             map.borrow_mut().insert(attr.clone(), val);
@@ -515,7 +522,7 @@ pub fn run(
                     }
                 }
                 Instr::Assert => {
-                    let cond = stack.pop().unwrap().as_bool();
+                    let cond = pop(&mut stack)?.as_bool();
                     if !cond {
                         break Err(RuntimeError::AssertionError);
                     }
@@ -523,10 +530,10 @@ pub fn run(
                 Instr::CallValue(argc) => {
                     let mut args_vec: Vec<Value> = Vec::new();
                     for _ in 0..*argc {
-                        args_vec.push(stack.pop().unwrap());
+                        args_vec.push(pop(&mut stack)?);
                     }
                     args_vec.reverse();
-                    let func_val = stack.pop().unwrap();
+                    let func_val = pop(&mut stack)?;
                     if let Value::Str(name) = func_val {
                         if let Some(func) = funcs.get(&name) {
                             let mut new_env = HashMap::new();
@@ -540,10 +547,12 @@ pub fn run(
                             pc = func.address;
                             advance_pc = false;
                         } else {
-                            panic!("Unknown function: {}", name);
+                            break Err(RuntimeError::UndefinedIdentError(name));
                         }
                     } else {
-                        panic!("CALL_VALUE expects function name");
+                        break Err(RuntimeError::TypeError(
+                            "Call value expects function name".to_string(),
+                        ));
                     }
                 }
                 Instr::PushNone => {
@@ -554,7 +563,7 @@ pub fn run(
                     advance_pc = false;
                 }
                 Instr::JumpIfFalse(target) => {
-                    let cond = stack.pop().unwrap().as_bool();
+                    let cond = pop(&mut stack)?.as_bool();
                     if !cond {
                         pc = *target;
                         advance_pc = false;
@@ -564,7 +573,7 @@ pub fn run(
                     if let Some(func) = funcs.get(name) {
                         let mut new_env = HashMap::new();
                         for param in func.params.iter().rev() {
-                            let arg = stack.pop().unwrap();
+                            let arg = pop(&mut stack)?;
                             new_env.insert(param.clone(), arg);
                         }
                         env_stack.push(env);
@@ -573,27 +582,27 @@ pub fn run(
                         pc = func.address;
                         advance_pc = false;
                     } else {
-                        panic!("Unknown function: {}", name);
+                        break Err(RuntimeError::UndefinedIdentError(name.clone()));
                     }
                 }
                 Instr::TailCall(name) => {
                     if let Some(func) = funcs.get(name) {
                         let mut new_env = HashMap::new();
                         for param in func.params.iter().rev() {
-                            let arg = stack.pop().unwrap();
+                            let arg = pop(&mut stack)?;
                             new_env.insert(param.clone(), arg);
                         }
                         env = new_env;
                         pc = func.address;
                         advance_pc = false;
                     } else {
-                        panic!("Unknown function: {}", name);
+                        break Err(RuntimeError::UndefinedIdentError(name.clone()));
                     }
                 }
                 Instr::CallBuiltin(name, argc) => {
                     let mut args: Vec<Value> = Vec::new();
                     for _ in 0..*argc {
-                        args.push(stack.pop().unwrap());
+                        args.push(pop(&mut stack)?);
                     }
                     args.reverse();
                     match call_builtin(name, &args, &env, &globals) {

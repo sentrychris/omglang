@@ -2,17 +2,6 @@
 
 Ordered from most recent at the top to oldest at the bottom.
 
-## [0.1.3] - 2025-08-10
-
-### Changed
-- Consolidated multiple raise opcodes into a single `RAISE <kind>` instruction driven by a new compact `ErrorKind` enum.
-- Updated compiler, VM, and disassembler to encode error kinds as a byte operand and construct `RuntimeError` variants centrally.
-- Added VM invariant error on stack underflow for `RAISE`.
-
-### Added
-- Backward decoding support for legacy raise opcodes (47–51) for one release.
-- Tests covering all raise kinds and stack underflow behaviour.
-
 ## [0.1.2] - 2025-08-10
 
 ### Added
@@ -21,10 +10,17 @@ Ordered from most recent at the top to oldest at the bottom.
 - Registered `call_builtin` as a recognized built-in in the compiler for proper lowering during bytecode generation.
 - Narrowed error types, adding opcode instructions, handlers and compiler instrutions for specific errors i.e. `SyntaxError`.
 - Prefix for calls from the interpreter into the VM layer. Such calls are now prefixed with `_omg_vm` for clarity.
+- Backward decoding support for legacy raise opcodes (47–51) for one release.
+- Tests covering all raise kinds and stack underflow behaviour.
 
 ### Changed
 - Updated the bytecode interpreter to invoke `call_builtin` for `Instr::CallBuiltin` to streamline execution flow.
 - Simplified the interpreter to delegate built-in calls to `call_builtin`.
+- Consolidated multiple raise opcodes into a single `RAISE <kind>` instruction driven by a new compact `ErrorKind` enum.
+- Updated compiler, VM, and disassembler to encode error kinds as a byte operand and construct `RuntimeError` variants centrally.
+- Added VM invariant error on stack underflow for `RAISE`.
+- VM stack operations now return `RuntimeError::VmInvariant` on underflow instead of panicking.
+- Function call handling in the VM now returns `RuntimeError` on undefined or invalid calls instead of panicking.
 
 ### Fixed
 - Centralized `call_builtin` helper eliminates scattered implementations across the runtime.
