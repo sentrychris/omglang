@@ -782,7 +782,7 @@ proc strip_header(source, path) {
             return source[i:]
         }
     }
-    raise("RuntimeError: OMG script missing required header ';;;omg' in " + path)
+    syntax_error("OMG script missing required header ';;;omg' in " + path)
     return source
 }
 
