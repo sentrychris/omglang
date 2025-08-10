@@ -1,5 +1,45 @@
 use std::fmt;
 
+#[repr(u8)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ErrorKind {
+    Generic = 0,
+    Syntax = 1,
+    Type = 2,
+    UndefinedIdent = 3,
+    Value = 4,
+    ModuleImport = 5,
+}
+
+impl ErrorKind {
+    pub fn into_runtime(self, msg: String) -> RuntimeError {
+        match self {
+            ErrorKind::Generic => RuntimeError::Raised(msg),
+            ErrorKind::Syntax => RuntimeError::SyntaxError(msg),
+            ErrorKind::Type => RuntimeError::TypeError(msg),
+            ErrorKind::UndefinedIdent => RuntimeError::UndefinedIdentError(msg),
+            ErrorKind::Value => RuntimeError::ValueError(msg),
+            ErrorKind::ModuleImport => RuntimeError::ModuleImportError(msg),
+        }
+    }
+}
+
+impl TryFrom<u8> for ErrorKind {
+    type Error = ();
+    fn try_from(v: u8) -> Result<Self, ()> {
+        use ErrorKind::*;
+        Ok(match v {
+            0 => Generic,
+            1 => Syntax,
+            2 => Type,
+            3 => UndefinedIdent,
+            4 => Value,
+            5 => ModuleImport,
+            _ => return Err(()),
+        })
+    }
+}
+
 /// Runtime errors that can occur during bytecode execution.
 #[derive(Debug, PartialEq)]
 pub enum RuntimeError {
@@ -25,6 +65,8 @@ pub enum RuntimeError {
     ZeroDivisionError,
     /// User-raised runtime error.
     Raised(String),
+    /// Internal VM invariant violation.
+    VmInvariant(String),
 }
 
 impl fmt::Display for RuntimeError {
@@ -62,6 +104,9 @@ impl fmt::Display for RuntimeError {
             }
             RuntimeError::Raised(msg) => {
                 write!(f, "RuntimeError: {}", msg)
+            }
+            RuntimeError::VmInvariant(msg) => {
+                write!(f, "VmInvariant: {}", msg)
             }
         }
     }

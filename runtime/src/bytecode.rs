@@ -1,5 +1,7 @@
 use std::collections::HashMap;
 
+use crate::error::ErrorKind;
+
 const BC_VERSION: u32 = (0 << 16) | (1 << 8) | 1;
 
 /// Representation of a compiled function.
@@ -58,12 +60,7 @@ pub enum Instr {
     CallValue(usize),
     SetupExcept(usize),
     PopBlock,
-    Raise,
-    RaiseModuleImportError,
-    RaiseSyntaxError,
-    RaiseTypeError,
-    RaiseUndefinedIdentError,
-    RaiseValueError,
+    Raise(ErrorKind),
 }
 
 fn read_u32(data: &[u8], idx: &mut usize) -> u32 {
@@ -207,12 +204,17 @@ pub fn parse_bytecode(data: &[u8]) -> (Vec<Instr>, HashMap<String, Function>) {
                 code.push(Instr::SetupExcept(t));
             }
             45 => code.push(Instr::PopBlock),
-            46 => code.push(Instr::Raise),
-            47 => code.push(Instr::RaiseSyntaxError),
-            48 => code.push(Instr::RaiseTypeError),
-            49 => code.push(Instr::RaiseUndefinedIdentError),
-            50 => code.push(Instr::RaiseValueError),
-            51 => code.push(Instr::RaiseModuleImportError),
+            46 => {
+                let kind_b = data[idx];
+                idx += 1;
+                let kind = ErrorKind::try_from(kind_b).unwrap();
+                code.push(Instr::Raise(kind));
+            }
+            47 => code.push(Instr::Raise(ErrorKind::Syntax)),
+            48 => code.push(Instr::Raise(ErrorKind::Type)),
+            49 => code.push(Instr::Raise(ErrorKind::UndefinedIdent)),
+            50 => code.push(Instr::Raise(ErrorKind::Value)),
+            51 => code.push(Instr::Raise(ErrorKind::ModuleImport)),
             _ => {}
         }
     }

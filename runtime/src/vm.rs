@@ -631,29 +631,17 @@ pub fn run(
                 Instr::PopBlock => {
                     block_stack.pop();
                 }
-                Instr::Raise => {
-                    let msg = stack.pop().unwrap().to_string();
-                    break Err(RuntimeError::Raised(msg));
-                }
-                Instr::RaiseSyntaxError => {
-                    let msg = stack.pop().unwrap().to_string();
-                    break Err(RuntimeError::SyntaxError(msg));
-                }
-                Instr::RaiseTypeError => {
-                    let msg = stack.pop().unwrap().to_string();
-                    break Err(RuntimeError::TypeError(msg));
-                }
-                Instr::RaiseUndefinedIdentError => {
-                    let msg = stack.pop().unwrap().to_string();
-                    break Err(RuntimeError::UndefinedIdentError(msg));
-                }
-                Instr::RaiseValueError => {
-                    let msg = stack.pop().unwrap().to_string();
-                    break Err(RuntimeError::ValueError(msg));
-                }
-                Instr::RaiseModuleImportError => {
-                    let msg = stack.pop().unwrap().to_string();
-                    break Err(RuntimeError::ModuleImportError(msg))
+                Instr::Raise(kind) => {
+                    let msg_val = match stack.pop() {
+                        Some(v) => v,
+                        None => {
+                            break Err(RuntimeError::VmInvariant(
+                                "stack underflow on RAISE".to_string(),
+                            ))
+                        }
+                    };
+                    let msg = msg_val.to_string();
+                    break Err(kind.into_runtime(msg));
                 }
             }
             break Ok(());

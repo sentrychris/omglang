@@ -2,6 +2,17 @@
 
 Ordered from most recent at the top to oldest at the bottom.
 
+## [0.1.3] - 2025-08-10
+
+### Changed
+- Consolidated multiple raise opcodes into a single `RAISE <kind>` instruction driven by a new compact `ErrorKind` enum.
+- Updated compiler, VM, and disassembler to encode error kinds as a byte operand and construct `RuntimeError` variants centrally.
+- Added VM invariant error on stack underflow for `RAISE`.
+
+### Added
+- Backward decoding support for legacy raise opcodes (47–51) for one release.
+- Tests covering all raise kinds and stack underflow behaviour.
+
 ## [0.1.2] - 2025-08-10
 
 ### Added
