@@ -1,6 +1,6 @@
 use super::*;
 use crate::bytecode::{Function, Instr};
-use crate::error::{RuntimeError, ErrorKind};
+use crate::error::{ErrorKind, RuntimeError};
 use std::collections::HashMap;
 
 #[test]
@@ -228,4 +228,54 @@ fn call_builtin_dispatches_hex() {
     let funcs = HashMap::new();
     let result = run(&code, &funcs, &[]);
     assert!(result.is_ok());
+}
+
+#[test]
+fn call_undefined_function_errors() {
+    let code = vec![Instr::Call("foo".to_string()), Instr::Halt];
+    let funcs = HashMap::new();
+    let result = run(&code, &funcs, &[]);
+    assert_eq!(
+        result,
+        Err(RuntimeError::UndefinedIdentError("foo".to_string()))
+    );
+}
+
+#[test]
+fn tail_call_undefined_function_errors() {
+    let code = vec![Instr::TailCall("foo".to_string()), Instr::Halt];
+    let funcs = HashMap::new();
+    let result = run(&code, &funcs, &[]);
+    assert_eq!(
+        result,
+        Err(RuntimeError::UndefinedIdentError("foo".to_string()))
+    );
+}
+
+#[test]
+fn call_value_type_error_when_non_string() {
+    let code = vec![Instr::PushInt(0), Instr::CallValue(0), Instr::Halt];
+    let funcs = HashMap::new();
+    let result = run(&code, &funcs, &[]);
+    assert_eq!(
+        result,
+        Err(RuntimeError::TypeError(
+            "Call value expects function name".to_string(),
+        ))
+    );
+}
+
+#[test]
+fn call_value_unknown_function_errors() {
+    let code = vec![
+        Instr::PushStr("foo".to_string()),
+        Instr::CallValue(0),
+        Instr::Halt,
+    ];
+    let funcs = HashMap::new();
+    let result = run(&code, &funcs, &[]);
+    assert_eq!(
+        result,
+        Err(RuntimeError::UndefinedIdentError("foo".to_string()))
+    );
 }
