@@ -32,6 +32,12 @@ fn main() {
         println!("Copied {} -> {}", out_bc.display(), dest.display());
     }
 
-    println!("cargo:rerun-if-changed={}", root.join("bootstrap/interpreter.omg").display());
-    println!("cargo:rerun-if-changed={}", root.join("omglang/compiler.py").display());
+    println!(
+        "cargo:rerun-if-changed={}",
+        root.join("bootstrap/interpreter.omg").display()
+    );
+    println!(
+        "cargo:rerun-if-changed={}",
+        root.join("omglang/compiler.py").display()
+    );
 }

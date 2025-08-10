@@ -1,15 +1,19 @@
 ;;;omg
 
 alloc tok_len := 0
+
 proc is_digit(ch) {
     return ch >= "0" and ch <= "9"
 }
+
 proc is_alpha(ch) {
     return (ch >= "a" and ch <= "z") or (ch >= "A" and ch <= "Z") or ch == "_"
 }
+
 proc is_alnum(ch) {
     return is_alpha(ch) or is_digit(ch)
 }
+
 proc read_number(src, i) {
     alloc num := 0
     alloc c := ""
@@ -21,6 +25,7 @@ proc read_number(src, i) {
     }
     return [num, i]
 }
+
 proc read_binary(src, i) {
     alloc num := 0
     alloc c := ""
@@ -32,6 +37,7 @@ proc read_binary(src, i) {
     }
     return [num, i]
 }
+
 proc read_ident(src, i) {
     alloc s := ""
     alloc n := length(src)
@@ -41,6 +47,7 @@ proc read_ident(src, i) {
     }
     return [s, i]
 }
+
 proc tokenize(src) {
     alloc tokens := {}
     alloc n := 0
@@ -50,15 +57,24 @@ proc tokenize(src) {
     alloc word := ""
     alloc s := ""
     alloc src_len := length(src)
-    if src_len >= 6 and src[0] == ";" and src[1] == ";" and src[2] == ";" and src[3] == "o" and src[4] == "m" and src[5] == "g" {
-        i := 6
-        if i < src_len and src[i] == "\r" {
-            i := i + 1
-        }
-        if i < src_len and src[i] == "\n" {
-            i := i + 1
+
+    if src_len == 0 or src[src_len - 1] != "\n" {
+        src := src + "\n"
+        src_len := src_len + 1
+    }
+
+    if src_len >= 6 {
+        if src[0] == ";" and src[1] == ";" and src[2] == ";" and src[3] == "o" and src[4] == "m" and src[5] == "g" {
+            i := 6
+            if i < src_len and src[i] == "\r" {
+                i := i + 1
+            }
+            if i < src_len and src[i] == "\n" {
+                i := i + 1
+            }
         }
     }
+
     loop i < src_len {
         c := src[i]
         if c == " " or c == "\t" or c == "\r" or c == "\n" {
@@ -79,6 +95,8 @@ proc tokenize(src) {
             tokens[n] := ["symbol", "=="]
             n := n + 1
             i := i + 2
+        } elif c == "=" {
+            panic("RuntimeError: Unexpected character =")
         } elif c == "!" and i + 1 < src_len and src[i + 1] == "=" {
             tokens[n] := ["symbol", "!="]
             n := n + 1
@@ -99,6 +117,8 @@ proc tokenize(src) {
             tokens[n] := ["symbol", ">>"]
             n := n + 1
             i := i + 2
+        } elif c == "/" and i + 1 < src_len and src[i + 1] == "/" {
+            panic("RuntimeError: Unexpected / after /")
         } elif c == "/" and i + 1 < src_len and src[i + 1] == "*" {
             i := i + 2
             loop i + 1 < src_len and (src[i] != "*" or src[i + 1] != "/") {
@@ -154,14 +174,19 @@ proc tokenize(src) {
             }
         }
     }
+
     tok_len := n
+    tokens[n] := ["eof", false]
+
     return tokens
 }
+
 proc parse(source) {
     alloc tokens := tokenize(source)
     alloc res := parse_program(tokens, 0)
     return res[0]
 }
+
 proc parse_program(tokens, i) {
     alloc stmts := []
     alloc res := [false, i]
@@ -171,6 +196,7 @@ proc parse_program(tokens, i) {
     }
     return [stmts, res[1]]
 }
+
 proc parse_statement(tokens, i) {
     alloc t := tokens[i]
     if t[0] == "kw" and t[1] == "alloc" {
@@ -259,6 +285,7 @@ proc parse_statement(tokens, i) {
         return [lval_res[0], lval_res[1]]
     }
 }
+
 proc parse_block(tokens, i) {
     alloc stmts := []
     alloc j := i
@@ -271,9 +298,11 @@ proc parse_block(tokens, i) {
     }
     return [stmts, j + 1]
 }
+
 proc parse_expression(tokens, i) {
     return parse_or(tokens, i)
 }
+
 proc parse_or(tokens, i) {
     alloc res := parse_and(tokens, i)
     alloc left := res[0]
@@ -286,6 +315,7 @@ proc parse_or(tokens, i) {
     }
     return [left, j]
 }
+
 proc parse_and(tokens, i) {
     alloc res := parse_comparison(tokens, i)
     alloc left := res[0]
@@ -298,6 +328,7 @@ proc parse_and(tokens, i) {
     }
     return [left, j]
 }
+
 proc parse_comparison(tokens, i) {
     alloc res := parse_bit_or(tokens, i)
     alloc left := res[0]
@@ -324,6 +355,7 @@ proc parse_comparison(tokens, i) {
     }
     return [left, j]
 }
+
 proc parse_add_sub(tokens, i) {
     alloc res := parse_term(tokens, i)
     alloc left := res[0]
@@ -332,6 +364,13 @@ proc parse_add_sub(tokens, i) {
     alloc right_res := [false, 0]
     loop j < tok_len and tokens[j][0] == "symbol" and (tokens[j][1] == "+" or tokens[j][1] == "-") {
         op := tokens[j]
+        if tokens[j + 1][0] == "symbol" and (tokens[j + 1][1] == "+" or tokens[j + 1][1] == "-") {
+            if op[1] == "+" and tokens[j + 1][1] == "-" {
+                panic("RuntimeError: unexpected - after + unary operator")
+            } elif op[1] == "-" and tokens[j + 1][1] == "+" {
+                panic("RuntimeError: unexpected + after - unary operator")
+            }
+        }
         right_res := parse_term(tokens, j + 1)
         if op[1] == "+" {
             left := ["add", left, right_res[0]]
@@ -342,6 +381,7 @@ proc parse_add_sub(tokens, i) {
     }
     return [left, j]
 }
+
 proc parse_term(tokens, i) {
     alloc res := parse_factor(tokens, i)
     alloc left := res[0]
@@ -420,13 +460,23 @@ proc parse_bit_or(tokens, i) {
     }
     return [left, j]
 }
+
 proc parse_factor(tokens, i) {
     alloc t := tokens[i]
     alloc node := false
     alloc j := i
     alloc k := 0
     alloc res := [false, 0]
-    if t[0] == "symbol" and t[1] == "-" {
+    if t[0] == "symbol" and t[1] == "+" {
+        if tokens[i + 1][0] == "symbol" and tokens[i + 1][1] == "-" {
+            panic("RuntimeError: unexpected - after + unary operator")
+        }
+        res := parse_factor(tokens, i + 1)
+        return [["unary", "add", res[0]], res[1]]
+    } elif t[0] == "symbol" and t[1] == "-" {
+        if tokens[i + 1][0] == "symbol" and tokens[i + 1][1] == "+" {
+            panic("RuntimeError: unexpected + after - unary operator")
+        }
         res := parse_factor(tokens, i + 1)
         return [["unary", "sub", res[0]], res[1]]
     } elif t[0] == "symbol" and t[1] == "~" {
@@ -550,10 +600,12 @@ proc parse_factor(tokens, i) {
     }
     return [node, j]
 }
+
 alloc global_env := []
 alloc current_dir := "."
 alloc module_file := "<stdin>"
 alloc loaded_modules := []
+
 proc lookup_var(env, name) {
     alloc i := 0
     alloc entry := false
@@ -577,6 +629,7 @@ proc lookup_var(env, name) {
     }
     return [false, false]
 }
+
 proc env_set(env, name, value) {
     alloc i := 0
     alloc entry := false
@@ -592,6 +645,7 @@ proc env_set(env, name, value) {
     env := env + [[name, value]]
     return env
 }
+
 proc copy_env(env) {
     alloc result := []
     alloc i := 0
@@ -696,6 +750,29 @@ proc join_path(base, rel) {
     }
     return res
 }
+
+proc strip_header(source, path) {
+    alloc i := 0
+    alloc src_len := length(source)
+    loop i < src_len and (source[i] == " " or source[i] == "\t" or source[i] == "\r" or source[i] == "\n") {
+        i := i + 1
+    }
+    if i + 5 < src_len {
+        if source[i] == ";" and source[i+1] == ";" and source[i+2] == ";" and source[i+3] == "o" and source[i+4] == "m" and source[i+5] == "g" {
+            i := i + 6
+            if i < src_len and source[i] == "\r" {
+                i := i + 1
+            }
+            if i < src_len and source[i] == "\n" {
+                i := i + 1
+            }
+            return source[i:]
+        }
+    }
+    panic("RuntimeError: OMG script missing required header ';;;omg' in " + path)
+    return source
+}
+
 proc call_function(func, arg_values, env) {
     if func[0] == "function" {
         alloc params := func[1]
@@ -708,6 +785,10 @@ proc call_function(func, arg_values, env) {
         alloc local := copy_env(base)
         alloc i := 0
         alloc params_len := length(params)
+        alloc arg_len := length(arg_values)
+        if arg_len != params_len {
+            panic("TypeError: Function expects " + params_len + " arguments")
+        }
         loop i < params_len {
             local := env_set(local, params[i], arg_values[i])
             i := i + 1
@@ -721,20 +802,50 @@ proc call_function(func, arg_values, env) {
     } elif func[0] == "builtin" {
         alloc name := func[1]
         if name == "length" {
+            if length(arg_values) != 1 {
+                panic("RuntimeError: length() expects one positional argument")
+            }
             return length(arg_values[0])
         } elif name == "read_file" {
+            if length(arg_values) != 1 {
+                panic("RuntimeError: read_file() expects one positional argument")
+            }
             return read_file(arg_values[0])
         } elif name == "ascii" {
+            if length(arg_values) != 1 {
+                panic("RuntimeError: ascii() expects one positional argument")
+            }
             return ascii(arg_values[0])
         } elif name == "chr" {
+            if length(arg_values) != 1 {
+                panic("RuntimeError: chr() expects one positional argument")
+            }
             return chr(arg_values[0])
         } elif name == "freeze" {
+            if length(arg_values) != 1 {
+                panic("RuntimeError: freeze() expects one positional argument")
+            }
             return freeze(arg_values[0])
+        } elif name == "panic" {
+            panic(arg_values[0])
+            return false
+        } elif name == "hex" {
+            if length(arg_values) != 1 {
+                panic("RuntimeError: hex() expects one integer")
+            }
+            return hex(arg_values[0])
+        } elif name == "binary" {
+            if length(arg_values) == 1 {
+                return binary(arg_values[0])
+            } elif length(arg_values) == 2 {
+                return binary(arg_values[0], arg_values[1])
+            }
+            panic("RuntimeError: binary() expects one or two integers")
         }
-        emit "Unknown builtin: " + name
+        panic("RuntimeError: Unknown builtin: " + name)
         return false
     } else {
-        emit "Not a function value"
+        panic("TypeError: Not a function value")
         return false
     }
 }
@@ -745,8 +856,7 @@ proc import_module(path) {
     alloc lm_len := length(loaded_modules)
     loop k < lm_len {
         if loaded_modules[k] == full {
-            emit "Recursive import: " + full
-            return {}
+            panic("RuntimeError: Recursive import of '" + full + "'")
         }
         k := k + 1
     }
@@ -766,23 +876,20 @@ proc import_module(path) {
     }
     alloc source := read_file(name)
     if source == false {
-        emit "Failed to read file: " + full
-        current_dir := saved_dir
-        module_file := saved_file
-        global_env := saved_global
-        loaded_modules := loaded_modules[0:lm_len]
-        return {}
+        panic("FileNotFoundError: Module '" + path + "' not found relative to '" + saved_file + "'")
     }
-    alloc src_len := length(source)
-    if src_len >= 6 and source[0] == ";" and source[1] == ";" and source[2] == ";" and source[3] == "o" and source[4] == "m" and source[5] == "g" {
-        alloc j := 6
-        if j < src_len and source[j] == "\n" {
-            j := j + 1
-        }
-        source := source[j:]
-    }
+    source := strip_header(source, full)
     alloc ast := parse(source)
-    alloc env := [["length", ["builtin", "length"]], ["read_file", ["builtin", "read_file"]], ["ascii", ["builtin", "ascii"]], ["chr", ["builtin", "chr"]], ["freeze", ["builtin", "freeze"]]]
+    alloc env := [
+        ["length", ["builtin", "length"]],
+        ["read_file", ["builtin", "read_file"]],
+        ["ascii", ["builtin", "ascii"]],
+        ["binary", ["builtin", "binary"]],
+        ["chr", ["builtin", "chr"]],
+        ["hex", ["builtin", "hex"]]
+        ["freeze", ["builtin", "freeze"]],
+        ["panic", ["builtin", "panic"]]
+    ]
     env := env_set(env, "args", [])
     global_env := env
     alloc exports := []
@@ -821,6 +928,7 @@ proc import_module(path) {
     loaded_modules := loaded_modules[0:lm_len]
     return module_ns
 }
+
 proc eval_expr(expr, env) {
     alloc kind := expr[0]
     if kind == "number" {
@@ -835,7 +943,7 @@ proc eval_expr(expr, env) {
         if res[0] {
             return res[1]
         }
-        emit "Undefined variable: " + name
+        panic("UndefinedVariableException: Undefined variable '" + name + "'")
         return false
     } elif kind == "add" {
         return eval_expr(expr[1], env) + eval_expr(expr[2], env)
@@ -945,10 +1053,11 @@ proc eval_expr(expr, env) {
         }
         return call_function(func_val, arg_values, env)
     } else {
-        emit "Unknown expr kind: " + kind
+        panic("RuntimeError: Unknown expr kind: " + kind)
         return false
     }
 }
+
 proc execute(stmts, env, is_global) {
     alloc i := 0
     alloc stmt := false
@@ -977,8 +1086,15 @@ proc execute(stmts, env, is_global) {
             env := env_set(env, stmt[1], eval_expr(stmt[2], env))
             if is_global { global_env := env }
         } elif kind == "assign" {
-            env := env_set(env, stmt[1], eval_expr(stmt[2], env))
-            if is_global { global_env := env }
+            name := stmt[1]
+            val := eval_expr(stmt[2], env)
+            alloc lookup := lookup_var(env, name)
+            if lookup[0] {
+                env := env_set(env, name, val)
+                if is_global { global_env := env }
+            } else {
+                panic("UndefinedVariableException: Undefined variable '" + name + "'")
+            }
         } elif kind == "attr_assign" {
             obj := eval_expr(stmt[1], env)
             attr := stmt[2]
@@ -994,7 +1110,7 @@ proc execute(stmts, env, is_global) {
             if cond {
                 _ := false
             } else {
-                emit "Assertion failed"
+                panic("AssertionError: Assertion failed")
             }
         } elif kind == "if" {
             cond := eval_expr(stmt[1], env)
@@ -1049,19 +1165,30 @@ proc execute(stmts, env, is_global) {
             }
             _ := call_function(func_val, call_args, env)
         } else {
-            emit "Unknown statement: " + kind
+            panic("RuntimeError: Unknown statement: " + kind)
         }
         i := i + 1
     }
     return ["normal", false]
 }
+
 proc run(source) {
     alloc ast := parse(source)
-    alloc env := [["length", ["builtin", "length"]], ["read_file", ["builtin", "read_file"]], ["ascii", ["builtin", "ascii"]], ["chr", ["builtin", "chr"]], ["freeze", ["builtin", "freeze"]]]
+    alloc env := [
+        ["length", ["builtin", "length"]],
+        ["read_file", ["builtin", "read_file"]],
+        ["ascii", ["builtin", "ascii"]],
+        ["binary", ["builtin", "binary"]],
+        ["chr", ["builtin", "chr"]],
+        ["hex", ["builtin", "hex"]]
+        ["freeze", ["builtin", "freeze"]],
+        ["panic", ["builtin", "panic"]]
+    ]
     env := env_set(env, "args", args)
     global_env := env
     return execute(ast, env, true)
 }
+
 proc run_file_with_args(path, file_args) {
     alloc saved := args
     alloc old_dir := current_dir
@@ -1080,33 +1207,20 @@ proc run_file_with_args(path, file_args) {
     }
     alloc source := read_file(name)
     if source == false {
-        emit "Failed to read file: " + path
-        current_dir := old_dir
-        module_file := old_file
-        args := saved
-        return ["error", false]
+        panic("RuntimeError: Failed to read file: " + path)
     }
-    alloc src_len := length(source)
-    if src_len >= 6 and source[0] == ";" and source[1] == ";" and source[2] == ";" and source[3] == "o" and source[4] == "m" and source[5] == "g" {
-        source := source[6:]
-        if length(source) > 0 {
-            if source[0] == "\r" {
-                source := source[1:]
-            }
-            if length(source) > 0 and source[0] == "\n" {
-                source := source[1:]
-            }
-        }
-    }
+    source := strip_header(source, path)
     alloc res := run(source)
     current_dir := old_dir
     module_file := old_file
     args := saved
     return res
 }
+
 proc run_file(path) {
     return run_file_with_args(path, args)
 }
+
 if length(args) > 0 {
     run_file(args[0])
 }
