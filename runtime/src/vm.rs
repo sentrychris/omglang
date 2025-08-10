@@ -625,6 +625,10 @@ pub fn run(
                     let msg = stack.pop().unwrap().to_string();
                     break Err(RuntimeError::Raised(msg));
                 }
+                Instr::RaiseSyntaxError => {
+                    let msg = stack.pop().unwrap().to_string();
+                    break Err(RuntimeError::SyntaxError(msg));
+                }
             }
             break Ok(());
         };
