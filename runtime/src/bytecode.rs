@@ -199,4 +199,3 @@ pub fn parse_bytecode(data: &[u8]) -> (Vec<Instr>, HashMap<String, Function>) {
     }
     (code, funcs)
 }
-

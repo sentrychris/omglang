@@ -50,13 +50,19 @@ proc tokenize(src) {
     alloc word := ""
     alloc s := ""
     alloc src_len := length(src)
-    if src_len >= 6 and src[0] == ";" and src[1] == ";" and src[2] == ";" and src[3] == "o" and src[4] == "m" and src[5] == "g" {
-        i := 6
-        if i < src_len and src[i] == "\r" {
-            i := i + 1
-        }
-        if i < src_len and src[i] == "\n" {
-            i := i + 1
+    if src_len == 0 or src[src_len - 1] != "\n" {
+        src := src + "\n"
+        src_len := src_len + 1
+    }
+    if src_len >= 6 {
+        if src[0] == ";" and src[1] == ";" and src[2] == ";" and src[3] == "o" and src[4] == "m" and src[5] == "g" {
+            i := 6
+            if i < src_len and src[i] == "\r" {
+                i := i + 1
+            }
+            if i < src_len and src[i] == "\n" {
+                i := i + 1
+            }
         }
     }
     loop i < src_len {
@@ -79,6 +85,8 @@ proc tokenize(src) {
             tokens[n] := ["symbol", "=="]
             n := n + 1
             i := i + 2
+        } elif c == "=" {
+            panic("RuntimeError: Unexpected character =")
         } elif c == "!" and i + 1 < src_len and src[i + 1] == "=" {
             tokens[n] := ["symbol", "!="]
             n := n + 1
@@ -155,6 +163,7 @@ proc tokenize(src) {
         }
     }
     tok_len := n
+    tokens[n] := ["eof", false]
     return tokens
 }
 proc parse(source) {
@@ -696,6 +705,28 @@ proc join_path(base, rel) {
     }
     return res
 }
+
+proc strip_header(source, path) {
+    alloc i := 0
+    alloc src_len := length(source)
+    loop i < src_len and (source[i] == " " or source[i] == "\t" or source[i] == "\r" or source[i] == "\n") {
+        i := i + 1
+    }
+    if i + 5 < src_len {
+        if source[i] == ";" and source[i+1] == ";" and source[i+2] == ";" and source[i+3] == "o" and source[i+4] == "m" and source[i+5] == "g" {
+            i := i + 6
+            if i < src_len and source[i] == "\r" {
+                i := i + 1
+            }
+            if i < src_len and source[i] == "\n" {
+                i := i + 1
+            }
+            return source[i:]
+        }
+    }
+    panic("RuntimeError: OMG script missing required header ';;;omg' in " + path)
+    return source
+}
 proc call_function(func, arg_values, env) {
     if func[0] == "function" {
         alloc params := func[1]
@@ -708,6 +739,10 @@ proc call_function(func, arg_values, env) {
         alloc local := copy_env(base)
         alloc i := 0
         alloc params_len := length(params)
+        alloc arg_len := length(arg_values)
+        if arg_len != params_len {
+            panic("TypeError: Function expects " + params_len + " arguments")
+        }
         loop i < params_len {
             local := env_set(local, params[i], arg_values[i])
             i := i + 1
@@ -730,11 +765,14 @@ proc call_function(func, arg_values, env) {
             return chr(arg_values[0])
         } elif name == "freeze" {
             return freeze(arg_values[0])
+        } elif name == "panic" {
+            panic(arg_values[0])
+            return false
         }
-        emit "Unknown builtin: " + name
+        panic("RuntimeError: Unknown builtin: " + name)
         return false
     } else {
-        emit "Not a function value"
+        panic("TypeError: Not a function value")
         return false
     }
 }
@@ -745,8 +783,7 @@ proc import_module(path) {
     alloc lm_len := length(loaded_modules)
     loop k < lm_len {
         if loaded_modules[k] == full {
-            emit "Recursive import: " + full
-            return {}
+            panic("RuntimeError: Recursive import of '" + full + "'")
         }
         k := k + 1
     }
@@ -766,23 +803,11 @@ proc import_module(path) {
     }
     alloc source := read_file(name)
     if source == false {
-        emit "Failed to read file: " + full
-        current_dir := saved_dir
-        module_file := saved_file
-        global_env := saved_global
-        loaded_modules := loaded_modules[0:lm_len]
-        return {}
+        panic("FileNotFoundError: Module '" + path + "' not found relative to '" + saved_file + "'")
     }
-    alloc src_len := length(source)
-    if src_len >= 6 and source[0] == ";" and source[1] == ";" and source[2] == ";" and source[3] == "o" and source[4] == "m" and source[5] == "g" {
-        alloc j := 6
-        if j < src_len and source[j] == "\n" {
-            j := j + 1
-        }
-        source := source[j:]
-    }
+    source := strip_header(source, full)
     alloc ast := parse(source)
-    alloc env := [["length", ["builtin", "length"]], ["read_file", ["builtin", "read_file"]], ["ascii", ["builtin", "ascii"]], ["chr", ["builtin", "chr"]], ["freeze", ["builtin", "freeze"]]]
+    alloc env := [["length", ["builtin", "length"]], ["read_file", ["builtin", "read_file"]], ["ascii", ["builtin", "ascii"]], ["chr", ["builtin", "chr"]], ["freeze", ["builtin", "freeze"]], ["panic", ["builtin", "panic"]]]
     env := env_set(env, "args", [])
     global_env := env
     alloc exports := []
@@ -835,7 +860,7 @@ proc eval_expr(expr, env) {
         if res[0] {
             return res[1]
         }
-        emit "Undefined variable: " + name
+        panic("UndefinedVariableException: Undefined variable '" + name + "'")
         return false
     } elif kind == "add" {
         return eval_expr(expr[1], env) + eval_expr(expr[2], env)
@@ -945,7 +970,7 @@ proc eval_expr(expr, env) {
         }
         return call_function(func_val, arg_values, env)
     } else {
-        emit "Unknown expr kind: " + kind
+        panic("RuntimeError: Unknown expr kind: " + kind)
         return false
     }
 }
@@ -977,8 +1002,15 @@ proc execute(stmts, env, is_global) {
             env := env_set(env, stmt[1], eval_expr(stmt[2], env))
             if is_global { global_env := env }
         } elif kind == "assign" {
-            env := env_set(env, stmt[1], eval_expr(stmt[2], env))
-            if is_global { global_env := env }
+            name := stmt[1]
+            val := eval_expr(stmt[2], env)
+            alloc lookup := lookup_var(env, name)
+            if lookup[0] {
+                env := env_set(env, name, val)
+                if is_global { global_env := env }
+            } else {
+                panic("UndefinedVariableException: Undefined variable '" + name + "'")
+            }
         } elif kind == "attr_assign" {
             obj := eval_expr(stmt[1], env)
             attr := stmt[2]
@@ -994,7 +1026,7 @@ proc execute(stmts, env, is_global) {
             if cond {
                 _ := false
             } else {
-                emit "Assertion failed"
+                panic("AssertionError: Assertion failed")
             }
         } elif kind == "if" {
             cond := eval_expr(stmt[1], env)
@@ -1049,7 +1081,7 @@ proc execute(stmts, env, is_global) {
             }
             _ := call_function(func_val, call_args, env)
         } else {
-            emit "Unknown statement: " + kind
+            panic("RuntimeError: Unknown statement: " + kind)
         }
         i := i + 1
     }
@@ -1057,7 +1089,7 @@ proc execute(stmts, env, is_global) {
 }
 proc run(source) {
     alloc ast := parse(source)
-    alloc env := [["length", ["builtin", "length"]], ["read_file", ["builtin", "read_file"]], ["ascii", ["builtin", "ascii"]], ["chr", ["builtin", "chr"]], ["freeze", ["builtin", "freeze"]]]
+    alloc env := [["length", ["builtin", "length"]], ["read_file", ["builtin", "read_file"]], ["ascii", ["builtin", "ascii"]], ["chr", ["builtin", "chr"]], ["freeze", ["builtin", "freeze"]], ["panic", ["builtin", "panic"]]]
     env := env_set(env, "args", args)
     global_env := env
     return execute(ast, env, true)
@@ -1080,24 +1112,9 @@ proc run_file_with_args(path, file_args) {
     }
     alloc source := read_file(name)
     if source == false {
-        emit "Failed to read file: " + path
-        current_dir := old_dir
-        module_file := old_file
-        args := saved
-        return ["error", false]
+        panic("RuntimeError: Failed to read file: " + path)
     }
-    alloc src_len := length(source)
-    if src_len >= 6 and source[0] == ";" and source[1] == ";" and source[2] == ";" and source[3] == "o" and source[4] == "m" and source[5] == "g" {
-        source := source[6:]
-        if length(source) > 0 {
-            if source[0] == "\r" {
-                source := source[1:]
-            }
-            if length(source) > 0 and source[0] == "\n" {
-                source := source[1:]
-            }
-        }
-    }
+    source := strip_header(source, path)
     alloc res := run(source)
     current_dir := old_dir
     module_file := old_file

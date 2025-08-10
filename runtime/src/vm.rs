@@ -2,6 +2,7 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
+use std::process;
 use std::rc::Rc;
 
 use crate::bytecode::{Function, Instr};
@@ -117,11 +118,17 @@ pub fn run(
             }
             Instr::Div => {
                 let b = stack.pop().unwrap().as_int();
+                if b == 0 {
+                    return Err(RuntimeError::ZeroDivisionError);
+                }
                 let a = stack.pop().unwrap().as_int();
                 stack.push(Value::Int(a / b));
             }
             Instr::Mod => {
                 let b = stack.pop().unwrap().as_int();
+                if b == 0 {
+                    return Err(RuntimeError::ZeroDivisionError);
+                }
                 let a = stack.pop().unwrap().as_int();
                 stack.push(Value::Int(a % b));
             }
@@ -219,33 +226,73 @@ pub fn run(
                 let base = stack.pop().unwrap();
                 match (base, idx) {
                     (Value::List(list), Value::Int(i)) => {
+                        if i < 0 {
+                            return Err(RuntimeError::IndexError(
+                                "List index out of bounds!".to_string(),
+                            ));
+                        }
                         let l = list.borrow();
-                        let idx = i as usize;
-                        if idx < l.len() {
-                            stack.push(l[idx].clone());
+                        let idx_usize = i as usize;
+                        if idx_usize < l.len() {
+                            stack.push(l[idx_usize].clone());
                         } else {
-                            stack.push(Value::Int(0));
+                            return Err(RuntimeError::IndexError(
+                                "List index out of bounds!".to_string(),
+                            ));
                         }
                     }
                     (Value::Dict(map), Value::Str(k)) => {
-                        stack.push(map.borrow().get(&k).cloned().unwrap_or(Value::Int(0)));
+                        if let Some(v) = map.borrow().get(&k).cloned() {
+                            stack.push(v);
+                        } else {
+                            return Err(RuntimeError::KeyError(k));
+                        }
                     }
                     (Value::Dict(map), Value::Int(i)) => {
                         let key = i.to_string();
-                        stack.push(map.borrow().get(&key).cloned().unwrap_or(Value::Int(0)));
+                        if let Some(v) = map.borrow().get(&key).cloned() {
+                            stack.push(v);
+                        } else {
+                            return Err(RuntimeError::KeyError(key));
+                        }
                     }
                     (Value::FrozenDict(map), Value::Str(k)) => {
-                        stack.push(map.get(&k).cloned().unwrap_or(Value::Int(0)));
+                        if let Some(v) = map.get(&k).cloned() {
+                            stack.push(v);
+                        } else {
+                            return Err(RuntimeError::KeyError(k));
+                        }
                     }
                     (Value::FrozenDict(map), Value::Int(i)) => {
                         let key = i.to_string();
-                        stack.push(map.get(&key).cloned().unwrap_or(Value::Int(0)));
+                        if let Some(v) = map.get(&key).cloned() {
+                            stack.push(v);
+                        } else {
+                            return Err(RuntimeError::KeyError(key));
+                        }
                     }
                     (Value::Str(s), Value::Int(i)) => {
-                        let ch = s.chars().nth(i as usize).unwrap_or('\0');
-                        stack.push(Value::Str(ch.to_string()));
+                        if i < 0 {
+                            return Err(RuntimeError::IndexError(
+                                "String index out of bounds!".to_string(),
+                            ));
+                        }
+                        let chars: Vec<char> = s.chars().collect();
+                        let idx_usize = i as usize;
+                        if idx_usize < chars.len() {
+                            stack.push(Value::Str(chars[idx_usize].to_string()));
+                        } else {
+                            return Err(RuntimeError::IndexError(
+                                "String index out of bounds!".to_string(),
+                            ));
+                        }
                     }
-                    _ => stack.push(Value::Int(0)),
+                    (other, _) => {
+                        return Err(RuntimeError::TypeError(format!(
+                            "{} is not indexable",
+                            other.to_string()
+                        )));
+                    }
                 }
             }
             Instr::Slice => {
@@ -303,14 +350,26 @@ pub fn run(
                 let base = stack.pop().unwrap();
                 match base {
                     Value::Dict(map) => {
-                        let v = map.borrow().get(attr).cloned().unwrap_or(Value::Int(0));
-                        stack.push(v);
+                        if let Some(v) = map.borrow().get(attr).cloned() {
+                            stack.push(v);
+                        } else {
+                            return Err(RuntimeError::KeyError(attr.clone()));
+                        }
                     }
                     Value::FrozenDict(map) => {
-                        let v = map.get(attr).cloned().unwrap_or(Value::Int(0));
-                        stack.push(v);
+                        if let Some(v) = map.get(attr).cloned() {
+                            stack.push(v);
+                        } else {
+                            return Err(RuntimeError::KeyError(attr.clone()));
+                        }
                     }
-                    _ => stack.push(Value::Int(0)),
+                    other => {
+                        return Err(RuntimeError::TypeError(format!(
+                            "{} has no attribute '{}'",
+                            other.to_string(),
+                            attr
+                        )));
+                    }
                 }
             }
             Instr::StoreAttr(attr) => {
@@ -448,6 +507,13 @@ pub fn run(
                         }
                         [Value::FrozenDict(map)] => Value::FrozenDict(map.clone()),
                         _ => panic!("freeze() expects a dict"),
+                    },
+                    "panic" => match args.as_slice() {
+                        [Value::Str(msg)] => {
+                            eprintln!("{}", msg);
+                            process::exit(1);
+                        }
+                        _ => panic!("panic() expects a string"),
                     },
                     "read_file" => match args.as_slice() {
                         [Value::Str(path)] => {
