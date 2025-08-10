@@ -433,24 +433,61 @@ pub fn run(
                 }
                 Instr::Slice => {
                     let end_val = pop(&mut stack)?;
-                    let start = pop(&mut stack)?.as_int() as usize;
+                    let start_val = pop(&mut stack)?;
                     let base = pop(&mut stack)?;
+                    let start_i64 = start_val.as_int();
                     match base {
                         Value::List(list) => {
                             let list_ref = list.borrow();
-                            let end = match end_val {
-                                Value::None => list_ref.len(),
-                                v => v.as_int() as usize,
+                            let len = list_ref.len();
+                            if start_i64 < 0 {
+                                break Err(RuntimeError::IndexError(
+                                    "Slice indices out of bounds!".to_string(),
+                                ));
+                            }
+                            let start = start_i64 as usize;
+                            let end_i64 = match end_val {
+                                Value::None => len as i64,
+                                v => v.as_int(),
                             };
+                            if end_i64 < 0 {
+                                break Err(RuntimeError::IndexError(
+                                    "Slice indices out of bounds!".to_string(),
+                                ));
+                            }
+                            let end = end_i64 as usize;
+                            if start > end || end > len {
+                                break Err(RuntimeError::IndexError(
+                                    "Slice indices out of bounds!".to_string(),
+                                ));
+                            }
                             let slice = list_ref[start..end].to_vec();
                             stack.push(Value::List(Rc::new(RefCell::new(slice))));
                         }
                         Value::Str(s) => {
                             let chars: Vec<char> = s.chars().collect();
-                            let end = match end_val {
-                                Value::None => chars.len(),
-                                v => v.as_int() as usize,
+                            let len = chars.len();
+                            if start_i64 < 0 {
+                                break Err(RuntimeError::IndexError(
+                                    "Slice indices out of bounds!".to_string(),
+                                ));
+                            }
+                            let start = start_i64 as usize;
+                            let end_i64 = match end_val {
+                                Value::None => len as i64,
+                                v => v.as_int(),
                             };
+                            if end_i64 < 0 {
+                                break Err(RuntimeError::IndexError(
+                                    "Slice indices out of bounds!".to_string(),
+                                ));
+                            }
+                            let end = end_i64 as usize;
+                            if start > end || end > len {
+                                break Err(RuntimeError::IndexError(
+                                    "Slice indices out of bounds!".to_string(),
+                                ));
+                            }
                             let slice: String = chars[start..end].iter().collect();
                             stack.push(Value::Str(slice));
                         }
