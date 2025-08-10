@@ -98,6 +98,11 @@ def verify_interpreter(interp_bin: str) -> None:
             bname, idx = _read_str(data, idx)
             argc, idx = _read_u32(data, idx)
             arg = (bname, argc)
+        elif name == "RAISE":
+            if idx >= len(data):
+                raise ValueError("error kind beyond end of file")
+            arg = data[idx]
+            idx += 1
         elif name in {"LOAD", "STORE", "CALL", "TCALL", "ATTR", "STORE_ATTR"}:
             arg, idx = _read_str(data, idx)
         # other opcodes carry no immediate argument
