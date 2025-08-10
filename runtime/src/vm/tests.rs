@@ -70,3 +70,89 @@ fn uncaught_raise_surfaces() {
     let result = run(&code, &funcs, &[]);
     assert_eq!(result, Err(RuntimeError::Raised("boom".to_string())));
 }
+
+#[test]
+fn uncaught_assert_surfaces() {
+    let code = vec![Instr::PushBool(false), Instr::Assert, Instr::Halt];
+    let funcs = HashMap::new();
+    let result = run(&code, &funcs, &[]);
+    assert_eq!(result, Err(RuntimeError::AssertionError));
+}
+
+#[test]
+fn assert_caught_in_block() {
+    let code = vec![
+        Instr::SetupExcept(5),
+        Instr::PushBool(false),
+        Instr::Assert,
+        Instr::PopBlock,
+        Instr::Jump(7),
+        Instr::Pop,
+        Instr::Halt,
+        Instr::Halt,
+    ];
+    let funcs = HashMap::new();
+    let result = run(&code, &funcs, &[]);
+    assert!(result.is_ok());
+}
+
+#[test]
+fn hex_with_string_type_error() {
+    let code = vec![
+        Instr::PushStr("foo".to_string()),
+        Instr::CallBuiltin("hex".to_string(), 1),
+        Instr::Halt,
+    ];
+    let funcs = HashMap::new();
+    let result = run(&code, &funcs, &[]);
+    assert_eq!(
+        result,
+        Err(RuntimeError::TypeError("hex() expects one integer".to_string()))
+    );
+}
+
+#[test]
+fn binary_with_string_type_error() {
+    let code = vec![
+        Instr::PushStr("foo".to_string()),
+        Instr::CallBuiltin("binary".to_string(), 1),
+        Instr::Halt,
+    ];
+    let funcs = HashMap::new();
+    let result = run(&code, &funcs, &[]);
+    assert_eq!(
+        result,
+        Err(RuntimeError::TypeError("binary() expects one or two integers".to_string()))
+    );
+}
+
+#[test]
+fn binary_with_non_positive_width_type_error() {
+    let code = vec![
+        Instr::PushInt(5),
+        Instr::PushInt(0),
+        Instr::CallBuiltin("binary".to_string(), 2),
+        Instr::Halt,
+    ];
+    let funcs = HashMap::new();
+    let result = run(&code, &funcs, &[]);
+    assert_eq!(
+        result,
+        Err(RuntimeError::TypeError("binary() width must be positive".to_string()))
+    );
+}
+
+#[test]
+fn length_with_int_type_error() {
+    let code = vec![
+        Instr::PushInt(5),
+        Instr::CallBuiltin("length".to_string(), 1),
+        Instr::Halt,
+    ];
+    let funcs = HashMap::new();
+    let result = run(&code, &funcs, &[]);
+    assert_eq!(
+        result,
+        Err(RuntimeError::TypeError("length() expects list or string".to_string()))
+    );
+}

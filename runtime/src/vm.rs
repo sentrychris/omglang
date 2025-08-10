@@ -57,7 +57,7 @@ pub fn run(
     while pc < code.len() {
         let mut advance_pc = true;
         let instr_res: Result<(), RuntimeError> = loop {
-        match &code[pc] {
+            match &code[pc] {
                 Instr::PushInt(v) => stack.push(Value::Int(*v)),
                 Instr::PushStr(s) => stack.push(Value::Str(s.clone())),
                 Instr::PushBool(b) => stack.push(Value::Bool(*b)),
@@ -138,7 +138,7 @@ pub fn run(
                 Instr::Mod => {
                     let b = stack.pop().unwrap().as_int();
                     if b == 0 {
-                    break Err(RuntimeError::ZeroDivisionError);
+                        break Err(RuntimeError::ZeroDivisionError);
                     }
                     let a = stack.pop().unwrap().as_int();
                     stack.push(Value::Int(a % b));
@@ -238,7 +238,7 @@ pub fn run(
                     match (base, idx) {
                         (Value::List(list), Value::Int(i)) => {
                             if i < 0 {
-                            break Err(RuntimeError::IndexError(
+                                break Err(RuntimeError::IndexError(
                                     "List index out of bounds!".to_string(),
                                 ));
                             }
@@ -247,7 +247,7 @@ pub fn run(
                             if idx_usize < l.len() {
                                 stack.push(l[idx_usize].clone());
                             } else {
-                            break Err(RuntimeError::IndexError(
+                                break Err(RuntimeError::IndexError(
                                     "List index out of bounds!".to_string(),
                                 ));
                             }
@@ -256,7 +256,7 @@ pub fn run(
                             if let Some(v) = map.borrow().get(&k).cloned() {
                                 stack.push(v);
                             } else {
-                            break Err(RuntimeError::KeyError(k));
+                                break Err(RuntimeError::KeyError(k));
                             }
                         }
                         (Value::Dict(map), Value::Int(i)) => {
@@ -264,14 +264,14 @@ pub fn run(
                             if let Some(v) = map.borrow().get(&key).cloned() {
                                 stack.push(v);
                             } else {
-                            break Err(RuntimeError::KeyError(key));
+                                break Err(RuntimeError::KeyError(key));
                             }
                         }
                         (Value::FrozenDict(map), Value::Str(k)) => {
                             if let Some(v) = map.get(&k).cloned() {
                                 stack.push(v);
                             } else {
-                            break Err(RuntimeError::KeyError(k));
+                                break Err(RuntimeError::KeyError(k));
                             }
                         }
                         (Value::FrozenDict(map), Value::Int(i)) => {
@@ -279,12 +279,12 @@ pub fn run(
                             if let Some(v) = map.get(&key).cloned() {
                                 stack.push(v);
                             } else {
-                            break Err(RuntimeError::KeyError(key));
+                                break Err(RuntimeError::KeyError(key));
                             }
                         }
                         (Value::Str(s), Value::Int(i)) => {
                             if i < 0 {
-                            break Err(RuntimeError::IndexError(
+                                break Err(RuntimeError::IndexError(
                                     "String index out of bounds!".to_string(),
                                 ));
                             }
@@ -293,13 +293,13 @@ pub fn run(
                             if idx_usize < chars.len() {
                                 stack.push(Value::Str(chars[idx_usize].to_string()));
                             } else {
-                            break Err(RuntimeError::IndexError(
+                                break Err(RuntimeError::IndexError(
                                     "String index out of bounds!".to_string(),
                                 ));
                             }
                         }
                         (other, _) => {
-                        break Err(RuntimeError::TypeError(format!(
+                            break Err(RuntimeError::TypeError(format!(
                                 "{} is not indexable",
                                 other.to_string()
                             )));
@@ -352,7 +352,7 @@ pub fn run(
                             map.borrow_mut().insert(i.to_string(), val);
                         }
                         (Value::FrozenDict(_), _) => {
-                        break Err(RuntimeError::FrozenWriteError);
+                            break Err(RuntimeError::FrozenWriteError);
                         }
                         _ => {}
                     }
@@ -364,18 +364,18 @@ pub fn run(
                             if let Some(v) = map.borrow().get(attr).cloned() {
                                 stack.push(v);
                             } else {
-                            break Err(RuntimeError::KeyError(attr.clone()));
+                                break Err(RuntimeError::KeyError(attr.clone()));
                             }
                         }
                         Value::FrozenDict(map) => {
                             if let Some(v) = map.get(attr).cloned() {
                                 stack.push(v);
                             } else {
-                            break Err(RuntimeError::KeyError(attr.clone()));
+                                break Err(RuntimeError::KeyError(attr.clone()));
                             }
                         }
                         other => {
-                        break Err(RuntimeError::TypeError(format!(
+                            break Err(RuntimeError::TypeError(format!(
                                 "{} has no attribute '{}'",
                                 other.to_string(),
                                 attr
@@ -391,7 +391,7 @@ pub fn run(
                             map.borrow_mut().insert(attr.clone(), val);
                         }
                         Value::FrozenDict(_) => {
-                        break Err(RuntimeError::FrozenWriteError);
+                            break Err(RuntimeError::FrozenWriteError);
                         }
                         _ => {}
                     }
@@ -399,7 +399,7 @@ pub fn run(
                 Instr::Assert => {
                     let cond = stack.pop().unwrap().as_bool();
                     if !cond {
-                        panic!("Assertion failed");
+                        break Err(RuntimeError::AssertionError);
                     }
                 }
                 Instr::CallValue(argc) => {
@@ -478,60 +478,84 @@ pub fn run(
                         args.push(stack.pop().unwrap());
                     }
                     args.reverse();
-                    let result = match name.as_str() {
+                    let result: Result<Value, RuntimeError> = match name.as_str() {
                         "chr" => match args.as_slice() {
-                            [Value::Int(i)] => Value::Str((*i as u8 as char).to_string()),
-                            _ => panic!("chr() expects one integer"),
+                            [Value::Int(i)] => Ok(Value::Str((*i as u8 as char).to_string())),
+                            _ => Err(RuntimeError::TypeError(
+                                "chr() expects one integer".to_string(),
+                            )),
                         },
                         "ascii" => match args.as_slice() {
                             [Value::Str(s)] if s.chars().count() == 1 => {
-                                Value::Int(s.chars().next().unwrap() as i64)
+                                Ok(Value::Int(s.chars().next().unwrap() as i64))
                             }
-                            _ => panic!("ascii() expects a single character"),
+                            _ => Err(RuntimeError::TypeError(
+                                "ascii() expects a single character".to_string(),
+                            )),
                         },
                         "hex" => match args.as_slice() {
-                            [Value::Int(i)] => Value::Str(format!("{:x}", i)),
-                            _ => panic!("hex() expects one integer"),
+                            [Value::Int(i)] => Ok(Value::Str(format!("{:x}", i))),
+                            _ => Err(RuntimeError::TypeError(
+                                "hex() expects one integer".to_string(),
+                            )),
                         },
                         "binary" => match args.as_slice() {
-                            [Value::Int(n)] => Value::Str(format!("{:b}", n)),
+                            [Value::Int(n)] => Ok(Value::Str(format!("{:b}", n))),
                             [Value::Int(n), Value::Int(width)] => {
                                 if *width <= 0 {
-                                    panic!("binary() width must be positive");
+                                    Err(RuntimeError::TypeError(
+                                        "binary() width must be positive".to_string(),
+                                    ))
+                                } else {
+                                    let mask = (1_i64 << width) - 1;
+                                    Ok(Value::Str(format!(
+                                        "{:0width$b}",
+                                        n & mask,
+                                        width = *width as usize
+                                    )))
                                 }
-                                let mask = (1_i64 << width) - 1;
-                                Value::Str(format!(
-                                    "{:0width$b}",
-                                    n & mask,
-                                    width = *width as usize
-                                ))
                             }
-                            _ => panic!("binary() expects one or two integers"),
+                            _ => Err(RuntimeError::TypeError(
+                                "binary() expects one or two integers".to_string(),
+                            )),
                         },
                         "length" => {
                             if args.len() != 1 {
-                                panic!("length() expects one positional argument");
-                            }
-                            match &args[0] {
-                                Value::List(list) => Value::Int(list.borrow().len() as i64),
-                                Value::Str(s) => Value::Int(s.chars().count() as i64),
-                                _ => panic!("length() expects list or string"),
+                                Err(RuntimeError::TypeError(
+                                    "length() expects one positional argument".to_string(),
+                                ))
+                            } else {
+                                match &args[0] {
+                                    Value::List(list) => {
+                                        Ok(Value::Int(list.borrow().len() as i64))
+                                    }
+                                    Value::Str(s) => {
+                                        Ok(Value::Int(s.chars().count() as i64))
+                                    }
+                                    _ => Err(RuntimeError::TypeError(
+                                        "length() expects list or string".to_string(),
+                                    )),
+                                }
                             }
                         }
                         "freeze" => match args.as_slice() {
                             [Value::Dict(map)] => {
                                 let frozen = map.borrow().clone();
-                                Value::FrozenDict(Rc::new(frozen))
+                                Ok(Value::FrozenDict(Rc::new(frozen)))
                             }
-                            [Value::FrozenDict(map)] => Value::FrozenDict(map.clone()),
-                            _ => panic!("freeze() expects a dict"),
+                            [Value::FrozenDict(map)] => Ok(Value::FrozenDict(map.clone())),
+                            _ => Err(RuntimeError::TypeError(
+                                "freeze() expects a dict".to_string(),
+                            )),
                         },
                         "panic" => match args.as_slice() {
                             [Value::Str(msg)] => {
                                 eprintln!("{}", msg);
                                 process::exit(1);
                             }
-                            _ => panic!("panic() expects a string"),
+                            _ => Err(RuntimeError::TypeError(
+                                "panic() expects a string".to_string(),
+                            )),
                         },
                         "read_file" => match args.as_slice() {
                             [Value::Str(path)] => {
@@ -546,15 +570,23 @@ pub fn run(
                                     }
                                 }
                                 match fs::read_to_string(&path_buf) {
-                                    Ok(content) => Value::Str(content),
-                                    Err(_) => Value::Bool(false),
+                                    Ok(content) => Ok(Value::Str(content)),
+                                    Err(_) => Ok(Value::Bool(false)),
                                 }
                             }
-                            _ => panic!("read_file() expects a file path"),
+                            _ => Err(RuntimeError::TypeError(
+                                "read_file() expects a file path".to_string(),
+                            )),
                         },
-                        _ => panic!("unknown builtin: {}", name),
+                        _ => Err(RuntimeError::TypeError(format!(
+                            "unknown builtin: {}",
+                            name
+                        ))),
                     };
-                    stack.push(result);
+                    match result {
+                        Ok(val) => stack.push(val),
+                        Err(e) => break Err(e),
+                    }
                 }
                 Instr::Pop => {
                     stack.pop();
@@ -586,12 +618,12 @@ pub fn run(
                 Instr::PopBlock => {
                     block_stack.pop();
                 }
-            Instr::Raise => {
-                let msg = stack.pop().unwrap().to_string();
-                break Err(RuntimeError::Raised(msg));
+                Instr::Raise => {
+                    let msg = stack.pop().unwrap().to_string();
+                    break Err(RuntimeError::Raised(msg));
+                }
             }
-        }
-        break Ok(());
+            break Ok(());
         };
 
         if let Err(e) = instr_res {
@@ -603,7 +635,7 @@ pub fn run(
             while let Some(block) = block_stack.pop() {
                 while env_stack.len() > block.env_depth {
                     env = env_stack.pop().unwrap();
-                    pc = ret_stack.pop().unwrap();
+                    ret_stack.pop();
                 }
                 ret_stack.truncate(block.ret_depth);
                 stack.truncate(block.stack_size);
