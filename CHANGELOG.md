@@ -2,6 +2,11 @@
 
 Ordered from most recent at the top to oldest at the bottom.
 
+## [0.1.4] - 2025-08-10
+
+### Changed
+- VM stack operations now return `RuntimeError::VmInvariant` on underflow instead of panicking.
+
 ## [0.1.3] - 2025-08-10
 
 ### Changed
