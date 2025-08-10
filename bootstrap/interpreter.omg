@@ -1,15 +1,19 @@
 ;;;omg
 
 alloc tok_len := 0
+
 proc is_digit(ch) {
     return ch >= "0" and ch <= "9"
 }
+
 proc is_alpha(ch) {
     return (ch >= "a" and ch <= "z") or (ch >= "A" and ch <= "Z") or ch == "_"
 }
+
 proc is_alnum(ch) {
     return is_alpha(ch) or is_digit(ch)
 }
+
 proc read_number(src, i) {
     alloc num := 0
     alloc c := ""
@@ -21,6 +25,7 @@ proc read_number(src, i) {
     }
     return [num, i]
 }
+
 proc read_binary(src, i) {
     alloc num := 0
     alloc c := ""
@@ -32,6 +37,7 @@ proc read_binary(src, i) {
     }
     return [num, i]
 }
+
 proc read_ident(src, i) {
     alloc s := ""
     alloc n := length(src)
@@ -41,6 +47,7 @@ proc read_ident(src, i) {
     }
     return [s, i]
 }
+
 proc tokenize(src) {
     alloc tokens := {}
     alloc n := 0
@@ -50,10 +57,12 @@ proc tokenize(src) {
     alloc word := ""
     alloc s := ""
     alloc src_len := length(src)
+
     if src_len == 0 or src[src_len - 1] != "\n" {
         src := src + "\n"
         src_len := src_len + 1
     }
+
     if src_len >= 6 {
         if src[0] == ";" and src[1] == ";" and src[2] == ";" and src[3] == "o" and src[4] == "m" and src[5] == "g" {
             i := 6
@@ -65,6 +74,7 @@ proc tokenize(src) {
             }
         }
     }
+
     loop i < src_len {
         c := src[i]
         if c == " " or c == "\t" or c == "\r" or c == "\n" {
@@ -164,15 +174,19 @@ proc tokenize(src) {
             }
         }
     }
+
     tok_len := n
     tokens[n] := ["eof", false]
+
     return tokens
 }
+
 proc parse(source) {
     alloc tokens := tokenize(source)
     alloc res := parse_program(tokens, 0)
     return res[0]
 }
+
 proc parse_program(tokens, i) {
     alloc stmts := []
     alloc res := [false, i]
@@ -182,6 +196,7 @@ proc parse_program(tokens, i) {
     }
     return [stmts, res[1]]
 }
+
 proc parse_statement(tokens, i) {
     alloc t := tokens[i]
     if t[0] == "kw" and t[1] == "alloc" {
@@ -270,6 +285,7 @@ proc parse_statement(tokens, i) {
         return [lval_res[0], lval_res[1]]
     }
 }
+
 proc parse_block(tokens, i) {
     alloc stmts := []
     alloc j := i
@@ -282,9 +298,11 @@ proc parse_block(tokens, i) {
     }
     return [stmts, j + 1]
 }
+
 proc parse_expression(tokens, i) {
     return parse_or(tokens, i)
 }
+
 proc parse_or(tokens, i) {
     alloc res := parse_and(tokens, i)
     alloc left := res[0]
@@ -297,6 +315,7 @@ proc parse_or(tokens, i) {
     }
     return [left, j]
 }
+
 proc parse_and(tokens, i) {
     alloc res := parse_comparison(tokens, i)
     alloc left := res[0]
@@ -309,6 +328,7 @@ proc parse_and(tokens, i) {
     }
     return [left, j]
 }
+
 proc parse_comparison(tokens, i) {
     alloc res := parse_bit_or(tokens, i)
     alloc left := res[0]
@@ -335,6 +355,7 @@ proc parse_comparison(tokens, i) {
     }
     return [left, j]
 }
+
 proc parse_add_sub(tokens, i) {
     alloc res := parse_term(tokens, i)
     alloc left := res[0]
@@ -360,6 +381,7 @@ proc parse_add_sub(tokens, i) {
     }
     return [left, j]
 }
+
 proc parse_term(tokens, i) {
     alloc res := parse_factor(tokens, i)
     alloc left := res[0]
@@ -438,6 +460,7 @@ proc parse_bit_or(tokens, i) {
     }
     return [left, j]
 }
+
 proc parse_factor(tokens, i) {
     alloc t := tokens[i]
     alloc node := false
@@ -577,10 +600,12 @@ proc parse_factor(tokens, i) {
     }
     return [node, j]
 }
+
 alloc global_env := []
 alloc current_dir := "."
 alloc module_file := "<stdin>"
 alloc loaded_modules := []
+
 proc lookup_var(env, name) {
     alloc i := 0
     alloc entry := false
@@ -604,6 +629,7 @@ proc lookup_var(env, name) {
     }
     return [false, false]
 }
+
 proc env_set(env, name, value) {
     alloc i := 0
     alloc entry := false
@@ -619,6 +645,7 @@ proc env_set(env, name, value) {
     env := env + [[name, value]]
     return env
 }
+
 proc copy_env(env) {
     alloc result := []
     alloc i := 0
@@ -745,6 +772,7 @@ proc strip_header(source, path) {
     panic("RuntimeError: OMG script missing required header ';;;omg' in " + path)
     return source
 }
+
 proc call_function(func, arg_values, env) {
     if func[0] == "function" {
         alloc params := func[1]
@@ -900,6 +928,7 @@ proc import_module(path) {
     loaded_modules := loaded_modules[0:lm_len]
     return module_ns
 }
+
 proc eval_expr(expr, env) {
     alloc kind := expr[0]
     if kind == "number" {
@@ -1028,6 +1057,7 @@ proc eval_expr(expr, env) {
         return false
     }
 }
+
 proc execute(stmts, env, is_global) {
     alloc i := 0
     alloc stmt := false
@@ -1141,6 +1171,7 @@ proc execute(stmts, env, is_global) {
     }
     return ["normal", false]
 }
+
 proc run(source) {
     alloc ast := parse(source)
     alloc env := [
@@ -1157,6 +1188,7 @@ proc run(source) {
     global_env := env
     return execute(ast, env, true)
 }
+
 proc run_file_with_args(path, file_args) {
     alloc saved := args
     alloc old_dir := current_dir
@@ -1184,9 +1216,11 @@ proc run_file_with_args(path, file_args) {
     args := saved
     return res
 }
+
 proc run_file(path) {
     return run_file_with_args(path, args)
 }
+
 if length(args) > 0 {
     run_file(args[0])
 }
