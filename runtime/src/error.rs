@@ -13,6 +13,8 @@ pub enum RuntimeError {
     TypeError(String),
     /// Indexing operation failed.
     IndexError(String),
+    /// User-raised runtime error.
+    Raised(String),
 }
 
 impl fmt::Display for RuntimeError {
@@ -31,6 +33,9 @@ impl fmt::Display for RuntimeError {
                 write!(f, "TypeError: {}", msg)
             }
             RuntimeError::IndexError(msg) => {
+                write!(f, "RuntimeError: {}", msg)
+            }
+            RuntimeError::Raised(msg) => {
                 write!(f, "RuntimeError: {}", msg)
             }
         }
