@@ -176,6 +176,9 @@ def main():
     # lint-python
     sub.add_parser("lint-python", help="Lint .py source files with flake8 and pylint")
 
+    # runtime-test
+    sub.add_parser("runtime-test", help="Run tests for the Rust runtime")
+
     # runtime-build
     r_build = sub.add_parser(
         "runtime-build", help="Build the OMG native runtime (with embedded interpreter.omgb).",
@@ -328,6 +331,13 @@ def main():
             print(f"ERROR! Failed to verify binary: {e}")
             sys.exit(1)
         return
+
+    if args.command == "runtime-test":
+        print("[*] Running tests")
+        subprocess.run(
+            ['cargo', 'test', '--manifest-path', RUNTIME_MANIFEST_PATH],
+            check=True
+        )
 
     if args.command == "runtime-build":
         env = os.environ.copy()
