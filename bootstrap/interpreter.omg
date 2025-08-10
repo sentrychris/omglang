@@ -834,7 +834,7 @@ proc import_module(path) {
     alloc lm_len := length(loaded_modules)
     loop k < lm_len {
         if loaded_modules[k] == full {
-            raise("RuntimeError: Recursive import of '" + full + "'")
+            _omg_vm_module_import_error_handle("Recursive import of '" + full + "'")
         }
         k := k + 1
     }
@@ -846,7 +846,6 @@ proc import_module(path) {
     module_file := full
     alloc name := full
     alloc i := length(name) - 1
-    emit name
     loop i >= 0 {
         if name[i] == "/" {
             break
@@ -858,7 +857,7 @@ proc import_module(path) {
     }
     alloc source := read_file(name)
     if source == false {
-        raise("FileNotFoundError: Module '" + path + "' not found relative to '" + saved_file + "'")
+        _omg_vm_module_import_error_handle("Module '" + path + "' not found relative to '" + saved_file + "'")
     }
     source := strip_header(source, full)
     alloc ast := parse(source)

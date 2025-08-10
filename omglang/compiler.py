@@ -79,6 +79,7 @@ OPCODES: dict[str, int] = {
     "RAISE_TYPE_ERROR": 48,
     "RAISE_UNDEF_IDENT_ERROR": 49,
     "RAISE_VALUE_ERROR": 50,
+    "RAISE_MODULE_IMPORT_ERROR": 51,
 }
 
 # Reverse-mapped opcode mnemonics
@@ -433,6 +434,12 @@ class Compiler:
                     else:
                         self.emit("PUSH_STR", "")
                     self.emit("RAISE_VALUE_ERROR")
+                elif name == "_omg_vm_module_import_error_handle":
+                    if args:
+                        self.compile_expr(args[0])
+                    else:
+                        self.emit("PUSH_STR", "")
+                    self.emit("RAISE_MODULE_IMPORT_ERROR")
                 else:
                     for arg in args:
                         self.compile_expr(arg)

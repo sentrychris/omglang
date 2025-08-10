@@ -59,6 +59,7 @@ pub enum Instr {
     SetupExcept(usize),
     PopBlock,
     Raise,
+    RaiseModuleImportError,
     RaiseSyntaxError,
     RaiseTypeError,
     RaiseUndefinedIdentError,
@@ -211,6 +212,7 @@ pub fn parse_bytecode(data: &[u8]) -> (Vec<Instr>, HashMap<String, Function>) {
             48 => code.push(Instr::RaiseTypeError),
             49 => code.push(Instr::RaiseUndefinedIdentError),
             50 => code.push(Instr::RaiseValueError),
+            51 => code.push(Instr::RaiseModuleImportError),
             _ => {}
         }
     }

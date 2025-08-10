@@ -11,6 +11,8 @@ pub enum RuntimeError {
     IndexError(String),
     /// Dictionary key was not found.
     KeyError(String),
+    /// Module import error.
+    ModuleImportError(String),
     /// Invalid syntax was attempted..
     SyntaxError(String),
     /// Operation was applied to an inappropriate type.
@@ -39,6 +41,9 @@ impl fmt::Display for RuntimeError {
             }
             RuntimeError::KeyError(key) => {
                 write!(f, "KeyError: \"Key '{}' not found\"", key)
+            }
+            RuntimeError::ModuleImportError(msg) => {
+                write!(f, "ModuleImportError: {}", msg)
             }
             RuntimeError::SyntaxError(msg) => {
                 write!(f, "SyntaxError: {}", msg)

@@ -651,6 +651,10 @@ pub fn run(
                     let msg = stack.pop().unwrap().to_string();
                     break Err(RuntimeError::ValueError(msg));
                 }
+                Instr::RaiseModuleImportError => {
+                    let msg = stack.pop().unwrap().to_string();
+                    break Err(RuntimeError::ModuleImportError(msg))
+                }
             }
             break Ok(());
         };
