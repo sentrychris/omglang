@@ -398,7 +398,7 @@ class Compiler:
             func_node, args = node[1], node[2]
             if func_node[0] == "ident":
                 name = func_node[1]
-                if name == "panic":
+                if name in {"panic", "raise"}:
                     if args:
                         self.compile_expr(args[0])
                     else:

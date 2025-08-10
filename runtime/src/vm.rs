@@ -57,7 +57,7 @@ pub fn run(
     while pc < code.len() {
         let mut advance_pc = true;
         let instr_res: Result<(), RuntimeError> = loop {
-        match &code[pc] {
+            match &code[pc] {
                 Instr::PushInt(v) => stack.push(Value::Int(*v)),
                 Instr::PushStr(s) => stack.push(Value::Str(s.clone())),
                 Instr::PushBool(b) => stack.push(Value::Bool(*b)),
@@ -138,7 +138,7 @@ pub fn run(
                 Instr::Mod => {
                     let b = stack.pop().unwrap().as_int();
                     if b == 0 {
-                    break Err(RuntimeError::ZeroDivisionError);
+                        break Err(RuntimeError::ZeroDivisionError);
                     }
                     let a = stack.pop().unwrap().as_int();
                     stack.push(Value::Int(a % b));
@@ -238,7 +238,7 @@ pub fn run(
                     match (base, idx) {
                         (Value::List(list), Value::Int(i)) => {
                             if i < 0 {
-                            break Err(RuntimeError::IndexError(
+                                break Err(RuntimeError::IndexError(
                                     "List index out of bounds!".to_string(),
                                 ));
                             }
@@ -247,7 +247,7 @@ pub fn run(
                             if idx_usize < l.len() {
                                 stack.push(l[idx_usize].clone());
                             } else {
-                            break Err(RuntimeError::IndexError(
+                                break Err(RuntimeError::IndexError(
                                     "List index out of bounds!".to_string(),
                                 ));
                             }
@@ -256,7 +256,7 @@ pub fn run(
                             if let Some(v) = map.borrow().get(&k).cloned() {
                                 stack.push(v);
                             } else {
-                            break Err(RuntimeError::KeyError(k));
+                                break Err(RuntimeError::KeyError(k));
                             }
                         }
                         (Value::Dict(map), Value::Int(i)) => {
@@ -264,14 +264,14 @@ pub fn run(
                             if let Some(v) = map.borrow().get(&key).cloned() {
                                 stack.push(v);
                             } else {
-                            break Err(RuntimeError::KeyError(key));
+                                break Err(RuntimeError::KeyError(key));
                             }
                         }
                         (Value::FrozenDict(map), Value::Str(k)) => {
                             if let Some(v) = map.get(&k).cloned() {
                                 stack.push(v);
                             } else {
-                            break Err(RuntimeError::KeyError(k));
+                                break Err(RuntimeError::KeyError(k));
                             }
                         }
                         (Value::FrozenDict(map), Value::Int(i)) => {
@@ -279,12 +279,12 @@ pub fn run(
                             if let Some(v) = map.get(&key).cloned() {
                                 stack.push(v);
                             } else {
-                            break Err(RuntimeError::KeyError(key));
+                                break Err(RuntimeError::KeyError(key));
                             }
                         }
                         (Value::Str(s), Value::Int(i)) => {
                             if i < 0 {
-                            break Err(RuntimeError::IndexError(
+                                break Err(RuntimeError::IndexError(
                                     "String index out of bounds!".to_string(),
                                 ));
                             }
@@ -293,13 +293,13 @@ pub fn run(
                             if idx_usize < chars.len() {
                                 stack.push(Value::Str(chars[idx_usize].to_string()));
                             } else {
-                            break Err(RuntimeError::IndexError(
+                                break Err(RuntimeError::IndexError(
                                     "String index out of bounds!".to_string(),
                                 ));
                             }
                         }
                         (other, _) => {
-                        break Err(RuntimeError::TypeError(format!(
+                            break Err(RuntimeError::TypeError(format!(
                                 "{} is not indexable",
                                 other.to_string()
                             )));
@@ -352,7 +352,7 @@ pub fn run(
                             map.borrow_mut().insert(i.to_string(), val);
                         }
                         (Value::FrozenDict(_), _) => {
-                        break Err(RuntimeError::FrozenWriteError);
+                            break Err(RuntimeError::FrozenWriteError);
                         }
                         _ => {}
                     }
@@ -364,18 +364,18 @@ pub fn run(
                             if let Some(v) = map.borrow().get(attr).cloned() {
                                 stack.push(v);
                             } else {
-                            break Err(RuntimeError::KeyError(attr.clone()));
+                                break Err(RuntimeError::KeyError(attr.clone()));
                             }
                         }
                         Value::FrozenDict(map) => {
                             if let Some(v) = map.get(attr).cloned() {
                                 stack.push(v);
                             } else {
-                            break Err(RuntimeError::KeyError(attr.clone()));
+                                break Err(RuntimeError::KeyError(attr.clone()));
                             }
                         }
                         other => {
-                        break Err(RuntimeError::TypeError(format!(
+                            break Err(RuntimeError::TypeError(format!(
                                 "{} has no attribute '{}'",
                                 other.to_string(),
                                 attr
@@ -391,7 +391,7 @@ pub fn run(
                             map.borrow_mut().insert(attr.clone(), val);
                         }
                         Value::FrozenDict(_) => {
-                        break Err(RuntimeError::FrozenWriteError);
+                            break Err(RuntimeError::FrozenWriteError);
                         }
                         _ => {}
                     }
@@ -586,12 +586,12 @@ pub fn run(
                 Instr::PopBlock => {
                     block_stack.pop();
                 }
-            Instr::Raise => {
-                let msg = stack.pop().unwrap().to_string();
-                break Err(RuntimeError::Raised(msg));
+                Instr::Raise => {
+                    let msg = stack.pop().unwrap().to_string();
+                    break Err(RuntimeError::Raised(msg));
+                }
             }
-        }
-        break Ok(());
+            break Ok(());
         };
 
         if let Err(e) = instr_res {
@@ -603,7 +603,7 @@ pub fn run(
             while let Some(block) = block_stack.pop() {
                 while env_stack.len() > block.env_depth {
                     env = env_stack.pop().unwrap();
-                    pc = ret_stack.pop().unwrap();
+                    ret_stack.pop();
                 }
                 ret_stack.truncate(block.ret_depth);
                 stack.truncate(block.stack_size);
