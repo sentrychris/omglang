@@ -72,6 +72,51 @@ fn uncaught_raise_surfaces() {
 }
 
 #[test]
+fn uncaught_syntax_error_surfaces() {
+    let code = vec![
+        Instr::PushStr("boom".to_string()),
+        Instr::RaiseSyntaxError,
+        Instr::Halt,
+    ];
+    let funcs = HashMap::new();
+    let result = run(&code, &funcs, &[]);
+    assert_eq!(
+        result,
+        Err(RuntimeError::SyntaxError("boom".to_string()))
+    );
+}
+
+#[test]
+fn uncaught_type_error_surfaces() {
+    let code = vec![
+        Instr::PushStr("boom".to_string()),
+        Instr::RaiseTypeError,
+        Instr::Halt,
+    ];
+    let funcs = HashMap::new();
+    let result = run(&code, &funcs, &[]);
+    assert_eq!(
+        result,
+        Err(RuntimeError::TypeError("boom".to_string()))
+    );
+}
+
+#[test]
+fn uncaught_undef_ident_error_surfaces() {
+    let code = vec![
+        Instr::PushStr("boom".to_string()),
+        Instr::RaiseUndefinedIdentError,
+        Instr::Halt,
+    ];
+    let funcs = HashMap::new();
+    let result = run(&code, &funcs, &[]);
+    assert_eq!(
+        result,
+        Err(RuntimeError::UndefinedIdentError("boom".to_string()))
+    );
+}
+
+#[test]
 fn uncaught_assert_surfaces() {
     let code = vec![Instr::PushBool(false), Instr::Assert, Instr::Halt];
     let funcs = HashMap::new();
