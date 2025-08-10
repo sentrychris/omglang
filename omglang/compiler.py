@@ -77,6 +77,7 @@ OPCODES: dict[str, int] = {
     "RAISE": 46,
     "RAISE_SYNTAX_ERROR": 47,
     "RAISE_TYPE_ERROR": 48,
+    "RAISE_UNDEF_IDENT_ERROR": 49,
 }
 
 # Reverse-mapped opcode mnemonics
@@ -419,6 +420,12 @@ class Compiler:
                     else:
                         self.emit("PUSH_STR", "")
                     self.emit("RAISE_TYPE_ERROR")
+                elif name == "undef_ident_error":
+                    if args:
+                        self.compile_expr(args[0])
+                    else:
+                        self.emit("PUSH_STR", "")
+                    self.emit("RAISE_UNDEF_IDENT_ERROR")
                 else:
                     for arg in args:
                         self.compile_expr(arg)

@@ -644,6 +644,10 @@ pub fn run(
                     let msg = stack.pop().unwrap().to_string();
                     break Err(RuntimeError::TypeError(msg))
                 }
+                Instr::RaiseUndefinedIdentError => {
+                    let msg = stack.pop().unwrap().to_string();
+                    break Err(RuntimeError::UndefinedIdentError(msg))
+                }
             }
             break Ok(());
         };

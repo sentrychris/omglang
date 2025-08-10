@@ -918,7 +918,7 @@ proc eval_expr(expr, env) {
         if res[0] {
             return res[1]
         }
-        raise("UndefinedVariableException: Undefined variable '" + name + "'")
+        undef_ident_error("Undefined identifier '" + name + "'")
         return false
     } elif kind == "add" {
         return eval_expr(expr[1], env) + eval_expr(expr[2], env)
@@ -1069,7 +1069,7 @@ proc execute(stmts, env, is_global) {
                 env := env_set(env, name, val)
                 if is_global { global_env := env }
             } else {
-                raise("UndefinedVariableException: Undefined variable '" + name + "'")
+                undef_ident_error("Undefined variable '" + name + "'")
             }
         } elif kind == "attr_assign" {
             obj := eval_expr(stmt[1], env)

@@ -15,6 +15,8 @@ pub enum RuntimeError {
     SyntaxError(String),
     /// Operation was applied to an inappropriate type.
     TypeError(String),
+    /// Undefined identifier was attempted.
+    UndefinedIdentError(String),
     /// Division or modulo by zero was attempted.
     ZeroDivisionError,
     /// User-raised runtime error.
@@ -41,6 +43,9 @@ impl fmt::Display for RuntimeError {
             }
             RuntimeError::TypeError(msg) => {
                 write!(f, "TypeError: {}", msg)
+            }
+            RuntimeError::UndefinedIdentError(msg) => {
+                write!(f, "UndefinedIdentError: {}", msg)
             }
             RuntimeError::ZeroDivisionError => {
                 write!(f, "ZeroDivisionError: integer division or modulo by zero")
