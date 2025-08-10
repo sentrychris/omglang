@@ -11,7 +11,8 @@ This document defines the role, responsibilities, and behavioral expectations of
 Codex (and similar agents) is treated as a **collaborative assistant** with read/write access to the codebase and documentation. It should:
 
 * Assist in writing new modules or tests based on the specification (`OMG_SPEC.md`)
-* Suggest refactors and improvements that align with established patterns
+* Assist in ensuring consistency between the original Python interpreter implementation and the self-hosted OMG interpreter implementation
+* Assist in maintining good error handling for errors described in `OMG_ERRORS.md`
 * Generate documentation or usage examples based on current interpreter/parser state
 * Respect and reinforce design choices, naming conventions, and code clarity
 * Propose new features only within the bounds of OMG’s educational scope
@@ -22,160 +23,23 @@ Codex (and similar agents) is treated as a **collaborative assistant** with read
 
 ### ✅ Must:
 
-* Use `OMG_SPEC.md` as the single source of truth
-* Keep all outputs consistent with the interpreter’s current capabilities
+* Use `OMG_SPEC.md` as the single source of truth for OMG syntax
+* Use `OMG_ERRORS.md` to determine which errors could occur in OMG program execution
 * Prompt for clarification when design intent is ambiguous
 * Maintain readability and simplicity in all contributions
 
 ### ❌ Must Not:
 
 * Introduce unsupported syntax or speculative features
-* Rewrite or remove key infrastructure (e.g. `tokenize`, `eval_expr`, `execute`) without explicit instruction
-* Assume external package support beyond standard Python
 
-## Project Structure
+## Areas of Focus for Codex
 
-The project tree structure is as follows:
+Codex should focus on:
+* Consistency between the original Python implementation and the native Rust runtime implementation
+* Maintaining feature partiy between the Python `omglang/interpreter.py` and the self-hosted `bootstrap/interpreter.omg`
+* Ensuring the self-hosted `bootstrap/interpreter.omg` is fully capable up to and including meta-circular interpretation
+* Ensuring OMG errors are handled consistently.
 
-```
-omglang/
-├── bootstrap
-│   ├── concept
-│   │   ├── interpreter.omg
-│   │   ├── parser.omg
-│   │   └── tokenizer.omg
-│   ├── interpreter.omg
-│   └── test_interpret.omg
-├── examples
-│   ├── modules
-│   │   ├── math.omg
-│   │   └── utils.omg
-│   ├── assignment.omg
-│   ├── bitwise.omg
-│   ├── dictionaries.omg
-│   ├── hello_world.omg
-│   ├── hex_to_rgb.omg
-│   ├── higher_order.omg
-│   ├── import_modules.omg
-│   ├── permissions.omg
-│   ├── rot_13.omg
-│   ├── self_hosted.omg
-│   ├── stack_vm.omg
-│   ├── stack_vm_and_asm.omg
-│   └── tabula_recta.omg
-├── omglang
-│   ├── parser
-│   │   ├── __init__.py
-│   │   ├── expressions.py
-│   │   ├── parser.py
-│   │   └── statements.py
-│   ├── tests
-│   │   ├── conftest.py
-│   │   ├── test_and_conditionals.py
-│   │   ├── test_arithmetic_bitwise_lists.py
-│   │   ├── test_builtin_bytecode.py
-│   │   ├── test_bytecode_cli_encoding.py
-│   │   ├── test_declaration_assignment.py
-│   │   ├── test_dictionaries.py
-│   │   ├── test_docblock_comments.py
-│   │   ├── test_first_class_functions.py
-│   │   ├── test_function_calls.py
-│   │   ├── test_loops_and_facts.py
-│   │   ├── test_modules.py
-│   │   ├── test_native_global_length.py
-│   │   ├── test_native_list_concat.py
-│   │   ├── test_native_mod.py
-│   │   ├── test_or_conditionals.py
-│   │   ├── test_scoping.py
-│   │   ├── test_self_hosted_interpreter_example.py
-│   │   ├── test_tail_call_bytecode.py
-│   │   ├── test_unary_ops.py
-│   │   └── utils.py
-│   ├── __init__.py
-│   ├── compiler.py
-│   ├── exceptions.py
-│   ├── interpreter.py
-│   ├── lexer.py
-│   └── operations.py
-├── omglang.egg-info
-│   ├── dependency_links.txt
-│   ├── entry_points.txt
-│   ├── PKG-INFO
-│   ├── requires.txt
-│   ├── SOURCES.txt
-│   └── top_level.txt
-├── package_resources
-│   ├── assets
-│   │   ├── icon.ico
-│   │   └── icon.png
-│   ├── upx-5.0.2-win64
-│   │   ├── COPYING
-│   │   ├── LICENSE
-│   │   ├── NEWS
-│   │   ├── README
-│   │   ├── THANKS.txt
-│   │   ├── upx-doc.html
-│   │   ├── upx-doc.txt
-│   │   ├── upx.1
-│   │   └── upx.exe
-│   ├── windows
-│   │   └── version.rc
-│   └── omg.spec
-├── runtime
-│   ├── src
-│   │   ├── bytecode.rs
-│   │   ├── main.rs
-│   │   ├── repl.rs
-│   │   ├── value.rs
-│   │   └── vm.rs
-│   ├── build.rs
-│   ├── Cargo.lock
-│   ├── Cargo.toml
-│   └── interpreter.omgb
-├── scripts
-│   ├── __init__.py
-│   ├── cli.py
-│   ├── generate_docstring_headers.py
-│   ├── generate_project_tree.py
-│   ├── generate_third_party_licenses_file.py
-│   ├── lint.py
-│   ├── parse_binary_step.py
-│   └── verify_binary.py
-├── spec
-│   ├── DEVELOPMENT.md
-│   ├── OMG_LEXER.md
-│   ├── OMG_PARSER.md
-│   └── OMG_SPEC.md
-├── vscode
-│   ├── dist
-│   │   └── extension.js
-│   ├── server
-│   │   └── main.py
-│   ├── syntaxes
-│   │   └── omg.tmLanguage.json
-│   ├── .gitignore
-│   ├── extension.ts
-│   ├── language-configuration.json
-│   ├── omglangsyntax-0.0.1.vsix
-│   ├── package-lock.json
-│   ├── package.json
-│   ├── README.md
-│   └── tsconfig.json
-├── .flake8
-├── .gitignore
-├── .pylintrc
-├── AGENTS.md
-├── CHANGELOG.md
-├── LICENSE
-├── omg.py
-├── project_tree.txt
-├── pt.txt
-├── pyproject.toml
-├── README.MD
-├── scratchpad.omg
-├── setup.cfg
-└── THIRD_PARTY_LICENSES.txt
-```
 
 This tree can be generated by running `py ./scripts/generate_project_tree.py`
 
