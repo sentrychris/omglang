@@ -47,8 +47,7 @@ fn call_builtin(
             [Value::Int(n)] => Ok(Value::Str(format!("{:b}", n))),
             [Value::Int(n), Value::Int(width)] => {
                 if *width <= 0 {
-                    // TODO: Change this to ValueError
-                    Err(RuntimeError::TypeError(
+                    Err(RuntimeError::ValueError(
                         "binary() width must be positive".to_string(),
                     ))
                 } else {
@@ -642,11 +641,19 @@ pub fn run(
                 }
                 Instr::RaiseTypeError => {
                     let msg = stack.pop().unwrap().to_string();
-                    break Err(RuntimeError::TypeError(msg))
+                    break Err(RuntimeError::TypeError(msg));
                 }
                 Instr::RaiseUndefinedIdentError => {
                     let msg = stack.pop().unwrap().to_string();
-                    break Err(RuntimeError::UndefinedIdentError(msg))
+                    break Err(RuntimeError::UndefinedIdentError(msg));
+                }
+                Instr::RaiseValueError => {
+                    let msg = stack.pop().unwrap().to_string();
+                    break Err(RuntimeError::ValueError(msg));
+                }
+                Instr::RaiseModuleImportError => {
+                    let msg = stack.pop().unwrap().to_string();
+                    break Err(RuntimeError::ModuleImportError(msg))
                 }
             }
             break Ok(());

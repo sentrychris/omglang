@@ -11,12 +11,16 @@ pub enum RuntimeError {
     IndexError(String),
     /// Dictionary key was not found.
     KeyError(String),
+    /// Module import error.
+    ModuleImportError(String),
     /// Invalid syntax was attempted..
     SyntaxError(String),
     /// Operation was applied to an inappropriate type.
     TypeError(String),
     /// Undefined identifier was attempted.
     UndefinedIdentError(String),
+    /// Value error.
+    ValueError(String),
     /// Division or modulo by zero was attempted.
     ZeroDivisionError,
     /// User-raised runtime error.
@@ -38,6 +42,9 @@ impl fmt::Display for RuntimeError {
             RuntimeError::KeyError(key) => {
                 write!(f, "KeyError: \"Key '{}' not found\"", key)
             }
+            RuntimeError::ModuleImportError(msg) => {
+                write!(f, "ModuleImportError: {}", msg)
+            }
             RuntimeError::SyntaxError(msg) => {
                 write!(f, "SyntaxError: {}", msg)
             }
@@ -46,6 +53,9 @@ impl fmt::Display for RuntimeError {
             }
             RuntimeError::UndefinedIdentError(msg) => {
                 write!(f, "UndefinedIdentError: {}", msg)
+            }
+            RuntimeError::ValueError(msg) => {
+                write!(f, "ValueError: {}", msg)
             }
             RuntimeError::ZeroDivisionError => {
                 write!(f, "ZeroDivisionError: integer division or modulo by zero")
