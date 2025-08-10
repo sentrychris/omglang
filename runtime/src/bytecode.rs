@@ -56,6 +56,9 @@ pub enum Instr {
     StoreAttr(String),
     Assert,
     CallValue(usize),
+    SetupExcept(usize),
+    PopBlock,
+    Raise,
 }
 
 fn read_u32(data: &[u8], idx: &mut usize) -> u32 {
@@ -194,6 +197,12 @@ pub fn parse_bytecode(data: &[u8]) -> (Vec<Instr>, HashMap<String, Function>) {
                 let n = read_u32(data, &mut idx) as usize;
                 code.push(Instr::CallValue(n));
             }
+            44 => {
+                let t = read_u32(data, &mut idx) as usize;
+                code.push(Instr::SetupExcept(t));
+            }
+            45 => code.push(Instr::PopBlock),
+            46 => code.push(Instr::Raise),
             _ => {}
         }
     }

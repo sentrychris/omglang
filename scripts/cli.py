@@ -1,7 +1,8 @@
 """
-Build utilities for OMG.
+OMG CLI for language developemnt and maintenance.
 
-The script handles platform differences for UPX download URLs and extraction.
+This CLI provides tools and commands for orchestrating builds of both the reference (orignal)
+Python implementation of OMG, and the native implementation that uses the Rust runtime.
 """
 
 import os
@@ -21,19 +22,36 @@ from scripts.generate_third_party_licenses_file import generate_third_party_lice
 from scripts.generate_project_tree import write_tree_to_file
 from scripts.verify_omgb_file_bytes import verify_interpreter
 
-
 # Project root
-BASE_DIR=os.path.dirname(os.path.dirname(__file__))
+BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 # OMG python runtime + interpreter (Python + Python)
-OMG_PY_ENTRYPOINT=os.path.join(BASE_DIR, 'omg.py')
-OMG_PY_INTERPRETER_SRC=os.path.join(BASE_DIR, 'omglang')
-DEFAULT_UPX_VER="5.0.2" # used by Pyinstaller for compression (check CFG)
+# used by Pyinstaller for compression (check CFG). 
+DEFAULT_UPX_VER="5.0.2"
+# output directory for the PyInstaller distribution. 
+PY_BUILD_OUTPUT_DIR = os.path.join(BASE_DIR, "output")
+# dist directory for the PyInstaller executable. 
+PY_DIST_DIR = os.path.join(PY_BUILD_OUTPUT_DIR, "dist")
+# build directory for PyInstaller build artifacts. 
+PY_BUILD_DIR = os.path.join(PY_BUILD_OUTPUT_DIR, "build")
+# package resources for PyInstaller (e.g. .spec, version.rc). 
+PY_PKG_RESOURCES = os.path.join(BASE_DIR, "package_resources")
+# .spec file for the PyInstaller distribution. 
+PY_BUILD_SPEC = os.path.join(PY_PKG_RESOURCES, "omg.spec")
+# Entry-point for the OMG lexer,parser,interpreter. 
+PY_OMG_ENTRYPOINT=os.path.join(BASE_DIR, 'omg.py')
+# The omglang reference (original) Python implementation. 
+PY_OMG_INTERPRETER_SRC=os.path.join(BASE_DIR, 'omglang')
 
 # OMG native runtime + interpreter (Rust + OMG)
+# OMG self-hosted interpreter
 OMG_INTERPRETER_SRC=os.path.join(BASE_DIR, 'bootstrap', 'interpreter.omg')
+# Compiled OMG interpreter binary
 OMG_INTERPRETER_BIN=os.path.join(BASE_DIR, 'runtime', 'interpreter.omgb')
-RUNTIME_MANIFEST_PATH=os.path.join(BASE_DIR, 'runtime', 'Cargo.toml')
+# Cargo manifest for the native runtime
+NATIVE_RUNTIME_MANIFEST_PATH=os.path.join(BASE_DIR, 'runtime', 'Cargo.toml')
+# Cargo target directory for the runtime build
+NATIVE_RUNTIME_TARGET_DIR = os.path.join(BASE_DIR, "runtime", "target")
 
 
 def _get_upx(package_resources: str, upx_pkg: str, upx_url: str, is_windows: bool) -> str:
@@ -71,20 +89,24 @@ def _get_upx(package_resources: str, upx_pkg: str, upx_url: str, is_windows: boo
     return upx_dir
 
 
-def _clean_dir(directory: str) -> None:
+def _clean_path(clean_path: str) -> None:
     """
-    Deletes the specified directory and all its contents if it exists.
+    Deletes the specified file or directory (and all its contents) if it exists.
 
     Args:
-        directory (str): The directory to be cleaned.
+        path (str): The file or directory to be cleaned.
     """
 
-    if os.path.exists(directory):
-        print(f"Cleaning {directory} directory...")
-        shutil.rmtree(directory)
+    if os.path.exists(clean_path):
+        if os.path.isdir(clean_path):
+            print(f"Cleaning directory {clean_path}...")
+            shutil.rmtree(clean_path)
+        else:
+            print(f"Removing file {clean_path}...")
+            os.remove(clean_path)
 
 
-def _build_exe(spec_file: str, upx_dir: str, dist_dir: str, build_dir: str) -> None:
+def _build_py_exe(spec_file: str, upx_dir: str, dist_dir: str, build_dir: str) -> None:
     """
     Builds the OMG runtime using PyInstaller.
 
@@ -150,11 +172,13 @@ def _disassemble_native_interpreter(
             addr = struct.unpack_from("<I", data, idx)[0]
             idx += 4
             print(f"FUNC {name} {param_count} {' '.join(params)} {addr}")
+        return source
     else:
         source = disassemble(data)
         s = 0 if start is None else start
         e = len(source) if end is None else end
         print(source[s:e])
+        return source[s:e]
 
 
 def main():
@@ -261,6 +285,11 @@ def main():
         default=None,
         help="End index into disassembly output",
     )
+    p_dis.add_argument(
+        "--dump-file",
+        action="store_true",
+        help="Dump the disassembled OMGB to a txt file"
+    )
 
     # Legacy Python runtime embedded build
     p_build = sub.add_parser(
@@ -291,14 +320,6 @@ def main():
 
     args = parser.parse_args()
 
-    # Common paths
-    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    out_dir = os.path.join(root, "output")
-    dist_dir = os.path.join(out_dir, "dist")
-    build_dir = os.path.join(out_dir, "build")
-    package_resources = os.path.join(root, "package_resources")
-    build_spec = os.path.join(package_resources, "omg.spec")
-
     if args.command == "docstring-headers":
         print("⏳ Inserting docstrings into source .py files...")
         insert_docstrings()
@@ -317,13 +338,13 @@ def main():
     if args.command == "lint-python":
         print("⏳ Running flake8...")
         subprocess.run(
-            ["flake8", OMG_PY_INTERPRETER_SRC, OMG_PY_ENTRYPOINT],
+            ["flake8", PY_OMG_INTERPRETER_SRC, PY_OMG_ENTRYPOINT],
             check=True
         )
 
         print("⏳ Running pylint...")
         subprocess.run(
-            ["pylint", OMG_PY_INTERPRETER_SRC, OMG_PY_ENTRYPOINT],
+            ["pylint", PY_OMG_INTERPRETER_SRC, PY_OMG_ENTRYPOINT],
             check=True
         )
 
@@ -332,7 +353,13 @@ def main():
         return
 
     if args.command == "disassemble-omgb":
-        _disassemble_native_interpreter(args.bin, args.start, args.end)
+        source = _disassemble_native_interpreter(
+            args.bin, args.start, args.end
+        )
+        if args.dump_file:
+            _out_file = os.path.join(BASE_DIR, 'dump_interpreter_omgb.txt')
+            with open(_out_file, 'w', encoding="utf-8") as f:
+                f.write(source)
         return
 
     if args.command == "verify-omgb":
@@ -347,35 +374,38 @@ def main():
     if args.command == "runtime-test":
         print("⏳ Running tests")
         subprocess.run(
-            ['cargo', 'test', '--manifest-path', RUNTIME_MANIFEST_PATH],
+            ['cargo', 'test', '--manifest-path', NATIVE_RUNTIME_MANIFEST_PATH],
             check=True
         )
 
     if args.command == "runtime-run":
         print("⏳ Executing runtime")
-        p_args = ['cargo', 'run', '--manifest-path', RUNTIME_MANIFEST_PATH]
+        p_args = ['cargo', 'run', '--manifest-path', NATIVE_RUNTIME_MANIFEST_PATH]
         if args.src:
             p_args.append('--')
             p_args.append(args.src)
         subprocess.run(p_args, check=True)
 
     if args.command == "runtime-build":
+        print("⏳ Building native runtime...")
         env = os.environ.copy()
         if args.dump_omgb:
             env["DUMP_OMGB"] = "1"
-        cmd = ["cargo", "build", "--release", "--manifest-path", RUNTIME_MANIFEST_PATH]
+        cmd = ["cargo", "build", "--release", "--manifest-path", NATIVE_RUNTIME_MANIFEST_PATH]
         if args.with_symbols:
             extra = "-C debuginfo=2 -C panic=abort"
             env["RUSTFLAGS"] = (env.get("RUSTFLAGS", "") + " " + extra).strip()
+        _clean_path(NATIVE_RUNTIME_TARGET_DIR)
+        _clean_path(OMG_INTERPRETER_BIN)
         subprocess.run(cmd, check=True, env=env)
 
     if args.command == "legacy-build":
-        if not os.path.exists(build_spec):
-            raise FileNotFoundError(f".spec file not found: {build_spec}")
+        if not os.path.exists(PY_BUILD_SPEC):
+            raise FileNotFoundError(f".spec file not found: {PY_BUILD_SPEC}")
         if args.clean:
             print("⏳ Cleaning previous build directories...")
-            _clean_dir(dist_dir)
-            _clean_dir(build_dir)
+            _clean_path(PY_DIST_DIR)
+            _clean_path(PY_BUILD_DIR)
         # Fetch UPX (scoped to build only)
         if os.name == "nt":
             upx_pkg = f"upx-{args.upx}-win64"
@@ -383,10 +413,10 @@ def main():
         else:
             upx_pkg = f"upx-{args.upx}-amd64_linux"
             upx_url = f"https://github.com/upx/upx/releases/download/v{args.upx}/{upx_pkg}.tar.xz"
-        upx_dir = _get_upx(package_resources, upx_pkg, upx_url, os.name == "nt")
-        _build_exe(build_spec, upx_dir, dist_dir, build_dir)
+        upx_dir = _get_upx(PY_PKG_RESOURCES, upx_pkg, upx_url, os.name == "nt")
+        _build_py_exe(PY_BUILD_SPEC, upx_dir, PY_DIST_DIR, PY_BUILD_DIR)
         if args.upx_clean:
-            _clean_dir(upx_dir)
+            _clean_path(upx_dir)
 
 if __name__ == "__main__":
     main()
