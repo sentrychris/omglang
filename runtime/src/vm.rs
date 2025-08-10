@@ -399,7 +399,7 @@ pub fn run(
                 Instr::Assert => {
                     let cond = stack.pop().unwrap().as_bool();
                     if !cond {
-                        panic!("Assertion failed");
+                        break Err(RuntimeError::AssertionError);
                     }
                 }
                 Instr::CallValue(argc) => {

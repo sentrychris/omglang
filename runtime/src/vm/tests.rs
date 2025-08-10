@@ -70,3 +70,28 @@ fn uncaught_raise_surfaces() {
     let result = run(&code, &funcs, &[]);
     assert_eq!(result, Err(RuntimeError::Raised("boom".to_string())));
 }
+
+#[test]
+fn uncaught_assert_surfaces() {
+    let code = vec![Instr::PushBool(false), Instr::Assert, Instr::Halt];
+    let funcs = HashMap::new();
+    let result = run(&code, &funcs, &[]);
+    assert_eq!(result, Err(RuntimeError::AssertionError));
+}
+
+#[test]
+fn assert_caught_in_block() {
+    let code = vec![
+        Instr::SetupExcept(5),
+        Instr::PushBool(false),
+        Instr::Assert,
+        Instr::PopBlock,
+        Instr::Jump(7),
+        Instr::Pop,
+        Instr::Halt,
+        Instr::Halt,
+    ];
+    let funcs = HashMap::new();
+    let result = run(&code, &funcs, &[]);
+    assert!(result.is_ok());
+}
