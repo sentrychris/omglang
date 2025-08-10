@@ -183,7 +183,7 @@ fn binary_with_non_positive_width_type_error() {
     let result = run(&code, &funcs, &[]);
     assert_eq!(
         result,
-        Err(RuntimeError::TypeError("binary() width must be positive".to_string()))
+        Err(RuntimeError::ValueError("binary() width must be positive".to_string()))
     );
 }
 
