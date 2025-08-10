@@ -408,19 +408,19 @@ class Compiler:
                     else:
                         self.emit("PUSH_STR", "")
                     self.emit("RAISE")
-                elif name == "syntax_error":
+                elif name == "_omg_vm_syntax_error_handle":
                     if args:
                         self.compile_expr(args[0])
                     else:
                         self.emit("PUSH_STR", "")
                     self.emit("RAISE_SYNTAX_ERROR")
-                elif name == "type_error":
+                elif name == "_omg_vm_type_error_handle":
                     if args:
                         self.compile_expr(args[0])
                     else:
                         self.emit("PUSH_STR", "")
                     self.emit("RAISE_TYPE_ERROR")
-                elif name == "undef_ident_error":
+                elif name == "_omg_vm_undef_ident_error_handle":
                     if args:
                         self.compile_expr(args[0])
                     else:
