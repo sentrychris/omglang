@@ -1,30 +1,43 @@
 # OMG Language
 
-OMG is a personal, educational programming language implemented in Python. It provides a minimal but expressive syntax for experimenting with the core components of a programming language, including lexing, parsing, and interpretation.
+OMG is a personal, educational programming language. It now ships with a native runtime written in Rust while retaining the original Python implementation for reference.
 
-OMG supports variables, arithmetic, lists, dictionaries, functions, conditionals, loops, and modules, all executed via a tree-walk interpreter.
+The language provides a minimal but expressive syntax, and supports variables, arithmetic, lists, dictionaries, functions, conditionals, loops, modules, and more.
 
 #### Documents:
 - [`OMG_SPEC.md`](./spec/OMG_SPEC.md): for the canonical language reference.
-- [`OMG_LEXER.md`](./spec/OMG_LEXER.md): describes the lexical analysis stage of execution.
-- [`OMG_PARSER.md`](./spec/OMG_PARSER.md): describes the parser's structure, flow, and grammar handling.
+- [`OMG_LEXER.md`](./spec/OMG_LEXER.md): describes the lexical analysis stage of execution for the original Python implementation.
+- [`OMG_PARSER.md`](./spec/OMG_PARSER.md): describes the parser's structure, flow, and grammar handling for the original Python implementation.
+
+The Python-based lexer, parser, and interpreter also exist as a bootstrapped [OMG interpreter](./bootstrap/interpreter.omg), compiled to binary format and embedded directly into the virtual machine. This allows the language to execute OMG code by interpreting OMG-written interpreter logic inside the VM itself, enabling self-hosting experiments and making the runtime a testbed for metaprogramming and language evolution.
+
 
 ## How to Run OMG Scripts
 
-You can run OMG scripts from the command line:
+The native runtime is located in the `runtime` directory and can be built and executed with Cargo.
+
+### Build and Run
 
 ```sh
-python omg.py path/to/script.omg
+omg-cli runtime-run ./path/to/script.omg
 ```
 
-The script must begin with the required `;;;omg` header on the first non-empty line.
+This command builds the runtime (if needed) and executes the given `.omg` script. The script must begin with the required `;;;omg` header on the first non-empty line.
+
+After building, the resulting binary is available at `runtime/target/debug/omg` (or `runtime/target/release/omg` when using `--release`):
+
+```sh
+./runtime/target/debug/omg path/to/script.omg
+```
 
 ### Interactive REPL
 
-Run without arguments to start an interactive REPL:
+Run OMG without arguments to start an interactive REPL:
 
 ```sh
-python omg.py
+omg-cli runtime-run
+# or after building
+./runtime/target/debug/omg
 ```
 
 Example session:
