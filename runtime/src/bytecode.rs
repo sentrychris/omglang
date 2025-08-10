@@ -60,6 +60,7 @@ pub enum Instr {
     PopBlock,
     Raise,
     RaiseSyntaxError,
+    RaiseTypeError,
 }
 
 fn read_u32(data: &[u8], idx: &mut usize) -> u32 {
@@ -205,6 +206,7 @@ pub fn parse_bytecode(data: &[u8]) -> (Vec<Instr>, HashMap<String, Function>) {
             45 => code.push(Instr::PopBlock),
             46 => code.push(Instr::Raise),
             47 => code.push(Instr::RaiseSyntaxError),
+            48 => code.push(Instr::RaiseTypeError),
             _ => {}
         }
     }

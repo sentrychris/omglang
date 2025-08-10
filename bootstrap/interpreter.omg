@@ -800,7 +800,7 @@ proc call_function(func_name, func, arg_values, env) {
         alloc params_len := length(params)
         alloc arg_len := length(arg_values)
         if arg_len != params_len {
-            raise("TypeError: Function '" + func_name + "' expects " + params_len + " arguments")
+            type_error("Function '" + func_name + "' expects " + params_len + " arguments")
         }
         loop i < params_len {
             local := env_set(local, params[i], arg_values[i])
@@ -820,7 +820,7 @@ proc call_function(func_name, func, arg_values, env) {
         }
         return call_builtin(name, arg_values)
     } else {
-        raise("TypeError: Not a function value")
+        type_error("Not a function value")
         return false
     }
 }

@@ -25,24 +25,29 @@ fn call_builtin(
     match name {
         "chr" => match args {
             [Value::Int(i)] => Ok(Value::Str((*i as u8 as char).to_string())),
-            _ => Err(RuntimeError::TypeError("chr() expects one integer".to_string())),
+            _ => Err(RuntimeError::TypeError(
+                "chr() expects one integer".to_string())
+            ),
         },
         "ascii" => match args {
             [Value::Str(s)] if s.chars().count() == 1 => {
                 Ok(Value::Int(s.chars().next().unwrap() as i64))
             }
             _ => Err(RuntimeError::TypeError(
-                "ascii() expects a single character".to_string(),
+                "ascii() expects a single character (arity mismatch)".to_string(),
             )),
         },
         "hex" => match args {
             [Value::Int(i)] => Ok(Value::Str(format!("{:x}", i))),
-            _ => Err(RuntimeError::TypeError("hex() expects one integer".to_string())),
+            _ => Err(RuntimeError::TypeError(
+                "hex() expects one integer (arity mismatch)".to_string())
+            ),
         },
         "binary" => match args {
             [Value::Int(n)] => Ok(Value::Str(format!("{:b}", n))),
             [Value::Int(n), Value::Int(width)] => {
                 if *width <= 0 {
+                    // TODO: Change this to ValueError
                     Err(RuntimeError::TypeError(
                         "binary() width must be positive".to_string(),
                     ))
@@ -56,20 +61,20 @@ fn call_builtin(
                 }
             }
             _ => Err(RuntimeError::TypeError(
-                "binary() expects one or two integers".to_string(),
+                "binary() expects one or two integers (arity mismatch)".to_string(),
             )),
         },
         "length" => {
             if args.len() != 1 {
                 Err(RuntimeError::TypeError(
-                    "length() expects one positional argument".to_string(),
+                    "length() expects one positional argument (arity mismatch)".to_string(),
                 ))
             } else {
                 match &args[0] {
                     Value::List(list) => Ok(Value::Int(list.borrow().len() as i64)),
                     Value::Str(s) => Ok(Value::Int(s.chars().count() as i64)),
                     _ => Err(RuntimeError::TypeError(
-                        "length() expects list or string".to_string(),
+                        "length() expects list or string (type mismatch)".to_string(),
                     )),
                 }
             }
@@ -80,14 +85,18 @@ fn call_builtin(
                 Ok(Value::FrozenDict(Rc::new(frozen)))
             }
             [Value::FrozenDict(map)] => Ok(Value::FrozenDict(map.clone())),
-            _ => Err(RuntimeError::TypeError("freeze() expects a dict".to_string())),
+            _ => Err(RuntimeError::TypeError(
+                "freeze() expects a dict (type mismatch)".to_string())
+            ),
         },
-        "panic" => match args {
+        "panic" => match args { // TODO depracated in favour of raise
             [Value::Str(msg)] => {
                 eprintln!("{}", msg);
                 process::exit(1);
             }
-            _ => Err(RuntimeError::TypeError("panic() expects a string".to_string())),
+            _ => Err(RuntimeError::TypeError(
+                "panic() expects a string (type mismatch)".to_string())
+            ),
         },
         "read_file" => match args {
             [Value::Str(path)] => {
@@ -106,7 +115,9 @@ fn call_builtin(
                     Err(_) => Ok(Value::Bool(false)),
                 }
             }
-            _ => Err(RuntimeError::TypeError("read_file() expects a file path".to_string())),
+            _ => Err(RuntimeError::TypeError(
+                "read_file() expects a file path".to_string())
+            ),
         },
         "call_builtin" => match args {
             [Value::Str(inner), Value::List(list)] => {
@@ -628,6 +639,10 @@ pub fn run(
                 Instr::RaiseSyntaxError => {
                     let msg = stack.pop().unwrap().to_string();
                     break Err(RuntimeError::SyntaxError(msg));
+                }
+                Instr::RaiseTypeError => {
+                    let msg = stack.pop().unwrap().to_string();
+                    break Err(RuntimeError::TypeError(msg))
                 }
             }
             break Ok(());

@@ -107,7 +107,7 @@ fn hex_with_string_type_error() {
     let result = run(&code, &funcs, &[]);
     assert_eq!(
         result,
-        Err(RuntimeError::TypeError("hex() expects one integer".to_string()))
+        Err(RuntimeError::TypeError("hex() expects one integer (arity mismatch)".to_string()))
     );
 }
 
@@ -122,7 +122,7 @@ fn binary_with_string_type_error() {
     let result = run(&code, &funcs, &[]);
     assert_eq!(
         result,
-        Err(RuntimeError::TypeError("binary() expects one or two integers".to_string()))
+        Err(RuntimeError::TypeError("binary() expects one or two integers (arity mismatch)".to_string()))
     );
 }
 
@@ -153,7 +153,7 @@ fn length_with_int_type_error() {
     let result = run(&code, &funcs, &[]);
     assert_eq!(
         result,
-        Err(RuntimeError::TypeError("length() expects list or string".to_string()))
+        Err(RuntimeError::TypeError("length() expects list or string (type mismatch)".to_string()))
     );
 }
 
