@@ -34,7 +34,7 @@ Example:
 Options:
     -h, --help
         Show this help message and exit.
-    --version
+    -v, --version
         Show runtime version."#,
         VERSION
     )
@@ -42,15 +42,18 @@ Options:
 
 fn main() {
     let args: Vec<String> = env::args().collect();
+
     if args.len() == 1 {
         repl_interpret();
         return;
     }
+
     if args[1] == "-h" || args[1] == "--help" {
         println!("{}", usage());
         return;
     }
-    if args[1] == "--version" {
+
+    if args[1] == "-v" || args[1] == "--version" {
         println!(
             "omg-runtime-build-{}-{}: v{}",
             env::consts::OS,
@@ -59,7 +62,9 @@ fn main() {
         );
         return;
     }
+
     if args[1].ends_with(".omgb") {
+        // execute pre-compiled .omgb binaries
         let bc_path = &args[1];
         let program_args: &[String] = if args.len() > 2 {
             if args[2] == "--" {
@@ -77,6 +82,7 @@ fn main() {
             std::process::exit(1);
         }
     } else {
+        // execute .omg source scripts using the embedded interpreter
         let prog_path = &args[1];
         let program_args_slice: &[String] = if args.len() > 2 {
             if args[2] == "--" {
@@ -87,9 +93,11 @@ fn main() {
         } else {
             &[]
         };
+
         let mut full_args = Vec::with_capacity(program_args_slice.len() + 1);
         full_args.push(prog_path.clone());
         full_args.extend_from_slice(program_args_slice);
+
         let (code, funcs) = parse_bytecode(INTERP_OMGBC);
         if let Err(e) = run(&code, &funcs, &full_args) {
             eprintln!("{}", e);

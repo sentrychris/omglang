@@ -182,6 +182,15 @@ def main():
     # runtime-test
     sub.add_parser("runtime-test", help="Run tests for the Rust runtime")
 
+    # runtime-run
+    r_run = sub.add_parser("runtime-run", help="Execute the Rust runtime")
+    r_run.add_argument(
+        "src",
+        nargs="?",
+        default=None,
+        help="Path to .omg source script"
+    )
+
     # runtime-build
     r_build = sub.add_parser(
         "runtime-build", help="Build the OMG native runtime (with embedded interpreter.omgb).",
@@ -341,6 +350,14 @@ def main():
             ['cargo', 'test', '--manifest-path', RUNTIME_MANIFEST_PATH],
             check=True
         )
+
+    if args.command == "runtime-run":
+        print("⏳ Executing runtime")
+        p_args = ['cargo', 'run', '--manifest-path', RUNTIME_MANIFEST_PATH]
+        if args.src:
+            p_args.append('--')
+            p_args.append(args.src)
+        subprocess.run(p_args, check=True)
 
     if args.command == "runtime-build":
         env = os.environ.copy()
