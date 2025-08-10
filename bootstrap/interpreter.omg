@@ -814,49 +814,11 @@ proc call_function(func_name, func, arg_values, env) {
         return false
     } elif func[0] == "builtin" {
         alloc name := func[1]
-        if name == "length" {
-            if length(arg_values) != 1 {
-                raise("RuntimeError: length() expects one positional argument")
-            }
-            return length(arg_values[0])
-        } elif name == "read_file" {
-            if length(arg_values) != 1 {
-                raise("RuntimeError: read_file() expects one positional argument")
-            }
-            return read_file(arg_values[0])
-        } elif name == "ascii" {
-            if length(arg_values) != 1 {
-                raise("RuntimeError: ascii() expects one positional argument")
-            }
-            return ascii(arg_values[0])
-        } elif name == "chr" {
-            if length(arg_values) != 1 {
-                raise("RuntimeError: chr() expects one positional argument")
-            }
-            return chr(arg_values[0])
-        } elif name == "freeze" {
-            if length(arg_values) != 1 {
-                raise("RuntimeError: freeze() expects one positional argument")
-            }
-            return freeze(arg_values[0])
-        } elif name == "raise" {
+        if name == "raise" {
             raise(arg_values[0])
             return false
-        } elif name == "hex" {
-            if length(arg_values) != 1 {
-                raise("RuntimeError: hex() expects one integer")
-            }
-            return hex(arg_values[0])
-        } elif name == "binary" {
-            if length(arg_values) == 1 {
-                return binary(arg_values[0])
-            } elif length(arg_values) == 2 {
-                return binary(arg_values[0], arg_values[1])
-            }
-            raise("RuntimeError: binary() expects one or two integers")
         }
-        raise("RuntimeError: Unknown builtin: " + name)
-        return false
+        return call_builtin(name, arg_values)
     } else {
         raise("TypeError: Not a function value")
         return false
