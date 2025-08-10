@@ -80,10 +80,7 @@ fn uncaught_syntax_error_surfaces() {
     ];
     let funcs = HashMap::new();
     let result = run(&code, &funcs, &[]);
-    assert_eq!(
-        result,
-        Err(RuntimeError::SyntaxError("boom".to_string()))
-    );
+    assert_eq!(result, Err(RuntimeError::SyntaxError("boom".to_string())));
 }
 
 #[test]
@@ -95,10 +92,7 @@ fn uncaught_type_error_surfaces() {
     ];
     let funcs = HashMap::new();
     let result = run(&code, &funcs, &[]);
-    assert_eq!(
-        result,
-        Err(RuntimeError::TypeError("boom".to_string()))
-    );
+    assert_eq!(result, Err(RuntimeError::TypeError("boom".to_string())));
 }
 
 #[test]
@@ -123,7 +117,9 @@ fn raise_stack_underflow_errors() {
     let result = run(&code, &funcs, &[]);
     assert_eq!(
         result,
-        Err(RuntimeError::VmInvariant("stack underflow on RAISE".to_string()))
+        Err(RuntimeError::VmInvariant(
+            "stack underflow on RAISE".to_string()
+        ))
     );
 }
 
@@ -163,7 +159,9 @@ fn hex_with_string_type_error() {
     let result = run(&code, &funcs, &[]);
     assert_eq!(
         result,
-        Err(RuntimeError::TypeError("hex() expects one integer (arity mismatch)".to_string()))
+        Err(RuntimeError::TypeError(
+            "hex() expects one integer (arity mismatch)".to_string()
+        ))
     );
 }
 
@@ -178,7 +176,9 @@ fn binary_with_string_type_error() {
     let result = run(&code, &funcs, &[]);
     assert_eq!(
         result,
-        Err(RuntimeError::TypeError("binary() expects one or two integers (arity mismatch)".to_string()))
+        Err(RuntimeError::TypeError(
+            "binary() expects one or two integers (arity mismatch)".to_string()
+        ))
     );
 }
 
@@ -194,7 +194,9 @@ fn binary_with_non_positive_width_type_error() {
     let result = run(&code, &funcs, &[]);
     assert_eq!(
         result,
-        Err(RuntimeError::ValueError("binary() width must be positive".to_string()))
+        Err(RuntimeError::ValueError(
+            "binary() width must be positive".to_string()
+        ))
     );
 }
 
@@ -209,7 +211,9 @@ fn length_with_int_type_error() {
     let result = run(&code, &funcs, &[]);
     assert_eq!(
         result,
-        Err(RuntimeError::TypeError("length() expects list or string (type mismatch)".to_string()))
+        Err(RuntimeError::TypeError(
+            "length() expects list or string (type mismatch)".to_string()
+        ))
     );
 }
 
@@ -277,5 +281,43 @@ fn call_value_unknown_function_errors() {
     assert_eq!(
         result,
         Err(RuntimeError::UndefinedIdentError("foo".to_string()))
+    );
+}
+
+#[test]
+fn list_slice_with_invalid_bounds_errors() {
+    let code = vec![
+        Instr::BuildList(0),
+        Instr::PushInt(1),
+        Instr::PushInt(0),
+        Instr::Slice,
+        Instr::Halt,
+    ];
+    let funcs = HashMap::new();
+    let result = run(&code, &funcs, &[]);
+    assert_eq!(
+        result,
+        Err(RuntimeError::IndexError(
+            "Slice indices out of bounds!".to_string()
+        ))
+    );
+}
+
+#[test]
+fn string_slice_with_invalid_bounds_errors() {
+    let code = vec![
+        Instr::PushStr("ab".to_string()),
+        Instr::PushInt(0),
+        Instr::PushInt(3),
+        Instr::Slice,
+        Instr::Halt,
+    ];
+    let funcs = HashMap::new();
+    let result = run(&code, &funcs, &[]);
+    assert_eq!(
+        result,
+        Err(RuntimeError::IndexError(
+            "Slice indices out of bounds!".to_string()
+        ))
     );
 }
