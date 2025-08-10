@@ -53,17 +53,17 @@ License: MIT"""
 
         if footer_pattern.search(body):
             updated_body = footer_pattern.sub(new_footer, body.strip())
-            action = "[✓] Footer block updated in"
+            action = "📝 Footer block updated in"
         else:
             updated_body = body.strip() + "\n\n" + new_footer
-            action = "[+] Footer block appended to"
+            action = "📝 Footer block appended to"
 
         new_docstring = f"{quote}{updated_body}\n{quote}"
         new_contents = new_docstring + contents[docstring_match.end():]
     else:
         new_docstring = f'"""{new_footer}"""\n\n'
         new_contents = new_docstring + contents
-        action = "[+] Docstring created with footer block"
+        action = "📝 Docstring created with footer block"
 
     with open(filepath, "w", encoding="utf-8") as file:
         file.write(new_contents)

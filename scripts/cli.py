@@ -53,7 +53,7 @@ def _get_upx(package_resources: str, upx_pkg: str, upx_url: str, is_windows: boo
     upx_dir = os.path.join(package_resources, upx_pkg)
 
     if not os.path.exists(upx_dir):
-        print("Downloading UPX...")
+        print("⏳ Downloading UPX...")
         upx_path = os.path.join(package_resources, f"{upx_pkg}.{'zip' if is_windows else 'tar.xz'}")
         urllib.request.urlretrieve(upx_url, upx_path)
 
@@ -66,7 +66,7 @@ def _get_upx(package_resources: str, upx_pkg: str, upx_url: str, is_windows: boo
 
         os.remove(upx_path)
     else:
-        print("UPX is available")
+        print("ℹ️  UPX is available")
 
     return upx_dir
 
@@ -95,7 +95,7 @@ def _build_exe(spec_file: str, upx_dir: str, dist_dir: str, build_dir: str) -> N
         build_dir (str): Directory for PyInstaller's build artifacts.
     """
 
-    print("Building OMG runtime executable...")
+    print("⏳ Building OMG runtime executable...")
     subprocess.run([
         "pyinstaller",
         spec_file,
@@ -106,23 +106,23 @@ def _build_exe(spec_file: str, upx_dir: str, dist_dir: str, build_dir: str) -> N
 
 
 def _compile_native_interpreter(src: str, out_bin: str) -> None:
-    print(f"[*] Compiling native {src} for runtime...")
+    print(f"⏳ Compiling native {src} for runtime...")
     compile_interp([src, out_bin])
-    print(f"[✓] Compiled to {out_bin}")
-    print("\n[?] Verify the binary with `omg-cli verify <path>`")
+    print(f"✅ Compiled to {out_bin}")
+    print("\n❔ Verify the binary with `omg-cli verify <path>`")
     print("    <path> will default to `./runtime/interpreter.omgb` if not set.")
 
 
 def _disassemble_native_interpreter(
     bin_path: str, start: int | None, end: int | None
 ) -> None:
-    print(f"[*] Disassembling {bin_path}..\n")
+    print(f"⏳ Disassembling {bin_path}..")
     with open(bin_path, "rb") as b:
         data = b.read()
     source = disassemble(data)
     if start is None and end is None:
         print("----------------------------------------------")
-        print("[+]     File Header and Function Table     [+]")
+        print("📑             File Header                  📑")
         print("----------------------------------------------")
         header = data[:4]
         version = struct.unpack_from("<I", data, 4)[0]
@@ -130,6 +130,9 @@ def _disassemble_native_interpreter(
         idx = 12
         print(f"magic {header!r}")
         print(f"version {version}")
+        print("----------------------------------------------")
+        print("🧬             Functions Table              🧬")
+        print("----------------------------------------------")
         for _ in range(func_count):
             name_len = struct.unpack_from("<I", data, idx)[0]
             idx += 4
@@ -288,28 +291,28 @@ def main():
     build_spec = os.path.join(package_resources, "omg.spec")
 
     if args.command == "docstring-headers":
-        print("Inserting docstrings into source .py files...")
+        print("⏳ Inserting docstrings into source .py files...")
         insert_docstrings()
         return
 
     if args.command == "third-party-lics":
-        print("Generating third-party licenses file...")
+        print("⏳ Generating third-party licenses file...")
         generate_third_party_licenses()
         return
 
     if args.command == "project-tree":
-        print("Generating project directory tree...")
+        print("⏳ Generating project directory tree...")
         write_tree_to_file()
         return
 
     if args.command == "lint-python":
-        print("Running flake8...")
+        print("⏳ Running flake8...")
         subprocess.run(
             ["flake8", OMG_PY_INTERPRETER_SRC, OMG_PY_ENTRYPOINT],
             check=True
         )
 
-        print("Running pylint...")
+        print("⏳ Running pylint...")
         subprocess.run(
             ["pylint", OMG_PY_INTERPRETER_SRC, OMG_PY_ENTRYPOINT],
             check=True
@@ -324,7 +327,7 @@ def main():
         return
 
     if args.command == "verify-omgb":
-        print(f"[*] Verifying {args.bin}")
+        print(f"⏳ Verifying {args.bin}")
         try:
             verify_interpreter(args.bin)
         except ValueError as e:
@@ -333,7 +336,7 @@ def main():
         return
 
     if args.command == "runtime-test":
-        print("[*] Running tests")
+        print("⏳ Running tests")
         subprocess.run(
             ['cargo', 'test', '--manifest-path', RUNTIME_MANIFEST_PATH],
             check=True
@@ -353,7 +356,7 @@ def main():
         if not os.path.exists(build_spec):
             raise FileNotFoundError(f".spec file not found: {build_spec}")
         if args.clean:
-            print("Cleaning previous build directories...")
+            print("⏳ Cleaning previous build directories...")
             _clean_dir(dist_dir)
             _clean_dir(build_dir)
         # Fetch UPX (scoped to build only)

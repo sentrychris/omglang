@@ -29,7 +29,7 @@ def write_tree_to_file(output_file: str = "project_tree.txt") -> None:
     tree(base_dir, "", lines)
     tree_rep = str.join("\n", lines).encode("utf-8")
     Path(output_file).write_bytes(tree_rep)
-    print(f"[✓] Project tree written to {output_file}")
+    print(f"✅ Project tree written to {output_file}")
     print(tree_rep.decode("utf-8"))
 
 if __name__ == "__main__":

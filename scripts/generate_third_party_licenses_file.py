@@ -42,7 +42,7 @@ def group_license(licenses):
     Group by license content
     """
 
-    print("[*] Grouping packages by license content...")
+    print("⏳ Grouping packages by license content...")
     grouped_licenses = defaultdict(list)
 
     for pkg in licenses:
@@ -60,7 +60,7 @@ def group_license(licenses):
             license_text
         ))
 
-    print(f"[+] Grouped into {len(grouped_licenses)} unique license block(s).")
+    print(f"ℹ️  Grouped into {len(grouped_licenses)} unique license block(s).")
     return grouped_licenses
 
 
@@ -68,7 +68,7 @@ def write_deduplicated(grouped_licenses, output_file="THIRD_PARTY_LICENSES.txt")
     """
     Write licenses to output file
     """
-    print(f"[*] Writing deduplicated license report to {output_file}...")
+    print(f"📝 Writing deduplicated license report to {output_file}...")
     count = 0
 
     with open(output_file, "w", encoding="utf-8") as f:
@@ -98,7 +98,7 @@ def write_deduplicated(grouped_licenses, output_file="THIRD_PARTY_LICENSES.txt")
             f.write("\n\n")
             count += 1
 
-    print(f"[+] Successfully wrote {count} license block(s) to {output_file}.")
+    print(f"✅ Successfully wrote {count} license block(s) to {output_file}.")
 
 
 def generate_third_party_licenses():
@@ -106,10 +106,10 @@ def generate_third_party_licenses():
     Generate third-party license file
     """
 
-    print("[*] Generating third-party license file...")
+    print("📝 Generating third-party license file...")
     raw_licenses = run_pip_licenses()
     write_deduplicated(group_license(raw_licenses))
-    print("[✓] Done.")
+    print("✅ Done.")
 
 
 if __name__ == "__main__":
