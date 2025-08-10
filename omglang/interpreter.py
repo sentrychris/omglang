@@ -549,6 +549,9 @@ class Interpreter:
                         # environments).
                         return FrozenNamespace(args[0])
 
+                    if func_name == 'raise':
+                        raise RuntimeError(args[0])
+
                 # User-defined functions
                 func_value = self.eval_expr(func_node)
                 if not isinstance(func_value, FunctionValue):
