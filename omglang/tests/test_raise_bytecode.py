@@ -1,5 +1,9 @@
+"""
+Test Errors.
+"""
 import pytest
 from omglang.compiler import compile_source, disassemble
+
 
 @pytest.mark.parametrize(
     "call, kind",
@@ -14,6 +18,9 @@ from omglang.compiler import compile_source, disassemble
     ],
 )
 def test_raise_compiles_to_raise_kind(call: str, kind: str) -> None:
+    """
+    Test raising error kind.
+    """
     bc = compile_source(call)
     lines = disassemble(bc).splitlines()
     assert "PUSH_STR boom" in lines
