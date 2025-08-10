@@ -786,7 +786,7 @@ proc strip_header(source, path) {
     return source
 }
 
-proc call_function(func, arg_values, env) {
+proc call_function(func_name, func, arg_values, env) {
     if func[0] == "function" {
         alloc params := func[1]
         alloc body := func[2]
@@ -800,7 +800,7 @@ proc call_function(func, arg_values, env) {
         alloc params_len := length(params)
         alloc arg_len := length(arg_values)
         if arg_len != params_len {
-            raise("TypeError: Function expects " + params_len + " arguments")
+            raise("TypeError: Function '" + func_name + "' expects " + params_len + " arguments")
         }
         loop i < params_len {
             local := env_set(local, params[i], arg_values[i])
@@ -1064,7 +1064,8 @@ proc eval_expr(expr, env) {
             arg_values := arg_values + [eval_expr(arg_nodes[i], env)]
             i := i + 1
         }
-        return call_function(func_val, arg_values, env)
+        alloc func_id := expr[1][1]
+        return call_function(func_id, func_val, arg_values, env)
     } else {
         raise("RuntimeError: Unknown expr kind: " + kind)
         return false
@@ -1188,7 +1189,8 @@ proc execute(stmts, env, is_global) {
                 call_args := call_args + [eval_expr(arg_nodes[j], env)]
                 j := j + 1
             }
-            _ := call_function(func_val, call_args, env)
+            alloc func_id := stmt[1][1]
+            _ := call_function(func_id, func_val, call_args, env)
         } else {
             raise("RuntimeError: Unknown statement: " + kind)
         }
