@@ -117,6 +117,7 @@ class Compiler:
             "length",
             "read_file",
             "freeze",
+            "call_builtin",
         }
 
     # ------------------------------------------------------------------

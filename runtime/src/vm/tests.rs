@@ -156,3 +156,20 @@ fn length_with_int_type_error() {
         Err(RuntimeError::TypeError("length() expects list or string".to_string()))
     );
 }
+
+#[test]
+fn call_builtin_dispatches_hex() {
+    let code = vec![
+        Instr::PushStr("hex".to_string()),
+        Instr::PushInt(255),
+        Instr::BuildList(1),
+        Instr::CallBuiltin("call_builtin".to_string(), 2),
+        Instr::PushStr("ff".to_string()),
+        Instr::Eq,
+        Instr::Assert,
+        Instr::Halt,
+    ];
+    let funcs = HashMap::new();
+    let result = run(&code, &funcs, &[]);
+    assert!(result.is_ok());
+}
