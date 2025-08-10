@@ -547,10 +547,12 @@ pub fn run(
                             pc = func.address;
                             advance_pc = false;
                         } else {
-                            panic!("Unknown function: {}", name);
+                            break Err(RuntimeError::UndefinedIdentError(name));
                         }
                     } else {
-                        panic!("CALL_VALUE expects function name");
+                        break Err(RuntimeError::TypeError(
+                            "Call value expects function name".to_string(),
+                        ));
                     }
                 }
                 Instr::PushNone => {
@@ -580,7 +582,7 @@ pub fn run(
                         pc = func.address;
                         advance_pc = false;
                     } else {
-                        panic!("Unknown function: {}", name);
+                        break Err(RuntimeError::UndefinedIdentError(name.clone()));
                     }
                 }
                 Instr::TailCall(name) => {
@@ -594,7 +596,7 @@ pub fn run(
                         pc = func.address;
                         advance_pc = false;
                     } else {
-                        panic!("Unknown function: {}", name);
+                        break Err(RuntimeError::UndefinedIdentError(name.clone()));
                     }
                 }
                 Instr::CallBuiltin(name, argc) => {
