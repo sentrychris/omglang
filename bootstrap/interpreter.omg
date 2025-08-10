@@ -107,6 +107,8 @@ proc tokenize(src) {
             tokens[n] := ["symbol", ">>"]
             n := n + 1
             i := i + 2
+        } elif c == "/" and i + 1 < src_len and src[i + 1] == "/" {
+            panic("RuntimeError: Unexpected / after /")
         } elif c == "/" and i + 1 < src_len and src[i + 1] == "*" {
             i := i + 2
             loop i + 1 < src_len and (src[i] != "*" or src[i + 1] != "/") {
@@ -341,6 +343,13 @@ proc parse_add_sub(tokens, i) {
     alloc right_res := [false, 0]
     loop j < tok_len and tokens[j][0] == "symbol" and (tokens[j][1] == "+" or tokens[j][1] == "-") {
         op := tokens[j]
+        if tokens[j + 1][0] == "symbol" and (tokens[j + 1][1] == "+" or tokens[j + 1][1] == "-") {
+            if op[1] == "+" and tokens[j + 1][1] == "-" {
+                panic("RuntimeError: unexpected - after + unary operator")
+            } elif op[1] == "-" and tokens[j + 1][1] == "+" {
+                panic("RuntimeError: unexpected + after - unary operator")
+            }
+        }
         right_res := parse_term(tokens, j + 1)
         if op[1] == "+" {
             left := ["add", left, right_res[0]]
@@ -435,7 +444,16 @@ proc parse_factor(tokens, i) {
     alloc j := i
     alloc k := 0
     alloc res := [false, 0]
-    if t[0] == "symbol" and t[1] == "-" {
+    if t[0] == "symbol" and t[1] == "+" {
+        if tokens[i + 1][0] == "symbol" and tokens[i + 1][1] == "-" {
+            panic("RuntimeError: unexpected - after + unary operator")
+        }
+        res := parse_factor(tokens, i + 1)
+        return [["unary", "add", res[0]], res[1]]
+    } elif t[0] == "symbol" and t[1] == "-" {
+        if tokens[i + 1][0] == "symbol" and tokens[i + 1][1] == "+" {
+            panic("RuntimeError: unexpected + after - unary operator")
+        }
         res := parse_factor(tokens, i + 1)
         return [["unary", "sub", res[0]], res[1]]
     } elif t[0] == "symbol" and t[1] == "~" {
@@ -756,18 +774,45 @@ proc call_function(func, arg_values, env) {
     } elif func[0] == "builtin" {
         alloc name := func[1]
         if name == "length" {
+            if length(arg_values) != 1 {
+                panic("RuntimeError: length() expects one positional argument")
+            }
             return length(arg_values[0])
         } elif name == "read_file" {
+            if length(arg_values) != 1 {
+                panic("RuntimeError: read_file() expects one positional argument")
+            }
             return read_file(arg_values[0])
         } elif name == "ascii" {
+            if length(arg_values) != 1 {
+                panic("RuntimeError: ascii() expects one positional argument")
+            }
             return ascii(arg_values[0])
         } elif name == "chr" {
+            if length(arg_values) != 1 {
+                panic("RuntimeError: chr() expects one positional argument")
+            }
             return chr(arg_values[0])
         } elif name == "freeze" {
+            if length(arg_values) != 1 {
+                panic("RuntimeError: freeze() expects one positional argument")
+            }
             return freeze(arg_values[0])
         } elif name == "panic" {
             panic(arg_values[0])
             return false
+        } elif name == "hex" {
+            if length(arg_values) != 1 {
+                panic("RuntimeError: hex() expects one integer")
+            }
+            return hex(arg_values[0])
+        } elif name == "binary" {
+            if length(arg_values) == 1 {
+                return binary(arg_values[0])
+            } elif length(arg_values) == 2 {
+                return binary(arg_values[0], arg_values[1])
+            }
+            panic("RuntimeError: binary() expects one or two integers")
         }
         panic("RuntimeError: Unknown builtin: " + name)
         return false
@@ -807,7 +852,16 @@ proc import_module(path) {
     }
     source := strip_header(source, full)
     alloc ast := parse(source)
-    alloc env := [["length", ["builtin", "length"]], ["read_file", ["builtin", "read_file"]], ["ascii", ["builtin", "ascii"]], ["chr", ["builtin", "chr"]], ["freeze", ["builtin", "freeze"]], ["panic", ["builtin", "panic"]]]
+    alloc env := [
+        ["length", ["builtin", "length"]],
+        ["read_file", ["builtin", "read_file"]],
+        ["ascii", ["builtin", "ascii"]],
+        ["binary", ["builtin", "binary"]],
+        ["chr", ["builtin", "chr"]],
+        ["hex", ["builtin", "hex"]]
+        ["freeze", ["builtin", "freeze"]],
+        ["panic", ["builtin", "panic"]]
+    ]
     env := env_set(env, "args", [])
     global_env := env
     alloc exports := []
@@ -1089,7 +1143,16 @@ proc execute(stmts, env, is_global) {
 }
 proc run(source) {
     alloc ast := parse(source)
-    alloc env := [["length", ["builtin", "length"]], ["read_file", ["builtin", "read_file"]], ["ascii", ["builtin", "ascii"]], ["chr", ["builtin", "chr"]], ["freeze", ["builtin", "freeze"]], ["panic", ["builtin", "panic"]]]
+    alloc env := [
+        ["length", ["builtin", "length"]],
+        ["read_file", ["builtin", "read_file"]],
+        ["ascii", ["builtin", "ascii"]],
+        ["binary", ["builtin", "binary"]],
+        ["chr", ["builtin", "chr"]],
+        ["hex", ["builtin", "hex"]]
+        ["freeze", ["builtin", "freeze"]],
+        ["panic", ["builtin", "panic"]]
+    ]
     env := env_set(env, "args", args)
     global_env := env
     return execute(ast, env, true)

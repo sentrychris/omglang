@@ -493,12 +493,15 @@ pub fn run(
                         }
                         _ => panic!("binary() expects one or two integers"),
                     },
-                    "length" => match args.as_slice() {
-                        [Value::List(list)] => Value::Int(list.borrow().len() as i64),
-                        [Value::Str(s)] => Value::Int(s.chars().count() as i64),
-                        [Value::Dict(map)] => Value::Int(map.borrow().len() as i64),
-                        [Value::FrozenDict(map)] => Value::Int(map.len() as i64),
-                        _ => panic!("length() expects a list, dict or string"),
+                    "length" => {
+                        if args.len() != 1 {
+                            panic!("length() expects one positional argument");
+                        }
+                        match &args[0] {
+                            Value::List(list) => Value::Int(list.borrow().len() as i64),
+                            Value::Str(s) => Value::Int(s.chars().count() as i64),
+                            _ => panic!("length() expects list or string"),
+                        }
                     },
                     "freeze" => match args.as_slice() {
                         [Value::Dict(map)] => {
