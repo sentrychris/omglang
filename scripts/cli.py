@@ -20,36 +20,37 @@ from omglang.compiler import main as compile_interp, disassemble
 from scripts.generate_docstring_headers import insert_docstrings
 from scripts.generate_third_party_licenses_file import generate_third_party_licenses
 from scripts.generate_project_tree import write_tree_to_file
+from scripts.omg2py import transpile_file
 from scripts.verify_omgb_file_bytes import verify_interpreter
 
 # Project root
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 # OMG python runtime + interpreter (Python + Python)
-# used by Pyinstaller for compression (check CFG). 
-DEFAULT_UPX_VER="5.0.2"
-# output directory for the PyInstaller distribution. 
+# used by Pyinstaller for compression (check CFG).
+DEFAULT_UPX_VER = "5.0.2"
+# output directory for the PyInstaller distribution.
 PY_BUILD_OUTPUT_DIR = os.path.join(BASE_DIR, "output")
-# dist directory for the PyInstaller executable. 
+# dist directory for the PyInstaller executable.
 PY_DIST_DIR = os.path.join(PY_BUILD_OUTPUT_DIR, "dist")
-# build directory for PyInstaller build artifacts. 
+# build directory for PyInstaller build artifacts.
 PY_BUILD_DIR = os.path.join(PY_BUILD_OUTPUT_DIR, "build")
-# package resources for PyInstaller (e.g. .spec, version.rc). 
+# package resources for PyInstaller (e.g. .spec, version.rc).
 PY_PKG_RESOURCES = os.path.join(BASE_DIR, "package_resources")
-# .spec file for the PyInstaller distribution. 
+# .spec file for the PyInstaller distribution.
 PY_BUILD_SPEC = os.path.join(PY_PKG_RESOURCES, "omg.spec")
-# Entry-point for the OMG lexer,parser,interpreter. 
-PY_OMG_ENTRYPOINT=os.path.join(BASE_DIR, 'omg.py')
-# The omglang reference (original) Python implementation. 
-PY_OMG_INTERPRETER_SRC=os.path.join(BASE_DIR, 'omglang')
+# Entry-point for the OMG lexer,parser,interpreter.
+PY_OMG_ENTRYPOINT = os.path.join(BASE_DIR, 'omg.py')
+# The omglang reference (original) Python implementation.
+PY_OMG_INTERPRETER_SRC = os.path.join(BASE_DIR, 'omglang')
 
 # OMG native runtime + interpreter (Rust + OMG)
 # OMG self-hosted interpreter
-OMG_INTERPRETER_SRC=os.path.join(BASE_DIR, 'bootstrap', 'interpreter.omg')
+OMG_INTERPRETER_SRC = os.path.join(BASE_DIR, 'bootstrap', 'interpreter.omg')
 # Compiled OMG interpreter binary
-OMG_INTERPRETER_BIN=os.path.join(BASE_DIR, 'runtime', 'interpreter.omgb')
+OMG_INTERPRETER_BIN = os.path.join(BASE_DIR, 'runtime', 'interpreter.omgb')
 # Cargo manifest for the native runtime
-NATIVE_RUNTIME_MANIFEST_PATH=os.path.join(BASE_DIR, 'runtime', 'Cargo.toml')
+NATIVE_RUNTIME_MANIFEST_PATH = os.path.join(BASE_DIR, 'runtime', 'Cargo.toml')
 # Cargo target directory for the runtime build
 NATIVE_RUNTIME_TARGET_DIR = os.path.join(BASE_DIR, "runtime", "target")
 
@@ -200,6 +201,11 @@ def main():
     # project-tree
     sub.add_parser("project-tree", help="Generate project directory tree representation")
 
+    # omg2py
+    p_trans = sub.add_parser("omg2py", help="Transpile OMG script to Python")
+    p_trans.add_argument("src", help="Path to .omg source script")
+    p_trans.add_argument("-o", "--out", dest="out", default=None, help="Output .py file path")
+
     # lint-python
     sub.add_parser("lint-python", help="Lint .py source files with flake8 and pylint")
 
@@ -335,6 +341,11 @@ def main():
         write_tree_to_file()
         return
 
+    if args.command == "omg2py":
+        out_path = args.out or f"{os.path.splitext(args.src)[0]}.py"
+        transpile_file(args.src, out_path)
+        return
+
     if args.command == "lint-python":
         print("⏳ Running flake8...")
         subprocess.run(
@@ -417,6 +428,7 @@ def main():
         _build_py_exe(PY_BUILD_SPEC, upx_dir, PY_DIST_DIR, PY_BUILD_DIR)
         if args.upx_clean:
             _clean_path(upx_dir)
+
 
 if __name__ == "__main__":
     main()
