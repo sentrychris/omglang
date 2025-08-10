@@ -9,6 +9,7 @@ Ordered from most recent at the top to oldest at the bottom.
 - Introduced a centralized `call_builtin` helper to dispatch built-ins through a single code path.
 - Registered `call_builtin` as a recognized built-in in the compiler for proper lowering during bytecode generation.
 - Narrowed error types, adding opcode instructions, handlers and compiler instrutions for specific errors i.e. `SyntaxError`.
+- Prefix for calls from the interpreter into the VM layer. Such calls are now prefixed with `_omg_vm` for clarity.
 
 ### Changed
 - Updated the bytecode interpreter to invoke `call_builtin` for `Instr::CallBuiltin` to streamline execution flow.
