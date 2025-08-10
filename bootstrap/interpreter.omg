@@ -138,6 +138,9 @@ proc tokenize(src) {
         } else {
             res := read_ident(src, i)
             word := res[0]
+            if res[1] == i {
+                panic("Unknown operator: " + c)
+            }
             i := res[1]
             if word == "alloc" or word == "emit" or word == "proc" or word == "return" or word == "if" or word == "else" or word == "elif" or word == "loop" or word == "break" or word == "and" or word == "or" or word == "facts" or word == "import" or word == "as" {
                 tokens[n] := ["kw", word]
@@ -199,16 +202,22 @@ proc parse_statement(tokens, i) {
         alloc else_block := []
         alloc k := 0
         alloc pair := false
-        loop j < tok_len and tokens[j][0] == "kw" and tokens[j][1] == "elif" {
-            res_elif := parse_expression(tokens, j + 1)
-            res_block := parse_block(tokens, res_elif[1])
-            elifs := elifs + [[res_elif[0], res_block[0]]]
-            j := res_block[1]
+        loop j < tok_len {
+            if tokens[j][0] == "kw" and tokens[j][1] == "elif" {
+                res_elif := parse_expression(tokens, j + 1)
+                res_block := parse_block(tokens, res_elif[1])
+                elifs := elifs + [[res_elif[0], res_block[0]]]
+                j := res_block[1]
+            } else {
+                break
+            }
         }
-        if j < tok_len and tokens[j][0] == "kw" and tokens[j][1] == "else" {
-            res_block := parse_block(tokens, j + 1)
-            else_block := res_block[0]
-            j := res_block[1]
+        if j < tok_len {
+            if tokens[j][0] == "kw" and tokens[j][1] == "else" {
+                res_block := parse_block(tokens, j + 1)
+                else_block := res_block[0]
+                j := res_block[1]
+            }
         }
         k := length(elifs) - 1
         loop k >= 0 {
@@ -245,15 +254,17 @@ proc parse_statement(tokens, i) {
     } else {
         alloc lval_res := parse_factor(tokens, i)
         alloc j := lval_res[1]
-        if j < tok_len and tokens[j][0] == "symbol" and tokens[j][1] == ":=" {
-            alloc val_res := parse_expression(tokens, j + 1)
-            alloc target := lval_res[0]
-            if target[0] == "ident" {
-                return [["assign", target[1], val_res[0]], val_res[1]]
-            } elif target[0] == "dot" {
-                return [["attr_assign", target[1], target[2], val_res[0]], val_res[1]]
-            } elif target[0] == "index" {
-                return [["index_assign", target[1], target[2], val_res[0]], val_res[1]]
+        if j < tok_len {
+            if tokens[j][0] == "symbol" and tokens[j][1] == ":=" {
+                alloc val_res := parse_expression(tokens, j + 1)
+                alloc target := lval_res[0]
+                if target[0] == "ident" {
+                    return [["assign", target[1], val_res[0]], val_res[1]]
+                } elif target[0] == "dot" {
+                    return [["attr_assign", target[1], target[2], val_res[0]], val_res[1]]
+                } elif target[0] == "index" {
+                    return [["index_assign", target[1], target[2], val_res[0]], val_res[1]]
+                }
             }
         }
         return [lval_res[0], lval_res[1]]
@@ -264,7 +275,10 @@ proc parse_block(tokens, i) {
     alloc j := i
     alloc res := [false, 0]
     j := j + 1
-    loop tokens[j][0] != "symbol" or tokens[j][1] != "}" {
+    loop j < tok_len {
+        if tokens[j][0] == "symbol" and tokens[j][1] == "}" {
+            break
+        }
         res := parse_statement(tokens, j)
         stmts := stmts + [res[0]]
         j := res[1]
@@ -279,10 +293,14 @@ proc parse_or(tokens, i) {
     alloc left := res[0]
     alloc j := res[1]
     alloc right_res := [false, 0]
-    loop j < tok_len and tokens[j][0] == "kw" and tokens[j][1] == "or" {
-        right_res := parse_and(tokens, j + 1)
-        left := ["or", left, right_res[0]]
-        j := right_res[1]
+    loop j < tok_len {
+        if tokens[j][0] == "kw" and tokens[j][1] == "or" {
+            right_res := parse_and(tokens, j + 1)
+            left := ["or", left, right_res[0]]
+            j := right_res[1]
+        } else {
+            break
+        }
     }
     return [left, j]
 }
@@ -291,10 +309,14 @@ proc parse_and(tokens, i) {
     alloc left := res[0]
     alloc j := res[1]
     alloc right_res := [false, 0]
-    loop j < tok_len and tokens[j][0] == "kw" and tokens[j][1] == "and" {
-        right_res := parse_comparison(tokens, j + 1)
-        left := ["and", left, right_res[0]]
-        j := right_res[1]
+    loop j < tok_len {
+        if tokens[j][0] == "kw" and tokens[j][1] == "and" {
+            right_res := parse_comparison(tokens, j + 1)
+            left := ["and", left, right_res[0]]
+            j := right_res[1]
+        } else {
+            break
+        }
     }
     return [left, j]
 }
@@ -304,23 +326,27 @@ proc parse_comparison(tokens, i) {
     alloc j := res[1]
     alloc op := [false, false]
     alloc right_res := [false, 0]
-    loop j < tok_len and tokens[j][0] == "symbol" and (tokens[j][1] == "<" or tokens[j][1] == "==" or tokens[j][1] == ">" or tokens[j][1] == "<=" or tokens[j][1] == ">=" or tokens[j][1] == "!=") {
-        op := tokens[j]
-        right_res := parse_bit_or(tokens, j + 1)
-        if op[1] == "<" {
-            left := ["lt", left, right_res[0]]
-        } elif op[1] == ">" {
-            left := ["gt", left, right_res[0]]
-        } elif op[1] == "<=" {
-            left := ["le", left, right_res[0]]
-        } elif op[1] == ">=" {
-            left := ["ge", left, right_res[0]]
-        } elif op[1] == "==" {
-            left := ["eq", left, right_res[0]]
+    loop j < tok_len {
+        if tokens[j][0] == "symbol" and (tokens[j][1] == "<" or tokens[j][1] == "==" or tokens[j][1] == ">" or tokens[j][1] == "<=" or tokens[j][1] == ">=" or tokens[j][1] == "!=") {
+            op := tokens[j]
+            right_res := parse_bit_or(tokens, j + 1)
+            if op[1] == "<" {
+                left := ["lt", left, right_res[0]]
+            } elif op[1] == ">" {
+                left := ["gt", left, right_res[0]]
+            } elif op[1] == "<=" {
+                left := ["le", left, right_res[0]]
+            } elif op[1] == ">=" {
+                left := ["ge", left, right_res[0]]
+            } elif op[1] == "==" {
+                left := ["eq", left, right_res[0]]
+            } else {
+                left := ["ne", left, right_res[0]]
+            }
+            j := right_res[1]
         } else {
-            left := ["ne", left, right_res[0]]
+            break
         }
-        j := right_res[1]
     }
     return [left, j]
 }
@@ -330,15 +356,19 @@ proc parse_add_sub(tokens, i) {
     alloc j := res[1]
     alloc op := [false, false]
     alloc right_res := [false, 0]
-    loop j < tok_len and tokens[j][0] == "symbol" and (tokens[j][1] == "+" or tokens[j][1] == "-") {
-        op := tokens[j]
-        right_res := parse_term(tokens, j + 1)
-        if op[1] == "+" {
-            left := ["add", left, right_res[0]]
+    loop j < tok_len {
+        if tokens[j][0] == "symbol" and (tokens[j][1] == "+" or tokens[j][1] == "-") {
+            op := tokens[j]
+            right_res := parse_term(tokens, j + 1)
+            if op[1] == "+" {
+                left := ["add", left, right_res[0]]
+            } else {
+                left := ["sub", left, right_res[0]]
+            }
+            j := right_res[1]
         } else {
-            left := ["sub", left, right_res[0]]
+            break
         }
-        j := right_res[1]
     }
     return [left, j]
 }
@@ -348,17 +378,21 @@ proc parse_term(tokens, i) {
     alloc j := res[1]
     alloc op := [false, false]
     alloc right_res := [false, 0]
-    loop j < tok_len and tokens[j][0] == "symbol" and (tokens[j][1] == "*" or tokens[j][1] == "/" or tokens[j][1] == "%") {
-        op := tokens[j]
-        right_res := parse_factor(tokens, j + 1)
-        if op[1] == "*" {
-            left := ["mul", left, right_res[0]]
-        } elif op[1] == "/" {
-            left := ["div", left, right_res[0]]
+    loop j < tok_len {
+        if tokens[j][0] == "symbol" and (tokens[j][1] == "*" or tokens[j][1] == "/" or tokens[j][1] == "%") {
+            op := tokens[j]
+            right_res := parse_factor(tokens, j + 1)
+            if op[1] == "*" {
+                left := ["mul", left, right_res[0]]
+            } elif op[1] == "/" {
+                left := ["div", left, right_res[0]]
+            } else {
+                left := ["mod", left, right_res[0]]
+            }
+            j := right_res[1]
         } else {
-            left := ["mod", left, right_res[0]]
+            break
         }
-        j := right_res[1]
     }
     return [left, j]
 }
@@ -369,15 +403,19 @@ proc parse_shift(tokens, i) {
     alloc j := res[1]
     alloc op := [false, false]
     alloc right_res := [false, 0]
-    loop j < tok_len and tokens[j][0] == "symbol" and (tokens[j][1] == "<<" or tokens[j][1] == ">>") {
-        op := tokens[j]
-        right_res := parse_add_sub(tokens, j + 1)
-        if op[1] == "<<" {
-            left := ["shl", left, right_res[0]]
+    loop j < tok_len {
+        if tokens[j][0] == "symbol" and (tokens[j][1] == "<<" or tokens[j][1] == ">>") {
+            op := tokens[j]
+            right_res := parse_add_sub(tokens, j + 1)
+            if op[1] == "<<" {
+                left := ["shl", left, right_res[0]]
+            } else {
+                left := ["shr", left, right_res[0]]
+            }
+            j := right_res[1]
         } else {
-            left := ["shr", left, right_res[0]]
+            break
         }
-        j := right_res[1]
     }
     return [left, j]
 }
@@ -387,10 +425,14 @@ proc parse_bit_and(tokens, i) {
     alloc left := res[0]
     alloc j := res[1]
     alloc right_res := [false, 0]
-    loop j < tok_len and tokens[j][0] == "symbol" and tokens[j][1] == "&" {
-        right_res := parse_shift(tokens, j + 1)
-        left := ["band", left, right_res[0]]
-        j := right_res[1]
+    loop j < tok_len {
+        if tokens[j][0] == "symbol" and tokens[j][1] == "&" {
+            right_res := parse_shift(tokens, j + 1)
+            left := ["band", left, right_res[0]]
+            j := right_res[1]
+        } else {
+            break
+        }
     }
     return [left, j]
 }
@@ -400,10 +442,14 @@ proc parse_bit_xor(tokens, i) {
     alloc left := res[0]
     alloc j := res[1]
     alloc right_res := [false, 0]
-    loop j < tok_len and tokens[j][0] == "symbol" and tokens[j][1] == "^" {
-        right_res := parse_bit_and(tokens, j + 1)
-        left := ["bxor", left, right_res[0]]
-        j := right_res[1]
+    loop j < tok_len {
+        if tokens[j][0] == "symbol" and tokens[j][1] == "^" {
+            right_res := parse_bit_and(tokens, j + 1)
+            left := ["bxor", left, right_res[0]]
+            j := right_res[1]
+        } else {
+            break
+        }
     }
     return [left, j]
 }
@@ -413,10 +459,14 @@ proc parse_bit_or(tokens, i) {
     alloc left := res[0]
     alloc j := res[1]
     alloc right_res := [false, 0]
-    loop j < tok_len and tokens[j][0] == "symbol" and tokens[j][1] == "|" {
-        right_res := parse_bit_xor(tokens, j + 1)
-        left := ["bor", left, right_res[0]]
-        j := right_res[1]
+    loop j < tok_len {
+        if tokens[j][0] == "symbol" and tokens[j][1] == "|" {
+            right_res := parse_bit_xor(tokens, j + 1)
+            left := ["bor", left, right_res[0]]
+            j := right_res[1]
+        } else {
+            break
+        }
     }
     return [left, j]
 }
@@ -506,44 +556,48 @@ proc parse_factor(tokens, i) {
     alloc call_args := []
     res := [false, 0]
     alloc attr := [false, false]
-    loop j < tok_len and tokens[j][0] == "symbol" {
-        if tokens[j][1] == "(" {
-            k := j + 1
-            call_args := []
-            if tokens[k][0] != "symbol" or tokens[k][1] != ")" {
-                loop true {
-                    res := parse_expression(tokens, k)
-                    call_args := call_args + [res[0]]
-                    k := res[1]
-                    if tokens[k][0] == "symbol" and tokens[k][1] == "," {
-                        k := k + 1
-                    } else {
-                        break
+    loop j < tok_len {
+        if tokens[j][0] == "symbol" {
+            if tokens[j][1] == "(" {
+                k := j + 1
+                call_args := []
+                if k < tok_len and (tokens[k][0] != "symbol" or tokens[k][1] != ")") {
+                    loop true {
+                        res := parse_expression(tokens, k)
+                        call_args := call_args + [res[0]]
+                        k := res[1]
+                        if k < tok_len and tokens[k][0] == "symbol" and tokens[k][1] == "," {
+                            k := k + 1
+                        } else {
+                            break
+                        }
                     }
                 }
-            }
-            node := ["func_call", node, call_args]
-            j := k + 1
-        } elif tokens[j][1] == "[" {
-            inner := parse_expression(tokens, j + 1)
-            k := inner[1]
-            if tokens[k][0] == "symbol" and tokens[k][1] == ":" {
-                if tokens[k + 1][0] == "symbol" and tokens[k + 1][1] == "]" {
-                    node := ["slice", node, inner[0], false]
-                    j := k + 2
-                } else {
-                    end_res := parse_expression(tokens, k + 1)
-                    node := ["slice", node, inner[0], end_res[0]]
-                    j := end_res[1] + 1
-                }
-            } else {
-                node := ["index", node, inner[0]]
+                node := ["func_call", node, call_args]
                 j := k + 1
+            } elif tokens[j][1] == "[" {
+                inner := parse_expression(tokens, j + 1)
+                k := inner[1]
+                if k < tok_len and tokens[k][0] == "symbol" and tokens[k][1] == ":" {
+                    if k + 1 < tok_len and tokens[k + 1][0] == "symbol" and tokens[k + 1][1] == "]" {
+                        node := ["slice", node, inner[0], false]
+                        j := k + 2
+                    } else {
+                        end_res := parse_expression(tokens, k + 1)
+                        node := ["slice", node, inner[0], end_res[0]]
+                        j := end_res[1] + 1
+                    }
+                } else {
+                    node := ["index", node, inner[0]]
+                    j := k + 1
+                }
+            } elif tokens[j][1] == "." {
+                attr := tokens[j + 1]
+                node := ["dot", node, attr[1]]
+                j := j + 2
+            } else {
+                break
             }
-        } elif tokens[j][1] == "." {
-            attr := tokens[j + 1]
-            node := ["dot", node, attr[1]]
-            j := j + 2
         } else {
             break
         }
@@ -835,7 +889,7 @@ proc eval_expr(expr, env) {
         if res[0] {
             return res[1]
         }
-        emit "Undefined variable: " + name
+        panic("Undefined variable: " + name)
         return false
     } elif kind == "add" {
         return eval_expr(expr[1], env) + eval_expr(expr[2], env)
@@ -977,8 +1031,14 @@ proc execute(stmts, env, is_global) {
             env := env_set(env, stmt[1], eval_expr(stmt[2], env))
             if is_global { global_env := env }
         } elif kind == "assign" {
-            env := env_set(env, stmt[1], eval_expr(stmt[2], env))
-            if is_global { global_env := env }
+            alloc name := stmt[1]
+            alloc res := lookup_var(env, name)
+            if res[0] {
+                env := env_set(env, name, eval_expr(stmt[2], env))
+                if is_global { global_env := env }
+            } else {
+                panic("Undefined variable: " + name)
+            }
         } elif kind == "attr_assign" {
             obj := eval_expr(stmt[1], env)
             attr := stmt[2]
