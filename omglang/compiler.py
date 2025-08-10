@@ -72,6 +72,9 @@ OPCODES: dict[str, int] = {
     "STORE_ATTR": 41,
     "ASSERT": 42,
     "CALL_VALUE": 43,
+    "SETUP_EXCEPT": 44,
+    "POP_BLOCK": 45,
+    "RAISE": 46,
 }
 
 # Reverse-mapped opcode mnemonics
@@ -114,7 +117,6 @@ class Compiler:
             "length",
             "read_file",
             "freeze",
-            "panic",
         }
 
     # ------------------------------------------------------------------
@@ -199,7 +201,7 @@ class Compiler:
                 out.extend(struct.pack("<I", len(sb)))
                 out.extend(sb)
                 out.extend(struct.pack("<I", argc))
-            elif op in {"JUMP", "JUMP_IF_FALSE"} and isinstance(arg, int):
+            elif op in {"JUMP", "JUMP_IF_FALSE", "SETUP_EXCEPT"} and isinstance(arg, int):
                 out.extend(struct.pack("<I", arg))
             # Remaining instructions carry no operands.
 
@@ -289,6 +291,19 @@ class Compiler:
             # Patch any breaks that occurred inside the loop
             for idx in self.break_stack.pop():
                 self.patch(idx, len(self.code))
+        elif kind == "try":
+            try_block, exc_name, except_block = stmt[1], stmt[2], stmt[3]
+            handler_idx = self.emit_placeholder("SETUP_EXCEPT")
+            try_body = try_block[1] if try_block[0] == "block" else []
+            self.compile_block(try_body)
+            self.emit("POP_BLOCK")
+            end_jump = self.emit_placeholder("JUMP")
+            self.patch(handler_idx, len(self.code))
+            if exc_name:
+                self.emit("STORE", exc_name)
+            except_body = except_block[1] if except_block[0] == "block" else []
+            self.compile_block(except_body)
+            self.patch(end_jump, len(self.code))
         elif kind == "func_def":
             name, params, body_node = stmt[1], stmt[2], stmt[3]
             body = body_node[1] if body_node[0] == "block" else []
@@ -383,12 +398,19 @@ class Compiler:
             func_node, args = node[1], node[2]
             if func_node[0] == "ident":
                 name = func_node[1]
-                for arg in args:
-                    self.compile_expr(arg)
-                if name in self.builtins:
-                    self.emit("BUILTIN", (name, len(args)))
+                if name == "panic":
+                    if args:
+                        self.compile_expr(args[0])
+                    else:
+                        self.emit("PUSH_STR", "")
+                    self.emit("RAISE")
                 else:
-                    self.emit("CALL", name)
+                    for arg in args:
+                        self.compile_expr(arg)
+                    if name in self.builtins:
+                        self.emit("BUILTIN", (name, len(args)))
+                    else:
+                        self.emit("CALL", name)
             else:
                 # General case: evaluate function expression then call indirectly
                 self.compile_expr(func_node)
@@ -513,7 +535,7 @@ def disassemble(data: bytes) -> str:
             argc = struct.unpack_from("<I", data, idx)[0]
             idx += 4
             lines.append(f"BUILTIN {s} {argc}")
-        elif name in {"JUMP", "JUMP_IF_FALSE"}:
+        elif name in {"JUMP", "JUMP_IF_FALSE", "SETUP_EXCEPT"}:
             (t,) = struct.unpack_from("<I", data, idx)
             idx += 4
             lines.append(f"{name} {t}")

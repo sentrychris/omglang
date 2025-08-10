@@ -91,6 +91,8 @@ def tokenize(code) -> tuple[list[Token], dict[str, str]]:
         ('AND',       r'\band\b'),
         ('OR',        r'\bor\b'),
         ('ALLOC',     r'\balloc\b'),
+        ('TRY',       r'\btry\b'),
+        ('EXCEPT',    r'\bexcept\b'),
 
         # Chain
         # ('CHAIN',     r''),

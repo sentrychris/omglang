@@ -107,6 +107,8 @@ def parse_statement(parser: 'Parser') -> tuple:
         return parser.parse_break()
     elif tok.type == 'FUNC':
         return parser.parse_func_def()
+    elif tok.type == 'TRY':
+        return parser.parse_try()
     elif tok.type == 'ALLOC':
         return parser.parse_declaration()
     elif tok.type == 'ID':
@@ -212,6 +214,21 @@ def parse_import(parser: 'Parser') -> tuple:
     parser.validate_id_or_raise(alias_tok)
     parser.eat("ID")
     return ("import", path_tok.value, alias_tok.value, tok.line)
+
+
+def parse_try(parser: 'Parser') -> tuple:
+    """Parse a try/except statement."""
+    tok = parser.curr_token
+    parser.eat("TRY")
+    try_block = parser.block()
+    parser.eat("EXCEPT")
+    exc_name = None
+    if parser.curr_token.type == "ID":
+        name_tok = parser.curr_token
+        parser.eat("ID")
+        exc_name = name_tok.value
+    except_block = parser.block()
+    return ("try", try_block, exc_name, except_block, tok.line)
 
 
 def parse_if(parser: 'Parser') -> tuple:
