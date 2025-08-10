@@ -75,6 +75,7 @@ OPCODES: dict[str, int] = {
     "SETUP_EXCEPT": 44,
     "POP_BLOCK": 45,
     "RAISE": 46,
+    "RAISE_SYNTAX_ERROR": 47,
 }
 
 # Reverse-mapped opcode mnemonics
@@ -405,6 +406,12 @@ class Compiler:
                     else:
                         self.emit("PUSH_STR", "")
                     self.emit("RAISE")
+                elif name == "syntax_error":
+                    if args:
+                        self.compile_expr(args[0])
+                    else:
+                        self.emit("PUSH_STR", "")
+                    self.emit("RAISE_SYNTAX_ERROR")
                 else:
                     for arg in args:
                         self.compile_expr(arg)
