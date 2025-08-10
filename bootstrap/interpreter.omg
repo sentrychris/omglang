@@ -96,7 +96,7 @@ proc tokenize(src) {
             n := n + 1
             i := i + 2
         } elif c == "=" {
-            raise("RuntimeError: Unexpected character =")
+            _omg_vm_syntax_error_handle("Unexpected character =")
         } elif c == "!" and i + 1 < src_len and src[i + 1] == "=" {
             tokens[n] := ["symbol", "!="]
             n := n + 1
@@ -118,7 +118,7 @@ proc tokenize(src) {
             n := n + 1
             i := i + 2
         } elif c == "/" and i + 1 < src_len and src[i + 1] == "/" {
-            raise("RuntimeError: Unexpected / after /")
+            _omg_vm_syntax_error_handle("Unexpected / after /")
         } elif c == "/" and i + 1 < src_len and src[i + 1] == "*" {
             i := i + 2
             loop i + 1 < src_len and (src[i] != "*" or src[i + 1] != "/") {
@@ -379,9 +379,9 @@ proc parse_add_sub(tokens, i) {
         op := tokens[j]
         if tokens[j + 1][0] == "symbol" and (tokens[j + 1][1] == "+" or tokens[j + 1][1] == "-") {
             if op[1] == "+" and tokens[j + 1][1] == "-" {
-                raise("RuntimeError: unexpected - after + unary operator")
+                _omg_vm_syntax_error_handle("Unexpected - after + unary operator")
             } elif op[1] == "-" and tokens[j + 1][1] == "+" {
-                raise("RuntimeError: unexpected + after - unary operator")
+                _omg_vm_syntax_error_handle("Unexpected + after - unary operator")
             }
         }
         right_res := parse_term(tokens, j + 1)
@@ -482,13 +482,13 @@ proc parse_factor(tokens, i) {
     alloc res := [false, 0]
     if t[0] == "symbol" and t[1] == "+" {
         if tokens[i + 1][0] == "symbol" and tokens[i + 1][1] == "-" {
-            raise("RuntimeError: unexpected - after + unary operator")
+            _omg_vm_syntax_error_handle("Unexpected - after + unary operator")
         }
         res := parse_factor(tokens, i + 1)
         return [["unary", "add", res[0]], res[1]]
     } elif t[0] == "symbol" and t[1] == "-" {
         if tokens[i + 1][0] == "symbol" and tokens[i + 1][1] == "+" {
-            raise("RuntimeError: unexpected + after - unary operator")
+            _omg_vm_syntax_error_handle("Unexpected + after - unary operator")
         }
         res := parse_factor(tokens, i + 1)
         return [["unary", "sub", res[0]], res[1]]
@@ -782,7 +782,7 @@ proc strip_header(source, path) {
             return source[i:]
         }
     }
-    raise("RuntimeError: OMG script missing required header ';;;omg' in " + path)
+    _omg_vm_syntax_error_handle("OMG script missing required header ';;;omg' in " + path)
     return source
 }
 
@@ -800,7 +800,7 @@ proc call_function(func_name, func, arg_values, env) {
         alloc params_len := length(params)
         alloc arg_len := length(arg_values)
         if arg_len != params_len {
-            raise("TypeError: Function '" + func_name + "' expects " + params_len + " arguments")
+            _omg_vm_type_error_handle("Function '" + func_name + "' expects " + params_len + " arguments")
         }
         loop i < params_len {
             local := env_set(local, params[i], arg_values[i])
@@ -820,7 +820,7 @@ proc call_function(func_name, func, arg_values, env) {
         }
         return call_builtin(name, arg_values)
     } else {
-        raise("TypeError: Not a function value")
+        _omg_vm_type_error_handle("Not a function value")
         return false
     }
 }
@@ -918,7 +918,7 @@ proc eval_expr(expr, env) {
         if res[0] {
             return res[1]
         }
-        raise("UndefinedVariableException: Undefined variable '" + name + "'")
+        _omg_vm_undef_ident_error_handle("Undefined identifier '" + name + "'")
         return false
     } elif kind == "add" {
         return eval_expr(expr[1], env) + eval_expr(expr[2], env)
@@ -1069,7 +1069,7 @@ proc execute(stmts, env, is_global) {
                 env := env_set(env, name, val)
                 if is_global { global_env := env }
             } else {
-                raise("UndefinedVariableException: Undefined variable '" + name + "'")
+                _omg_vm_undef_ident_error_handle("Undefined variable '" + name + "'")
             }
         } elif kind == "attr_assign" {
             obj := eval_expr(stmt[1], env)

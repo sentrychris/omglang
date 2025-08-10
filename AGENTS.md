@@ -27,6 +27,7 @@ Codex (and similar agents) is treated as a **collaborative assistant** with read
 * Use `OMG_ERRORS.md` to determine which errors could occur in OMG program execution
 * Prompt for clarification when design intent is ambiguous
 * Maintain readability and simplicity in all contributions
+* Update the `CHANGELOG.md` every time a change is made, refactoring for extended feature/bugfix work.
 
 ### ❌ Must Not:
 

@@ -75,6 +75,9 @@ OPCODES: dict[str, int] = {
     "SETUP_EXCEPT": 44,
     "POP_BLOCK": 45,
     "RAISE": 46,
+    "RAISE_SYNTAX_ERROR": 47,
+    "RAISE_TYPE_ERROR": 48,
+    "RAISE_UNDEF_IDENT_ERROR": 49,
 }
 
 # Reverse-mapped opcode mnemonics
@@ -405,6 +408,24 @@ class Compiler:
                     else:
                         self.emit("PUSH_STR", "")
                     self.emit("RAISE")
+                elif name == "_omg_vm_syntax_error_handle":
+                    if args:
+                        self.compile_expr(args[0])
+                    else:
+                        self.emit("PUSH_STR", "")
+                    self.emit("RAISE_SYNTAX_ERROR")
+                elif name == "_omg_vm_type_error_handle":
+                    if args:
+                        self.compile_expr(args[0])
+                    else:
+                        self.emit("PUSH_STR", "")
+                    self.emit("RAISE_TYPE_ERROR")
+                elif name == "_omg_vm_undef_ident_error_handle":
+                    if args:
+                        self.compile_expr(args[0])
+                    else:
+                        self.emit("PUSH_STR", "")
+                    self.emit("RAISE_UNDEF_IDENT_ERROR")
                 else:
                     for arg in args:
                         self.compile_expr(arg)
