@@ -13,6 +13,10 @@ pub enum RuntimeError {
     TypeError(String),
     /// Indexing operation failed.
     IndexError(String),
+    /// User-raised runtime error.
+    Raised(String),
+    /// An assertion failed.
+    AssertionError,
 }
 
 impl fmt::Display for RuntimeError {
@@ -32,6 +36,12 @@ impl fmt::Display for RuntimeError {
             }
             RuntimeError::IndexError(msg) => {
                 write!(f, "RuntimeError: {}", msg)
+            }
+            RuntimeError::Raised(msg) => {
+                write!(f, "RuntimeError: {}", msg)
+            }
+            RuntimeError::AssertionError => {
+                write!(f, "AssertionError: assertion failed")
             }
         }
     }

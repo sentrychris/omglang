@@ -549,6 +549,9 @@ class Interpreter:
                         # environments).
                         return FrozenNamespace(args[0])
 
+                    if func_name == 'raise':
+                        raise RuntimeError(args[0])
+
                 # User-defined functions
                 func_value = self.eval_expr(func_node)
                 if not isinstance(func_value, FunctionValue):
@@ -693,6 +696,18 @@ class Interpreter:
                 except BreakLoop:
                     pass
 
+            elif kind == 'try':
+                _, try_block, err_name, except_block, _ = stmt
+                try:
+                    self.execute([try_block])
+                except ReturnControlFlow:
+                    raise
+                except BreakLoop:
+                    raise
+                except Exception as e:
+                    if err_name:
+                        self.vars[err_name] = str(e)
+                    self.execute([except_block])
             elif kind == 'break':
                 raise BreakLoop()
 
