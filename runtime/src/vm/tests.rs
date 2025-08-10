@@ -1,6 +1,6 @@
 use super::*;
 use crate::bytecode::{Function, Instr};
-use crate::error::RuntimeError;
+use crate::error::{RuntimeError, ErrorKind};
 use std::collections::HashMap;
 
 #[test]
@@ -52,7 +52,7 @@ fn raise_caught_in_caller() {
         Instr::Halt,
         // boom function
         Instr::PushStr("boom".to_string()),
-        Instr::Raise,
+        Instr::Raise(ErrorKind::Generic),
         Instr::Ret,
     ];
     let result = run(&code, &funcs, &[]);
@@ -63,7 +63,7 @@ fn raise_caught_in_caller() {
 fn uncaught_raise_surfaces() {
     let code = vec![
         Instr::PushStr("boom".to_string()),
-        Instr::Raise,
+        Instr::Raise(ErrorKind::Generic),
         Instr::Halt,
     ];
     let funcs = HashMap::new();
@@ -75,7 +75,7 @@ fn uncaught_raise_surfaces() {
 fn uncaught_syntax_error_surfaces() {
     let code = vec![
         Instr::PushStr("boom".to_string()),
-        Instr::RaiseSyntaxError,
+        Instr::Raise(ErrorKind::Syntax),
         Instr::Halt,
     ];
     let funcs = HashMap::new();
@@ -90,7 +90,7 @@ fn uncaught_syntax_error_surfaces() {
 fn uncaught_type_error_surfaces() {
     let code = vec![
         Instr::PushStr("boom".to_string()),
-        Instr::RaiseTypeError,
+        Instr::Raise(ErrorKind::Type),
         Instr::Halt,
     ];
     let funcs = HashMap::new();
@@ -105,7 +105,7 @@ fn uncaught_type_error_surfaces() {
 fn uncaught_undef_ident_error_surfaces() {
     let code = vec![
         Instr::PushStr("boom".to_string()),
-        Instr::RaiseUndefinedIdentError,
+        Instr::Raise(ErrorKind::UndefinedIdent),
         Instr::Halt,
     ];
     let funcs = HashMap::new();
@@ -113,6 +113,17 @@ fn uncaught_undef_ident_error_surfaces() {
     assert_eq!(
         result,
         Err(RuntimeError::UndefinedIdentError("boom".to_string()))
+    );
+}
+
+#[test]
+fn raise_stack_underflow_errors() {
+    let code = vec![Instr::Raise(ErrorKind::Generic), Instr::Halt];
+    let funcs = HashMap::new();
+    let result = run(&code, &funcs, &[]);
+    assert_eq!(
+        result,
+        Err(RuntimeError::VmInvariant("stack underflow on RAISE".to_string()))
     );
 }
 
@@ -183,7 +194,7 @@ fn binary_with_non_positive_width_type_error() {
     let result = run(&code, &funcs, &[]);
     assert_eq!(
         result,
-        Err(RuntimeError::TypeError("binary() width must be positive".to_string()))
+        Err(RuntimeError::ValueError("binary() width must be positive".to_string()))
     );
 }
 

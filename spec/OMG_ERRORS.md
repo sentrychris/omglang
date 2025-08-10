@@ -6,6 +6,21 @@ Please note this list is not exhaustive, for all errors please see the original 
 
 ---
 
+### VM Error Kinds
+
+The native runtime uses a single `RAISE <kind>` instruction where `<kind>` maps to a specific `RuntimeError` variant. Supported kinds are:
+
+- `Generic`
+- `Syntax`
+- `Type`
+- `UndefinedIdent`
+- `Value`
+- `ModuleImport`
+
+These cover the common error categories raised by the VM.
+
+---
+
 ## 1. Missing Script Header
 
 If the required `;;;omg` header is missing, the interpreter raises:

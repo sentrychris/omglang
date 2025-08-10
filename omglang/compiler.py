@@ -75,14 +75,32 @@ OPCODES: dict[str, int] = {
     "SETUP_EXCEPT": 44,
     "POP_BLOCK": 45,
     "RAISE": 46,
-    "RAISE_SYNTAX_ERROR": 47,
-    "RAISE_TYPE_ERROR": 48,
-    "RAISE_UNDEF_IDENT_ERROR": 49,
 }
 
 # Reverse-mapped opcode mnemonics
 REV_OPCODES: dict[int, str] = {v: k for k, v in OPCODES.items()}
 
+# Error kind mapping for RAISE instruction
+ERROR_KIND_TO_CODE = {
+    "Generic": 0,
+    "Syntax": 1,
+    "Type": 2,
+    "UndefinedIdent": 3,
+    "Value": 4,
+    "ModuleImport": 5,
+}
+CODE_TO_ERROR_KIND = {v: k for k, v in ERROR_KIND_TO_CODE.items()}
+
+# Mapping from raise helper function names to error kinds
+ERROR_NAME_TO_KIND = {
+    "panic": "Generic",
+    "raise": "Generic",
+    "_omg_vm_syntax_error_handle": "Syntax",
+    "_omg_vm_type_error_handle": "Type",
+    "_omg_vm_undef_ident_error_handle": "UndefinedIdent",
+    "_omg_vm_value_error_handle": "Value",
+    "_omg_vm_module_import_error_handle": "ModuleImport",
+}
 # Bytecode header
 MAGIC_HEADER = b"OMGB"
 
@@ -147,6 +165,18 @@ class Compiler:
         op, _ = self.code[idx]
         self.code[idx] = (op, target)
 
+    def compile_raise_call(self, name: str, args: List[tuple]) -> bool:
+        """Compile special raise helper calls into RAISE instructions."""
+        kind = ERROR_NAME_TO_KIND.get(name)
+        if kind is None:
+            return False
+        if args:
+            self.compile_expr(args[0])
+        else:
+            self.emit("PUSH_STR", "")
+        self.emit("RAISE", kind)
+        return True
+
     # ------------------------------------------------------------------
     # Compilation entry points
     # ------------------------------------------------------------------
@@ -205,6 +235,8 @@ class Compiler:
                 out.extend(struct.pack("<I", len(sb)))
                 out.extend(sb)
                 out.extend(struct.pack("<I", argc))
+            elif op == "RAISE" and isinstance(arg, str):
+                out.append(ERROR_KIND_TO_CODE[arg])
             elif op in {"JUMP", "JUMP_IF_FALSE", "SETUP_EXCEPT"} and isinstance(arg, int):
                 out.extend(struct.pack("<I", arg))
             # Remaining instructions carry no operands.
@@ -402,31 +434,7 @@ class Compiler:
             func_node, args = node[1], node[2]
             if func_node[0] == "ident":
                 name = func_node[1]
-                if name in {"panic", "raise"}:
-                    if args:
-                        self.compile_expr(args[0])
-                    else:
-                        self.emit("PUSH_STR", "")
-                    self.emit("RAISE")
-                elif name == "_omg_vm_syntax_error_handle":
-                    if args:
-                        self.compile_expr(args[0])
-                    else:
-                        self.emit("PUSH_STR", "")
-                    self.emit("RAISE_SYNTAX_ERROR")
-                elif name == "_omg_vm_type_error_handle":
-                    if args:
-                        self.compile_expr(args[0])
-                    else:
-                        self.emit("PUSH_STR", "")
-                    self.emit("RAISE_TYPE_ERROR")
-                elif name == "_omg_vm_undef_ident_error_handle":
-                    if args:
-                        self.compile_expr(args[0])
-                    else:
-                        self.emit("PUSH_STR", "")
-                    self.emit("RAISE_UNDEF_IDENT_ERROR")
-                else:
+                if not self.compile_raise_call(name, args):
                     for arg in args:
                         self.compile_expr(arg)
                     if name in self.builtins:
@@ -557,6 +565,10 @@ def disassemble(data: bytes) -> str:
             argc = struct.unpack_from("<I", data, idx)[0]
             idx += 4
             lines.append(f"BUILTIN {s} {argc}")
+        elif name == "RAISE":
+            kind = data[idx]
+            idx += 1
+            lines.append(f"RAISE {CODE_TO_ERROR_KIND.get(kind, str(kind))}")
         elif name in {"JUMP", "JUMP_IF_FALSE", "SETUP_EXCEPT"}:
             (t,) = struct.unpack_from("<I", data, idx)
             idx += 4

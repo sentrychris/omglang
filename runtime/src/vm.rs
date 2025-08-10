@@ -47,8 +47,7 @@ fn call_builtin(
             [Value::Int(n)] => Ok(Value::Str(format!("{:b}", n))),
             [Value::Int(n), Value::Int(width)] => {
                 if *width <= 0 {
-                    // TODO: Change this to ValueError
-                    Err(RuntimeError::TypeError(
+                    Err(RuntimeError::ValueError(
                         "binary() width must be positive".to_string(),
                     ))
                 } else {
@@ -632,21 +631,17 @@ pub fn run(
                 Instr::PopBlock => {
                     block_stack.pop();
                 }
-                Instr::Raise => {
-                    let msg = stack.pop().unwrap().to_string();
-                    break Err(RuntimeError::Raised(msg));
-                }
-                Instr::RaiseSyntaxError => {
-                    let msg = stack.pop().unwrap().to_string();
-                    break Err(RuntimeError::SyntaxError(msg));
-                }
-                Instr::RaiseTypeError => {
-                    let msg = stack.pop().unwrap().to_string();
-                    break Err(RuntimeError::TypeError(msg))
-                }
-                Instr::RaiseUndefinedIdentError => {
-                    let msg = stack.pop().unwrap().to_string();
-                    break Err(RuntimeError::UndefinedIdentError(msg))
+                Instr::Raise(kind) => {
+                    let msg_val = match stack.pop() {
+                        Some(v) => v,
+                        None => {
+                            break Err(RuntimeError::VmInvariant(
+                                "stack underflow on RAISE".to_string(),
+                            ))
+                        }
+                    };
+                    let msg = msg_val.to_string();
+                    break Err(kind.into_runtime(msg));
                 }
             }
             break Ok(());
