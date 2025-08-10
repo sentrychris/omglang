@@ -15,10 +15,11 @@ Ordered from most recent at the top to oldest at the bottom.
 - Updated the bytecode interpreter to invoke `call_builtin` for `Instr::CallBuiltin` to streamline execution flow.
 - Simplified the interpreter to delegate built-in calls to `call_builtin`.
 
-
 ### Fixed
 - Centralized `call_builtin` helper eliminates scattered implementations across the runtime.
 - Narrower error handling eliminates relying on generic string-based `raise` which was resulting in prefixed errors e.g. `RuntimeError: SyntaxError: Unxepected <symbol>...`, errors are now correctly defined according to their type. Generic `raise()` has been retained for special cases. 
+- Refactored basename extraction in bootstrap interpreter's `import_module` to avoid negative string indexing when module paths lack directory separators.
+- Guarded `dirname` and `run_file_with_args` against negative string indexing so modules in the current directory import and execute without errors.
 
 ## [0.1.1] - 2025-08-08
 

@@ -14,7 +14,7 @@ use vm::run;
 /// Embedded interpreter.omgb generated at build time.
 const INTERP_OMGBC: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/interpreter.omgb"));
 
-const VERSION: &str = "0.1.1";
+const VERSION: &str = "0.1.2";
 
 fn usage() -> String {
     format!(

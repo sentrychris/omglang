@@ -690,7 +690,10 @@ proc normalize_path(path) {
 proc dirname(path) {
     path := normalize_path(path)
     alloc i := length(path) - 1
-    loop i >= 0 and path[i] != "/" {
+    loop i >= 0 {
+        if path[i] == "/" {
+            break
+        }
         i := i - 1
     }
     if i >= 0 {
@@ -843,7 +846,11 @@ proc import_module(path) {
     module_file := full
     alloc name := full
     alloc i := length(name) - 1
-    loop i >= 0 and name[i] != "/" {
+    emit name
+    loop i >= 0 {
+        if name[i] == "/" {
+            break
+        }
         i := i - 1
     }
     if i >= 0 {
@@ -1188,7 +1195,10 @@ proc run_file_with_args(path, file_args) {
     current_dir := dirname(path)
     alloc name := path
     alloc i := length(name) - 1
-    loop i >= 0 and name[i] != "/" {
+    loop i >= 0 {
+        if name[i] == "/" {
+            break
+        }
         i := i - 1
     }
     if i >= 0 {
