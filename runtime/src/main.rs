@@ -75,6 +75,7 @@ fn main() {
         } else {
             &[]
         };
+
         let src = fs::read(bc_path).expect("failed to read bytecode file");
         let (code, funcs) = parse_bytecode(&src);
         if let Err(e) = run(&code, &funcs, program_args) {

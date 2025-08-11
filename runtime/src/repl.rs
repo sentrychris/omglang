@@ -14,11 +14,13 @@ pub fn repl_interpret() {
         let prompt = if buffer.is_empty() { ">>> " } else { "... " };
         print!("{}", prompt);
         io::stdout().flush().unwrap();
+
         let mut line = String::new();
         if io::stdin().read_line(&mut line).unwrap() == 0 {
             println!();
             break;
         }
+
         let trimmed = line.trim();
         if buffer.is_empty() && (trimmed == "exit" || trimmed == "quit") {
             break;
@@ -78,12 +80,14 @@ pub fn repl_interpret() {
                         continue;
                     }
                 }
+
                 let stdout = String::from_utf8_lossy(&out.stdout).to_string();
                 if stdout.starts_with(&last_output) {
                     print!("{}", &stdout[last_output.len()..]);
                 } else {
                     print!("{}", stdout);
                 }
+
                 last_output = stdout;
                 history.push_str(&block);
                 buffer.clear();
