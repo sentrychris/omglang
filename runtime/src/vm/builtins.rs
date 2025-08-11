@@ -101,7 +101,11 @@ pub fn call_builtin(
                 }
                 match fs::read_to_string(&path_buf) {
                     Ok(content) => Ok(Value::Str(content)),
-                    Err(_) => Ok(Value::Bool(false)),
+                    Err(err) => Err(RuntimeError::ModuleImportError(format!(
+                        "failed to read '{}': {}",
+                        path_buf.display(),
+                        err
+                    ))),
                 }
             }
             _ => Err(RuntimeError::TypeError(

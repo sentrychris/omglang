@@ -84,6 +84,23 @@ fn panic_builtin_raises() {
 }
 
 #[test]
+fn read_file_missing_raises_module_import_error() {
+    let code = vec![
+        Instr::PushStr("no_such_file.omg".to_string()),
+        Instr::CallBuiltin("read_file".to_string(), 1),
+        Instr::Halt,
+    ];
+    let funcs = HashMap::new();
+    let result = run(&code, &funcs, &[]);
+    match result {
+        Err(RuntimeError::ModuleImportError(msg)) => {
+            assert!(msg.contains("no_such_file.omg"));
+        }
+        other => panic!("expected ModuleImportError, got {:?}", other),
+    }
+}
+
+#[test]
 fn uncaught_syntax_error_surfaces() {
     let code = vec![
         Instr::PushStr("boom".to_string()),
