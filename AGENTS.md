@@ -37,8 +37,8 @@ Codex (and similar agents) is treated as a **collaborative assistant** with read
 
 Codex should focus on:
 * Consistency between the original Python implementation and the native Rust runtime implementation
-* Maintaining feature partiy between the Python `omglang/interpreter.py` and the self-hosted `bootstrap/interpreter.omg`
-* Ensuring the self-hosted `bootstrap/interpreter.omg` is fully capable up to and including meta-circular interpretation
+* Maintaining feature partiy between the Python `omglang/interpreter.py` and the self-hosted `omglang/interpreter.omg`
+* Ensuring the self-hosted `omglang/interpreter.omg` is fully capable up to and including meta-circular interpretation
 * Ensuring OMG errors are handled consistently.
 
 

@@ -1,6 +1,6 @@
 ;;;omg
 
-import "./interpreter.omg" as OMGInterpreter
+import "../interpreter.omg" as OMGInterpreter
 
 alloc lines := [
     "proc fact(n) {",

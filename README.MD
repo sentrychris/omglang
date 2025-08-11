@@ -9,7 +9,7 @@ The language provides a minimal but expressive syntax, and supports variables, a
 - [`OMG_LEXER.md`](./spec/OMG_LEXER.md): describes the lexical analysis stage of execution for the original Python implementation.
 - [`OMG_PARSER.md`](./spec/OMG_PARSER.md): describes the parser's structure, flow, and grammar handling for the original Python implementation.
 
-The Python-based lexer, parser, and interpreter also exist as a bootstrapped [OMG interpreter](./bootstrap/interpreter.omg), compiled to binary format and embedded directly into the virtual machine. This allows the language to execute OMG code by interpreting OMG-written interpreter logic inside the VM itself, enabling self-hosting experiments and making the runtime a testbed for metaprogramming and language evolution.
+The Python-based lexer, parser, and interpreter also exist as a bootstrapped [OMG interpreter](./omglang/interpreter.omg), compiled to binary format and embedded directly into the virtual machine. This allows the language to execute OMG code by interpreting OMG-written interpreter logic inside the VM itself, enabling self-hosting experiments and making the runtime a testbed for metaprogramming and language evolution.
 
 
 ## How to Run OMG Scripts

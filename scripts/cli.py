@@ -26,26 +26,26 @@ from scripts.verify_omgb_file_bytes import verify_interpreter
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 # OMG python runtime + interpreter (Python + Python)
-# used by Pyinstaller for compression (check CFG). 
+# used by Pyinstaller for compression (check CFG).
 DEFAULT_UPX_VER="5.0.2"
-# output directory for the PyInstaller distribution. 
+# output directory for the PyInstaller distribution.
 PY_BUILD_OUTPUT_DIR = os.path.join(BASE_DIR, "output")
-# dist directory for the PyInstaller executable. 
+# dist directory for the PyInstaller executable.
 PY_DIST_DIR = os.path.join(PY_BUILD_OUTPUT_DIR, "dist")
-# build directory for PyInstaller build artifacts. 
+# build directory for PyInstaller build artifacts.
 PY_BUILD_DIR = os.path.join(PY_BUILD_OUTPUT_DIR, "build")
-# package resources for PyInstaller (e.g. .spec, version.rc). 
+# package resources for PyInstaller (e.g. .spec, version.rc).
 PY_PKG_RESOURCES = os.path.join(BASE_DIR, "package_resources")
-# .spec file for the PyInstaller distribution. 
+# .spec file for the PyInstaller distribution.
 PY_BUILD_SPEC = os.path.join(PY_PKG_RESOURCES, "omg.spec")
-# Entry-point for the OMG lexer,parser,interpreter. 
+# Entry-point for the OMG lexer,parser,interpreter.
 PY_OMG_ENTRYPOINT=os.path.join(BASE_DIR, 'omg.py')
-# The omglang reference (original) Python implementation. 
+# The omglang reference (original) Python implementation.
 PY_OMG_INTERPRETER_SRC=os.path.join(BASE_DIR, 'omglang')
 
 # OMG native runtime + interpreter (Rust + OMG)
 # OMG self-hosted interpreter
-OMG_INTERPRETER_SRC=os.path.join(BASE_DIR, 'bootstrap', 'interpreter.omg')
+OMG_INTERPRETER_SRC=os.path.join(BASE_DIR, 'omglang', 'interpreter.omg')
 # Compiled OMG interpreter binary
 OMG_INTERPRETER_BIN=os.path.join(BASE_DIR, 'runtime', 'interpreter.omgb')
 # Cargo manifest for the native runtime

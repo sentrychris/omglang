@@ -15,7 +15,7 @@ fn main() {
     let status = Command::new("python")
         .arg("-m")
         .arg("omglang.compiler")
-        .arg("bootstrap/interpreter.omg")
+        .arg("omglang/interpreter.omg")
         .arg(&out_bc)
         .current_dir(&root)
         .status()
@@ -34,7 +34,7 @@ fn main() {
 
     println!(
         "cargo:rerun-if-changed={}",
-        root.join("bootstrap/interpreter.omg").display()
+        root.join("omglang/interpreter.omg").display()
     );
     println!(
         "cargo:rerun-if-changed={}",
