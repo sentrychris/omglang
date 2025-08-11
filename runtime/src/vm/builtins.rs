@@ -5,7 +5,8 @@ use std::fs;
 use std::path::PathBuf;
 use std::rc::Rc;
 
-use crate::error::RuntimeError;
+use super::ops_control;
+use crate::error::{ErrorKind, RuntimeError};
 use crate::value::Value;
 
 /// Call a built-in function by name.
@@ -85,6 +86,16 @@ pub fn call_builtin(
             [Value::Str(msg)] => Err(RuntimeError::Raised(msg.clone())),
             _ => Err(RuntimeError::TypeError(
                 "panic() expects a string (type mismatch)".to_string(),
+            )),
+        },
+        "raise" => match args {
+            [Value::Str(msg)] => {
+                let mut stack = vec![Value::Str(msg.clone())];
+                ops_control::handle_raise(&ErrorKind::Generic, &mut stack)?;
+                unreachable!()
+            }
+            _ => Err(RuntimeError::TypeError(
+                "raise() expects a string (type mismatch)".to_string(),
             )),
         },
         "read_file" => match args {

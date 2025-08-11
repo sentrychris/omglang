@@ -264,6 +264,20 @@ fn call_builtin_dispatches_hex() {
 }
 
 #[test]
+fn call_builtin_dispatches_raise() {
+    let code = vec![
+        Instr::PushStr("raise".to_string()),
+        Instr::PushStr("boom".to_string()),
+        Instr::BuildList(1),
+        Instr::CallBuiltin("call_builtin".to_string(), 2),
+        Instr::Halt,
+    ];
+    let funcs = HashMap::new();
+    let result = run(&code, &funcs, &[]);
+    assert_eq!(result, Err(RuntimeError::Raised("boom".to_string())));
+}
+
+#[test]
 fn load_unknown_name_errors() {
     let code = vec![Instr::Load("foo".to_string()), Instr::Halt];
     let funcs = HashMap::new();
