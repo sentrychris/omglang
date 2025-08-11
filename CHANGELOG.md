@@ -21,12 +21,15 @@ Ordered from most recent at the top to oldest at the bottom.
 - Added VM invariant error on stack underflow for `RAISE`.
 - VM stack operations now return `RuntimeError::VmInvariant` on underflow instead of panicking.
 - Function call handling in the VM now returns `RuntimeError` on undefined or invalid calls instead of panicking.
+- Moved builtin dispatch into a dedicated `vm::builtins` module exposing `call_builtin`.
+- Refactored VM opcode dispatch into dedicated handler modules for arithmetic, structural, and control operations.
 
 ### Fixed
 - Centralized `call_builtin` helper eliminates scattered implementations across the runtime.
-- Narrower error handling eliminates relying on generic string-based `raise` which was resulting in prefixed errors e.g. `RuntimeError: SyntaxError: Unxepected <symbol>...`, errors are now correctly defined according to their type. Generic `raise()` has been retained for special cases. 
+- Narrower error handling eliminates relying on generic string-based `raise` which was resulting in prefixed errors e.g. `RuntimeError: SyntaxError: Unxepected <symbol>...`, errors are now correctly defined according to their type. Generic `raise()` has been retained for special cases.
 - Refactored basename extraction in bootstrap interpreter's `import_module` to avoid negative string indexing when module paths lack directory separators.
 - Guarded `dirname` and `run_file_with_args` against negative string indexing so modules in the current directory import and execute without errors.
+- Validated slice indices in the VM, returning `IndexError` for out-of-range or invalid ranges instead of panicking.
 
 ## [0.1.1] - 2025-08-08
 

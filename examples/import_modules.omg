@@ -4,7 +4,7 @@ import "./modules/math.omg" as math
 
 # Loop over numbers and rate them, including Fibonacci calculation
 alloc idx := 10
-alloc max := 20
+alloc max := 15
 alloc fnum := 2
 
 loop idx <= max {
