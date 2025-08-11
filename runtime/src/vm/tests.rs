@@ -332,3 +332,16 @@ fn string_slice_with_invalid_bounds_errors() {
         ))
     );
 }
+
+#[test]
+fn neg_on_non_int_string_errors() {
+    let code = vec![Instr::PushStr("abc".to_string()), Instr::Neg, Instr::Halt];
+    let funcs = HashMap::new();
+    let result = run(&code, &funcs, &[]);
+    assert_eq!(
+        result,
+        Err(RuntimeError::TypeError(
+            "Invalid literal for int(): 'abc'".to_string(),
+        )),
+    );
+}

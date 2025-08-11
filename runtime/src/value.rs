@@ -2,6 +2,8 @@ use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 
+use crate::error::RuntimeError;
+
 /// Value type for the VM stack.
 #[derive(Clone)]
 pub enum Value {
@@ -16,21 +18,17 @@ pub enum Value {
 
 impl Value {
     /// Convert the value to an integer.
-    pub fn as_int(&self) -> i64 {
+    pub fn as_int(&self) -> Result<i64, RuntimeError> {
         match self {
-            Value::Int(i) => *i,
-            Value::Str(s) => s.parse::<i64>().unwrap_or(0),
-            Value::Bool(b) => {
-                if *b {
-                    1
-                } else {
-                    0
-                }
-            }
-            Value::List(l) => l.borrow().len() as i64,
-            Value::Dict(d) => d.borrow().len() as i64,
-            Value::FrozenDict(d) => d.len() as i64,
-            Value::None => 0,
+            Value::Int(i) => Ok(*i),
+            Value::Str(s) => s.parse::<i64>().map_err(|_| {
+                RuntimeError::TypeError(format!("Invalid literal for int(): '{}'", s))
+            }),
+            Value::Bool(b) => Ok(if *b { 1 } else { 0 }),
+            Value::List(l) => Ok(l.borrow().len() as i64),
+            Value::Dict(d) => Ok(d.borrow().len() as i64),
+            Value::FrozenDict(d) => Ok(d.len() as i64),
+            Value::None => Ok(0),
         }
     }
 

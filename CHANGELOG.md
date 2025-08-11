@@ -23,6 +23,7 @@ Ordered from most recent at the top to oldest at the bottom.
 - Function call handling in the VM now returns `RuntimeError` on undefined or invalid calls instead of panicking.
 - Moved builtin dispatch into a dedicated `vm::builtins` module exposing `call_builtin`.
 - Refactored VM opcode dispatch into dedicated handler modules for arithmetic, structural, and control operations.
+- `Value::as_int` now returns `Result<i64, RuntimeError>` and emits a `TypeError` when string parsing fails.
 
 ### Fixed
 - Centralized `call_builtin` helper eliminates scattered implementations across the runtime.
