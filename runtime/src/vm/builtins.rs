@@ -3,7 +3,6 @@
 use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
-use std::process;
 use std::rc::Rc;
 
 use crate::error::RuntimeError;
@@ -83,11 +82,7 @@ pub fn call_builtin(
             )),
         },
         "panic" => match args {
-            // TODO depracated in favour of raise
-            [Value::Str(msg)] => {
-                eprintln!("{}", msg);
-                process::exit(1);
-            }
+            [Value::Str(msg)] => Err(RuntimeError::Raised(msg.clone())),
             _ => Err(RuntimeError::TypeError(
                 "panic() expects a string (type mismatch)".to_string(),
             )),

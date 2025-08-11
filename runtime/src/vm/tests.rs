@@ -72,6 +72,18 @@ fn uncaught_raise_surfaces() {
 }
 
 #[test]
+fn panic_builtin_raises() {
+    let code = vec![
+        Instr::PushStr("boom".to_string()),
+        Instr::CallBuiltin("panic".to_string(), 1),
+        Instr::Halt,
+    ];
+    let funcs = HashMap::new();
+    let result = run(&code, &funcs, &[]);
+    assert_eq!(result, Err(RuntimeError::Raised("boom".to_string())));
+}
+
+#[test]
 fn uncaught_syntax_error_surfaces() {
     let code = vec![
         Instr::PushStr("boom".to_string()),
