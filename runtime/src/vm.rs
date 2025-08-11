@@ -9,6 +9,10 @@ use crate::bytecode::{Function, Instr};
 use crate::error::RuntimeError;
 use crate::value::Value;
 
+mod ops_arith;
+mod ops_control;
+mod ops_struct;
+
 struct Block {
     handler: usize,
     stack_size: usize,
@@ -226,431 +230,221 @@ pub fn run(
                     }
                 }
                 Instr::Add => {
-                    let b = pop(&mut stack)?;
-                    let a = pop(&mut stack)?;
-                    match (a, b) {
-                        (Value::Str(sa), Value::Str(sb)) => stack.push(Value::Str(sa + &sb)),
-                        (Value::Str(sa), v) => stack.push(Value::Str(sa + &v.to_string())),
-                        (v, Value::Str(sb)) => stack.push(Value::Str(v.to_string() + &sb)),
-                        (Value::List(la), Value::List(lb)) => {
-                            {
-                                let mut la_mut = la.borrow_mut();
-                                la_mut.extend(lb.borrow().iter().cloned());
-                            }
-                            stack.push(Value::List(la));
-                        }
-                        (a, b) => stack.push(Value::Int(a.as_int() + b.as_int())),
+                    if let Err(e) = ops_arith::handle_add(&mut stack) {
+                        break Err(e);
                     }
                 }
                 Instr::Sub => {
-                    let b = pop(&mut stack)?.as_int();
-                    let a = pop(&mut stack)?.as_int();
-                    stack.push(Value::Int(a - b));
+                    if let Err(e) = ops_arith::handle_sub(&mut stack) {
+                        break Err(e);
+                    }
                 }
                 Instr::Mul => {
-                    let b = pop(&mut stack)?.as_int();
-                    let a = pop(&mut stack)?.as_int();
-                    stack.push(Value::Int(a.checked_mul(b).unwrap_or(0)));
+                    if let Err(e) = ops_arith::handle_mul(&mut stack) {
+                        break Err(e);
+                    }
                 }
                 Instr::Div => {
-                    let b = pop(&mut stack)?.as_int();
-                    if b == 0 {
-                        break Err(RuntimeError::ZeroDivisionError);
+                    if let Err(e) = ops_arith::handle_div(&mut stack) {
+                        break Err(e);
                     }
-                    let a = pop(&mut stack)?.as_int();
-                    stack.push(Value::Int(a / b));
                 }
                 Instr::Mod => {
-                    let b = pop(&mut stack)?.as_int();
-                    if b == 0 {
-                        break Err(RuntimeError::ZeroDivisionError);
+                    if let Err(e) = ops_arith::handle_mod(&mut stack) {
+                        break Err(e);
                     }
-                    let a = pop(&mut stack)?.as_int();
-                    stack.push(Value::Int(a % b));
                 }
                 Instr::Eq => {
-                    let b = pop(&mut stack)?.to_string();
-                    let a = pop(&mut stack)?.to_string();
-                    stack.push(Value::Bool(a == b));
+                    if let Err(e) = ops_arith::handle_eq(&mut stack) {
+                        break Err(e);
+                    }
                 }
                 Instr::Ne => {
-                    let b = pop(&mut stack)?.to_string();
-                    let a = pop(&mut stack)?.to_string();
-                    stack.push(Value::Bool(a != b));
+                    if let Err(e) = ops_arith::handle_ne(&mut stack) {
+                        break Err(e);
+                    }
                 }
                 Instr::Lt => {
-                    let b = pop(&mut stack)?;
-                    let a = pop(&mut stack)?;
-                    let res = match (&a, &b) {
-                        (Value::Str(sa), Value::Str(sb)) => sa < sb,
-                        _ => a.as_int() < b.as_int(),
-                    };
-                    stack.push(Value::Bool(res));
+                    if let Err(e) = ops_arith::handle_lt(&mut stack) {
+                        break Err(e);
+                    }
                 }
                 Instr::Le => {
-                    let b = pop(&mut stack)?;
-                    let a = pop(&mut stack)?;
-                    let res = match (&a, &b) {
-                        (Value::Str(sa), Value::Str(sb)) => sa <= sb,
-                        _ => a.as_int() <= b.as_int(),
-                    };
-                    stack.push(Value::Bool(res));
+                    if let Err(e) = ops_arith::handle_le(&mut stack) {
+                        break Err(e);
+                    }
                 }
                 Instr::Gt => {
-                    let b = pop(&mut stack)?;
-                    let a = pop(&mut stack)?;
-                    let res = match (&a, &b) {
-                        (Value::Str(sa), Value::Str(sb)) => sa > sb,
-                        _ => a.as_int() > b.as_int(),
-                    };
-                    stack.push(Value::Bool(res));
+                    if let Err(e) = ops_arith::handle_gt(&mut stack) {
+                        break Err(e);
+                    }
                 }
                 Instr::Ge => {
-                    let b = pop(&mut stack)?;
-                    let a = pop(&mut stack)?;
-                    let res = match (&a, &b) {
-                        (Value::Str(sa), Value::Str(sb)) => sa >= sb,
-                        _ => a.as_int() >= b.as_int(),
-                    };
-                    stack.push(Value::Bool(res));
+                    if let Err(e) = ops_arith::handle_ge(&mut stack) {
+                        break Err(e);
+                    }
                 }
                 Instr::BAnd => {
-                    let b = pop(&mut stack)?.as_int();
-                    let a = pop(&mut stack)?.as_int();
-                    stack.push(Value::Int(a & b));
+                    if let Err(e) = ops_arith::handle_band(&mut stack) {
+                        break Err(e);
+                    }
                 }
                 Instr::BOr => {
-                    let b = pop(&mut stack)?.as_int();
-                    let a = pop(&mut stack)?.as_int();
-                    stack.push(Value::Int(a | b));
+                    if let Err(e) = ops_arith::handle_bor(&mut stack) {
+                        break Err(e);
+                    }
                 }
                 Instr::BXor => {
-                    let b = pop(&mut stack)?.as_int();
-                    let a = pop(&mut stack)?.as_int();
-                    stack.push(Value::Int(a ^ b));
+                    if let Err(e) = ops_arith::handle_bxor(&mut stack) {
+                        break Err(e);
+                    }
                 }
                 Instr::Shl => {
-                    let b = pop(&mut stack)?.as_int() as u32;
-                    let a = pop(&mut stack)?.as_int();
-                    stack.push(Value::Int(a << b));
+                    if let Err(e) = ops_arith::handle_shl(&mut stack) {
+                        break Err(e);
+                    }
                 }
                 Instr::Shr => {
-                    let b = pop(&mut stack)?.as_int() as u32;
-                    let a = pop(&mut stack)?.as_int();
-                    stack.push(Value::Int(a >> b));
+                    if let Err(e) = ops_arith::handle_shr(&mut stack) {
+                        break Err(e);
+                    }
                 }
                 Instr::And => {
-                    let b = pop(&mut stack)?.as_bool();
-                    let a = pop(&mut stack)?.as_bool();
-                    stack.push(Value::Bool(a && b));
+                    if let Err(e) = ops_arith::handle_and(&mut stack) {
+                        break Err(e);
+                    }
                 }
                 Instr::Or => {
-                    let b = pop(&mut stack)?.as_bool();
-                    let a = pop(&mut stack)?.as_bool();
-                    stack.push(Value::Bool(a || b));
+                    if let Err(e) = ops_arith::handle_or(&mut stack) {
+                        break Err(e);
+                    }
                 }
                 Instr::Not => {
-                    let v = pop(&mut stack)?.as_int();
-                    stack.push(Value::Int(!v));
+                    if let Err(e) = ops_arith::handle_not(&mut stack) {
+                        break Err(e);
+                    }
                 }
                 Instr::Neg => {
-                    let v = pop(&mut stack)?.as_int();
-                    stack.push(Value::Int(-v));
+                    if let Err(e) = ops_arith::handle_neg(&mut stack) {
+                        break Err(e);
+                    }
                 }
                 Instr::Index => {
-                    let idx = pop(&mut stack)?;
-                    let base = pop(&mut stack)?;
-                    match (base, idx) {
-                        (Value::List(list), Value::Int(i)) => {
-                            if i < 0 {
-                                break Err(RuntimeError::IndexError(
-                                    "List index out of bounds!".to_string(),
-                                ));
-                            }
-                            let l = list.borrow();
-                            let idx_usize = i as usize;
-                            if idx_usize < l.len() {
-                                stack.push(l[idx_usize].clone());
-                            } else {
-                                break Err(RuntimeError::IndexError(
-                                    "List index out of bounds!".to_string(),
-                                ));
-                            }
-                        }
-                        (Value::Dict(map), Value::Str(k)) => {
-                            if let Some(v) = map.borrow().get(&k).cloned() {
-                                stack.push(v);
-                            } else {
-                                break Err(RuntimeError::KeyError(k));
-                            }
-                        }
-                        (Value::Dict(map), Value::Int(i)) => {
-                            let key = i.to_string();
-                            if let Some(v) = map.borrow().get(&key).cloned() {
-                                stack.push(v);
-                            } else {
-                                break Err(RuntimeError::KeyError(key));
-                            }
-                        }
-                        (Value::FrozenDict(map), Value::Str(k)) => {
-                            if let Some(v) = map.get(&k).cloned() {
-                                stack.push(v);
-                            } else {
-                                break Err(RuntimeError::KeyError(k));
-                            }
-                        }
-                        (Value::FrozenDict(map), Value::Int(i)) => {
-                            let key = i.to_string();
-                            if let Some(v) = map.get(&key).cloned() {
-                                stack.push(v);
-                            } else {
-                                break Err(RuntimeError::KeyError(key));
-                            }
-                        }
-                        (Value::Str(s), Value::Int(i)) => {
-                            if i < 0 {
-                                break Err(RuntimeError::IndexError(
-                                    "String index out of bounds!".to_string(),
-                                ));
-                            }
-                            let chars: Vec<char> = s.chars().collect();
-                            let idx_usize = i as usize;
-                            if idx_usize < chars.len() {
-                                stack.push(Value::Str(chars[idx_usize].to_string()));
-                            } else {
-                                break Err(RuntimeError::IndexError(
-                                    "String index out of bounds!".to_string(),
-                                ));
-                            }
-                        }
-                        (other, _) => {
-                            break Err(RuntimeError::TypeError(format!(
-                                "{} is not indexable",
-                                other.to_string()
-                            )));
-                        }
+                    if let Err(e) = ops_struct::handle_index(&mut stack) {
+                        break Err(e);
                     }
                 }
                 Instr::Slice => {
-                    let end_val = pop(&mut stack)?;
-                    let start = pop(&mut stack)?.as_int() as usize;
-                    let base = pop(&mut stack)?;
-                    match base {
-                        Value::List(list) => {
-                            let list_ref = list.borrow();
-                            let end = match end_val {
-                                Value::None => list_ref.len(),
-                                v => v.as_int() as usize,
-                            };
-                            let slice = list_ref[start..end].to_vec();
-                            stack.push(Value::List(Rc::new(RefCell::new(slice))));
-                        }
-                        Value::Str(s) => {
-                            let chars: Vec<char> = s.chars().collect();
-                            let end = match end_val {
-                                Value::None => chars.len(),
-                                v => v.as_int() as usize,
-                            };
-                            let slice: String = chars[start..end].iter().collect();
-                            stack.push(Value::Str(slice));
-                        }
-                        _ => stack.push(Value::Int(0)),
+                    if let Err(e) = ops_struct::handle_slice(&mut stack) {
+                        break Err(e);
                     }
                 }
                 Instr::StoreIndex => {
-                    let val = pop(&mut stack)?;
-                    let idx = pop(&mut stack)?;
-                    let base = pop(&mut stack)?;
-                    match (base, idx) {
-                        (Value::List(list), Value::Int(i)) => {
-                            let mut l = list.borrow_mut();
-                            let idx_usize = i as usize;
-                            if idx_usize >= l.len() {
-                                l.resize(idx_usize + 1, Value::Int(0));
-                            }
-                            l[idx_usize] = val;
-                        }
-                        (Value::Dict(map), Value::Str(k)) => {
-                            map.borrow_mut().insert(k, val);
-                        }
-                        (Value::Dict(map), Value::Int(i)) => {
-                            map.borrow_mut().insert(i.to_string(), val);
-                        }
-                        (Value::FrozenDict(_), _) => {
-                            break Err(RuntimeError::FrozenWriteError);
-                        }
-                        _ => {}
+                    if let Err(e) = ops_struct::handle_store_index(&mut stack) {
+                        break Err(e);
                     }
                 }
                 Instr::Attr(attr) => {
-                    let base = pop(&mut stack)?;
-                    match base {
-                        Value::Dict(map) => {
-                            if let Some(v) = map.borrow().get(attr).cloned() {
-                                stack.push(v);
-                            } else {
-                                break Err(RuntimeError::KeyError(attr.clone()));
-                            }
-                        }
-                        Value::FrozenDict(map) => {
-                            if let Some(v) = map.get(attr).cloned() {
-                                stack.push(v);
-                            } else {
-                                break Err(RuntimeError::KeyError(attr.clone()));
-                            }
-                        }
-                        other => {
-                            break Err(RuntimeError::TypeError(format!(
-                                "{} has no attribute '{}'",
-                                other.to_string(),
-                                attr
-                            )));
-                        }
+                    if let Err(e) = ops_struct::handle_attr(&mut stack, attr) {
+                        break Err(e);
                     }
                 }
                 Instr::StoreAttr(attr) => {
-                    let val = pop(&mut stack)?;
-                    let base = pop(&mut stack)?;
-                    match base {
-                        Value::Dict(map) => {
-                            map.borrow_mut().insert(attr.clone(), val);
-                        }
-                        Value::FrozenDict(_) => {
-                            break Err(RuntimeError::FrozenWriteError);
-                        }
-                        _ => {}
+                    if let Err(e) = ops_struct::handle_store_attr(&mut stack, attr) {
+                        break Err(e);
                     }
                 }
                 Instr::Assert => {
-                    let cond = pop(&mut stack)?.as_bool();
-                    if !cond {
-                        break Err(RuntimeError::AssertionError);
+                    if let Err(e) = ops_control::handle_assert(&mut stack) {
+                        break Err(e);
                     }
                 }
                 Instr::CallValue(argc) => {
-                    let mut args_vec: Vec<Value> = Vec::new();
-                    for _ in 0..*argc {
-                        args_vec.push(pop(&mut stack)?);
-                    }
-                    args_vec.reverse();
-                    let func_val = pop(&mut stack)?;
-                    if let Value::Str(name) = func_val {
-                        if let Some(func) = funcs.get(&name) {
-                            let mut new_env = HashMap::new();
-                            for param in func.params.iter().rev() {
-                                let arg = args_vec.pop().unwrap();
-                                new_env.insert(param.clone(), arg);
-                            }
-                            env_stack.push(env);
-                            ret_stack.push(pc + 1);
-                            env = new_env;
-                            pc = func.address;
-                            advance_pc = false;
-                        } else {
-                            break Err(RuntimeError::UndefinedIdentError(name));
-                        }
-                    } else {
-                        break Err(RuntimeError::TypeError(
-                            "Call value expects function name".to_string(),
-                        ));
+                    if let Err(e) = ops_control::handle_call_value(
+                        *argc,
+                        &mut stack,
+                        &funcs,
+                        &mut env_stack,
+                        &mut ret_stack,
+                        &mut env,
+                        &mut pc,
+                        &mut advance_pc,
+                    ) {
+                        break Err(e);
                     }
                 }
-                Instr::PushNone => {
-                    stack.push(Value::None);
-                }
-                Instr::Jump(target) => {
-                    pc = *target;
-                    advance_pc = false;
-                }
+                Instr::PushNone => ops_control::handle_push_none(&mut stack),
+                Instr::Jump(target) => ops_control::handle_jump(&mut pc, *target, &mut advance_pc),
                 Instr::JumpIfFalse(target) => {
-                    let cond = pop(&mut stack)?.as_bool();
-                    if !cond {
-                        pc = *target;
-                        advance_pc = false;
+                    if let Err(e) = ops_control::handle_jump_if_false(
+                        &mut stack,
+                        &mut pc,
+                        *target,
+                        &mut advance_pc,
+                    ) {
+                        break Err(e);
                     }
                 }
                 Instr::Call(name) => {
-                    if let Some(func) = funcs.get(name) {
-                        let mut new_env = HashMap::new();
-                        for param in func.params.iter().rev() {
-                            let arg = pop(&mut stack)?;
-                            new_env.insert(param.clone(), arg);
-                        }
-                        env_stack.push(env);
-                        ret_stack.push(pc + 1);
-                        env = new_env;
-                        pc = func.address;
-                        advance_pc = false;
-                    } else {
-                        break Err(RuntimeError::UndefinedIdentError(name.clone()));
+                    if let Err(e) = ops_control::handle_call(
+                        name,
+                        &funcs,
+                        &mut stack,
+                        &mut env,
+                        &mut env_stack,
+                        &mut ret_stack,
+                        &mut pc,
+                        &mut advance_pc,
+                    ) {
+                        break Err(e);
                     }
                 }
                 Instr::TailCall(name) => {
-                    if let Some(func) = funcs.get(name) {
-                        let mut new_env = HashMap::new();
-                        for param in func.params.iter().rev() {
-                            let arg = pop(&mut stack)?;
-                            new_env.insert(param.clone(), arg);
-                        }
-                        env = new_env;
-                        pc = func.address;
-                        advance_pc = false;
-                    } else {
-                        break Err(RuntimeError::UndefinedIdentError(name.clone()));
+                    if let Err(e) = ops_control::handle_tail_call(
+                        name,
+                        &funcs,
+                        &mut stack,
+                        &mut env,
+                        &mut pc,
+                        &mut advance_pc,
+                    ) {
+                        break Err(e);
                     }
                 }
                 Instr::CallBuiltin(name, argc) => {
-                    let mut args: Vec<Value> = Vec::new();
-                    for _ in 0..*argc {
-                        args.push(pop(&mut stack)?);
-                    }
-                    args.reverse();
-                    match call_builtin(name, &args, &env, &globals) {
-                        Ok(val) => stack.push(val),
-                        Err(e) => break Err(e),
-                    }
-                }
-                Instr::Pop => {
-                    stack.pop();
-                }
-                Instr::Ret => {
-                    let ret_val = stack.pop().unwrap_or(Value::Int(0));
-                    pc = ret_stack.pop().unwrap();
-                    env = env_stack.pop().unwrap();
-                    stack.push(ret_val);
-                    advance_pc = false;
-                }
-                Instr::Emit => {
-                    if let Some(v) = stack.pop() {
-                        println!("{}", v.to_string());
+                    if let Err(e) = ops_control::handle_call_builtin(
+                        name,
+                        *argc,
+                        &mut stack,
+                        &env,
+                        &globals,
+                    ) {
+                        break Err(e);
                     }
                 }
-                Instr::Halt => {
-                    pc = code.len();
-                    advance_pc = false;
-                }
-                Instr::SetupExcept(target) => {
-                    block_stack.push(Block {
-                        handler: *target,
-                        stack_size: stack.len(),
-                        env_depth: env_stack.len(),
-                        ret_depth: ret_stack.len(),
-                    });
-                }
-                Instr::PopBlock => {
-                    block_stack.pop();
-                }
+                Instr::Pop => ops_control::handle_pop(&mut stack),
+                Instr::Ret => ops_control::handle_ret(
+                    &mut stack,
+                    &mut ret_stack,
+                    &mut env_stack,
+                    &mut env,
+                    &mut pc,
+                    &mut advance_pc,
+                ),
+                Instr::Emit => ops_control::handle_emit(&mut stack),
+                Instr::Halt => ops_control::handle_halt(&mut pc, code.len(), &mut advance_pc),
+                Instr::SetupExcept(target) => ops_control::handle_setup_except(
+                    &mut block_stack,
+                    *target,
+                    stack.len(),
+                    env_stack.len(),
+                    ret_stack.len(),
+                ),
+                Instr::PopBlock => ops_control::handle_pop_block(&mut block_stack),
                 Instr::Raise(kind) => {
-                    let msg_val = match stack.pop() {
-                        Some(v) => v,
-                        None => {
-                            break Err(RuntimeError::VmInvariant(
-                                "stack underflow on RAISE".to_string(),
-                            ))
-                        }
-                    };
-                    let msg = msg_val.to_string();
-                    break Err(kind.into_runtime(msg));
+                    if let Err(e) = ops_control::handle_raise(&mut stack, *kind) {
+                        break Err(e);
+                    }
                 }
             }
             break Ok(());

@@ -2,6 +2,11 @@
 
 Ordered from most recent at the top to oldest at the bottom.
 
+## [0.1.3] - 2025-08-10
+
+### Changed
+- Refactored VM instruction handling into `ops_arith`, `ops_struct`, and `ops_control` modules for clarity.
+
 ## [0.1.2] - 2025-08-10
 
 ### Added
