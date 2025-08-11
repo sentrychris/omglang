@@ -78,7 +78,7 @@ pub fn run(
                     } else if let Some(v) = globals.get(name) {
                         stack.push(v.clone());
                     } else {
-                        stack.push(Value::Int(0));
+                        break Err(RuntimeError::UndefinedIdentError(name.clone()));
                     }
                 }
                 Instr::Store(name) => {

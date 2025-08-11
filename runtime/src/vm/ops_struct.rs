@@ -2,9 +2,9 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
 
+use super::pop;
 use crate::error::RuntimeError;
 use crate::value::Value;
-use super::pop;
 
 pub(super) fn handle_build_list(n: usize, stack: &mut Vec<Value>) -> Result<(), RuntimeError> {
     let mut elements = Vec::new();
@@ -96,7 +96,7 @@ pub(super) fn handle_slice(stack: &mut Vec<Value>) -> Result<(), RuntimeError> {
     let end_val = pop(stack)?;
     let start_val = pop(stack)?;
     let base = pop(stack)?;
-    let start_i64 = start_val.as_int();
+    let start_i64 = start_val.as_int()?;
     match base {
         Value::List(list) => {
             let list_ref = list.borrow();
@@ -107,7 +107,7 @@ pub(super) fn handle_slice(stack: &mut Vec<Value>) -> Result<(), RuntimeError> {
             let start = start_i64 as usize;
             let end_i64 = match end_val {
                 Value::None => len as i64,
-                v => v.as_int(),
+                v => v.as_int()?,
             };
             if end_i64 < 0 {
                 return Err(RuntimeError::IndexError("Slice indices out of bounds!".to_string()));
@@ -128,7 +128,7 @@ pub(super) fn handle_slice(stack: &mut Vec<Value>) -> Result<(), RuntimeError> {
             let start = start_i64 as usize;
             let end_i64 = match end_val {
                 Value::None => len as i64,
-                v => v.as_int(),
+                v => v.as_int()?,
             };
             if end_i64 < 0 {
                 return Err(RuntimeError::IndexError("Slice indices out of bounds!".to_string()));
