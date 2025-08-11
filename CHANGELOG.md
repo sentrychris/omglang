@@ -30,6 +30,7 @@ Ordered from most recent at the top to oldest at the bottom.
 - Refactored basename extraction in bootstrap interpreter's `import_module` to avoid negative string indexing when module paths lack directory separators.
 - Guarded `dirname` and `run_file_with_args` against negative string indexing so modules in the current directory import and execute without errors.
 - Validated slice indices in the VM, returning `IndexError` for out-of-range or invalid ranges instead of panicking.
+- VM `LOAD` instruction now raises `UndefinedIdentError` when a name is missing instead of defaulting to zero.
 
 ## [0.1.1] - 2025-08-08
 

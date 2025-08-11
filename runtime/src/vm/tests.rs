@@ -235,6 +235,17 @@ fn call_builtin_dispatches_hex() {
 }
 
 #[test]
+fn load_unknown_name_errors() {
+    let code = vec![Instr::Load("foo".to_string()), Instr::Halt];
+    let funcs = HashMap::new();
+    let result = run(&code, &funcs, &[]);
+    assert_eq!(
+        result,
+        Err(RuntimeError::UndefinedIdentError("foo".to_string()))
+    );
+}
+
+#[test]
 fn call_undefined_function_errors() {
     let code = vec![Instr::Call("foo".to_string()), Instr::Halt];
     let funcs = HashMap::new();
