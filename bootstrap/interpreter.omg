@@ -817,10 +817,6 @@ proc call_function(func_name, func, arg_values, env) {
         return false
     } elif func[0] == "builtin" {
         alloc name := func[1]
-        if name == "raise" {
-            raise(arg_values[0])
-            return false
-        }
         return call_builtin(name, arg_values)
     } else {
         _omg_vm_type_error_handle("Not a function value")

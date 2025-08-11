@@ -72,6 +72,35 @@ fn uncaught_raise_surfaces() {
 }
 
 #[test]
+fn panic_builtin_raises() {
+    let code = vec![
+        Instr::PushStr("boom".to_string()),
+        Instr::CallBuiltin("panic".to_string(), 1),
+        Instr::Halt,
+    ];
+    let funcs = HashMap::new();
+    let result = run(&code, &funcs, &[]);
+    assert_eq!(result, Err(RuntimeError::Raised("boom".to_string())));
+}
+
+#[test]
+fn read_file_missing_raises_module_import_error() {
+    let code = vec![
+        Instr::PushStr("no_such_file.omg".to_string()),
+        Instr::CallBuiltin("read_file".to_string(), 1),
+        Instr::Halt,
+    ];
+    let funcs = HashMap::new();
+    let result = run(&code, &funcs, &[]);
+    match result {
+        Err(RuntimeError::ModuleImportError(msg)) => {
+            assert!(msg.contains("no_such_file.omg"));
+        }
+        other => panic!("expected ModuleImportError, got {:?}", other),
+    }
+}
+
+#[test]
 fn uncaught_syntax_error_surfaces() {
     let code = vec![
         Instr::PushStr("boom".to_string()),
@@ -232,6 +261,20 @@ fn call_builtin_dispatches_hex() {
     let funcs = HashMap::new();
     let result = run(&code, &funcs, &[]);
     assert!(result.is_ok());
+}
+
+#[test]
+fn call_builtin_dispatches_raise() {
+    let code = vec![
+        Instr::PushStr("raise".to_string()),
+        Instr::PushStr("boom".to_string()),
+        Instr::BuildList(1),
+        Instr::CallBuiltin("call_builtin".to_string(), 2),
+        Instr::Halt,
+    ];
+    let funcs = HashMap::new();
+    let result = run(&code, &funcs, &[]);
+    assert_eq!(result, Err(RuntimeError::Raised("boom".to_string())));
 }
 
 #[test]

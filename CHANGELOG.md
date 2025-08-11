@@ -12,6 +12,8 @@ Ordered from most recent at the top to oldest at the bottom.
 - Prefix for calls from the interpreter into the VM layer. Such calls are now prefixed with `_omg_vm` for clarity.
 - Backward decoding support for legacy raise opcodes (47–51) for one release.
 - Tests covering all raise kinds and stack underflow behaviour.
+- Added a `raise` builtin in the VM that delegates to `ops_control::handle_raise`,
+  enabling generic errors via `call_builtin` without special-case interpreter logic.
 
 ### Changed
 - Updated the bytecode interpreter to invoke `call_builtin` for `Instr::CallBuiltin` to streamline execution flow.

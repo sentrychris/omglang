@@ -3,10 +3,10 @@
 use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
-use std::process;
 use std::rc::Rc;
 
-use crate::error::RuntimeError;
+use super::ops_control;
+use crate::error::{ErrorKind, RuntimeError};
 use crate::value::Value;
 
 /// Call a built-in function by name.
@@ -83,13 +83,19 @@ pub fn call_builtin(
             )),
         },
         "panic" => match args {
-            // TODO depracated in favour of raise
-            [Value::Str(msg)] => {
-                eprintln!("{}", msg);
-                process::exit(1);
-            }
+            [Value::Str(msg)] => Err(RuntimeError::Raised(msg.clone())),
             _ => Err(RuntimeError::TypeError(
                 "panic() expects a string (type mismatch)".to_string(),
+            )),
+        },
+        "raise" => match args {
+            [Value::Str(msg)] => {
+                let mut stack = vec![Value::Str(msg.clone())];
+                ops_control::handle_raise(&ErrorKind::Generic, &mut stack)?;
+                unreachable!()
+            }
+            _ => Err(RuntimeError::TypeError(
+                "raise() expects a string (type mismatch)".to_string(),
             )),
         },
         "read_file" => match args {
@@ -106,7 +112,11 @@ pub fn call_builtin(
                 }
                 match fs::read_to_string(&path_buf) {
                     Ok(content) => Ok(Value::Str(content)),
-                    Err(_) => Ok(Value::Bool(false)),
+                    Err(err) => Err(RuntimeError::ModuleImportError(format!(
+                        "failed to read '{}': {}",
+                        path_buf.display(),
+                        err
+                    ))),
                 }
             }
             _ => Err(RuntimeError::TypeError(
