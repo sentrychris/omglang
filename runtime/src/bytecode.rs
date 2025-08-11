@@ -87,10 +87,13 @@ pub fn parse_bytecode(data: &[u8]) -> (Vec<Instr>, HashMap<String, Function>) {
     let mut idx = 0;
     assert!(&data[0..4] == b"OMGB");
     idx += 4;
+
     let version = read_u32(data, &mut idx);
     assert_eq!(version, BC_VERSION, "unsupported version");
+
     let func_count = read_u32(data, &mut idx) as usize;
     let mut funcs: HashMap<String, Function> = HashMap::new();
+
     for _ in 0..func_count {
         let name = read_string(data, &mut idx);
         let param_count = read_u32(data, &mut idx) as usize;
@@ -98,6 +101,7 @@ pub fn parse_bytecode(data: &[u8]) -> (Vec<Instr>, HashMap<String, Function>) {
         for _ in 0..param_count {
             params.push(read_string(data, &mut idx));
         }
+
         let address = read_u32(data, &mut idx) as usize;
         funcs.insert(name.clone(), Function { params, address });
     }

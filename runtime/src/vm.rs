@@ -39,6 +39,7 @@ pub fn run(
         "args".to_string(),
         Value::List(Rc::new(RefCell::new(arg_values))),
     );
+
     if let Some(first) = program_args.first() {
         let path = PathBuf::from(first.replace("\\", "/"));
         globals.insert(
@@ -57,6 +58,7 @@ pub fn run(
         globals.insert("module_file".to_string(), Value::Str("<stdin>".to_string()));
         globals.insert("current_dir".to_string(), Value::Str(".".to_string()));
     }
+
     let mut env: HashMap<String, Value> = HashMap::new();
     let mut env_stack: Vec<HashMap<String, Value>> = Vec::new();
     let mut ret_stack: Vec<usize> = Vec::new();
@@ -275,6 +277,7 @@ pub fn run(
                 handled = true;
                 break;
             }
+
             if !handled {
                 return Err(err);
             } else {
@@ -288,5 +291,6 @@ pub fn run(
     }
     Ok(())
 }
+
 #[cfg(test)]
 mod tests;

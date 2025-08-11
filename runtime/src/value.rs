@@ -57,6 +57,7 @@ impl Value {
                     if !seen.insert(ptr) {
                         return "[...]".to_string();
                     }
+
                     let inner: Vec<String> =
                         list.borrow().iter().map(|v| helper(v, seen)).collect();
                     format!("[{}]", inner.join(", "))
@@ -66,6 +67,7 @@ impl Value {
                     if !seen.insert(ptr) {
                         return "{...}".to_string();
                     }
+
                     let inner: Vec<String> = map
                         .borrow()
                         .iter()
@@ -78,6 +80,7 @@ impl Value {
                     if !seen.insert(ptr) {
                         return "{...}".to_string();
                     }
+
                     let inner: Vec<String> = map
                         .iter()
                         .map(|(k, v)| format!("{}: {}", k, helper(v, seen)))
