@@ -21,6 +21,7 @@ Ordered from most recent at the top to oldest at the bottom.
 - Added VM invariant error on stack underflow for `RAISE`.
 - VM stack operations now return `RuntimeError::VmInvariant` on underflow instead of panicking.
 - Function call handling in the VM now returns `RuntimeError` on undefined or invalid calls instead of panicking.
+- Moved builtin dispatch into a dedicated `vm::builtins` module exposing `call_builtin`.
 
 ### Fixed
 - Centralized `call_builtin` helper eliminates scattered implementations across the runtime.
