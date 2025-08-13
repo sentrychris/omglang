@@ -63,6 +63,8 @@ wasm-pack build runtime --target web --out-dir wasm
 
 This creates an ES module wrapper and `.wasm` binary in the `wasm/` directory. The directory is gitignored and can be rebuilt locally when needed.
 
+The resulting package exposes both `run_file` and `run_source`. Use `run_source` to execute OMG code provided as a string, which allows building an in-browser REPL.
+
 Build the native CLI separately with Cargo:
 
 ```sh
