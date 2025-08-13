@@ -7,6 +7,7 @@ Ordered from most recent at the top to oldest at the bottom.
 ### Added
 - Generated a WebAssembly package for the runtime with the embedded OMG interpreter bytecode, output under `wasm/`.
 - Exposed a `run_source` API in the runtime for executing OMG code from a string, enabling browser-based REPLs.
+- `index.html` demonstrating an in-browser REPL powered by the WebAssembly runtime.
 - Implemented control-breaking mechanics for exceptions in the VM layer. VM's eval loop tracks an `error_flag` and after each instruction, unwinds the block stack or returns the error if no handler exists.
 - Introduced a centralized `call_builtin` helper to dispatch built-ins through a single code path.
 - Registered `call_builtin` as a recognized built-in in the compiler for proper lowering during bytecode generation.

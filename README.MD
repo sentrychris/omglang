@@ -58,12 +58,12 @@ positive
 Generate a WebAssembly package of the runtime (including the embedded interpreter bytecode) with:
 
 ```sh
-wasm-pack build runtime --target web --out-dir wasm
+cd runtime && wasm-pack build --target web --out-dir ../wasm
 ```
 
 This creates an ES module wrapper and `.wasm` binary in the `wasm/` directory. The directory is gitignored and can be rebuilt locally when needed.
 
-The resulting package exposes both `run_file` and `run_source`. Use `run_source` to execute OMG code provided as a string, which allows building an in-browser REPL.
+The resulting package exposes both `run_file` and `run_source`. Use `run_source` to execute OMG code provided as a string, which allows building an in-browser REPL. A minimal example page is provided in `index.html`. After building the WebAssembly package, serve the repository with any static file server (for example `python -m http.server`) and open `index.html` in a browser to experiment with OMG code interactively.
 
 Build the native CLI separately with Cargo:
 
