@@ -53,6 +53,22 @@ positive
 >>> quit
 ```
 
+### WebAssembly build
+
+Generate a WebAssembly package of the runtime (including the embedded interpreter bytecode) with:
+
+```sh
+wasm-pack build runtime --target web --out-dir wasm
+```
+
+This creates an ES module wrapper and `.wasm` binary in the `wasm/` directory. The directory is gitignored and can be rebuilt locally when needed.
+
+Build the native CLI separately with Cargo:
+
+```sh
+cargo build -p runtime
+```
+
 ---
 
 ## Syntax

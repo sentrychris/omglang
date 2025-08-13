@@ -5,6 +5,7 @@ Ordered from most recent at the top to oldest at the bottom.
 ## [0.1.2] - 2025-08-10
 
 ### Added
+- Generated a WebAssembly package for the runtime with the embedded OMG interpreter bytecode, output under `wasm/`.
 - Implemented control-breaking mechanics for exceptions in the VM layer. VM's eval loop tracks an `error_flag` and after each instruction, unwinds the block stack or returns the error if no handler exists.
 - Introduced a centralized `call_builtin` helper to dispatch built-ins through a single code path.
 - Registered `call_builtin` as a recognized built-in in the compiler for proper lowering during bytecode generation.
@@ -26,6 +27,8 @@ Ordered from most recent at the top to oldest at the bottom.
 - Moved builtin dispatch into a dedicated `vm::builtins` module exposing `call_builtin`.
 - Refactored VM opcode dispatch into dedicated handler modules for arithmetic, structural, and control operations.
 - `Value::as_int` now returns `Result<i64, RuntimeError>` and emits a `TypeError` when string parsing fails.
+- Removed generated WebAssembly artifacts from version control; `wasm/` is now gitignored and rebuilt locally with `wasm-pack`.
+- Documented separate build steps for the native binary and WebAssembly package in `README.MD`.
 
 ### Fixed
 - Centralized `call_builtin` helper eliminates scattered implementations across the runtime.
