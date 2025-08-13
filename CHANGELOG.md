@@ -32,6 +32,7 @@ Ordered from most recent at the top to oldest at the bottom.
 - Documented separate build steps for the native binary and WebAssembly package in `README.MD`.
 
 ### Fixed
+- Renamed CLI binary to `omg` to avoid build output filename collisions with the `omg_runtime` library.
 - Centralized `call_builtin` helper eliminates scattered implementations across the runtime.
 - Narrower error handling eliminates relying on generic string-based `raise` which was resulting in prefixed errors e.g. `RuntimeError: SyntaxError: Unxepected <symbol>...`, errors are now correctly defined according to their type. Generic `raise()` has been retained for special cases.
 - Refactored basename extraction in bootstrap interpreter's `import_module` to avoid negative string indexing when module paths lack directory separators.
