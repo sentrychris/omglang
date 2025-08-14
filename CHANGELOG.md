@@ -42,7 +42,7 @@ Ordered from most recent at the top to oldest at the bottom.
 - Guarded `dirname` and `run_file_with_args` against negative string indexing so modules in the current directory import and execute without errors.
 - Validated slice indices in the VM, returning `IndexError` for out-of-range or invalid ranges instead of panicking.
 - VM `LOAD` instruction now raises `UndefinedIdentError` when a name is missing instead of defaulting to zero.
-- `run_source` now runs the interpreter's global initialization before invoking `run`, preventing stack underflow in the WebAssembly REPL.
+- `run_source` now runs the interpreter's global initialization before invoking `run`, ensuring WebAssembly REPL snippets execute cleanly and produce output.
 - `run_source` bypasses the interpreter's CLI bootstrap so browser snippets execute without launching the REPL.
 
 ## [0.1.1] - 2025-08-08
