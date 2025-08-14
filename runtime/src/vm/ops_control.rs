@@ -165,7 +165,14 @@ pub(super) fn handle_ret(
 
 pub(super) fn handle_emit(stack: &mut Vec<Value>) {
     if let Some(v) = stack.pop() {
-        println!("{}", v.to_string());
+        #[cfg(target_arch = "wasm32")]
+        {
+            web_sys::console::log_1(&wasm_bindgen::JsValue::from_str(&v.to_string()));
+        }
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            println!("{}", v.to_string());
+        }
     }
 }
 

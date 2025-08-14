@@ -41,6 +41,7 @@ Ordered from most recent at the top to oldest at the bottom.
 - Validated slice indices in the VM, returning `IndexError` for out-of-range or invalid ranges instead of panicking.
 - VM `LOAD` instruction now raises `UndefinedIdentError` when a name is missing instead of defaulting to zero.
 - `run_source` now runs the interpreter's global initialization before invoking `run`, preventing stack underflow in the WebAssembly REPL.
+- `emit` instructions log via the browser console in WebAssembly builds so REPL output appears in the page.
 
 ## [0.1.1] - 2025-08-08
 
