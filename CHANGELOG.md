@@ -2,6 +2,12 @@
 
 Ordered from most recent at the top to oldest at the bottom.
 
+## [0.1.3] - 2025-08-11
+
+### Added
+- File I/O builtins `file_open`, `file_read`, `file_write`, `file_close`, and
+  `file_exists` with support for text and binary modes.
+
 ## [0.1.2] - 2025-08-10
 
 ### Added

@@ -14,6 +14,11 @@ from omglang.compiler import compile_source, disassemble
         ("emit binary(5)", "BUILTIN binary 1"),
         ("emit binary(5, 3)", "BUILTIN binary 2"),
         ("emit read_file(\"README.MD\")", "BUILTIN read_file 1"),
+        ("emit file_open(\"README.MD\", \"r\")", "BUILTIN file_open 2"),
+        ("emit file_read(0)", "BUILTIN file_read 1"),
+        ("emit file_write(0, \"x\")", "BUILTIN file_write 2"),
+        ("emit file_close(0)", "BUILTIN file_close 1"),
+        ("emit file_exists(\"README.MD\")", "BUILTIN file_exists 1"),
     ],
 )
 def test_builtin_emits_builtin_instruction(src: str, expected: str) -> None:

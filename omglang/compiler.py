@@ -139,6 +139,11 @@ class Compiler:
             "read_file",
             "freeze",
             "call_builtin",
+            "file_open",
+            "file_read",
+            "file_write",
+            "file_close",
+            "file_exists",
         }
 
     # ------------------------------------------------------------------

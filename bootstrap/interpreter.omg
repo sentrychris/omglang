@@ -865,6 +865,11 @@ proc import_module(path) {
         ["chr", ["builtin", "chr"]],
         ["hex", ["builtin", "hex"]],
         ["freeze", ["builtin", "freeze"]],
+        ["file_open", ["builtin", "file_open"]],
+        ["file_read", ["builtin", "file_read"]],
+        ["file_write", ["builtin", "file_write"]],
+        ["file_close", ["builtin", "file_close"]],
+        ["file_exists", ["builtin", "file_exists"]],
         ["raise", ["builtin", "raise"]]
     ]
     env := env_set(env, "args", [])
@@ -1171,8 +1176,13 @@ proc run(source) {
         ["ascii", ["builtin", "ascii"]],
         ["binary", ["builtin", "binary"]],
         ["chr", ["builtin", "chr"]],
-        ["hex", ["builtin", "hex"]]
+        ["hex", ["builtin", "hex"]],
         ["freeze", ["builtin", "freeze"]],
+        ["file_open", ["builtin", "file_open"]],
+        ["file_read", ["builtin", "file_read"]],
+        ["file_write", ["builtin", "file_write"]],
+        ["file_close", ["builtin", "file_close"]],
+        ["file_exists", ["builtin", "file_exists"]],
         ["raise", ["builtin", "raise"]]
     ]
     env := env_set(env, "args", args)
