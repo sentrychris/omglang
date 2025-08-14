@@ -78,7 +78,8 @@ fn main() {
 
         let src = fs::read(bc_path).expect("failed to read bytecode file");
         let (code, funcs) = parse_bytecode(&src);
-        if let Err(e) = run(&code, &funcs, program_args) {
+        let mut emit = |s: String| println!("{}", s);
+        if let Err(e) = run(&code, &funcs, program_args, &mut emit) {
             eprintln!("{}", e);
             std::process::exit(1);
         }
@@ -100,7 +101,8 @@ fn main() {
         full_args.extend_from_slice(program_args_slice);
 
         let (code, funcs) = parse_bytecode(INTERP_OMGBC);
-        if let Err(e) = run(&code, &funcs, &full_args) {
+        let mut emit = |s: String| println!("{}", s);
+        if let Err(e) = run(&code, &funcs, &full_args, &mut emit) {
             eprintln!("{}", e);
             std::process::exit(1);
         }

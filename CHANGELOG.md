@@ -31,6 +31,8 @@ Ordered from most recent at the top to oldest at the bottom.
 - `Value::as_int` now returns `Result<i64, RuntimeError>` and emits a `TypeError` when string parsing fails.
 - Removed generated WebAssembly artifacts from version control; `wasm/` is now gitignored and rebuilt locally with `wasm-pack`.
 - Documented separate build steps for the native binary and WebAssembly package in `README.MD`.
+- VM `run` now accepts an output callback so `emit` results can be captured by callers; `run_file` and `run_source` return emitted output strings for browser use.
+- Rebuilt `index.html` to display REPL results directly without relying on the browser console.
 
 ### Fixed
 - Renamed CLI binary to `omg` to avoid build output filename collisions with the `omg_runtime` library.
@@ -41,7 +43,6 @@ Ordered from most recent at the top to oldest at the bottom.
 - Validated slice indices in the VM, returning `IndexError` for out-of-range or invalid ranges instead of panicking.
 - VM `LOAD` instruction now raises `UndefinedIdentError` when a name is missing instead of defaulting to zero.
 - `run_source` now runs the interpreter's global initialization before invoking `run`, preventing stack underflow in the WebAssembly REPL.
-- `emit` instructions log via the browser console in WebAssembly builds so REPL output appears in the page.
 
 ## [0.1.1] - 2025-08-08
 

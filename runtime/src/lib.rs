@@ -13,15 +13,24 @@ const INTERP_OMGBC: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/interprete
 
 /// Execute an OMG source file using the embedded interpreter.
 #[wasm_bindgen]
-pub fn run_file(prog_path: &str) -> Result<(), JsValue> {
+pub fn run_file(prog_path: &str) -> Result<String, JsValue> {
     let args = vec![prog_path.to_string()];
     let (code, funcs) = parse_bytecode(INTERP_OMGBC);
-    run(&code, &funcs, &args).map_err(|e| JsValue::from_str(&format!("{}", e)))
+    let mut output = String::new();
+    {
+        let mut emit = |s: String| {
+            output.push_str(&s);
+            output.push('\n');
+        };
+        run(&code, &funcs, &args, &mut emit)
+            .map_err(|e| JsValue::from_str(&format!("{}", e)))?;
+    }
+    Ok(output)
 }
 
 /// Execute an OMG source string using the embedded interpreter.
 #[wasm_bindgen]
-pub fn run_source(source: &str) -> Result<(), JsValue> {
+pub fn run_source(source: &str) -> Result<String, JsValue> {
     let (mut code, funcs) = parse_bytecode(INTERP_OMGBC);
     if let Some(Instr::Halt) = code.last() {
         code.pop();
@@ -29,5 +38,14 @@ pub fn run_source(source: &str) -> Result<(), JsValue> {
     code.push(Instr::PushStr(source.to_string()));
     code.push(Instr::Call("run".to_string()));
     code.push(Instr::Halt);
-    run(&code, &funcs, &[]).map_err(|e| JsValue::from_str(&format!("{}", e)))
+    let mut output = String::new();
+    {
+        let mut emit = |s: String| {
+            output.push_str(&s);
+            output.push('\n');
+        };
+        run(&code, &funcs, &[], &mut emit)
+            .map_err(|e| JsValue::from_str(&format!("{}", e)))?;
+    }
+    Ok(output)
 }
