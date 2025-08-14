@@ -33,6 +33,7 @@ Ordered from most recent at the top to oldest at the bottom.
 - Documented separate build steps for the native binary and WebAssembly package in `README.MD`.
 - VM `run` now accepts an output callback so `emit` results can be captured by callers; `run_file` and `run_source` return emitted output strings for browser use.
 - Rebuilt `index.html` to display REPL results directly without relying on the browser console.
+- Reworked WebAssembly helpers to append `run_file`/`run` calls after interpreter initialization, providing a clean API for browser execution.
 
 ### Fixed
 - Renamed CLI binary to `omg` to avoid build output filename collisions with the `omg_runtime` library.
