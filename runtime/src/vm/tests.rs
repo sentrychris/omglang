@@ -3,6 +3,15 @@ use crate::bytecode::{Function, Instr};
 use crate::error::{ErrorKind, RuntimeError};
 use std::collections::HashMap;
 
+fn run_silent(
+    code: &[Instr],
+    funcs: &HashMap<String, Function>,
+    args: &[String],
+) -> Result<(), RuntimeError> {
+    let mut emit = |_s: String| {};
+    run(code, funcs, args, &mut emit)
+}
+
 #[test]
 fn store_attr_on_frozen_dict_errors() {
     let code = vec![
@@ -13,7 +22,7 @@ fn store_attr_on_frozen_dict_errors() {
         Instr::Halt,
     ];
     let funcs = HashMap::new();
-    let result = run(&code, &funcs, &[]);
+    let result = run_silent(&code, &funcs, &[]);
     assert_eq!(result, Err(RuntimeError::FrozenWriteError));
 }
 
@@ -28,7 +37,7 @@ fn store_index_on_frozen_dict_errors() {
         Instr::Halt,
     ];
     let funcs = HashMap::new();
-    let result = run(&code, &funcs, &[]);
+    let result = run_silent(&code, &funcs, &[]);
     assert_eq!(result, Err(RuntimeError::FrozenWriteError));
 }
 
@@ -55,7 +64,7 @@ fn raise_caught_in_caller() {
         Instr::Raise(ErrorKind::Generic),
         Instr::Ret,
     ];
-    let result = run(&code, &funcs, &[]);
+    let result = run_silent(&code, &funcs, &[]);
     assert!(result.is_ok());
 }
 
@@ -67,7 +76,7 @@ fn uncaught_raise_surfaces() {
         Instr::Halt,
     ];
     let funcs = HashMap::new();
-    let result = run(&code, &funcs, &[]);
+    let result = run_silent(&code, &funcs, &[]);
     assert_eq!(result, Err(RuntimeError::Raised("boom".to_string())));
 }
 
@@ -79,7 +88,7 @@ fn panic_builtin_raises() {
         Instr::Halt,
     ];
     let funcs = HashMap::new();
-    let result = run(&code, &funcs, &[]);
+    let result = run_silent(&code, &funcs, &[]);
     assert_eq!(result, Err(RuntimeError::Raised("boom".to_string())));
 }
 
@@ -91,7 +100,7 @@ fn read_file_missing_raises_module_import_error() {
         Instr::Halt,
     ];
     let funcs = HashMap::new();
-    let result = run(&code, &funcs, &[]);
+    let result = run_silent(&code, &funcs, &[]);
     match result {
         Err(RuntimeError::ModuleImportError(msg)) => {
             assert!(msg.contains("no_such_file.omg"));
@@ -108,7 +117,7 @@ fn uncaught_syntax_error_surfaces() {
         Instr::Halt,
     ];
     let funcs = HashMap::new();
-    let result = run(&code, &funcs, &[]);
+    let result = run_silent(&code, &funcs, &[]);
     assert_eq!(result, Err(RuntimeError::SyntaxError("boom".to_string())));
 }
 
@@ -120,7 +129,7 @@ fn uncaught_type_error_surfaces() {
         Instr::Halt,
     ];
     let funcs = HashMap::new();
-    let result = run(&code, &funcs, &[]);
+    let result = run_silent(&code, &funcs, &[]);
     assert_eq!(result, Err(RuntimeError::TypeError("boom".to_string())));
 }
 
@@ -132,7 +141,7 @@ fn uncaught_undef_ident_error_surfaces() {
         Instr::Halt,
     ];
     let funcs = HashMap::new();
-    let result = run(&code, &funcs, &[]);
+    let result = run_silent(&code, &funcs, &[]);
     assert_eq!(
         result,
         Err(RuntimeError::UndefinedIdentError("boom".to_string()))
@@ -143,7 +152,7 @@ fn uncaught_undef_ident_error_surfaces() {
 fn raise_stack_underflow_errors() {
     let code = vec![Instr::Raise(ErrorKind::Generic), Instr::Halt];
     let funcs = HashMap::new();
-    let result = run(&code, &funcs, &[]);
+    let result = run_silent(&code, &funcs, &[]);
     assert_eq!(
         result,
         Err(RuntimeError::VmInvariant(
@@ -156,7 +165,7 @@ fn raise_stack_underflow_errors() {
 fn uncaught_assert_surfaces() {
     let code = vec![Instr::PushBool(false), Instr::Assert, Instr::Halt];
     let funcs = HashMap::new();
-    let result = run(&code, &funcs, &[]);
+    let result = run_silent(&code, &funcs, &[]);
     assert_eq!(result, Err(RuntimeError::AssertionError));
 }
 
@@ -173,7 +182,7 @@ fn assert_caught_in_block() {
         Instr::Halt,
     ];
     let funcs = HashMap::new();
-    let result = run(&code, &funcs, &[]);
+    let result = run_silent(&code, &funcs, &[]);
     assert!(result.is_ok());
 }
 
@@ -185,7 +194,7 @@ fn hex_with_string_type_error() {
         Instr::Halt,
     ];
     let funcs = HashMap::new();
-    let result = run(&code, &funcs, &[]);
+    let result = run_silent(&code, &funcs, &[]);
     assert_eq!(
         result,
         Err(RuntimeError::TypeError(
@@ -202,7 +211,7 @@ fn binary_with_string_type_error() {
         Instr::Halt,
     ];
     let funcs = HashMap::new();
-    let result = run(&code, &funcs, &[]);
+    let result = run_silent(&code, &funcs, &[]);
     assert_eq!(
         result,
         Err(RuntimeError::TypeError(
@@ -220,7 +229,7 @@ fn binary_with_non_positive_width_type_error() {
         Instr::Halt,
     ];
     let funcs = HashMap::new();
-    let result = run(&code, &funcs, &[]);
+    let result = run_silent(&code, &funcs, &[]);
     assert_eq!(
         result,
         Err(RuntimeError::ValueError(
@@ -237,7 +246,7 @@ fn length_with_int_type_error() {
         Instr::Halt,
     ];
     let funcs = HashMap::new();
-    let result = run(&code, &funcs, &[]);
+    let result = run_silent(&code, &funcs, &[]);
     assert_eq!(
         result,
         Err(RuntimeError::TypeError(
@@ -259,7 +268,7 @@ fn call_builtin_dispatches_hex() {
         Instr::Halt,
     ];
     let funcs = HashMap::new();
-    let result = run(&code, &funcs, &[]);
+    let result = run_silent(&code, &funcs, &[]);
     assert!(result.is_ok());
 }
 
@@ -273,7 +282,7 @@ fn call_builtin_dispatches_raise() {
         Instr::Halt,
     ];
     let funcs = HashMap::new();
-    let result = run(&code, &funcs, &[]);
+    let result = run_silent(&code, &funcs, &[]);
     assert_eq!(result, Err(RuntimeError::Raised("boom".to_string())));
 }
 
@@ -281,7 +290,7 @@ fn call_builtin_dispatches_raise() {
 fn load_unknown_name_errors() {
     let code = vec![Instr::Load("foo".to_string()), Instr::Halt];
     let funcs = HashMap::new();
-    let result = run(&code, &funcs, &[]);
+    let result = run_silent(&code, &funcs, &[]);
     assert_eq!(
         result,
         Err(RuntimeError::UndefinedIdentError("foo".to_string()))
@@ -292,7 +301,7 @@ fn load_unknown_name_errors() {
 fn call_undefined_function_errors() {
     let code = vec![Instr::Call("foo".to_string()), Instr::Halt];
     let funcs = HashMap::new();
-    let result = run(&code, &funcs, &[]);
+    let result = run_silent(&code, &funcs, &[]);
     assert_eq!(
         result,
         Err(RuntimeError::UndefinedIdentError("foo".to_string()))
@@ -303,7 +312,7 @@ fn call_undefined_function_errors() {
 fn tail_call_undefined_function_errors() {
     let code = vec![Instr::TailCall("foo".to_string()), Instr::Halt];
     let funcs = HashMap::new();
-    let result = run(&code, &funcs, &[]);
+    let result = run_silent(&code, &funcs, &[]);
     assert_eq!(
         result,
         Err(RuntimeError::UndefinedIdentError("foo".to_string()))
@@ -314,7 +323,7 @@ fn tail_call_undefined_function_errors() {
 fn call_value_type_error_when_non_string() {
     let code = vec![Instr::PushInt(0), Instr::CallValue(0), Instr::Halt];
     let funcs = HashMap::new();
-    let result = run(&code, &funcs, &[]);
+    let result = run_silent(&code, &funcs, &[]);
     assert_eq!(
         result,
         Err(RuntimeError::TypeError(
@@ -331,7 +340,7 @@ fn call_value_unknown_function_errors() {
         Instr::Halt,
     ];
     let funcs = HashMap::new();
-    let result = run(&code, &funcs, &[]);
+    let result = run_silent(&code, &funcs, &[]);
     assert_eq!(
         result,
         Err(RuntimeError::UndefinedIdentError("foo".to_string()))
@@ -348,7 +357,7 @@ fn list_slice_with_invalid_bounds_errors() {
         Instr::Halt,
     ];
     let funcs = HashMap::new();
-    let result = run(&code, &funcs, &[]);
+    let result = run_silent(&code, &funcs, &[]);
     assert_eq!(
         result,
         Err(RuntimeError::IndexError(
@@ -367,7 +376,7 @@ fn string_slice_with_invalid_bounds_errors() {
         Instr::Halt,
     ];
     let funcs = HashMap::new();
-    let result = run(&code, &funcs, &[]);
+    let result = run_silent(&code, &funcs, &[]);
     assert_eq!(
         result,
         Err(RuntimeError::IndexError(
@@ -380,7 +389,7 @@ fn string_slice_with_invalid_bounds_errors() {
 fn neg_on_non_int_string_errors() {
     let code = vec![Instr::PushStr("abc".to_string()), Instr::Neg, Instr::Halt];
     let funcs = HashMap::new();
-    let result = run(&code, &funcs, &[]);
+    let result = run_silent(&code, &funcs, &[]);
     assert_eq!(
         result,
         Err(RuntimeError::TypeError(

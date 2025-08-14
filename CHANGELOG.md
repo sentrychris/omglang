@@ -2,9 +2,18 @@
 
 Ordered from most recent at the top to oldest at the bottom.
 
+## [Unreleased]
+
+### Added
+- Reimplemented the WebAssembly helpers using a shared `exec_with` routine so `run_file` and `run_source` build their own bytecode wrappers.
+- Rebuilt `index.html` from scratch to provide a simple browser REPL driven by the new `run_source` API.
+
 ## [0.1.2] - 2025-08-10
 
 ### Added
+- Generated a WebAssembly package for the runtime with the embedded OMG interpreter bytecode, output under `wasm/`.
+- Exposed a `run_source` API in the runtime for executing OMG code from a string, enabling browser-based REPLs.
+- `index.html` demonstrating an in-browser REPL powered by the WebAssembly runtime.
 - Implemented control-breaking mechanics for exceptions in the VM layer. VM's eval loop tracks an `error_flag` and after each instruction, unwinds the block stack or returns the error if no handler exists.
 - Introduced a centralized `call_builtin` helper to dispatch built-ins through a single code path.
 - Registered `call_builtin` as a recognized built-in in the compiler for proper lowering during bytecode generation.
@@ -26,14 +35,21 @@ Ordered from most recent at the top to oldest at the bottom.
 - Moved builtin dispatch into a dedicated `vm::builtins` module exposing `call_builtin`.
 - Refactored VM opcode dispatch into dedicated handler modules for arithmetic, structural, and control operations.
 - `Value::as_int` now returns `Result<i64, RuntimeError>` and emits a `TypeError` when string parsing fails.
+- Removed generated WebAssembly artifacts from version control; `wasm/` is now gitignored and rebuilt locally with `wasm-pack`.
+- Documented separate build steps for the native binary and WebAssembly package in `README.MD`.
+- VM `run` now accepts an output callback so `emit` results can be captured by callers; `run_file` and `run_source` return emitted output strings for browser use.
+- Rebuilt `index.html` to display REPL results directly without relying on the browser console.
 
 ### Fixed
+- Renamed CLI binary to `omg` to avoid build output filename collisions with the `omg_runtime` library.
 - Centralized `call_builtin` helper eliminates scattered implementations across the runtime.
 - Narrower error handling eliminates relying on generic string-based `raise` which was resulting in prefixed errors e.g. `RuntimeError: SyntaxError: Unxepected <symbol>...`, errors are now correctly defined according to their type. Generic `raise()` has been retained for special cases.
 - Refactored basename extraction in bootstrap interpreter's `import_module` to avoid negative string indexing when module paths lack directory separators.
 - Guarded `dirname` and `run_file_with_args` against negative string indexing so modules in the current directory import and execute without errors.
 - Validated slice indices in the VM, returning `IndexError` for out-of-range or invalid ranges instead of panicking.
 - VM `LOAD` instruction now raises `UndefinedIdentError` when a name is missing instead of defaulting to zero.
+- `run_source` now runs the interpreter's global initialization before invoking `run`, ensuring WebAssembly REPL snippets execute cleanly and produce output.
+- `run_source` bypasses the interpreter's CLI bootstrap so browser snippets execute without launching the REPL.
 
 ## [0.1.1] - 2025-08-08
 

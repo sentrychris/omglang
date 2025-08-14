@@ -163,9 +163,9 @@ pub(super) fn handle_ret(
     *advance_pc = false;
 }
 
-pub(super) fn handle_emit(stack: &mut Vec<Value>) {
+pub(super) fn handle_emit(stack: &mut Vec<Value>, emitter: &mut dyn FnMut(String)) {
     if let Some(v) = stack.pop() {
-        println!("{}", v.to_string());
+        emitter(v.to_string());
     }
 }
 

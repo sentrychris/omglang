@@ -30,6 +30,7 @@ pub fn run(
     code: &[Instr],
     funcs: &HashMap<String, Function>,
     program_args: &[String],
+    emitter: &mut dyn FnMut(String),
 ) -> Result<(), RuntimeError> {
     let mut stack: Vec<Value> = Vec::new();
     let mut globals: HashMap<String, Value> = HashMap::new();
@@ -235,7 +236,7 @@ pub fn run(
                     );
                 }
                 Instr::Emit => {
-                    ops_control::handle_emit(&mut stack);
+                    ops_control::handle_emit(&mut stack, emitter);
                 }
                 Instr::Halt => {
                     ops_control::handle_halt(code.len(), &mut pc, &mut advance_pc);
