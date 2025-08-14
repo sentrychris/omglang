@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>OMG Web REPL</title>
+  <style>
+    body { font-family: sans-serif; margin: 2rem; }
+    textarea { width: 100%; height: 8rem; }
+    pre { background: #f0f0f0; padding: 1rem; min-height: 6rem; white-space: pre-wrap; }
+  </style>
+</head>
+<body>
+  <h1>OMG Web REPL</h1>
+  <textarea id="input" placeholder="emit 1 + 1"></textarea>
+  <br />
+  <button id="run">Run</button>
+  <pre id="output"></pre>
+  <script type="module">
+    import init, { run_source } from './wasm/omg_runtime.js';
+
+    await init();
+
+    const input = document.getElementById('input');
+    const out = document.getElementById('output');
+    let history = '';
+    let printed = '';
+
+    function append(text) {
+      out.textContent += text + '\n';
+    }
+
+    document.getElementById('run').addEventListener('click', () => {
+      history += input.value + '\n';
+      try {
+        const result = run_source(history);
+        const diff = result.slice(printed.length);
+        if (diff) {
+          append(diff.trimEnd());
+          printed = result;
+        }
+      } catch (e) {
+        append('Error: ' + e);
+      }
+      input.value = '';
+    });
+  </script>
+</body>
+</html>

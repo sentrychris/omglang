@@ -53,6 +53,28 @@ positive
 >>> quit
 ```
 
+### WebAssembly build
+
+Use `wasm-pack` to compile the runtime (with the embedded interpreter) for the browser:
+
+```sh
+cd runtime
+wasm-pack build --target web --out-dir ../wasm --no-opt
+```
+
+The command emits an ES module and `.wasm` binary in `wasm/` (ignored by git). The module exposes:
+
+* `run_file(path)` – run a script by filename and return anything it prints
+* `run_source(src)` – run OMG code from a string and return its emitted output
+
+`index.html` demonstrates a minimal in-browser REPL powered by `run_source`. Serve the repository with any static file server (for example `python -m http.server`) and open the page to experiment.
+
+Build the native CLI separately with Cargo:
+
+```sh
+cargo build -p runtime
+```
+
 ---
 
 ## Syntax
