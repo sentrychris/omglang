@@ -1,0 +1,12 @@
+{
+  "name": "omg-playground",
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build"
+  },
+  "dependencies": {
+    "@omg-lang/runtime-wasm": "0.1.0"
+  }
+}

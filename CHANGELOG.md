@@ -2,6 +2,11 @@
 
 Ordered from most recent at the top to oldest at the bottom.
 
+## [0.1.3] - 2025-08-14
+
+### Added
+- Added initial WebAssembly runtime crate, browser worker bindings, and playground scaffolding.
+
 ## [0.1.2] - 2025-08-10
 
 ### Added
