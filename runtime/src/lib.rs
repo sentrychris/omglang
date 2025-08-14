@@ -31,13 +31,12 @@ pub fn run_file(prog_path: &str) -> Result<String, JsValue> {
 /// Execute an OMG source string using the embedded interpreter.
 #[wasm_bindgen]
 pub fn run_source(source: &str) -> Result<String, JsValue> {
-    let (mut code, funcs) = parse_bytecode(INTERP_OMGBC);
-    if let Some(Instr::Halt) = code.last() {
-        code.pop();
-    }
-    code.push(Instr::PushStr(source.to_string()));
-    code.push(Instr::Call("run".to_string()));
-    code.push(Instr::Halt);
+    let (_, funcs) = parse_bytecode(INTERP_OMGBC);
+    let code = vec![
+        Instr::PushStr(source.to_string()),
+        Instr::Call("run".to_string()),
+        Instr::Halt,
+    ];
     let mut output = String::new();
     {
         let mut emit = |s: String| {
