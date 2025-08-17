@@ -1,5 +1,4 @@
 """Tests for file I/O builtins."""
-from pathlib import Path
 
 from omglang.interpreter import Interpreter
 from omglang.tests.utils import parse_source
