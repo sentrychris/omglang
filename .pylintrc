@@ -2,6 +2,7 @@
 disable =
     broad-except,
     consider-using-in,
+    consider-using-with,
     duplicate-code,
     import-outside-toplevel,
     no-else-raise,
@@ -17,7 +18,9 @@ disable =
     too-many-return-statements,
     too-many-statements,
     unbalanced-tuple-unpacking,
-    unnecessary-pass
+    unnecessary-pass,
+    unspecified-encoding
+
 
 [FORMAT]
 max-line-length = 105
