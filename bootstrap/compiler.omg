@@ -1,0 +1,481 @@
+;;;omg
+
+# OMG bytecode compiler implemented in OMG.
+# Translates parsed AST nodes into bytecode instructions.
+
+# Opcode mapping from mnemonic to numeric code.
+alloc OPCODES := {}
+OPCODES["PUSH_INT"] := 0
+OPCODES["PUSH_STR"] := 1
+OPCODES["PUSH_BOOL"] := 2
+OPCODES["BUILD_LIST"] := 3
+OPCODES["BUILD_DICT"] := 4
+OPCODES["LOAD"] := 5
+OPCODES["STORE"] := 6
+OPCODES["ADD"] := 7
+OPCODES["SUB"] := 8
+OPCODES["MUL"] := 9
+OPCODES["DIV"] := 10
+OPCODES["MOD"] := 11
+OPCODES["EQ"] := 12
+OPCODES["NE"] := 13
+OPCODES["LT"] := 14
+OPCODES["LE"] := 15
+OPCODES["GT"] := 16
+OPCODES["GE"] := 17
+OPCODES["BAND"] := 18
+OPCODES["BOR"] := 19
+OPCODES["BXOR"] := 20
+OPCODES["SHL"] := 21
+OPCODES["SHR"] := 22
+OPCODES["AND"] := 23
+OPCODES["OR"] := 24
+OPCODES["NOT"] := 25
+OPCODES["NEG"] := 26
+OPCODES["INDEX"] := 27
+OPCODES["SLICE"] := 28
+OPCODES["JUMP"] := 29
+OPCODES["JUMP_IF_FALSE"] := 30
+OPCODES["CALL"] := 31
+OPCODES["TCALL"] := 32
+OPCODES["BUILTIN"] := 33
+OPCODES["POP"] := 34
+OPCODES["PUSH_NONE"] := 35
+OPCODES["RET"] := 36
+OPCODES["EMIT"] := 37
+OPCODES["HALT"] := 38
+OPCODES["STORE_INDEX"] := 39
+OPCODES["ATTR"] := 40
+OPCODES["STORE_ATTR"] := 41
+OPCODES["ASSERT"] := 42
+OPCODES["CALL_VALUE"] := 43
+OPCODES["SETUP_EXCEPT"] := 44
+OPCODES["POP_BLOCK"] := 45
+OPCODES["RAISE"] := 46
+
+# Reverse opcode mapping (unused but kept for completeness)
+alloc REV_OPCODES := {}
+
+# Error kind to code mapping and reverse.
+alloc ERROR_KIND_TO_CODE := {}
+ERROR_KIND_TO_CODE["Generic"] := 0
+ERROR_KIND_TO_CODE["Syntax"] := 1
+ERROR_KIND_TO_CODE["Type"] := 2
+ERROR_KIND_TO_CODE["UndefinedIdent"] := 3
+ERROR_KIND_TO_CODE["Value"] := 4
+ERROR_KIND_TO_CODE["ModuleImport"] := 5
+
+alloc CODE_TO_ERROR_KIND := {}
+CODE_TO_ERROR_KIND[0] := "Generic"
+CODE_TO_ERROR_KIND[1] := "Syntax"
+CODE_TO_ERROR_KIND[2] := "Type"
+CODE_TO_ERROR_KIND[3] := "UndefinedIdent"
+CODE_TO_ERROR_KIND[4] := "Value"
+CODE_TO_ERROR_KIND[5] := "ModuleImport"
+
+# Mapping from helper names to error kinds.
+alloc ERROR_NAME_TO_KIND := {}
+ERROR_NAME_TO_KIND["panic"] := "Generic"
+ERROR_NAME_TO_KIND["raise"] := "Generic"
+ERROR_NAME_TO_KIND["_omg_vm_syntax_error_handle"] := "Syntax"
+ERROR_NAME_TO_KIND["_omg_vm_type_error_handle"] := "Type"
+ERROR_NAME_TO_KIND["_omg_vm_undef_ident_error_handle"] := "UndefinedIdent"
+ERROR_NAME_TO_KIND["_omg_vm_value_error_handle"] := "Value"
+ERROR_NAME_TO_KIND["_omg_vm_module_import_error_handle"] := "ModuleImport"
+
+# Builtin function names recognised by the compiler.
+alloc BUILTINS := {}
+BUILTINS["chr"] := 1
+BUILTINS["ascii"] := 1
+BUILTINS["hex"] := 1
+BUILTINS["binary"] := 1
+BUILTINS["length"] := 1
+BUILTINS["read_file"] := 1
+BUILTINS["freeze"] := 1
+BUILTINS["call_builtin"] := 1
+BUILTINS["file_open"] := 1
+BUILTINS["file_read"] := 1
+BUILTINS["file_write"] := 1
+BUILTINS["file_close"] := 1
+BUILTINS["file_exists"] := 1
+
+# ------------------------------------------------------------------
+# Compiler state
+# ------------------------------------------------------------------
+alloc code := []            # Main instruction stream
+alloc pending_funcs := []   # [[name, params, body_code], ...]
+alloc funcs := []           # [[name, params, addr], ...]
+alloc break_stack := []     # Stack of lists of break jump indices
+
+# Emit instruction helper
+proc emit(op, arg) {
+    alloc idx := length(code)
+    code[idx] := [op, arg]
+}
+
+# Emit placeholder instruction and return its index
+proc emit_placeholder(op) {
+    alloc idx := length(code)
+    code[idx] := [op, 0]
+    return idx
+}
+
+# Patch placeholder at index with actual target
+proc patch(idx, target) {
+    alloc inst := code[idx]
+    code[idx] := [inst[0], target]
+}
+
+# Compile raise helper call to RAISE instruction
+proc compile_raise_call(name, args) {
+    alloc kind := ERROR_NAME_TO_KIND[name]
+    if kind == 0 {
+        return false
+    }
+    if length(args) > 0 {
+        compile_expr(args[0])
+    } else {
+        emit("PUSH_STR", "")
+    }
+    emit("RAISE", kind)
+    return true
+}
+
+# ------------------------------------------------------------------
+# Top level compile
+# ------------------------------------------------------------------
+proc compile(ast) {
+    alloc i := 0
+    alloc n := length(ast)
+    loop i < n {
+        compile_stmt(ast[i])
+        i := i + 1
+    }
+    emit("HALT", 0)
+
+    # Append function bodies and record addresses
+    alloc final_code := code
+    alloc j := 0
+    alloc fn := []
+    loop j < length(pending_funcs) {
+        fn := pending_funcs[j]
+        alloc name := fn[0]
+        alloc params := fn[1]
+        alloc body := fn[2]
+        alloc addr := length(final_code)
+        funcs[length(funcs)] := [name, params, addr]
+        alloc k := 0
+        loop k < length(body) {
+            alloc inst := body[k]
+            alloc op := inst[0]
+            alloc arg := inst[1]
+            if (op == "JUMP" or op == "JUMP_IF_FALSE") and arg != 0 {
+                final_code[length(final_code)] := [op, arg + addr]
+            } else {
+                final_code[length(final_code)] := [op, arg]
+            }
+            k := k + 1
+        }
+        j := j + 1
+    }
+    return [funcs, final_code]
+}
+
+# Helper to compile a block of statements
+proc compile_block(block) {
+    alloc i := 0
+    loop i < length(block) {
+        compile_stmt(block[i])
+        i := i + 1
+    }
+}
+
+# ------------------------------------------------------------------
+# Statement compilation
+# ------------------------------------------------------------------
+proc compile_stmt(stmt) {
+    alloc kind := stmt[0]
+    if kind == "emit" {
+        compile_expr(stmt[1])
+        emit("EMIT", 0)
+    } elif kind == "decl" or kind == "assign" {
+        alloc name := stmt[1]
+        alloc expr := stmt[2]
+        compile_expr(expr)
+        emit("STORE", name)
+    } elif kind == "attr_assign" {
+        alloc base := stmt[1]
+        alloc attr := stmt[2]
+        alloc expr := stmt[3]
+        compile_expr(base)
+        compile_expr(expr)
+        emit("STORE_ATTR", attr)
+    } elif kind == "index_assign" {
+        alloc base := stmt[1]
+        alloc idx_expr := stmt[2]
+        alloc val_expr := stmt[3]
+        compile_expr(base)
+        compile_expr(idx_expr)
+        compile_expr(val_expr)
+        emit("STORE_INDEX", 0)
+    } elif kind == "expr_stmt" {
+        compile_expr(stmt[1])
+        emit("POP", 0)
+    } elif kind == "facts" {
+        compile_expr(stmt[1])
+        emit("ASSERT", 0)
+    } elif kind == "if" {
+        # Flatten if/elif chain
+        alloc cond_blocks := []
+        alloc else_block := []
+        alloc current := stmt
+        loop true {
+            alloc cond := current[1]
+            alloc block_node := current[2]
+            alloc b := block_node[1]
+            cond_blocks[length(cond_blocks)] := [cond, b]
+            alloc tail := current[3]
+            if tail != 0 and tail[0] == "if" {
+                current := tail
+            } else {
+                if tail != 0 {
+                    else_block := tail[1]
+                }
+                break
+            }
+        }
+        alloc end_jumps := []
+        alloc i := 0
+        loop i < length(cond_blocks) {
+            alloc cb := cond_blocks[i]
+            alloc cond := cb[0]
+            alloc block := cb[1]
+            compile_expr(cond)
+            alloc jf := emit_placeholder("JUMP_IF_FALSE")
+            compile_block(block)
+            end_jumps[length(end_jumps)] := emit_placeholder("JUMP")
+            patch(jf, length(code))
+            i := i + 1
+        }
+        if length(else_block) > 0 {
+            compile_block(else_block)
+        }
+        i := 0
+        loop i < length(end_jumps) {
+            patch(end_jumps[i], length(code))
+            i := i + 1
+        }
+    } elif kind == "loop" {
+        alloc cond := stmt[1]
+        alloc body := stmt[2][1]
+        alloc start := length(code)
+        compile_expr(cond)
+        alloc jf := emit_placeholder("JUMP_IF_FALSE")
+        break_stack[length(break_stack)] := []
+        compile_block(body)
+        emit("JUMP", start)
+        patch(jf, length(code))
+        alloc breaks := break_stack[length(break_stack)-1]
+        alloc bi := 0
+        loop bi < length(breaks) {
+            patch(breaks[bi], length(code))
+            bi := bi + 1
+        }
+        break_stack := break_stack[0:length(break_stack)-1]
+    } elif kind == "try" {
+        alloc try_block := stmt[1]
+        alloc exc_name := stmt[2]
+        alloc except_block := stmt[3]
+        alloc handler := emit_placeholder("SETUP_EXCEPT")
+        compile_block(try_block[1])
+        emit("POP_BLOCK", 0)
+        alloc end_jump := emit_placeholder("JUMP")
+        patch(handler, length(code))
+        if exc_name != 0 {
+            emit("STORE", exc_name)
+        }
+        compile_block(except_block[1])
+        patch(end_jump, length(code))
+    } elif kind == "func_def" {
+        alloc name := stmt[1]
+        alloc params := stmt[2]
+        alloc body := stmt[3][1]
+        alloc body_code := _compile_function_body(body)
+        pending_funcs[length(pending_funcs)] := [name, params, body_code]
+    } elif kind == "return" {
+        alloc expr := stmt[1]
+        if expr[0] == "func_call" and expr[1][0] == "ident" {
+            alloc func_node := expr[1]
+            alloc args := expr[2]
+            alloc name := func_node[1]
+            alloc i := 0
+            loop i < length(args) {
+                compile_expr(args[i])
+                i := i + 1
+            }
+            if BUILTINS[name] != 0 {
+                emit("BUILTIN", [name, length(args)])
+                emit("RET", 0)
+            } else {
+                emit("TCALL", name)
+            }
+        } else {
+            compile_expr(expr)
+            emit("RET", 0)
+        }
+    } elif kind == "break" {
+        if length(break_stack) == 0 {
+            # unresolved break outside loop; raise syntax? ignore
+        }
+        alloc j := emit_placeholder("JUMP")
+        alloc bs := break_stack[length(break_stack)-1]
+        bs[length(bs)] := j
+        break_stack[length(break_stack)-1] := bs
+    } elif kind == "block" {
+        compile_block(stmt[1])
+    } else {
+        # Unsupported statement
+    }
+}
+
+# Compile function body separately and return its instruction list
+proc _compile_function_body(body) {
+    alloc saved_code := code
+    code := []
+    compile_block(body)
+    emit("RET", 0)
+    alloc body_code := code
+    code := saved_code
+    return body_code
+}
+
+# ------------------------------------------------------------------
+# Expression compilation
+# ------------------------------------------------------------------
+proc compile_expr(node) {
+    alloc op := node[0]
+    if op == "number" {
+        emit("PUSH_INT", node[1])
+    } elif op == "string" {
+        emit("PUSH_STR", node[1])
+    } elif op == "bool" {
+        if node[1] {
+            emit("PUSH_BOOL", true)
+        } else {
+            emit("PUSH_BOOL", false)
+        }
+    } elif op == "ident" {
+        emit("LOAD", node[1])
+    } elif op == "list" {
+        alloc elems := node[1]
+        alloc i := 0
+        loop i < length(elems) {
+            compile_expr(elems[i])
+            i := i + 1
+        }
+        emit("BUILD_LIST", length(elems))
+    } elif op == "dict" {
+        alloc pairs := node[1]
+        alloc i := 0
+        loop i < length(pairs) {
+            emit("PUSH_STR", pairs[i][0])
+            compile_expr(pairs[i][1])
+            i := i + 1
+        }
+        emit("BUILD_DICT", length(pairs))
+    } elif op == "index" {
+        compile_expr(node[1])
+        compile_expr(node[2])
+        emit("INDEX", 0)
+    } elif op == "slice" {
+        compile_expr(node[1])
+        compile_expr(node[2])
+        alloc end := node[3]
+        if end == 0 {
+            emit("PUSH_NONE", 0)
+        } else {
+            compile_expr(end)
+        }
+        emit("SLICE", 0)
+    } elif op == "dot" {
+        compile_expr(node[1])
+        emit("ATTR", node[2])
+    } elif op == "func_call" {
+        alloc func_node := node[1]
+        alloc args := node[2]
+        if func_node[0] == "ident" {
+            alloc name := func_node[1]
+            if not compile_raise_call(name, args) {
+                alloc i := 0
+                loop i < length(args) {
+                    compile_expr(args[i])
+                    i := i + 1
+                }
+                if BUILTINS[name] != 0 {
+                    emit("BUILTIN", [name, length(args)])
+                } else {
+                    emit("CALL", name)
+                }
+            }
+        } else {
+            compile_expr(func_node)
+            alloc i := 0
+            loop i < length(args) {
+                compile_expr(args[i])
+                i := i + 1
+            }
+            emit("CALL_VALUE", length(args))
+        }
+    } elif op == "unary" {
+        alloc uop := node[1]
+        compile_expr(node[2])
+        if uop == "+" {
+        } elif uop == "-" {
+            emit("NEG", 0)
+        } elif uop == "~" {
+            emit("NOT", 0)
+        }
+    } else {
+        # Binary operations encoded using symbolic strings as op
+        compile_expr(node[1])
+        compile_expr(node[2])
+        if op == "+" {
+            emit("ADD", 0)
+        } elif op == "-" {
+            emit("SUB", 0)
+        } elif op == "*" {
+            emit("MUL", 0)
+        } elif op == "/" {
+            emit("DIV", 0)
+        } elif op == "%" {
+            emit("MOD", 0)
+        } elif op == "==" {
+            emit("EQ", 0)
+        } elif op == "!=" {
+            emit("NE", 0)
+        } elif op == ">" {
+            emit("GT", 0)
+        } elif op == "<" {
+            emit("LT", 0)
+        } elif op == ">=" {
+            emit("GE", 0)
+        } elif op == "<=" {
+            emit("LE", 0)
+        } elif op == "and" {
+            emit("AND", 0)
+        } elif op == "or" {
+            emit("OR", 0)
+        } elif op == "&" {
+            emit("BAND", 0)
+        } elif op == "|" {
+            emit("BOR", 0)
+        } elif op == "^" {
+            emit("BXOR", 0)
+        } elif op == "<<" {
+            emit("SHL", 0)
+        } elif op == ">>" {
+            emit("SHR", 0)
+        }
+    }
+}
+

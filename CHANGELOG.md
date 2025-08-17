@@ -7,6 +7,8 @@ Ordered from most recent at the top to oldest at the bottom.
 ### Added
 - File I/O builtins `file_open`, `file_read`, `file_write`, `file_close`, and
   `file_exists` with support for text and binary modes.
+- Initial OMG implementation of the bytecode compiler, including opcode
+  mappings, jump patching helpers and function body assembly.
 
 ## [0.1.2] - 2025-08-10
 
