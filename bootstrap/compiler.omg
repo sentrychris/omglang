@@ -1,0 +1,150 @@
+;;;omg
+
+import "./interpreter.omg" as OMGInterpreter
+
+# Return true if name is in list.
+proc is_defined(names, name) {
+    alloc i := 0
+    alloc n := length(names)
+    loop i < n {
+        if names[i] == name {
+            return true
+        }
+        i := i + 1
+    }
+    return false
+}
+
+# Recursively ensure all identifiers in an expression are declared.
+proc check_expr(node, names) {
+    alloc kind := node[0]
+    if kind == "ident" {
+        if not is_defined(names, node[1]) {
+            _omg_vm_undef_ident_error_handle("Undefined identifier '" + node[1] + "'")
+        }
+    } elif kind == "number" or kind == "string" or kind == "bool" {
+        # primitives
+    } elif kind == "list" {
+        alloc elems := node[1]
+        alloc i := 0
+        loop i < length(elems) {
+            check_expr(elems[i], names)
+            i := i + 1
+        }
+    } elif kind == "dict" {
+        alloc pairs := node[1]
+        alloc i := 0
+        loop i < length(pairs) {
+            check_expr(pairs[i][0], names)
+            check_expr(pairs[i][1], names)
+            i := i + 1
+        }
+    } elif kind == "func_call" {
+        check_expr(node[1], names)
+        alloc args := node[2]
+        alloc i := 0
+        loop i < length(args) {
+            check_expr(args[i], names)
+            i := i + 1
+        }
+    } elif kind == "dot" {
+        check_expr(node[1], names)
+    } elif kind == "index" {
+        check_expr(node[1], names)
+        check_expr(node[2], names)
+    } elif kind == "slice" {
+        check_expr(node[1], names)
+        check_expr(node[2], names)
+        if node[3] != false {
+            check_expr(node[3], names)
+        }
+    } elif kind == "unary" {
+        check_expr(node[2], names)
+    } elif kind == "bitnot" {
+        check_expr(node[1], names)
+    } else {
+        check_expr(node[1], names)
+        check_expr(node[2], names)
+    }
+}
+
+# Validate identifiers across a list of statements.
+proc check_statements(stmts, names) {
+    alloc i := 0
+    loop i < length(stmts) {
+        alloc stmt := stmts[i]
+        alloc kind := stmt[0]
+        if kind == "decl" {
+            check_expr(stmt[2], names)
+            names := names + [stmt[1]]
+        } elif kind == "assign" {
+            if not is_defined(names, stmt[1]) {
+                _omg_vm_undef_ident_error_handle("Undefined identifier '" + stmt[1] + "'")
+            }
+            check_expr(stmt[2], names)
+        } elif kind == "emit" {
+            check_expr(stmt[1], names)
+        } elif kind == "return" {
+            check_expr(stmt[1], names)
+        } elif kind == "func_def" {
+            names := names + [stmt[1]]
+            alloc new_names := names + stmt[2]
+            check_statements(stmt[3], new_names)
+        } elif kind == "func_call" {
+            check_expr(stmt[1], names)
+            alloc args := stmt[2]
+            alloc j := 0
+            loop j < length(args) {
+                check_expr(args[j], names)
+                j := j + 1
+            }
+        } elif kind == "if" {
+            check_expr(stmt[1], names)
+            check_statements(stmt[2], names)
+            if length(stmt) > 3 {
+                check_statements(stmt[3], names)
+            }
+        } elif kind == "loop" {
+            check_expr(stmt[1], names)
+            check_statements(stmt[2], names)
+        } elif kind == "attr_assign" {
+            check_expr(stmt[1], names)
+            check_expr(stmt[3], names)
+        } elif kind == "index_assign" {
+            check_expr(stmt[1], names)
+            check_expr(stmt[2], names)
+            check_expr(stmt[3], names)
+        } elif kind == "import" {
+            names := names + [stmt[2]]
+        } elif kind == "facts" {
+            check_expr(stmt[1], names)
+        }
+        i := i + 1
+    }
+    return names
+}
+
+# Read a source file, produce its AST and ensure identifiers are defined.
+proc compile_file(path) {
+    alloc src := read_file(path)
+    if src == false {
+        _omg_vm_value_error_handle("Failed to read file: " + path)
+        return false
+    }
+    src := OMGInterpreter.strip_header(src, path)
+    alloc tokens := OMGInterpreter.tokenize(src)
+    alloc res := OMGInterpreter.parse_program(tokens, 0)
+    if res[1] != tok_len {
+        _omg_vm_syntax_error_handle("Unexpected tokens at end of file")
+    }
+    alloc ast := res[0]
+    check_statements(ast, [])
+    return ast
+}
+
+if length(args) > 0 {
+    alloc ast := compile_file(args[0])
+} else {
+    _omg_vm_value_error_handle("No source file provided")
+}
+

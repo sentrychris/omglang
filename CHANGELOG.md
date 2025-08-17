@@ -2,6 +2,11 @@
 
 Ordered from most recent at the top to oldest at the bottom.
 
+## [0.1.4] - 2025-08-12
+
+### Added
+- Preliminary compiler front-end reads source, tokenizes and parses into an AST with VM error handling.
+
 ## [0.1.3] - 2025-08-11
 
 ### Added
