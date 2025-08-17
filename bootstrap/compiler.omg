@@ -134,3 +134,38 @@ alloc ERROR_NAME_TO_KIND := {
 proc opcode(name) {
     return OPCODES[name]
 }
+
+# Current instruction stream as a list of [op, arg] pairs.
+alloc code := []
+
+# Pending function bodies waiting to be appended.
+alloc pending_funcs := []
+
+# Finalized function metadata entries.
+alloc funcs := []
+
+# Stack of lists used to patch `break` statements.
+alloc break_stack := []
+
+# Create a FunctionEntry record.
+proc make_function_entry(name, params, address) {
+    return { name: name, params: params, address: address }
+}
+
+# Emit a bytecode instruction.
+proc emit(op, arg) {
+    code := code + [[op, arg]]
+}
+
+# Emit a placeholder instruction and return its index for later patching.
+proc emit_placeholder(op) {
+    alloc idx := length(code)
+    code := code + [[op, false]]
+    return idx
+}
+
+# Patch a previously emitted placeholder with the given target.
+proc patch(idx, target) {
+    alloc entry := code[idx]
+    code[idx] := [entry[0], target]
+}

@@ -2,6 +2,11 @@
 
 Ordered from most recent at the top to oldest at the bottom.
 
+## [0.1.4] - 2025-08-11
+
+### Added
+- Bytecode emission utilities and function tracking structures in the bootstrap compiler.
+
 ## [0.1.3] - 2025-08-11
 
 ### Added
