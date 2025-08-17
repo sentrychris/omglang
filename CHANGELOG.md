@@ -7,6 +7,8 @@ Ordered from most recent at the top to oldest at the bottom.
 ### Added
 - File I/O builtins `file_open`, `file_read`, `file_write`, `file_close`, and
   `file_exists` with support for text and binary modes.
+- Opcode and error mapping constants for the bootstrap compiler, mirroring the
+  Python implementation.
 
 ## [0.1.2] - 2025-08-10
 

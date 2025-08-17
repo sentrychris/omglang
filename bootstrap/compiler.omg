@@ -1,0 +1,136 @@
+;;;omg
+
+# Bytecode compiler constants mirrored from Python implementation.
+
+alloc OPCODES := {
+    PUSH_INT: 0,
+    PUSH_STR: 1,
+    PUSH_BOOL: 2,
+    BUILD_LIST: 3,
+    BUILD_DICT: 4,
+    LOAD: 5,
+    STORE: 6,
+    ADD: 7,
+    SUB: 8,
+    MUL: 9,
+    DIV: 10,
+    MOD: 11,
+    EQ: 12,
+    NE: 13,
+    LT: 14,
+    LE: 15,
+    GT: 16,
+    GE: 17,
+    BAND: 18,
+    BOR: 19,
+    BXOR: 20,
+    SHL: 21,
+    SHR: 22,
+    AND: 23,
+    OR: 24,
+    NOT: 25,
+    NEG: 26,
+    INDEX: 27,
+    SLICE: 28,
+    JUMP: 29,
+    JUMP_IF_FALSE: 30,
+    CALL: 31,
+    TCALL: 32,
+    BUILTIN: 33,
+    POP: 34,
+    PUSH_NONE: 35,
+    RET: 36,
+    EMIT: 37,
+    HALT: 38,
+    STORE_INDEX: 39,
+    ATTR: 40,
+    STORE_ATTR: 41,
+    ASSERT: 42,
+    CALL_VALUE: 43,
+    SETUP_EXCEPT: 44,
+    POP_BLOCK: 45,
+    RAISE: 46
+}
+
+alloc REV_OPCODES := {
+    0: "PUSH_INT",
+    1: "PUSH_STR",
+    2: "PUSH_BOOL",
+    3: "BUILD_LIST",
+    4: "BUILD_DICT",
+    5: "LOAD",
+    6: "STORE",
+    7: "ADD",
+    8: "SUB",
+    9: "MUL",
+    10: "DIV",
+    11: "MOD",
+    12: "EQ",
+    13: "NE",
+    14: "LT",
+    15: "LE",
+    16: "GT",
+    17: "GE",
+    18: "BAND",
+    19: "BOR",
+    20: "BXOR",
+    21: "SHL",
+    22: "SHR",
+    23: "AND",
+    24: "OR",
+    25: "NOT",
+    26: "NEG",
+    27: "INDEX",
+    28: "SLICE",
+    29: "JUMP",
+    30: "JUMP_IF_FALSE",
+    31: "CALL",
+    32: "TCALL",
+    33: "BUILTIN",
+    34: "POP",
+    35: "PUSH_NONE",
+    36: "RET",
+    37: "EMIT",
+    38: "HALT",
+    39: "STORE_INDEX",
+    40: "ATTR",
+    41: "STORE_ATTR",
+    42: "ASSERT",
+    43: "CALL_VALUE",
+    44: "SETUP_EXCEPT",
+    45: "POP_BLOCK",
+    46: "RAISE"
+}
+
+alloc ERROR_KIND_TO_CODE := {
+    Generic: 0,
+    Syntax: 1,
+    Type: 2,
+    UndefinedIdent: 3,
+    Value: 4,
+    ModuleImport: 5
+}
+
+alloc CODE_TO_ERROR_KIND := {
+    0: "Generic",
+    1: "Syntax",
+    2: "Type",
+    3: "UndefinedIdent",
+    4: "Value",
+    5: "ModuleImport"
+}
+
+alloc ERROR_NAME_TO_KIND := {
+    panic: "Generic",
+    raise: "Generic",
+    _omg_vm_syntax_error_handle: "Syntax",
+    _omg_vm_type_error_handle: "Type",
+    _omg_vm_undef_ident_error_handle: "UndefinedIdent",
+    _omg_vm_value_error_handle: "Value",
+    _omg_vm_module_import_error_handle: "ModuleImport"
+}
+
+# Return opcode value for the given mnemonic.
+proc opcode(name) {
+    return OPCODES[name]
+}
