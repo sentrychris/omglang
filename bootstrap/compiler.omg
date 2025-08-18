@@ -147,6 +147,23 @@ alloc funcs := []
 # Stack of lists used to patch `break` statements.
 alloc break_stack := []
 
+# Names of builtin functions recognized by the compiler.
+alloc BUILTINS := {
+    chr: true,
+    ascii: true,
+    hex: true,
+    binary: true,
+    length: true,
+    read_file: true,
+    freeze: true,
+    call_builtin: true,
+    file_open: true,
+    file_read: true,
+    file_write: true,
+    file_close: true,
+    file_exists: true
+}
+
 # Create a FunctionEntry record.
 proc make_function_entry(name, params, address) {
     return { name: name, params: params, address: address }
@@ -168,4 +185,199 @@ proc emit_placeholder(op) {
 proc patch(idx, target) {
     alloc entry := code[idx]
     code[idx] := [entry[0], target]
+}
+
+# Compile a block of statements.
+proc compile_block(block) {
+    alloc i := 0
+    alloc n := length(block)
+    loop i < n {
+        compile_stmt(block[i])
+        i := i + 1
+    }
+}
+
+# Compile a single statement node.
+proc compile_stmt(stmt) {
+    alloc kind := stmt[0]
+    if kind == "emit" {
+        compile_expr(stmt[1])
+        emit(opcode("EMIT"), false)
+    } elif kind == "decl" or kind == "assign" {
+        alloc name := stmt[1]
+        alloc expr := stmt[2]
+        compile_expr(expr)
+        emit(opcode("STORE"), name)
+    } elif kind == "attr_assign" {
+        alloc base := stmt[1]
+        alloc attr := stmt[2]
+        alloc expr := stmt[3]
+        compile_expr(base)
+        compile_expr(expr)
+        emit(opcode("STORE_ATTR"), attr)
+    } elif kind == "index_assign" {
+        alloc base := stmt[1]
+        alloc index_expr := stmt[2]
+        alloc value_expr := stmt[3]
+        compile_expr(base)
+        compile_expr(index_expr)
+        compile_expr(value_expr)
+        emit(opcode("STORE_INDEX"), false)
+    } elif kind == "expr_stmt" {
+        compile_expr(stmt[1])
+        emit(opcode("POP"), false)
+    } elif kind == "import" {
+        raise("RuntimeError: Module imports are resolved by the interpreter and cannot be compiled")
+    } elif kind == "facts" {
+        compile_expr(stmt[1])
+        emit(opcode("ASSERT"), false)
+    } elif kind == "if" {
+        alloc cond_blocks := []
+        alloc else_block := false
+        alloc current := stmt
+        loop true {
+            alloc cond := current[1]
+            alloc block_node := current[2]
+            alloc block_stmts := []
+            if block_node[0] == "block" {
+                block_stmts := block_node[1]
+            }
+            cond_blocks := cond_blocks + [[cond, block_stmts]]
+            alloc tail := current[3]
+            if tail != false and tail[0] == "if" {
+                current := tail
+            } else {
+                if tail != false {
+                    if tail[0] == "block" {
+                        else_block := tail[1]
+                    }
+                }
+                break
+            }
+        }
+        alloc end_jumps := []
+        alloc i := 0
+        alloc cb_len := length(cond_blocks)
+        loop i < cb_len {
+            alloc pair := cond_blocks[i]
+            alloc cond := pair[0]
+            alloc block := pair[1]
+            compile_expr(cond)
+            alloc jf := emit_placeholder(opcode("JUMP_IF_FALSE"))
+            compile_block(block)
+            end_jumps := end_jumps + [emit_placeholder(opcode("JUMP"))]
+            patch(jf, length(code))
+            i := i + 1
+        }
+        if else_block != false {
+            compile_block(else_block)
+        }
+        alloc j := 0
+        alloc ej_len := length(end_jumps)
+        loop j < ej_len {
+            patch(end_jumps[j], length(code))
+            j := j + 1
+        }
+    } elif kind == "loop" {
+        alloc cond := stmt[1]
+        alloc body_node := stmt[2]
+        alloc body := []
+        if body_node[0] == "block" {
+            body := body_node[1]
+        }
+        alloc start := length(code)
+        compile_expr(cond)
+        alloc jf := emit_placeholder(opcode("JUMP_IF_FALSE"))
+        break_stack := break_stack + [[]]
+        compile_block(body)
+        emit(opcode("JUMP"), start)
+        patch(jf, length(code))
+        alloc bs_len := length(break_stack)
+        alloc breaks := break_stack[bs_len - 1]
+        break_stack := break_stack[0:bs_len - 1]
+        alloc k := 0
+        alloc b_len := length(breaks)
+        loop k < b_len {
+            patch(breaks[k], length(code))
+            k := k + 1
+        }
+    } elif kind == "try" {
+        alloc try_block := stmt[1]
+        alloc exc_name := stmt[2]
+        alloc except_block := stmt[3]
+        alloc handler_idx := emit_placeholder(opcode("SETUP_EXCEPT"))
+        alloc try_body := []
+        if try_block[0] == "block" {
+            try_body := try_block[1]
+        }
+        compile_block(try_body)
+        emit(opcode("POP_BLOCK"), false)
+        alloc end_jump := emit_placeholder(opcode("JUMP"))
+        patch(handler_idx, length(code))
+        if exc_name != false {
+            emit(opcode("STORE"), exc_name)
+        }
+        alloc except_body := []
+        if except_block[0] == "block" {
+            except_body := except_block[1]
+        }
+        compile_block(except_body)
+        patch(end_jump, length(code))
+    } elif kind == "func_def" {
+        alloc name := stmt[1]
+        alloc params := stmt[2]
+        alloc body_node := stmt[3]
+        alloc body := []
+        if body_node[0] == "block" {
+            body := body_node[1]
+        }
+        alloc body_code := _compile_function_body(body)
+        pending_funcs := pending_funcs + [[name, params, body_code]]
+    } elif kind == "return" {
+        alloc expr := stmt[1]
+        if expr[0] == "func_call" and expr[1][0] == "ident" {
+            alloc func_node := expr[1]
+            alloc args := expr[2]
+            alloc name := func_node[1]
+            alloc i := 0
+            alloc n := length(args)
+            loop i < n {
+                compile_expr(args[i])
+                i := i + 1
+            }
+            if BUILTINS[name] != false {
+                emit(opcode("BUILTIN"), [name, n])
+                emit(opcode("RET"), false)
+            } else {
+                emit(opcode("TCALL"), name)
+            }
+        } else {
+            compile_expr(expr)
+            emit(opcode("RET"), false)
+        }
+    } elif kind == "break" {
+        if length(break_stack) == 0 {
+            raise("SyntaxError: 'break' used outside of loop")
+        }
+        alloc j := emit_placeholder(opcode("JUMP"))
+        alloc bs_len := length(break_stack)
+        alloc top := break_stack[bs_len - 1]
+        top := top + [j]
+        break_stack[bs_len - 1] := top
+    } elif kind == "block" {
+        compile_block(stmt[1])
+    } else {
+        raise("RuntimeError: Unsupported statement: " + kind)
+    }
+}
+
+# Compile the body of a function into bytecode.
+proc _compile_function_body(body) {
+    alloc saved_code := code
+    code := []
+    compile_block(body)
+    emit(opcode("RET"), false)
+    alloc func_code := code
+    code := saved_code
+    return func_code
 }

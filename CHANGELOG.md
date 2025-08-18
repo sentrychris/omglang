@@ -2,6 +2,12 @@
 
 Ordered from most recent at the top to oldest at the bottom.
 
+## [0.1.5] - 2025-08-12
+
+### Added
+- Statement compilation logic for declarations, control flow, loops, functions,
+  try/except, and returns in the bootstrap compiler.
+
 ## [0.1.4] - 2025-08-11
 
 ### Added
