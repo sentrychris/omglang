@@ -2,6 +2,14 @@
 
 Ordered from most recent at the top to oldest at the bottom.
 
+## [0.1.7] - 2025-08-18
+
+### Added
+- Final bytecode serialization in the bootstrap compiler, emitting the
+  OMGB header, version, function table, and instruction stream.
+- `compile_source` procedure and CLI wrapper to generate `.omgb` files
+  matching the Python serializer.
+
 ## [0.1.6] - 2025-08-13
 
 ### Added

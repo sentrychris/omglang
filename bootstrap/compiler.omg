@@ -2,6 +2,17 @@
 
 # Bytecode compiler constants mirrored from Python implementation.
 
+# Import interpreter utilities for tokenizing and parsing without
+# executing its command-line entry point on import.
+alloc _saved_args := args
+args := []
+import "./interpreter.omg" as OMGInterpreter
+args := _saved_args
+
+# Bytecode header and version constants.
+alloc MAGIC_HEADER := [79, 77, 71, 66]
+alloc BC_VERSION := 257  # 0x00000101 (major=0, minor=1, patch=1)
+
 alloc OPCODES := {
     PUSH_INT: 0,
     PUSH_STR: 1,
@@ -52,55 +63,6 @@ alloc OPCODES := {
     RAISE: 46
 }
 
-alloc REV_OPCODES := {
-    0: "PUSH_INT",
-    1: "PUSH_STR",
-    2: "PUSH_BOOL",
-    3: "BUILD_LIST",
-    4: "BUILD_DICT",
-    5: "LOAD",
-    6: "STORE",
-    7: "ADD",
-    8: "SUB",
-    9: "MUL",
-    10: "DIV",
-    11: "MOD",
-    12: "EQ",
-    13: "NE",
-    14: "LT",
-    15: "LE",
-    16: "GT",
-    17: "GE",
-    18: "BAND",
-    19: "BOR",
-    20: "BXOR",
-    21: "SHL",
-    22: "SHR",
-    23: "AND",
-    24: "OR",
-    25: "NOT",
-    26: "NEG",
-    27: "INDEX",
-    28: "SLICE",
-    29: "JUMP",
-    30: "JUMP_IF_FALSE",
-    31: "CALL",
-    32: "TCALL",
-    33: "BUILTIN",
-    34: "POP",
-    35: "PUSH_NONE",
-    36: "RET",
-    37: "EMIT",
-    38: "HALT",
-    39: "STORE_INDEX",
-    40: "ATTR",
-    41: "STORE_ATTR",
-    42: "ASSERT",
-    43: "CALL_VALUE",
-    44: "SETUP_EXCEPT",
-    45: "POP_BLOCK",
-    46: "RAISE"
-}
 
 alloc ERROR_KIND_TO_CODE := {
     Generic: 0,
@@ -111,24 +73,6 @@ alloc ERROR_KIND_TO_CODE := {
     ModuleImport: 5
 }
 
-alloc CODE_TO_ERROR_KIND := {
-    0: "Generic",
-    1: "Syntax",
-    2: "Type",
-    3: "UndefinedIdent",
-    4: "Value",
-    5: "ModuleImport"
-}
-
-alloc ERROR_NAME_TO_KIND := {
-    panic: "Generic",
-    raise: "Generic",
-    _omg_vm_syntax_error_handle: "Syntax",
-    _omg_vm_type_error_handle: "Type",
-    _omg_vm_undef_ident_error_handle: "UndefinedIdent",
-    _omg_vm_value_error_handle: "Value",
-    _omg_vm_module_import_error_handle: "ModuleImport"
-}
 
 # Return opcode value for the given mnemonic.
 proc opcode(name) {
@@ -148,20 +92,105 @@ alloc funcs := []
 alloc break_stack := []
 
 # Names of builtin functions recognized by the compiler.
-alloc BUILTINS := {
-    chr: true,
-    ascii: true,
-    hex: true,
-    binary: true,
-    length: true,
-    read_file: true,
-    freeze: true,
-    call_builtin: true,
-    file_open: true,
-    file_read: true,
-    file_write: true,
-    file_close: true,
-    file_exists: true
+
+# ------------------------------------------------------------------
+# Byte manipulation helpers
+# ------------------------------------------------------------------
+
+# Pack a 32-bit unsigned integer into little-endian byte list.
+proc pack_u32(n) {
+    return [n & 255, (n >> 8) & 255, (n >> 16) & 255, (n >> 24) & 255]
+}
+
+# Pack a 64-bit signed integer into little-endian byte list.
+proc pack_i64(n) {
+    if n < 0 {
+        n := (1 << 64) + n
+    }
+    alloc res := []
+    alloc i := 0
+    loop i < 8 {
+        res := res + [n & 255]
+        n := n >> 8
+        i := i + 1
+    }
+    return res
+}
+
+# Convert a UTF-8 string into a list of byte values.
+proc str_bytes(s) {
+    alloc out := []
+    alloc i := 0
+    alloc n := length(s)
+    loop i < n {
+        out := out + [ascii(s[i])]
+        i := i + 1
+    }
+    return out
+}
+
+# Encode the current bytecode into a list of bytes matching the Python serializer.
+proc encode_bytecode(final_code) {
+    alloc out := MAGIC_HEADER
+    out := out + pack_u32(BC_VERSION)
+    out := out + pack_u32(length(funcs))
+    alloc i := 0
+    loop i < length(funcs) {
+        alloc f := funcs[i]
+        alloc name_bytes := str_bytes(f.name)
+        out := out + pack_u32(length(name_bytes))
+        out := out + name_bytes
+        out := out + pack_u32(length(f.params))
+        alloc j := 0
+        loop j < length(f.params) {
+            alloc pb := str_bytes(f.params[j])
+            out := out + pack_u32(length(pb))
+            out := out + pb
+            j := j + 1
+        }
+        out := out + pack_u32(f.address)
+        i := i + 1
+    }
+    out := out + pack_u32(length(final_code))
+    i := 0
+    loop i < length(final_code) {
+        alloc instr := final_code[i]
+        alloc op := instr[0]
+        alloc arg := instr[1]
+        out := out + [op]
+        if op == opcode("PUSH_INT") {
+            out := out + pack_i64(arg)
+        } elif op == opcode("PUSH_STR") {
+            alloc sb := str_bytes(arg)
+            out := out + pack_u32(length(sb))
+            out := out + sb
+        } elif op == opcode("PUSH_BOOL") {
+            if arg {
+                out := out + [1]
+            } else {
+                out := out + [0]
+            }
+        } elif op == opcode("BUILD_LIST") or op == opcode("BUILD_DICT") or op == opcode("CALL_VALUE") {
+            out := out + pack_u32(arg)
+        } elif op == opcode("LOAD") or op == opcode("STORE") or op == opcode("CALL") or op == opcode("TCALL") or op == opcode("ATTR") or op == opcode("STORE_ATTR") {
+            alloc sb2 := str_bytes(arg)
+            out := out + pack_u32(length(sb2))
+            out := out + sb2
+        } elif op == opcode("BUILTIN") {
+            alloc name := arg[0]
+            alloc argc := arg[1]
+            alloc sb3 := str_bytes(name)
+            out := out + pack_u32(length(sb3))
+            out := out + sb3
+            out := out + pack_u32(argc)
+        } elif op == opcode("RAISE") {
+            out := out + [ERROR_KIND_TO_CODE[arg]]
+        } elif op == opcode("JUMP") or op == opcode("JUMP_IF_FALSE") or op == opcode("SETUP_EXCEPT") {
+            out := out + pack_u32(arg)
+        }
+        i := i + 1
+    }
+    return out
 }
 
 # Create a FunctionEntry record.
@@ -170,7 +199,7 @@ proc make_function_entry(name, params, address) {
 }
 
 # Emit a bytecode instruction.
-proc emit(op, arg) {
+proc emit_instr(op, arg) {
     code := code + [[op, arg]]
 }
 
@@ -185,6 +214,18 @@ proc emit_placeholder(op) {
 proc patch(idx, target) {
     alloc entry := code[idx]
     code[idx] := [entry[0], target]
+}
+
+# Check if a function name corresponds to a built-in.
+proc is_builtin(name) {
+    if name == "chr" or name == "ascii" or name == "hex" or name == "binary" {
+        return true
+    } elif name == "length" or name == "read_file" or name == "freeze" or name == "call_builtin" {
+        return true
+    } elif name == "file_open" or name == "file_read" or name == "file_write" or name == "file_close" or name == "file_exists" {
+        return true
+    }
+    return false
 }
 
 # Compile a block of statements.
@@ -202,19 +243,19 @@ proc compile_stmt(stmt) {
     alloc kind := stmt[0]
     if kind == "emit" {
         compile_expr(stmt[1])
-        emit(opcode("EMIT"), false)
+        emit_instr(opcode("EMIT"), false)
     } elif kind == "decl" or kind == "assign" {
         alloc name := stmt[1]
         alloc expr := stmt[2]
         compile_expr(expr)
-        emit(opcode("STORE"), name)
+        emit_instr(opcode("STORE"), name)
     } elif kind == "attr_assign" {
         alloc base := stmt[1]
         alloc attr := stmt[2]
         alloc expr := stmt[3]
         compile_expr(base)
         compile_expr(expr)
-        emit(opcode("STORE_ATTR"), attr)
+        emit_instr(opcode("STORE_ATTR"), attr)
     } elif kind == "index_assign" {
         alloc base := stmt[1]
         alloc index_expr := stmt[2]
@@ -222,15 +263,15 @@ proc compile_stmt(stmt) {
         compile_expr(base)
         compile_expr(index_expr)
         compile_expr(value_expr)
-        emit(opcode("STORE_INDEX"), false)
+        emit_instr(opcode("STORE_INDEX"), false)
     } elif kind == "expr_stmt" {
         compile_expr(stmt[1])
-        emit(opcode("POP"), false)
+        emit_instr(opcode("POP"), false)
     } elif kind == "import" {
         raise("RuntimeError: Module imports are resolved by the interpreter and cannot be compiled")
     } elif kind == "facts" {
         compile_expr(stmt[1])
-        emit(opcode("ASSERT"), false)
+        emit_instr(opcode("ASSERT"), false)
     } elif kind == "if" {
         alloc cond_blocks := []
         alloc else_block := false
@@ -290,7 +331,7 @@ proc compile_stmt(stmt) {
         alloc jf := emit_placeholder(opcode("JUMP_IF_FALSE"))
         break_stack := break_stack + [[]]
         compile_block(body)
-        emit(opcode("JUMP"), start)
+        emit_instr(opcode("JUMP"), start)
         patch(jf, length(code))
         alloc bs_len := length(break_stack)
         alloc breaks := break_stack[bs_len - 1]
@@ -311,11 +352,11 @@ proc compile_stmt(stmt) {
             try_body := try_block[1]
         }
         compile_block(try_body)
-        emit(opcode("POP_BLOCK"), false)
+        emit_instr(opcode("POP_BLOCK"), false)
         alloc end_jump := emit_placeholder(opcode("JUMP"))
         patch(handler_idx, length(code))
         if exc_name != false {
-            emit(opcode("STORE"), exc_name)
+            emit_instr(opcode("STORE"), exc_name)
         }
         alloc except_body := []
         if except_block[0] == "block" {
@@ -345,15 +386,15 @@ proc compile_stmt(stmt) {
                 compile_expr(args[i])
                 i := i + 1
             }
-            if BUILTINS[name] != false {
-                emit(opcode("BUILTIN"), [name, n])
-                emit(opcode("RET"), false)
+            if is_builtin(name) {
+                emit_instr(opcode("BUILTIN"), [name, n])
+                emit_instr(opcode("RET"), false)
             } else {
-                emit(opcode("TCALL"), name)
+                emit_instr(opcode("TCALL"), name)
             }
         } else {
             compile_expr(expr)
-            emit(opcode("RET"), false)
+            emit_instr(opcode("RET"), false)
         }
     } elif kind == "break" {
         if length(break_stack) == 0 {
@@ -376,24 +417,39 @@ proc _compile_function_body(body) {
     alloc saved_code := code
     code := []
     compile_block(body)
-    emit(opcode("RET"), false)
-    alloc func_code := code
+    emit_instr(opcode("RET"), false)
+    alloc func_code := code + []
     code := saved_code
     return func_code
 }
 
 # Compile special raise helper calls into RAISE instructions.
 proc compile_raise_call(name, args) {
-    alloc kind := ERROR_NAME_TO_KIND[name]
+    alloc kind := false
+    if name == "panic" {
+        kind := "Generic"
+    } elif name == "raise" {
+        kind := "Generic"
+    } elif name == "_omg_vm_syntax_error_handle" {
+        kind := "Syntax"
+    } elif name == "_omg_vm_type_error_handle" {
+        kind := "Type"
+    } elif name == "_omg_vm_undef_ident_error_handle" {
+        kind := "UndefinedIdent"
+    } elif name == "_omg_vm_value_error_handle" {
+        kind := "Value"
+    } elif name == "_omg_vm_module_import_error_handle" {
+        kind := "ModuleImport"
+    }
     if kind == false {
         return false
     }
     if length(args) > 0 {
         compile_expr(args[0])
     } else {
-        emit(opcode("PUSH_STR"), "")
+        emit_instr(opcode("PUSH_STR"), "")
     }
-    emit(opcode("RAISE"), kind)
+    emit_instr(opcode("RAISE"), kind)
     return true
 }
 
@@ -401,13 +457,13 @@ proc compile_raise_call(name, args) {
 proc compile_expr(node) {
     alloc op := node[0]
     if op == "number" {
-        emit(opcode("PUSH_INT"), node[1])
+        emit_instr(opcode("PUSH_INT"), node[1])
     } elif op == "string" {
-        emit(opcode("PUSH_STR"), node[1])
+        emit_instr(opcode("PUSH_STR"), node[1])
     } elif op == "bool" {
-        emit(opcode("PUSH_BOOL"), node[1])
+        emit_instr(opcode("PUSH_BOOL"), node[1])
     } elif op == "ident" {
-        emit(opcode("LOAD"), node[1])
+        emit_instr(opcode("LOAD"), node[1])
     } elif op == "list" {
         alloc elements := node[1]
         alloc i := 0
@@ -416,7 +472,7 @@ proc compile_expr(node) {
             compile_expr(elements[i])
             i := i + 1
         }
-        emit(opcode("BUILD_LIST"), n)
+        emit_instr(opcode("BUILD_LIST"), n)
     } elif op == "dict" {
         alloc pairs := node[1]
         alloc i := 0
@@ -427,24 +483,24 @@ proc compile_expr(node) {
             compile_expr(pair[1])
             i := i + 1
         }
-        emit(opcode("BUILD_DICT"), n)
+        emit_instr(opcode("BUILD_DICT"), n)
     } elif op == "index" {
         compile_expr(node[1])
         compile_expr(node[2])
-        emit(opcode("INDEX"), false)
+        emit_instr(opcode("INDEX"), false)
     } elif op == "slice" {
         compile_expr(node[1])
         compile_expr(node[2])
         alloc end := node[3]
         if end == false {
-            emit(opcode("PUSH_NONE"), false)
+            emit_instr(opcode("PUSH_NONE"), false)
         } else {
             compile_expr(end)
         }
-        emit(opcode("SLICE"), false)
+        emit_instr(opcode("SLICE"), false)
     } elif op == "dot" {
         compile_expr(node[1])
-        emit(opcode("ATTR"), node[2])
+        emit_instr(opcode("ATTR"), node[2])
     } elif op == "func_call" {
         alloc func_node := node[1]
         alloc args := node[2]
@@ -457,10 +513,10 @@ proc compile_expr(node) {
                     compile_expr(args[i])
                     i := i + 1
                 }
-                if BUILTINS[name] != false {
-                    emit(opcode("BUILTIN"), [name, n])
+                if is_builtin(name) {
+                    emit_instr(opcode("BUILTIN"), [name, n])
                 } else {
-                    emit(opcode("CALL"), name)
+                    emit_instr(opcode("CALL"), name)
                 }
             }
         } else {
@@ -471,92 +527,158 @@ proc compile_expr(node) {
                 compile_expr(args[i])
                 i := i + 1
             }
-            emit(opcode("CALL_VALUE"), n)
+            emit_instr(opcode("CALL_VALUE"), n)
         }
     } elif op == "unary" {
         alloc unary_op := node[1]
         compile_expr(node[2])
         if unary_op == "sub" {
-            emit(opcode("NEG"), false)
+            emit_instr(opcode("NEG"), false)
         } elif unary_op == "add" {
             # unary plus does not modify the value
+            alloc noop := 0
         }
     } elif op == "bitnot" {
         compile_expr(node[1])
-        emit(opcode("NOT"), false)
+        emit_instr(opcode("NOT"), false)
     } elif op == "add" {
         compile_expr(node[1])
         compile_expr(node[2])
-        emit(opcode("ADD"), false)
+        emit_instr(opcode("ADD"), false)
     } elif op == "sub" {
         compile_expr(node[1])
         compile_expr(node[2])
-        emit(opcode("SUB"), false)
+        emit_instr(opcode("SUB"), false)
     } elif op == "mul" {
         compile_expr(node[1])
         compile_expr(node[2])
-        emit(opcode("MUL"), false)
+        emit_instr(opcode("MUL"), false)
     } elif op == "div" {
         compile_expr(node[1])
         compile_expr(node[2])
-        emit(opcode("DIV"), false)
+        emit_instr(opcode("DIV"), false)
     } elif op == "mod" {
         compile_expr(node[1])
         compile_expr(node[2])
-        emit(opcode("MOD"), false)
+        emit_instr(opcode("MOD"), false)
     } elif op == "eq" {
         compile_expr(node[1])
         compile_expr(node[2])
-        emit(opcode("EQ"), false)
+        emit_instr(opcode("EQ"), false)
     } elif op == "ne" {
         compile_expr(node[1])
         compile_expr(node[2])
-        emit(opcode("NE"), false)
+        emit_instr(opcode("NE"), false)
     } elif op == "gt" {
         compile_expr(node[1])
         compile_expr(node[2])
-        emit(opcode("GT"), false)
+        emit_instr(opcode("GT"), false)
     } elif op == "lt" {
         compile_expr(node[1])
         compile_expr(node[2])
-        emit(opcode("LT"), false)
+        emit_instr(opcode("LT"), false)
     } elif op == "ge" {
         compile_expr(node[1])
         compile_expr(node[2])
-        emit(opcode("GE"), false)
+        emit_instr(opcode("GE"), false)
     } elif op == "le" {
         compile_expr(node[1])
         compile_expr(node[2])
-        emit(opcode("LE"), false)
+        emit_instr(opcode("LE"), false)
     } elif op == "and" {
         compile_expr(node[1])
         compile_expr(node[2])
-        emit(opcode("AND"), false)
+        emit_instr(opcode("AND"), false)
     } elif op == "or" {
         compile_expr(node[1])
         compile_expr(node[2])
-        emit(opcode("OR"), false)
+        emit_instr(opcode("OR"), false)
     } elif op == "band" {
         compile_expr(node[1])
         compile_expr(node[2])
-        emit(opcode("BAND"), false)
+        emit_instr(opcode("BAND"), false)
     } elif op == "bor" {
         compile_expr(node[1])
         compile_expr(node[2])
-        emit(opcode("BOR"), false)
+        emit_instr(opcode("BOR"), false)
     } elif op == "bxor" {
         compile_expr(node[1])
         compile_expr(node[2])
-        emit(opcode("BXOR"), false)
+        emit_instr(opcode("BXOR"), false)
     } elif op == "shl" {
         compile_expr(node[1])
         compile_expr(node[2])
-        emit(opcode("SHL"), false)
+        emit_instr(opcode("SHL"), false)
     } elif op == "shr" {
         compile_expr(node[1])
         compile_expr(node[2])
-        emit(opcode("SHR"), false)
+        emit_instr(opcode("SHR"), false)
     } else {
         raise("RuntimeError: Unsupported expression node: " + op)
+    }
+}
+
+# ------------------------------------------------------------------
+# Compilation entry points
+# ------------------------------------------------------------------
+
+# Compile an AST into final bytecode.
+proc compile(ast) {
+    code := []
+    pending_funcs := []
+    funcs := []
+    break_stack := []
+    compile_block(ast)
+    emit_instr(opcode("HALT"), false)
+    alloc final_code := code
+    alloc i := 0
+    loop i < length(pending_funcs) {
+        alloc entry := pending_funcs[i]
+        alloc name := entry[0]
+        alloc params := entry[1]
+        alloc body := entry[2]
+        alloc addr := length(final_code)
+        funcs := funcs + [make_function_entry(name, params, addr)]
+        alloc j := 0
+        loop j < length(body) {
+            alloc ins := body[j]
+            alloc op := ins[0]
+            alloc arg := ins[1]
+            if (op == opcode("JUMP") or op == opcode("JUMP_IF_FALSE")) and arg != false {
+                final_code := final_code + [[op, arg + addr]]
+            } else {
+                final_code := final_code + [[op, arg]]
+            }
+            j := j + 1
+        }
+        i := i + 1
+    }
+    return encode_bytecode(final_code)
+}
+
+# Compile source string into bytecode.
+proc compile_source(source, file) {
+    alloc ast := OMGInterpreter.parse(source)
+    return compile(ast)
+}
+
+# ------------------------------------------------------------------
+# CLI entry point
+# ------------------------------------------------------------------
+
+if length(args) > 0 {
+    alloc path := args[0]
+    alloc src := read_file(path)
+    if src == false {
+        raise("RuntimeError: Failed to read file: " + path)
+    }
+    alloc bc := compile_source(src, path)
+    if length(args) > 1 {
+        alloc out_path := args[1]
+        alloc h := file_open(out_path, "wb")
+        file_write(h, bc)
+        file_close(h)
+    } else {
+        emit bc
     }
 }
