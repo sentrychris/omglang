@@ -2,6 +2,15 @@
 
 Ordered from most recent at the top to oldest at the bottom.
 
+## [0.1.8] - 2025-08-18
+
+### Added
+- `write_file` builtin for writing text or binary data
+- Exposed error helper builtins for `Syntax`, `Type`, `UndefinedIdent`, `Value`, and `ModuleImport` errors
+
+### Changed
+- Bootstrap compiler CLI uses `write_file` for output
+
 ## [0.1.7] - 2025-08-18
 
 ### Added
