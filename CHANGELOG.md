@@ -2,6 +2,14 @@
 
 Ordered from most recent at the top to oldest at the bottom.
 
+## [0.1.6] - 2025-08-13
+
+### Added
+- Expression compilation logic in the bootstrap compiler covering literals,
+  variables, function calls, unary and binary operations, indexing, slicing,
+  and attribute access.
+- Special raise-call rewriting via `compile_raise_call` to emit `RAISE`.
+
 ## [0.1.5] - 2025-08-12
 
 ### Added

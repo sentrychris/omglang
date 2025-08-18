@@ -381,3 +381,182 @@ proc _compile_function_body(body) {
     code := saved_code
     return func_code
 }
+
+# Compile special raise helper calls into RAISE instructions.
+proc compile_raise_call(name, args) {
+    alloc kind := ERROR_NAME_TO_KIND[name]
+    if kind == false {
+        return false
+    }
+    if length(args) > 0 {
+        compile_expr(args[0])
+    } else {
+        emit(opcode("PUSH_STR"), "")
+    }
+    emit(opcode("RAISE"), kind)
+    return true
+}
+
+# Compile an expression node into bytecode.
+proc compile_expr(node) {
+    alloc op := node[0]
+    if op == "number" {
+        emit(opcode("PUSH_INT"), node[1])
+    } elif op == "string" {
+        emit(opcode("PUSH_STR"), node[1])
+    } elif op == "bool" {
+        emit(opcode("PUSH_BOOL"), node[1])
+    } elif op == "ident" {
+        emit(opcode("LOAD"), node[1])
+    } elif op == "list" {
+        alloc elements := node[1]
+        alloc i := 0
+        alloc n := length(elements)
+        loop i < n {
+            compile_expr(elements[i])
+            i := i + 1
+        }
+        emit(opcode("BUILD_LIST"), n)
+    } elif op == "dict" {
+        alloc pairs := node[1]
+        alloc i := 0
+        alloc n := length(pairs)
+        loop i < n {
+            alloc pair := pairs[i]
+            compile_expr(pair[0])
+            compile_expr(pair[1])
+            i := i + 1
+        }
+        emit(opcode("BUILD_DICT"), n)
+    } elif op == "index" {
+        compile_expr(node[1])
+        compile_expr(node[2])
+        emit(opcode("INDEX"), false)
+    } elif op == "slice" {
+        compile_expr(node[1])
+        compile_expr(node[2])
+        alloc end := node[3]
+        if end == false {
+            emit(opcode("PUSH_NONE"), false)
+        } else {
+            compile_expr(end)
+        }
+        emit(opcode("SLICE"), false)
+    } elif op == "dot" {
+        compile_expr(node[1])
+        emit(opcode("ATTR"), node[2])
+    } elif op == "func_call" {
+        alloc func_node := node[1]
+        alloc args := node[2]
+        if func_node[0] == "ident" {
+            alloc name := func_node[1]
+            if compile_raise_call(name, args) == false {
+                alloc i := 0
+                alloc n := length(args)
+                loop i < n {
+                    compile_expr(args[i])
+                    i := i + 1
+                }
+                if BUILTINS[name] != false {
+                    emit(opcode("BUILTIN"), [name, n])
+                } else {
+                    emit(opcode("CALL"), name)
+                }
+            }
+        } else {
+            compile_expr(func_node)
+            alloc i := 0
+            alloc n := length(args)
+            loop i < n {
+                compile_expr(args[i])
+                i := i + 1
+            }
+            emit(opcode("CALL_VALUE"), n)
+        }
+    } elif op == "unary" {
+        alloc unary_op := node[1]
+        compile_expr(node[2])
+        if unary_op == "sub" {
+            emit(opcode("NEG"), false)
+        } elif unary_op == "add" {
+            # unary plus does not modify the value
+        }
+    } elif op == "bitnot" {
+        compile_expr(node[1])
+        emit(opcode("NOT"), false)
+    } elif op == "add" {
+        compile_expr(node[1])
+        compile_expr(node[2])
+        emit(opcode("ADD"), false)
+    } elif op == "sub" {
+        compile_expr(node[1])
+        compile_expr(node[2])
+        emit(opcode("SUB"), false)
+    } elif op == "mul" {
+        compile_expr(node[1])
+        compile_expr(node[2])
+        emit(opcode("MUL"), false)
+    } elif op == "div" {
+        compile_expr(node[1])
+        compile_expr(node[2])
+        emit(opcode("DIV"), false)
+    } elif op == "mod" {
+        compile_expr(node[1])
+        compile_expr(node[2])
+        emit(opcode("MOD"), false)
+    } elif op == "eq" {
+        compile_expr(node[1])
+        compile_expr(node[2])
+        emit(opcode("EQ"), false)
+    } elif op == "ne" {
+        compile_expr(node[1])
+        compile_expr(node[2])
+        emit(opcode("NE"), false)
+    } elif op == "gt" {
+        compile_expr(node[1])
+        compile_expr(node[2])
+        emit(opcode("GT"), false)
+    } elif op == "lt" {
+        compile_expr(node[1])
+        compile_expr(node[2])
+        emit(opcode("LT"), false)
+    } elif op == "ge" {
+        compile_expr(node[1])
+        compile_expr(node[2])
+        emit(opcode("GE"), false)
+    } elif op == "le" {
+        compile_expr(node[1])
+        compile_expr(node[2])
+        emit(opcode("LE"), false)
+    } elif op == "and" {
+        compile_expr(node[1])
+        compile_expr(node[2])
+        emit(opcode("AND"), false)
+    } elif op == "or" {
+        compile_expr(node[1])
+        compile_expr(node[2])
+        emit(opcode("OR"), false)
+    } elif op == "band" {
+        compile_expr(node[1])
+        compile_expr(node[2])
+        emit(opcode("BAND"), false)
+    } elif op == "bor" {
+        compile_expr(node[1])
+        compile_expr(node[2])
+        emit(opcode("BOR"), false)
+    } elif op == "bxor" {
+        compile_expr(node[1])
+        compile_expr(node[2])
+        emit(opcode("BXOR"), false)
+    } elif op == "shl" {
+        compile_expr(node[1])
+        compile_expr(node[2])
+        emit(opcode("SHL"), false)
+    } elif op == "shr" {
+        compile_expr(node[1])
+        compile_expr(node[2])
+        emit(opcode("SHR"), false)
+    } else {
+        raise("RuntimeError: Unsupported expression node: " + op)
+    }
+}
