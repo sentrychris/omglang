@@ -1,12 +1,15 @@
 //! Built-in function dispatch for the OMG VM.
 
+use std::cell::RefCell;
 use std::collections::HashMap;
 use std::fs::{self, OpenOptions};
 use std::io::{Read, Write};
 use std::path::PathBuf;
 use std::rc::Rc;
-use std::cell::RefCell;
-use std::sync::{atomic::{AtomicI32, Ordering}, Mutex};
+use std::sync::{
+    atomic::{AtomicI32, Ordering},
+    Mutex,
+};
 
 use once_cell::sync::Lazy;
 
@@ -23,7 +26,11 @@ static FILE_HANDLES: Lazy<Mutex<HashMap<i32, FileEntry>>> =
     Lazy::new(|| Mutex::new(HashMap::new()));
 static NEXT_FD: AtomicI32 = AtomicI32::new(0);
 
-fn resolve_path(path: &str, env: &HashMap<String, Value>, globals: &HashMap<String, Value>) -> PathBuf {
+fn resolve_path(
+    path: &str,
+    env: &HashMap<String, Value>,
+    globals: &HashMap<String, Value>,
+) -> PathBuf {
     let mut path_buf = PathBuf::from(path.replace("\\", "/"));
     if path_buf.is_relative() {
         if let Some(Value::Str(cur)) = env
@@ -142,6 +149,32 @@ pub fn call_builtin(
                 "read_file() expects a file path".to_string(),
             )),
         },
+        "write_file" => match args {
+            [Value::Str(path), Value::Str(data)] => {
+                let path_buf = resolve_path(path, env, globals);
+                fs::write(&path_buf, data.as_bytes())
+                    .map_err(|e| RuntimeError::ValueError(e.to_string()))?;
+                Ok(Value::Int(data.as_bytes().len() as i64))
+            }
+            [Value::Str(path), Value::List(list)] => {
+                let path_buf = resolve_path(path, env, globals);
+                let vec = list
+                    .borrow()
+                    .iter()
+                    .map(|v| match v {
+                        Value::Int(i) if *i >= 0 && *i <= 255 => Ok(*i as u8),
+                        _ => Err(RuntimeError::TypeError(
+                            "write_file() expects bytes 0-255".to_string(),
+                        )),
+                    })
+                    .collect::<Result<Vec<u8>, RuntimeError>>()?;
+                fs::write(&path_buf, &vec).map_err(|e| RuntimeError::ValueError(e.to_string()))?;
+                Ok(Value::Int(vec.len() as i64))
+            }
+            _ => Err(RuntimeError::TypeError(
+                "write_file() expects path and data".to_string(),
+            )),
+        },
         "file_open" => match args {
             [Value::Str(path), Value::Str(mode)] => {
                 let path_buf = resolve_path(path, env, globals);
@@ -158,9 +191,7 @@ pub fn call_builtin(
                         opts.write(true).create(true).append(true);
                     }
                     _ => {
-                        return Err(RuntimeError::ValueError(
-                            "invalid file mode".to_string(),
-                        ));
+                        return Err(RuntimeError::ValueError("invalid file mode".to_string()));
                     }
                 }
                 match opts.open(&path_buf) {
@@ -281,6 +312,56 @@ pub fn call_builtin(
             }
             _ => Err(RuntimeError::TypeError(
                 "file_exists() expects a path".to_string(),
+            )),
+        },
+        "_omg_vm_syntax_error_handle" => match args {
+            [Value::Str(msg)] => {
+                let mut stack = vec![Value::Str(msg.clone())];
+                ops_control::handle_raise(&ErrorKind::Syntax, &mut stack)?;
+                unreachable!()
+            }
+            _ => Err(RuntimeError::TypeError(
+                "_omg_vm_syntax_error_handle() expects a string".to_string(),
+            )),
+        },
+        "_omg_vm_type_error_handle" => match args {
+            [Value::Str(msg)] => {
+                let mut stack = vec![Value::Str(msg.clone())];
+                ops_control::handle_raise(&ErrorKind::Type, &mut stack)?;
+                unreachable!()
+            }
+            _ => Err(RuntimeError::TypeError(
+                "_omg_vm_type_error_handle() expects a string".to_string(),
+            )),
+        },
+        "_omg_vm_undef_ident_error_handle" => match args {
+            [Value::Str(msg)] => {
+                let mut stack = vec![Value::Str(msg.clone())];
+                ops_control::handle_raise(&ErrorKind::UndefinedIdent, &mut stack)?;
+                unreachable!()
+            }
+            _ => Err(RuntimeError::TypeError(
+                "_omg_vm_undef_ident_error_handle() expects a string".to_string(),
+            )),
+        },
+        "_omg_vm_value_error_handle" => match args {
+            [Value::Str(msg)] => {
+                let mut stack = vec![Value::Str(msg.clone())];
+                ops_control::handle_raise(&ErrorKind::Value, &mut stack)?;
+                unreachable!()
+            }
+            _ => Err(RuntimeError::TypeError(
+                "_omg_vm_value_error_handle() expects a string".to_string(),
+            )),
+        },
+        "_omg_vm_module_import_error_handle" => match args {
+            [Value::Str(msg)] => {
+                let mut stack = vec![Value::Str(msg.clone())];
+                ops_control::handle_raise(&ErrorKind::ModuleImport, &mut stack)?;
+                unreachable!()
+            }
+            _ => Err(RuntimeError::TypeError(
+                "_omg_vm_module_import_error_handle() expects a string".to_string(),
             )),
         },
         "call_builtin" => match args {

@@ -860,6 +860,7 @@ proc import_module(path) {
     alloc env := [
         ["length", ["builtin", "length"]],
         ["read_file", ["builtin", "read_file"]],
+        ["write_file", ["builtin", "write_file"]],
         ["ascii", ["builtin", "ascii"]],
         ["binary", ["builtin", "binary"]],
         ["chr", ["builtin", "chr"]],
@@ -870,7 +871,12 @@ proc import_module(path) {
         ["file_write", ["builtin", "file_write"]],
         ["file_close", ["builtin", "file_close"]],
         ["file_exists", ["builtin", "file_exists"]],
-        ["raise", ["builtin", "raise"]]
+        ["raise", ["builtin", "raise"]],
+        ["_omg_vm_syntax_error_handle", ["builtin", "_omg_vm_syntax_error_handle"]],
+        ["_omg_vm_type_error_handle", ["builtin", "_omg_vm_type_error_handle"]],
+        ["_omg_vm_undef_ident_error_handle", ["builtin", "_omg_vm_undef_ident_error_handle"]],
+        ["_omg_vm_value_error_handle", ["builtin", "_omg_vm_value_error_handle"]],
+        ["_omg_vm_module_import_error_handle", ["builtin", "_omg_vm_module_import_error_handle"]]
     ]
     env := env_set(env, "args", [])
     global_env := env
@@ -1173,6 +1179,7 @@ proc run(source) {
     alloc env := [
         ["length", ["builtin", "length"]],
         ["read_file", ["builtin", "read_file"]],
+        ["write_file", ["builtin", "write_file"]],
         ["ascii", ["builtin", "ascii"]],
         ["binary", ["builtin", "binary"]],
         ["chr", ["builtin", "chr"]],
@@ -1183,7 +1190,12 @@ proc run(source) {
         ["file_write", ["builtin", "file_write"]],
         ["file_close", ["builtin", "file_close"]],
         ["file_exists", ["builtin", "file_exists"]],
-        ["raise", ["builtin", "raise"]]
+        ["raise", ["builtin", "raise"]],
+        ["_omg_vm_syntax_error_handle", ["builtin", "_omg_vm_syntax_error_handle"]],
+        ["_omg_vm_type_error_handle", ["builtin", "_omg_vm_type_error_handle"]],
+        ["_omg_vm_undef_ident_error_handle", ["builtin", "_omg_vm_undef_ident_error_handle"]],
+        ["_omg_vm_value_error_handle", ["builtin", "_omg_vm_value_error_handle"]],
+        ["_omg_vm_module_import_error_handle", ["builtin", "_omg_vm_module_import_error_handle"]]
     ]
     env := env_set(env, "args", args)
     global_env := env
