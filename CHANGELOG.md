@@ -2,6 +2,11 @@
 
 Ordered from most recent at the top to oldest at the bottom.
 
+## [0.1.9] - 2025-08-18
+
+### Changed
+- Optimized bootstrap compiler to mutate lists in-place, eliminating quadratic concatenation during instruction emission and bytecode serialization.
+
 ## [0.1.8] - 2025-08-18
 
 ### Added

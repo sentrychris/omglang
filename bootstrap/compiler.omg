@@ -80,16 +80,20 @@ proc opcode(name) {
 }
 
 # Current instruction stream as a list of [op, arg] pairs.
-alloc code := []
+alloc code := {}
+alloc code_len := 0
 
 # Pending function bodies waiting to be appended.
-alloc pending_funcs := []
+alloc pending_funcs := {}
+alloc pending_funcs_len := 0
 
 # Finalized function metadata entries.
-alloc funcs := []
+alloc funcs := {}
+alloc funcs_len := 0
 
 # Stack of lists used to patch `break` statements.
-alloc break_stack := []
+alloc break_stack := {}
+alloc break_stack_len := 0
 
 # Names of builtin functions recognized by the compiler.
 
@@ -129,68 +133,105 @@ proc str_bytes(s) {
     return out
 }
 
-# Encode the current bytecode into a list of bytes matching the Python serializer.
-proc encode_bytecode(final_code) {
-    alloc out := MAGIC_HEADER
-    out := out + pack_u32(BC_VERSION)
-    out := out + pack_u32(length(funcs))
+# Append a list of bytes to the destination buffer.
+proc append_bytes(buf, len, bytes) {
     alloc i := 0
-    loop i < length(funcs) {
+    alloc n := length(bytes)
+    loop i < n {
+        buf[len] := bytes[i]
+        len := len + 1
+        i := i + 1
+    }
+    return len
+}
+
+# Create a list of zero bytes with the given size using doubling to avoid quadratic behavior.
+proc make_list(n) {
+    if n == 0 {
+        return []
+    }
+    alloc res := [0]
+    alloc size := 1
+    loop size < n {
+        res := res + res
+        size := size * 2
+    }
+    return res[0:n]
+}
+
+# Encode the current bytecode into a list of bytes matching the Python serializer.
+proc encode_bytecode(final_code, final_code_len) {
+    alloc out := {}
+    alloc out_len := 0
+    out_len := append_bytes(out, out_len, MAGIC_HEADER)
+    out_len := append_bytes(out, out_len, pack_u32(BC_VERSION))
+    out_len := append_bytes(out, out_len, pack_u32(funcs_len))
+    alloc i := 0
+    loop i < funcs_len {
         alloc f := funcs[i]
         alloc name_bytes := str_bytes(f.name)
-        out := out + pack_u32(length(name_bytes))
-        out := out + name_bytes
-        out := out + pack_u32(length(f.params))
+        out_len := append_bytes(out, out_len, pack_u32(length(name_bytes)))
+        out_len := append_bytes(out, out_len, name_bytes)
+        out_len := append_bytes(out, out_len, pack_u32(length(f.params)))
         alloc j := 0
         loop j < length(f.params) {
             alloc pb := str_bytes(f.params[j])
-            out := out + pack_u32(length(pb))
-            out := out + pb
+            out_len := append_bytes(out, out_len, pack_u32(length(pb)))
+            out_len := append_bytes(out, out_len, pb)
             j := j + 1
         }
-        out := out + pack_u32(f.address)
+        out_len := append_bytes(out, out_len, pack_u32(f.address))
         i := i + 1
     }
-    out := out + pack_u32(length(final_code))
+    out_len := append_bytes(out, out_len, pack_u32(final_code_len))
     i := 0
-    loop i < length(final_code) {
+    loop i < final_code_len {
         alloc instr := final_code[i]
         alloc op := instr[0]
         alloc arg := instr[1]
-        out := out + [op]
+        out[out_len] := op
+        out_len := out_len + 1
         if op == opcode("PUSH_INT") {
-            out := out + pack_i64(arg)
+            out_len := append_bytes(out, out_len, pack_i64(arg))
         } elif op == opcode("PUSH_STR") {
             alloc sb := str_bytes(arg)
-            out := out + pack_u32(length(sb))
-            out := out + sb
+            out_len := append_bytes(out, out_len, pack_u32(length(sb)))
+            out_len := append_bytes(out, out_len, sb)
         } elif op == opcode("PUSH_BOOL") {
             if arg {
-                out := out + [1]
+                out[out_len] := 1
             } else {
-                out := out + [0]
+                out[out_len] := 0
             }
+            out_len := out_len + 1
         } elif op == opcode("BUILD_LIST") or op == opcode("BUILD_DICT") or op == opcode("CALL_VALUE") {
-            out := out + pack_u32(arg)
+            out_len := append_bytes(out, out_len, pack_u32(arg))
         } elif op == opcode("LOAD") or op == opcode("STORE") or op == opcode("CALL") or op == opcode("TCALL") or op == opcode("ATTR") or op == opcode("STORE_ATTR") {
             alloc sb2 := str_bytes(arg)
-            out := out + pack_u32(length(sb2))
-            out := out + sb2
+            out_len := append_bytes(out, out_len, pack_u32(length(sb2)))
+            out_len := append_bytes(out, out_len, sb2)
         } elif op == opcode("BUILTIN") {
             alloc name := arg[0]
             alloc argc := arg[1]
             alloc sb3 := str_bytes(name)
-            out := out + pack_u32(length(sb3))
-            out := out + sb3
-            out := out + pack_u32(argc)
+            out_len := append_bytes(out, out_len, pack_u32(length(sb3)))
+            out_len := append_bytes(out, out_len, sb3)
+            out_len := append_bytes(out, out_len, pack_u32(argc))
         } elif op == opcode("RAISE") {
-            out := out + [ERROR_KIND_TO_CODE[arg]]
+            out[out_len] := ERROR_KIND_TO_CODE[arg]
+            out_len := out_len + 1
         } elif op == opcode("JUMP") or op == opcode("JUMP_IF_FALSE") or op == opcode("SETUP_EXCEPT") {
-            out := out + pack_u32(arg)
+            out_len := append_bytes(out, out_len, pack_u32(arg))
         }
         i := i + 1
     }
-    return out
+    alloc res := make_list(out_len)
+    i := 0
+    loop i < out_len {
+        res[i] := out[i]
+        i := i + 1
+    }
+    return res
 }
 
 # Create a FunctionEntry record.
@@ -200,13 +241,15 @@ proc make_function_entry(name, params, address) {
 
 # Emit a bytecode instruction.
 proc emit_instr(op, arg) {
-    code := code + [[op, arg]]
+    code[code_len] := [op, arg]
+    code_len := code_len + 1
 }
 
 # Emit a placeholder instruction and return its index for later patching.
 proc emit_placeholder(op) {
-    alloc idx := length(code)
-    code := code + [[op, false]]
+    alloc idx := code_len
+    code[code_len] := [op, false]
+    code_len := code_len + 1
     return idx
 }
 
@@ -307,7 +350,7 @@ proc compile_stmt(stmt) {
             alloc jf := emit_placeholder(opcode("JUMP_IF_FALSE"))
             compile_block(block)
             end_jumps := end_jumps + [emit_placeholder(opcode("JUMP"))]
-            patch(jf, length(code))
+            patch(jf, code_len)
             i := i + 1
         }
         if else_block != false {
@@ -316,7 +359,7 @@ proc compile_stmt(stmt) {
         alloc j := 0
         alloc ej_len := length(end_jumps)
         loop j < ej_len {
-            patch(end_jumps[j], length(code))
+            patch(end_jumps[j], code_len)
             j := j + 1
         }
     } elif kind == "loop" {
@@ -326,20 +369,21 @@ proc compile_stmt(stmt) {
         if body_node[0] == "block" {
             body := body_node[1]
         }
-        alloc start := length(code)
+        alloc start := code_len
         compile_expr(cond)
         alloc jf := emit_placeholder(opcode("JUMP_IF_FALSE"))
-        break_stack := break_stack + [[]]
+        break_stack[break_stack_len] := []
+        break_stack_len := break_stack_len + 1
         compile_block(body)
         emit_instr(opcode("JUMP"), start)
-        patch(jf, length(code))
-        alloc bs_len := length(break_stack)
+        patch(jf, code_len)
+        alloc bs_len := break_stack_len
         alloc breaks := break_stack[bs_len - 1]
-        break_stack := break_stack[0:bs_len - 1]
+        break_stack_len := bs_len - 1
         alloc k := 0
         alloc b_len := length(breaks)
         loop k < b_len {
-            patch(breaks[k], length(code))
+            patch(breaks[k], code_len)
             k := k + 1
         }
     } elif kind == "try" {
@@ -354,7 +398,7 @@ proc compile_stmt(stmt) {
         compile_block(try_body)
         emit_instr(opcode("POP_BLOCK"), false)
         alloc end_jump := emit_placeholder(opcode("JUMP"))
-        patch(handler_idx, length(code))
+        patch(handler_idx, code_len)
         if exc_name != false {
             emit_instr(opcode("STORE"), exc_name)
         }
@@ -363,7 +407,7 @@ proc compile_stmt(stmt) {
             except_body := except_block[1]
         }
         compile_block(except_body)
-        patch(end_jump, length(code))
+        patch(end_jump, code_len)
     } elif kind == "func_def" {
         alloc name := stmt[1]
         alloc params := stmt[2]
@@ -373,7 +417,8 @@ proc compile_stmt(stmt) {
             body := body_node[1]
         }
         alloc body_code := _compile_function_body(body)
-        pending_funcs := pending_funcs + [[name, params, body_code]]
+        pending_funcs[pending_funcs_len] := [name, params, body_code]
+        pending_funcs_len := pending_funcs_len + 1
     } elif kind == "return" {
         alloc expr := stmt[1]
         if expr[0] == "func_call" and expr[1][0] == "ident" {
@@ -397,11 +442,11 @@ proc compile_stmt(stmt) {
             emit_instr(opcode("RET"), false)
         }
     } elif kind == "break" {
-        if length(break_stack) == 0 {
+        if break_stack_len == 0 {
             raise("SyntaxError: 'break' used outside of loop")
         }
         alloc j := emit_placeholder(opcode("JUMP"))
-        alloc bs_len := length(break_stack)
+        alloc bs_len := break_stack_len
         alloc top := break_stack[bs_len - 1]
         top := top + [j]
         break_stack[bs_len - 1] := top
@@ -415,11 +460,25 @@ proc compile_stmt(stmt) {
 # Compile the body of a function into bytecode.
 proc _compile_function_body(body) {
     alloc saved_code := code
-    code := []
+    alloc saved_len := code_len
+    alloc saved_stack := break_stack
+    alloc saved_stack_len := break_stack_len
+    code := {}
+    code_len := 0
+    break_stack := {}
+    break_stack_len := 0
     compile_block(body)
     emit_instr(opcode("RET"), false)
-    alloc func_code := code + []
+    alloc func_code := make_list(code_len)
+    alloc i := 0
+    loop i < code_len {
+        func_code[i] := code[i]
+        i := i + 1
+    }
     code := saved_code
+    code_len := saved_len
+    break_stack := saved_stack
+    break_stack_len := saved_stack_len
     return func_code
 }
 
@@ -624,36 +683,43 @@ proc compile_expr(node) {
 
 # Compile an AST into final bytecode.
 proc compile(ast) {
-    code := []
-    pending_funcs := []
-    funcs := []
-    break_stack := []
+    code := {}
+    code_len := 0
+    pending_funcs := {}
+    pending_funcs_len := 0
+    funcs := {}
+    funcs_len := 0
+    break_stack := {}
+    break_stack_len := 0
     compile_block(ast)
     emit_instr(opcode("HALT"), false)
     alloc final_code := code
+    alloc final_code_len := code_len
     alloc i := 0
-    loop i < length(pending_funcs) {
+    loop i < pending_funcs_len {
         alloc entry := pending_funcs[i]
         alloc name := entry[0]
         alloc params := entry[1]
         alloc body := entry[2]
-        alloc addr := length(final_code)
-        funcs := funcs + [make_function_entry(name, params, addr)]
+        alloc addr := final_code_len
+        funcs[funcs_len] := make_function_entry(name, params, addr)
+        funcs_len := funcs_len + 1
         alloc j := 0
         loop j < length(body) {
             alloc ins := body[j]
             alloc op := ins[0]
             alloc arg := ins[1]
             if (op == opcode("JUMP") or op == opcode("JUMP_IF_FALSE")) and arg != false {
-                final_code := final_code + [[op, arg + addr]]
+                final_code[final_code_len] := [op, arg + addr]
             } else {
-                final_code := final_code + [[op, arg]]
+                final_code[final_code_len] := [op, arg]
             }
+            final_code_len := final_code_len + 1
             j := j + 1
         }
         i := i + 1
     }
-    return encode_bytecode(final_code)
+    return encode_bytecode(final_code, final_code_len)
 }
 
 # Compile source string into bytecode.
