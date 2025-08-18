@@ -100,13 +100,12 @@ class Interpreter:
             RuntimeError: If the header is missing or incorrect.
         """
         for line in source_code.splitlines():
-            if line.strip() == '':
+            if line.strip() == "":
                 continue
-            if line.strip() == ';;;omg':
+            if line.strip() == ";;;omg":
                 return
         raise RuntimeError(
-            f"OMG script missing required header ';;;omg' "
-            f"in {self.file}"
+            f"OMG script missing required header ';;;omg' " f"in {self.file}"
         )
 
     def strip_header(self, source_code: str) -> str:
@@ -118,11 +117,10 @@ class Interpreter:
         """
         lines = source_code.splitlines()
         for i, line in enumerate(lines):
-            if line.strip() == ';;;omg':
-                return '\n'.join(lines[i + 1:])
+            if line.strip() == ";;;omg":
+                return "\n".join(lines[i + 1 :])
         raise RuntimeError(
-            f"OMG script missing required header ';;;omg'\n"
-            f"in {self.file}"
+            f"OMG script missing required header ';;;omg'\n" f"in {self.file}"
         )
 
     def _resolve_path(self, path: str) -> Path:
@@ -155,13 +153,19 @@ class Interpreter:
         Returns:
             FrozenNamespace: A read-only namespace containing the module's exported variables.
         """
-        base_dir = os.path.dirname(self.file) if self.file not in {"<stdin>", "<test>"} else os.getcwd()
+        base_dir = (
+            os.path.dirname(self.file)
+            if self.file not in {"<stdin>", "<test>"}
+            else os.getcwd()
+        )
         module_path = os.path.normpath(os.path.abspath(os.path.join(base_dir, path)))
 
         if module_path in self.loaded_modules:
             raise RuntimeError(f"Recursive import of '{module_path}'")
         if not os.path.exists(module_path):
-            raise FileNotFoundError(f"Module '{path}' not found relative to '{self.file}'")
+            raise FileNotFoundError(
+                f"Module '{path}' not found relative to '{self.file}'"
+            )
 
         self.loaded_modules.add(module_path)
         try:
@@ -188,7 +192,9 @@ class Interpreter:
 
             module_interpreter.execute(ast)
 
-            exported_bindings = {name: module_interpreter.vars.get(name) for name in exports}
+            exported_bindings = {
+                name: module_interpreter.vars.get(name) for name in exports
+            }
             return FrozenNamespace(exported_bindings)
         except SyntaxError as e:
             raise SyntaxError(f"Error in module '{module_path}': {e}") from e
@@ -212,25 +218,29 @@ class Interpreter:
                     f"({self._format_expr(node[1])} == "
                     f"{self._format_expr(node[2])})"
                 )
-            case 'ident':
+            case "ident":
                 return node[1]
-            case 'number' | 'bool' | 'int':
+            case "number" | "bool" | "int":
                 return str(node[1])
-            case 'string':
+            case "string":
                 return repr(node[1])
-            case 'list':
-                return '[' + ', '.join(self._format_expr(e) for e in node[1]) + ']'
-            case 'dict':
-                return '{' + ', '.join(f"{k}: {self._format_expr(v)}" for k, v in node[1]) + '}'
-            case 'index':
+            case "list":
+                return "[" + ", ".join(self._format_expr(e) for e in node[1]) + "]"
+            case "dict":
+                return (
+                    "{"
+                    + ", ".join(f"{k}: {self._format_expr(v)}" for k, v in node[1])
+                    + "}"
+                )
+            case "index":
                 return f"{self._format_expr(node[1])}[{self._format_expr(node[2])}]"
-            case 'slice':
+            case "slice":
                 start = self._format_expr(node[2])
-                end = '' if node[3] is None else self._format_expr(node[3])
+                end = "" if node[3] is None else self._format_expr(node[3])
                 return f"{self._format_expr(node[1])}[{start}:{end}]"
-            case 'dot':
+            case "dot":
                 return f"{self._format_expr(node[1])}.{node[2]}"
-            case 'func_call':
+            case "func_call":
                 func_expr, args, _ = node[1], node[2], node[3]
                 return (
                     f"{self._format_expr(func_expr)}"
@@ -262,21 +272,21 @@ class Interpreter:
             line = node[-1]
 
             # Literals
-            if op == 'number':
+            if op == "number":
                 return node[1]
-            elif op == 'string':
+            elif op == "string":
                 return node[1]
-            elif op == 'bool':
+            elif op == "bool":
                 return node[1]
-            elif op == 'list':
+            elif op == "list":
                 _, elements, _ = node
                 return [self.eval_expr(elem) for elem in elements]
-            elif op == 'dict':
+            elif op == "dict":
                 _, pairs, _ = node
                 return {k: self.eval_expr(v) for k, v in pairs}
 
             # Variables
-            elif op == 'ident':
+            elif op == "ident":
                 varname = node[1]
                 if varname in self.vars:
                     return self.vars[varname]
@@ -285,7 +295,7 @@ class Interpreter:
                 raise UndefinedVariableException(varname, line, self.file)
 
             # Indexes
-            elif op == 'index':
+            elif op == "index":
                 _, target_node, index_expr, _ = node
                 target = self.eval_expr(target_node)
                 index = self.eval_expr(index_expr)
@@ -318,7 +328,7 @@ class Interpreter:
                 )
 
             # Index slicing
-            elif op == 'slice':
+            elif op == "slice":
                 _, target_node, start_expr, end_expr, _ = node
                 target = self.eval_expr(target_node)
                 start = self.eval_expr(start_expr)
@@ -330,7 +340,7 @@ class Interpreter:
                     f"{self._format_expr(node)}\n"
                     f"On line {line} in {self.file}"
                 )
-            elif op == 'dot':
+            elif op == "dot":
                 _, target_node, attr_name, _ = node
                 target = self.eval_expr(target_node)
                 if not isinstance(target, dict):
@@ -417,13 +427,11 @@ class Interpreter:
                     case Op.LE:
                         term = lhs <= rhs
                     case _:
-                        raise UnknownOpException(
-                            f"Unknown binary operator '{op}'"
-                        )
+                        raise UnknownOpException(f"Unknown binary operator '{op}'")
                 return term
 
             # Unary operator
-            elif op == 'unary':
+            elif op == "unary":
                 operator = node[1]
                 operand = self.eval_expr(node[2])
                 match operator:
@@ -459,14 +467,14 @@ class Interpreter:
                         )
 
             # Function calls
-            elif op == 'func_call':
+            elif op == "func_call":
                 _, func_node, args_nodes, line = node
                 args = [self.eval_expr(arg) for arg in args_nodes]
 
                 # Handle built-in functions before resolving variables
-                if func_node[0] == 'ident':
+                if func_node[0] == "ident":
                     func_name = func_node[1]
-                    if func_name == 'chr':
+                    if func_name == "chr":
                         if len(args) != 1 or not isinstance(args[0], int):
                             raise TypeError(
                                 f"chr() expects one integer argument!\n"
@@ -474,15 +482,19 @@ class Interpreter:
                             )
                         return chr(args[0])
 
-                    if func_name == 'ascii':
-                        if len(args) != 1 or not isinstance(args[0], str) or len(args[0]) != 1:
+                    if func_name == "ascii":
+                        if (
+                            len(args) != 1
+                            or not isinstance(args[0], str)
+                            or len(args[0]) != 1
+                        ):
                             raise TypeError(
                                 f"ascii() expects a single-character string argument!\n"
                                 f"on line {line} in {self.file}"
                             )
                         return ord(args[0])
 
-                    if func_name == 'hex':
+                    if func_name == "hex":
                         if len(args) != 1 or not isinstance(args[0], int):
                             raise TypeError(
                                 f"hex() expects one integer argument!\n"
@@ -490,7 +502,7 @@ class Interpreter:
                             )
                         return str(hex(args[0])[2:]).upper()
 
-                    if func_name == 'binary':
+                    if func_name == "binary":
                         if (
                             len(args) not in (1, 2)
                             or not isinstance(args[0], int)
@@ -502,7 +514,7 @@ class Interpreter:
                             )
                         n = args[0]
                         if len(args) == 1:
-                            return ('-' + bin(abs(n))[2:]) if n < 0 else bin(n)[2:]
+                            return ("-" + bin(abs(n))[2:]) if n < 0 else bin(n)[2:]
                         width = args[1]
                         if width <= 0:
                             raise ValueError(
@@ -510,9 +522,9 @@ class Interpreter:
                                 f"on line {line} in {self.file}"
                             )
                         mask = (1 << width) - 1
-                        return format(n & mask, f'0{width}b')
+                        return format(n & mask, f"0{width}b")
 
-                    if func_name == 'length':
+                    if func_name == "length":
                         if len(args) != 1:
                             raise TypeError(
                                 f"length() expects one argument on line!\n"
@@ -526,7 +538,7 @@ class Interpreter:
                             )
                         return len(arg)
 
-                    if func_name == 'read_file':
+                    if func_name == "read_file":
                         if len(args) != 1 or not isinstance(args[0], str):
                             raise TypeError(
                                 f"read_file() expects a file path string!\n"
@@ -539,7 +551,33 @@ class Interpreter:
                         except OSError:
                             return False
 
-                    if func_name == 'file_open':
+                    if func_name == "write_file":
+                        if len(args) != 2 or not isinstance(args[0], str):
+                            raise TypeError(
+                                f"write_file() expects path and data!\n"
+                                f"on line {line} in {self.file}"
+                            )
+                        path = self._resolve_path(args[0])
+                        data = args[1]
+                        try:
+                            if isinstance(data, str):
+                                path.write_text(data, encoding="utf-8")
+                                return len(data.encode("utf-8"))
+                            if isinstance(data, list) and all(
+                                isinstance(b, int) and 0 <= b <= 255 for b in data
+                            ):
+                                path.write_bytes(bytes(data))
+                                return len(data)
+                            raise TypeError(
+                                f"write_file() expects string or list of bytes!\n"
+                                f"on line {line} in {self.file}"
+                            )
+                        except OSError as e:
+                            raise RuntimeError(
+                                f"Cannot write file '{path}': {e}"
+                            ) from e
+
+                    if func_name == "file_open":
                         if (
                             len(args) != 2
                             or not isinstance(args[0], str)
@@ -552,20 +590,18 @@ class Interpreter:
                         path = self._resolve_path(args[0])
                         mode = args[1]
                         try:
-                            if 'b' in mode:
+                            if "b" in mode:
                                 fobj = open(path, mode)
                             else:
                                 fobj = open(path, mode, encoding="utf-8")
                         except OSError as e:
-                            raise RuntimeError(
-                                f"Cannot open file '{path}': {e}"
-                            ) from e
+                            raise RuntimeError(f"Cannot open file '{path}': {e}") from e
                         handle = Interpreter.next_handle
                         Interpreter.next_handle += 1
                         Interpreter.file_handles[handle] = (fobj, mode)
                         return handle
 
-                    if func_name == 'file_read':
+                    if func_name == "file_read":
                         if len(args) != 1 or not isinstance(args[0], int):
                             raise TypeError(
                                 f"file_read() expects a file handle!\n"
@@ -579,9 +615,9 @@ class Interpreter:
                             )
                         fobj, mode = entry
                         data = fobj.read()
-                        return list(data) if 'b' in mode else data
+                        return list(data) if "b" in mode else data
 
-                    if func_name == 'file_write':
+                    if func_name == "file_write":
                         if len(args) != 2 or not isinstance(args[0], int):
                             raise TypeError(
                                 f"file_write() expects handle and data!\n"
@@ -595,7 +631,7 @@ class Interpreter:
                             )
                         fobj, mode = entry
                         data = args[1]
-                        if 'b' in mode:
+                        if "b" in mode:
                             if not isinstance(data, list) or any(
                                 not isinstance(b, int) or b < 0 or b > 255 for b in data
                             ):
@@ -613,7 +649,7 @@ class Interpreter:
                         fobj.write(data)
                         return len(data.encode("utf-8"))
 
-                    if func_name == 'file_close':
+                    if func_name == "file_close":
                         if len(args) != 1 or not isinstance(args[0], int):
                             raise TypeError(
                                 f"file_close() expects a file handle!\n"
@@ -629,7 +665,7 @@ class Interpreter:
                         fobj.close()
                         return None
 
-                    if func_name == 'file_exists':
+                    if func_name == "file_exists":
                         if len(args) != 1 or not isinstance(args[0], str):
                             raise TypeError(
                                 f"file_exists() expects a path string!\n"
@@ -638,7 +674,47 @@ class Interpreter:
                         path = self._resolve_path(args[0])
                         return path.exists()
 
-                    if func_name == 'freeze':
+                    if func_name == "_omg_vm_syntax_error_handle":
+                        if len(args) != 1 or not isinstance(args[0], str):
+                            raise TypeError(
+                                f"_omg_vm_syntax_error_handle() expects a message!\n"
+                                f"on line {line} in {self.file}"
+                            )
+                        raise SyntaxError(args[0])
+
+                    if func_name == "_omg_vm_type_error_handle":
+                        if len(args) != 1 or not isinstance(args[0], str):
+                            raise TypeError(
+                                f"_omg_vm_type_error_handle() expects a message!\n"
+                                f"on line {line} in {self.file}"
+                            )
+                        raise TypeError(args[0])
+
+                    if func_name == "_omg_vm_undef_ident_error_handle":
+                        if len(args) != 1 or not isinstance(args[0], str):
+                            raise TypeError(
+                                f"_omg_vm_undef_ident_error_handle() expects a message!\n"
+                                f"on line {line} in {self.file}"
+                            )
+                        raise NameError(args[0])
+
+                    if func_name == "_omg_vm_value_error_handle":
+                        if len(args) != 1 or not isinstance(args[0], str):
+                            raise TypeError(
+                                f"_omg_vm_value_error_handle() expects a message!\n"
+                                f"on line {line} in {self.file}"
+                            )
+                        raise ValueError(args[0])
+
+                    if func_name == "_omg_vm_module_import_error_handle":
+                        if len(args) != 1 or not isinstance(args[0], str):
+                            raise TypeError(
+                                f"_omg_vm_module_import_error_handle() expects a message!\n"
+                                f"on line {line} in {self.file}"
+                            )
+                        raise ImportError(args[0])
+
+                    if func_name == "freeze":
                         if len(args) != 1 or not isinstance(args[0], dict):
                             raise TypeError(
                                 f"freeze() expects a dict!\n"
@@ -710,12 +786,12 @@ class Interpreter:
             kind = stmt[0]
             line = stmt[-1]
 
-            if kind == 'decl':
+            if kind == "decl":
                 _, var_name, expr_node, _ = stmt
                 value = self.eval_expr(expr_node)
                 self.vars[var_name] = value
 
-            elif kind == 'assign':
+            elif kind == "assign":
                 _, var_name, expr_node, _ = stmt
                 value = self.eval_expr(expr_node)
                 if var_name in self.vars:
@@ -724,7 +800,7 @@ class Interpreter:
                     self.global_vars[var_name] = value
                 else:
                     raise UndefinedVariableException(var_name, line, self.file)
-            elif kind == 'attr_assign':
+            elif kind == "attr_assign":
                 _, obj_expr, attr_name, value_expr, _ = stmt
                 target = self.eval_expr(obj_expr)
                 if not isinstance(target, dict):
@@ -733,7 +809,7 @@ class Interpreter:
                         f"On line {line} in {self.file}"
                     )
                 target[attr_name] = self.eval_expr(value_expr)
-            elif kind == 'index_assign':
+            elif kind == "index_assign":
                 _, obj_expr, key_expr, value_expr, _ = stmt
                 target = self.eval_expr(obj_expr)
                 key = self.eval_expr(key_expr)
@@ -755,17 +831,17 @@ class Interpreter:
                         f"{self._format_expr(obj_expr)} is not indexable on line {line} in {self.file}"
                     )
 
-            elif kind == 'import':
+            elif kind == "import":
                 _, path, alias, _ = stmt
                 module_ns = self.import_module(path)
                 self.vars[alias] = module_ns
 
-            elif kind == 'emit':
+            elif kind == "emit":
                 _, expr_node, _ = stmt
                 value = self.eval_expr(expr_node)
                 print(value)
 
-            elif kind == 'facts':
+            elif kind == "facts":
                 _, expr_node, line = stmt
                 value = self.eval_expr(expr_node)
                 if not value:
@@ -773,18 +849,18 @@ class Interpreter:
                         f"Assertion failed on line {line}: {self._format_expr(expr_node)}"
                     )
 
-            elif kind == 'if':
+            elif kind == "if":
                 _, cond_node, then_block, else_block, _ = stmt
                 if self.eval_expr(cond_node):
                     self.execute([then_block])
                 elif else_block:
                     self.execute([else_block])
 
-            elif kind == 'block':
+            elif kind == "block":
                 _, block_statements, _ = stmt
                 self.execute(block_statements)
 
-            elif kind == 'loop':
+            elif kind == "loop":
                 _, cond_node, block_node, _ = stmt
                 try:
                     while self.eval_expr(cond_node):
@@ -795,7 +871,7 @@ class Interpreter:
                 except BreakLoop:
                     pass
 
-            elif kind == 'try':
+            elif kind == "try":
                 _, try_block, err_name, except_block, _ = stmt
                 try:
                     self.execute([try_block])
@@ -807,10 +883,10 @@ class Interpreter:
                     if err_name:
                         self.vars[err_name] = str(e)
                     self.execute([except_block])
-            elif kind == 'break':
+            elif kind == "break":
                 raise BreakLoop()
 
-            elif kind == 'func_def':
+            elif kind == "func_def":
                 _, name, params, body, _ = stmt
                 captured = {} if self.vars is self.global_vars else self.vars.copy()
                 # Preserve the global namespace where the function was defined so that
@@ -818,12 +894,12 @@ class Interpreter:
                 func_value = FunctionValue(params, body, captured, self.global_vars)
                 self.vars[name] = func_value
 
-            elif kind == 'return':
+            elif kind == "return":
                 _, expr_node, _ = stmt
                 value = self.eval_expr(expr_node)
                 raise ReturnControlFlow(value)
 
-            elif kind == 'expr_stmt':
+            elif kind == "expr_stmt":
                 _, expr_node, _ = stmt
                 self.eval_expr(expr_node)
 

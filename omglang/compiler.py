@@ -111,6 +111,7 @@ BC_VERSION = (0 << 16) | (1 << 8) | 1
 @dataclass
 class FunctionEntry:
     """Metadata for a compiled function."""
+
     name: str
     params: List[str]
     address: int
@@ -137,6 +138,7 @@ class Compiler:
             "binary",
             "length",
             "read_file",
+            "write_file",
             "freeze",
             "call_builtin",
             "file_open",
@@ -228,9 +230,18 @@ class Compiler:
                 out.extend(sb)
             elif op == "PUSH_BOOL" and isinstance(arg, bool):
                 out.append(1 if arg else 0)
-            elif op in {"BUILD_LIST", "BUILD_DICT", "CALL_VALUE"} and isinstance(arg, int):
+            elif op in {"BUILD_LIST", "BUILD_DICT", "CALL_VALUE"} and isinstance(
+                arg, int
+            ):
                 out.extend(struct.pack("<I", arg))
-            elif op in {"LOAD", "STORE", "CALL", "TCALL", "ATTR", "STORE_ATTR"} and isinstance(arg, str):
+            elif op in {
+                "LOAD",
+                "STORE",
+                "CALL",
+                "TCALL",
+                "ATTR",
+                "STORE_ATTR",
+            } and isinstance(arg, str):
                 sb = arg.encode("utf-8")
                 out.extend(struct.pack("<I", len(sb)))
                 out.extend(sb)
@@ -242,7 +253,9 @@ class Compiler:
                 out.extend(struct.pack("<I", argc))
             elif op == "RAISE" and isinstance(arg, str):
                 out.append(ERROR_KIND_TO_CODE[arg])
-            elif op in {"JUMP", "JUMP_IF_FALSE", "SETUP_EXCEPT"} and isinstance(arg, int):
+            elif op in {"JUMP", "JUMP_IF_FALSE", "SETUP_EXCEPT"} and isinstance(
+                arg, int
+            ):
                 out.extend(struct.pack("<I", arg))
             # Remaining instructions carry no operands.
 
@@ -516,7 +529,7 @@ def disassemble(data: bytes) -> str:
     for _ in range(func_count):
         name_len = struct.unpack_from("<I", data, idx)[0]
         idx += 4
-        name = data[idx:idx + name_len].decode("utf-8")
+        name = data[idx : idx + name_len].decode("utf-8")
         idx += name_len
         param_count = struct.unpack_from("<I", data, idx)[0]
         idx += 4
@@ -524,14 +537,12 @@ def disassemble(data: bytes) -> str:
         for _ in range(param_count):
             p_len = struct.unpack_from("<I", data, idx)[0]
             idx += 4
-            param = data[idx:idx + p_len].decode("utf-8")
+            param = data[idx : idx + p_len].decode("utf-8")
             idx += p_len
             params.append(param)
         addr = struct.unpack_from("<I", data, idx)[0]
         idx += 4
-        lines.append(
-            f"FUNC {name} {param_count} {' '.join(params)} {addr}"
-        )
+        lines.append(f"FUNC {name} {param_count} {' '.join(params)} {addr}")
     code_len = struct.unpack_from("<I", data, idx)[0]
     idx += 4
     for _ in range(code_len):
@@ -545,7 +556,7 @@ def disassemble(data: bytes) -> str:
         elif name == "PUSH_STR":
             slen = struct.unpack_from("<I", data, idx)[0]
             idx += 4
-            s = data[idx:idx + slen].decode("utf-8")
+            s = data[idx : idx + slen].decode("utf-8")
             idx += slen
             lines.append(f"PUSH_STR {s}")
         elif name == "PUSH_BOOL":
@@ -559,13 +570,13 @@ def disassemble(data: bytes) -> str:
         elif name in {"LOAD", "STORE", "CALL", "TCALL", "ATTR", "STORE_ATTR"}:
             slen = struct.unpack_from("<I", data, idx)[0]
             idx += 4
-            s = data[idx:idx + slen].decode("utf-8")
+            s = data[idx : idx + slen].decode("utf-8")
             idx += slen
             lines.append(f"{name} {s}")
         elif name == "BUILTIN":
             slen = struct.unpack_from("<I", data, idx)[0]
             idx += 4
-            s = data[idx:idx + slen].decode("utf-8")
+            s = data[idx : idx + slen].decode("utf-8")
             idx += slen
             argc = struct.unpack_from("<I", data, idx)[0]
             idx += 4

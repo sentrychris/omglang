@@ -220,7 +220,7 @@ proc patch(idx, target) {
 proc is_builtin(name) {
     if name == "chr" or name == "ascii" or name == "hex" or name == "binary" {
         return true
-    } elif name == "length" or name == "read_file" or name == "freeze" or name == "call_builtin" {
+    } elif name == "length" or name == "read_file" or name == "write_file" or name == "freeze" or name == "call_builtin" {
         return true
     } elif name == "file_open" or name == "file_read" or name == "file_write" or name == "file_close" or name == "file_exists" {
         return true
@@ -675,9 +675,7 @@ if length(args) > 0 {
     alloc bc := compile_source(src, path)
     if length(args) > 1 {
         alloc out_path := args[1]
-        alloc h := file_open(out_path, "wb")
-        file_write(h, bc)
-        file_close(h)
+        write_file(out_path, bc)
     } else {
         emit bc
     }
