@@ -121,6 +121,16 @@ The following evaluate to false in a boolean context:
 | `ascii(char)`      | ASCII code of single character            |
 | `chr(n)`           | Character corresponding to ASCII code `n` |
 | `length(x)`        | Length of a list or string                |
+| `file_open(path, mode)` | Open a file and return a handle      |
+| `file_read(handle)` | Read entire contents of an open file     |
+| `file_write(handle, data)` | Write to a file, returns bytes written |
+| `file_close(handle)` | Close an open file                      |
+| `file_exists(path)` | Check if a file exists                   |
+
+File handles are non-negative integers. The `mode` parameter uses Python-style
+flags such as `"r"`, `"rb"`, `"w"`, `"wb"`, `"a"`, and `"ab"`. Text modes
+operate on UTF-8 strings, while binary modes read and write lists of integers
+between 0 and 255.
 
 ---
 
