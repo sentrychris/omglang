@@ -3,5 +3,16 @@ name = "omg_runtime"
 version = "0.1.2"
 edition = "2021"
 
+description = "The OMG language runtime and virtual machine, providing bytecode execution, REPL, and built-in functions."
+license = "MIT"
+authors = ["Chris Rowles <christopher.rowles@outlook.com>"]
+repository = "https://github.com/sentrychris/omglang"
+homepage = "https://github.com/sentrychris/omglang"
+documentation = "https://docs.rs/omg_runtime"
+readme = "README.md"
+keywords = ["language", "vm", "bytecode", "interpreter", "educational"]
+categories = ["compilers", "interpreters", "development-tools"]
+
+
 [dependencies]
 once_cell = "1.19"
