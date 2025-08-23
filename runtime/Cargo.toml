@@ -2,6 +2,14 @@
 name = "omg_runtime"
 version = "0.1.2"
 edition = "2021"
+include = [
+  "src/**",
+  "bootstrap/interpreter.omg",
+  "build.rs",
+  "README.md",
+  "LICENSE*",
+  "Cargo.toml",
+]
 
 description = "The OMG language runtime and virtual machine, providing bytecode execution, REPL, and built-in functions."
 license = "MIT"
