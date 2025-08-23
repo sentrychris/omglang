@@ -19,7 +19,7 @@ homepage = "https://github.com/sentrychris/omglang"
 documentation = "https://docs.rs/omg_runtime"
 readme = "README.md"
 keywords = ["language", "vm", "bytecode", "interpreter", "educational"]
-categories = ["compilers", "interpreters", "development-tools"]
+categories = ["compilers", "development-tools"]
 
 
 [dependencies]
