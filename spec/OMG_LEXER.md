@@ -17,7 +17,7 @@ Key features:
 
 All OMG scripts must begin with the header:
 
-```omg
+```sh
 ;;;omg
 ````
 

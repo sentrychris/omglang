@@ -4,20 +4,19 @@ use std::path::PathBuf;
 use std::process::Command;
 
 fn main() {
-    let out_dir = PathBuf::from(env::var("OUT_DIR").unwrap());
-    let out_bc = out_dir.join("interpreter.omgb");
+    // Rebuild if either the bootstrap source or the compiler changes
+    println!("cargo:rerun-if-changed=bootstrap/interpreter.omg");
 
-    let root = PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap())
-        .parent()
-        .expect("CARGO_MANIFEST_DIR has no parent")
-        .to_path_buf();
+    let out_dir = PathBuf::from(env::var("OUT_DIR").unwrap());
+    let src = PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap())
+        .join("bootstrap/interpreter.omg");
+    let out_bc = out_dir.join("interpreter.omgb");
 
     let status = Command::new("python")
         .arg("-m")
         .arg("omglang.compiler")
-        .arg("bootstrap/interpreter.omg")
+        .arg(&src)
         .arg(&out_bc)
-        .current_dir(&root)
         .status()
         .expect("failed to run compiler");
 
@@ -31,13 +30,4 @@ fn main() {
         fs::copy(&out_bc, &dest).expect("failed to copy .omgb file");
         println!("Copied {} -> {}", out_bc.display(), dest.display());
     }
-
-    println!(
-        "cargo:rerun-if-changed={}",
-        root.join("bootstrap/interpreter.omg").display()
-    );
-    println!(
-        "cargo:rerun-if-changed={}",
-        root.join("omglang/compiler.py").display()
-    );
 }

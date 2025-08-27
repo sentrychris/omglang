@@ -81,6 +81,10 @@ class FunctionValue:
 class Interpreter:
     """Tree-walk interpreter for OMGlang."""
 
+    # Global file handle table shared across interpreter instances
+    file_handles: dict[int, tuple[object, str]] = {}
+    next_handle: int = 0
+
     def __init__(self, file: str, loaded_modules: set[str] | None = None):
         """Initialize the interpreter."""
         self.vars = {}
@@ -120,6 +124,22 @@ class Interpreter:
             f"OMG script missing required header ';;;omg'\n"
             f"in {self.file}"
         )
+
+    def _resolve_path(self, path: str) -> Path:
+        """Resolve a possibly relative path against current_dir if available."""
+        p = Path(path)
+        if not p.is_absolute():
+            base = None
+            for scope in (self.vars, self.global_vars):
+                if not scope:
+                    continue
+                cur = scope.get("current_dir")
+                if isinstance(cur, str):
+                    base = Path(cur.replace("\\", "/"))
+                    break
+            if base is not None:
+                p = base / p
+        return p
 
     # ------------------------------------------------------------------
     # Module system
@@ -513,28 +533,110 @@ class Interpreter:
                                 f"on line {line} in {self.file}"
                             )
 
-                        # PATCH: Since bootstrapping OMG with a native runtime, the original
-                        # interpreter fails to resolve modules which are handled relative from
-                        # the execution script. In order to fix this, we need to adjust the
-                        # module path accordingly.
-                        # with open(args[0], 'r', encoding='utf-8') as f:
-                        #     return f.read()
-                        path = Path(args[0])
-                        if not path.is_absolute():
-                            base = None
-                            for scope in (self.vars, self.global_vars):
-                                if not scope:
-                                    continue
-                                cur = scope.get("current_dir")
-                                if isinstance(cur, str):
-                                    base = Path(cur.replace("\\", "/"))
-                                    break
-                            if base is not None:
-                                path = base / path
+                        path = self._resolve_path(args[0])
                         try:
                             return path.read_text(encoding="utf-8")
                         except OSError:
                             return False
+
+                    if func_name == 'file_open':
+                        if (
+                            len(args) != 2
+                            or not isinstance(args[0], str)
+                            or not isinstance(args[1], str)
+                        ):
+                            raise TypeError(
+                                f"file_open() expects path and mode strings!\n"
+                                f"on line {line} in {self.file}"
+                            )
+                        path = self._resolve_path(args[0])
+                        mode = args[1]
+                        try:
+                            if 'b' in mode:
+                                fobj = open(path, mode)
+                            else:
+                                fobj = open(path, mode, encoding="utf-8")
+                        except OSError as e:
+                            raise RuntimeError(
+                                f"Cannot open file '{path}': {e}"
+                            ) from e
+                        handle = Interpreter.next_handle
+                        Interpreter.next_handle += 1
+                        Interpreter.file_handles[handle] = (fobj, mode)
+                        return handle
+
+                    if func_name == 'file_read':
+                        if len(args) != 1 or not isinstance(args[0], int):
+                            raise TypeError(
+                                f"file_read() expects a file handle!\n"
+                                f"on line {line} in {self.file}"
+                            )
+                        entry = Interpreter.file_handles.get(args[0])
+                        if entry is None:
+                            raise ValueError(
+                                f"Invalid file handle {args[0]}\n"
+                                f"on line {line} in {self.file}"
+                            )
+                        fobj, mode = entry
+                        data = fobj.read()
+                        return list(data) if 'b' in mode else data
+
+                    if func_name == 'file_write':
+                        if len(args) != 2 or not isinstance(args[0], int):
+                            raise TypeError(
+                                f"file_write() expects handle and data!\n"
+                                f"on line {line} in {self.file}"
+                            )
+                        entry = Interpreter.file_handles.get(args[0])
+                        if entry is None:
+                            raise ValueError(
+                                f"Invalid file handle {args[0]}\n"
+                                f"on line {line} in {self.file}"
+                            )
+                        fobj, mode = entry
+                        data = args[1]
+                        if 'b' in mode:
+                            if not isinstance(data, list) or any(
+                                not isinstance(b, int) or b < 0 or b > 255 for b in data
+                            ):
+                                raise TypeError(
+                                    f"file_write() expects list of bytes for binary mode!\n"
+                                    f"on line {line} in {self.file}"
+                                )
+                            written = fobj.write(bytes(data))
+                            return written
+                        if not isinstance(data, str):
+                            raise TypeError(
+                                f"file_write() expects string data for text mode!\n"
+                                f"on line {line} in {self.file}"
+                            )
+                        fobj.write(data)
+                        return len(data.encode("utf-8"))
+
+                    if func_name == 'file_close':
+                        if len(args) != 1 or not isinstance(args[0], int):
+                            raise TypeError(
+                                f"file_close() expects a file handle!\n"
+                                f"on line {line} in {self.file}"
+                            )
+                        entry = Interpreter.file_handles.pop(args[0], None)
+                        if entry is None:
+                            raise ValueError(
+                                f"Invalid file handle {args[0]}\n"
+                                f"on line {line} in {self.file}"
+                            )
+                        fobj, _ = entry
+                        fobj.close()
+                        return None
+
+                    if func_name == 'file_exists':
+                        if len(args) != 1 or not isinstance(args[0], str):
+                            raise TypeError(
+                                f"file_exists() expects a path string!\n"
+                                f"on line {line} in {self.file}"
+                            )
+                        path = self._resolve_path(args[0])
+                        return path.exists()
 
                     if func_name == 'freeze':
                         if len(args) != 1 or not isinstance(args[0], dict):

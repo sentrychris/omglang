@@ -1,0 +1,6 @@
+;;;omg
+
+alloc handle := file_open("./files/test.txt", "w")
+
+file_write(handle, "hello")
+file_close(handle)
