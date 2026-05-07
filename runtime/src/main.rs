@@ -73,6 +73,9 @@ Options:
                              compiler instead of the Rust frontend, then run it.
                              Slower (the compiler runs on the VM) but proves
                              that OMG is genuinely self-hosting.
+        --self-hosted-compile <in.omg> [<out.omgb>]
+                             Like --compile, but uses the OMG-in-OMG compiler.
+                             Writes bytecode to <out.omgb> or stdout.
         --verify-self-hosted Run the fixed-point check: compile a `.omg` with
                              both the Rust and OMG-in-OMG compilers and
                              confirm the byte streams are identical.
@@ -112,6 +115,7 @@ fn main() -> ExitCode {
         "--compile" => return cmd_compile(&args[2..]),
         "--disasm" => return cmd_disasm(&args[2..]),
         "--self-hosted" => return cmd_self_hosted(&args[2..]),
+        "--self-hosted-compile" => return cmd_self_hosted_compile(&args[2..]),
         "--verify-self-hosted" => return cmd_verify_self_hosted(&args[2..]),
         _ => {}
     }
@@ -267,6 +271,39 @@ fn cmd_self_hosted(args: &[String]) -> ExitCode {
             ExitCode::FAILURE
         }
     }
+}
+
+/// Compile a `.omg` file with the embedded OMG-in-OMG compiler and write
+/// the bytecode to disk — the self-hosted analogue of `--compile`.
+fn cmd_self_hosted_compile(args: &[String]) -> ExitCode {
+    if args.is_empty() {
+        eprintln!("--self-hosted-compile expects <in.omg> [<out.omgb>]");
+        return ExitCode::FAILURE;
+    }
+    let in_path = PathBuf::from(&args[0]);
+    let out: Option<PathBuf> = args.get(1).map(PathBuf::from);
+    let bytes = match self_hosted_compile(&in_path) {
+        Ok(b) => b,
+        Err(e) => {
+            eprintln!("{}", e);
+            return ExitCode::FAILURE;
+        }
+    };
+    match out {
+        Some(p) => {
+            if let Err(e) = fs::write(&p, &bytes) {
+                eprintln!("cannot write '{}': {}", p.display(), e);
+                return ExitCode::FAILURE;
+            }
+        }
+        None => {
+            use std::io::Write;
+            if std::io::stdout().write_all(&bytes).is_err() {
+                return ExitCode::FAILURE;
+            }
+        }
+    }
+    ExitCode::SUCCESS
 }
 
 /// Compile a `.omg` file with both the Rust frontend and the OMG-in-OMG

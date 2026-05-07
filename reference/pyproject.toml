@@ -14,9 +14,6 @@ dev = [
     "pygls"
 ]
 
-[project.scripts]
-omg-cli = "scripts.cli:main"
-
 [build-system]
 requires = ["setuptools"]
 build-backend = "setuptools.build_meta"
