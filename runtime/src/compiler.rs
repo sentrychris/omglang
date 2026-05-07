@@ -139,7 +139,7 @@ impl Compiler {
         }
     }
 
-    fn declare_local(&mut self, name: &str) {
+    pub fn declare_local(&mut self, name: &str) {
         if let Some(scope) = self.local_scopes.last_mut() {
             scope.insert(name.to_string());
         }
@@ -828,13 +828,31 @@ fn rebase_jump(instr: Instr, base: usize) -> Instr {
 /// Compile a complete source string from a known file path, recursively
 /// resolving `import` statements relative to that file.
 pub fn compile_source(source: &str, file: impl AsRef<Path>) -> Result<Program, RuntimeError> {
+    compile_source_with_globals(source, file, &[])
+}
+
+/// Compile while pretending the given names are already declared at top
+/// level. Used by the REPL to tell the compiler about `alloc`s and `proc`s
+/// from earlier turns, so that calls like `add5(10)` get lowered to
+/// `Load + CallValue` (closure path) instead of `Call("add5")` (direct
+/// function-table lookup, which would fail since `add5` is a value, not
+/// a registered function).
+pub fn compile_source_with_globals(
+    source: &str,
+    file: impl AsRef<Path>,
+    known_globals: &[String],
+) -> Result<Program, RuntimeError> {
     let path = file.as_ref().to_path_buf();
     let toks = tokenize(source, &path.display().to_string())?;
     let ast = {
         let mut p = Parser::new(&toks, path.display().to_string());
         p.parse_program()?
     };
-    Compiler::new(path).compile_program(ast)
+    let mut compiler = Compiler::new(path);
+    for name in known_globals {
+        compiler.declare_local(name);
+    }
+    compiler.compile_program(ast)
 }
 
 // --- Debug formatting helpers (kept out of public surface) -----------------
