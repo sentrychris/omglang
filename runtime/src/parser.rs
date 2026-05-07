@@ -210,6 +210,7 @@ impl<'a> Parser<'a> {
             _ => return Err(self.syntax("Expected function name after 'proc'")),
         };
         self.expect(&TokKind::LParen)?;
+        self.skip_newlines();
         let mut params: Vec<String> = Vec::new();
         if !matches!(self.peek().kind, TokKind::RParen) {
             let p = self.advance().clone();
@@ -217,13 +218,16 @@ impl<'a> Parser<'a> {
                 TokKind::Ident(s) => s,
                 _ => return Err(self.syntax("Expected parameter name")),
             });
+            self.skip_newlines();
             while matches!(self.peek().kind, TokKind::Comma) {
                 self.advance();
+                self.skip_newlines();
                 let p = self.advance().clone();
                 params.push(match p.kind {
                     TokKind::Ident(s) => s,
                     _ => return Err(self.syntax("Expected parameter name")),
                 });
+                self.skip_newlines();
             }
         }
         self.expect(&TokKind::RParen)?;
@@ -586,12 +590,16 @@ impl<'a> Parser<'a> {
                 TokKind::LParen => {
                     let line = self.peek().line;
                     self.advance();
+                    self.skip_newlines();
                     let mut args = Vec::new();
                     if !matches!(self.peek().kind, TokKind::RParen) {
                         args.push(self.parse_expr()?);
+                        self.skip_newlines();
                         while matches!(self.peek().kind, TokKind::Comma) {
                             self.advance();
+                            self.skip_newlines();
                             args.push(self.parse_expr()?);
+                            self.skip_newlines();
                         }
                     }
                     self.expect(&TokKind::RParen)?;

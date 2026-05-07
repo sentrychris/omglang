@@ -620,16 +620,17 @@ proc parse_postfix(i) {
         alloc k := tok_kind(r[1])
         if k == "LPAREN" {
             alloc line := tok_line(r[1])
-            alloc j := r[1] + 1
+            alloc j := skip_newlines(r[1] + 1)
             alloc args := []
             if tok_kind(j) != "RPAREN" {
                 alloc a := parse_expr(j)
                 args := args + [a[0]]
-                j := a[1]
+                j := skip_newlines(a[1])
                 loop tok_kind(j) == "COMMA" {
-                    a := parse_expr(j + 1)
+                    j := skip_newlines(j + 1)
+                    a := parse_expr(j)
                     args := args + [a[0]]
-                    j := a[1]
+                    j := skip_newlines(a[1])
                 }
             }
             j := expect("RPAREN", j)
@@ -849,20 +850,21 @@ proc parse_stmt(i) {
         }
         alloc name := tok_val(j)
         j := expect("LPAREN", j + 1)
+        j := skip_newlines(j)
         alloc params := []
         if tok_kind(j) != "RPAREN" {
             if tok_kind(j) != "ID" {
                 syntax_error("expected parameter name", j)
             }
             params := params + [tok_val(j)]
-            j := j + 1
+            j := skip_newlines(j + 1)
             loop tok_kind(j) == "COMMA" {
-                j := j + 1
+                j := skip_newlines(j + 1)
                 if tok_kind(j) != "ID" {
                     syntax_error("expected parameter name", j)
                 }
                 params := params + [tok_val(j)]
-                j := j + 1
+                j := skip_newlines(j + 1)
             }
         }
         j := expect("RPAREN", j)

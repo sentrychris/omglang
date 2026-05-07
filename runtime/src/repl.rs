@@ -35,6 +35,8 @@ pub fn repl_interpret() {
 
     let mut buffer: Vec<String> = Vec::new();
     let mut brace_depth: i32 = 0;
+    let mut paren_depth: i32 = 0;
+    let mut bracket_depth: i32 = 0;
     let mut in_string: Option<char> = None;
 
     loop {
@@ -77,17 +79,30 @@ pub fn repl_interpret() {
                 }
                 '{' if in_string.is_none() => brace_depth += 1,
                 '}' if in_string.is_none() => brace_depth -= 1,
+                '(' if in_string.is_none() => paren_depth += 1,
+                ')' if in_string.is_none() => paren_depth -= 1,
+                '[' if in_string.is_none() => bracket_depth += 1,
+                ']' if in_string.is_none() => bracket_depth -= 1,
                 _ => {}
             }
         }
         buffer.push(line);
-        if brace_depth > 0 || in_string.is_some() {
+        if brace_depth > 0
+            || paren_depth > 0
+            || bracket_depth > 0
+            || in_string.is_some()
+        {
             continue;
         }
 
         let block: String = buffer.join("");
         let source = format!(";;;omg\n{}", block);
-        let path = std::env::temp_dir().join("<repl>.omg");
+        // Anchor relative `import` paths to the user's actual CWD rather
+        // than the temp dir; using a synthetic file in CWD makes
+        // `dirname(path)` equal to CWD, which is what users expect.
+        let path = std::env::current_dir()
+            .unwrap_or_else(|_| std::env::temp_dir())
+            .join("<repl>");
 
         // Names of globals/procs declared in earlier turns. Telling the
         // compiler about them ensures `name(args)` calls resolve via
@@ -132,6 +147,8 @@ pub fn repl_interpret() {
 
         buffer.clear();
         brace_depth = 0;
+        paren_depth = 0;
+        bracket_depth = 0;
         in_string = None;
     }
 }

@@ -77,9 +77,18 @@ impl Value {
                 RuntimeError::TypeError(format!("Invalid literal for int(): '{}'", s))
             }),
             Value::Bool(b) => Ok(if *b { 1 } else { 0 }),
-            Value::List(l) => Ok(l.borrow().len() as i64),
-            Value::Dict(d) => Ok(d.borrow().len() as i64),
-            Value::FrozenDict(d) => Ok(d.len() as i64),
+            // Compound values are *not* implicitly convertible to int. Use
+            // `length(x)` if you want the count. Allowing the conversion
+            // hides bugs like `5 + [1,2,3]` silently producing `8`.
+            Value::List(_) => Err(RuntimeError::TypeError(
+                "cannot convert list to int (use length() instead)".to_string(),
+            )),
+            Value::Dict(_) => Err(RuntimeError::TypeError(
+                "cannot convert dict to int (use length() instead)".to_string(),
+            )),
+            Value::FrozenDict(_) => Err(RuntimeError::TypeError(
+                "cannot convert frozen dict to int".to_string(),
+            )),
             Value::Closure { name, .. } => Err(RuntimeError::TypeError(format!(
                 "cannot convert function '{}' to int",
                 name
