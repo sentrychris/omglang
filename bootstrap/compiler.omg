@@ -1,0 +1,1861 @@
+;;;omg
+
+# OMG compiler written in OMG.
+#
+# This program reads an OMG source file, compiles it to .omgb bytecode, and
+# writes the result. Together with the Rust VM it forms the self-hosting
+# implementation:
+#
+#     Rust(compiler.omg)            -> compiler.omgb (bootstrap)
+#     compiler.omgb(compiler.omg)   -> compiler.omgb (fixed point)
+#
+# The Rust runtime ships compiler.omgb embedded; running `omg foo.omg`
+# invokes the embedded compiler to produce foo's bytecode, then runs it.
+#
+# Restrictions that compiler.omg itself observes (so it stays inside the
+# subset of OMG it supports):
+#   - no `try`/`except`
+#   - no nested procs / closures (top-level procs only)
+#   - no `import` (single file)
+#   - no negative-index slicing  (positive bounds only)
+#
+# The compiler ITSELF supports the full language for user programs — the
+# above are restrictions on this file's own use of OMG.
+
+# === Bytecode opcode table =================================================
+
+alloc OP_PUSH_INT       := 0
+alloc OP_PUSH_STR       := 1
+alloc OP_PUSH_BOOL      := 2
+alloc OP_BUILD_LIST     := 3
+alloc OP_BUILD_DICT     := 4
+alloc OP_LOAD           := 5
+alloc OP_STORE          := 6
+alloc OP_ADD            := 7
+alloc OP_SUB            := 8
+alloc OP_MUL            := 9
+alloc OP_DIV            := 10
+alloc OP_MOD            := 11
+alloc OP_EQ             := 12
+alloc OP_NE             := 13
+alloc OP_LT             := 14
+alloc OP_LE             := 15
+alloc OP_GT             := 16
+alloc OP_GE             := 17
+alloc OP_BAND           := 18
+alloc OP_BOR            := 19
+alloc OP_BXOR           := 20
+alloc OP_SHL            := 21
+alloc OP_SHR            := 22
+alloc OP_AND            := 23
+alloc OP_OR             := 24
+alloc OP_NOT            := 25
+alloc OP_NEG            := 26
+alloc OP_INDEX          := 27
+alloc OP_SLICE          := 28
+alloc OP_JUMP           := 29
+alloc OP_JUMP_IF_FALSE  := 30
+alloc OP_CALL           := 31
+alloc OP_TCALL          := 32
+alloc OP_BUILTIN        := 33
+alloc OP_POP            := 34
+alloc OP_PUSH_NONE      := 35
+alloc OP_RET            := 36
+alloc OP_EMIT           := 37
+alloc OP_HALT           := 38
+alloc OP_STORE_INDEX    := 39
+alloc OP_ATTR           := 40
+alloc OP_STORE_ATTR     := 41
+alloc OP_ASSERT         := 42
+alloc OP_CALL_VALUE     := 43
+alloc OP_SETUP_EXCEPT   := 44
+alloc OP_POP_BLOCK      := 45
+alloc OP_RAISE          := 46
+alloc OP_MAKE_FUNC      := 52
+alloc OP_STORE_LOCAL    := 53
+
+# Error kinds for the RAISE instruction's payload byte.
+alloc EK_GENERIC        := 0
+alloc EK_SYNTAX         := 1
+alloc EK_TYPE           := 2
+alloc EK_UNDEF_IDENT    := 3
+alloc EK_VALUE          := 4
+alloc EK_MODULE_IMPORT  := 5
+
+# Bytecode version: same packed layout as the Rust runtime
+# (MAJOR<<16) | (MINOR<<8) | PATCH = 0.1.1.
+alloc BC_VERSION := 257
+
+# === Tiny utilities =========================================================
+
+proc bytes_append(buf, b) {
+    buf := buf + [b]
+    return buf
+}
+
+proc bytes_extend(buf, more) {
+    buf := buf + more
+    return buf
+}
+
+# Write a u32 in little-endian order.
+proc emit_u32(buf, n) {
+    buf := buf + [n & 255]
+    buf := buf + [(n >> 8) & 255]
+    buf := buf + [(n >> 16) & 255]
+    buf := buf + [(n >> 24) & 255]
+    return buf
+}
+
+# Write an i64 in little-endian order. Negative values use two's complement.
+proc emit_i64(buf, n) {
+    alloc x := n
+    if x < 0 {
+        # Two's complement of a 64-bit value: invert bits then add 1.
+        # We synthesise the bottom 8 bytes manually to avoid wide-integer math.
+        alloc i := 0
+        loop i < 8 {
+            buf := buf + [x & 255]
+            x := x >> 8
+            i := i + 1
+        }
+        return buf
+    }
+    alloc i := 0
+    loop i < 8 {
+        buf := buf + [x & 255]
+        x := x >> 8
+        i := i + 1
+    }
+    return buf
+}
+
+# Length-prefixed UTF-8 string. Each character we encode is treated as a
+# single byte — sufficient for ASCII identifiers; multi-byte source strings
+# are re-encoded by the runtime when they reach `read_file`.
+proc emit_str(buf, s) {
+    alloc n := length(s)
+    buf := emit_u32(buf, n)
+    alloc i := 0
+    loop i < n {
+        buf := buf + [ascii(s[i])]
+        i := i + 1
+    }
+    return buf
+}
+
+# Emit a list of bytes (already individual ints 0-255) into `buf`.
+proc emit_bytes(buf, bs) {
+    alloc i := 0
+    alloc n := length(bs)
+    loop i < n {
+        buf := buf + [bs[i]]
+        i := i + 1
+    }
+    return buf
+}
+
+# === Source iteration =======================================================
+
+proc is_digit(ch) {
+    return ch >= "0" and ch <= "9"
+}
+
+proc is_alpha(ch) {
+    return (ch >= "a" and ch <= "z") or (ch >= "A" and ch <= "Z") or ch == "_"
+}
+
+proc is_alnum(ch) {
+    return is_alpha(ch) or is_digit(ch)
+}
+
+# Strip the ;;;omg header. Returns [body, start_line].
+proc strip_header(src) {
+    alloc n := length(src)
+    alloc i := 0
+    alloc line := 1
+    # skip blank lines
+    loop i < n {
+        if src[i] == "\n" {
+            line := line + 1
+            i := i + 1
+        } elif src[i] == " " or src[i] == "\t" or src[i] == "\r" {
+            i := i + 1
+        } else {
+            break
+        }
+    }
+    if i + 6 <= n {
+        if src[i] == ";" and src[i + 1] == ";" and src[i + 2] == ";" and src[i + 3] == "o" and src[i + 4] == "m" and src[i + 5] == "g" {
+            i := i + 6
+            # consume the rest of the header line
+            loop i < n and src[i] != "\n" {
+                i := i + 1
+            }
+            if i < n {
+                i := i + 1
+                line := line + 1
+            }
+            return [src[i:n], line]
+        }
+    }
+    return [src, line]
+}
+
+# === Lexer =================================================================
+#
+# Returns a list of tokens; each token is a 3-list: ["KIND", value, line].
+# `value` is the integer for numbers, the decoded string for strings, the
+# identifier text for identifiers, "" for everything else. Final token is
+# ["EOF", "", line].
+
+proc keyword_kind(word) {
+    if word == "if"     { return "IF"     }
+    if word == "elif"   { return "ELIF"   }
+    if word == "else"   { return "ELSE"   }
+    if word == "loop"   { return "LOOP"   }
+    if word == "break"  { return "BREAK"  }
+    if word == "emit"   { return "EMIT"   }
+    if word == "import" { return "IMPORT" }
+    if word == "as"     { return "AS"     }
+    if word == "facts"  { return "FACTS"  }
+    if word == "proc"   { return "FUNC"   }
+    if word == "return" { return "RETURN" }
+    if word == "and"    { return "AND"    }
+    if word == "or"     { return "OR"     }
+    if word == "alloc"  { return "ALLOC"  }
+    if word == "try"    { return "TRY"    }
+    if word == "except" { return "EXCEPT" }
+    if word == "true"   { return "TRUE"   }
+    if word == "false"  { return "FALSE"  }
+    return ""
+}
+
+proc decode_escape(c) {
+    if c == "n"  { return "\n" }
+    if c == "t"  { return "\t" }
+    if c == "r"  { return "\r" }
+    if c == "\\" { return "\\" }
+    if c == "\"" { return "\"" }
+    if c == "0"  { return chr(0) }
+    return c
+}
+
+proc tokenize(src, file) {
+    alloc res := strip_header(src)
+    alloc body := res[0]
+    alloc line := res[1]
+    alloc n := length(body)
+    alloc i := 0
+    alloc tokens := []
+    loop i < n {
+        alloc c := body[i]
+        if c == " " or c == "\t" or c == "\r" {
+            i := i + 1
+        } elif c == "\n" {
+            tokens := tokens + [["NL", "", line]]
+            line := line + 1
+            i := i + 1
+        } elif c == "#" {
+            loop i < n and body[i] != "\n" {
+                i := i + 1
+            }
+        } elif c == "/" and i + 1 < n and body[i + 1] == "*" {
+            i := i + 2
+            loop i + 1 < n and (body[i] != "*" or body[i + 1] != "/") {
+                if body[i] == "\n" {
+                    line := line + 1
+                }
+                i := i + 1
+            }
+            if i + 1 < n {
+                i := i + 2
+            } else {
+                i := n
+            }
+        } elif c == "0" and i + 1 < n and (body[i + 1] == "b" or body[i + 1] == "B") {
+            i := i + 2
+            alloc num := 0
+            loop i < n and (body[i] == "0" or body[i] == "1") {
+                num := num * 2 + ascii(body[i]) - ascii("0")
+                i := i + 1
+            }
+            tokens := tokens + [["NUM", num, line]]
+        } elif is_digit(c) {
+            alloc num := 0
+            loop i < n and is_digit(body[i]) {
+                num := num * 10 + ascii(body[i]) - ascii("0")
+                i := i + 1
+            }
+            tokens := tokens + [["NUM", num, line]]
+        } elif c == "\"" {
+            i := i + 1
+            alloc s := ""
+            loop i < n and body[i] != "\"" {
+                if body[i] == "\\" and i + 1 < n {
+                    s := s + decode_escape(body[i + 1])
+                    i := i + 2
+                } else {
+                    if body[i] == "\n" {
+                        line := line + 1
+                    }
+                    s := s + body[i]
+                    i := i + 1
+                }
+            }
+            if i < n {
+                i := i + 1
+            }
+            tokens := tokens + [["STR", s, line]]
+        } elif is_alpha(c) {
+            alloc word := ""
+            loop i < n and is_alnum(body[i]) {
+                word := word + body[i]
+                i := i + 1
+            }
+            alloc kind := keyword_kind(word)
+            if kind == "" {
+                tokens := tokens + [["ID", word, line]]
+            } else {
+                tokens := tokens + [[kind, word, line]]
+            }
+        } elif c == ":" and i + 1 < n and body[i + 1] == "=" {
+            tokens := tokens + [["ASSIGN", "", line]]
+            i := i + 2
+        } elif c == "=" and i + 1 < n and body[i + 1] == "=" {
+            tokens := tokens + [["EQ", "", line]]
+            i := i + 2
+        } elif c == "!" and i + 1 < n and body[i + 1] == "=" {
+            tokens := tokens + [["NE", "", line]]
+            i := i + 2
+        } elif c == "<" and i + 1 < n and body[i + 1] == "=" {
+            tokens := tokens + [["LE", "", line]]
+            i := i + 2
+        } elif c == ">" and i + 1 < n and body[i + 1] == "=" {
+            tokens := tokens + [["GE", "", line]]
+            i := i + 2
+        } elif c == "<" and i + 1 < n and body[i + 1] == "<" {
+            tokens := tokens + [["SHL", "", line]]
+            i := i + 2
+        } elif c == ">" and i + 1 < n and body[i + 1] == ">" {
+            tokens := tokens + [["SHR", "", line]]
+            i := i + 2
+        } elif c == "{" {
+            tokens := tokens + [["LBRACE", "", line]]
+            i := i + 1
+        } elif c == "}" {
+            tokens := tokens + [["RBRACE", "", line]]
+            i := i + 1
+        } elif c == "(" {
+            tokens := tokens + [["LPAREN", "", line]]
+            i := i + 1
+        } elif c == ")" {
+            tokens := tokens + [["RPAREN", "", line]]
+            i := i + 1
+        } elif c == "[" {
+            tokens := tokens + [["LBRACK", "", line]]
+            i := i + 1
+        } elif c == "]" {
+            tokens := tokens + [["RBRACK", "", line]]
+            i := i + 1
+        } elif c == "," {
+            tokens := tokens + [["COMMA", "", line]]
+            i := i + 1
+        } elif c == "." {
+            tokens := tokens + [["DOT", "", line]]
+            i := i + 1
+        } elif c == ":" {
+            tokens := tokens + [["COLON", "", line]]
+            i := i + 1
+        } elif c == "+" {
+            tokens := tokens + [["PLUS", "", line]]
+            i := i + 1
+        } elif c == "-" {
+            tokens := tokens + [["MINUS", "", line]]
+            i := i + 1
+        } elif c == "*" {
+            tokens := tokens + [["STAR", "", line]]
+            i := i + 1
+        } elif c == "/" {
+            tokens := tokens + [["SLASH", "", line]]
+            i := i + 1
+        } elif c == "%" {
+            tokens := tokens + [["PERCENT", "", line]]
+            i := i + 1
+        } elif c == "&" {
+            tokens := tokens + [["AMP", "", line]]
+            i := i + 1
+        } elif c == "|" {
+            tokens := tokens + [["PIPE", "", line]]
+            i := i + 1
+        } elif c == "^" {
+            tokens := tokens + [["CARET", "", line]]
+            i := i + 1
+        } elif c == "~" {
+            tokens := tokens + [["TILDE", "", line]]
+            i := i + 1
+        } elif c == "<" {
+            tokens := tokens + [["LT", "", line]]
+            i := i + 1
+        } elif c == ">" {
+            tokens := tokens + [["GT", "", line]]
+            i := i + 1
+        } else {
+            panic("Unexpected character '" + c + "' on line " + line + " in " + file)
+        }
+    }
+    tokens := tokens + [["EOF", "", line]]
+    return tokens
+}
+
+# === Parser ================================================================
+#
+# All parser routines take (tokens, position) and return [node, new_position].
+# AST nodes are lists tagged by their first element.
+
+# Mutable parser state held in the global `parse_state` so individual parser
+# routines don't need to thread the source-file path through every call.
+alloc parse_state := ["", []]
+
+proc set_parse_state(file, tokens) {
+    parse_state := [file, tokens]
+}
+
+proc parse_file() {
+    return parse_state[0]
+}
+
+proc parse_tokens() {
+    return parse_state[1]
+}
+
+proc tok_at(i) {
+    alloc ts := parse_state[1]
+    return ts[i]
+}
+
+proc tok_kind(i) {
+    return tok_at(i)[0]
+}
+
+proc tok_val(i) {
+    return tok_at(i)[1]
+}
+
+proc tok_line(i) {
+    return tok_at(i)[2]
+}
+
+proc syntax_error(msg, i) {
+    alloc t := tok_at(i)
+    panic("SyntaxError: " + msg + " on line " + t[2] + " in " + parse_file())
+}
+
+proc skip_newlines(i) {
+    loop tok_kind(i) == "NL" {
+        i := i + 1
+    }
+    return i
+}
+
+proc expect(kind, i) {
+    if tok_kind(i) != kind {
+        syntax_error("expected " + kind + " but got " + tok_kind(i), i)
+    }
+    return i + 1
+}
+
+# ---- Expressions ----------------------------------------------------------
+
+proc parse_expr(i) {
+    return parse_or(i)
+}
+
+proc parse_or(i) {
+    alloc r := parse_and(i)
+    loop tok_kind(r[1]) == "OR" {
+        alloc line := tok_line(r[1])
+        alloc rhs := parse_and(r[1] + 1)
+        r := [["bin", "or", r[0], rhs[0], line], rhs[1]]
+    }
+    return r
+}
+
+proc parse_and(i) {
+    alloc r := parse_cmp(i)
+    loop tok_kind(r[1]) == "AND" {
+        alloc line := tok_line(r[1])
+        alloc rhs := parse_cmp(r[1] + 1)
+        r := [["bin", "and", r[0], rhs[0], line], rhs[1]]
+    }
+    return r
+}
+
+proc parse_cmp(i) {
+    alloc r := parse_bor(i)
+    loop true {
+        alloc k := tok_kind(r[1])
+        alloc op := ""
+        if k == "EQ" { op := "eq" }
+        if k == "NE" { op := "ne" }
+        if k == "LT" { op := "lt" }
+        if k == "LE" { op := "le" }
+        if k == "GT" { op := "gt" }
+        if k == "GE" { op := "ge" }
+        if op == "" {
+            return r
+        }
+        alloc line := tok_line(r[1])
+        alloc rhs := parse_bor(r[1] + 1)
+        r := [["bin", op, r[0], rhs[0], line], rhs[1]]
+    }
+    return r
+}
+
+proc parse_bor(i) {
+    alloc r := parse_bxor(i)
+    loop tok_kind(r[1]) == "PIPE" {
+        alloc line := tok_line(r[1])
+        alloc rhs := parse_bxor(r[1] + 1)
+        r := [["bin", "bor", r[0], rhs[0], line], rhs[1]]
+    }
+    return r
+}
+
+proc parse_bxor(i) {
+    alloc r := parse_band(i)
+    loop tok_kind(r[1]) == "CARET" {
+        alloc line := tok_line(r[1])
+        alloc rhs := parse_band(r[1] + 1)
+        r := [["bin", "bxor", r[0], rhs[0], line], rhs[1]]
+    }
+    return r
+}
+
+proc parse_band(i) {
+    alloc r := parse_shift(i)
+    loop tok_kind(r[1]) == "AMP" {
+        alloc line := tok_line(r[1])
+        alloc rhs := parse_shift(r[1] + 1)
+        r := [["bin", "band", r[0], rhs[0], line], rhs[1]]
+    }
+    return r
+}
+
+proc parse_shift(i) {
+    alloc r := parse_add(i)
+    loop true {
+        alloc k := tok_kind(r[1])
+        alloc op := ""
+        if k == "SHL" { op := "shl" }
+        if k == "SHR" { op := "shr" }
+        if op == "" {
+            return r
+        }
+        alloc line := tok_line(r[1])
+        alloc rhs := parse_add(r[1] + 1)
+        r := [["bin", op, r[0], rhs[0], line], rhs[1]]
+    }
+    return r
+}
+
+proc parse_add(i) {
+    alloc r := parse_mul(i)
+    loop true {
+        alloc k := tok_kind(r[1])
+        alloc op := ""
+        if k == "PLUS"  { op := "add" }
+        if k == "MINUS" { op := "sub" }
+        if op == "" {
+            return r
+        }
+        alloc line := tok_line(r[1])
+        alloc rhs := parse_mul(r[1] + 1)
+        r := [["bin", op, r[0], rhs[0], line], rhs[1]]
+    }
+    return r
+}
+
+proc parse_mul(i) {
+    alloc r := parse_unary(i)
+    loop true {
+        alloc k := tok_kind(r[1])
+        alloc op := ""
+        if k == "STAR"    { op := "mul" }
+        if k == "SLASH"   { op := "div" }
+        if k == "PERCENT" { op := "mod" }
+        if op == "" {
+            return r
+        }
+        alloc line := tok_line(r[1])
+        alloc rhs := parse_unary(r[1] + 1)
+        r := [["bin", op, r[0], rhs[0], line], rhs[1]]
+    }
+    return r
+}
+
+proc parse_unary(i) {
+    alloc k := tok_kind(i)
+    if k == "TILDE" {
+        alloc line := tok_line(i)
+        alloc r := parse_unary(i + 1)
+        return [["unary", "bnot", r[0], line], r[1]]
+    }
+    if k == "MINUS" {
+        alloc line := tok_line(i)
+        alloc r := parse_unary(i + 1)
+        return [["unary", "neg", r[0], line], r[1]]
+    }
+    if k == "PLUS" {
+        alloc line := tok_line(i)
+        alloc r := parse_unary(i + 1)
+        return [["unary", "plus", r[0], line], r[1]]
+    }
+    return parse_postfix(i)
+}
+
+proc parse_postfix(i) {
+    alloc r := parse_primary(i)
+    loop true {
+        alloc k := tok_kind(r[1])
+        if k == "LPAREN" {
+            alloc line := tok_line(r[1])
+            alloc j := r[1] + 1
+            alloc args := []
+            if tok_kind(j) != "RPAREN" {
+                alloc a := parse_expr(j)
+                args := args + [a[0]]
+                j := a[1]
+                loop tok_kind(j) == "COMMA" {
+                    a := parse_expr(j + 1)
+                    args := args + [a[0]]
+                    j := a[1]
+                }
+            }
+            j := expect("RPAREN", j)
+            r := [["call", r[0], args, line], j]
+        } elif k == "LBRACK" {
+            alloc line := tok_line(r[1])
+            alloc j := r[1] + 1
+            alloc start := parse_expr(j)
+            if tok_kind(start[1]) == "COLON" {
+                alloc end_idx := start[1] + 1
+                if tok_kind(end_idx) == "RBRACK" {
+                    end_idx := end_idx + 1
+                    r := [["slice", r[0], start[0], false, line], end_idx]
+                } else {
+                    alloc e := parse_expr(end_idx)
+                    end_idx := expect("RBRACK", e[1])
+                    r := [["slice", r[0], start[0], e[0], line], end_idx]
+                }
+            } else {
+                j := expect("RBRACK", start[1])
+                r := [["index", r[0], start[0], line], j]
+            }
+        } elif k == "DOT" {
+            alloc line := tok_line(r[1])
+            if tok_kind(r[1] + 1) != "ID" {
+                syntax_error("expected identifier after '.'", r[1] + 1)
+            }
+            alloc name := tok_val(r[1] + 1)
+            r := [["dot", r[0], name, line], r[1] + 2]
+        } else {
+            return r
+        }
+    }
+    return r
+}
+
+proc parse_primary(i) {
+    alloc k := tok_kind(i)
+    alloc line := tok_line(i)
+    if k == "NUM" {
+        return [["num", tok_val(i), line], i + 1]
+    }
+    if k == "STR" {
+        return [["str", tok_val(i), line], i + 1]
+    }
+    if k == "TRUE" {
+        return [["bool", true, line], i + 1]
+    }
+    if k == "FALSE" {
+        return [["bool", false, line], i + 1]
+    }
+    if k == "ID" {
+        return [["id", tok_val(i), line], i + 1]
+    }
+    if k == "LPAREN" {
+        alloc r := parse_expr(i + 1)
+        return [r[0], expect("RPAREN", r[1])]
+    }
+    if k == "LBRACK" {
+        alloc j := skip_newlines(i + 1)
+        alloc elems := []
+        loop tok_kind(j) != "RBRACK" {
+            alloc r := parse_expr(j)
+            elems := elems + [r[0]]
+            j := skip_newlines(r[1])
+            if tok_kind(j) == "COMMA" {
+                j := skip_newlines(j + 1)
+            }
+        }
+        return [["list", elems, line], j + 1]
+    }
+    if k == "LBRACE" {
+        alloc j := skip_newlines(i + 1)
+        alloc pairs := []
+        loop tok_kind(j) != "RBRACE" {
+            alloc key := ""
+            if tok_kind(j) == "STR" {
+                key := tok_val(j)
+                j := j + 1
+            } elif tok_kind(j) == "ID" {
+                key := tok_val(j)
+                j := j + 1
+            } else {
+                syntax_error("invalid dict key", j)
+            }
+            j := expect("COLON", j)
+            j := skip_newlines(j)
+            alloc v := parse_expr(j)
+            pairs := pairs + [[key, v[0]]]
+            j := skip_newlines(v[1])
+            if tok_kind(j) == "COMMA" {
+                j := skip_newlines(j + 1)
+            }
+        }
+        return [["dict", pairs, line], j + 1]
+    }
+    syntax_error("unexpected token " + k, i)
+    return [false, i]
+}
+
+# ---- Statements -----------------------------------------------------------
+
+proc parse_block(i) {
+    alloc line := tok_line(i)
+    alloc j := expect("LBRACE", i)
+    j := skip_newlines(j)
+    alloc stmts := []
+    loop tok_kind(j) != "RBRACE" {
+        alloc r := parse_stmt(j)
+        stmts := stmts + [r[0]]
+        j := skip_newlines(r[1])
+    }
+    return [["block", stmts, line], j + 1]
+}
+
+proc parse_lvalue(i) {
+    if tok_kind(i) != "ID" {
+        syntax_error("expected identifier", i)
+    }
+    alloc node := ["id", tok_val(i), tok_line(i)]
+    alloc j := i + 1
+    loop true {
+        alloc k := tok_kind(j)
+        if k == "DOT" {
+            if tok_kind(j + 1) != "ID" {
+                syntax_error("expected identifier after '.'", j + 1)
+            }
+            alloc attr := tok_val(j + 1)
+            node := ["dot", node, attr, tok_line(j + 1)]
+            j := j + 2
+        } elif k == "LBRACK" {
+            alloc line := tok_line(j)
+            alloc r := parse_expr(j + 1)
+            j := expect("RBRACK", r[1])
+            node := ["index", node, r[0], line]
+        } else {
+            return [node, j]
+        }
+    }
+    return [node, j]
+}
+
+proc parse_stmt(i) {
+    alloc k := tok_kind(i)
+    alloc line := tok_line(i)
+    if k == "ALLOC" {
+        alloc j := i + 1
+        if tok_kind(j) != "ID" {
+            syntax_error("expected identifier after 'alloc'", j)
+        }
+        alloc name := tok_val(j)
+        j := expect("ASSIGN", j + 1)
+        alloc r := parse_expr(j)
+        return [["decl", name, r[0], line], r[1]]
+    }
+    if k == "EMIT" {
+        alloc r := parse_expr(i + 1)
+        return [["emit", r[0], line], r[1]]
+    }
+    if k == "FACTS" {
+        alloc r := parse_expr(i + 1)
+        return [["facts", r[0], line], r[1]]
+    }
+    if k == "IMPORT" {
+        if tok_kind(i + 1) != "STR" {
+            syntax_error("expected string after 'import'", i + 1)
+        }
+        alloc path := tok_val(i + 1)
+        alloc j := expect("AS", i + 2)
+        if tok_kind(j) != "ID" {
+            syntax_error("expected identifier after 'as'", j)
+        }
+        alloc alias := tok_val(j)
+        return [["import", path, alias, line], j + 1]
+    }
+    if k == "IF" {
+        alloc r := parse_expr(i + 1)
+        alloc cond := r[0]
+        alloc bb := parse_block(r[1])
+        alloc elif_cases := []
+        alloc else_block := false
+        alloc j := bb[1]
+        loop tok_kind(j) == "ELIF" {
+            alloc e_line := tok_line(j)
+            alloc ec := parse_expr(j + 1)
+            alloc eb := parse_block(ec[1])
+            elif_cases := elif_cases + [[ec[0], eb[0], e_line]]
+            j := eb[1]
+        }
+        if tok_kind(j) == "ELSE" {
+            alloc eb := parse_block(j + 1)
+            else_block := eb[0]
+            j := eb[1]
+        }
+        # Fold elif chain into nested if/else.
+        alloc tail := else_block
+        alloc idx := length(elif_cases) - 1
+        loop idx >= 0 {
+            alloc ec := elif_cases[idx]
+            tail := ["if", ec[0], ec[1], tail, ec[2]]
+            idx := idx - 1
+        }
+        return [["if", cond, bb[0], tail, line], j]
+    }
+    if k == "LOOP" {
+        alloc r := parse_expr(i + 1)
+        alloc body := parse_block(r[1])
+        return [["loop", r[0], body[0], line], body[1]]
+    }
+    if k == "BREAK" {
+        return [["break", line], i + 1]
+    }
+    if k == "FUNC" {
+        alloc j := i + 1
+        if tok_kind(j) != "ID" {
+            syntax_error("expected function name after 'proc'", j)
+        }
+        alloc name := tok_val(j)
+        j := expect("LPAREN", j + 1)
+        alloc params := []
+        if tok_kind(j) != "RPAREN" {
+            if tok_kind(j) != "ID" {
+                syntax_error("expected parameter name", j)
+            }
+            params := params + [tok_val(j)]
+            j := j + 1
+            loop tok_kind(j) == "COMMA" {
+                j := j + 1
+                if tok_kind(j) != "ID" {
+                    syntax_error("expected parameter name", j)
+                }
+                params := params + [tok_val(j)]
+                j := j + 1
+            }
+        }
+        j := expect("RPAREN", j)
+        alloc body := parse_block(j)
+        return [["func", name, params, body[0], line], body[1]]
+    }
+    if k == "RETURN" {
+        alloc r := parse_expr(i + 1)
+        return [["return", r[0], line], r[1]]
+    }
+    if k == "TRY" {
+        alloc tb := parse_block(i + 1)
+        alloc j := expect("EXCEPT", tb[1])
+        alloc exc_name := false
+        if tok_kind(j) == "ID" {
+            exc_name := tok_val(j)
+            j := j + 1
+        }
+        alloc eb := parse_block(j)
+        return [["try", tb[0], exc_name, eb[0], line], eb[1]]
+    }
+    if k == "ID" {
+        # Reassignment fast path: ID := expr
+        if tok_kind(i + 1) == "ASSIGN" {
+            alloc name := tok_val(i)
+            alloc r := parse_expr(i + 2)
+            return [["assign", name, r[0], line], r[1]]
+        }
+        # lvalue := expr (attr or index assign), or expression statement.
+        alloc lv := parse_lvalue(i)
+        if tok_kind(lv[1]) == "ASSIGN" {
+            alloc r := parse_expr(lv[1] + 1)
+            alloc target := lv[0]
+            if target[0] == "dot" {
+                return [["attr_assign", target[1], target[2], r[0], line], r[1]]
+            }
+            if target[0] == "index" {
+                return [["index_assign", target[1], target[2], r[0], line], r[1]]
+            }
+            return [["expr_stmt", target, line], lv[1]]
+        }
+        # Expression statement.
+        alloc r := parse_postfix(i)
+        return [["expr_stmt", r[0], line], r[1]]
+    }
+    syntax_error("unexpected token " + k, i)
+    return [false, i]
+}
+
+proc parse_program(file, tokens) {
+    set_parse_state(file, tokens)
+    alloc i := skip_newlines(0)
+    alloc stmts := []
+    loop tok_kind(i) != "EOF" {
+        alloc r := parse_stmt(i)
+        stmts := stmts + [r[0]]
+        i := skip_newlines(r[1])
+    }
+    return stmts
+}
+
+# === Compiler ==============================================================
+#
+# Lowers the AST to a flat list of bytecode instructions plus a list of
+# function entries [name, params, address]. The output mirrors what the
+# Rust compiler produces, byte-for-byte.
+
+# Compiler state (no closures so we keep this in globals).
+alloc cc_code := []
+alloc cc_pending_funcs := []   # list of [name, params, body_code]
+alloc cc_funcs := []           # list of [name, params, address]
+alloc cc_break_stack := []     # list of (list of patch indices)
+alloc cc_local_scopes := [[]]  # stack of name lists
+alloc cc_module_counter := 0
+alloc cc_current_prefix := ""
+alloc cc_current_file := ""
+
+# Builtin names: calls to these become BUILTIN.
+alloc cc_builtins := [
+    "chr", "ascii", "hex", "binary", "length", "read_file",
+    "freeze", "call_builtin", "file_open", "file_read",
+    "file_write", "file_close", "file_exists"
+]
+
+proc cc_is_builtin(name) {
+    alloc i := 0
+    alloc n := length(cc_builtins)
+    loop i < n {
+        if cc_builtins[i] == name {
+            return true
+        }
+        i := i + 1
+    }
+    return false
+}
+
+# RAISE-helper names map to ErrorKind codes.
+proc cc_raise_kind(name) {
+    if name == "panic" or name == "raise" {
+        return EK_GENERIC
+    }
+    if name == "_omg_vm_syntax_error_handle"        { return EK_SYNTAX        }
+    if name == "_omg_vm_type_error_handle"          { return EK_TYPE          }
+    if name == "_omg_vm_undef_ident_error_handle"   { return EK_UNDEF_IDENT   }
+    if name == "_omg_vm_value_error_handle"         { return EK_VALUE         }
+    if name == "_omg_vm_module_import_error_handle" { return EK_MODULE_IMPORT }
+    return -1
+}
+
+proc cc_is_reserved(name) {
+    return name == "args" or name == "module_file" or name == "current_dir"
+}
+
+proc cc_mangle(name) {
+    if cc_current_prefix == "" {
+        return name
+    }
+    return cc_current_prefix + name
+}
+
+proc cc_in_function_scope(name) {
+    if length(cc_local_scopes) <= 1 {
+        return false
+    }
+    alloc i := 1
+    alloc n := length(cc_local_scopes)
+    loop i < n {
+        alloc scope := cc_local_scopes[i]
+        alloc j := 0
+        alloc m := length(scope)
+        loop j < m {
+            if scope[j] == name {
+                return true
+            }
+            j := j + 1
+        }
+        i := i + 1
+    }
+    return false
+}
+
+proc cc_is_value_binding(name) {
+    alloc i := 0
+    alloc n := length(cc_local_scopes)
+    loop i < n {
+        alloc scope := cc_local_scopes[i]
+        alloc j := 0
+        alloc m := length(scope)
+        loop j < m {
+            if scope[j] == name {
+                return true
+            }
+            j := j + 1
+        }
+        i := i + 1
+    }
+    return false
+}
+
+proc cc_declare_local(name) {
+    alloc top := length(cc_local_scopes) - 1
+    alloc scope := cc_local_scopes[top]
+    cc_local_scopes[top] := scope + [name]
+}
+
+proc cc_resolve_load(name) {
+    if cc_in_function_scope(name) {
+        return name
+    }
+    if cc_is_reserved(name) {
+        return name
+    }
+    return cc_mangle(name)
+}
+
+proc cc_resolve_store(name) {
+    if length(cc_local_scopes) > 1 {
+        return name
+    }
+    if cc_is_reserved(name) {
+        return name
+    }
+    return cc_mangle(name)
+}
+
+# --- Instruction emission -------------------------------------------------
+#
+# Instructions are 2-element lists ["KIND", payload].
+
+proc cc_emit(instr) {
+    cc_code := cc_code + [instr]
+}
+
+proc cc_emit_simple(opname) {
+    cc_emit([opname, false])
+}
+
+proc cc_placeholder(opname) {
+    alloc idx := length(cc_code)
+    cc_emit([opname, 0])
+    return idx
+}
+
+proc cc_patch(idx, target) {
+    cc_code[idx] := [cc_code[idx][0], target]
+}
+
+# Walk over the AST node and emit code; expressions push exactly one value.
+
+proc compile_expr(node) {
+    alloc kind := node[0]
+    if kind == "num"  {
+        cc_emit(["PUSH_INT",  node[1]])
+        return false
+    }
+    if kind == "str"  {
+        cc_emit(["PUSH_STR",  node[1]])
+        return false
+    }
+    if kind == "bool" {
+        cc_emit(["PUSH_BOOL", node[1]])
+        return false
+    }
+    if kind == "id" {
+        cc_emit(["LOAD", cc_resolve_load(node[1])])
+        return false
+    }
+    if kind == "list" {
+        alloc elems := node[1]
+        alloc i := 0
+        alloc n := length(elems)
+        loop i < n {
+            compile_expr(elems[i])
+            i := i + 1
+        }
+        cc_emit(["BUILD_LIST", n])
+        return false
+    }
+    if kind == "dict" {
+        alloc pairs := node[1]
+        alloc i := 0
+        alloc n := length(pairs)
+        loop i < n {
+            cc_emit(["PUSH_STR", pairs[i][0]])
+            compile_expr(pairs[i][1])
+            i := i + 1
+        }
+        cc_emit(["BUILD_DICT", n])
+        return false
+    }
+    if kind == "index" {
+        compile_expr(node[1])
+        compile_expr(node[2])
+        cc_emit_simple("INDEX")
+        return false
+    }
+    if kind == "slice" {
+        compile_expr(node[1])
+        compile_expr(node[2])
+        if node[3] == false {
+            cc_emit_simple("PUSH_NONE")
+        } else {
+            compile_expr(node[3])
+        }
+        cc_emit_simple("SLICE")
+        return false
+    }
+    if kind == "dot" {
+        compile_expr(node[1])
+        cc_emit(["ATTR", node[2]])
+        return false
+    }
+    if kind == "call" {
+        alloc callee := node[1]
+        alloc args := node[2]
+        if callee[0] == "id" {
+            alloc cname := callee[1]
+            alloc rk := cc_raise_kind(cname)
+            if rk != -1 {
+                if length(args) > 0 {
+                    compile_expr(args[0])
+                } else {
+                    cc_emit(["PUSH_STR", ""])
+                }
+                cc_emit(["RAISE", rk])
+                # RAISE always unwinds, so no follow-up bytecode runs.  We
+                # match the Rust compiler exactly and leave the stack
+                # logically unbalanced — the unwind code path doesn't care.
+                return false
+            }
+            if cc_is_builtin(cname) {
+                alloc i := 0
+                alloc n := length(args)
+                loop i < n {
+                    compile_expr(args[i])
+                    i := i + 1
+                }
+                cc_emit(["BUILTIN", [cname, n]])
+                return false
+            }
+            if cc_is_value_binding(cname) {
+                cc_emit(["LOAD", cc_resolve_load(cname)])
+                alloc i := 0
+                alloc n := length(args)
+                loop i < n {
+                    compile_expr(args[i])
+                    i := i + 1
+                }
+                cc_emit(["CALL_VALUE", n])
+                return false
+            }
+            alloc i := 0
+            alloc n := length(args)
+            loop i < n {
+                compile_expr(args[i])
+                i := i + 1
+            }
+            cc_emit(["CALL", cc_mangle(cname)])
+            return false
+        }
+        compile_expr(callee)
+        alloc i := 0
+        alloc n := length(args)
+        loop i < n {
+            compile_expr(args[i])
+            i := i + 1
+        }
+        cc_emit(["CALL_VALUE", n])
+        return false
+    }
+    if kind == "unary" {
+        compile_expr(node[2])
+        if node[1] == "neg"  {
+            cc_emit_simple("NEG")
+            return false
+        }
+        if node[1] == "bnot" {
+            cc_emit_simple("NOT")
+            return false
+        }
+        if node[1] == "plus" { return false }
+        panic("unknown unary op " + node[1])
+    }
+    if kind == "bin" {
+        alloc op := node[1]
+        if op == "and" {
+            compile_expr(node[2])
+            alloc jf := cc_placeholder("JUMP_IF_FALSE")
+            compile_expr(node[3])
+            cc_emit(["PUSH_BOOL", true])
+            cc_emit_simple("AND")
+            alloc jend := cc_placeholder("JUMP")
+            cc_patch(jf, length(cc_code))
+            cc_emit(["PUSH_BOOL", false])
+            cc_patch(jend, length(cc_code))
+            return false
+        }
+        if op == "or" {
+            compile_expr(node[2])
+            alloc jf := cc_placeholder("JUMP_IF_FALSE")
+            cc_emit(["PUSH_BOOL", true])
+            alloc jend := cc_placeholder("JUMP")
+            cc_patch(jf, length(cc_code))
+            compile_expr(node[3])
+            cc_emit(["PUSH_BOOL", false])
+            cc_emit_simple("OR")
+            cc_patch(jend, length(cc_code))
+            return false
+        }
+        compile_expr(node[2])
+        compile_expr(node[3])
+        if op == "add"  {
+            cc_emit_simple("ADD")
+             return false
+        }
+        if op == "sub"  {
+            cc_emit_simple("SUB")
+             return false
+        }
+        if op == "mul"  {
+            cc_emit_simple("MUL")
+             return false
+        }
+        if op == "div"  {
+            cc_emit_simple("DIV")
+             return false
+        }
+        if op == "mod"  {
+            cc_emit_simple("MOD")
+             return false
+        }
+        if op == "eq"   {
+            cc_emit_simple("EQ")
+              return false
+        }
+        if op == "ne"   {
+            cc_emit_simple("NE")
+              return false
+        }
+        if op == "lt"   {
+            cc_emit_simple("LT")
+              return false
+        }
+        if op == "le"   {
+            cc_emit_simple("LE")
+              return false
+        }
+        if op == "gt"   {
+            cc_emit_simple("GT")
+              return false
+        }
+        if op == "ge"   {
+            cc_emit_simple("GE")
+              return false
+        }
+        if op == "band" {
+            cc_emit_simple("BAND")
+            return false
+        }
+        if op == "bor"  {
+            cc_emit_simple("BOR")
+             return false
+        }
+        if op == "bxor" {
+            cc_emit_simple("BXOR")
+            return false
+        }
+        if op == "shl"  {
+            cc_emit_simple("SHL")
+             return false
+        }
+        if op == "shr"  {
+            cc_emit_simple("SHR")
+             return false
+        }
+        panic("unknown binary op " + op)
+    }
+    panic("unknown expression kind: " + kind)
+}
+
+proc compile_block_node(block) {
+    if block[0] == "block" {
+        alloc stmts := block[1]
+        alloc i := 0
+        alloc n := length(stmts)
+        loop i < n {
+            compile_stmt(stmts[i])
+            i := i + 1
+        }
+        return false
+    }
+    compile_stmt(block)
+    return false
+}
+
+# Path resolution for compile-time imports. Keep it simple: drop the last
+# path component of `base` and join with `rel`.
+proc path_dirname(p) {
+    alloc i := length(p) - 1
+    loop i >= 0 {
+        if p[i] == "/" or p[i] == "\\" {
+            return p[0:i]
+        }
+        i := i - 1
+    }
+    return ""
+}
+
+proc path_join(base, rel) {
+    if length(rel) > 0 and (rel[0] == "/" or rel[0] == "\\") {
+        return rel
+    }
+    if length(base) == 0 {
+        return rel
+    }
+    return base + "/" + rel
+}
+
+# Compile an `import "path" as alias` by recursively reading + compiling the
+# referenced file, then emitting a frozen-namespace dict bound to `alias`.
+proc compile_import(path, alias, line) {
+    alloc resolved := path_join(path_dirname(cc_current_file), path)
+    cc_module_counter := cc_module_counter + 1
+    alloc prefix := "__mod_" + cc_module_counter + "__"
+    alloc src := read_file(resolved)
+    if src == false {
+        panic("ModuleImportError: cannot read '" + resolved + "'")
+    }
+    alloc tokens := tokenize(src, resolved)
+    alloc ast := parse_program(resolved, tokens)
+    # Collect exports first so we can emit them in declaration order.
+    alloc exports := []
+    alloc i := 0
+    alloc n := length(ast)
+    loop i < n {
+        alloc s := ast[i]
+        if s[0] == "decl" {
+            exports := exports + [[s[1], "value"]]
+        }
+        if s[0] == "func" {
+            exports := exports + [[s[1], "func"]]
+        }
+        i := i + 1
+    }
+    # Compile the imported module's top-level statements inline at the
+    # import site, with all globals prefixed.
+    alloc saved_prefix := cc_current_prefix
+    alloc saved_file   := cc_current_file
+    cc_current_prefix := prefix
+    cc_current_file   := resolved
+    i := 0
+    loop i < n {
+        compile_stmt(ast[i])
+        i := i + 1
+    }
+    cc_current_prefix := saved_prefix
+    cc_current_file   := saved_file
+    # Build the namespace dict.
+    i := 0
+    alloc ne := length(exports)
+    loop i < ne {
+        alloc ex := exports[i]
+        cc_emit(["PUSH_STR", ex[0]])
+        if ex[1] == "func" {
+            cc_emit(["PUSH_STR", prefix + ex[0]])
+        } else {
+            if cc_is_reserved(ex[0]) {
+                cc_emit(["LOAD", ex[0]])
+            } else {
+                cc_emit(["LOAD", prefix + ex[0]])
+            }
+        }
+        i := i + 1
+    }
+    cc_emit(["BUILD_DICT", ne])
+    cc_emit(["BUILTIN", ["freeze", 1]])
+    cc_emit(["STORE_LOCAL", cc_resolve_store(alias)])
+    cc_declare_local(alias)
+}
+
+proc compile_stmt(stmt) {
+    alloc kind := stmt[0]
+    if kind == "emit" {
+        compile_expr(stmt[1])
+        cc_emit_simple("EMIT")
+        return false
+    }
+    if kind == "decl" {
+        compile_expr(stmt[2])
+        cc_emit(["STORE_LOCAL", cc_resolve_store(stmt[1])])
+        cc_declare_local(stmt[1])
+        return false
+    }
+    if kind == "assign" {
+        compile_expr(stmt[2])
+        cc_emit(["STORE", cc_resolve_store(stmt[1])])
+        return false
+    }
+    if kind == "attr_assign" {
+        compile_expr(stmt[1])
+        compile_expr(stmt[3])
+        cc_emit(["STORE_ATTR", stmt[2]])
+        return false
+    }
+    if kind == "index_assign" {
+        compile_expr(stmt[1])
+        compile_expr(stmt[2])
+        compile_expr(stmt[3])
+        cc_emit_simple("STORE_INDEX")
+        return false
+    }
+    if kind == "expr_stmt" {
+        compile_expr(stmt[1])
+        cc_emit_simple("POP")
+        return false
+    }
+    if kind == "import" {
+        compile_import(stmt[1], stmt[2], stmt[3])
+        return false
+    }
+    if kind == "facts" {
+        compile_expr(stmt[1])
+        cc_emit_simple("ASSERT")
+        return false
+    }
+    if kind == "if" {
+        # Unroll any elif chain produced by the parser.  Use a sentinel
+        # (`done`) instead of `break` to avoid relying on a nested loop
+        # break-frame inside compile_stmt's own bytecode.
+        alloc cases := [[stmt[1], stmt[2]]]
+        alloc else_block := false
+        alloc cur_tail := stmt[3]
+        alloc done := false
+        loop done == false {
+            if cur_tail == false {
+                done := true
+            } elif cur_tail[0] == "if" {
+                cases := cases + [[cur_tail[1], cur_tail[2]]]
+                cur_tail := cur_tail[3]
+            } else {
+                else_block := cur_tail
+                done := true
+            }
+        }
+        alloc end_jumps := []
+        alloc i := 0
+        alloc n := length(cases)
+        loop i < n {
+            alloc c := cases[i]
+            compile_expr(c[0])
+            alloc jf := cc_placeholder("JUMP_IF_FALSE")
+            compile_block_node(c[1])
+            alloc tmp_jp := cc_placeholder("JUMP")
+            end_jumps := end_jumps + [tmp_jp]
+            cc_patch(jf, length(cc_code))
+            i := i + 1
+        }
+        if else_block != false {
+            compile_block_node(else_block)
+        }
+        alloc here := length(cc_code)
+        i := 0
+        alloc m := length(end_jumps)
+        loop i < m {
+            cc_patch(end_jumps[i], here)
+            i := i + 1
+        }
+        return false
+    }
+    if kind == "loop" {
+        alloc start := length(cc_code)
+        compile_expr(stmt[1])
+        alloc jf := cc_placeholder("JUMP_IF_FALSE")
+        cc_break_stack := cc_break_stack + [[]]
+        compile_block_node(stmt[2])
+        cc_emit(["JUMP", start])
+        alloc here := length(cc_code)
+        cc_patch(jf, here)
+        alloc top := length(cc_break_stack) - 1
+        alloc breaks := cc_break_stack[top]
+        cc_break_stack := cc_break_stack[0:top]
+        alloc i := 0
+        loop i < length(breaks) {
+            cc_patch(breaks[i], here)
+            i := i + 1
+        }
+        return false
+    }
+    if kind == "try" {
+        alloc handler_idx := cc_placeholder("SETUP_EXCEPT")
+        compile_block_node(stmt[1])
+        cc_emit_simple("POP_BLOCK")
+        alloc jend := cc_placeholder("JUMP")
+        alloc handler_pc := length(cc_code)
+        cc_patch(handler_idx, handler_pc)
+        alloc exc_name := stmt[2]
+        if exc_name == false {
+            cc_emit_simple("POP")
+        } else {
+            cc_emit(["STORE_LOCAL", cc_resolve_store(exc_name)])
+            cc_declare_local(exc_name)
+        }
+        compile_block_node(stmt[3])
+        cc_patch(jend, length(cc_code))
+        return false
+    }
+    if kind == "func" {
+        alloc name := stmt[1]
+        alloc params := stmt[2]
+        alloc body := stmt[3]
+        alloc body_code := compile_function_body(params, body)
+        alloc mangled := cc_mangle(name)
+        cc_pending_funcs := cc_pending_funcs + [[mangled, params, body_code]]
+        cc_emit(["MAKE_FUNC", mangled])
+        if length(cc_local_scopes) > 1 {
+            cc_declare_local(name)
+        }
+        return false
+    }
+    if kind == "return" {
+        alloc expr := stmt[1]
+        if expr[0] == "call" and expr[1][0] == "id" {
+            alloc cname := expr[1][1]
+            alloc rk := cc_raise_kind(cname)
+            if rk != -1 {
+                if length(expr[2]) > 0 {
+                    compile_expr(expr[2][0])
+                } else {
+                    cc_emit(["PUSH_STR", ""])
+                }
+                cc_emit(["RAISE", rk])
+                return false
+            }
+            if cc_is_builtin(cname) == false and cc_is_value_binding(cname) == false {
+                # Direct tail call of a top-level proc.
+                alloc args := expr[2]
+                alloc i := 0
+                alloc n := length(args)
+                loop i < n {
+                    compile_expr(args[i])
+                    i := i + 1
+                }
+                cc_emit(["TCALL", cc_mangle(cname)])
+                return false
+            }
+        }
+        compile_expr(expr)
+        cc_emit_simple("RET")
+        return false
+    }
+    if kind == "break" {
+        alloc top := length(cc_break_stack) - 1
+        alloc j := cc_placeholder("JUMP")
+        cc_break_stack[top] := cc_break_stack[top] + [j]
+        return false
+    }
+    if kind == "block" {
+        compile_block_node(stmt)
+        return false
+    }
+    panic("unknown statement: " + kind)
+}
+
+proc compile_function_body(params, body) {
+    alloc saved_code   := cc_code
+    alloc saved_breaks := cc_break_stack
+    cc_code := []
+    cc_break_stack := []
+    alloc new_scope := []
+    alloc i := 0
+    alloc n := length(params)
+    loop i < n {
+        new_scope := new_scope + [params[i]]
+        i := i + 1
+    }
+    cc_local_scopes := cc_local_scopes + [new_scope]
+    compile_block_node(body)
+    cc_emit_simple("RET")
+    alloc popped := cc_local_scopes[0:length(cc_local_scopes) - 1]
+    cc_local_scopes := popped
+    alloc out := cc_code
+    cc_code := saved_code
+    cc_break_stack := saved_breaks
+    return out
+}
+
+# Rebase a function body's jump targets so they land at absolute PCs after
+# the function table is appended.
+proc cc_rebase(body, base) {
+    alloc out := []
+    alloc i := 0
+    alloc n := length(body)
+    loop i < n {
+        alloc instr := body[i]
+        alloc op := instr[0]
+        if op == "JUMP" or op == "JUMP_IF_FALSE" or op == "SETUP_EXCEPT" {
+            out := out + [[op, instr[1] + base]]
+        } else {
+            out := out + [instr]
+        }
+        i := i + 1
+    }
+    return out
+}
+
+# Drive a full program compilation. Returns [final_code, funcs_list], where
+# funcs_list is a list of [name, params, address] sorted by name.
+proc compile_program_node(ast, file) {
+    cc_code := []
+    cc_pending_funcs := []
+    cc_funcs := []
+    cc_break_stack := []
+    cc_local_scopes := [[]]
+    cc_module_counter := 0
+    cc_current_prefix := ""
+    cc_current_file := file
+    alloc i := 0
+    alloc n := length(ast)
+    loop i < n {
+        compile_stmt(ast[i])
+        i := i + 1
+    }
+    cc_emit_simple("HALT")
+    alloc final_code := cc_code
+    alloc pf := cc_pending_funcs
+    i := 0
+    n := length(pf)
+    loop i < n {
+        alloc f := pf[i]
+        alloc addr := length(final_code)
+        cc_funcs := cc_funcs + [[f[0], f[1], addr]]
+        final_code := final_code + cc_rebase(f[2], addr)
+        i := i + 1
+    }
+    return [final_code, cc_funcs]
+}
+
+# === Bytecode writer =======================================================
+
+# Encode one compiled instruction tuple ["KIND", payload] into bytes.
+proc encode_instr(buf, instr) {
+    alloc op := instr[0]
+    alloc arg := instr[1]
+    if op == "PUSH_INT"        {
+        buf := bytes_append(buf, OP_PUSH_INT)
+              return emit_i64(buf, arg)
+    }
+    if op == "PUSH_STR"        {
+        buf := bytes_append(buf, OP_PUSH_STR)
+              return emit_str(buf, arg)
+    }
+    if op == "PUSH_BOOL" {
+        buf := bytes_append(buf, OP_PUSH_BOOL)
+        if arg == true {
+            return bytes_append(buf, 1)
+        }
+        return bytes_append(buf, 0)
+    }
+    if op == "BUILD_LIST"      {
+        buf := bytes_append(buf, OP_BUILD_LIST)
+            return emit_u32(buf, arg)
+    }
+    if op == "BUILD_DICT"      {
+        buf := bytes_append(buf, OP_BUILD_DICT)
+            return emit_u32(buf, arg)
+    }
+    if op == "LOAD"            {
+        buf := bytes_append(buf, OP_LOAD)
+                  return emit_str(buf, arg)
+    }
+    if op == "STORE"           {
+        buf := bytes_append(buf, OP_STORE)
+                 return emit_str(buf, arg)
+    }
+    if op == "ADD"             { return bytes_append(buf, OP_ADD)             }
+    if op == "SUB"             { return bytes_append(buf, OP_SUB)             }
+    if op == "MUL"             { return bytes_append(buf, OP_MUL)             }
+    if op == "DIV"             { return bytes_append(buf, OP_DIV)             }
+    if op == "MOD"             { return bytes_append(buf, OP_MOD)             }
+    if op == "EQ"              { return bytes_append(buf, OP_EQ)              }
+    if op == "NE"              { return bytes_append(buf, OP_NE)              }
+    if op == "LT"              { return bytes_append(buf, OP_LT)              }
+    if op == "LE"              { return bytes_append(buf, OP_LE)              }
+    if op == "GT"              { return bytes_append(buf, OP_GT)              }
+    if op == "GE"              { return bytes_append(buf, OP_GE)              }
+    if op == "BAND"            { return bytes_append(buf, OP_BAND)            }
+    if op == "BOR"             { return bytes_append(buf, OP_BOR)             }
+    if op == "BXOR"            { return bytes_append(buf, OP_BXOR)            }
+    if op == "SHL"             { return bytes_append(buf, OP_SHL)             }
+    if op == "SHR"             { return bytes_append(buf, OP_SHR)             }
+    if op == "AND"             { return bytes_append(buf, OP_AND)             }
+    if op == "OR"              { return bytes_append(buf, OP_OR)              }
+    if op == "NOT"             { return bytes_append(buf, OP_NOT)             }
+    if op == "NEG"             { return bytes_append(buf, OP_NEG)             }
+    if op == "INDEX"           { return bytes_append(buf, OP_INDEX)           }
+    if op == "SLICE"           { return bytes_append(buf, OP_SLICE)           }
+    if op == "JUMP"            {
+        buf := bytes_append(buf, OP_JUMP)
+                  return emit_u32(buf, arg)
+    }
+    if op == "JUMP_IF_FALSE"   {
+        buf := bytes_append(buf, OP_JUMP_IF_FALSE)
+         return emit_u32(buf, arg)
+    }
+    if op == "CALL"            {
+        buf := bytes_append(buf, OP_CALL)
+                  return emit_str(buf, arg)
+    }
+    if op == "TCALL"           {
+        buf := bytes_append(buf, OP_TCALL)
+                 return emit_str(buf, arg)
+    }
+    if op == "BUILTIN" {
+        buf := bytes_append(buf, OP_BUILTIN)
+        buf := emit_str(buf, arg[0])
+        return emit_u32(buf, arg[1])
+    }
+    if op == "POP"             { return bytes_append(buf, OP_POP)             }
+    if op == "PUSH_NONE"       { return bytes_append(buf, OP_PUSH_NONE)       }
+    if op == "RET"             { return bytes_append(buf, OP_RET)             }
+    if op == "EMIT"            { return bytes_append(buf, OP_EMIT)            }
+    if op == "HALT"            { return bytes_append(buf, OP_HALT)            }
+    if op == "STORE_INDEX"     { return bytes_append(buf, OP_STORE_INDEX)     }
+    if op == "ATTR"            {
+        buf := bytes_append(buf, OP_ATTR)
+                  return emit_str(buf, arg)
+    }
+    if op == "STORE_ATTR"      {
+        buf := bytes_append(buf, OP_STORE_ATTR)
+            return emit_str(buf, arg)
+    }
+    if op == "ASSERT"          { return bytes_append(buf, OP_ASSERT)          }
+    if op == "CALL_VALUE"      {
+        buf := bytes_append(buf, OP_CALL_VALUE)
+            return emit_u32(buf, arg)
+    }
+    if op == "SETUP_EXCEPT"    {
+        buf := bytes_append(buf, OP_SETUP_EXCEPT)
+          return emit_u32(buf, arg)
+    }
+    if op == "POP_BLOCK"       { return bytes_append(buf, OP_POP_BLOCK)       }
+    if op == "RAISE" {
+        buf := bytes_append(buf, OP_RAISE)
+        return bytes_append(buf, arg)
+    }
+    if op == "MAKE_FUNC"       {
+        buf := bytes_append(buf, OP_MAKE_FUNC)
+        return emit_str(buf, arg)
+    }
+    if op == "STORE_LOCAL"     {
+        buf := bytes_append(buf, OP_STORE_LOCAL)
+        return emit_str(buf, arg)
+    }
+    panic("unknown instruction: " + op)
+}
+
+# Sort the function table by name so the emitted bytes are deterministic
+# regardless of declaration order. Insertion sort — N is small (a few
+# hundred entries at most for realistic programs).
+proc sort_funcs(funcs) {
+    alloc out := []
+    alloc i := 0
+    alloc n := length(funcs)
+    loop i < n {
+        alloc cur := funcs[i]
+        alloc j := length(out) - 1
+        loop j >= 0 and out[j][0] > cur[0] {
+            j := j - 1
+        }
+        alloc head := out[0:j + 1]
+        alloc tail := out[j + 1:length(out)]
+        out := head + [cur] + tail
+        i := i + 1
+    }
+    return out
+}
+
+# Build the full .omgb byte string.
+proc write_bytecode(code, funcs) {
+    alloc buf := []
+    buf := bytes_append(buf, ascii("O"))
+    buf := bytes_append(buf, ascii("M"))
+    buf := bytes_append(buf, ascii("G"))
+    buf := bytes_append(buf, ascii("B"))
+    buf := emit_u32(buf, BC_VERSION)
+    alloc sorted := sort_funcs(funcs)
+    buf := emit_u32(buf, length(sorted))
+    alloc i := 0
+    alloc n := length(sorted)
+    loop i < n {
+        alloc f := sorted[i]
+        buf := emit_str(buf, f[0])
+        alloc params := f[1]
+        buf := emit_u32(buf, length(params))
+        alloc j := 0
+        alloc m := length(params)
+        loop j < m {
+            buf := emit_str(buf, params[j])
+            j := j + 1
+        }
+        buf := emit_u32(buf, f[2])
+        i := i + 1
+    }
+    buf := emit_u32(buf, length(code))
+    i := 0
+    n := length(code)
+    loop i < n {
+        buf := encode_instr(buf, code[i])
+        i := i + 1
+    }
+    return buf
+}
+
+# === Entry point ===========================================================
+
+proc do_compile(in_path, out_path) {
+    alloc src := read_file(in_path)
+    if src == false {
+        panic("cannot read '" + in_path + "'")
+    }
+    alloc tokens := tokenize(src, in_path)
+    alloc ast := parse_program(in_path, tokens)
+    alloc compiled := compile_program_node(ast, in_path)
+    alloc bytes := write_bytecode(compiled[0], compiled[1])
+    alloc h := file_open(out_path, "wb")
+    file_write(h, bytes)
+    file_close(h)
+}
+
+# `args[0]` is the script path itself (the embedded compiler.omgb); the
+# real arguments start at args[1].  Mirrors `argv[0]` in Python / C.
+if length(args) < 3 {
+    panic("usage: compiler <in.omg> <out.omgb>")
+}
+
+do_compile(args[1], args[2])

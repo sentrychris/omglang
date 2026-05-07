@@ -1,17 +1,16 @@
 [package]
 name = "omg_runtime"
-version = "0.1.2"
+version = "0.2.0"
 edition = "2021"
 include = [
   "src/**",
-  "bootstrap/interpreter.omg",
   "build.rs",
   "README.md",
   "LICENSE*",
   "Cargo.toml",
 ]
 
-description = "The OMG language runtime and virtual machine, providing bytecode execution, REPL, and built-in functions."
+description = "The fully self-hosted OMG language runtime: lexer, parser, bytecode compiler, stack VM, REPL, and built-in functions, all in Rust."
 license = "MIT"
 authors = ["Chris Rowles <christopher.rowles@outlook.com>"]
 repository = "https://github.com/sentrychris/omglang"

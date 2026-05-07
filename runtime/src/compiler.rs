@@ -1,0 +1,915 @@
+//! # OMGlang Bytecode Compiler
+//!
+//! Lowers an [`crate::ast::Node`] tree into a flat instruction stream + a
+//! function table compatible with the existing VM.
+//!
+//! Equivalent to `omglang/compiler.py` from the reference implementation,
+//! plus first-class **native import** support: instead of refusing files
+//! with `import`, this compiler recursively compiles imported modules,
+//! mangles their function names so they don't collide, and emits inline
+//! initialisation that builds a frozen-namespace dict for each module.
+//!
+//! There is no longer a need for the OMG-implemented `bootstrap/interpreter.omg`
+//! — running a `.omg` file goes straight through this compiler in-process.
+
+use std::collections::{HashMap, HashSet};
+use std::fs;
+use std::mem;
+use std::path::{Path, PathBuf};
+use std::rc::Rc;
+
+use crate::ast::{BinOp, Node, UnaryOp};
+use crate::bytecode::{Function, Instr};
+use crate::error::{ErrorKind, RuntimeError};
+use crate::lexer::tokenize;
+use crate::parser::Parser;
+
+/// Built-in function names known to the compiler. Calls to these become
+/// `CallBuiltin` instructions instead of `Call`. Keep in sync with
+/// `runtime::vm::builtins::call_builtin`.
+fn builtin_names() -> &'static [&'static str] {
+    &[
+        "chr",
+        "ascii",
+        "hex",
+        "binary",
+        "length",
+        "read_file",
+        "freeze",
+        "call_builtin",
+        "file_open",
+        "file_read",
+        "file_write",
+        "file_close",
+        "file_exists",
+    ]
+}
+
+/// Names that lower to a `Raise(kind)` instruction. These mirror the helper
+/// names used by the original bootstrap interpreter and the Python
+/// reference compiler.
+fn raise_helpers() -> &'static [(&'static str, ErrorKind)] {
+    &[
+        ("panic", ErrorKind::Generic),
+        ("raise", ErrorKind::Generic),
+        ("_omg_vm_syntax_error_handle", ErrorKind::Syntax),
+        ("_omg_vm_type_error_handle", ErrorKind::Type),
+        (
+            "_omg_vm_undef_ident_error_handle",
+            ErrorKind::UndefinedIdent,
+        ),
+        ("_omg_vm_value_error_handle", ErrorKind::Value),
+        (
+            "_omg_vm_module_import_error_handle",
+            ErrorKind::ModuleImport,
+        ),
+    ]
+}
+
+fn lookup_raise(name: &str) -> Option<ErrorKind> {
+    raise_helpers()
+        .iter()
+        .find(|(n, _)| *n == name)
+        .map(|(_, k)| *k)
+}
+
+fn is_builtin(name: &str) -> bool {
+    builtin_names().contains(&name)
+}
+
+/// One compiled program: instruction stream + function table.
+pub struct Program {
+    pub code: Vec<Instr>,
+    pub funcs: HashMap<String, Function>,
+}
+
+/// Compiler context. A single instance compiles the entry-point file plus
+/// any modules it imports, sharing one global instruction stream and one
+/// function table across them.
+pub struct Compiler {
+    code: Vec<Instr>,
+    pending_funcs: Vec<(String, Rc<Vec<String>>, Vec<Instr>)>,
+    funcs: HashMap<String, Function>,
+    break_stack: Vec<Vec<usize>>,
+    /// Modules already loaded during this compile, keyed by canonical path.
+    loaded_modules: HashMap<PathBuf, ModuleInfo>,
+    /// Stack of paths currently being loaded — for cycle detection.
+    loading_stack: HashSet<PathBuf>,
+    /// Counter used to generate unique mangling prefixes.
+    module_counter: usize,
+    /// Active mangling prefix for the file currently being compiled. Empty
+    /// string for the entry-point file.
+    current_prefix: String,
+    /// Current source-file path, used in error messages.
+    current_file: PathBuf,
+    /// Stack of name sets that are *locally* bound (parameters, allocs,
+    /// import aliases, captured closures). Used to decide whether
+    /// `f(x)` should compile to a direct `Call` or to `Load + CallValue`.
+    /// The bottom-most frame represents the file's top-level locals.
+    local_scopes: Vec<HashSet<String>>,
+}
+
+#[derive(Clone)]
+struct ModuleInfo {
+    /// Mangling prefix used for this module (e.g. "__mod_3__").
+    prefix: String,
+    /// Names that are exported (top-level alloc + proc names, *unprefixed*).
+    exports: Vec<(String, ExportKind)>,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ExportKind {
+    Func,
+    Value,
+}
+
+impl Compiler {
+    pub fn new(entry_file: impl Into<PathBuf>) -> Self {
+        Self {
+            code: Vec::new(),
+            pending_funcs: Vec::new(),
+            funcs: HashMap::new(),
+            break_stack: Vec::new(),
+            loaded_modules: HashMap::new(),
+            loading_stack: HashSet::new(),
+            module_counter: 0,
+            current_prefix: String::new(),
+            current_file: entry_file.into(),
+            local_scopes: vec![HashSet::new()],
+        }
+    }
+
+    fn declare_local(&mut self, name: &str) {
+        if let Some(scope) = self.local_scopes.last_mut() {
+            scope.insert(name.to_string());
+        }
+    }
+
+    /// True when `name` is bound inside a function body (parameter, alloc,
+    /// nested proc, except-binding). The bottom-most scope tracks
+    /// *top-level* bindings, which are globals and so deliberately excluded.
+    fn in_function_scope(&self, name: &str) -> bool {
+        if self.local_scopes.len() <= 1 {
+            return false;
+        }
+        self.local_scopes
+            .iter()
+            .skip(1)
+            .any(|scope| scope.contains(name))
+    }
+
+    /// True when `name` has been *declared* anywhere in the current
+    /// compilation, including the top-level scope. Used to decide whether
+    /// a `name(args)` form should compile to a direct `Call` (top-level
+    /// proc, fast path) or to `Load + CallValue` (any value binding,
+    /// because the value may be a closure — e.g. `alloc add5 := make_adder(5)`).
+    fn is_value_binding(&self, name: &str) -> bool {
+        self.local_scopes.iter().any(|scope| scope.contains(name))
+    }
+
+    /// Reserved names auto-injected by the runtime as globals — they must
+    /// never be prefixed by a module mangling, otherwise imports would lose
+    /// access to them.
+    fn is_reserved_global(name: &str) -> bool {
+        matches!(name, "args" | "module_file" | "current_dir")
+    }
+
+    /// Resolve a name for a *load* (Ident, Call, etc.). Locals stay as-is;
+    /// globals get the active module prefix unless they are reserved.
+    fn resolve_load(&self, name: &str) -> String {
+        if self.in_function_scope(name) {
+            name.to_string()
+        } else if Self::is_reserved_global(name) {
+            name.to_string()
+        } else {
+            self.mangle(name)
+        }
+    }
+
+    /// Resolve a name for a *store*. At top-level, names go to globals (so
+    /// they get mangled). Inside a function body, they're stored in the
+    /// caller frame's locals (no mangling).
+    fn resolve_store(&self, name: &str) -> String {
+        if self.local_scopes.len() > 1 {
+            name.to_string()
+        } else if Self::is_reserved_global(name) {
+            name.to_string()
+        } else {
+            self.mangle(name)
+        }
+    }
+
+    /// Compile a complete program (entry-point AST already parsed) into a
+    /// final [`Program`].
+    pub fn compile_program(mut self, ast: Vec<Node>) -> Result<Program, RuntimeError> {
+        for stmt in ast {
+            self.compile_stmt(&stmt)?;
+        }
+        self.emit(Instr::Halt);
+        // Flush pending function bodies after the main code so PC layout is:
+        //   [main code...HALT][func1 body][func2 body]...
+        let mut final_code = self.code;
+        let pending = std::mem::take(&mut self.pending_funcs);
+        for (name, params, body) in pending {
+            let addr = final_code.len();
+            self.funcs.insert(
+                name,
+                Function {
+                    params: params.as_ref().clone(),
+                    address: addr,
+                },
+            );
+            for instr in body {
+                final_code.push(rebase_jump(instr, addr));
+            }
+        }
+        Ok(Program {
+            code: final_code,
+            funcs: self.funcs,
+        })
+    }
+
+    // ------------------------------------------------------------------
+    // Helpers
+    // ------------------------------------------------------------------
+
+    fn emit(&mut self, instr: Instr) {
+        self.code.push(instr);
+    }
+
+    fn placeholder(&mut self, instr: Instr) -> usize {
+        let idx = self.code.len();
+        self.code.push(instr);
+        idx
+    }
+
+    fn patch_jump(&mut self, idx: usize, target: usize) {
+        self.code[idx] = match &self.code[idx] {
+            Instr::Jump(_) => Instr::Jump(target),
+            Instr::JumpIfFalse(_) => Instr::JumpIfFalse(target),
+            Instr::SetupExcept(_) => Instr::SetupExcept(target),
+            other => panic!("patch_jump on non-jump instr: {:?}", DebugInstr(other)),
+        };
+    }
+
+    /// Apply the active module prefix to a top-level binding name.
+    fn mangle(&self, name: &str) -> String {
+        if self.current_prefix.is_empty() {
+            name.to_string()
+        } else {
+            format!("{}{}", self.current_prefix, name)
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // Statements
+    // ------------------------------------------------------------------
+
+    fn compile_stmt(&mut self, stmt: &Node) -> Result<(), RuntimeError> {
+        match stmt {
+            Node::Emit(expr, _) => {
+                self.compile_expr(expr)?;
+                self.emit(Instr::Emit);
+            }
+            Node::Decl(name, expr, _) => {
+                self.compile_expr(expr)?;
+                // `alloc` always creates a fresh binding in the innermost
+                // scope; we use StoreLocal so it doesn't clobber a same-named
+                // global (e.g. the runtime-injected `args`).
+                self.emit(Instr::StoreLocal(self.resolve_store(name)));
+                self.declare_local(name);
+            }
+            Node::Assign(name, expr, _) => {
+                self.compile_expr(expr)?;
+                self.emit(Instr::Store(self.resolve_store(name)));
+            }
+            Node::AttrAssign(target, attr, value, _) => {
+                self.compile_expr(target)?;
+                self.compile_expr(value)?;
+                self.emit(Instr::StoreAttr(attr.clone()));
+            }
+            Node::IndexAssign(target, idx, value, _) => {
+                self.compile_expr(target)?;
+                self.compile_expr(idx)?;
+                self.compile_expr(value)?;
+                self.emit(Instr::StoreIndex);
+            }
+            Node::ExprStmt(expr, _) => {
+                self.compile_expr(expr)?;
+                self.emit(Instr::Pop);
+            }
+            Node::Import(path, alias, line) => {
+                self.compile_import(path, alias, *line)?;
+            }
+            Node::Facts(expr, _) => {
+                self.compile_expr(expr)?;
+                self.emit(Instr::Assert);
+            }
+            Node::If(cond, then_block, tail, _) => {
+                // Unroll nested elif chain to share the same end-jump array.
+                let mut cases: Vec<(&Node, &Node)> = Vec::new();
+                let mut else_block: Option<&Node> = None;
+                let mut current_cond: &Node = cond;
+                let mut current_then: &Node = then_block;
+                let mut current_tail: &Option<Box<Node>> = tail;
+                loop {
+                    cases.push((current_cond, current_then));
+                    match current_tail.as_deref() {
+                        Some(Node::If(c, t, nt, _)) => {
+                            current_cond = c;
+                            current_then = t;
+                            current_tail = nt;
+                        }
+                        Some(b @ Node::Block(_, _)) => {
+                            else_block = Some(b);
+                            break;
+                        }
+                        Some(other) => {
+                            else_block = Some(other);
+                            break;
+                        }
+                        None => break,
+                    }
+                }
+                let mut end_jumps: Vec<usize> = Vec::new();
+                for (c, b) in cases {
+                    self.compile_expr(c)?;
+                    let jf = self.placeholder(Instr::JumpIfFalse(0));
+                    self.compile_block_node(b)?;
+                    end_jumps.push(self.placeholder(Instr::Jump(0)));
+                    let here = self.code.len();
+                    self.patch_jump(jf, here);
+                }
+                if let Some(eb) = else_block {
+                    self.compile_block_node(eb)?;
+                }
+                let here = self.code.len();
+                for j in end_jumps {
+                    self.patch_jump(j, here);
+                }
+            }
+            Node::Loop(cond, body, _) => {
+                let start = self.code.len();
+                self.compile_expr(cond)?;
+                let jf = self.placeholder(Instr::JumpIfFalse(0));
+                self.break_stack.push(Vec::new());
+                self.compile_block_node(body)?;
+                self.emit(Instr::Jump(start));
+                let here = self.code.len();
+                self.patch_jump(jf, here);
+                let breaks = self.break_stack.pop().unwrap();
+                for b in breaks {
+                    self.patch_jump(b, here);
+                }
+            }
+            Node::Try(try_block, exc_name, except_block, _) => {
+                let handler_idx = self.placeholder(Instr::SetupExcept(0));
+                self.compile_block_node(try_block)?;
+                self.emit(Instr::PopBlock);
+                let end_jump = self.placeholder(Instr::Jump(0));
+                let handler_pc = self.code.len();
+                self.patch_jump(handler_idx, handler_pc);
+                if let Some(name) = exc_name {
+                    self.emit(Instr::StoreLocal(self.resolve_store(name)));
+                    self.declare_local(name);
+                } else {
+                    self.emit(Instr::Pop);
+                }
+                self.compile_block_node(except_block)?;
+                let end_pc = self.code.len();
+                self.patch_jump(end_jump, end_pc);
+            }
+            Node::FuncDef(name, params, body, _) => {
+                let body_code = self.compile_function_body(params, body)?;
+                let mangled = self.mangle(name);
+                self.pending_funcs
+                    .push((mangled.clone(), params.clone(), body_code));
+                // Bind the function as a first-class value at the definition
+                // site. At top level this stores `Closure { mangled, ∅ }` to
+                // globals; inside a function body it captures the current
+                // local environment so nested procs become real closures.
+                self.emit(Instr::MakeFunc(mangled));
+                // Inside another function, the proc lives in the local env,
+                // so further references resolve via Load + CallValue. At
+                // top level we leave it out of the local-scope tracker so
+                // calls of the form `foo()` compile to fast direct `Call`s.
+                if self.local_scopes.len() > 1 {
+                    self.declare_local(name);
+                }
+            }
+            Node::Return(expr, _) => {
+                if let Node::FuncCall(callee, args, _) = expr.as_ref() {
+                    if let Node::Ident(name, _) = callee.as_ref() {
+                        if let Some(kind) = lookup_raise(name) {
+                            // raise / panic are not tail-callable; lower to RAISE.
+                            self.compile_raise_call(kind, args)?;
+                            return Ok(());
+                        }
+                        // Tail-call optimisation only applies to direct
+                        // calls of known top-level procs. If the name is a
+                        // value binding (parameter, alloc, nested proc),
+                        // fall through to the generic `Load + CallValue +
+                        // Ret` path below so closures resolve correctly.
+                        if !is_builtin(name) && !self.is_value_binding(name) {
+                            for a in args {
+                                self.compile_expr(a)?;
+                            }
+                            self.emit(Instr::TailCall(self.resolve_call_name(name)));
+                            return Ok(());
+                        }
+                    }
+                }
+                self.compile_expr(expr)?;
+                self.emit(Instr::Ret);
+            }
+            Node::Break(_) => {
+                if self.break_stack.is_empty() {
+                    return Err(RuntimeError::SyntaxError(format!(
+                        "'break' outside of loop in {}",
+                        self.current_file.display()
+                    )));
+                }
+                let j = self.placeholder(Instr::Jump(0));
+                self.break_stack.last_mut().unwrap().push(j);
+            }
+            Node::Block(stmts, _) => {
+                for s in stmts {
+                    self.compile_stmt(s)?;
+                }
+            }
+            other => {
+                return Err(RuntimeError::SyntaxError(format!(
+                    "Unsupported statement at line {} in {}: {:?}",
+                    other.line(),
+                    self.current_file.display(),
+                    DebugNode(other)
+                )));
+            }
+        }
+        Ok(())
+    }
+
+    fn compile_block_node(&mut self, node: &Node) -> Result<(), RuntimeError> {
+        match node {
+            Node::Block(stmts, _) => {
+                for s in stmts {
+                    self.compile_stmt(s)?;
+                }
+                Ok(())
+            }
+            other => self.compile_stmt(other),
+        }
+    }
+
+    fn compile_function_body(
+        &mut self,
+        params: &Rc<Vec<String>>,
+        body: &Node,
+    ) -> Result<Vec<Instr>, RuntimeError> {
+        let saved_code = mem::take(&mut self.code);
+        // Function bodies start with empty break_stack so a stray `break`
+        // produces a syntax error, matching the Python compiler.
+        let saved_break = mem::take(&mut self.break_stack);
+        // Push a new local scope seeded with the parameter names. They are
+        // bound by the VM at call time; the compiler only needs to know
+        // which identifiers are local (parameters / declarations) to choose
+        // between Call and CallValue for `name(args)` forms.
+        let mut new_scope: HashSet<String> = HashSet::new();
+        for p in params.iter() {
+            new_scope.insert(p.clone());
+        }
+        self.local_scopes.push(new_scope);
+        self.compile_block_node(body)?;
+        self.emit(Instr::Ret);
+        self.local_scopes.pop();
+        let func_code = mem::replace(&mut self.code, saved_code);
+        self.break_stack = saved_break;
+        Ok(func_code)
+    }
+
+    fn compile_raise_call(
+        &mut self,
+        kind: ErrorKind,
+        args: &[Node],
+    ) -> Result<(), RuntimeError> {
+        if let Some(first) = args.first() {
+            self.compile_expr(first)?;
+        } else {
+            self.emit(Instr::PushStr(String::new()));
+        }
+        self.emit(Instr::Raise(kind));
+        Ok(())
+    }
+
+    /// When the entry file (or an imported module) calls a user-defined
+    /// function by bare name, the compiler resolves it against the active
+    /// mangling prefix.
+    fn resolve_call_name(&self, name: &str) -> String {
+        // Imported modules use their own mangling prefix while compiling, so
+        // calling a sibling proc within the same module gets the prefix
+        // applied.  Since we don't know at this point whether `name` is a
+        // local proc or a top-level proc from the entry file, the convention
+        // is: top-level procs in *every* file are prefixed with their module
+        // prefix, and we always add the prefix when emitting CALL.  Builtins
+        // are special-cased before reaching this function.
+        format!("{}{}", self.current_prefix, name)
+    }
+
+    // ------------------------------------------------------------------
+    // Imports
+    // ------------------------------------------------------------------
+
+    fn compile_import_alias_store(&mut self, alias: &str) {
+        // `import ... as name` introduces a brand-new binding; treat it as
+        // an alloc so it doesn't accidentally rebind a same-named global.
+        self.emit(Instr::StoreLocal(self.resolve_store(alias)));
+        self.declare_local(alias);
+    }
+
+    fn compile_import(
+        &mut self,
+        path: &str,
+        alias: &str,
+        line: usize,
+    ) -> Result<(), RuntimeError> {
+        let resolved = self.resolve_module_path(path).map_err(|e| {
+            RuntimeError::ModuleImportError(format!(
+                "Module '{}' not found relative to '{}' on line {}: {}",
+                path,
+                self.current_file.display(),
+                line,
+                e
+            ))
+        })?;
+        // Cycle detection.
+        if self.loading_stack.contains(&resolved) {
+            return Err(RuntimeError::ModuleImportError(format!(
+                "Recursive import of '{}'",
+                resolved.display()
+            )));
+        }
+        // Cache.
+        let info = if let Some(info) = self.loaded_modules.get(&resolved) {
+            info.clone()
+        } else {
+            self.compile_module_inline(&resolved)?
+        };
+        // Bind the alias to a frozen namespace built at this point in the
+        // bytecode. For each export:
+        //   - functions:  PUSH_STR <mangled fn name>
+        //   - values:     LOAD <mangled var name>
+        // Then BUILD_DICT and freeze.
+        for (name, kind) in &info.exports {
+            self.emit(Instr::PushStr(name.clone()));
+            match kind {
+                ExportKind::Func => {
+                    self.emit(Instr::PushStr(format!("{}{}", info.prefix, name)));
+                }
+                ExportKind::Value => {
+                    // Reserved globals (`args`, `module_file`, `current_dir`)
+                    // were stored unprefixed by the imported module's
+                    // `Decl` — see `resolve_store`. We must Load them by the
+                    // same name here.
+                    let load_name = if Self::is_reserved_global(name) {
+                        name.clone()
+                    } else {
+                        format!("{}{}", info.prefix, name)
+                    };
+                    self.emit(Instr::Load(load_name));
+                }
+            }
+        }
+        self.emit(Instr::BuildDict(info.exports.len()));
+        self.emit(Instr::CallBuiltin("freeze".to_string(), 1));
+        self.compile_import_alias_store(alias);
+        Ok(())
+    }
+
+    fn resolve_module_path(&self, raw: &str) -> std::io::Result<PathBuf> {
+        let raw = raw.replace('\\', "/");
+        let p = Path::new(&raw);
+        let base = self
+            .current_file
+            .parent()
+            .map(|p| p.to_path_buf())
+            .unwrap_or_else(|| PathBuf::from("."));
+        let candidate = if p.is_absolute() {
+            p.to_path_buf()
+        } else {
+            base.join(p)
+        };
+        // Canonicalise to use as a stable cache key.
+        fs::canonicalize(&candidate)
+    }
+
+    fn compile_module_inline(
+        &mut self,
+        resolved: &Path,
+    ) -> Result<ModuleInfo, RuntimeError> {
+        let source = fs::read_to_string(resolved).map_err(|e| {
+            RuntimeError::ModuleImportError(format!(
+                "Cannot read '{}': {}",
+                resolved.display(),
+                e
+            ))
+        })?;
+        // Lex + parse the imported file.
+        let toks = tokenize(&source, &resolved.display().to_string())?;
+        let ast = {
+            let mut parser = Parser::new(&toks, resolved.display().to_string());
+            parser.parse_program()?
+        };
+        // Determine exports from top-level decls / func_defs.
+        let mut exports: Vec<(String, ExportKind)> = Vec::new();
+        for stmt in &ast {
+            match stmt {
+                Node::Decl(name, _, _) => {
+                    exports.push((name.clone(), ExportKind::Value));
+                }
+                Node::FuncDef(name, _, _, _) => {
+                    exports.push((name.clone(), ExportKind::Func));
+                }
+                _ => {}
+            }
+        }
+        // Allocate a unique mangling prefix for this module.
+        self.module_counter += 1;
+        let prefix = format!("__mod_{}__", self.module_counter);
+        let info = ModuleInfo {
+            prefix: prefix.clone(),
+            exports,
+        };
+        // Insert into cache up front so cycles see a partially-compiled entry.
+        self.loaded_modules
+            .insert(resolved.to_path_buf(), info.clone());
+        self.loading_stack.insert(resolved.to_path_buf());
+        // Swap context: compile imported file's top-level statements inline at
+        // the current import site, prefixed with this module's namespace.
+        let saved_prefix = std::mem::replace(&mut self.current_prefix, prefix);
+        let saved_file = std::mem::replace(&mut self.current_file, resolved.to_path_buf());
+        for stmt in ast {
+            self.compile_stmt(&stmt)?;
+        }
+        self.current_prefix = saved_prefix;
+        self.current_file = saved_file;
+        self.loading_stack.remove(resolved);
+        Ok(info)
+    }
+
+    // ------------------------------------------------------------------
+    // Expressions
+    // ------------------------------------------------------------------
+
+    fn compile_expr(&mut self, expr: &Node) -> Result<(), RuntimeError> {
+        match expr {
+            Node::Number(v, _) => self.emit(Instr::PushInt(*v)),
+            Node::Str(s, _) => self.emit(Instr::PushStr(s.clone())),
+            Node::Bool(b, _) => self.emit(Instr::PushBool(*b)),
+            Node::Ident(name, _) => self.emit(Instr::Load(self.resolve_load(name))),
+            Node::List(elems, _) => {
+                for e in elems {
+                    self.compile_expr(e)?;
+                }
+                self.emit(Instr::BuildList(elems.len()));
+            }
+            Node::Dict(pairs, _) => {
+                for (k, v) in pairs {
+                    self.emit(Instr::PushStr(k.clone()));
+                    self.compile_expr(v)?;
+                }
+                self.emit(Instr::BuildDict(pairs.len()));
+            }
+            Node::Index(base, idx, _) => {
+                self.compile_expr(base)?;
+                self.compile_expr(idx)?;
+                self.emit(Instr::Index);
+            }
+            Node::Slice(base, start, end, _) => {
+                self.compile_expr(base)?;
+                self.compile_expr(start)?;
+                if let Some(e) = end {
+                    self.compile_expr(e)?;
+                } else {
+                    self.emit(Instr::PushNone);
+                }
+                self.emit(Instr::Slice);
+            }
+            Node::Dot(base, attr, _) => {
+                self.compile_expr(base)?;
+                self.emit(Instr::Attr(attr.clone()));
+            }
+            Node::FuncCall(callee, args, _) => {
+                if let Node::Ident(name, _) = callee.as_ref() {
+                    if let Some(kind) = lookup_raise(name) {
+                        self.compile_raise_call(kind, args)?;
+                        return Ok(());
+                    }
+                    if is_builtin(name) {
+                        for a in args {
+                            self.compile_expr(a)?;
+                        }
+                        self.emit(Instr::CallBuiltin(name.clone(), args.len()));
+                        return Ok(());
+                    }
+                    if self.is_value_binding(name) {
+                        // Any value binding — parameters, allocs, nested
+                        // procs, or top-level allocs holding a closure —
+                        // is invoked indirectly via Load + CallValue. Only
+                        // top-level proc names use the direct `Call` fast
+                        // path below.
+                        self.emit(Instr::Load(self.resolve_load(name)));
+                        for a in args {
+                            self.compile_expr(a)?;
+                        }
+                        self.emit(Instr::CallValue(args.len()));
+                        return Ok(());
+                    }
+                    // Top-level proc: emit a direct Call for the fast path.
+                    for a in args {
+                        self.compile_expr(a)?;
+                    }
+                    self.emit(Instr::Call(self.resolve_call_name(name)));
+                    return Ok(());
+                }
+                // Generic case: callee is an arbitrary expression (e.g.
+                // `pair[0](x)` or `freeze(d).fn(x)`).
+                self.compile_expr(callee)?;
+                for a in args {
+                    self.compile_expr(a)?;
+                }
+                self.emit(Instr::CallValue(args.len()));
+            }
+            Node::Unary(op, inner, _) => {
+                self.compile_expr(inner)?;
+                match op {
+                    UnaryOp::Plus => {} // no-op
+                    UnaryOp::Neg => self.emit(Instr::Neg),
+                    UnaryOp::BNot => self.emit(Instr::Not),
+                }
+            }
+            Node::Binary(BinOp::And, lhs, rhs, _) => {
+                // Short-circuit: if lhs is falsy, the whole expression is
+                // false; otherwise the result is bool(rhs). This matches the
+                // Python reference interpreter (which also returns a bool).
+                self.compile_expr(lhs)?;
+                let jf = self.placeholder(Instr::JumpIfFalse(0));
+                self.compile_expr(rhs)?;
+                self.emit(Instr::PushBool(true));
+                self.emit(Instr::And);
+                let end_jump = self.placeholder(Instr::Jump(0));
+                let on_false_pc = self.code.len();
+                self.patch_jump(jf, on_false_pc);
+                self.emit(Instr::PushBool(false));
+                let end_pc = self.code.len();
+                self.patch_jump(end_jump, end_pc);
+            }
+            Node::Binary(BinOp::Or, lhs, rhs, _) => {
+                // Short-circuit: if lhs is truthy → true. Otherwise return
+                // bool(rhs).
+                self.compile_expr(lhs)?;
+                let jf = self.placeholder(Instr::JumpIfFalse(0));
+                // lhs was truthy → push true.
+                self.emit(Instr::PushBool(true));
+                let end_jump = self.placeholder(Instr::Jump(0));
+                let on_false_pc = self.code.len();
+                self.patch_jump(jf, on_false_pc);
+                self.compile_expr(rhs)?;
+                self.emit(Instr::PushBool(false));
+                self.emit(Instr::Or);
+                let end_pc = self.code.len();
+                self.patch_jump(end_jump, end_pc);
+            }
+            Node::Binary(op, lhs, rhs, _) => {
+                self.compile_expr(lhs)?;
+                self.compile_expr(rhs)?;
+                let instr = match op {
+                    BinOp::Add => Instr::Add,
+                    BinOp::Sub => Instr::Sub,
+                    BinOp::Mul => Instr::Mul,
+                    BinOp::Div => Instr::Div,
+                    BinOp::Mod => Instr::Mod,
+                    BinOp::BAnd => Instr::BAnd,
+                    BinOp::BOr => Instr::BOr,
+                    BinOp::BXor => Instr::BXor,
+                    BinOp::Shl => Instr::Shl,
+                    BinOp::Shr => Instr::Shr,
+                    BinOp::Eq => Instr::Eq,
+                    BinOp::Ne => Instr::Ne,
+                    BinOp::Lt => Instr::Lt,
+                    BinOp::Le => Instr::Le,
+                    BinOp::Gt => Instr::Gt,
+                    BinOp::Ge => Instr::Ge,
+                    BinOp::And | BinOp::Or => unreachable!("handled above"),
+                };
+                self.emit(instr);
+            }
+            other => {
+                return Err(RuntimeError::SyntaxError(format!(
+                    "Unsupported expression at line {} in {}: {:?}",
+                    other.line(),
+                    self.current_file.display(),
+                    DebugNode(other)
+                )));
+            }
+        }
+        Ok(())
+    }
+}
+
+fn rebase_jump(instr: Instr, base: usize) -> Instr {
+    match instr {
+        Instr::Jump(t) => Instr::Jump(t + base),
+        Instr::JumpIfFalse(t) => Instr::JumpIfFalse(t + base),
+        Instr::SetupExcept(t) => Instr::SetupExcept(t + base),
+        other => other,
+    }
+}
+
+/// Compile a complete source string from a known file path, recursively
+/// resolving `import` statements relative to that file.
+pub fn compile_source(source: &str, file: impl AsRef<Path>) -> Result<Program, RuntimeError> {
+    let path = file.as_ref().to_path_buf();
+    let toks = tokenize(source, &path.display().to_string())?;
+    let ast = {
+        let mut p = Parser::new(&toks, path.display().to_string());
+        p.parse_program()?
+    };
+    Compiler::new(path).compile_program(ast)
+}
+
+// --- Debug formatting helpers (kept out of public surface) -----------------
+
+struct DebugInstr<'a>(&'a Instr);
+impl<'a> std::fmt::Debug for DebugInstr<'a> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // Concise rendering — the variant name is enough for compiler errors.
+        let name = match self.0 {
+            Instr::Jump(_) => "Jump",
+            Instr::JumpIfFalse(_) => "JumpIfFalse",
+            Instr::SetupExcept(_) => "SetupExcept",
+            _ => "instr",
+        };
+        write!(f, "{}", name)
+    }
+}
+
+struct DebugNode<'a>(&'a Node);
+impl<'a> std::fmt::Debug for DebugNode<'a> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let name = match self.0 {
+            Node::Number(..) => "Number",
+            Node::Str(..) => "Str",
+            Node::Bool(..) => "Bool",
+            Node::List(..) => "List",
+            Node::Dict(..) => "Dict",
+            Node::Ident(..) => "Ident",
+            Node::Binary(..) => "Binary",
+            Node::Unary(..) => "Unary",
+            Node::Index(..) => "Index",
+            Node::Slice(..) => "Slice",
+            Node::Dot(..) => "Dot",
+            Node::FuncCall(..) => "FuncCall",
+            Node::Decl(..) => "Decl",
+            Node::Assign(..) => "Assign",
+            Node::AttrAssign(..) => "AttrAssign",
+            Node::IndexAssign(..) => "IndexAssign",
+            Node::Emit(..) => "Emit",
+            Node::Facts(..) => "Facts",
+            Node::Import(..) => "Import",
+            Node::If(..) => "If",
+            Node::Loop(..) => "Loop",
+            Node::Break(..) => "Break",
+            Node::FuncDef(..) => "FuncDef",
+            Node::Return(..) => "Return",
+            Node::ExprStmt(..) => "ExprStmt",
+            Node::Block(..) => "Block",
+            Node::Try(..) => "Try",
+        };
+        write!(f, "{}", name)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn compile(src: &str) -> Program {
+        let path = std::env::temp_dir().join("compile_test.omg");
+        fs::write(&path, src).unwrap();
+        let prog = compile_source(src, &path).unwrap();
+        let _ = fs::remove_file(&path);
+        prog
+    }
+
+    #[test]
+    fn compiles_hello() {
+        let prog = compile(";;;omg\nemit \"hi\"\n");
+        assert!(matches!(prog.code.first(), Some(Instr::PushStr(_))));
+    }
+
+    #[test]
+    fn compiles_function_call() {
+        let prog = compile(";;;omg\nproc f(x) { return x + 1 }\nemit f(5)\n");
+        assert!(prog.funcs.contains_key("f"));
+    }
+}

@@ -1,43 +1,58 @@
 # OMG Language
 
-OMG is a personal, educational programming language. It now ships with a native runtime written in Rust while retaining the original Python implementation for reference.
+OMG is a personal, educational programming language. It ships with a fully
+**self-hosted Rust runtime** — lexer, parser, bytecode compiler, stack VM,
+and REPL all in Rust, with **no Python dependency** at build or run time.
+The original Python implementation in `omglang/` is retained for reference
+only.
 
-The language provides a minimal but expressive syntax, and supports variables, arithmetic, lists, dictionaries, functions, conditionals, loops, modules, and more.
+The language provides a minimal but expressive syntax: variables,
+arithmetic, lists, dictionaries, first-class functions, closures,
+conditionals, loops, modules with `import`, exception handling, and more.
 
 #### Documents:
-- [`OMG_SPEC.md`](./spec/OMG_SPEC.md): for the canonical language reference.
-- [`OMG_LEXER.md`](./spec/OMG_LEXER.md): describes the lexical analysis stage of execution for the original Python implementation.
-- [`OMG_PARSER.md`](./spec/OMG_PARSER.md): describes the parser's structure, flow, and grammar handling for the original Python implementation.
+- [`OMG_SPEC.md`](./spec/OMG_SPEC.md): the canonical language reference.
+- [`OMG_LEXER.md`](./spec/OMG_LEXER.md): the lexical analysis stage (the
+  Rust runtime mirrors this exactly; the doc is also accurate for the
+  original Python implementation).
+- [`OMG_PARSER.md`](./spec/OMG_PARSER.md): the parser's structure, flow,
+  and grammar handling.
+- [`runtime/README.md`](./runtime/README.md): runtime architecture and CLI.
 
-The Python-based lexer, parser, and interpreter also exist as a bootstrapped [OMG interpreter](./bootstrap/interpreter.omg), compiled to binary format and embedded directly into the virtual machine. This allows the language to execute OMG code by interpreting OMG-written interpreter logic inside the VM itself, enabling self-hosting experiments and making the runtime a testbed for metaprogramming and language evolution.
+The original `bootstrap/interpreter.omg` (a 1200-line OMG-implemented
+interpreter) is preserved as a sample program, but it is no longer used to
+execute `.omg` files. The Rust runtime compiles `.omg` directly to bytecode
+in-process.
 
 
 ## How to Run OMG Scripts
 
-The native runtime is located in the `runtime` directory and can be built and executed with Cargo.
-
-### Build and Run
-
 ```sh
-omg-cli runtime-run ./path/to/script.omg
+# Build (no Python required)
+cargo build --release --manifest-path runtime/Cargo.toml
+
+# Run a script directly (compiles in-process)
+./runtime/target/release/omg_runtime path/to/script.omg
+
+# Compile to a portable .omgb bytecode file
+./runtime/target/release/omg_runtime --compile path/to/script.omg out.omgb
+
+# Run precompiled bytecode
+./runtime/target/release/omg_runtime out.omgb
+
+# Disassemble (.omg or .omgb)
+./runtime/target/release/omg_runtime --disasm path/to/script.omg
 ```
 
-This command builds the runtime (if needed) and executes the given `.omg` script. The script must begin with the required `;;;omg` header on the first non-empty line.
-
-After building, the resulting binary is available at `runtime/target/debug/omg` (or `runtime/target/release/omg` when using `--release`):
-
-```sh
-./runtime/target/debug/omg path/to/script.omg
-```
+Every `.omg` script must begin with the `;;;omg` header on the first
+non-empty line.
 
 ### Interactive REPL
 
-Run OMG without arguments to start an interactive REPL:
+Run with no arguments:
 
 ```sh
-omg-cli runtime-run
-# or after building
-./runtime/target/debug/omg
+./runtime/target/release/omg_runtime
 ```
 
 Example session:
