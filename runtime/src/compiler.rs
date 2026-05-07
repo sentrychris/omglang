@@ -186,17 +186,30 @@ impl Compiler {
         }
     }
 
-    /// Resolve a name for a *store*. At top-level, names go to globals (so
-    /// they get mangled). Inside a function body, they're stored in the
-    /// caller frame's locals (no mangling).
+    /// Resolve a name for a *store*.
+    ///
+    /// Reserved globals (`args`, `module_file`, `current_dir`) always pass
+    /// through unprefixed. Otherwise:
+    ///
+    /// - Inside a function body, names declared locally (parameters / inner
+    ///   `alloc` / except-bindings / nested procs) are stored unprefixed,
+    ///   matching the runtime's local-env semantics.
+    /// - Inside a function body, names *not* declared locally are treated
+    ///   as references to the surrounding module's globals — those get
+    ///   mangled so writes from imported modules land on the right slot.
+    /// - At top-level, regular mangling applies (so imported modules don't
+    ///   collide on top-level names).
     fn resolve_store(&self, name: &str) -> String {
-        if self.local_scopes.len() > 1 {
-            name.to_string()
-        } else if Self::is_reserved_global(name) {
-            name.to_string()
-        } else {
-            self.mangle(name)
+        if Self::is_reserved_global(name) {
+            return name.to_string();
         }
+        if self.local_scopes.len() > 1 {
+            if self.in_function_scope(name) {
+                return name.to_string();
+            }
+            return self.mangle(name);
+        }
+        self.mangle(name)
     }
 
     /// Compile a complete program (entry-point AST already parsed) into a
@@ -273,11 +286,13 @@ impl Compiler {
             }
             Node::Decl(name, expr, _) => {
                 self.compile_expr(expr)?;
-                // `alloc` always creates a fresh binding in the innermost
-                // scope; we use StoreLocal so it doesn't clobber a same-named
-                // global (e.g. the runtime-injected `args`).
-                self.emit(Instr::StoreLocal(self.resolve_store(name)));
+                // Declare *before* resolving the storage name so
+                // `resolve_store` sees the new local in scope and emits the
+                // unmangled name. (The expression has already been compiled
+                // with the old scope state, so `alloc x := f(x)` still
+                // resolves the RHS `x` against the surrounding scope.)
                 self.declare_local(name);
+                self.emit(Instr::StoreLocal(self.resolve_store(name)));
             }
             Node::Assign(name, expr, _) => {
                 self.compile_expr(expr)?;
@@ -370,8 +385,8 @@ impl Compiler {
                 let handler_pc = self.code.len();
                 self.patch_jump(handler_idx, handler_pc);
                 if let Some(name) = exc_name {
-                    self.emit(Instr::StoreLocal(self.resolve_store(name)));
                     self.declare_local(name);
+                    self.emit(Instr::StoreLocal(self.resolve_store(name)));
                 } else {
                     self.emit(Instr::Pop);
                 }
@@ -522,8 +537,10 @@ impl Compiler {
     fn compile_import_alias_store(&mut self, alias: &str) {
         // `import ... as name` introduces a brand-new binding; treat it as
         // an alloc so it doesn't accidentally rebind a same-named global.
-        self.emit(Instr::StoreLocal(self.resolve_store(alias)));
+        // Declare before resolve_store, same as Decl, so the alias stays
+        // unmangled inside any enclosing function body.
         self.declare_local(alias);
+        self.emit(Instr::StoreLocal(self.resolve_store(alias)));
     }
 
     fn compile_import(

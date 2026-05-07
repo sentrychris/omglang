@@ -23,6 +23,7 @@
 # above are restrictions on this file's own use of OMG.
 
 # === Bytecode opcode table =================================================
+alloc OP_NOP            := 0
 
 alloc OP_PUSH_INT       := 0
 alloc OP_PUSH_STR       := 1
@@ -1041,11 +1042,20 @@ proc cc_resolve_load(name) {
 }
 
 proc cc_resolve_store(name) {
-    if length(cc_local_scopes) > 1 {
-        return name
-    }
+    # Reserved globals always pass through unprefixed.
     if cc_is_reserved(name) {
         return name
+    }
+    # Inside a function body: only function-scope locals stay unprefixed.
+    # Writes to names declared at the module's top level get mangled so they
+    # update the module's actual global slot — without this, `tok_len := n`
+    # inside an imported module would create a stray function-local instead
+    # of mutating the module's `tok_len` global.
+    if length(cc_local_scopes) > 1 {
+        if cc_in_function_scope(name) {
+            return name
+        }
+        return cc_mangle(name)
     }
     return cc_mangle(name)
 }
@@ -1401,8 +1411,8 @@ proc compile_import(path, alias, line) {
     }
     cc_emit(["BUILD_DICT", ne])
     cc_emit(["BUILTIN", ["freeze", 1]])
-    cc_emit(["STORE_LOCAL", cc_resolve_store(alias)])
     cc_declare_local(alias)
+    cc_emit(["STORE_LOCAL", cc_resolve_store(alias)])
 }
 
 proc compile_stmt(stmt) {
@@ -1414,8 +1424,11 @@ proc compile_stmt(stmt) {
     }
     if kind == "decl" {
         compile_expr(stmt[2])
-        cc_emit(["STORE_LOCAL", cc_resolve_store(stmt[1])])
+        # Declare before resolving the storage name so resolve_store sees
+        # the new local in scope and emits the unmangled name.  The RHS
+        # was already compiled against the old scope.
         cc_declare_local(stmt[1])
+        cc_emit(["STORE_LOCAL", cc_resolve_store(stmt[1])])
         return false
     }
     if kind == "assign" {
@@ -1524,8 +1537,8 @@ proc compile_stmt(stmt) {
         if exc_name == false {
             cc_emit_simple("POP")
         } else {
-            cc_emit(["STORE_LOCAL", cc_resolve_store(exc_name)])
             cc_declare_local(exc_name)
+            cc_emit(["STORE_LOCAL", cc_resolve_store(exc_name)])
         }
         compile_block_node(stmt[3])
         cc_patch(jend, length(cc_code))
