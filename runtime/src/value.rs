@@ -55,7 +55,14 @@ pub enum Value {
     Dict(Rc<RefCell<HashMap<String, Value>>>),
     /// Immutable dictionary (reference-counted).
     FrozenDict(Rc<HashMap<String, Value>>),
-    /// Sentinel for “no value”.
+    /// First-class function reference. Top-level procs are stored as
+    /// `Closure { name, captured: empty }`; nested procs capture the
+    /// surrounding local environment at the point of definition.
+    Closure {
+        name: String,
+        captured: Rc<HashMap<String, Value>>,
+    },
+    /// Sentinel for "no value".
     None,
 }
 
@@ -73,6 +80,10 @@ impl Value {
             Value::List(l) => Ok(l.borrow().len() as i64),
             Value::Dict(d) => Ok(d.borrow().len() as i64),
             Value::FrozenDict(d) => Ok(d.len() as i64),
+            Value::Closure { name, .. } => Err(RuntimeError::TypeError(format!(
+                "cannot convert function '{}' to int",
+                name
+            ))),
             Value::None => Ok(0),
         }
     }
@@ -89,6 +100,8 @@ impl Value {
             Value::List(l) => !l.borrow().is_empty(),
             Value::Dict(d) => !d.borrow().is_empty(),
             Value::FrozenDict(d) => !d.is_empty(),
+            // A live function reference is always truthy.
+            Value::Closure { .. } => true,
             Value::None => false,
         }
     }
@@ -145,6 +158,10 @@ impl Value {
                         .collect();
                     format!("{{{}}}", inner.join(", "))
                 }
+
+                // Closures render as their function name (handy for
+                // `emit some_function` in REPL sessions).
+                Value::Closure { name, .. } => format!("<proc {}>", name),
 
                 // None → empty string
                 Value::None => "".to_string(),

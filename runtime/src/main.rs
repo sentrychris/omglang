@@ -1,193 +1,453 @@
 //! OMG Language Runtime entry point.
 //!
-//! This binary can do two things:
-//! 1) Run a precompiled OMG bytecode file (`.omgb`) directly.
-//! 2) Run a plain OMG source script (`.omg`) by invoking the **embedded
-//!    interpreter** that’s compiled into this binary at build time.
+//! The runtime is fully self-hosted in Rust: it owns the lexer, parser,
+//! compiler, bytecode reader/writer, and VM. There is no longer any
+//! dependency on Python or on the embedded self-hosted `interpreter.omg`.
 //!
-//! Behavior summary:
-//! - With **no args**, start an interactive REPL.
-//! - With `-h/--help`, print usage.
-//! - With `-v/--version`, print build-target + version.
-//! - With a **`.omgb`** path, load bytecode from disk and execute it.
-//! - With a **`.omg`** path, run the embedded interpreter bytecode and pass the
-//!   `.omg` script path to it (the interpreter will then load/execute it).
+//! ## Modes
+//! - **No args** → interactive REPL.
+//! - `-h` / `--help` / `-v` / `--version` → print and exit.
+//! - `--compile <in.omg> [<out.omgb>]` → compile a source file to bytecode.
+//!   When `<out.omgb>` is omitted, the bytes are written to stdout.
+//! - `--disasm <file>` → print a textual disassembly of `.omg` or `.omgb`
+//!   input to stdout (helpful for debugging).
+//! - `<file.omg>` → compile in-process and execute.
+//! - `<file.omgb>` → load bytecode and execute.
 //!
-//! Argument separator:
-//! - If a literal `--` appears *after* the script path, everything after it is
-//!   considered program arguments and will be exposed to the OMG program via
-//!   the VM’s `args` global.
+//! ## Argument forwarding
+//! Anything after the script path (optionally separated by `--`) is exposed
+//! to the running program via the `args` global, with `module_file` and
+//! `current_dir` derived from the script path.
 
 use std::env;
 use std::fs;
+use std::path::PathBuf;
+use std::process::ExitCode;
 
+mod ast;
 mod bytecode;
+mod compiler;
 mod error;
+mod lexer;
+mod parser;
 mod repl;
 mod value;
 mod vm;
 
-use bytecode::parse_bytecode;
+use bytecode::{parse_bytecode, write_bytecode, Function, Instr};
+use compiler::compile_source;
+use error::RuntimeError;
 use repl::repl_interpret;
 use vm::run;
 
-/// Embedded `interpreter.omgb` generated at build time.
-///
-/// The build script places the compiled interpreter bytecode in
-/// `$OUT_DIR/interpreter.omgb`. We bake it into the final binary so that
-/// users can run `.omg` source files **without** needing a separate
-/// interpreter executable at runtime.
-const INTERP_OMGBC: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/interpreter.omgb"));
+/// Human-facing runtime version. Bump in lockstep with `Cargo.toml`.
+const VERSION: &str = "0.2.0";
 
-/// Human-facing runtime version string.
-///
-/// This reflects the runtime wrapper, not the language version.
-/// It’s printed by `--version` and included in help text.
-const VERSION: &str = "0.1.2";
+/// Embedded `bootstrap/compiler.omgb` — the OMG-written OMG compiler,
+/// pre-compiled by the Rust frontend at build time. Loaded on demand by
+/// `--self-hosted` and `--verify-self-hosted`.
+const SELF_HOSTED_COMPILER: &[u8] =
+    include_bytes!("../../bootstrap/compiler.omgb");
 
-/// Construct the help/usage text shown for `-h/--help`.
-///
-/// Kept as a function so it can interpolate the current `VERSION`.
 fn usage() -> String {
     format!(
         r#"OMG Language Runtime v{0}
 
 Usage:
-    omg <script.omg>
+    omg [<script>]
+    omg --compile <in.omg> [<out.omgb>]
+    omg --disasm <file>
 
 Arguments:
-    <script.omg>
-        Path to an OMG language source file to execute. The file must
-        include the required header ';;;omg' on the first non-empty line.
-
-Example:
-    omg hello.omg
+    <script>
+        A `.omg` source file (compiled in-process and executed) or a
+        precompiled `.omgb` bytecode file. The source must include the
+        required header `;;;omg` on the first non-empty line.
 
 Options:
-    -h, --help
-        Show this help message and exit.
-    -v, --version
-        Show runtime version."#,
+    -h, --help               Show this help message and exit.
+    -v, --version            Show runtime version.
+        --compile            Compile a `.omg` file to `.omgb` (Rust frontend).
+        --disasm             Disassemble a `.omg` or `.omgb` file.
+        --self-hosted        Compile a `.omg` file using the embedded OMG-in-OMG
+                             compiler instead of the Rust frontend, then run it.
+                             Slower (the compiler runs on the VM) but proves
+                             that OMG is genuinely self-hosting.
+        --self-hosted-compile <in.omg> [<out.omgb>]
+                             Like --compile, but uses the OMG-in-OMG compiler.
+                             Writes bytecode to <out.omgb> or stdout.
+        --verify-self-hosted Run the fixed-point check: compile a `.omg` with
+                             both the Rust and OMG-in-OMG compilers and
+                             confirm the byte streams are identical.
+
+Examples:
+    omg hello.omg
+    omg hello.omgb -- arg1 arg2
+    omg --compile hello.omg hello.omgb
+    omg --self-hosted hello.omg
+    omg --verify-self-hosted bootstrap/compiler.omg"#,
         VERSION
     )
 }
 
-/// Program entry point.
-///
-/// High-level flow:
-/// 1) Read CLI args.
-/// 2) If no args → start REPL.
-/// 3) If `--help/--version` → print and exit.
-/// 4) Otherwise treat the first arg as a path. If it ends with `.omgb`,
-///    load bytecode and execute. Otherwise, assume it is a `.omg` source
-///    path and execute it through the embedded interpreter bytecode.
-///
-/// Argument forwarding:
-/// - For `.omgb`, we forward args *after* the script path to the program.
-/// - For `.omg`, we invoke the embedded interpreter and pass a vector where
-///   the first argument is the source file path, followed by any extra args.
-/// - In both modes we support an optional literal `--` that separates
-///   runtime flags from program args (everything after `--` is treated as
-///   program input).
-fn main() {
-    // Capture raw command-line arguments as owned Strings.
+fn main() -> ExitCode {
     let args: Vec<String> = env::args().collect();
 
-    // --- Mode selection & meta commands ------------------------------------
-
-    // No arguments → interactive REPL (dev-friendly quick start).
     if args.len() == 1 {
         repl_interpret();
-        return;
+        return ExitCode::SUCCESS;
     }
 
-    // Help flag → show usage and exit 0.
-    if args[1] == "-h" || args[1] == "--help" {
-        println!("{}", usage());
-        return;
+    match args[1].as_str() {
+        "-h" | "--help" => {
+            println!("{}", usage());
+            return ExitCode::SUCCESS;
+        }
+        "-v" | "--version" => {
+            println!(
+                "omg-runtime-build-{}-{}: v{}",
+                env::consts::OS,
+                env::consts::ARCH,
+                VERSION
+            );
+            return ExitCode::SUCCESS;
+        }
+        "--compile" => return cmd_compile(&args[2..]),
+        "--disasm" => return cmd_disasm(&args[2..]),
+        "--self-hosted" => return cmd_self_hosted(&args[2..]),
+        "--self-hosted-compile" => return cmd_self_hosted_compile(&args[2..]),
+        "--verify-self-hosted" => return cmd_verify_self_hosted(&args[2..]),
+        _ => {}
     }
 
-    // Version flag → print OS/arch/build-friendly identifier + runtime version.
-    if args[1] == "-v" || args[1] == "--version" {
-        println!(
-            "omg-runtime-build-{}-{}: v{}",
-            env::consts::OS,
-            env::consts::ARCH,
-            VERSION
-        );
-        return;
-    }
-
-    // --- Execution modes ----------------------------------------------------
-
-    if args[1].ends_with(".omgb") {
-        // === Bytecode mode: execute a precompiled .omgb binary ===
-        //
-        // Layout: omg <file.omgb> [--] [program args...]
-        // We slice the original `args` to obtain "program args" exposed to the VM.
-        let bc_path = &args[1];
-
-        // Extract program arguments after the `.omgb` path.
-        // If `--` is present immediately after the path, skip it.
-        let program_args: &[String] = if args.len() > 2 {
-            if args[2] == "--" {
-                &args[3..]
-            } else {
-                &args[2..]
-            }
+    let script = PathBuf::from(&args[1]);
+    let program_args: Vec<String> = if args.len() > 2 {
+        if args[2] == "--" {
+            args[3..].to_vec()
         } else {
-            &[]
-        };
-
-        // Read bytecode from disk; any I/O error is a hard failure (panic)
-        // because we cannot proceed. Using `expect` yields a concise message.
-        let src = fs::read(bc_path).expect("failed to read bytecode file");
-
-        // Decode the bytecode image into instruction stream + function table.
-        let (code, funcs) = parse_bytecode(&src);
-
-        // Hand off to the VM. On runtime error we print to stderr and exit 1
-        // (so that shells/scripts can detect failure).
-        if let Err(e) = run(&code, &funcs, program_args) {
-            eprintln!("{}", e);
-            std::process::exit(1);
+            args[2..].to_vec()
         }
     } else {
-        // === Source mode: execute a .omg script using the embedded interpreter ===
-        //
-        // Layout: omg <file.omg> [--] [program args...]
-        //
-        // We do **not** parse/execute the `.omg` file directly here. Instead we
-        // run the *embedded interpreter* (compiled as `.omgb`) and pass it the
-        // source path and args. The interpreter bytecode knows how to read the
-        // `.omg` file, lex/parse/interpret it.
-        let prog_path = &args[1];
+        Vec::new()
+    };
+    let mut full_args = Vec::with_capacity(program_args.len() + 1);
+    full_args.push(script.to_string_lossy().to_string());
+    full_args.extend_from_slice(&program_args);
 
-        // Extract the trailing program args in the same way as above.
-        let program_args_slice: &[String] = if args.len() > 2 {
-            if args[2] == "--" {
-                &args[3..]
-            } else {
-                &args[2..]
-            }
-        } else {
-            &[]
-        };
+    let result = if script
+        .extension()
+        .map(|e| e == "omgb")
+        .unwrap_or(false)
+    {
+        run_omgb(&script, &full_args)
+    } else {
+        run_omg(&script, &full_args)
+    };
 
-        // The embedded interpreter expects argv-style input where argv[0] is the
-        // script path, so we construct that here and then append user args.
-        let mut full_args = Vec::with_capacity(program_args_slice.len() + 1);
-        full_args.push(prog_path.clone());
-        full_args.extend_from_slice(program_args_slice);
-
-        // Load the embedded interpreter bytecode image from the build output.
-        let (code, funcs) = parse_bytecode(INTERP_OMGBC);
-
-        // Execute the interpreter, providing it with the constructed arguments.
-        // On error, forward message to stderr and exit 1.
-        if let Err(e) = run(&code, &funcs, &full_args) {
+    match result {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(e) => {
             eprintln!("{}", e);
-            std::process::exit(1);
+            ExitCode::FAILURE
         }
     }
+}
+
+fn run_omg(path: &PathBuf, full_args: &[String]) -> Result<(), RuntimeError> {
+    let source = fs::read_to_string(path).map_err(|e| {
+        RuntimeError::ModuleImportError(format!(
+            "Cannot read script '{}': {}",
+            path.display(),
+            e
+        ))
+    })?;
+    check_header(&source, path)?;
+    let program = compile_source(&source, path)?;
+    run(&program.code, &program.funcs, full_args)
+}
+
+fn run_omgb(path: &PathBuf, full_args: &[String]) -> Result<(), RuntimeError> {
+    let bytes = fs::read(path).map_err(|e| {
+        RuntimeError::ModuleImportError(format!(
+            "Cannot read bytecode '{}': {}",
+            path.display(),
+            e
+        ))
+    })?;
+    let (code, funcs) = parse_bytecode(&bytes)?;
+    run(&code, &funcs, full_args)
+}
+
+fn check_header(source: &str, path: &PathBuf) -> Result<(), RuntimeError> {
+    for line in source.lines() {
+        let t = line.trim();
+        if t.is_empty() {
+            continue;
+        }
+        if t == ";;;omg" {
+            return Ok(());
+        }
+        break;
+    }
+    Err(RuntimeError::SyntaxError(format!(
+        "OMG script missing required header ';;;omg' in {}",
+        path.display()
+    )))
+}
+
+fn cmd_compile(args: &[String]) -> ExitCode {
+    if args.is_empty() {
+        eprintln!("--compile expects an input .omg path");
+        return ExitCode::FAILURE;
+    }
+    let in_path = PathBuf::from(&args[0]);
+    let out: Option<PathBuf> = args.get(1).map(PathBuf::from);
+    let source = match fs::read_to_string(&in_path) {
+        Ok(s) => s,
+        Err(e) => {
+            eprintln!("cannot read '{}': {}", in_path.display(), e);
+            return ExitCode::FAILURE;
+        }
+    };
+    if let Err(e) = check_header(&source, &in_path) {
+        eprintln!("{}", e);
+        return ExitCode::FAILURE;
+    }
+    let program = match compile_source(&source, &in_path) {
+        Ok(p) => p,
+        Err(e) => {
+            eprintln!("{}", e);
+            return ExitCode::FAILURE;
+        }
+    };
+    let bytes = write_bytecode(&program.code, &program.funcs);
+    match out {
+        Some(p) => {
+            if let Err(e) = fs::write(&p, &bytes) {
+                eprintln!("cannot write '{}': {}", p.display(), e);
+                return ExitCode::FAILURE;
+            }
+        }
+        None => {
+            use std::io::Write;
+            if std::io::stdout().write_all(&bytes).is_err() {
+                return ExitCode::FAILURE;
+            }
+        }
+    }
+    ExitCode::SUCCESS
+}
+
+/// Compile a `.omg` source file using the embedded **OMG-written** compiler
+/// (stage-1) and execute the result. Slower than `--compile` because the
+/// compiler itself runs on the VM, but proves the OMG language can compile
+/// itself end-to-end.
+fn cmd_self_hosted(args: &[String]) -> ExitCode {
+    if args.is_empty() {
+        eprintln!("--self-hosted expects a .omg path");
+        return ExitCode::FAILURE;
+    }
+    let in_path = PathBuf::from(&args[0]);
+    let program_args: Vec<String> = args[1..].to_vec();
+    match self_hosted_compile(&in_path) {
+        Ok(bytes) => match parse_bytecode(&bytes) {
+            Ok((code, funcs)) => {
+                let mut full = Vec::with_capacity(program_args.len() + 1);
+                full.push(in_path.to_string_lossy().to_string());
+                full.extend_from_slice(&program_args);
+                if let Err(e) = run(&code, &funcs, &full) {
+                    eprintln!("{}", e);
+                    return ExitCode::FAILURE;
+                }
+                ExitCode::SUCCESS
+            }
+            Err(e) => {
+                eprintln!("self-hosted output didn't parse: {}", e);
+                ExitCode::FAILURE
+            }
+        },
+        Err(e) => {
+            eprintln!("{}", e);
+            ExitCode::FAILURE
+        }
+    }
+}
+
+/// Compile a `.omg` file with the embedded OMG-in-OMG compiler and write
+/// the bytecode to disk — the self-hosted analogue of `--compile`.
+fn cmd_self_hosted_compile(args: &[String]) -> ExitCode {
+    if args.is_empty() {
+        eprintln!("--self-hosted-compile expects <in.omg> [<out.omgb>]");
+        return ExitCode::FAILURE;
+    }
+    let in_path = PathBuf::from(&args[0]);
+    let out: Option<PathBuf> = args.get(1).map(PathBuf::from);
+    let bytes = match self_hosted_compile(&in_path) {
+        Ok(b) => b,
+        Err(e) => {
+            eprintln!("{}", e);
+            return ExitCode::FAILURE;
+        }
+    };
+    match out {
+        Some(p) => {
+            if let Err(e) = fs::write(&p, &bytes) {
+                eprintln!("cannot write '{}': {}", p.display(), e);
+                return ExitCode::FAILURE;
+            }
+        }
+        None => {
+            use std::io::Write;
+            if std::io::stdout().write_all(&bytes).is_err() {
+                return ExitCode::FAILURE;
+            }
+        }
+    }
+    ExitCode::SUCCESS
+}
+
+/// Compile a `.omg` file with both the Rust frontend and the OMG-in-OMG
+/// frontend, then assert the byte streams are identical. Used to verify
+/// that the self-hosted compiler is a fixed point.
+fn cmd_verify_self_hosted(args: &[String]) -> ExitCode {
+    if args.is_empty() {
+        eprintln!("--verify-self-hosted expects a .omg path");
+        return ExitCode::FAILURE;
+    }
+    let in_path = PathBuf::from(&args[0]);
+    let source = match fs::read_to_string(&in_path) {
+        Ok(s) => s,
+        Err(e) => {
+            eprintln!("cannot read '{}': {}", in_path.display(), e);
+            return ExitCode::FAILURE;
+        }
+    };
+    let rust_bytes = match compile_source(&source, &in_path) {
+        Ok(p) => write_bytecode(&p.code, &p.funcs),
+        Err(e) => {
+            eprintln!("Rust frontend failed: {}", e);
+            return ExitCode::FAILURE;
+        }
+    };
+    let omg_bytes = match self_hosted_compile(&in_path) {
+        Ok(b) => b,
+        Err(e) => {
+            eprintln!("OMG frontend failed: {}", e);
+            return ExitCode::FAILURE;
+        }
+    };
+    if rust_bytes == omg_bytes {
+        println!(
+            "OK  {} ({} bytes) — self-hosted output matches Rust output",
+            in_path.display(),
+            rust_bytes.len()
+        );
+        ExitCode::SUCCESS
+    } else {
+        println!(
+            "FAIL  {}: Rust={} bytes, OMG={} bytes — outputs differ",
+            in_path.display(),
+            rust_bytes.len(),
+            omg_bytes.len()
+        );
+        ExitCode::FAILURE
+    }
+}
+
+/// Drive the embedded OMG-written compiler against a source file and return
+/// the resulting `.omgb` bytes. Uses a temp file to thread the result back
+/// into the host process — the embedded compiler is a normal OMG program
+/// that takes [in.omg, out.omgb] as args and writes the bytecode to disk.
+fn self_hosted_compile(in_path: &PathBuf) -> Result<Vec<u8>, RuntimeError> {
+    let (code, funcs) = parse_bytecode(SELF_HOSTED_COMPILER)?;
+    let abs_in = fs::canonicalize(in_path).map_err(|e| {
+        RuntimeError::ModuleImportError(format!(
+            "cannot canonicalise '{}': {}",
+            in_path.display(),
+            e
+        ))
+    })?;
+    let tmp = std::env::temp_dir().join(format!(
+        "omg-stage1-{}-{}.omgb",
+        std::process::id(),
+        rand_suffix()
+    ));
+    let args = [
+        "<embedded>".to_string(),
+        abs_in.to_string_lossy().to_string(),
+        tmp.to_string_lossy().to_string(),
+    ];
+    run(&code, &funcs, &args)?;
+    let bytes = fs::read(&tmp).map_err(|e| {
+        RuntimeError::ModuleImportError(format!(
+            "cannot read self-hosted output '{}': {}",
+            tmp.display(),
+            e
+        ))
+    })?;
+    let _ = fs::remove_file(&tmp);
+    Ok(bytes)
+}
+
+fn rand_suffix() -> u64 {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_nanos() as u64)
+        .unwrap_or(0)
+}
+
+fn cmd_disasm(args: &[String]) -> ExitCode {
+    if args.is_empty() {
+        eprintln!("--disasm expects a file path");
+        return ExitCode::FAILURE;
+    }
+    let path = PathBuf::from(&args[0]);
+    let bytes = match fs::read(&path) {
+        Ok(b) => b,
+        Err(e) => {
+            eprintln!("cannot read '{}': {}", path.display(), e);
+            return ExitCode::FAILURE;
+        }
+    };
+    let (code, funcs): (Vec<Instr>, std::collections::HashMap<String, Function>) =
+        if path.extension().map(|e| e == "omgb").unwrap_or(false) {
+            match parse_bytecode(&bytes) {
+                Ok(p) => p,
+                Err(e) => {
+                    eprintln!("{}", e);
+                    return ExitCode::FAILURE;
+                }
+            }
+        } else {
+            let source = String::from_utf8_lossy(&bytes).to_string();
+            if let Err(e) = check_header(&source, &path) {
+                eprintln!("{}", e);
+                return ExitCode::FAILURE;
+            }
+            match compile_source(&source, &path) {
+                Ok(p) => (p.code, p.funcs),
+                Err(e) => {
+                    eprintln!("{}", e);
+                    return ExitCode::FAILURE;
+                }
+            }
+        };
+    println!("# functions");
+    let mut names: Vec<&String> = funcs.keys().collect();
+    names.sort();
+    for name in names {
+        let f = &funcs[name];
+        println!(
+            "FUNC {} ({}) @ {}",
+            name,
+            f.params.join(", "),
+            f.address
+        );
+    }
+    println!("# code");
+    for (i, instr) in code.iter().enumerate() {
+        println!("{:04}  {:?}", i, instr);
+    }
+    ExitCode::SUCCESS
 }

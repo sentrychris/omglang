@@ -2,7 +2,7 @@
   "name": "omg-language-support",
   "displayName": "OMG Language Support",
   "version": "0.0.1",
-  "publisher": "Chris Rowles",
+  "publisher": "chris-rowles",
   "engines": {
     "vscode": "^1.82.0"
   },
