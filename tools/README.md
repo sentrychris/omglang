@@ -10,15 +10,15 @@ imports, and closures.
 ## Running
 
 ```sh
-omg tools/<tool>.omg <args...>
+omg tools/<dir>/<tool>.omg <args...>
 ```
 
 For example:
 
 ```sh
-omg tools/wc.omg examples/hello_world.omg examples/prime_sieve.omg
-omg tools/grep.omg "proc " examples/higher_order.omg
-omg tools/hex.omg bootstrap/compiler.omgb | head
+omg tools/omg/unix/wc.omg examples/hello_world.omg examples/prime_sieve.omg
+omg tools/omg/unix/grep.omg "proc " examples/higher_order.omg
+omg tools/omg/unix/hex.omg bootstrap/compiler.omgb | head
 ```
 
 ## Path handling
@@ -29,7 +29,7 @@ behave. The script's location on disk is irrelevant for runtime file I/O.
 
 ```sh
 $ cd ~
-$ omg ~/workspace/omglang/tools/wc.omg notes.txt
+$ omg ~/workspace/omglang/tools/unix/wc.omg notes.txt
    ←     # reads ~/notes.txt
 ```
 
@@ -42,13 +42,13 @@ that's a *compile-time* path concern, not a runtime one.)
 
 | Tool        | Approx. Unix equivalent | What it does |
 |-------------|-------------------------|--------------|
-| `wc.omg`    | `wc -l -w -m`           | Lines, words, characters per file plus a total. |
-| `grep.omg`  | `grep -F -n`            | Print lines (with line numbers, prefixed with path when more than one input) containing a literal substring. |
-| `hex.omg`   | `xxd`                   | 16-bytes-per-row hex + ASCII-gutter dump of any binary file. |
-| `sort.omg`  | `sort`                  | Concatenate inputs and print all lines sorted lexicographically (insertion sort, in place). |
-| `uniq.omg`  | `uniq`                  | Drop adjacent duplicate lines. Pair with `sort` for full dedup. |
-| `head.omg`  | `head -n N`             | First `N` lines (default 10) of each input; multi-file output uses `==> path <==` banners. |
-| `tail.omg`  | `tail -n N`             | Last `N` lines (default 10) of each input; same multi-file banners. |
+| `unix/wc.omg`    | `wc -l -w -m`           | Lines, words, characters per file plus a total. |
+| `unix/grep.omg`  | `grep -F -n`            | Print lines (with line numbers, prefixed with path when more than one input) containing a literal substring. |
+| `unix/hex.omg`   | `xxd`                   | 16-bytes-per-row hex + ASCII-gutter dump of any binary file. |
+| `unix/sort.omg`  | `sort`                  | Concatenate inputs and print all lines sorted lexicographically (insertion sort, in place). |
+| `unix/uniq.omg`  | `uniq`                  | Drop adjacent duplicate lines. Pair with `sort` for full dedup. |
+| `unix/head.omg`  | `head -n N`             | First `N` lines (default 10) of each input; multi-file output uses `==> path <==` banners. |
+| `unix/tail.omg`  | `tail -n N`             | Last `N` lines (default 10) of each input; same multi-file banners. |
 
 ### Format and conversion
 
@@ -63,12 +63,12 @@ that's a *compile-time* path concern, not a runtime one.)
 
 | Tool             | What it does |
 |------------------|--------------|
-| `omg-fmt.omg`    | Minimal formatter: re-indents every line using 4-space units sized by accumulated `{ } ( ) [ ]` depth, strips trailing whitespace, preserves blank lines and the contents of strings/docblocks. Idempotent. |
-| `omg-bundle.omg` | Inlines `import` statements into a single self-contained `.omg` file. Top-level names from each imported module are mangled to `__alias__name` and exposed via a `freeze({ ... })` namespace dict; calls like `math.is_prime(97)` continue to work because the dict holds first-class closures. |
-| `omg-deps.omg`   | Prints the import graph of an OMG program as an indented tree. Detects cycles, marks unreadable files. |
-| `omg-test.omg`   | Runs each test file through the OMG-in-OMG tree-walk interpreter at `reference/interpreter.omg` and reports pass/fail. A test passes if it executes to completion without raising; `facts`/`panic`/runtime errors count as failures. Exits non-zero on any failure. |
+| `omg/omg-fmt.omg`    | Minimal formatter: re-indents every line using 4-space units sized by accumulated `{ } ( ) [ ]` depth, strips trailing whitespace, preserves blank lines and the contents of strings/docblocks. Idempotent. |
+| `omg/omg-bundle.omg` | Inlines `import` statements into a single self-contained `.omg` file. Top-level names from each imported module are mangled to `__alias__name` and exposed via a `freeze({ ... })` namespace dict; calls like `math.is_prime(97)` continue to work because the dict holds first-class closures. |
+| `omg/omg-deps.omg`   | Prints the import graph of an OMG program as an indented tree. Detects cycles, marks unreadable files. |
+| `omg/omg-test.omg`   | Runs each test file through the OMG-in-OMG tree-walk interpreter at `reference/interpreter.omg` and reports pass/fail. A test passes if it executes to completion without raising; `facts`/`panic`/runtime errors count as failures. Exits non-zero on any failure. |
 
-### Advanced (`advanced/`)
+### Advanced
 
 Larger, demo-quality programs that compose the smaller tools.
 
@@ -95,14 +95,14 @@ Each tool imports it as `lib`.
 These tools should match their Unix counterparts on simple inputs:
 
 ```sh
-$ omg tools/wc.omg examples/maze_solver.omg | awk '{print $1, $2, $3}'
+$ omg tools/unix/wc.omg examples/maze_solver.omg | awk '{print $1, $2, $3}'
 105 378 2348
 $ wc -l -w -m examples/maze_solver.omg | awk '{print $1, $2, $3}'
 105 378 2348
 ```
 
 ```sh
-$ printf 'ccc\naaa\nbbb\naaa\n' > /tmp/x && omg tools/sort.omg /tmp/x
+$ printf 'ccc\naaa\nbbb\naaa\n' > /tmp/x && omg tools/unix/sort.omg /tmp/x
 aaa
 aaa
 bbb
