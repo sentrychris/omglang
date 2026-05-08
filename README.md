@@ -1,13 +1,14 @@
 # OMG
 
+[![CodeQL](https://github.com/sentrychris/omglang/actions/workflows/github-code-scanning/codeql/badge.svg)](https://github.com/sentrychris/omglang/actions/workflows/github-code-scanning/codeql)
+[![CI](https://github.com/sentrychris/omglang/actions/workflows/ci.yml/badge.svg)](https://github.com/sentrychris/omglang/actions/workflows/ci.yml)
+
 A small programming language made for fun and for learning how
 languages get put together end-to-end.
 
 OMG has the usual stuff every language has: variables, math, strings, lists,
 dictionaries, conditionals, loops, functions, files etc. There's nothing flashy 
 or industrial about it. It exists so I could see what it takes to build a working programming language, all the way up to writing OMG's own compiler **in OMG**.
-
----
 
 ## Contents
 
