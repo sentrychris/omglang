@@ -54,25 +54,26 @@ fn usage() -> String {
         r#"OMG Language Runtime v{0}
 
 Usage:
-    omg [<script>]
+    omg [--rust] [<script>]
     omg --compile <in.omg> [<out.omgb>]
     omg --disasm <file>
 
 Arguments:
     <script>
-        A `.omg` source file (compiled in-process and executed) or a
-        precompiled `.omgb` bytecode file. The source must include the
-        required header `;;;omg` on the first non-empty line.
+        A `.omg` source file or a precompiled `.omgb` file. By default,
+        `.omg` sources are compiled by the embedded OMG-in-OMG compiler
+        (stage-1) running on the VM. Pass `--rust` to use the Rust
+        frontend instead — significantly faster, but bypasses the
+        self-hosted toolchain.
 
 Options:
     -h, --help               Show this help message and exit.
     -v, --version            Show runtime version.
+        --rust               Use the Rust frontend (stage-0) to compile the
+                             script instead of the embedded OMG-in-OMG
+                             compiler. Faster for one-off runs.
         --compile            Compile a `.omg` file to `.omgb` (Rust frontend).
         --disasm             Disassemble a `.omg` or `.omgb` file.
-        --self-hosted        Compile a `.omg` file using the embedded OMG-in-OMG
-                             compiler instead of the Rust frontend, then run it.
-                             Slower (the compiler runs on the VM) but proves
-                             that OMG is genuinely self-hosting.
         --self-hosted-compile <in.omg> [<out.omgb>]
                              Like --compile, but uses the OMG-in-OMG compiler.
                              Writes bytecode to <out.omgb> or stdout.
@@ -81,17 +82,35 @@ Options:
                              confirm the byte streams are identical.
 
 Examples:
-    omg hello.omg
+    omg hello.omg                    # self-hosted (default)
+    omg --rust hello.omg             # Rust frontend
     omg hello.omgb -- arg1 arg2
     omg --compile hello.omg hello.omgb
-    omg --self-hosted hello.omg
     omg --verify-self-hosted bootstrap/compiler.omg"#,
         VERSION
     )
 }
 
 fn main() -> ExitCode {
-    let args: Vec<String> = env::args().collect();
+    let mut args: Vec<String> = env::args().collect();
+
+    // Pull `--rust` off the front (if present) so the rest of dispatch
+    // doesn't have to know it exists. It only affects the bare-script
+    // execution path: `--compile` is already Rust-only, `--disasm` is
+    // backend-agnostic, and the various `--self-hosted-*` commands
+    // are explicit about which compiler they want.
+    let mut use_rust = false;
+    if args.get(1).map(|s| s.as_str()) == Some("--rust") {
+        use_rust = true;
+        args.remove(1);
+    }
+    // `--self-hosted` used to be the opt-in flag for the OMG-in-OMG
+    // compiler; that is now the default, so the flag is a no-op alias.
+    // We keep it for back-compat with anyone who has it in their muscle
+    // memory or in scripts.
+    if args.get(1).map(|s| s.as_str()) == Some("--self-hosted") {
+        args.remove(1);
+    }
 
     if args.len() == 1 {
         repl_interpret();
@@ -114,7 +133,6 @@ fn main() -> ExitCode {
         }
         "--compile" => return cmd_compile(&args[2..]),
         "--disasm" => return cmd_disasm(&args[2..]),
-        "--self-hosted" => return cmd_self_hosted(&args[2..]),
         "--self-hosted-compile" => return cmd_self_hosted_compile(&args[2..]),
         "--verify-self-hosted" => return cmd_verify_self_hosted(&args[2..]),
         _ => {}
@@ -134,14 +152,20 @@ fn main() -> ExitCode {
     full_args.push(script.to_string_lossy().to_string());
     full_args.extend_from_slice(&program_args);
 
-    let result = if script
+    let is_omgb = script
         .extension()
         .map(|e| e == "omgb")
-        .unwrap_or(false)
-    {
+        .unwrap_or(false);
+
+    // Precompiled bytecode: nothing to compile, both paths are identical.
+    // Bare `.omg` source: route through the OMG-in-OMG compiler by
+    // default, or the Rust frontend when the user passed `--rust`.
+    let result = if is_omgb {
         run_omgb(&script, &full_args)
-    } else {
+    } else if use_rust {
         run_omg(&script, &full_args)
+    } else {
+        run_omg_self_hosted(&script, &full_args)
     };
 
     match result {
@@ -164,6 +188,15 @@ fn run_omg(path: &PathBuf, full_args: &[String]) -> Result<(), RuntimeError> {
     check_header(&source, path)?;
     let program = compile_source(&source, path)?;
     run(&program.code, &program.funcs, full_args)
+}
+
+/// Default execution path for a `.omg` file: compile it via the embedded
+/// OMG-in-OMG compiler (running on the VM) and run the result. This is
+/// what bare `omg <script>` invokes when `--rust` isn't passed.
+fn run_omg_self_hosted(path: &PathBuf, full_args: &[String]) -> Result<(), RuntimeError> {
+    let bytes = self_hosted_compile(path)?;
+    let (code, funcs) = parse_bytecode(&bytes)?;
+    run(&code, &funcs, full_args)
 }
 
 fn run_omgb(path: &PathBuf, full_args: &[String]) -> Result<(), RuntimeError> {
@@ -236,41 +269,6 @@ fn cmd_compile(args: &[String]) -> ExitCode {
         }
     }
     ExitCode::SUCCESS
-}
-
-/// Compile a `.omg` source file using the embedded **OMG-written** compiler
-/// (stage-1) and execute the result. Slower than `--compile` because the
-/// compiler itself runs on the VM, but proves the OMG language can compile
-/// itself end-to-end.
-fn cmd_self_hosted(args: &[String]) -> ExitCode {
-    if args.is_empty() {
-        eprintln!("--self-hosted expects a .omg path");
-        return ExitCode::FAILURE;
-    }
-    let in_path = PathBuf::from(&args[0]);
-    let program_args: Vec<String> = args[1..].to_vec();
-    match self_hosted_compile(&in_path) {
-        Ok(bytes) => match parse_bytecode(&bytes) {
-            Ok((code, funcs)) => {
-                let mut full = Vec::with_capacity(program_args.len() + 1);
-                full.push(in_path.to_string_lossy().to_string());
-                full.extend_from_slice(&program_args);
-                if let Err(e) = run(&code, &funcs, &full) {
-                    eprintln!("{}", e);
-                    return ExitCode::FAILURE;
-                }
-                ExitCode::SUCCESS
-            }
-            Err(e) => {
-                eprintln!("self-hosted output didn't parse: {}", e);
-                ExitCode::FAILURE
-            }
-        },
-        Err(e) => {
-            eprintln!("{}", e);
-            ExitCode::FAILURE
-        }
-    }
 }
 
 /// Compile a `.omg` file with the embedded OMG-in-OMG compiler and write

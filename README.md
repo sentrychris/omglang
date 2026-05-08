@@ -663,15 +663,28 @@ Some interesting starting points:
 OMG's compiler is itself written in OMG. The file
 [`bootstrap/compiler.omg`](bootstrap/compiler.omg) reads OMG source
 code and produces the bytecode the runtime executes, which is exactly
-what the Rust frontend in `runtime/` does. Run
+what the Rust frontend in `runtime/` does.
+
+By default, `omg <script>` runs your code through that OMG-written
+compiler — the language compiles itself end-to-end on every run. If you
+want the faster Rust frontend (e.g. while iterating, or to avoid the
+~1 second compile overhead on larger programs), pass `--rust`:
+
+```sh
+omg foo.omg              # self-hosted (default)
+omg --rust foo.omg       # Rust frontend
+```
+
+To verify both compilers agree byte-for-byte on the compiler's own
+source — the fixed-point check — run:
 
 ```sh
 omg --verify-self-hosted bootstrap/compiler.omg
 ```
 
-and the runtime compiles `compiler.omg` two different ways, once with
-the Rust frontend, once with the OMG-written compiler running on the
-VM, and confirms the two byte streams are identical.
+The runtime compiles `compiler.omg` two different ways, once with the
+Rust frontend, once with the OMG-written compiler running on the VM,
+and confirms the two byte streams are identical.
 
 ---
 
