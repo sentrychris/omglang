@@ -1,6 +1,6 @@
 ;;;omg
 
-import "../reference/interpreter.omg" as OMGI
+import "../../reference/interpreter.omg" as OMGI
 
 # omg-test — run a list of OMG test files through the bootstrap
 # tree-walk interpreter and print a pass/fail summary.
