@@ -22,7 +22,6 @@
 
 use std::cell::RefCell;
 use std::collections::HashMap;
-use std::path::PathBuf;
 use std::rc::Rc;
 
 use crate::bytecode::{Function, Instr};

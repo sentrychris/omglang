@@ -515,6 +515,47 @@ Variables, functions, and imports persist across lines until you `quit`.
 
 ---
 
+## Editor support (VS Code)
+
+The [`vscode/`](vscode/) directory holds a VS Code extension that adds:
+
+- syntax highlighting for `.omg` files (a TextMate grammar in
+  `vscode/syntaxes/`),
+- file icons for `.omg` source and `.omgb` bytecode,
+- a small **language server** (LSP) under `vscode/server/` that powers
+  autocompletion, hover info, and go-to-definition on built-ins and
+  user-defined `proc`s/`alloc`s in the open file.
+
+The extension isn't published on the marketplace, you build it from
+this repo and install the resulting `.vsix` directly:
+
+```sh
+cd vscode
+npm install                                             # first time only, pulls dependencies
+npm run compile                                         # compile the TypeScript client + server
+npx vsce package -o omg-language-server.vsix           # package into a .vsix bundle
+code --install-extension omg-language-server.vsix --force
+```
+
+What each step does:
+
+- `npm install`: downloads the dev dependencies (TypeScript compiler,
+  `vsce` packager, the VS Code LSP libraries). Only needed the first
+  time, or after the dependency list changes.
+- `npm run compile`: runs `tsc` on the client (the bit that loads into
+  VS Code) and the server (the bit that answers LSP requests). Outputs
+  go to `client/out/` and `server/out/`.
+- `npx vsce package`: bundles the compiled output, the grammar, the
+  icons, and `package.json` into a single installable `.vsix` archive.
+- `code --install-extension … --force`: installs that bundle into your
+  local VS Code, replacing any previous version of the extension.
+
+After installing, open any `.omg` file and you should see syntax
+highlighting and the OMG file icon. Start typing `proc`, `loop`,
+`emit`, etc. to see completions.
+
+---
+
 ## What's in this repo
 
 ```

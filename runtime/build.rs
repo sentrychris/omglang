@@ -15,16 +15,26 @@ use std::env;
 use std::fs;
 use std::path::PathBuf;
 
+// These modules are shared with the runtime binary via `#[path]`. The build
+// script only needs a subset (parsing + write_bytecode); the binary uses the
+// rest. Suppress dead-code warnings here so the *binary's* live code isn't
+// flagged from the build script's narrower view.
+#[allow(dead_code)]
 #[path = "src/ast.rs"]
 mod ast;
+#[allow(dead_code)]
 #[path = "src/error.rs"]
 mod error;
+#[allow(dead_code)]
 #[path = "src/lexer.rs"]
 mod lexer;
+#[allow(dead_code)]
 #[path = "src/parser.rs"]
 mod parser;
+#[allow(dead_code)]
 #[path = "src/bytecode.rs"]
 mod bytecode;
+#[allow(dead_code)]
 #[path = "src/compiler.rs"]
 mod compiler;
 
