@@ -16,6 +16,7 @@ pub enum BinOp {
     Sub,
     Mul,
     Div,
+    FloorDiv,
     Mod,
     BAnd,
     BOr,
@@ -46,6 +47,7 @@ pub enum UnaryOp {
 pub enum Node {
     // Expressions
     Number(i64, usize),
+    Float(f64, usize),
     Str(String, usize),
     Bool(bool, usize),
     List(Vec<Node>, usize),
@@ -82,6 +84,7 @@ impl Node {
         use Node::*;
         match self {
             Number(_, l)
+            | Float(_, l)
             | Str(_, l)
             | Bool(_, l)
             | List(_, l)
