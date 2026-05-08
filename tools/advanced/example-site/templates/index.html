@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>{{title}}</title>
+  <style>
+    body { font-family: system-ui, sans-serif; max-width: 720px; margin: 2em auto; padding: 0 1em; line-height: 1.5; color: #1b1b1b; }
+    h1 { line-height: 1.2; }
+    a { color: #5a3fbf; }
+    ul.posts { list-style: none; padding: 0; }
+    ul.posts li { padding: 0.4em 0; border-bottom: 1px dashed #ddd; }
+    small { color: #666; }
+  </style>
+</head>
+<body>
+  <h1>{{title}}</h1>
+  <article>
+    {{body}}
+  </article>
+  <h2>Posts</h2>
+  <ul class="posts">
+{{posts}}
+  </ul>
+</body>
+</html>

@@ -68,6 +68,14 @@ that's a *compile-time* path concern, not a runtime one.)
 | `omg-deps.omg`   | Prints the import graph of an OMG program as an indented tree. Detects cycles, marks unreadable files. |
 | `omg-test.omg`   | Runs each test file through the OMG-in-OMG tree-walk interpreter at `reference/interpreter.omg` and reports pass/fail. A test passes if it executes to completion without raising; `facts`/`panic`/runtime errors count as failures. Exits non-zero on any failure. |
 
+### Advanced (`advanced/`)
+
+Larger, demo-quality programs that compose the smaller tools.
+
+| Tool                  | What it does |
+|-----------------------|--------------|
+| `advanced/ssg.omg`    | Static site generator. Walks `<site>/content/`, parses front-matter, converts each markdown file via `md2html.omg`, applies `<site>/templates/*.html`, and writes a parallel directory tree to `<site>/out/`. See [`advanced/README.md`](advanced/README.md) for the layout, template variables, and an example site. |
+
 ### Shared helpers
 
 `lib.omg` collects helpers shared between the tools:
