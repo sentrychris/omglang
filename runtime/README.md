@@ -10,7 +10,7 @@ the built-ins, and a stage-0 frontend used to bootstrap the OMG-in-OMG
 compiler at `cargo build` time.
 
 There is **no Python dependency** at build time or run time. The legacy
-Python toolchain in `omglang/` is retained for reference only.
+Python toolchain in `reference/` is retained for reference only.
 
 ```text
 .omg source ──► lexer ──► parser ──► AST ──► compiler ──► bytecode ──► stack VM
@@ -20,9 +20,6 @@ Python toolchain in `omglang/` is retained for reference only.
                        (run on the VM via --self-hosted) ─────┘
 ```
 
-See [`.ai/docs/06_actual_self_hosting.md`](../.ai/docs/06_actual_self_hosting.md)
-for the full self-hosting story.
-
 ## Quick start
 
 ```sh
@@ -30,19 +27,19 @@ for the full self-hosting story.
 cargo build --release --manifest-path runtime/Cargo.toml
 
 # Run a script
-./runtime/target/release/omg_runtime examples/prime_sieve.omg
+./runtime/target/release/omg examples/prime_sieve.omg
 
 # Compile to bytecode
-./runtime/target/release/omg_runtime --compile examples/prime_sieve.omg prime.omgb
+./runtime/target/release/omg --compile examples/prime_sieve.omg prime.omgb
 
 # Run precompiled bytecode
-./runtime/target/release/omg_runtime prime.omgb
+./runtime/target/release/omg prime.omgb
 
 # Disassemble a .omg or .omgb file
-./runtime/target/release/omg_runtime --disasm examples/hello_world.omg
+./runtime/target/release/omg --disasm examples/hello_world.omg
 
 # Interactive REPL (state persists across turns)
-./runtime/target/release/omg_runtime
+./runtime/target/release/omg
 ```
 
 ## What the runtime owns
@@ -145,34 +142,8 @@ State (`alloc`, `proc`, file handles) persists across turns. Multiline
 input is detected by tracking brace depth — inputs aren't executed until
 the braces balance.
 
-## What's new in v0.2
-
-* The runtime is fully self-hosted. `build.rs` no longer invokes Python.
-* New CLI flags: `--compile`, `--disasm`.
-* The embedded `bootstrap/interpreter.omgb` is no longer used to run `.omg`
-  files. The bootstrap interpreter remains in `bootstrap/` as a sample OMG
-  program.
-* `import` now works from compiled `.omgb` files — the compiler resolves
-  modules at compile time instead of refusing to compile them.
-* First-class functions and closures via the `MakeFunc` opcode and
-  `Value::Closure`.
-* `and` / `or` short-circuit at the bytecode level.
-* List `+` allocates a new list instead of mutating the LHS.
-* Integer arithmetic is overflow-checked; division/modulus use floor
-  semantics (matching Python).
-* `==` / `!=` use typed structural equality (no string-coerced compares).
-* Negative indices supported on lists and strings; out-of-range reads/
-  writes error instead of silently expanding or returning 0.
-* Bytecode parser returns `Result` instead of panicking on malformed input.
-* REPL is in-process and persistent — no per-turn process spawn.
-
-## License
-
-Licensed under the [MIT License](../LICENSE).
-
 ## Links
 
-* [OMG Language Specification](../spec/OMG_SPEC.md)
-* [Lexer Documentation](../spec/OMG_LEXER.md)
-* [Parser Documentation](../spec/OMG_PARSER.md)
-* [Development Guide](../spec/DEVELOPMENT.md)
+* [Top-level README](../README.MD)
+* [OMG-in-OMG tools](../tools/README.md)
+* [VS Code extension](../vscode/README.md)

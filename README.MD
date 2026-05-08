@@ -9,6 +9,33 @@ or industrial about it. It exists so I could see what it takes to build a workin
 
 ---
 
+## Contents
+
+- [Get it running](#get-it-running)
+  - [Hello, world](#hello-world)
+- [A tour of the language](#a-tour-of-the-language)
+  - [Variables](#variables)
+  - [Numbers and math](#numbers-and-math)
+  - [Strings](#strings)
+  - [Booleans and comparisons](#booleans-and-comparisons)
+  - [Conditionals](#conditionals)
+  - [Loops](#loops)
+  - [Lists](#lists)
+  - [Dictionaries](#dictionaries)
+  - [Functions](#functions)
+  - [Multi-file programs: `import`](#multi-file-programs-import)
+  - [Files](#files)
+  - [Errors and `try` / `except`](#errors-and-try--except)
+- [Built-in functions](#built-in-functions)
+- [The REPL](#the-repl)
+- [Editor support (VS Code)](#editor-support-vs-code)
+- [What's in this repo](#whats-in-this-repo)
+- [A small piece of trivia](#a-small-piece-of-trivia)
+- [More reading](#more-reading)
+- [License](#license)
+
+---
+
 ## Get it running
 
 You need [Rust](https://rustup.rs/) installed (one command from the
@@ -567,7 +594,6 @@ omglang/
 ├── examples/        small standalone programs
 ├── tools/           command-line utilities written in OMG (wc, grep, sort, etc.)
 ├── reference/       the legacy Python implementation + a tree-walk OMG-in-OMG interpreter
-├── spec/            language reference docs
 └── vscode/          VS Code extension (syntax highlighting + LSP completion)
 ```
 
@@ -602,7 +628,6 @@ VM, and confirms the two byte streams are identical.
 
 ## More reading
 
-- [`spec/OMG_SPEC.md`](spec/OMG_SPEC.md): formal language reference.
 - [`runtime/README.md`](runtime/README.md): runtime architecture and CLI flags.
 - [`tools/README.md`](tools/README.md): the OMG-in-OMG tools.
 - [`vscode/README.md`](vscode/README.md): VS Code extension.
