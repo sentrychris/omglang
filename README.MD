@@ -38,8 +38,7 @@ or industrial about it. It exists so I could see what it takes to build a workin
 
 ## Get it running
 
-You need [Rust](https://rustup.rs/) installed (one command from the
-website). Then:
+You need [Rust](https://rustup.rs/) installed. Then:
 
 ```sh
 git clone https://github.com/sentrychris/omglang
