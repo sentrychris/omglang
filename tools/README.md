@@ -1,11 +1,10 @@
 # OMG tools
 
-Small Unix-style command-line utilities **written in OMG itself**.
+A bunch of command-line utilities **written in OMG itself**.
 
 Each tool is a standalone `.omg` script in this directory; together they
-demonstrate that OMG handles real text processing — not just toy examples.
-They use the language's strings, lists, dicts, file I/O (text and binary),
-imports, and closures.
+demonstrate that OMG handles real tasks. They use the language's strings, 
+lists, dicts, file I/O (text and binary), imports, closures and more.
 
 ## Running
 
