@@ -427,10 +427,13 @@ fn execute(
                 }
                 Instr::StoreLocal(name) => {
                     // `alloc` semantics: always create a binding in the
-                    // innermost scope without consulting globals.  Prevents
-                    // accidental clobbering of runtime-injected globals
-                    // (`args`, `module_file`, `current_dir`) by user locals
-                    // that happen to share the name.
+                    // innermost scope without consulting outer scopes — so
+                    // a local can shadow a global of the same name.
+                    //
+                    // Same-scope re-declaration is rejected at *compile
+                    // time* (see compiler.rs / bootstrap/compiler.omg);
+                    // at runtime an `alloc` inside a loop body legitimately
+                    // re-runs every iteration and must just re-bind.
                     if let Some(v) = stack.pop() {
                         if env_stack.is_empty() {
                             globals.insert(name.clone(), v);

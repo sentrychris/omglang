@@ -303,7 +303,26 @@ impl Compiler {
                 self.compile_expr(expr)?;
                 self.emit(Instr::Emit);
             }
-            Node::Decl(name, expr, _) => {
+            Node::Decl(name, expr, line) => {
+                // Top-level same-scope re-declaration is a compile-time
+                // error: it's almost always a typo or accidental
+                // copy/paste. Inside a proc we *don't* enforce this yet —
+                // OMG is proc-scoped (no block scoping), so the
+                // "alloc-per-branch" idiom in parser-style code would be
+                // forced into ugly hoists. Block scoping (a future change)
+                // is the right way to extend the rule into procs.
+                if self.local_scopes.len() == 1 {
+                    if let Some(scope) = self.local_scopes.last() {
+                        if scope.contains(name) {
+                            return Err(RuntimeError::SyntaxError(format!(
+                                "'{}' is already declared at the top level on line {} in {}",
+                                name,
+                                line,
+                                self.current_file.display()
+                            )));
+                        }
+                    }
+                }
                 self.compile_expr(expr)?;
                 // Declare *before* resolving the storage name so
                 // `resolve_store` sees the new local in scope and emits the

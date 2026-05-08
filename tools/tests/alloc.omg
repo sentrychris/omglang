@@ -166,23 +166,33 @@ emit "global args length stable: " + (args_before == args_after) # → true
 
 # --- Edge case: re-alloc'ing the same name at top level -------------------
 #
-# Currently allowed (silent overwrite). Documented here so the behaviour is
-# explicit; if this ever changes to an error, this script will tell you.
+# Top-level duplicate `alloc` is a compile-time error — the unambiguous
+# typo case. We document it here as a comment because the failure is a
+# SyntaxError, not a runtime exception, so try/except can't catch it:
+# the script wouldn't compile at all.
+#
+#     alloc dup := 1
+#     alloc dup := 2
+#     # → SyntaxError: 'dup' is already declared at the top level on line 2
+#
+# Inside a proc, re-`alloc` of the same name in different mutually-
+# exclusive branches is currently *allowed* — OMG is proc-scoped, not
+# block-scoped, and forbidding the parser-style "alloc-per-branch"
+# pattern would force ugly hoists. (Block scoping is a future change
+# that would extend the strict rule into procs.)
 
 emit ""
-emit "===== re-alloc ====="
+emit "===== re-alloc (documented above) ====="
+emit "top-level duplicate alloc → compile-time SyntaxError"
+emit "in-proc branch-local re-alloc → currently allowed"
 
-alloc dup := 1
-alloc dup := 2
-emit "after re-alloc, dup = " + dup     # → 2
-
-# --- Edge case: parameters can be alloc'd over (creating a new local) ----
+# --- Edge case: rebinding a parameter ------------------------------------
 #
-# `alloc x := ...` always creates a fresh local in the innermost scope, even
-# if there's a parameter `x`. This effectively replaces the parameter binding.
+# Parameters are pre-bound locals, so `:=` updates them in place. This is
+# the canonical way to "transform" a parameter inside a proc.
 
 proc reparam(x) {
-    alloc x := x * 10                   # fresh local x; param x was the seed
+    x := x * 10
     return x
 }
 emit "reparam(5): " + reparam(5)        # → 50

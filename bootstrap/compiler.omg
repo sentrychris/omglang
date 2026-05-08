@@ -110,20 +110,11 @@ proc emit_u32(buf, n) {
     return buf
 }
 
-# Write an i64 in little-endian order. Negative values use two's complement.
+# Write an i64 in little-endian order. Negative values use two's complement
+# implicitly: `x & 255` and `x >> 8` work uniformly because OMG ints are
+# signed 64-bit and `>>` is arithmetic shift.
 proc emit_i64(buf, n) {
     alloc x := n
-    if x < 0 {
-        # Two's complement of a 64-bit value: invert bits then add 1.
-        # We synthesise the bottom 8 bytes manually to avoid wide-integer math.
-        alloc i := 0
-        loop i < 8 {
-            buf := buf + [x & 255]
-            x := x >> 8
-            i := i + 1
-        }
-        return buf
-    }
     alloc i := 0
     loop i < 8 {
         buf := buf + [x & 255]
@@ -275,12 +266,12 @@ proc tokenize(src, file) {
             }
         } elif c == "0" and i + 1 < n and (body[i + 1] == "b" or body[i + 1] == "B") {
             i := i + 2
-            alloc num := 0
+            alloc bin_num := 0
             loop i < n and (body[i] == "0" or body[i] == "1") {
-                num := num * 2 + ascii(body[i]) - ascii("0")
+                bin_num := bin_num * 2 + ascii(body[i]) - ascii("0")
                 i := i + 1
             }
-            tokens := tokens + [["NUM", num, line]]
+            tokens := tokens + [["NUM", bin_num, line]]
         } elif is_digit(c) {
             alloc num := 0
             alloc start := i
@@ -1091,6 +1082,20 @@ proc cc_declare_local(name) {
     cc_local_scopes[top] := scope + [name]
 }
 
+# Linear scan: is `name` in the list of names? Used by the alloc
+# duplicate-declaration check.
+proc list_contains_name(xs, name) {
+    alloc i := 0
+    alloc n := length(xs)
+    loop i < n {
+        if xs[i] == name {
+            return true
+        }
+        i := i + 1
+    }
+    return false
+}
+
 proc cc_resolve_load(name) {
     if cc_in_function_scope(name) {
         return name
@@ -1548,6 +1553,19 @@ proc compile_stmt(stmt) {
         return false
     }
     if kind == "decl" {
+        # Top-level same-scope re-declaration is a compile-time error: it's
+        # almost always a typo or accidental copy/paste. Inside a proc we
+        # *don't* enforce this yet — OMG is proc-scoped (no block scoping),
+        # so the "alloc-per-branch" idiom in parser-style code would be
+        # forced into ugly hoists. Block scoping is a future change that
+        # would extend the rule into procs.
+        if length(cc_local_scopes) == 1 {
+            alloc dn_scope := cc_local_scopes[0]
+            alloc dn_dup := list_contains_name(dn_scope, stmt[1])
+            if dn_dup {
+                panic("'" + stmt[1] + "' is already declared at the top level on line " + stmt[3])
+            }
+        }
         compile_expr(stmt[2])
         # Declare before resolving the storage name so resolve_store sees
         # the new local in scope and emits the unmangled name.  The RHS
