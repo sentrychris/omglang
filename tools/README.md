@@ -77,7 +77,7 @@ Larger, demo-quality programs that compose the smaller tools.
 
 ### Shared helpers
 
-`lib.omg` collects helpers shared between the tools:
+`modules/lib.omg` collects helpers shared between the tools:
 
 - `split_lines(text)`, `contains(haystack, needle)`
 - `sort_strings(xs)` — in-place insertion sort
