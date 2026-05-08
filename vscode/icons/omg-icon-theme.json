@@ -1,0 +1,14 @@
+{
+  "$schema": "vscode://schemas/icon-theme",
+  "iconDefinitions": {
+    "_omg_src": { "iconPath": "./omg.svg" },
+    "_omg_bytecode": { "iconPath": "./omgb.svg" }
+  },
+  "fileExtensions": {
+    "omg": "_omg_src",
+    "omgb": "_omg_bytecode"
+  },
+  "languageIds": {
+    "omg": "_omg_src"
+  }
+}

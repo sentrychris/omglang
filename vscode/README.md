@@ -32,6 +32,15 @@ Python dependency.
 
 - **Document outline**: top-level procs and allocs in the file.
 
+- **File icon**: a violet "OMG" badge on `.omg` files. Visible on tabs
+  unconditionally, and in the file explorer either:
+  - automatically, if your active file-icon theme delegates unknown
+    extensions to the language-defined icon (most don't); or
+  - by selecting **OMG Icons** under
+    *File → Preferences → Theme → File Icon Theme…*. This bundled icon
+    theme just covers `.omg` (source) and `.omgb` (compiled bytecode);
+    everything else falls back to your previous theme's defaults.
+
 ## Layout
 
 ```
@@ -40,6 +49,10 @@ vscode/
 ├── tsconfig.json                # project references → client + server
 ├── language-configuration.json  # comments, brackets, indentation
 ├── syntaxes/omg.tmLanguage.json # TextMate grammar
+├── icons/
+│   ├── omg.svg                  # `.omg` source-file icon
+│   ├── omgb.svg                 # `.omgb` bytecode-file icon
+│   └── omg-icon-theme.json      # opt-in "OMG Icons" file-icon theme
 ├── client/                      # extension entry point (loads the server)
 │   ├── package.json
 │   ├── tsconfig.json

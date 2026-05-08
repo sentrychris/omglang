@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="32" height="32" role="img" aria-label="OMG file">
+  <!--
+    File-tree icon for the OMG language.
+
+    Lower-case "omg" in CSS-named turquoise (#40E0D0) on a transparent
+    background, so the icon picks up whatever sidebar / tab background
+    the active VS Code theme provides.  Bold monospace, tightened
+    letter-spacing so the three glyphs fill the 16x16 explorer slot
+    without looking sparse.
+  -->
+  <text x="16" y="22"
+        font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace"
+        font-weight="800"
+        font-size="13"
+        text-anchor="middle"
+        fill="#40E0D0"
+        letter-spacing="-0.5">omg</text>
+</svg>

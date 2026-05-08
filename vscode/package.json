@@ -20,7 +20,20 @@
         "id": "omg",
         "aliases": ["OMG", "omg"],
         "extensions": [".omg"],
-        "configuration": "./language-configuration.json"
+        "configuration": "./language-configuration.json",
+        "icon": {
+          "light": "./icons/omg.svg",
+          "dark": "./icons/omg.svg"
+        }
+      },
+      {
+        "id": "omg-bytecode",
+        "aliases": ["OMG Bytecode"],
+        "extensions": [".omgb"],
+        "icon": {
+          "light": "./icons/omgb.svg",
+          "dark": "./icons/omgb.svg"
+        }
       }
     ],
     "grammars": [
@@ -28,6 +41,13 @@
         "language": "omg",
         "scopeName": "source.omg",
         "path": "./syntaxes/omg.tmLanguage.json"
+      }
+    ],
+    "iconThemes": [
+      {
+        "id": "omg-icons",
+        "label": "OMG Icons",
+        "path": "./icons/omg-icon-theme.json"
       }
     ],
     "configuration": {
