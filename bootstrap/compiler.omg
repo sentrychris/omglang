@@ -74,6 +74,8 @@ alloc OP_POP_BLOCK      := 45
 alloc OP_RAISE          := 46
 alloc OP_MAKE_FUNC      := 52
 alloc OP_STORE_LOCAL    := 53
+alloc OP_PUSH_FLOAT     := 54
+alloc OP_FLOOR_DIV      := 55
 
 # Error kinds for the RAISE instruction's payload byte.
 alloc EK_GENERIC        := 0
@@ -281,11 +283,50 @@ proc tokenize(src, file) {
             tokens := tokens + [["NUM", num, line]]
         } elif is_digit(c) {
             alloc num := 0
+            alloc start := i
             loop i < n and is_digit(body[i]) {
                 num := num * 10 + ascii(body[i]) - ascii("0")
                 i := i + 1
             }
-            tokens := tokens + [["NUM", num, line]]
+            # Promote to float if followed by `.<digit>` or `[eE][+-]?<digit>`.
+            # A bare trailing `.` (e.g. `5.`) does NOT promote, so `5.foo`
+            # parses as attribute access on int 5.
+            alloc is_float_dot := false
+            if i < n and body[i] == "." and i + 1 < n and is_digit(body[i + 1]) {
+                is_float_dot := true
+            }
+            alloc is_float_exp := false
+            if i < n and (body[i] == "e" or body[i] == "E") {
+                is_float_exp := true
+            }
+            if is_float_dot or is_float_exp {
+                if is_float_dot {
+                    i := i + 1
+                    loop i < n and is_digit(body[i]) {
+                        i := i + 1
+                    }
+                }
+                if i < n and (body[i] == "e" or body[i] == "E") {
+                    i := i + 1
+                    if i < n and (body[i] == "+" or body[i] == "-") {
+                        i := i + 1
+                    }
+                    alloc exp_start := i
+                    loop i < n and is_digit(body[i]) {
+                        i := i + 1
+                    }
+                    if exp_start == i {
+                        panic("Float exponent has no digits on line " + line + " in " + file)
+                    }
+                }
+                # Slice the literal text out so the runtime can convert it
+                # to IEEE-754 bits via `float_bits`. The compiler itself
+                # never does float math.
+                alloc lit := body[start:i]
+                tokens := tokens + [["FNUM", lit, line]]
+            } else {
+                tokens := tokens + [["NUM", num, line]]
+            }
         } elif c == "\"" {
             i := i + 1
             alloc s := ""
@@ -337,6 +378,9 @@ proc tokenize(src, file) {
             i := i + 2
         } elif c == ">" and i + 1 < n and body[i + 1] == ">" {
             tokens := tokens + [["SHR", "", line]]
+            i := i + 2
+        } elif c == "/" and i + 1 < n and body[i + 1] == "/" {
+            tokens := tokens + [["DSLASH", "", line]]
             i := i + 2
         } elif c == "{" {
             tokens := tokens + [["LBRACE", "", line]]
@@ -581,6 +625,7 @@ proc parse_mul(i) {
         alloc op := ""
         if k == "STAR"    { op := "mul" }
         if k == "SLASH"   { op := "div" }
+        if k == "DSLASH"  { op := "floor_div" }
         if k == "PERCENT" { op := "mod" }
         if op == "" {
             return r
@@ -670,6 +715,9 @@ proc parse_primary(i) {
     alloc line := tok_line(i)
     if k == "NUM" {
         return [["num", tok_val(i), line], i + 1]
+    }
+    if k == "FNUM" {
+        return [["fnum", tok_val(i), line], i + 1]
     }
     if k == "STR" {
         return [["str", tok_val(i), line], i + 1]
@@ -956,7 +1004,9 @@ alloc cc_loading := []
 alloc cc_builtins := [
     "chr", "ascii", "hex", "binary", "length", "read_file",
     "freeze", "call_builtin", "file_open", "file_read",
-    "file_write", "file_close", "file_exists", "string_bytes"
+    "file_write", "file_close", "file_exists", "string_bytes",
+    "int", "float", "floor", "ceil", "round", "abs",
+    "sqrt", "pow", "log", "sin", "cos", "tan", "float_bits"
 ]
 
 proc cc_is_builtin(name) {
@@ -1097,6 +1147,13 @@ proc compile_expr(node) {
     alloc kind := node[0]
     if kind == "num"  {
         cc_emit(["PUSH_INT",  node[1]])
+        return false
+    }
+    if kind == "fnum" {
+        # `node[1]` is the literal text from the source; convert to bits and
+        # emit. The bit pattern survives a round-trip through emit_i64 →
+        # f64::from_bits in the VM.
+        cc_emit(["PUSH_FLOAT", float_bits(node[1])])
         return false
     }
     if kind == "str"  {
@@ -1270,6 +1327,10 @@ proc compile_expr(node) {
         if op == "div"  {
             cc_emit_simple("DIV")
              return false
+        }
+        if op == "floor_div" {
+            cc_emit_simple("FLOOR_DIV")
+            return false
         }
         if op == "mod"  {
             cc_emit_simple("MOD")
@@ -1750,6 +1811,11 @@ proc encode_instr(buf, instr) {
         buf := bytes_append(buf, OP_PUSH_INT)
               return emit_i64(buf, arg)
     }
+    if op == "PUSH_FLOAT"      {
+        # `arg` is already the IEEE-754 bit pattern as an i64.
+        buf := bytes_append(buf, OP_PUSH_FLOAT)
+        return emit_i64(buf, arg)
+    }
     if op == "PUSH_STR"        {
         buf := bytes_append(buf, OP_PUSH_STR)
               return emit_str(buf, arg)
@@ -1781,6 +1847,7 @@ proc encode_instr(buf, instr) {
     if op == "SUB"             { return bytes_append(buf, OP_SUB)             }
     if op == "MUL"             { return bytes_append(buf, OP_MUL)             }
     if op == "DIV"             { return bytes_append(buf, OP_DIV)             }
+    if op == "FLOOR_DIV"       { return bytes_append(buf, OP_FLOOR_DIV)       }
     if op == "MOD"             { return bytes_append(buf, OP_MOD)             }
     if op == "EQ"              { return bytes_append(buf, OP_EQ)              }
     if op == "NE"              { return bytes_append(buf, OP_NE)              }

@@ -43,6 +43,21 @@ fn builtin_names() -> &'static [&'static str] {
         "file_close",
         "file_exists",
         "string_bytes",
+        // Numeric / math
+        "int",
+        "float",
+        "floor",
+        "ceil",
+        "round",
+        "abs",
+        "sqrt",
+        "pow",
+        "log",
+        "sin",
+        "cos",
+        "tan",
+        // Used by `bootstrap/compiler.omg` to embed float literals as i64 bits.
+        "float_bits",
     ]
 }
 
@@ -681,6 +696,7 @@ impl Compiler {
     fn compile_expr(&mut self, expr: &Node) -> Result<(), RuntimeError> {
         match expr {
             Node::Number(v, _) => self.emit(Instr::PushInt(*v)),
+            Node::Float(v, _) => self.emit(Instr::PushFloat(*v)),
             Node::Str(s, _) => self.emit(Instr::PushStr(s.clone())),
             Node::Bool(b, _) => self.emit(Instr::PushBool(*b)),
             Node::Ident(name, _) => self.emit(Instr::Load(self.resolve_load(name))),
@@ -805,6 +821,7 @@ impl Compiler {
                     BinOp::Sub => Instr::Sub,
                     BinOp::Mul => Instr::Mul,
                     BinOp::Div => Instr::Div,
+                    BinOp::FloorDiv => Instr::FloorDiv,
                     BinOp::Mod => Instr::Mod,
                     BinOp::BAnd => Instr::BAnd,
                     BinOp::BOr => Instr::BOr,
@@ -894,6 +911,7 @@ impl<'a> std::fmt::Debug for DebugNode<'a> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let name = match self.0 {
             Node::Number(..) => "Number",
+            Node::Float(..) => "Float",
             Node::Str(..) => "Str",
             Node::Bool(..) => "Bool",
             Node::List(..) => "List",
