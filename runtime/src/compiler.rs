@@ -117,6 +117,17 @@ pub struct Compiler {
     pending_funcs: Vec<(String, Rc<Vec<String>>, Vec<Instr>)>,
     funcs: HashMap<String, Function>,
     break_stack: Vec<Vec<usize>>,
+    /// How many `SETUP_EXCEPT` blocks are currently open lexically. Used
+    /// so `return` / `break` / tail calls can emit a matching number of
+    /// `POP_BLOCK` instructions before transferring control — otherwise
+    /// the runtime block-stack accumulates stale handlers, which a
+    /// later `RAISE` in unrelated code would unwind into.
+    try_depth: usize,
+    /// `try_depth` value at the start of each currently-open loop, in
+    /// parallel with `break_stack`. `break` uses this to compute how
+    /// many `PopBlock`s are needed to escape any tries nested between
+    /// the break statement and its target loop.
+    loop_try_depth: Vec<usize>,
     /// Modules already loaded during this compile, keyed by canonical path.
     loaded_modules: HashMap<PathBuf, ModuleInfo>,
     /// Stack of paths currently being loaded — for cycle detection.
@@ -161,6 +172,8 @@ impl Compiler {
             pending_funcs: Vec::new(),
             funcs: HashMap::new(),
             break_stack: Vec::new(),
+            try_depth: 0,
+            loop_try_depth: Vec::new(),
             loaded_modules: HashMap::new(),
             loading_stack: HashSet::new(),
             module_counter: 0,
@@ -280,6 +293,16 @@ impl Compiler {
 
     fn emit(&mut self, instr: Instr) {
         self.code.push(instr);
+    }
+
+    /// Emit `n` `PopBlock` instructions. Used by `return` / `break` /
+    /// tail-call sites to drain any open `SETUP_EXCEPT` blocks before
+    /// transferring control out of their lexical scope, so a later
+    /// `RAISE` doesn't unwind into a stale handler.
+    fn emit_pop_blocks(&mut self, n: usize) {
+        for _ in 0..n {
+            self.emit(Instr::PopBlock);
+        }
     }
 
     fn placeholder(&mut self, instr: Instr) -> usize {
@@ -420,18 +443,27 @@ impl Compiler {
                 self.compile_expr(cond)?;
                 let jf = self.placeholder(Instr::JumpIfFalse(0));
                 self.break_stack.push(Vec::new());
+                self.loop_try_depth.push(self.try_depth);
                 self.compile_block_node(body)?;
                 self.emit(Instr::Jump(start));
                 let here = self.code.len();
                 self.patch_jump(jf, here);
                 let breaks = self.break_stack.pop().unwrap();
+                self.loop_try_depth.pop();
                 for b in breaks {
                     self.patch_jump(b, here);
                 }
             }
             Node::Try(try_block, exc_name, except_block, _) => {
                 let handler_idx = self.placeholder(Instr::SetupExcept(0));
+                // Track the open SETUP_EXCEPT block so any `return` /
+                // `break` inside the body emits a matching POP_BLOCK
+                // before transferring control. The except body runs
+                // *after* the runtime has unwound the block, so it
+                // sees the original try_depth — adjust accordingly.
+                self.try_depth += 1;
                 self.compile_block_node(try_block)?;
+                self.try_depth -= 1;
                 self.emit(Instr::PopBlock);
                 let end_jump = self.placeholder(Instr::Jump(0));
                 let handler_pc = self.code.len();
@@ -481,12 +513,14 @@ impl Compiler {
                             for a in args {
                                 self.compile_expr(a)?;
                             }
+                            self.emit_pop_blocks(self.try_depth);
                             self.emit(Instr::TailCall(self.resolve_call_name(name)));
                             return Ok(());
                         }
                     }
                 }
                 self.compile_expr(expr)?;
+                self.emit_pop_blocks(self.try_depth);
                 self.emit(Instr::Ret);
             }
             Node::Break(_) => {
@@ -496,6 +530,12 @@ impl Compiler {
                         self.current_file.display()
                     )));
                 }
+                // Pop any try blocks opened *between* the enclosing loop
+                // and this break. `loop_try_depth.last()` records the
+                // try_depth when the loop started; the current
+                // try_depth tells us how many tries are nested inside.
+                let saved = *self.loop_try_depth.last().unwrap();
+                self.emit_pop_blocks(self.try_depth - saved);
                 let j = self.placeholder(Instr::Jump(0));
                 self.break_stack.last_mut().unwrap().push(j);
             }
@@ -537,6 +577,13 @@ impl Compiler {
         // Function bodies start with empty break_stack so a stray `break`
         // produces a syntax error, matching the Python compiler.
         let saved_break = mem::take(&mut self.break_stack);
+        // Each function tracks its own try-block depth, independent of
+        // the enclosing scope's. (Outer try/except blocks don't carry
+        // through a function call boundary — the unwinder pops to the
+        // enclosing block's env_depth, which would be the call frame.)
+        let saved_try_depth = self.try_depth;
+        let saved_loop_try_depth = mem::take(&mut self.loop_try_depth);
+        self.try_depth = 0;
         // Push a new local scope seeded with the parameter names. They are
         // bound by the VM at call time; the compiler only needs to know
         // which identifiers are local (parameters / declarations) to choose
@@ -557,6 +604,8 @@ impl Compiler {
         self.local_scopes.pop();
         let func_code = mem::replace(&mut self.code, saved_code);
         self.break_stack = saved_break;
+        self.try_depth = saved_try_depth;
+        self.loop_try_depth = saved_loop_try_depth;
         Ok(func_code)
     }
 

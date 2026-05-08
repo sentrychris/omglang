@@ -1,0 +1,1338 @@
+;;;omg
+
+# bootstrap/native-c.omg — OMG bytecode → C transpiler.
+#
+# Reads a `.omgb` file and writes a `.c` file that, when compiled with
+# any C99 compiler, produces a native binary functionally equivalent to
+# running the bytecode through the OMG VM (for the supported subset).
+#
+# Usage:
+#     omg bootstrap/native-c.omg <in.omgb> <out.c>
+#     cc <out.c> -o <out>
+#     ./<out>
+#
+# This is the path to running OMG without the Rust runtime. The
+# transpiler itself is OMG; the generated programs link against
+# `bootstrap/omg_rt.h` (a small C header inlined at the top of every
+# output, so each `.c` is self-contained); after that there's no
+# Rust dependency for execution — just a C compiler and libc.
+#
+# Phase 1 (this commit): the hello-world subset.
+#     PUSH_INT, PUSH_STR, PUSH_NONE, EMIT, HALT
+# Future phases will extend coverage to arithmetic, control flow,
+# functions, lists/dicts, closures, try/except.
+
+# === Opcode constants =====================================================
+#
+# Mirror of `runtime/src/bytecode.rs` and `bootstrap/{compiler,vm}.omg`.
+
+alloc OP_PUSH_INT       := 0
+alloc OP_PUSH_STR       := 1
+alloc OP_PUSH_BOOL      := 2
+alloc OP_BUILD_LIST     := 3
+alloc OP_BUILD_DICT     := 4
+alloc OP_LOAD           := 5
+alloc OP_STORE          := 6
+alloc OP_ADD            := 7
+alloc OP_SUB            := 8
+alloc OP_MUL            := 9
+alloc OP_DIV            := 10
+alloc OP_MOD            := 11
+alloc OP_EQ             := 12
+alloc OP_NE             := 13
+alloc OP_LT             := 14
+alloc OP_LE             := 15
+alloc OP_GT             := 16
+alloc OP_GE             := 17
+alloc OP_BAND           := 18
+alloc OP_BOR            := 19
+alloc OP_BXOR           := 20
+alloc OP_SHL            := 21
+alloc OP_SHR            := 22
+alloc OP_AND            := 23
+alloc OP_OR             := 24
+alloc OP_NOT            := 25
+alloc OP_NEG            := 26
+alloc OP_INDEX          := 27
+alloc OP_SLICE          := 28
+alloc OP_JUMP           := 29
+alloc OP_JUMP_IF_FALSE  := 30
+alloc OP_CALL           := 31
+alloc OP_TCALL          := 32
+alloc OP_BUILTIN        := 33
+alloc OP_POP            := 34
+alloc OP_PUSH_NONE      := 35
+alloc OP_RET            := 36
+alloc OP_EMIT           := 37
+alloc OP_HALT           := 38
+alloc OP_STORE_INDEX    := 39
+alloc OP_ATTR           := 40
+alloc OP_STORE_ATTR     := 41
+alloc OP_ASSERT         := 42
+alloc OP_CALL_VALUE     := 43
+alloc OP_SETUP_EXCEPT   := 44
+alloc OP_POP_BLOCK      := 45
+alloc OP_RAISE          := 46
+alloc OP_MAKE_FUNC      := 52
+alloc OP_STORE_LOCAL    := 53
+alloc OP_PUSH_FLOAT     := 54
+alloc OP_FLOOR_DIV      := 55
+
+alloc BC_VERSION := 257
+
+# === Bytecode reader ======================================================
+#
+# Minimal subset of the parser in bootstrap/vm.omg, focused on the
+# opcodes phase-1 supports. Unknown opcodes still parse into tagged
+# instructions so we can emit a clear "not implemented yet" panic
+# during code-gen rather than a cryptic decode error.
+
+proc read_u32_at(bytes, i) {
+    alloc v := bytes[i] | (bytes[i + 1] << 8) | (bytes[i + 2] << 16) | (bytes[i + 3] << 24)
+    return [v, i + 4]
+}
+
+proc read_i64_at(bytes, i) {
+    alloc lo_pair := read_u32_at(bytes, i)
+    alloc hi_pair := read_u32_at(bytes, i + 4)
+    alloc v := (hi_pair[0] << 32) | lo_pair[0]
+    return [v, i + 8]
+}
+
+proc read_str_at(bytes, i) {
+    alloc len_pair := read_u32_at(bytes, i)
+    alloc len := len_pair[0]
+    alloc start := len_pair[1]
+    alloc s := bytes_to_string(bytes[start:start + len])
+    return [s, start + len]
+}
+
+proc tagged(tag, value, cur) {
+    return [[tag, value], cur]
+}
+
+proc tagged0(tag, cur) {
+    return [[tag, false], cur]
+}
+
+# Decode one instruction; returns [["NAME", payload], new_cursor].
+proc decode_one(op, bytes, cursor) {
+    if op == OP_PUSH_INT {
+        alloc r := read_i64_at(bytes, cursor)
+        return tagged("PUSH_INT", r[0], r[1])
+    }
+    if op == OP_PUSH_STR {
+        alloc r := read_str_at(bytes, cursor)
+        return tagged("PUSH_STR", r[0], r[1])
+    }
+    if op == OP_PUSH_BOOL {
+        alloc v := bytes[cursor] != 0
+        return tagged("PUSH_BOOL", v, cursor + 1)
+    }
+    if op == OP_PUSH_FLOAT {
+        # We DON'T convert to a float here — we keep the raw 64-bit
+        # pattern. Phase-1 doesn't support floats, but later phases
+        # will need the bits to emit C `double` literals.
+        alloc r := read_i64_at(bytes, cursor)
+        return tagged("PUSH_FLOAT_BITS", r[0], r[1])
+    }
+    if op == OP_PUSH_NONE   { return tagged0("PUSH_NONE",   cursor) }
+    if op == OP_EMIT        { return tagged0("EMIT",        cursor) }
+    if op == OP_HALT        { return tagged0("HALT",        cursor) }
+    if op == OP_POP         { return tagged0("POP",         cursor) }
+    # Other opcodes — keep their tags so generate() emits the
+    # "not implemented" panic with the correct name.
+    if op == OP_BUILD_LIST   { alloc r := read_u32_at(bytes, cursor) return tagged("BUILD_LIST",  r[0], r[1]) }
+    if op == OP_BUILD_DICT   { alloc r := read_u32_at(bytes, cursor) return tagged("BUILD_DICT",  r[0], r[1]) }
+    if op == OP_LOAD         { alloc r := read_str_at(bytes, cursor) return tagged("LOAD",        r[0], r[1]) }
+    if op == OP_STORE        { alloc r := read_str_at(bytes, cursor) return tagged("STORE",       r[0], r[1]) }
+    if op == OP_STORE_LOCAL  { alloc r := read_str_at(bytes, cursor) return tagged("STORE_LOCAL", r[0], r[1]) }
+    if op == OP_ADD          { return tagged0("ADD",        cursor) }
+    if op == OP_SUB          { return tagged0("SUB",        cursor) }
+    if op == OP_MUL          { return tagged0("MUL",        cursor) }
+    if op == OP_DIV          { return tagged0("DIV",        cursor) }
+    if op == OP_FLOOR_DIV    { return tagged0("FLOOR_DIV",  cursor) }
+    if op == OP_MOD          { return tagged0("MOD",        cursor) }
+    if op == OP_NEG          { return tagged0("NEG",        cursor) }
+    if op == OP_EQ           { return tagged0("EQ",         cursor) }
+    if op == OP_NE           { return tagged0("NE",         cursor) }
+    if op == OP_LT           { return tagged0("LT",         cursor) }
+    if op == OP_LE           { return tagged0("LE",         cursor) }
+    if op == OP_GT           { return tagged0("GT",         cursor) }
+    if op == OP_GE           { return tagged0("GE",         cursor) }
+    if op == OP_BAND         { return tagged0("BAND",       cursor) }
+    if op == OP_BOR          { return tagged0("BOR",        cursor) }
+    if op == OP_BXOR         { return tagged0("BXOR",       cursor) }
+    if op == OP_SHL          { return tagged0("SHL",        cursor) }
+    if op == OP_SHR          { return tagged0("SHR",        cursor) }
+    if op == OP_AND          { return tagged0("AND",        cursor) }
+    if op == OP_OR           { return tagged0("OR",         cursor) }
+    if op == OP_NOT          { return tagged0("NOT",        cursor) }
+    if op == OP_INDEX        { return tagged0("INDEX",      cursor) }
+    if op == OP_SLICE        { return tagged0("SLICE",      cursor) }
+    if op == OP_STORE_INDEX  { return tagged0("STORE_INDEX",cursor) }
+    if op == OP_ASSERT       { return tagged0("ASSERT",     cursor) }
+    if op == OP_POP_BLOCK    { return tagged0("POP_BLOCK",  cursor) }
+    if op == OP_JUMP         { alloc r := read_u32_at(bytes, cursor) return tagged("JUMP",         r[0], r[1]) }
+    if op == OP_JUMP_IF_FALSE { alloc r := read_u32_at(bytes, cursor) return tagged("JUMP_IF_FALSE", r[0], r[1]) }
+    if op == OP_CALL         { alloc r := read_str_at(bytes, cursor) return tagged("CALL",         r[0], r[1]) }
+    if op == OP_TCALL        { alloc r := read_str_at(bytes, cursor) return tagged("TCALL",        r[0], r[1]) }
+    if op == OP_BUILTIN {
+        alloc nm := read_str_at(bytes, cursor)
+        alloc ac := read_u32_at(bytes, nm[1])
+        return tagged("BUILTIN", [nm[0], ac[0]], ac[1])
+    }
+    if op == OP_ATTR         { alloc r := read_str_at(bytes, cursor) return tagged("ATTR",         r[0], r[1]) }
+    if op == OP_STORE_ATTR   { alloc r := read_str_at(bytes, cursor) return tagged("STORE_ATTR",   r[0], r[1]) }
+    if op == OP_CALL_VALUE   { alloc r := read_u32_at(bytes, cursor) return tagged("CALL_VALUE",   r[0], r[1]) }
+    if op == OP_SETUP_EXCEPT { alloc r := read_u32_at(bytes, cursor) return tagged("SETUP_EXCEPT", r[0], r[1]) }
+    if op == OP_RAISE        { alloc kind := bytes[cursor] return tagged("RAISE", kind, cursor + 1) }
+    if op == OP_RET          { return tagged0("RET",        cursor) }
+    if op == OP_MAKE_FUNC    { alloc r := read_str_at(bytes, cursor) return tagged("MAKE_FUNC",    r[0], r[1]) }
+    panic("native-c: unknown opcode 0x" + hex(op))
+}
+
+proc parse_bytecode(bytes) {
+    alloc n := length(bytes)
+    if n < 8 {
+        panic("native-c: bytecode too short")
+    }
+    if bytes[0] != ascii("O") or bytes[1] != ascii("M") or bytes[2] != ascii("G") or bytes[3] != ascii("B") {
+        panic("native-c: bad magic in header")
+    }
+    alloc cursor := 4
+    alloc ver_pair := read_u32_at(bytes, cursor)
+    cursor := ver_pair[1]
+    if ver_pair[0] != BC_VERSION {
+        panic("native-c: unsupported bytecode version " + ver_pair[0])
+    }
+    alloc fc_pair := read_u32_at(bytes, cursor)
+    alloc func_count := fc_pair[0]
+    cursor := fc_pair[1]
+    alloc funcs := {}
+    alloc f := 0
+    loop f < func_count {
+        alloc name_pair := read_str_at(bytes, cursor)
+        alloc name := name_pair[0]
+        cursor := name_pair[1]
+        alloc pc_pair := read_u32_at(bytes, cursor)
+        alloc param_count := pc_pair[0]
+        cursor := pc_pair[1]
+        alloc params := []
+        alloc p := 0
+        loop p < param_count {
+            alloc p_pair := read_str_at(bytes, cursor)
+            params := params + [p_pair[0]]
+            cursor := p_pair[1]
+            p := p + 1
+        }
+        alloc addr_pair := read_u32_at(bytes, cursor)
+        cursor := addr_pair[1]
+        funcs[name] := [params, addr_pair[0]]
+        f := f + 1
+    }
+    alloc cl_pair := read_u32_at(bytes, cursor)
+    alloc code_len := cl_pair[0]
+    cursor := cl_pair[1]
+    alloc code := []
+    alloc k := 0
+    loop k < code_len {
+        if cursor >= n {
+            panic("native-c: truncated instruction stream at instruction " + k)
+        }
+        alloc op := bytes[cursor]
+        cursor := cursor + 1
+        alloc instr := decode_one(op, bytes, cursor)
+        code := code + [instr[0]]
+        cursor := instr[1]
+        k := k + 1
+    }
+    return [code, funcs]
+}
+
+# === C string escaping ====================================================
+#
+# Backslash, double-quote, and the common control characters need
+# escaping in a C string literal. UTF-8 bytes pass through unchanged
+# because C source files are assumed to be UTF-8 (which all modern
+# compilers handle).
+
+proc c_escape(s) {
+    alloc out := ""
+    alloc i := 0
+    alloc n := length(s)
+    loop i < n {
+        alloc c := s[i]
+        if c == "\\" {
+            out := out + "\\\\"
+        } elif c == "\"" {
+            out := out + "\\\""
+        } elif c == "\n" {
+            out := out + "\\n"
+        } elif c == "\r" {
+            out := out + "\\r"
+        } elif c == "\t" {
+            out := out + "\\t"
+        } else {
+            out := out + c
+        }
+        i := i + 1
+    }
+    return out
+}
+
+# === Code generator =======================================================
+
+# C-friendly identifier name for an OMG variable. Prefix with `v_` so we
+# never collide with a C keyword and never start with a leading underscore.
+# The same prefix is used for both file-level globals and function-local
+# variables — when both exist, the local shadows the global naturally
+# inside the function body.
+proc c_var(name) {
+    return "v_" + name
+}
+
+# Numeric C function name for an OMG proc. We use a stable integer index
+# rather than the OMG name itself so mangled names like `__mod_3__foo`
+# (which include `__` sequences reserved by the C standard) don't surface
+# in the generated source.
+proc c_fn_name(idx) {
+    return "omg_p" + idx
+}
+
+# Format an instruction index as a label (`L0042`). C labels are scoped
+# per function, so reusing the same numeric format across all functions
+# is safe — labels in different C functions don't collide.
+proc label_for(i) {
+    alloc s := "L"
+    alloc n := i
+    alloc digits := ""
+    if n == 0 {
+        digits := "0000"
+    } else {
+        loop n > 0 {
+            digits := chr(ascii("0") + (n % 10)) + digits
+            n := n // 10
+        }
+        loop length(digits) < 4 {
+            digits := "0" + digits
+        }
+    }
+    return s + digits
+}
+
+# Two-operand op, common pattern. Pops both operands without dec'ing
+# them first, computes the result, then dec's the operands. The result
+# carries fresh ownership that transfers to the stack.
+proc emit_binop(c_func) {
+    return "    { Value b = stack[--sp]; Value a = stack[--sp]; Value r = " + c_func + "(a, b); omg_dec(a); omg_dec(b); stack[sp++] = r; }\n"
+}
+
+proc emit_unop(c_func) {
+    return "    { Value a = stack[--sp]; Value r = " + c_func + "(a); omg_dec(a); stack[sp++] = r; }\n"
+}
+
+# Emit C for a builtin call. We currently support a small set tied to
+# the phase-4 surface (strings + numeric). Everything else panics at
+# transpile time so the user knows which builtin to add.
+proc emit_builtin1(c_func) {
+    return "    { Value v = stack[--sp]; Value r = " + c_func + "(v); omg_dec(v); stack[sp++] = r; }\n"
+}
+
+# Two-argument builtin call. Pops b then a (source order: a came first).
+proc emit_builtin2(c_func) {
+    return "    { Value b = stack[--sp]; Value a = stack[--sp]; Value r = " + c_func + "(a, b); omg_dec(a); omg_dec(b); stack[sp++] = r; }\n"
+}
+
+proc emit_builtin(name, argc) {
+    if name == "length"   and argc == 1 { return emit_builtin1("omg_length") }
+    if name == "chr"      and argc == 1 { return emit_builtin1("omg_chr") }
+    if name == "ascii"    and argc == 1 { return emit_builtin1("omg_ascii") }
+    if name == "freeze"   and argc == 1 { return emit_builtin1("omg_dict_freeze") }
+    if name == "dict_keys" and argc == 1 { return emit_builtin1("omg_dict_keys") }
+
+    # Numeric / math builtins (phase 6).
+    if name == "int"   and argc == 1 { return emit_builtin1("omg_builtin_int") }
+    if name == "float" and argc == 1 { return emit_builtin1("omg_builtin_float") }
+    if name == "floor" and argc == 1 { return emit_builtin1("omg_builtin_floor") }
+    if name == "ceil"  and argc == 1 { return emit_builtin1("omg_builtin_ceil") }
+    if name == "round" and argc == 1 { return emit_builtin1("omg_builtin_round") }
+    if name == "abs"   and argc == 1 { return emit_builtin1("omg_builtin_abs") }
+    if name == "sqrt"  and argc == 1 { return emit_builtin1("omg_builtin_sqrt") }
+    if name == "log"   and argc == 1 { return emit_builtin1("omg_builtin_log") }
+    if name == "sin"   and argc == 1 { return emit_builtin1("omg_builtin_sin") }
+    if name == "cos"   and argc == 1 { return emit_builtin1("omg_builtin_cos") }
+    if name == "tan"   and argc == 1 { return emit_builtin1("omg_builtin_tan") }
+    if name == "pow"   and argc == 2 { return emit_builtin2("omg_builtin_pow") }
+
+    # Long-tail conversion builtins (phase 7).
+    if name == "hex"           and argc == 1 { return emit_builtin1("omg_builtin_hex") }
+    if name == "string_bytes"  and argc == 1 { return emit_builtin1("omg_builtin_string_bytes") }
+    if name == "bytes_to_string" and argc == 1 { return emit_builtin1("omg_builtin_bytes_to_string") }
+    if name == "float_bits"    and argc == 1 { return emit_builtin1("omg_builtin_float_bits") }
+    if name == "bits_to_float" and argc == 1 { return emit_builtin1("omg_builtin_bits_to_float") }
+    if name == "binary"        and argc == 1 { return emit_builtin1("omg_builtin_binary1") }
+    if name == "binary"        and argc == 2 { return emit_builtin2("omg_builtin_binary2") }
+
+    # File I/O (phase 7).
+    if name == "file_open"   and argc == 2 { return emit_builtin2("omg_builtin_file_open") }
+    if name == "file_read"   and argc == 1 { return emit_builtin1("omg_builtin_file_read") }
+    if name == "file_write"  and argc == 2 { return emit_builtin2("omg_builtin_file_write") }
+    if name == "file_close"  and argc == 1 { return emit_builtin1("omg_builtin_file_close") }
+    if name == "read_file"   and argc == 1 { return emit_builtin1("omg_builtin_read_file") }
+    if name == "file_exists" and argc == 1 { return emit_builtin1("omg_builtin_file_exists") }
+    if name == "is_dir"      and argc == 1 { return emit_builtin1("omg_builtin_is_dir") }
+    if name == "read_dir"    and argc == 1 { return emit_builtin1("omg_builtin_read_dir") }
+    if name == "make_dir"    and argc == 1 { return emit_builtin1("omg_builtin_make_dir") }
+
+    # User-raised errors (phase 7). Both diverge but we model them as
+    # Value-returning so the BUILTIN slot still pushes a (dead) result.
+    if name == "panic" and argc == 1 { return emit_builtin1("omg_builtin_panic") }
+    if name == "raise" and argc == 1 { return emit_builtin1("omg_builtin_raise") }
+
+    # Reflective dispatch (used by the OMG-in-OMG interpreter).
+    if name == "call_builtin" and argc == 2 { return emit_builtin2("omg_call_builtin") }
+
+    panic("native-c: builtin '" + name + "' (argc=" + argc + ") not implemented yet")
+}
+
+# Emit C for one bytecode instruction. `ctx` carries program-wide info
+# (`func_index`, `funcs`) plus context for the current function being
+# emitted (`current_locals`, `current_captured`, `in_function`).
+proc emit_c_for_instr(instr, ctx) {
+    alloc op := instr[0]
+    alloc arg := instr[1]
+    # Pushes — primitives never need refcounting. Fresh heap values
+    # (closures, lists, dicts) are created with rc=1 by their helper
+    # so we just push them and the stack owns the reference.
+    if op == "PUSH_INT"  { return "    stack[sp++] = omg_int(" + arg + "LL);\n" }
+    if op == "PUSH_STR"  { return "    stack[sp++] = omg_str(\"" + c_escape(arg) + "\");\n" }
+    if op == "PUSH_BOOL" {
+        if arg == true {
+            return "    stack[sp++] = omg_bool(1);\n"
+        }
+        return "    stack[sp++] = omg_bool(0);\n"
+    }
+    if op == "PUSH_NONE" { return "    stack[sp++] = omg_none();\n" }
+    # PUSH_FLOAT_BITS: the bytecode payload is the IEEE-754 bit
+    # pattern as an i64. Emit it as a C int64_t literal and let
+    # omg_float_from_bits memcpy-cast it to a double at runtime.
+    if op == "PUSH_FLOAT_BITS" {
+        return "    stack[sp++] = omg_float_from_bits(" + arg + "LL);\n"
+    }
+    if op == "EMIT"      { return "    { Value v = stack[--sp]; omg_emit(v); omg_dec(v); }\n" }
+    if op == "POP"       { return "    omg_dec(stack[--sp]);\n" }
+    if op == "HALT"      { return "    return 0;\n" }
+
+    # LOAD: copy v_<name> onto the stack; both slot and stack own it,
+    # so inc. STORE / STORE_LOCAL: pop transfers ownership to the
+    # slot — omg_assign dec's the old occupant before installing.
+    if op == "LOAD"        { return "    { Value v = " + c_var(arg) + "; omg_inc(v); stack[sp++] = v; }\n" }
+    # STORE / STORE_LOCAL of `current_dir` also updates omg_cwd_str so
+    # path resolution (file_open, read_file, etc.) tracks user mutations
+    # the way the OMG VM does. We do this only for `current_dir` —
+    # everything else is just a plain assign.
+    if op == "STORE" {
+        if arg == "current_dir" {
+            return "    omg_assign(&" + c_var(arg) + ", stack[--sp]); if (" + c_var(arg) + ".tag == OMG_STR) omg_cwd_str = " + c_var(arg) + ".v.s;\n"
+        }
+        return "    omg_assign(&" + c_var(arg) + ", stack[--sp]);\n"
+    }
+    if op == "STORE_LOCAL" {
+        if arg == "current_dir" {
+            return "    omg_assign(&" + c_var(arg) + ", stack[--sp]); if (" + c_var(arg) + ".tag == OMG_STR) omg_cwd_str = " + c_var(arg) + ".v.s;\n"
+        }
+        return "    omg_assign(&" + c_var(arg) + ", stack[--sp]);\n"
+    }
+
+    if op == "ADD"       { return emit_binop("omg_add") }
+    if op == "SUB"       { return emit_binop("omg_sub") }
+    if op == "MUL"       { return emit_binop("omg_mul") }
+    if op == "DIV"       { return emit_binop("omg_div") }
+    if op == "FLOOR_DIV" { return emit_binop("omg_floor_div") }
+    if op == "MOD"       { return emit_binop("omg_mod") }
+    if op == "NEG"       { return emit_unop("omg_neg") }
+
+    if op == "EQ" { return emit_binop("omg_eq") }
+    if op == "NE" { return emit_binop("omg_ne") }
+    if op == "LT" { return emit_binop("omg_lt") }
+    if op == "LE" { return emit_binop("omg_le") }
+    if op == "GT" { return emit_binop("omg_gt") }
+    if op == "GE" { return emit_binop("omg_ge") }
+
+    if op == "BAND" { return emit_binop("omg_band") }
+    if op == "BOR"  { return emit_binop("omg_bor") }
+    if op == "BXOR" { return emit_binop("omg_bxor") }
+    if op == "SHL"  { return emit_binop("omg_shl") }
+    if op == "SHR"  { return emit_binop("omg_shr") }
+    if op == "AND"  { return emit_binop("omg_and") }
+    if op == "OR"   { return emit_binop("omg_or") }
+    if op == "NOT"  { return emit_unop("omg_bnot") }
+
+    if op == "JUMP"          { return "    goto " + label_for(arg) + ";\n" }
+    if op == "JUMP_IF_FALSE" {
+        return "    { Value v = stack[--sp]; int t = omg_truthy(v); omg_dec(v); if (!t) goto " + label_for(arg) + "; }\n"
+    }
+
+    # ---- Index / slice / store-index (strings, lists, dicts) ----
+    # `omg_index` and `omg_slice` already inc the result for the caller,
+    # so the caller pushes without any extra refcount management. We
+    # do dec the base/idx/start/end pops because they were borrowed
+    # from the operand stack.
+    if op == "INDEX" {
+        return "    { Value idx = stack[--sp]; Value base = stack[--sp]; Value r = omg_index(base, idx); omg_dec(idx); omg_dec(base); stack[sp++] = r; }\n"
+    }
+    if op == "SLICE" {
+        return "    { Value end = stack[--sp]; Value start = stack[--sp]; Value base = stack[--sp]; Value r = omg_slice(base, start, end); omg_dec(end); omg_dec(start); omg_dec(base); stack[sp++] = r; }\n"
+    }
+    # STORE_INDEX: value transfers from stack into the list/dict slot
+    # (omg_store_index + omg_assign dec the old occupant). The popped
+    # idx and base are temporary borrows, so dec them.
+    if op == "STORE_INDEX" {
+        return "    { Value v = stack[--sp]; Value idx = stack[--sp]; Value base = stack[--sp]; omg_store_index(base, idx, v); omg_dec(idx); omg_dec(base); }\n"
+    }
+    if op == "ATTR" {
+        return "    { Value base = stack[--sp]; Value r = omg_attr(base, \"" + c_escape(arg) + "\"); omg_dec(base); stack[sp++] = r; }\n"
+    }
+    if op == "STORE_ATTR" {
+        return "    { Value v = stack[--sp]; Value base = stack[--sp]; omg_store_attr(base, \"" + c_escape(arg) + "\", v); omg_dec(base); }\n"
+    }
+
+    # ---- List / dict construction ----
+    if op == "BUILD_LIST" {
+        if arg == 0 {
+            return "    stack[sp++] = omg_list_new();\n"
+        }
+        alloc out := "    {\n"
+        out := out + "        Value omg_items[" + arg + "];\n"
+        alloc i := arg - 1
+        loop i >= 0 {
+            out := out + "        omg_items[" + i + "] = stack[--sp];\n"
+            i := i - 1
+        }
+        out := out + "        stack[sp++] = omg_list_build(omg_items, " + arg + ");\n"
+        out := out + "    }\n"
+        return out
+    }
+    if op == "BUILD_DICT" {
+        # Stack layout: [..., k0, v0, k1, v1, ..., k(n-1), v(n-1)].
+        # We build a fresh dict and set each pair.
+        alloc out := "    {\n"
+        out := out + "        Value omg_dict_v;\n"
+        out := out + "        omg_dict_v.tag = OMG_DICT;\n"
+        out := out + "        omg_dict_v.v.d = omg_dict_alloc();\n"
+        if arg > 0 {
+            out := out + "        Value omg_pairs[" + arg + "][2];\n"
+            alloc i := arg - 1
+            loop i >= 0 {
+                out := out + "        omg_pairs[" + i + "][1] = stack[--sp];\n"
+                out := out + "        omg_pairs[" + i + "][0] = stack[--sp];\n"
+                i := i - 1
+            }
+            alloc j := 0
+            loop j < arg {
+                out := out + "        { char buf[64]; const char *k = omg_value_to_cstr(omg_pairs[" + j + "][0], buf, sizeof(buf)); omg_dict_set(omg_dict_v.v.d, k, omg_pairs[" + j + "][1]); }\n"
+                j := j + 1
+            }
+        }
+        out := out + "        stack[sp++] = omg_dict_v;\n"
+        out := out + "    }\n"
+        return out
+    }
+
+    # ---- Builtins (phase 4: just the string-adjacent ones) ----
+    if op == "BUILTIN" {
+        alloc bname := arg[0]
+        alloc bargc := arg[1]
+        return emit_builtin(bname, bargc)
+    }
+
+    # ---- Functions (phase 3) ----
+    if op == "RET" {
+        # The return value is on top of the operand stack — pop it
+        # without dec'ing (transferring its reference to the caller).
+        # Before returning, drain every slot this function owns:
+        # parameters, alloc'd locals, and captured-env unpacks. The
+        # set comes from the analyzer's per-function info.
+        return emit_ret(ctx)
+    }
+    if op == "CALL" {
+        # Direct call by name. We trust the bytecode's name resolution:
+        # the OMG compiler only emits CALL <name> for names in the
+        # function table.
+        alloc fname := arg
+        alloc fidx := ctx["func_index"][fname]
+        alloc finfo := ctx["funcs"][fname]
+        alloc nparams := length(finfo[0])
+        return emit_call(c_fn_name(fidx), "NULL", "0", nparams)
+    }
+    if op == "TCALL" {
+        # Tail call: replace the current frame instead of pushing a
+        # new one. The OMG compiler emits a defensive PushNone+Ret
+        # *after* TCALL that never executes in the OMG VM (because
+        # TCALL transfers control to the callee, which returns to our
+        # caller). We mirror that by emitting a sibling-call `return`
+        # — those dead instructions become dead C code, and cc -O2
+        # converts the call into a real tail call (no C stack growth).
+        alloc fname := arg
+        alloc fidx := ctx["func_index"][fname]
+        alloc finfo := ctx["funcs"][fname]
+        alloc nparams := length(finfo[0])
+        return emit_tail_call(c_fn_name(fidx), nparams, ctx)
+    }
+    if op == "CALL_VALUE" {
+        # Indirect call through a closure value popped from the stack.
+        alloc nparams := arg
+        return emit_call_value(nparams)
+    }
+    # ---- Exceptions (phase 7) ----
+    # ASSERT pops a value and panics if it's falsy. The error message
+    # is the same one the OMG VM uses for AssertionError.
+    if op == "ASSERT" {
+        return "    { Value v = stack[--sp]; int t = omg_truthy(v); omg_dec(v); if (!t) omg_panic(\"AssertionError\", \"assertion failed\"); }\n"
+    }
+    # SETUP_EXCEPT(handler_pc): heap-allocate an OmgBlock, snapshot sp,
+    # push the block onto the global stack, and setjmp into it. On the
+    # longjmp return path, restore sp and jump to the handler PC with
+    # the error string on top of stack. See omg_rt.h for the rationale
+    # behind the heap allocation (OmgBlock pointer survives scope exit).
+    if op == "SETUP_EXCEPT" {
+        alloc out := "    {\n"
+        out := out + "        OmgBlock *omg_b = (OmgBlock *)malloc(sizeof(OmgBlock));\n"
+        out := out + "        if (!omg_b) { fprintf(stderr, \"out of memory\\n\"); exit(1); }\n"
+        out := out + "        omg_b->saved_sp = sp;\n"
+        out := out + "        omg_block_push(omg_b);\n"
+        out := out + "        if (setjmp(omg_b->jb) != 0) {\n"
+        out := out + "            sp = omg_b->saved_sp;\n"
+        out := out + "            free(omg_b);\n"
+        out := out + "            stack[sp++] = omg_pending_error;\n"
+        out := out + "            goto " + label_for(arg) + ";\n"
+        out := out + "        }\n"
+        out := out + "    }\n"
+        return out
+    }
+    # POP_BLOCK: clean exit from the try body. The handler-entry path
+    # already freed its block; this matches that.
+    if op == "POP_BLOCK" {
+        return "    { OmgBlock *b = omg_block_take(); if (b) free(b); }\n"
+    }
+    # RAISE(kind): pop the message Value and longjmp to the most recent
+    # block (or exit if none). Doesn't return — the dec is unreachable.
+    if op == "RAISE" {
+        return "    { Value m = stack[--sp]; omg_raise(" + arg + ", m); }\n"
+    }
+
+    if op == "MAKE_FUNC" {
+        # MAKE_FUNC binds a closure value to a name in the innermost
+        # scope. The new closure carries rc=1 from `omg_closure`;
+        # `omg_assign` transfers it into the slot, dec'ing the old
+        # binding (omg_none on first set, the previous closure on
+        # rebind). For captures, each cap[i] is a fresh reference into
+        # the closure's array, so we omg_inc the source variable.
+        alloc fname := arg
+        alloc fidx := ctx["func_index"][fname]
+        alloc inner_info := ctx["func_info"][fname]
+        alloc inner_captured := inner_info["captured_list"]
+        alloc nc := length(inner_captured)
+        if nc == 0 {
+            return "    omg_assign(&" + c_var(fname) + ", omg_closure(" + c_fn_name(fidx) + ", NULL, 0));\n"
+        }
+        alloc out := "    {\n"
+        out := out + "        Value *cap = (Value *)malloc(" + nc + " * sizeof(Value));\n"
+        alloc i := 0
+        loop i < nc {
+            out := out + "        cap[" + i + "] = " + c_var(inner_captured[i]) + "; omg_inc(cap[" + i + "]);\n"
+            i := i + 1
+        }
+        out := out + "        omg_assign(&" + c_var(fname) + ", omg_closure(" + c_fn_name(fidx) + ", cap, " + nc + "));\n"
+        out := out + "    }\n"
+        return out
+    }
+
+    panic("native-c: opcode '" + op + "' not implemented yet")
+}
+
+# Build the comma-separated arg list for a call, using local variables
+# omg_a0..omg_a<N-1> for the actual args and omg_none() for the padding
+# slots up to OMG_MAX_ARITY (= 8). Inline-arg passing lets cc optimise
+# tail calls without worrying about local-array pointer escape.
+proc args_list(nparams) {
+    alloc parts := []
+    alloc i := 0
+    loop i < nparams {
+        parts := parts + ["omg_a" + i]
+        i := i + 1
+    }
+    loop i < 8 {
+        parts := parts + ["omg_none()"]
+        i := i + 1
+    }
+    alloc out := ""
+    alloc j := 0
+    loop j < length(parts) {
+        if j > 0 {
+            out := out + ", "
+        }
+        out := out + parts[j]
+        j := j + 1
+    }
+    return out
+}
+
+# Pop `nparams` args off the operand stack into omg_a0..omg_a<N-1>.
+proc pop_args(nparams) {
+    alloc out := ""
+    alloc i := nparams - 1
+    loop i >= 0 {
+        out := out + "        Value omg_a" + i + " = stack[--sp];\n"
+        i := i - 1
+    }
+    return out
+}
+
+# Emit `omg_dec` for every slot this function owns (params + locals +
+# unpacked captured copies). Used at every return / tail-call site so
+# refcounts balance regardless of which exit path the body takes.
+proc emit_drain_locals(ctx) {
+    alloc cf := ctx["current_func"]
+    if cf == "" {
+        # Top-level (main) doesn't have managed locals in the same way
+        # — globals stay alive for the whole program.
+        return ""
+    }
+    alloc info := ctx["func_info"][cf]
+    alloc out := ""
+    # Params.
+    alloc params := info["params"]
+    alloc i := 0
+    loop i < length(params) {
+        out := out + "        omg_dec(" + c_var(params[i]) + ");\n"
+        i := i + 1
+    }
+    # Locals (alloc'd via STORE_LOCAL or MAKE_FUNC).
+    alloc lkeys := dict_keys(info["locals"])
+    alloc j := 0
+    loop j < length(lkeys) {
+        alloc nm := lkeys[j]
+        if has_key(info["params_set"], nm) == false {
+            out := out + "        omg_dec(" + c_var(nm) + ");\n"
+        }
+        j := j + 1
+    }
+    # Captured copies.
+    alloc cap := info["captured_list"]
+    alloc k := 0
+    loop k < length(cap) {
+        out := out + "        omg_dec(" + c_var(cap[k]) + ");\n"
+        k := k + 1
+    }
+    return out
+}
+
+proc emit_ret(ctx) {
+    alloc out := "    {\n"
+    out := out + "        Value rv = stack[--sp];\n"
+    out := out + emit_drain_locals(ctx)
+    out := out + "        return rv;\n"
+    out := out + "    }\n"
+    return out
+}
+
+# Direct (non-tail) call — pushes the result onto the operand stack.
+# Caller's popped args were transferred to the callee; after the call
+# returns we don't dec them (callee owns now). The result has rc=1
+# from the callee's RET, so push without inc.
+proc emit_call(c_fn, captured_expr, cap_count_expr, nparams) {
+    alloc out := "    {\n"
+    out := out + pop_args(nparams)
+    out := out + "        stack[sp++] = " + c_fn + "(" + captured_expr + ", " + cap_count_expr + ", " + nparams + ", " + args_list(nparams) + ");\n"
+    out := out + "    }\n"
+    return out
+}
+
+# Tail call — emits a C `return` so cc -O2 sibling-call-optimises.
+# Drain *this* function's owned slots first (we won't return to do it).
+# Args transfer to the callee, which will drain them on its own RET.
+proc emit_tail_call(c_fn, nparams, ctx) {
+    alloc out := "    {\n"
+    out := out + pop_args(nparams)
+    out := out + emit_drain_locals(ctx)
+    out := out + "        return " + c_fn + "(NULL, 0, " + nparams + ", " + args_list(nparams) + ");\n"
+    out := out + "    }\n"
+    return out
+}
+
+# Indirect call through a value popped from the stack. The OMG VM's
+# CALL_VALUE accepts either a Closure (with captured env) or a String
+# (a function name resolved against the global function table). The
+# string form is what `import`-style modules produce: a frozen dict of
+# `name -> mangled_name` pairs, where `OP_ATTR` returns the mangled
+# name and `OP_CALL_VALUE` looks it up in the function table.
+proc emit_call_value(nparams) {
+    alloc out := "    {\n"
+    out := out + pop_args(nparams)
+    out := out + "        Value omg_callee = stack[--sp];\n"
+    out := out + "        OmgFn omg_fn = NULL;\n"
+    out := out + "        Value *omg_cap = NULL;\n"
+    out := out + "        int omg_capn = 0;\n"
+    out := out + "        if (omg_callee.tag == OMG_CLOSURE) {\n"
+    out := out + "            omg_fn = omg_callee.v.c->fn;\n"
+    out := out + "            omg_cap = omg_callee.v.c->captured;\n"
+    out := out + "            omg_capn = omg_callee.v.c->cap_count;\n"
+    out := out + "        } else if (omg_callee.tag == OMG_STR) {\n"
+    out := out + "            omg_fn = omg_lookup_fn(omg_callee.v.s);\n"
+    out := out + "            if (!omg_fn) omg_panic(\"UndefinedIdentError\", omg_callee.v.s);\n"
+    out := out + "        } else {\n"
+    out := out + "            omg_panic(\"TypeError\", \"cannot call non-function value\");\n"
+    out := out + "        }\n"
+    out := out + "        Value omg_result = omg_fn(omg_cap, omg_capn, " + nparams + ", " + args_list(nparams) + ");\n"
+    out := out + "        omg_dec(omg_callee);\n"
+    out := out + "        stack[sp++] = omg_result;\n"
+    out := out + "    }\n"
+    return out
+}
+
+# Probe-style "is `key` in dict d?" — used liberally below for
+# membership queries on our analysis sets.
+proc has_key(d, key) {
+    try {
+        alloc probe := d[key]
+        return true
+    } except err {
+        return false
+    }
+}
+
+# === Pre-analysis =========================================================
+#
+# Before emitting anything we walk the bytecode once to figure out:
+#   * which names are top-level globals (declared before HALT),
+#   * the boundary of each function's body in the instruction stream,
+#   * each function's parameters / locals / captured variables,
+#   * a stable integer index for each function (used as the C name).
+
+# Names of runtime-injected globals the OMG VM populates at startup.
+# Programs may LOAD these without an explicit declaration, so we make
+# them file-static C variables.
+alloc INJECTED_GLOBALS := ["args", "module_file", "current_dir"]
+
+proc collect_globals(code) {
+    alloc globals := {}
+    alloc i := 0
+    alloc n := length(code)
+    loop i < n {
+        alloc instr := code[i]
+        alloc op := instr[0]
+        if op == "STORE_LOCAL" or op == "STORE" or op == "LOAD" {
+            globals[instr[1]] := true
+        }
+        if op == "MAKE_FUNC" {
+            # Top-level MAKE_FUNC binds a closure value to a name in
+            # globals; the name is the proc's mangled name.
+            globals[instr[1]] := true
+        }
+        if op == "HALT" {
+            # Add the runtime-injected globals so functions that LOAD
+            # them resolve to the file-static binding rather than to
+            # an undeclared identifier.
+            alloc j := 0
+            loop j < length(INJECTED_GLOBALS) {
+                globals[INJECTED_GLOBALS[j]] := true
+                j := j + 1
+            }
+            return globals
+        }
+        i := i + 1
+    }
+    alloc j := 0
+    loop j < length(INJECTED_GLOBALS) {
+        globals[INJECTED_GLOBALS[j]] := true
+        j := j + 1
+    }
+    return globals
+}
+
+# Build a sorted [address, name] list so we can determine each function's
+# body boundary (start of next function, or end of code).
+proc sorted_funcs_by_addr(funcs) {
+    alloc names := dict_keys(funcs)
+    alloc pairs := []
+    alloc i := 0
+    alloc n := length(names)
+    loop i < n {
+        alloc nm := names[i]
+        pairs := pairs + [[funcs[nm][1], nm]]
+        i := i + 1
+    }
+    # Insertion sort by address (small N).
+    alloc np := length(pairs)
+    alloc j := 1
+    loop j < np {
+        alloc k := j
+        loop k > 0 and pairs[k][0] < pairs[k - 1][0] {
+            alloc tmp := pairs[k]
+            pairs[k] := pairs[k - 1]
+            pairs[k - 1] := tmp
+            k := k - 1
+        }
+        j := j + 1
+    }
+    return pairs
+}
+
+# Pre-collect every name that's a parameter or alloc'd local in *any*
+# function in the program. We use this to distinguish two situations
+# that look identical at the single-function level:
+#
+#   - A name like `n` referenced inside `add` that's a parameter of an
+#     *enclosing* proc `make_adder`: this is a real closure capture.
+#   - A name like `c` in `examples/rot_13.omg`'s dead branch that's
+#     truly undefined (a typo): the OMG VM only complains about it at
+#     LOAD time, so we likewise treat it as an implicit global rather
+#     than refusing to compile.
+proc collect_all_local_names(code, funcs) {
+    alloc all := {}
+    alloc names := dict_keys(funcs)
+    alloc n := length(names)
+    alloc i := 0
+    alloc sorted := sorted_funcs_by_addr(funcs)
+    alloc code_len := length(code)
+    loop i < n {
+        alloc addr := sorted[i][0]
+        alloc nm := sorted[i][1]
+        alloc body_start := addr
+        alloc body_end := code_len
+        if i + 1 < n {
+            body_end := sorted[i + 1][0]
+        }
+        alloc params := funcs[nm][0]
+        # Params are locals from the function's perspective.
+        alloc p := 0
+        loop p < length(params) {
+            all[params[p]] := true
+            p := p + 1
+        }
+        # STORE_LOCAL / MAKE_FUNC targets within body are also locals.
+        alloc j := body_start
+        loop j < body_end {
+            alloc instr := code[j]
+            alloc op := instr[0]
+            if op == "STORE_LOCAL" or op == "MAKE_FUNC" {
+                all[instr[1]] := true
+            }
+            j := j + 1
+        }
+        i := i + 1
+    }
+    return all
+}
+
+# Analyse a single function body: extract STORE_LOCAL targets and
+# referenced names, then bucket each name into params / locals /
+# captured / globals.
+proc analyze_function(fname, params, body_start, body_end, code, globals, all_locals) {
+    alloc params_set := {}
+    alloc i := 0
+    alloc np := length(params)
+    loop i < np {
+        params_set[params[i]] := true
+        i := i + 1
+    }
+    alloc locals := {}            # STORE_LOCAL or MAKE_FUNC targets within body
+    alloc referenced := {}        # any LOAD/STORE/STORE_LOCAL/MAKE_FUNC name
+    alloc j := body_start
+    loop j < body_end {
+        alloc instr := code[j]
+        alloc op := instr[0]
+        if op == "STORE_LOCAL" or op == "MAKE_FUNC" {
+            # Both bind a name in the innermost scope. STORE_LOCAL stores
+            # an explicit value; MAKE_FUNC binds a closure for a nested
+            # proc. Either way the name belongs to the local env.
+            locals[instr[1]] := true
+            referenced[instr[1]] := true
+        } elif op == "LOAD" or op == "STORE" {
+            referenced[instr[1]] := true
+        }
+        j := j + 1
+    }
+    # Bucket each referenced-but-not-bound-in-this-scope name. There
+    # are two cases:
+    #
+    #   * The name is a param/local of *some other* function — that's
+    #     a real closure capture; record it in captured_list with a
+    #     stable index.
+    #   * The name is bound nowhere — that's either an implicit global
+    #     (the runtime-injected ones we already seeded) or a real typo
+    #     in the user's code. We promote it to a global so the C
+    #     compile succeeds; if a LOAD ever actually executes, the
+    #     resulting omg_none will surface as a downstream type error,
+    #     matching the OMG VM's lazy UndefinedIdentError behaviour.
+    alloc captured_list := []
+    alloc ref_keys := dict_keys(referenced)
+    alloc rk := length(ref_keys)
+    alloc k := 0
+    loop k < rk {
+        alloc nm := ref_keys[k]
+        if has_key(params_set, nm) == false and has_key(locals, nm) == false and has_key(globals, nm) == false {
+            if has_key(all_locals, nm) {
+                captured_list := captured_list + [nm]
+            } else {
+                globals[nm] := true
+            }
+        }
+        k := k + 1
+    }
+    return {
+        params: params,
+        params_set: params_set,
+        locals: locals,
+        captured_list: captured_list,
+        body_start: body_start,
+        body_end: body_end
+    }
+}
+
+proc analyze_all_functions(code, funcs, globals) {
+    alloc all_locals := collect_all_local_names(code, funcs)
+    alloc sorted := sorted_funcs_by_addr(funcs)
+    alloc analyses := {}
+    alloc i := 0
+    alloc n := length(sorted)
+    alloc code_len := length(code)
+    loop i < n {
+        alloc addr := sorted[i][0]
+        alloc nm := sorted[i][1]
+        alloc body_start := addr
+        alloc body_end := code_len
+        if i + 1 < n {
+            body_end := sorted[i + 1][0]
+        }
+        alloc params := funcs[nm][0]
+        analyses[nm] := analyze_function(nm, params, body_start, body_end, code, globals, all_locals)
+        i := i + 1
+    }
+    return analyses
+}
+
+proc build_func_index(funcs) {
+    alloc names := dict_keys(funcs)
+    # Sort alphabetically for deterministic numbering.
+    alloc nn := length(names)
+    alloc j := 1
+    loop j < nn {
+        alloc k := j
+        loop k > 0 and names[k] < names[k - 1] {
+            alloc tmp := names[k]
+            names[k] := names[k - 1]
+            names[k - 1] := tmp
+            k := k - 1
+        }
+        j := j + 1
+    }
+    alloc index := {}
+    alloc i := 0
+    loop i < nn {
+        index[names[i]] := i
+        i := i + 1
+    }
+    return index
+}
+
+# === Code emission ========================================================
+
+# Find every instruction index that is the target of a JUMP /
+# JUMP_IF_FALSE / SETUP_EXCEPT, so we can emit labels selectively.
+proc collect_jump_targets(code, body_start, body_end) {
+    alloc targets := {}
+    alloc i := body_start
+    loop i < body_end {
+        alloc instr := code[i]
+        alloc op := instr[0]
+        if op == "JUMP" or op == "JUMP_IF_FALSE" or op == "SETUP_EXCEPT" {
+            targets[instr[1]] := true
+        }
+        i := i + 1
+    }
+    return targets
+}
+
+# Emit the body of one function (or main): walks instructions in
+# [start, end), stopping at HALT (or running off the end).
+proc emit_body(code, body_start, body_end, ctx) {
+    alloc out := ""
+    alloc targets := collect_jump_targets(code, body_start, body_end)
+    alloc i := body_start
+    loop i < body_end {
+        if has_key(targets, i) {
+            out := out + label_for(i) + ":;\n"
+        }
+        out := out + emit_c_for_instr(code[i], ctx)
+        if code[i][0] == "HALT" {
+            break
+        }
+        i := i + 1
+    }
+    return out
+}
+
+# Emit one function definition.
+proc emit_function(name, code, funcs, func_index, func_info, globals) {
+    alloc info := func_info[name]
+    alloc params := info["params"]
+    alloc locals := info["locals"]
+    alloc captured_list := info["captured_list"]
+    alloc body_start := info["body_start"]
+    alloc body_end := info["body_end"]
+    alloc fidx := func_index[name]
+
+    alloc out := "static Value " + c_fn_name(fidx) + "(Value *captured, int cap_count, int argc,\n"
+    out := out + "                            Value omg_a0, Value omg_a1, Value omg_a2, Value omg_a3,\n"
+    out := out + "                            Value omg_a4, Value omg_a5, Value omg_a6, Value omg_a7) {\n"
+    out := out + "    (void)cap_count; (void)argc;\n"
+    out := out + "    Value stack[256];\n"
+    out := out + "    int sp = 0;\n"
+    out := out + "    (void)stack; (void)sp;\n"
+    if length(captured_list) == 0 {
+        out := out + "    (void)captured;\n"
+    }
+    # Silence unused-parameter warnings for arity-padding slots that
+    # this proc doesn't read. Their values are omg_none() and get
+    # dec'd at function exit if we touched them, but we don't.
+    alloc np := length(params)
+    alloc pad := np
+    loop pad < 8 {
+        out := out + "    (void)omg_a" + pad + ";\n"
+        pad := pad + 1
+    }
+
+    # Unpack parameters: caller transferred ownership, so we just take
+    # them without inc'ing. They'll be dec'd on every return path.
+    alloc p := 0
+    loop p < np {
+        out := out + "    Value " + c_var(params[p]) + " = omg_a" + p + ";\n"
+        p := p + 1
+    }
+
+    # Declare alloc'd locals (excluding params we just unpacked).
+    # Initialised to omg_none so the first omg_assign has something
+    # safe to dec.
+    alloc local_keys := dict_keys(locals)
+    alloc lk := length(local_keys)
+    alloc l := 0
+    loop l < lk {
+        alloc nm := local_keys[l]
+        if has_key(info["params_set"], nm) == false {
+            out := out + "    Value " + c_var(nm) + " = omg_none();\n"
+        }
+        l := l + 1
+    }
+
+    # Unpack captured values: the closure still owns its captured
+    # array, so we inc each one to give the local slot its own ref.
+    alloc nc := length(captured_list)
+    alloc c := 0
+    loop c < nc {
+        out := out + "    Value " + c_var(captured_list[c]) + " = captured[" + c + "]; omg_inc(" + c_var(captured_list[c]) + ");\n"
+        c := c + 1
+    }
+
+    # Body.
+    alloc ctx := {
+        funcs: funcs,
+        func_index: func_index,
+        func_info: func_info,
+        globals: globals,
+        in_function: true,
+        current_func: name
+    }
+    out := out + emit_body(code, body_start, body_end, ctx)
+    # Implicit return for paths that fall off the end. The OMG
+    # compiler also emits PushNone+Ret so this is dead code, but
+    # keeping it here means the C function is well-formed even if a
+    # bytecode quirk somehow lands here.
+    out := out + "    {\n"
+    out := out + "        Value rv = omg_none();\n"
+    out := out + emit_drain_locals(ctx)
+    out := out + "        return rv;\n"
+    out := out + "    }\n"
+    out := out + "}\n\n"
+    return out
+}
+
+proc generate(code, funcs, runtime_header, source_path) {
+    alloc globals := collect_globals(code)
+    alloc func_index := build_func_index(funcs)
+    alloc func_info := analyze_all_functions(code, funcs, globals)
+
+    alloc out := "/* Generated by bootstrap/native-c.omg from " + source_path + " */\n\n"
+    out := out + runtime_header
+    out := out + "\n"
+
+    # File-level static globals: every top-level declared name + the
+    # runtime-injected ones.
+    alloc gkeys := dict_keys(globals)
+    alloc gk_n := length(gkeys)
+    alloc i := 0
+    loop i < gk_n {
+        out := out + "static Value " + c_var(gkeys[i]) + ";\n"
+        i := i + 1
+    }
+    if gk_n > 0 {
+        out := out + "\n"
+    }
+
+    # Forward declarations for every proc.
+    alloc all_func_names := dict_keys(funcs)
+    alloc nf := length(all_func_names)
+    i := 0
+    loop i < nf {
+        out := out + "static Value " + c_fn_name(func_index[all_func_names[i]]) + "(Value *, int, int, Value, Value, Value, Value, Value, Value, Value, Value);\n"
+        i := i + 1
+    }
+    if nf > 0 {
+        out := out + "\n"
+    }
+    # Forward decl for the string-keyed function lookup. CALL_VALUE may
+    # encounter a string callee (imported-module dispatch), and the
+    # lookup table is emitted after the function definitions, so a
+    # forward decl is required.
+    out := out + "static OmgFn omg_lookup_fn(const char *name);\n\n"
+
+    # Function definitions.
+    i := 0
+    loop i < nf {
+        out := out + emit_function(all_func_names[i], code, funcs, func_index, func_info, globals)
+        i := i + 1
+    }
+
+    # Lookup table from OMG function name → C function pointer. CALL_VALUE
+    # uses this when the callee is a string (which happens with
+    # imported-module dicts; see emit_call_value's comment).
+    out := out + "static const struct { const char *name; OmgFn fn; } omg_func_table[] = {\n"
+    i := 0
+    loop i < nf {
+        alloc fname := all_func_names[i]
+        out := out + "    {\"" + c_escape(fname) + "\", " + c_fn_name(func_index[fname]) + "},\n"
+        i := i + 1
+    }
+    out := out + "    {NULL, NULL}\n"
+    out := out + "};\n"
+    out := out + "static OmgFn omg_lookup_fn(const char *name) {\n"
+    out := out + "    for (int i = 0; omg_func_table[i].name; i++) {\n"
+    out := out + "        if (strcmp(omg_func_table[i].name, name) == 0) return omg_func_table[i].fn;\n"
+    out := out + "    }\n"
+    out := out + "    return NULL;\n"
+    out := out + "}\n\n"
+
+    # main(): the top-level code (instructions 0 .. first HALT).
+    out := out + "int main(int argc, char **argv) {\n"
+    out := out + "    (void)argc; (void)argv;\n"
+    out := out + "    /* Force line-buffered stdout so stdout/stderr interleave the\n"
+    out := out + "     * way Rust's stdio does (Rust's println! flushes on \\n via\n"
+    out := out + "     * LineWriter even when piped). Matters for error tests where a\n"
+    out := out + "     * panic to stderr must come AFTER prior emits, not before. */\n"
+    out := out + "    setvbuf(stdout, NULL, _IOLBF, 0);\n"
+    out := out + "    Value stack[1024];\n"
+    out := out + "    int sp = 0;\n"
+    out := out + "    (void)stack; (void)sp;\n"
+
+    # Initialise runtime-injected globals to match the OMG VM:
+    #   - args         = list of [argv[0], argv[1], ...]
+    #   - module_file  = argv[0] (script path; here, the binary's own path)
+    #   - current_dir  = OS cwd via getcwd()
+    # omg_cwd_str is the path-resolution base used by file_open/etc.;
+    # mirroring it to v_current_dir keeps the user-visible global
+    # consistent for read access.
+    out := out + "    {\n"
+    out := out + "        char *cwdbuf = (char *)malloc(4096);\n"
+    out := out + "        if (cwdbuf && getcwd(cwdbuf, 4096)) {\n"
+    out := out + "            omg_cwd_str = cwdbuf;\n"
+    out := out + "        } else {\n"
+    out := out + "            free(cwdbuf);\n"
+    out := out + "            omg_cwd_str = \".\";\n"
+    out := out + "        }\n"
+    out := out + "    }\n"
+    out := out + "    " + c_var("module_file") + " = omg_str(argc > 0 ? argv[0] : \"<stdin>\");\n"
+    out := out + "    " + c_var("current_dir") + " = omg_str(omg_cwd_str);\n"
+    out := out + "    {\n"
+    out := out + "        Value alist; alist.tag = OMG_LIST; alist.v.l = omg_list_alloc(argc);\n"
+    out := out + "        for (int i = 0; i < argc; i++) omg_list_push(alist.v.l, omg_str(argv[i]));\n"
+    out := out + "        " + c_var("args") + " = alist;\n"
+    out := out + "    }\n"
+    out := out + "\n"
+
+    alloc ctx := {
+        funcs: funcs,
+        func_index: func_index,
+        func_info: func_info,
+        globals: globals,
+        in_function: false,
+        current_func: ""
+    }
+    # Find the HALT to know where main ends.
+    alloc main_end := length(code)
+    alloc j := 0
+    alloc nc := length(code)
+    loop j < nc {
+        if code[j][0] == "HALT" {
+            main_end := j + 1
+            break
+        }
+        j := j + 1
+    }
+    out := out + emit_body(code, 0, main_end, ctx)
+    out := out + "    return 0;\n"
+    out := out + "}\n"
+    return out
+}
+
+# === Runtime header path resolution =======================================
+#
+# The header lives next to this script: bootstrap/omg_rt.h. We can't
+# embed it as a string literal because OMG strings would need every
+# C-special character escaped, and the runtime is meant to be edited
+# as plain C. So we read it from disk at transpile time. The path is
+# computed relative to module_file (this script), not the user's CWD,
+# so the transpiler works from any directory.
+
+proc dirname(path) {
+    alloc i := length(path) - 1
+    loop i >= 0 {
+        if path[i] == "/" or path[i] == "\\" {
+            return path[0:i]
+        }
+        i := i - 1
+    }
+    return "."
+}
+
+# === Main =================================================================
+
+if length(args) < 3 {
+    panic("usage: omg bootstrap/native-c.omg <in.omgb> <out.c>")
+}
+
+alloc bc_path := args[1]
+alloc out_path := args[2]
+alloc rt_path := dirname(module_file) + "/omg_rt.h"
+
+alloc fh := file_open(bc_path, "rb")
+alloc bc_bytes := file_read(fh)
+file_close(fh)
+
+alloc parsed := parse_bytecode(bc_bytes)
+alloc code := parsed[0]
+alloc funcs := parsed[1]
+
+alloc runtime_header := read_file(rt_path)
+if runtime_header == false {
+    panic("native-c: cannot read runtime header at " + rt_path)
+}
+
+alloc c_src := generate(code, funcs, runtime_header, bc_path)
+
+alloc out_h := file_open(out_path, "w")
+file_write(out_h, c_src)
+file_close(out_h)
+
+emit "[native-c] " + bc_path + " -> " + out_path + " (" + length(c_src) + " bytes)"

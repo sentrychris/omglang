@@ -974,6 +974,15 @@ alloc cc_code := []
 alloc cc_pending_funcs := []   # list of [name, params, body_code]
 alloc cc_funcs := []           # list of [name, params, address]
 alloc cc_break_stack := []     # list of (list of patch indices)
+# Number of `SETUP_EXCEPT` blocks currently open in the function being
+# compiled. `return` / `break` / tail-call sites must emit a matching
+# number of `POP_BLOCK` instructions so a later `RAISE` doesn't unwind
+# into a stale handler.
+alloc cc_try_depth := 0
+# Saved cc_try_depth at the start of each currently-open loop, in
+# parallel with cc_break_stack. `break` uses this to know how many
+# tries are nested between it and its target loop.
+alloc cc_loop_try_depth := []
 alloc cc_local_scopes := [[]]  # stack of name lists
 alloc cc_module_counter := 0
 alloc cc_current_prefix := ""
@@ -1144,6 +1153,17 @@ proc cc_emit(instr) {
 
 proc cc_emit_simple(opname) {
     cc_emit([opname, false])
+}
+
+# Emit `n` POP_BLOCK instructions. Used by return / break / tail-call
+# sites to drain open SETUP_EXCEPT blocks before transferring control
+# out of their lexical scope.
+proc cc_emit_pop_blocks(n) {
+    alloc i := 0
+    loop i < n {
+        cc_emit_simple("POP_BLOCK")
+        i := i + 1
+    }
 }
 
 proc cc_placeholder(opname) {
@@ -1666,6 +1686,7 @@ proc compile_stmt(stmt) {
         compile_expr(stmt[1])
         alloc jf := cc_placeholder("JUMP_IF_FALSE")
         cc_break_stack := cc_break_stack + [[]]
+        cc_loop_try_depth := cc_loop_try_depth + [cc_try_depth]
         compile_block_node(stmt[2])
         cc_emit(["JUMP", start])
         alloc here := length(cc_code)
@@ -1673,6 +1694,8 @@ proc compile_stmt(stmt) {
         alloc top := length(cc_break_stack) - 1
         alloc breaks := cc_break_stack[top]
         cc_break_stack := cc_break_stack[0:top]
+        alloc ltd_top := length(cc_loop_try_depth) - 1
+        cc_loop_try_depth := cc_loop_try_depth[0:ltd_top]
         alloc i := 0
         loop i < length(breaks) {
             cc_patch(breaks[i], here)
@@ -1682,7 +1705,12 @@ proc compile_stmt(stmt) {
     }
     if kind == "try" {
         alloc handler_idx := cc_placeholder("SETUP_EXCEPT")
+        # Track open SETUP_EXCEPT so any return/break/tail-call in the
+        # try body emits the matching POP_BLOCK before transferring
+        # control. The except body sees the original try_depth.
+        cc_try_depth := cc_try_depth + 1
         compile_block_node(stmt[1])
+        cc_try_depth := cc_try_depth - 1
         cc_emit_simple("POP_BLOCK")
         alloc jend := cc_placeholder("JUMP")
         alloc handler_pc := length(cc_code)
@@ -1734,15 +1762,25 @@ proc compile_stmt(stmt) {
                     compile_expr(args[i])
                     i := i + 1
                 }
+                # Drain any open SETUP_EXCEPT blocks before transferring
+                # control out of this function.
+                cc_emit_pop_blocks(cc_try_depth)
                 cc_emit(["TCALL", cc_mangle(cname)])
                 return false
             }
         }
         compile_expr(expr)
+        cc_emit_pop_blocks(cc_try_depth)
         cc_emit_simple("RET")
         return false
     }
     if kind == "break" {
+        # Drain SETUP_EXCEPT blocks opened *between* the enclosing loop
+        # and this break. cc_loop_try_depth records cc_try_depth as it
+        # was when the loop started.
+        alloc ltd_top := length(cc_loop_try_depth) - 1
+        alloc saved := cc_loop_try_depth[ltd_top]
+        cc_emit_pop_blocks(cc_try_depth - saved)
         alloc top := length(cc_break_stack) - 1
         alloc j := cc_placeholder("JUMP")
         cc_break_stack[top] := cc_break_stack[top] + [j]
@@ -1758,8 +1796,15 @@ proc compile_stmt(stmt) {
 proc compile_function_body(params, body) {
     alloc saved_code   := cc_code
     alloc saved_breaks := cc_break_stack
+    # Each function tracks its own try-block depth, independent of the
+    # enclosing scope's. (Outer try/except blocks don't carry through a
+    # function call boundary.)
+    alloc saved_try_depth := cc_try_depth
+    alloc saved_loop_try := cc_loop_try_depth
     cc_code := []
     cc_break_stack := []
+    cc_try_depth := 0
+    cc_loop_try_depth := []
     alloc new_scope := []
     alloc i := 0
     alloc n := length(params)
@@ -1780,6 +1825,8 @@ proc compile_function_body(params, body) {
     alloc out := cc_code
     cc_code := saved_code
     cc_break_stack := saved_breaks
+    cc_try_depth := saved_try_depth
+    cc_loop_try_depth := saved_loop_try
     return out
 }
 

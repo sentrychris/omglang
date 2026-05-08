@@ -1,0 +1,99 @@
+;;;omg
+
+# Regression test: the compiler must emit POP_BLOCK before any
+# control-flow exit from inside a `try` block (return, tail call,
+# break out of an enclosing loop). Without that, the SETUP_EXCEPT
+# block leaks onto the runtime block-stack, and any *later* panic
+# unwinds to the dead handler.
+
+# Case 1: `return true` inside `try` — the original symptom that
+# surfaced when bootstrap/native-c.omg called this kind of helper
+# in a loop.
+proc has_key(d, key) {
+    try {
+        alloc probe := d[key]
+        return true
+    } except err {
+        return false
+    }
+}
+
+alloc d := {a: 1}
+emit has_key(d, "a")            # true
+emit has_key(d, "missing")      # false
+
+# A panic raised AFTER the leaky-return helpers would (pre-fix) be
+# caught by has_key's stale handler and produce a VmInvariant.
+try {
+    panic("real error")
+} except err {
+    emit "caught: " + err       # caught: RuntimeError: real error
+}
+
+# Case 2: `break` inside `try` inside `loop` — the SETUP_EXCEPT must
+# be popped when control jumps out of the loop.
+alloc i := 0
+loop i < 5 {
+    try {
+        if i == 2 {
+            break
+        }
+        i := i + 1
+    } except _ {
+        emit "unreachable"
+    }
+}
+emit "i after break: " + i      # i after break: 2
+
+try {
+    panic("after break")
+} except err {
+    emit "caught: " + err
+}
+
+# Case 3: tail call inside `try`. The TCALL must pop blocks before
+# transferring control to the callee, otherwise the callee's frame
+# inherits a stale handler.
+proc bottom(n) {
+    if n <= 0 { return n }
+    return bottom(n - 1)
+}
+proc through_try() {
+    try {
+        return bottom(3)
+    } except err {
+        return -1
+    }
+}
+emit through_try()              # 0
+
+try {
+    panic("after tail call")
+} except err {
+    emit "caught: " + err
+}
+
+# Case 4: nested tries — `return` from the inner try must pop both.
+proc nested(n) {
+    try {
+        try {
+            if n > 0 {
+                return n * 2    # both blocks must be popped here
+            }
+        } except _ {
+            return -1
+        }
+    } except _ {
+        return -2
+    }
+    return 0
+}
+emit nested(7)                  # 14
+
+try {
+    panic("after nested")
+} except err {
+    emit "caught: " + err
+}
+
+emit "all clean"
