@@ -1,0 +1,166 @@
+;;;omg
+
+import "lib.omg" as lib
+
+# omg-fmt — minimal OMG source formatter.
+#
+# Usage:  omg tools/omg-fmt.omg <input.omg> [output]
+#
+# What it does:
+#   - Re-indents every line using 4-space units, sized by accumulated
+#     `{ } ( ) [ ]` depth.  Lines that *start* with a closing bracket are
+#     dedented one level so `} else {` lands flush with its `if`.
+#   - Strips trailing whitespace.
+#   - Preserves blank lines.
+#   - Leaves contents of `/** ... */` doc-blocks and `"..."` strings
+#     verbatim (so multi-line literals don't get re-indented mid-string).
+#
+# What it does *not* do (yet):
+#   - Normalise spacing inside lines (operators, commas, etc.).
+#   - Reflow multi-line proc/list/dict literals to a hanging indent.
+#
+# Result: idempotent — running the formatter twice produces the same
+# output as running it once.
+
+# === module-level scanner state =========================================
+
+alloc fmt_in_string := false
+alloc fmt_in_doc := false
+alloc fmt_depth := 0
+
+proc reset_state() {
+    fmt_in_string := false
+    fmt_in_doc := false
+    fmt_depth := 0
+}
+
+# Walk a line, updating depth and the in_string / in_doc flags.  Skips
+# brace counting inside strings, line comments, and docblocks.
+proc scan_line(line) {
+    alloc n := length(line)
+    alloc i := 0
+    loop i < n {
+        alloc c := line[i]
+        if fmt_in_doc {
+            if c == "*" and i + 1 < n and line[i + 1] == "/" {
+                fmt_in_doc := false
+                i := i + 2
+            } else {
+                i := i + 1
+            }
+        } elif fmt_in_string {
+            if c == "\\" and i + 1 < n {
+                i := i + 2
+            } elif c == "\"" {
+                fmt_in_string := false
+                i := i + 1
+            } else {
+                i := i + 1
+            }
+        } elif c == "#" {
+            i := n
+        } elif c == "/" and i + 1 < n and line[i + 1] == "*" {
+            fmt_in_doc := true
+            i := i + 2
+        } elif c == "\"" {
+            fmt_in_string := true
+            i := i + 1
+        } elif c == "{" or c == "(" or c == "[" {
+            fmt_depth := fmt_depth + 1
+            i := i + 1
+        } elif c == "}" or c == ")" or c == "]" {
+            fmt_depth := fmt_depth - 1
+            i := i + 1
+        } else {
+            i := i + 1
+        }
+    }
+}
+
+# Strip trailing whitespace from a line (without touching anything else).
+proc rstrip(s) {
+    alloc j := length(s)
+    loop j > 0 {
+        alloc c := s[j - 1]
+        if c == " " or c == "\t" or c == "\r" {
+            j := j - 1
+        } else {
+            break
+        }
+    }
+    return s[0:j]
+}
+
+# Strip leading whitespace from a line.
+proc lstrip(s) {
+    alloc i := 0
+    alloc n := length(s)
+    loop i < n {
+        alloc c := s[i]
+        if c == " " or c == "\t" {
+            i := i + 1
+        } else {
+            break
+        }
+    }
+    return s[i:n]
+}
+
+# `count` repetitions of "    ".
+proc indent(count) {
+    alloc s := ""
+    alloc k := 0
+    loop k < count {
+        s := s + "    "
+        k := k + 1
+    }
+    return s
+}
+
+if length(args) < 2 {
+    panic("usage: omg tools/omg-fmt.omg <input.omg> [output]")
+}
+
+alloc src := read_file(args[1])
+if src == false {
+    panic("cannot read: " + args[1])
+}
+
+reset_state()
+alloc lines := lib.split_lines(src)
+alloc nl := length(lines)
+alloc out := ""
+alloc i := 0
+loop i < nl {
+    alloc line := lines[i]
+    if fmt_in_string or fmt_in_doc {
+        # Inside a multi-line string or docblock — preserve verbatim so
+        # we don't accidentally trim significant whitespace.
+        out := out + rstrip(line) + "\n"
+    } else {
+        alloc trimmed := lib.trim(line)
+        if length(trimmed) == 0 {
+            out := out + "\n"
+        } else {
+            alloc starts_close := trimmed[0] == "}" or trimmed[0] == ")" or trimmed[0] == "]"
+            alloc this_depth := fmt_depth
+            if starts_close {
+                this_depth := fmt_depth - 1
+            }
+            if this_depth < 0 {
+                this_depth := 0
+            }
+            out := out + indent(this_depth) + trimmed + "\n"
+        }
+    }
+    scan_line(line)
+    i := i + 1
+}
+
+if length(args) >= 3 {
+    alloc h := file_open(args[2], "w")
+    file_write(h, out)
+    file_close(h)
+} else {
+    emit out
+}

@@ -1,7 +1,7 @@
 ;;;omg
 
-proc message(message) {
-  return "Hello, " + message + "!"
+proc greeting(name) {
+  return "Hello " + name
 }
 
-emit message("World")
+emit greeting("Chris")

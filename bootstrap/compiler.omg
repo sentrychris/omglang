@@ -23,6 +23,7 @@
 # above are restrictions on this file's own use of OMG.
 
 # === Bytecode opcode table =================================================
+alloc OP_NOP            := 0
 
 alloc OP_PUSH_INT       := 0
 alloc OP_PUSH_STR       := 1
@@ -130,18 +131,15 @@ proc emit_i64(buf, n) {
     return buf
 }
 
-# Length-prefixed UTF-8 string. Each character we encode is treated as a
-# single byte — sufficient for ASCII identifiers; multi-byte source strings
-# are re-encoded by the runtime when they reach `read_file`.
+# Length-prefixed UTF-8 string.  We delegate the encoding to the runtime
+# `string_bytes` builtin so non-ASCII characters serialize as the same
+# UTF-8 byte sequence the Rust frontend produces — preserves byte-for-byte
+# parity with `omg --compile` even when the source contains glyphs like
+# `└──` or `╳`.
 proc emit_str(buf, s) {
-    alloc n := length(s)
-    buf := emit_u32(buf, n)
-    alloc i := 0
-    loop i < n {
-        buf := buf + [ascii(s[i])]
-        i := i + 1
-    }
-    return buf
+    alloc bytes := string_bytes(s)
+    buf := emit_u32(buf, length(bytes))
+    return buf + bytes
 }
 
 # Emit a list of bytes (already individual ints 0-255) into `buf`.
@@ -620,16 +618,17 @@ proc parse_postfix(i) {
         alloc k := tok_kind(r[1])
         if k == "LPAREN" {
             alloc line := tok_line(r[1])
-            alloc j := r[1] + 1
+            alloc j := skip_newlines(r[1] + 1)
             alloc args := []
             if tok_kind(j) != "RPAREN" {
                 alloc a := parse_expr(j)
                 args := args + [a[0]]
-                j := a[1]
+                j := skip_newlines(a[1])
                 loop tok_kind(j) == "COMMA" {
-                    a := parse_expr(j + 1)
+                    j := skip_newlines(j + 1)
+                    a := parse_expr(j)
                     args := args + [a[0]]
-                    j := a[1]
+                    j := skip_newlines(a[1])
                 }
             }
             j := expect("RPAREN", j)
@@ -849,20 +848,21 @@ proc parse_stmt(i) {
         }
         alloc name := tok_val(j)
         j := expect("LPAREN", j + 1)
+        j := skip_newlines(j)
         alloc params := []
         if tok_kind(j) != "RPAREN" {
             if tok_kind(j) != "ID" {
                 syntax_error("expected parameter name", j)
             }
             params := params + [tok_val(j)]
-            j := j + 1
+            j := skip_newlines(j + 1)
             loop tok_kind(j) == "COMMA" {
-                j := j + 1
+                j := skip_newlines(j + 1)
                 if tok_kind(j) != "ID" {
                     syntax_error("expected parameter name", j)
                 }
                 params := params + [tok_val(j)]
-                j := j + 1
+                j := skip_newlines(j + 1)
             }
         }
         j := expect("RPAREN", j)
@@ -940,11 +940,23 @@ alloc cc_module_counter := 0
 alloc cc_current_prefix := ""
 alloc cc_current_file := ""
 
+# Cache of compiled imports: each entry is [resolved_path, prefix, exports]
+# where `exports` is a list of [name, kind] pairs.  Subsequent imports of
+# the same module reuse the cached prefix and exports without re-inlining
+# the module body — matching the Rust compiler's behaviour and keeping
+# bytecode size proportional to the number of *distinct* modules rather
+# than the number of import sites.
+alloc cc_loaded_modules := []
+
+# Stack of paths currently being inlined.  Used to reject cyclic imports
+# before they recurse infinitely.
+alloc cc_loading := []
+
 # Builtin names: calls to these become BUILTIN.
 alloc cc_builtins := [
     "chr", "ascii", "hex", "binary", "length", "read_file",
     "freeze", "call_builtin", "file_open", "file_read",
-    "file_write", "file_close", "file_exists"
+    "file_write", "file_close", "file_exists", "string_bytes"
 ]
 
 proc cc_is_builtin(name) {
@@ -1039,11 +1051,20 @@ proc cc_resolve_load(name) {
 }
 
 proc cc_resolve_store(name) {
-    if length(cc_local_scopes) > 1 {
-        return name
-    }
+    # Reserved globals always pass through unprefixed.
     if cc_is_reserved(name) {
         return name
+    }
+    # Inside a function body: only function-scope locals stay unprefixed.
+    # Writes to names declared at the module's top level get mangled so they
+    # update the module's actual global slot — without this, `tok_len := n`
+    # inside an imported module would create a stray function-local instead
+    # of mutating the module's `tok_len` global.
+    if length(cc_local_scopes) > 1 {
+        if cc_in_function_scope(name) {
+            return name
+        }
+        return cc_mangle(name)
     }
     return cc_mangle(name)
 }
@@ -1341,47 +1362,101 @@ proc path_join(base, rel) {
     return base + "/" + rel
 }
 
-# Compile an `import "path" as alias` by recursively reading + compiling the
-# referenced file, then emitting a frozen-namespace dict bound to `alias`.
+# Look up a previously-compiled module by its resolved path.  Returns the
+# cached entry [path, prefix, exports] or false.
+proc cc_find_loaded(resolved) {
+    alloc i := 0
+    alloc n := length(cc_loaded_modules)
+    loop i < n {
+        if cc_loaded_modules[i][0] == resolved {
+            return cc_loaded_modules[i]
+        }
+        i := i + 1
+    }
+    return false
+}
+
+# True iff `resolved` is currently on the import-loading stack.
+proc cc_is_loading(resolved) {
+    alloc i := 0
+    alloc n := length(cc_loading)
+    loop i < n {
+        if cc_loading[i] == resolved {
+            return true
+        }
+        i := i + 1
+    }
+    return false
+}
+
+# Compile an `import "path" as alias`.  Each distinct module is inlined
+# at most once across the whole compilation; subsequent imports of the
+# same path reuse the cached prefix and exports to emit only the
+# alias-binding namespace dict.
 proc compile_import(path, alias, line) {
     alloc resolved := path_join(path_dirname(cc_current_file), path)
-    cc_module_counter := cc_module_counter + 1
-    alloc prefix := "__mod_" + cc_module_counter + "__"
-    alloc src := read_file(resolved)
-    if src == false {
-        panic("ModuleImportError: cannot read '" + resolved + "'")
+
+    if cc_is_loading(resolved) {
+        panic("ModuleImportError: recursive import of '" + resolved + "'")
     }
-    alloc tokens := tokenize(src, resolved)
-    alloc ast := parse_program(resolved, tokens)
-    # Collect exports first so we can emit them in declaration order.
+
+    alloc prefix := ""
     alloc exports := []
+    alloc cached := cc_find_loaded(resolved)
+    if cached != false {
+        # Reuse the cached prefix + export list.  No re-inlining: the
+        # module's procs are already in the function table and its
+        # `alloc`s already executed at the original import site.
+        prefix := cached[1]
+        exports := cached[2]
+    } else {
+        cc_module_counter := cc_module_counter + 1
+        prefix := "__mod_" + cc_module_counter + "__"
+        alloc src := read_file(resolved)
+        if src == false {
+            panic("ModuleImportError: cannot read '" + resolved + "'")
+        }
+        alloc tokens := tokenize(src, resolved)
+        alloc ast := parse_program(resolved, tokens)
+        # Collect exports first so we can emit them in declaration order.
+        alloc i := 0
+        alloc n := length(ast)
+        loop i < n {
+            alloc s := ast[i]
+            if s[0] == "decl" {
+                exports := exports + [[s[1], "value"]]
+            }
+            if s[0] == "func" {
+                exports := exports + [[s[1], "func"]]
+            }
+            i := i + 1
+        }
+        # Insert into the cache *before* recursing so a cycle sees the
+        # partially-built entry rather than re-inlining.
+        cc_loaded_modules := cc_loaded_modules + [[resolved, prefix, exports]]
+        cc_loading := cc_loading + [resolved]
+        # Compile the imported module's top-level statements inline at
+        # this import site, with all globals prefixed.
+        alloc saved_prefix := cc_current_prefix
+        alloc saved_file   := cc_current_file
+        cc_current_prefix := prefix
+        cc_current_file   := resolved
+        i := 0
+        loop i < n {
+            compile_stmt(ast[i])
+            i := i + 1
+        }
+        cc_current_prefix := saved_prefix
+        cc_current_file   := saved_file
+        # Pop the loading stack.
+        alloc top := length(cc_loading) - 1
+        cc_loading := cc_loading[0:top]
+    }
+
+    # Build the namespace dict using the prefix + exports we either
+    # cached or just produced.  The dict-build is emitted at every
+    # import site so each alias gets its own frozen-dict binding.
     alloc i := 0
-    alloc n := length(ast)
-    loop i < n {
-        alloc s := ast[i]
-        if s[0] == "decl" {
-            exports := exports + [[s[1], "value"]]
-        }
-        if s[0] == "func" {
-            exports := exports + [[s[1], "func"]]
-        }
-        i := i + 1
-    }
-    # Compile the imported module's top-level statements inline at the
-    # import site, with all globals prefixed.
-    alloc saved_prefix := cc_current_prefix
-    alloc saved_file   := cc_current_file
-    cc_current_prefix := prefix
-    cc_current_file   := resolved
-    i := 0
-    loop i < n {
-        compile_stmt(ast[i])
-        i := i + 1
-    }
-    cc_current_prefix := saved_prefix
-    cc_current_file   := saved_file
-    # Build the namespace dict.
-    i := 0
     alloc ne := length(exports)
     loop i < ne {
         alloc ex := exports[i]
@@ -1399,8 +1474,8 @@ proc compile_import(path, alias, line) {
     }
     cc_emit(["BUILD_DICT", ne])
     cc_emit(["BUILTIN", ["freeze", 1]])
-    cc_emit(["STORE_LOCAL", cc_resolve_store(alias)])
     cc_declare_local(alias)
+    cc_emit(["STORE_LOCAL", cc_resolve_store(alias)])
 }
 
 proc compile_stmt(stmt) {
@@ -1412,8 +1487,11 @@ proc compile_stmt(stmt) {
     }
     if kind == "decl" {
         compile_expr(stmt[2])
-        cc_emit(["STORE_LOCAL", cc_resolve_store(stmt[1])])
+        # Declare before resolving the storage name so resolve_store sees
+        # the new local in scope and emits the unmangled name.  The RHS
+        # was already compiled against the old scope.
         cc_declare_local(stmt[1])
+        cc_emit(["STORE_LOCAL", cc_resolve_store(stmt[1])])
         return false
     }
     if kind == "assign" {
@@ -1522,8 +1600,8 @@ proc compile_stmt(stmt) {
         if exc_name == false {
             cc_emit_simple("POP")
         } else {
-            cc_emit(["STORE_LOCAL", cc_resolve_store(exc_name)])
             cc_declare_local(exc_name)
+            cc_emit(["STORE_LOCAL", cc_resolve_store(exc_name)])
         }
         compile_block_node(stmt[3])
         cc_patch(jend, length(cc_code))
@@ -1639,6 +1717,8 @@ proc compile_program_node(ast, file) {
     cc_module_counter := 0
     cc_current_prefix := ""
     cc_current_file := file
+    cc_loaded_modules := []
+    cc_loading := []
     alloc i := 0
     alloc n := length(ast)
     loop i < n {

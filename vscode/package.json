@@ -1,20 +1,39 @@
 {
   "name": "omg-language-support",
   "displayName": "OMG Language Support",
-  "version": "0.0.1",
+  "description": "Syntax highlighting and language server (completion, hover, go-to-definition) for the OMG programming language.",
+  "version": "0.2.0",
   "publisher": "chris-rowles",
   "engines": {
-    "vscode": "^1.82.0"
+    "vscode": "^1.85.0"
   },
-  "activationEvents": [],
-  "main": "./dist/extension.js",
+  "categories": [
+    "Programming Languages"
+  ],
+  "main": "./client/out/extension.js",
+  "activationEvents": [
+    "onLanguage:omg"
+  ],
   "contributes": {
     "languages": [
       {
         "id": "omg",
         "aliases": ["OMG", "omg"],
         "extensions": [".omg"],
-        "configuration": "./language-configuration.json"
+        "configuration": "./language-configuration.json",
+        "icon": {
+          "light": "./icons/omg.svg",
+          "dark": "./icons/omg.svg"
+        }
+      },
+      {
+        "id": "omg-bytecode",
+        "aliases": ["OMG Bytecode"],
+        "extensions": [".omgb"],
+        "icon": {
+          "light": "./icons/omgb.svg",
+          "dark": "./icons/omgb.svg"
+        }
       }
     ],
     "grammars": [
@@ -23,19 +42,36 @@
         "scopeName": "source.omg",
         "path": "./syntaxes/omg.tmLanguage.json"
       }
-    ]
+    ],
+    "iconThemes": [
+      {
+        "id": "omg-icons",
+        "label": "OMG Icons",
+        "path": "./icons/omg-icon-theme.json"
+      }
+    ],
+    "configuration": {
+      "type": "object",
+      "title": "OMG",
+      "properties": {
+        "omg.trace.server": {
+          "scope": "window",
+          "type": "string",
+          "enum": ["off", "messages", "verbose"],
+          "default": "off",
+          "description": "Trace LSP traffic between VS Code and the OMG language server."
+        }
+      }
+    }
   },
   "scripts": {
-    "compile": "tsc -p ./",
-    "watch": "tsc -watch -p ./",
-    "prepublish": "npm run compile"
-  },
-  "dependencies": {
-    "vscode-languageclient": "^9.0.1"
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc -b",
+    "watch": "tsc -b -w",
+    "postinstall": "cd client && npm install && cd ../server && npm install"
   },
   "devDependencies": {
-    "typescript": "^5.0.0",
-    "@types/node": "^18.0.0",
-    "@types/vscode": "^1.82.0"
+    "@types/node": "^20.0.0",
+    "typescript": "^5.4.0"
   }
 }

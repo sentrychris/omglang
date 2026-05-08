@@ -1,0 +1,408 @@
+;;;omg
+
+import "lib.omg" as lib
+
+# omg-bundle — produce a single self-contained `.omg` file from a program
+# that uses `import`, by inlining each imported module and rewriting its
+# top-level names with a `__alias__` prefix to avoid clashes.
+#
+# Usage:  omg tools/omg-bundle.omg <root.omg> [output.omg]
+#
+# Strategy:
+#
+#   1. Parse the root file's top-level `import "path" as alias` lines.
+#   2. For each import:
+#      a. Read the file.
+#      b. Strip its `;;;omg` header.
+#      c. Find every top-level `proc NAME` and `alloc NAME` declaration.
+#      d. Rewrite the module's source so each occurrence of NAME (with
+#         word boundaries, outside strings/comments, not preceded by `.`)
+#         becomes `__alias__NAME`.
+#      e. After the rewritten module, emit a frozen-namespace dict:
+#            alloc alias := freeze({"NAME": __alias__NAME, ...})
+#         Closures and plain values both flow through `freeze()` cleanly.
+#   3. Emit the root file with its `import` lines deleted.
+#
+# Single-level imports only (no transitive bundling).  Cyclic imports are
+# rejected.  The output is regular OMG source ready to compile or run.
+
+# === scanning ============================================================
+
+# Find top-level identifiers introduced via `proc NAME` or `alloc NAME` at
+# brace depth 0, outside docblocks.  Returns [[name, kind], ...] where
+# kind is "proc" or "alloc".
+proc top_level_names(text) {
+    alloc lines := lib.split_lines(text)
+    alloc n := length(lines)
+    alloc names := []
+    alloc depth := 0
+    alloc in_doc := false
+    alloc i := 0
+    loop i < n {
+        alloc line := lines[i]
+        if depth == 0 and in_doc == false {
+            alloc tr := lib.trim(line)
+            if lib.starts_with(tr, "proc ") {
+                alloc rest := lib.trim(tr[5:length(tr)])
+                alloc end := 0
+                loop end < length(rest) and lib.is_ident_char(rest[end]) {
+                    end := end + 1
+                }
+                if end > 0 {
+                    names := names + [[rest[0:end], "proc"]]
+                }
+            } elif lib.starts_with(tr, "alloc ") {
+                alloc rest := lib.trim(tr[6:length(tr)])
+                alloc end := 0
+                loop end < length(rest) and lib.is_ident_char(rest[end]) {
+                    end := end + 1
+                }
+                if end > 0 {
+                    names := names + [[rest[0:end], "alloc"]]
+                }
+            }
+        }
+        # Update brace + docblock state for this line.
+        alloc m := length(line)
+        alloc in_str := false
+        alloc k := 0
+        loop k < m {
+            alloc c := line[k]
+            if in_doc {
+                if c == "*" and k + 1 < m and line[k + 1] == "/" {
+                    in_doc := false
+                    k := k + 2
+                } else {
+                    k := k + 1
+                }
+            } elif in_str {
+                if c == "\\" and k + 1 < m {
+                    k := k + 2
+                } elif c == "\"" {
+                    in_str := false
+                    k := k + 1
+                } else {
+                    k := k + 1
+                }
+            } elif c == "#" {
+                k := m
+            } elif c == "/" and k + 1 < m and line[k + 1] == "*" {
+                in_doc := true
+                k := k + 2
+            } elif c == "\"" {
+                in_str := true
+                k := k + 1
+            } elif c == "{" {
+                depth := depth + 1
+                k := k + 1
+            } elif c == "}" {
+                depth := depth - 1
+                k := k + 1
+            } else {
+                k := k + 1
+            }
+        }
+        i := i + 1
+    }
+    return names
+}
+
+# Strip the leading `;;;omg` header so we don't end up with two of them
+# in the bundled output.  Returns the body text only.
+proc strip_header(text) {
+    alloc n := length(text)
+    alloc i := 0
+    # skip blank/whitespace lines
+    loop i < n {
+        alloc c := text[i]
+        if c == " " or c == "\t" or c == "\r" or c == "\n" {
+            i := i + 1
+        } else {
+            break
+        }
+    }
+    if i + 6 <= n and text[i:i + 6] == ";;;omg" {
+        i := i + 6
+        loop i < n and text[i] != "\n" {
+            i := i + 1
+        }
+        if i < n {
+            i := i + 1
+        }
+    }
+    return text[i:n]
+}
+
+# Walk `text` and rewrite every word-boundary occurrence of any name in
+# `targets` (the bare-string list, no kind tags) with `prefix + name`,
+# skipping strings, comments, docblocks, and `.member` accesses.
+proc rewrite(text, targets, prefix) {
+    alloc out := ""
+    alloc n := length(text)
+    alloc i := 0
+    alloc in_str := false
+    alloc in_doc := false
+    alloc in_line_comment := false
+    loop i < n {
+        alloc c := text[i]
+        if in_doc {
+            out := out + c
+            if c == "*" and i + 1 < n and text[i + 1] == "/" {
+                out := out + "/"
+                i := i + 2
+                in_doc := false
+            } else {
+                i := i + 1
+            }
+        } elif in_str {
+            out := out + c
+            if c == "\\" and i + 1 < n {
+                out := out + text[i + 1]
+                i := i + 2
+            } elif c == "\"" {
+                in_str := false
+                i := i + 1
+            } else {
+                i := i + 1
+            }
+        } elif in_line_comment {
+            out := out + c
+            if c == "\n" {
+                in_line_comment := false
+            }
+            i := i + 1
+        } elif c == "#" {
+            in_line_comment := true
+            out := out + c
+            i := i + 1
+        } elif c == "/" and i + 1 < n and text[i + 1] == "*" {
+            in_doc := true
+            out := out + "/*"
+            i := i + 2
+        } elif c == "\"" {
+            in_str := true
+            out := out + c
+            i := i + 1
+        } elif lib.is_ident_start(c) {
+            alloc start := i
+            i := i + 1
+            loop i < n and lib.is_ident_char(text[i]) {
+                i := i + 1
+            }
+            alloc word := text[start:i]
+            alloc prev_dot := false
+            if start > 0 and text[start - 1] == "." {
+                prev_dot := true
+            }
+            if prev_dot == false and lib.list_contains(targets, word) {
+                out := out + prefix + word
+            } else {
+                out := out + word
+            }
+        } else {
+            out := out + c
+            i := i + 1
+        }
+    }
+    return out
+}
+
+# Build the namespace-dict construction line for an alias.  Closures (proc)
+# and values (alloc) both pass through `freeze()` cleanly because OMG's
+# `Value::Closure` is a normal first-class value that sits inside a dict.
+proc build_namespace(alias, prefix, names) {
+    alloc out := "alloc " + alias + " := freeze({\n"
+    alloc i := 0
+    alloc n := length(names)
+    loop i < n {
+        alloc nm := names[i][0]
+        out := out + "    \"" + nm + "\": " + prefix + nm
+        if i < n - 1 {
+            out := out + ","
+        }
+        out := out + "\n"
+        i := i + 1
+    }
+    out := out + "})\n"
+    return out
+}
+
+# Find top-level `import "path" as alias` lines in the root file and
+# return [[path, alias, line_index], ...].  Same brace-depth and string-
+# tracking logic as `top_level_names`.
+proc find_imports(text) {
+    alloc lines := lib.split_lines(text)
+    alloc n := length(lines)
+    alloc imps := []
+    alloc depth := 0
+    alloc in_doc := false
+    alloc i := 0
+    loop i < n {
+        alloc line := lines[i]
+        if depth == 0 and in_doc == false {
+            alloc tr := lib.trim(line)
+            if lib.starts_with(tr, "import ") {
+                alloc q1 := -1
+                alloc j := 0
+                loop j < length(tr) {
+                    if tr[j] == "\"" {
+                        q1 := j
+                        j := length(tr)
+                    } else {
+                        j := j + 1
+                    }
+                }
+                if q1 >= 0 {
+                    alloc q2 := q1 + 1
+                    loop q2 < length(tr) and tr[q2] != "\"" {
+                        q2 := q2 + 1
+                    }
+                    if q2 < length(tr) {
+                        alloc path := tr[q1 + 1:q2]
+                        alloc rest := lib.trim(tr[q2 + 1:length(tr)])
+                        if lib.starts_with(rest, "as ") {
+                            alloc alias := lib.trim(rest[3:length(rest)])
+                            imps := imps + [[path, alias, i]]
+                        }
+                    }
+                }
+            }
+        }
+        # Same scanner update as in top_level_names.
+        alloc m := length(line)
+        alloc in_str := false
+        alloc k := 0
+        loop k < m {
+            alloc c := line[k]
+            if in_doc {
+                if c == "*" and k + 1 < m and line[k + 1] == "/" {
+                    in_doc := false
+                    k := k + 2
+                } else {
+                    k := k + 1
+                }
+            } elif in_str {
+                if c == "\\" and k + 1 < m {
+                    k := k + 2
+                } elif c == "\"" {
+                    in_str := false
+                    k := k + 1
+                } else {
+                    k := k + 1
+                }
+            } elif c == "#" {
+                k := m
+            } elif c == "/" and k + 1 < m and line[k + 1] == "*" {
+                in_doc := true
+                k := k + 2
+            } elif c == "\"" {
+                in_str := true
+                k := k + 1
+            } elif c == "{" {
+                depth := depth + 1
+                k := k + 1
+            } elif c == "}" {
+                depth := depth - 1
+                k := k + 1
+            } else {
+                k := k + 1
+            }
+        }
+        i := i + 1
+    }
+    return imps
+}
+
+# Strip a list of import lines (by index) from the source.
+proc strip_lines(text, indices) {
+    alloc lines := lib.split_lines(text)
+    alloc n := length(lines)
+    alloc i := 0
+    alloc out := ""
+    loop i < n {
+        if lib.list_contains(indices, i) == false {
+            out := out + lines[i] + "\n"
+        }
+        i := i + 1
+    }
+    return out
+}
+
+# === driver =============================================================
+
+if length(args) < 2 {
+    panic("usage: omg tools/omg-bundle.omg <root.omg> [output.omg]")
+}
+
+alloc root_path := args[1]
+alloc root_text := read_file(root_path)
+if root_text == false {
+    panic("cannot read root: " + root_path)
+}
+
+alloc imports := find_imports(root_text)
+alloc nimp := length(imports)
+alloc root_dir := lib.path_split(root_path)[0]
+
+alloc bundle := ";;;omg\n\n# Bundled by tools/omg-bundle.omg\n\n"
+
+alloc i := 0
+loop i < nimp {
+    alloc imp := imports[i]
+    alloc raw := imp[0]
+    alloc alias := imp[1]
+    alloc resolved := raw
+    if length(raw) > 0 and raw[0] != "/" {
+        if length(root_dir) > 0 {
+            resolved := root_dir + "/" + raw
+        }
+    }
+    alloc mod_text := read_file(resolved)
+    if mod_text == false {
+        panic("cannot read module: " + resolved)
+    }
+    alloc body := strip_header(mod_text)
+    alloc names := top_level_names(body)
+    # Build a flat name list for the rewriter (just the strings).
+    alloc flat := []
+    alloc k := 0
+    loop k < length(names) {
+        flat := flat + [names[k][0]]
+        k := k + 1
+    }
+    alloc prefix := "__" + alias + "__"
+    alloc rewritten := rewrite(body, flat, prefix)
+    bundle := bundle + "# === module \"" + resolved + "\" as " + alias + " ===\n\n"
+    bundle := bundle + rewritten
+    if length(rewritten) > 0 and rewritten[length(rewritten) - 1] != "\n" {
+        bundle := bundle + "\n"
+    }
+    bundle := bundle + "\n"
+    bundle := bundle + build_namespace(alias, prefix, names)
+    bundle := bundle + "\n"
+    i := i + 1
+}
+
+# Strip the import lines from the root, then strip the header and append.
+alloc indices := []
+alloc j := 0
+loop j < nimp {
+    indices := indices + [imports[j][2]]
+    j := j + 1
+}
+alloc root_no_imports := strip_lines(root_text, indices)
+alloc root_body := strip_header(root_no_imports)
+
+bundle := bundle + "# === main code from " + root_path + " ===\n\n"
+bundle := bundle + root_body
+if length(root_body) > 0 and root_body[length(root_body) - 1] != "\n" {
+    bundle := bundle + "\n"
+}
+
+if length(args) >= 3 {
+    alloc h := file_open(args[2], "w")
+    file_write(h, bundle)
+    file_close(h)
+} else {
+    emit bundle
+}

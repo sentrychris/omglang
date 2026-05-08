@@ -1,6 +1,7 @@
-node_modules
+node_modules/
 .vscode-test/
 *.vsix
 .env
-*__pycache__/
-dist
+client/out/
+server/out/
+*.tsbuildinfo

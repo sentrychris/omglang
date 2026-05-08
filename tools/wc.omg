@@ -1,0 +1,54 @@
+;;;omg
+
+# wc — count lines, words, and characters in each input file.
+# Output columns match `wc -l -w -m`.
+#
+# Usage:  omg tools/wc.omg <file> [file...]
+
+proc count(text) {
+    alloc n := length(text)
+    alloc lines := 0
+    alloc words := 0
+    alloc i := 0
+    alloc in_word := false
+    loop i < n {
+        alloc c := text[i]
+        if c == "\n" {
+            lines := lines + 1
+        }
+        if c == " " or c == "\t" or c == "\n" {
+            in_word := false
+        } elif in_word == false {
+            words := words + 1
+            in_word := true
+        }
+        i := i + 1
+    }
+    return [lines, words, n]
+}
+
+if length(args) < 2 {
+    panic("usage: omg tools/wc.omg <file> [file...]")
+}
+
+alloc total_l := 0
+alloc total_w := 0
+alloc total_c := 0
+alloc i := 1
+loop i < length(args) {
+    alloc path := args[i]
+    alloc text := read_file(path)
+    if text == false {
+        emit path + ": cannot read"
+    } else {
+        alloc r := count(text)
+        emit r[0] + "\t" + r[1] + "\t" + r[2] + "\t" + path
+        total_l := total_l + r[0]
+        total_w := total_w + r[1]
+        total_c := total_c + r[2]
+    }
+    i := i + 1
+}
+if length(args) > 3 {
+    emit total_l + "\t" + total_w + "\t" + total_c + "\ttotal"
+}

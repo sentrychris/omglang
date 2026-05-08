@@ -148,6 +148,24 @@ pub fn call_builtin(
             )),
         },
 
+        // string_bytes(s) → list of UTF-8 byte values for `s`. Used by the
+        // OMG-in-OMG compiler so it can write source strings into the
+        // `.omgb` byte stream the same way the Rust frontend does
+        // (length + raw UTF-8 bytes, not codepoint-per-element).
+        "string_bytes" => match args {
+            [Value::Str(s)] => {
+                let list: Vec<Value> = s
+                    .as_bytes()
+                    .iter()
+                    .map(|b| Value::Int(*b as i64))
+                    .collect();
+                Ok(Value::List(Rc::new(RefCell::new(list))))
+            }
+            _ => Err(RuntimeError::TypeError(
+                "string_bytes() expects a string".to_string(),
+            )),
+        },
+
         // length(x) for list or string
         "length" => {
             if args.len() != 1 {

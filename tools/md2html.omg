@@ -1,0 +1,293 @@
+;;;omg
+
+import "lib.omg" as lib
+
+# md2html — convert a useful subset of Markdown to HTML.
+#
+# Usage:  omg tools/md2html.omg <input.md> [output.html]
+#
+# Supports:
+#   - ATX headers (`#` through `######`)
+#   - Paragraphs (separated by blank lines)
+#   - Inline `**bold**`, `*italic*`, `` `code` ``
+#   - `[text](url)` links
+#   - Unordered lists (`-` or `*` bullets)
+#   - Ordered lists (`1.` style)
+#   - Fenced code blocks (` ``` ` … ` ``` `)
+#   - Horizontal rule (`---` on its own line)
+#   - HTML escaping of `< > & "` outside of code/HTML
+#
+# Skipped:
+#   - Tables, blockquotes, footnotes, reference links, setext headers,
+#     nested lists.  Add as needed.
+
+# === document state (module globals) =====================================
+
+# Output buffer; written incrementally as we walk the input.
+alloc out := ""
+alloc in_code := false       # inside a fenced code block?
+alloc in_ul := false
+alloc in_ol := false
+alloc in_para := false
+
+# === helpers =============================================================
+
+proc html_escape(s) {
+    alloc r := ""
+    alloc n := length(s)
+    alloc i := 0
+    loop i < n {
+        alloc c := s[i]
+        if c == "<" {
+            r := r + "&lt;"
+        } elif c == ">" {
+            r := r + "&gt;"
+        } elif c == "&" {
+            r := r + "&amp;"
+        } elif c == "\"" {
+            r := r + "&quot;"
+        } else {
+            r := r + c
+        }
+        i := i + 1
+    }
+    return r
+}
+
+# Render inline markdown tokens within a single line: `code`, **bold**,
+# *italic*, [text](url).  Non-special characters are HTML-escaped.
+proc format_inline(line) {
+    alloc r := ""
+    alloc n := length(line)
+    alloc i := 0
+    loop i < n {
+        alloc c := line[i]
+        if c == "`" {
+            alloc j := i + 1
+            loop j < n and line[j] != "`" {
+                j := j + 1
+            }
+            if j < n {
+                r := r + "<code>" + html_escape(line[i + 1:j]) + "</code>"
+                i := j + 1
+            } else {
+                r := r + "`"
+                i := i + 1
+            }
+        } elif c == "*" and i + 1 < n and line[i + 1] == "*" {
+            alloc j := i + 2
+            loop j + 1 < n and (line[j] != "*" or line[j + 1] != "*") {
+                j := j + 1
+            }
+            if j + 1 < n {
+                r := r + "<strong>" + format_inline(line[i + 2:j]) + "</strong>"
+                i := j + 2
+            } else {
+                r := r + c
+                i := i + 1
+            }
+        } elif c == "*" {
+            alloc j := i + 1
+            loop j < n and line[j] != "*" {
+                j := j + 1
+            }
+            if j < n {
+                r := r + "<em>" + format_inline(line[i + 1:j]) + "</em>"
+                i := j + 1
+            } else {
+                r := r + c
+                i := i + 1
+            }
+        } elif c == "[" {
+            alloc j := i + 1
+            loop j < n and line[j] != "]" {
+                j := j + 1
+            }
+            if j + 2 < n and line[j + 1] == "(" {
+                alloc k := j + 2
+                loop k < n and line[k] != ")" {
+                    k := k + 1
+                }
+                if k < n {
+                    alloc text := line[i + 1:j]
+                    alloc url := line[j + 2:k]
+                    r := r + "<a href=\"" + url + "\">" + html_escape(text) + "</a>"
+                    i := k + 1
+                } else {
+                    r := r + c
+                    i := i + 1
+                }
+            } else {
+                r := r + c
+                i := i + 1
+            }
+        } elif c == "<" {
+            r := r + "&lt;"
+            i := i + 1
+        } elif c == ">" {
+            r := r + "&gt;"
+            i := i + 1
+        } elif c == "&" {
+            r := r + "&amp;"
+            i := i + 1
+        } else {
+            r := r + c
+            i := i + 1
+        }
+    }
+    return r
+}
+
+proc close_para() {
+    if in_para {
+        out := out + "</p>\n"
+        in_para := false
+    }
+}
+proc close_ul() {
+    if in_ul {
+        out := out + "</ul>\n"
+        in_ul := false
+    }
+}
+proc close_ol() {
+    if in_ol {
+        out := out + "</ol>\n"
+        in_ol := false
+    }
+}
+proc close_block() {
+    close_para()
+    close_ul()
+    close_ol()
+}
+
+# `1. ` style ordered-list prefix.  Returns the body or false.
+proc ordered_body(line) {
+    alloc trimmed := lib.trim(line)
+    alloc n := length(trimmed)
+    alloc i := 0
+    loop i < n and trimmed[i] >= "0" and trimmed[i] <= "9" {
+        i := i + 1
+    }
+    if i == 0 {
+        return false
+    }
+    if i + 1 < n and trimmed[i] == "." and trimmed[i + 1] == " " {
+        return trimmed[i + 2:n]
+    }
+    return false
+}
+
+# `- ` / `* ` unordered-list prefix.
+proc unordered_body(line) {
+    alloc trimmed := lib.trim(line)
+    if lib.starts_with(trimmed, "- ") or lib.starts_with(trimmed, "* ") {
+        return trimmed[2:length(trimmed)]
+    }
+    return false
+}
+
+# === entry point =========================================================
+
+if length(args) < 2 {
+    panic("usage: omg tools/md2html.omg <input.md> [output.html]")
+}
+
+alloc input := read_file(args[1])
+if input == false {
+    panic("cannot read: " + args[1])
+}
+
+alloc lines := lib.split_lines(input)
+alloc nl := length(lines)
+alloc i := 0
+loop i < nl {
+    alloc line := lines[i]
+    if lib.starts_with(line, "```") {
+        if in_code {
+            out := out + "</code></pre>\n"
+            in_code := false
+        } else {
+            close_block()
+            alloc lang := line[3:length(line)]
+            if length(lang) > 0 {
+                out := out + "<pre><code class=\"language-" + lang + "\">"
+            } else {
+                out := out + "<pre><code>"
+            }
+            in_code := true
+        }
+    } elif in_code {
+        out := out + html_escape(line) + "\n"
+    } elif lib.starts_with(line, "######") {
+        close_block()
+        out := out + "<h6>" + format_inline(lib.trim(line[6:length(line)])) + "</h6>\n"
+    } elif lib.starts_with(line, "#####") {
+        close_block()
+        out := out + "<h5>" + format_inline(lib.trim(line[5:length(line)])) + "</h5>\n"
+    } elif lib.starts_with(line, "####") {
+        close_block()
+        out := out + "<h4>" + format_inline(lib.trim(line[4:length(line)])) + "</h4>\n"
+    } elif lib.starts_with(line, "###") {
+        close_block()
+        out := out + "<h3>" + format_inline(lib.trim(line[3:length(line)])) + "</h3>\n"
+    } elif lib.starts_with(line, "##") {
+        close_block()
+        out := out + "<h2>" + format_inline(lib.trim(line[2:length(line)])) + "</h2>\n"
+    } elif lib.starts_with(line, "#") {
+        close_block()
+        out := out + "<h1>" + format_inline(lib.trim(line[1:length(line)])) + "</h1>\n"
+    } elif lib.trim(line) == "---" or lib.trim(line) == "***" {
+        close_block()
+        out := out + "<hr>\n"
+    } else {
+        alloc ub := unordered_body(line)
+        alloc ob := false
+        if ub == false {
+            ob := ordered_body(line)
+        }
+        if ub != false {
+            close_para()
+            close_ol()
+            if in_ul == false {
+                out := out + "<ul>\n"
+                in_ul := true
+            }
+            out := out + "<li>" + format_inline(ub) + "</li>\n"
+        } elif ob != false {
+            close_para()
+            close_ul()
+            if in_ol == false {
+                out := out + "<ol>\n"
+                in_ol := true
+            }
+            out := out + "<li>" + format_inline(ob) + "</li>\n"
+        } elif length(lib.trim(line)) == 0 {
+            close_block()
+        } else {
+            if in_para == false {
+                close_ul()
+                close_ol()
+                out := out + "<p>"
+                in_para := true
+            } else {
+                out := out + " "
+            }
+            out := out + format_inline(lib.trim(line))
+        }
+    }
+    i := i + 1
+}
+close_block()
+if in_code {
+    out := out + "</code></pre>\n"
+}
+
+if length(args) >= 3 {
+    alloc h := file_open(args[2], "w")
+    file_write(h, out)
+    file_close(h)
+} else {
+    emit out
+}

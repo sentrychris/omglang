@@ -1,0 +1,171 @@
+;;;omg
+
+import "lib.omg" as lib
+
+# omg-deps — print the import graph of an OMG program as an indented tree.
+#
+# Usage:  omg tools/omg-deps.omg <root.omg>
+#
+# Output (example):
+#
+#   examples/import_modules.omg
+#   └── examples/modules/math.omg
+#
+# Each line is the path of a file, indented by its depth in the import
+# tree.  Cycles are detected and printed with `(cycle)` instead of being
+# expanded again.
+
+if length(args) < 2 {
+    panic("usage: omg tools/omg-deps.omg <root.omg>")
+}
+
+# Track which files are currently on the recursion stack, for cycle
+# detection.  `visited` is a permanent set across the whole tree so we
+# show each file's children only once.
+alloc on_stack := []
+alloc visited := []
+
+# Extract `import "path" as alias` statements that appear at the file's
+# top level (brace depth 0).  Returns a list of [path, alias] pairs.
+proc imports_in(text) {
+    alloc lines := lib.split_lines(text)
+    alloc n := length(lines)
+    alloc i := 0
+    alloc depth := 0
+    alloc in_doc := false
+    alloc out := []
+    loop i < n {
+        alloc line := lines[i]
+        if depth == 0 and in_doc == false {
+            alloc tr := lib.trim(line)
+            if lib.starts_with(tr, "import ") {
+                # Extract quoted path and alias name.
+                alloc q1 := -1
+                alloc j := 0
+                loop j < length(tr) {
+                    if tr[j] == "\"" {
+                        q1 := j
+                        j := length(tr)
+                    } else {
+                        j := j + 1
+                    }
+                }
+                if q1 >= 0 {
+                    alloc q2 := q1 + 1
+                    loop q2 < length(tr) and tr[q2] != "\"" {
+                        q2 := q2 + 1
+                    }
+                    if q2 < length(tr) {
+                        alloc path := tr[q1 + 1:q2]
+                        # Find ` as ALIAS` after the closing quote.
+                        alloc rest := lib.trim(tr[q2 + 1:length(tr)])
+                        if lib.starts_with(rest, "as ") {
+                            alloc alias := lib.trim(rest[3:length(rest)])
+                            out := out + [[path, alias]]
+                        }
+                    }
+                }
+            }
+        }
+        # Update brace + docblock state.
+        alloc k := 0
+        alloc m := length(line)
+        loop k < m {
+            alloc c := line[k]
+            if in_doc {
+                if c == "*" and k + 1 < m and line[k + 1] == "/" {
+                    in_doc := false
+                    k := k + 2
+                } else {
+                    k := k + 1
+                }
+            } elif c == "/" and k + 1 < m and line[k + 1] == "*" {
+                in_doc := true
+                k := k + 2
+            } elif c == "#" {
+                k := m
+            } elif c == "{" {
+                depth := depth + 1
+                k := k + 1
+            } elif c == "}" {
+                depth := depth - 1
+                k := k + 1
+            } else {
+                k := k + 1
+            }
+        }
+        i := i + 1
+    }
+    return out
+}
+
+# Print the file at `path` and its dependents.  `prefix` is the visual
+# prefix accumulated so far (made of `│   ` and `    `); `is_last` chooses
+# the elbow (`└──`) vs tee (`├──`) glyph.
+proc walk(path, prefix, is_last, is_root) {
+    alloc display := path
+    alloc glyph := ""
+    if is_root {
+        emit display
+    } else {
+        if is_last {
+            glyph := "└── "
+        } else {
+            glyph := "├── "
+        }
+        emit prefix + glyph + display
+    }
+
+    if lib.list_contains(on_stack, path) {
+        emit prefix + "    (cycle)"
+        return false
+    }
+    if lib.list_contains(visited, path) {
+        return false
+    }
+
+    alloc text := read_file(path)
+    if text == false {
+        emit prefix + "    (cannot read)"
+        return false
+    }
+
+    on_stack := on_stack + [path]
+    visited := visited + [path]
+
+    alloc imps := imports_in(text)
+    alloc nimp := length(imps)
+
+    # Resolve relative paths against the *importing* file's directory.
+    alloc dir := lib.path_split(path)[0]
+
+    alloc i := 0
+    loop i < nimp {
+        alloc imp := imps[i]
+        alloc raw := imp[0]
+        alloc resolved := raw
+        if length(raw) > 0 and raw[0] != "/" {
+            if length(dir) > 0 {
+                resolved := dir + "/" + raw
+            }
+        }
+        alloc child_prefix := prefix
+        if is_root == false {
+            if is_last {
+                child_prefix := prefix + "    "
+            } else {
+                child_prefix := prefix + "│   "
+            }
+        }
+        alloc child_is_last := i == nimp - 1
+        walk(resolved, child_prefix, child_is_last, false)
+        i := i + 1
+    }
+
+    # Pop from on_stack (rebuild without the last element).
+    alloc top := length(on_stack) - 1
+    on_stack := on_stack[0:top]
+    return false
+}
+
+walk(args[1], "", true, true)

@@ -1225,6 +1225,9 @@ proc run_file(path) {
     return run_file_with_args(path, args)
 }
 
-if length(args) > 0 {
-    run_file(args[0])
-}
+# Auto-run was useful when this file was the entry point under the Python
+# runtime (where args[0] was the first real argument).  Under the Rust
+# runtime args[0] is the script path itself, and importing this file as a
+# library — e.g. from tools/omg-test.omg — would trigger a recursive
+# self-interpretation loop on import.  Removed.  To run a script through
+# this tree-walk interpreter, import the file and call `run_file(path)`.

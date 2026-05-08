@@ -1,0 +1,95 @@
+;;;omg
+
+import "lib.omg" as lib
+
+# tmpl — render a template by replacing `{{name}}` placeholders with values
+# loaded from a `key=value` data file.
+#
+# Usage:  omg tools/tmpl.omg <template> <data> [output]
+#
+# Data file format:
+#   #-prefixed and blank lines are ignored.
+#   Other lines are split on the first `=` into key, value (both trimmed).
+#
+# Missing placeholders render as the empty string.
+
+if length(args) < 3 {
+    panic("usage: omg tools/tmpl.omg <template> <data> [output]")
+}
+
+# Parse a data file into a string-keyed dict.
+proc load_data(path) {
+    alloc text := read_file(path)
+    if text == false {
+        panic("cannot read data file: " + path)
+    }
+    alloc lines := lib.split_lines(text)
+    alloc data := {}
+    alloc i := 0
+    alloc n := length(lines)
+    loop i < n {
+        alloc line := lib.trim(lines[i])
+        if length(line) > 0 and line[0] != "#" {
+            alloc m := length(line)
+            alloc j := 0
+            loop j < m and line[j] != "=" {
+                j := j + 1
+            }
+            if j < m {
+                alloc key := lib.trim(line[0:j])
+                alloc val := lib.trim(line[j + 1:m])
+                data[key] := val
+            }
+        }
+        i := i + 1
+    }
+    return data
+}
+
+# Substitute every `{{name}}` in `template` with `data[name]` (or "").
+proc render(template, data) {
+    alloc out := ""
+    alloc n := length(template)
+    alloc i := 0
+    loop i < n {
+        if i + 1 < n and template[i] == "{" and template[i + 1] == "{" {
+            alloc j := i + 2
+            loop j + 1 < n and (template[j] != "}" or template[j + 1] != "}") {
+                j := j + 1
+            }
+            if j + 1 < n {
+                alloc key := lib.trim(template[i + 2:j])
+                alloc val := ""
+                try {
+                    val := data[key]
+                } except {
+                    val := ""
+                }
+                out := out + val
+                i := j + 2
+            } else {
+                out := out + template[i]
+                i := i + 1
+            }
+        } else {
+            out := out + template[i]
+            i := i + 1
+        }
+    }
+    return out
+}
+
+alloc data := load_data(args[2])
+alloc template := read_file(args[1])
+if template == false {
+    panic("cannot read template: " + args[1])
+}
+alloc result := render(template, data)
+
+if length(args) >= 4 {
+    alloc h := file_open(args[3], "w")
+    file_write(h, result)
+    file_close(h)
+} else {
+    emit result
+}

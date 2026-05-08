@@ -1,0 +1,145 @@
+;;;omg
+
+import "lib.omg" as lib
+
+# base64 — encode binary files to base64 text, or decode base64 text back
+# to binary.  Standard alphabet, `=` padding.  Whitespace in input is
+# ignored when decoding (so line-wrapped base64 round-trips cleanly).
+#
+# Usage:
+#   omg tools/base64.omg encode <in> [out]    # binary file → base64 text
+#   omg tools/base64.omg decode <in> <out>    # base64 text → binary file
+
+alloc ALPHA := "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
+
+# Encode the byte list `bytes` into a base64 string.
+proc encode_bytes(bytes) {
+    alloc n := length(bytes)
+    alloc out := ""
+    alloc i := 0
+    loop i + 2 < n {
+        alloc b0 := bytes[i]
+        alloc b1 := bytes[i + 1]
+        alloc b2 := bytes[i + 2]
+        alloc c0 := (b0 >> 2) & 63
+        alloc c1 := ((b0 & 3) << 4) | ((b1 >> 4) & 15)
+        alloc c2 := ((b1 & 15) << 2) | ((b2 >> 6) & 3)
+        alloc c3 := b2 & 63
+        out := out + ALPHA[c0] + ALPHA[c1] + ALPHA[c2] + ALPHA[c3]
+        i := i + 3
+    }
+    if i < n {
+        alloc rem := n - i
+        alloc b0 := bytes[i]
+        alloc b1 := 0
+        if rem > 1 {
+            b1 := bytes[i + 1]
+        }
+        alloc c0 := (b0 >> 2) & 63
+        alloc c1 := ((b0 & 3) << 4) | ((b1 >> 4) & 15)
+        if rem == 1 {
+            out := out + ALPHA[c0] + ALPHA[c1] + "=="
+        } else {
+            alloc c2 := (b1 & 15) << 2
+            out := out + ALPHA[c0] + ALPHA[c1] + ALPHA[c2] + "="
+        }
+    }
+    return out
+}
+
+# Map a single base64 character to its 0-63 value, or -1 for invalid.
+proc decode_index(c) {
+    if c >= "A" and c <= "Z" {
+        return ascii(c) - ascii("A")
+    }
+    if c >= "a" and c <= "z" {
+        return ascii(c) - ascii("a") + 26
+    }
+    if c >= "0" and c <= "9" {
+        return ascii(c) - ascii("0") + 52
+    }
+    if c == "+" {
+        return 62
+    }
+    if c == "/" {
+        return 63
+    }
+    return -1
+}
+
+# Decode `text` and stream the resulting bytes into the open file handle
+# `oh`.  Streaming avoids building a giant in-memory list of bytes (which
+# would be O(n²) in OMG due to `+` allocating).
+proc decode_to_handle(text, oh) {
+    alloc n := length(text)
+    alloc buf := [0, 0, 0, 0]
+    alloc bi := 0
+    alloc pad := 0
+    alloc i := 0
+    loop i < n {
+        alloc c := text[i]
+        if c == "=" {
+            buf[bi] := 0
+            bi := bi + 1
+            pad := pad + 1
+        } elif c == " " or c == "\n" or c == "\r" or c == "\t" {
+            i := i + 0
+        } else {
+            alloc v := decode_index(c)
+            if v < 0 {
+                panic("invalid base64 char: " + c)
+            }
+            buf[bi] := v
+            bi := bi + 1
+        }
+        if bi == 4 {
+            alloc b0 := ((buf[0] << 2) | ((buf[1] >> 4) & 3)) & 255
+            alloc b1 := (((buf[1] & 15) << 4) | ((buf[2] >> 2) & 15)) & 255
+            alloc b2 := (((buf[2] & 3) << 6) | buf[3]) & 255
+            if pad == 0 {
+                file_write(oh, [b0, b1, b2])
+            } elif pad == 1 {
+                file_write(oh, [b0, b1])
+            } else {
+                file_write(oh, [b0])
+            }
+            bi := 0
+            pad := 0
+        }
+        i := i + 1
+    }
+}
+
+if length(args) < 3 {
+    panic("usage: omg tools/base64.omg <encode|decode> <in> [out]")
+}
+
+alloc mode := args[1]
+alloc in_path := args[2]
+
+if mode == "encode" {
+    alloc h := file_open(in_path, "rb")
+    alloc bytes := file_read(h)
+    file_close(h)
+    alloc s := encode_bytes(bytes)
+    if length(args) >= 4 {
+        alloc oh := file_open(args[3], "w")
+        file_write(oh, s)
+        file_close(oh)
+    } else {
+        emit s
+    }
+} elif mode == "decode" {
+    if length(args) < 4 {
+        panic("decode needs an output path: omg tools/base64.omg decode <in> <out>")
+    }
+    alloc text := read_file(in_path)
+    if text == false {
+        panic("cannot read input: " + in_path)
+    }
+    alloc oh := file_open(args[3], "wb")
+    decode_to_handle(text, oh)
+    file_close(oh)
+} else {
+    panic("unknown mode: " + mode + " (use 'encode' or 'decode')")
+}

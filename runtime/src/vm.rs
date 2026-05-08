@@ -120,13 +120,26 @@ pub fn run_program(
     // The caller passes the full bytecode each turn (REPL) or once (one-shot
     // run). Function addresses are absolute indexes into `code`, so the same
     // table works for both call paths.
-    execute(code, funcs_persistent, globals)
+    execute(code, funcs_persistent, globals, 0)
+}
+
+/// Execute `code` against caller-owned `globals` and `funcs`, starting at
+/// the given program counter. Used by the REPL to run only the freshly
+/// appended chunk of an accumulated bytecode buffer.
+pub fn run_program_from(
+    code: &[Instr],
+    funcs: &HashMap<String, Function>,
+    globals: &mut HashMap<String, Value>,
+    start_pc: usize,
+) -> Result<(), RuntimeError> {
+    execute(code, funcs, globals, start_pc)
 }
 
 fn execute(
     code: &[Instr],
     funcs: &HashMap<String, Function>,
     globals: &mut HashMap<String, Value>,
+    start_pc: usize,
 ) -> Result<(), RuntimeError> {
     let mut stack: Vec<Value> = Vec::new();
     let mut env: HashMap<String, Value> = HashMap::new();
@@ -134,7 +147,7 @@ fn execute(
     let mut ret_stack: Vec<usize> = Vec::new();
     let mut block_stack: Vec<Block> = Vec::new();
     let mut error_flag: Option<RuntimeError> = None;
-    let mut pc: usize = 0;
+    let mut pc: usize = start_pc;
 
     while pc < code.len() {
         let mut advance_pc = true;
