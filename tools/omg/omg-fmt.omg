@@ -1,10 +1,10 @@
 ;;;omg
 
-import "lib.omg" as lib
+import "../modules/lib.omg" as lib
 
 # omg-fmt — minimal OMG source formatter.
 #
-# Usage:  omg tools/omg-fmt.omg <input.omg> [output]
+# Usage:  omg tools/omg/omg-fmt.omg <input.omg> [output]
 #
 # What it does:
 #   - Re-indents every line using 4-space units, sized by accumulated
@@ -118,7 +118,7 @@ proc indent(count) {
 }
 
 if length(args) < 2 {
-    panic("usage: omg tools/omg-fmt.omg <input.omg> [output]")
+    panic("usage: omg tools/omg/omg-fmt.omg <input.omg> [output]")
 }
 
 alloc src := read_file(args[1])

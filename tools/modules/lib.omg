@@ -2,7 +2,7 @@
 
 # Shared helpers for the OMG `tools/` utilities.
 #
-# Each tool imports this as `lib` (e.g. `import "lib.omg" as lib`) and
+# Each tool imports this as `lib` (e.g. `import "./modules/lib.omg" as lib`) and
 # reaches into it for line splitting, substring search, sorting,
 # hex-padding, byte rendering, and integer parsing — the bits every
 # small Unix-style tool ends up needing.

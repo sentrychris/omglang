@@ -1,6 +1,6 @@
 ;;;omg
 
-import "lib.omg" as lib
+import "./modules/lib.omg" as lib
 
 # tmpl — render a template by replacing `{{name}}` placeholders with values
 # loaded from a `key=value` data file.

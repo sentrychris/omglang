@@ -21,7 +21,7 @@
 # bootstrap interpreter to run further tests, which would inflate this
 # harness's compile + boot time substantially.  Verify it directly with:
 #
-#     omg tools/omg-test.omg <test_pass.omg> [...]
+#     omg tools/omg/omg-test.omg <test_pass.omg> [...]
 
 # === helpers (defined first so we can call them at top level) ============
 
@@ -62,7 +62,7 @@ alloc fails := []
 args := ["wc.omg", "/tmp/hello.txt"]
 banner("wc")
 try {
-    import "wc.omg" as _wc
+    import "./unix/wc.omg" as _wc
     emit "  [PASS]"
     passed := passed + 1
 } except err {
@@ -74,7 +74,7 @@ try {
 args := ["grep.omg", "ana", "/tmp/sample.txt"]
 banner("grep")
 try {
-    import "grep.omg" as _grep
+    import "./unix/grep.omg" as _grep
     emit "  [PASS]"
     passed := passed + 1
 } except err {
@@ -86,7 +86,7 @@ try {
 args := ["hex.omg", "/tmp/hello.txt"]
 banner("hex")
 try {
-    import "hex.omg" as _hex
+    import "./unix/hex.omg" as _hex
     emit "  [PASS]"
     passed := passed + 1
 } except err {
@@ -98,7 +98,7 @@ try {
 args := ["sort.omg", "/tmp/sample.txt"]
 banner("sort")
 try {
-    import "sort.omg" as _sort
+    import "./unix/sort.omg" as _sort
     emit "  [PASS]"
     passed := passed + 1
 } except err {
@@ -110,7 +110,7 @@ try {
 args := ["uniq.omg", "/tmp/sorted.txt"]
 banner("uniq")
 try {
-    import "uniq.omg" as _uniq
+    import "./unix/uniq.omg" as _uniq
     emit "  [PASS]"
     passed := passed + 1
 } except err {
@@ -122,7 +122,7 @@ try {
 args := ["head.omg", "-n", "3", "/tmp/sample.txt"]
 banner("head -n 3")
 try {
-    import "head.omg" as _head
+    import "./unix/head.omg" as _head
     emit "  [PASS]"
     passed := passed + 1
 } except err {
@@ -134,7 +134,7 @@ try {
 args := ["tail.omg", "-n", "2", "/tmp/sample.txt"]
 banner("tail -n 2")
 try {
-    import "tail.omg" as _tail
+    import "./unix/tail.omg" as _tail
     emit "  [PASS]"
     passed := passed + 1
 } except err {
@@ -203,7 +203,7 @@ try {
 args := ["omg-fmt.omg", "/tmp/messy.omg"]
 banner("omg-fmt")
 try {
-    import "omg-fmt.omg" as _fmt
+    import "./omg/omg-fmt.omg" as _fmt
     emit "  [PASS]"
     passed := passed + 1
 } except err {
@@ -218,7 +218,7 @@ write_file("/tmp/leaf.omg", ";;;omg\nemit 1\n")
 args := ["omg-deps.omg", "/tmp/leaf.omg"]
 banner("omg-deps")
 try {
-    import "omg-deps.omg" as _deps
+    import "./omg/omg-deps.omg" as _deps
     emit "  [PASS]"
     passed := passed + 1
 } except err {
@@ -231,7 +231,7 @@ try {
 args := ["omg-bundle.omg", "/tmp/leaf.omg", "/tmp/leaf-bundle.omg"]
 banner("omg-bundle")
 try {
-    import "omg-bundle.omg" as _bundle
+    import "./omg/omg-bundle.omg" as _bundle
     emit "  [PASS]"
     passed := passed + 1
 } except err {

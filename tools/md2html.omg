@@ -1,6 +1,6 @@
 ;;;omg
 
-import "lib.omg" as lib
+import "./modules/lib.omg" as lib
 
 # md2html — convert a useful subset of Markdown to HTML.
 #

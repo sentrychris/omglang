@@ -1,6 +1,6 @@
 ;;;omg
 
-import "../lib.omg" as lib
+import "../modules/lib.omg" as lib
 import "../md2html.omg" as md
 
 # ssg — a tiny static site generator written in OMG.

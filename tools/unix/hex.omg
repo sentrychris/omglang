@@ -1,6 +1,6 @@
 ;;;omg
 
-import "lib.omg" as lib
+import "../modules/lib.omg" as lib
 
 # hex — xxd-style hex dump of a file.  Reads in binary mode so it works
 # on arbitrary files, not just text.

@@ -1,0 +1,201 @@
+;;;omg
+
+# === Edge cases for the alloc / := ruleset ================================
+#
+# Rules under test:
+#   1. Every new binding requires `alloc`. Bare `:=` on a never-declared
+#      name raises UndefinedIdentError.
+#   2. Re-assignment uses bare `:=` (no `alloc` the second time).
+#   3. Bindings declared inside a proc are local — invisible outside it.
+#   4. Globals can be read AND updated from inside a proc with bare `:=`.
+#
+# Each case prints what it observed and what was expected, so you can
+# eyeball the run.
+
+# --- Original cases (unchanged behaviour) ---------------------------------
+
+alloc a := 5
+a := 1
+emit a                                  # → 1   (rule 2: top-level reassign)
+
+proc hoist(n) {
+    a := n                              # rule 4: writes the global `a`
+}
+hoist(3)
+
+proc local() {
+    alloc b := 1                        # rule 3: `b` lives inside this proc
+    return b
+}
+local()
+
+emit a                                  # → 3   (rule 4: hoist(3) bumped it)
+
+# `emit b` would raise UndefinedIdentError. Caught here so the rest of the
+# script keeps running; uncomment for the bare crash.
+try {
+    emit b
+} except err {
+    emit "caught: " + err               # UndefinedIdentError: b   (rule 3)
+}
+
+# --- Rule 1: alloc required for new bindings ------------------------------
+
+emit ""
+emit "===== Rule 1 ====="
+
+# Bare `:=` to an undeclared name at top level.
+try {
+    nope := 99
+    emit "FAIL: top-level bare := on a new name didn't error"
+} except err {
+    emit "caught: " + err               # UndefinedIdentError: nope
+}
+
+# Same inside a proc — typo for an existing global.
+proc typo_inside() {
+    couner := 1                         # meant `counter`; no such name
+    return couner
+}
+try {
+    typo_inside()
+    emit "FAIL: typo inside proc didn't error"
+} except err {
+    emit "caught: " + err               # UndefinedIdentError: couner
+}
+
+# --- Rule 2: re-assignment with bare := -----------------------------------
+
+emit ""
+emit "===== Rule 2 ====="
+
+# Loop iteration variable: classic case for `:=` updating an existing
+# top-level binding.
+alloc i := 0
+loop i < 3 {
+    i := i + 1
+}
+emit "i after loop: " + i               # → 3
+
+# Procedure parameters are pre-bound locals, so `:=` on them just updates.
+proc bump(x) {
+    x := x + 100
+    return x
+}
+emit "bump(1): " + bump(1)              # → 101
+
+# --- Rule 3: locals don't leak --------------------------------------------
+
+emit ""
+emit "===== Rule 3 ====="
+
+proc local_only() {
+    alloc tmp := "hidden"
+    return length(tmp)
+}
+emit "local_only(): " + local_only()    # → 6
+
+try {
+    emit tmp                            # tmp doesn't exist outside local_only
+} except err {
+    emit "caught: " + err               # UndefinedIdentError: tmp
+}
+
+# A nested block (loop / if) does NOT introduce a new scope. An `alloc`
+# inside a loop body is visible after the loop ends.
+alloc seen := false
+alloc k := 0
+loop k < 1 {
+    alloc inside_loop := "yes"
+    seen := true
+    k := k + 1
+}
+# `inside_loop` was alloc'd at the (function- or top-level) scope of the
+# enclosing block — there's only one local scope per proc, plus globals.
+emit "inside_loop after loop: " + inside_loop   # → yes
+
+# --- Rule 4: globals from inside a function -------------------------------
+
+emit ""
+emit "===== Rule 4 ====="
+
+alloc r := 1
+proc bump_r() { r := r + 1 }
+bump_r()
+bump_r()
+bump_r()
+emit "r after 3 bumps: " + r            # → 4
+
+# Globals injected by the runtime work the same way: `args`, `module_file`,
+# and `current_dir` are all read/writeable from inside a proc.
+proc read_module_file() {
+    return module_file
+}
+emit "module_file len > 0: " + (length(read_module_file()) > 0)  # → true
+
+# --- Edge case: alloc inside a proc *shadows* a same-named global ---------
+
+emit ""
+emit "===== Shadowing ====="
+
+alloc s := "outer"
+proc shadow_test() {
+    alloc s := "inner"                  # NEW local; outer s untouched
+    return s
+}
+emit "shadow_test() returns: " + shadow_test()  # → inner
+emit "outer s afterwards:    " + s              # → outer
+
+# --- Edge case: `alloc args := ...` doesn't clobber the runtime global ----
+#
+# Pre-StoreLocal, this used to be the most painful footgun. Verify the
+# runtime-injected `args` survives a function that allocates its own `args`.
+
+emit ""
+emit "===== args protection ====="
+
+proc with_local_args() {
+    alloc args := [99, 100, 101]
+    return length(args)
+}
+alloc args_before := length(args)
+alloc local_len := with_local_args()
+alloc args_after := length(args)
+emit "local args length:        " + local_len           # → 3
+emit "global args length stable: " + (args_before == args_after) # → true
+
+# --- Edge case: re-alloc'ing the same name at top level -------------------
+#
+# Top-level duplicate `alloc` is a compile-time error — the unambiguous
+# typo case. We document it here as a comment because the failure is a
+# SyntaxError, not a runtime exception, so try/except can't catch it:
+# the script wouldn't compile at all.
+#
+#     alloc dup := 1
+#     alloc dup := 2
+#     # → SyntaxError: 'dup' is already declared at the top level on line 2
+#
+# Inside a proc, re-`alloc` of the same name in different mutually-
+# exclusive branches is currently *allowed* — OMG is proc-scoped, not
+# block-scoped, and forbidding the parser-style "alloc-per-branch"
+# pattern would force ugly hoists. (Block scoping is a future change
+# that would extend the strict rule into procs.)
+
+emit ""
+emit "===== re-alloc (documented above) ====="
+emit "top-level duplicate alloc → compile-time SyntaxError"
+emit "in-proc branch-local re-alloc → currently allowed"
+
+# --- Edge case: rebinding a parameter ------------------------------------
+#
+# Parameters are pre-bound locals, so `:=` updates them in place. This is
+# the canonical way to "transform" a parameter inside a proc.
+
+proc reparam(x) {
+    x := x * 10
+    return x
+}
+emit "reparam(5): " + reparam(5)        # → 50
+
+emit ""
+emit "all rule tests done."

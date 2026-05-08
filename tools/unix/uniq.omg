@@ -1,6 +1,6 @@
 ;;;omg
 
-import "lib.omg" as lib
+import "../modules/lib.omg" as lib
 
 # uniq — print each line once, dropping adjacent duplicates.  Matches the
 # Unix `uniq` semantics: input is expected to be (typically) sorted, and

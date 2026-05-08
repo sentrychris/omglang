@@ -5,7 +5,7 @@ import "../reference/interpreter.omg" as OMGI
 # omg-test — run a list of OMG test files through the bootstrap
 # tree-walk interpreter and print a pass/fail summary.
 #
-# Usage:  omg tools/omg-test.omg <test1.omg> [test2.omg ...]
+# Usage:  omg tools/omg/omg-test.omg <test1.omg> [test2.omg ...]
 #
 # Each test file is interpreted independently.  A test passes if it runs
 # to completion without raising — failures (assertions, panics, runtime
@@ -19,7 +19,7 @@ import "../reference/interpreter.omg" as OMGI
 # OMG running OMG that's running OMG.
 
 if length(args) < 2 {
-    panic("usage: omg tools/omg-test.omg <test.omg> [...]")
+    panic("usage: omg tools/omg/omg-test.omg <test.omg> [...]")
 }
 
 alloc passed := 0
