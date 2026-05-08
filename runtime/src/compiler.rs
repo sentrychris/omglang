@@ -126,6 +126,11 @@ pub struct Compiler {
     /// `f(x)` should compile to a direct `Call` or to `Load + CallValue`.
     /// The bottom-most frame represents the file's top-level locals.
     local_scopes: Vec<HashSet<String>>,
+    /// **Mangled** names that have been alloc'd at top level. Used purely
+    /// for the duplicate-`alloc` check; we can't reuse `local_scopes[0]`
+    /// because that holds *unmangled* names (so two imported modules
+    /// with `alloc i := ...` would falsely collide on the bare name).
+    top_level_declared: HashSet<String>,
 }
 
 #[derive(Clone)]
@@ -155,6 +160,7 @@ impl Compiler {
             current_prefix: String::new(),
             current_file: entry_file.into(),
             local_scopes: vec![HashSet::new()],
+            top_level_declared: HashSet::new(),
         }
     }
 
@@ -306,21 +312,22 @@ impl Compiler {
             Node::Decl(name, expr, line) => {
                 // Top-level same-scope re-declaration is a compile-time
                 // error: it's almost always a typo or accidental
-                // copy/paste. Inside a proc we *don't* enforce this yet —
-                // OMG is proc-scoped (no block scoping), so the
-                // "alloc-per-branch" idiom in parser-style code would be
-                // forced into ugly hoists. Block scoping (a future change)
-                // is the right way to extend the rule into procs.
+                // copy/paste. We track top-level allocs by their
+                // *mangled* name so two imported modules with `alloc i`
+                // don't falsely collide. Inside a proc we don't enforce
+                // this yet — OMG is proc-scoped (no block scoping), so
+                // the "alloc-per-branch" idiom in parser-style code
+                // would be forced into ugly hoists. Block scoping is the
+                // right way to extend the rule into procs.
                 if self.local_scopes.len() == 1 {
-                    if let Some(scope) = self.local_scopes.last() {
-                        if scope.contains(name) {
-                            return Err(RuntimeError::SyntaxError(format!(
-                                "'{}' is already declared at the top level on line {} in {}",
-                                name,
-                                line,
-                                self.current_file.display()
-                            )));
-                        }
+                    let mangled = self.resolve_store(name);
+                    if !self.top_level_declared.insert(mangled) {
+                        return Err(RuntimeError::SyntaxError(format!(
+                            "'{}' is already declared at the top level on line {} in {}",
+                            name,
+                            line,
+                            self.current_file.display()
+                        )));
                     }
                 }
                 self.compile_expr(expr)?;

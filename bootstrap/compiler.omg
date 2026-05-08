@@ -979,6 +979,14 @@ alloc cc_module_counter := 0
 alloc cc_current_prefix := ""
 alloc cc_current_file := ""
 
+# Mangled names that have been alloc'd at the top level. Tracked
+# separately from `cc_local_scopes[0]` (which holds *unmangled* names)
+# so two imported modules with `alloc i := ...` don't falsely collide
+# on the bare name — they get distinct prefixes (`__mod_3__i`,
+# `__mod_4__i`, ...) and only a real same-module duplicate trips the
+# check.
+alloc cc_top_level_declared := []
+
 # Cache of compiled imports: each entry is [resolved_path, prefix, exports]
 # where `exports` is a list of [name, kind] pairs.  Subsequent imports of
 # the same module reuse the cached prefix and exports without re-inlining
@@ -1554,17 +1562,19 @@ proc compile_stmt(stmt) {
     }
     if kind == "decl" {
         # Top-level same-scope re-declaration is a compile-time error: it's
-        # almost always a typo or accidental copy/paste. Inside a proc we
-        # *don't* enforce this yet — OMG is proc-scoped (no block scoping),
-        # so the "alloc-per-branch" idiom in parser-style code would be
-        # forced into ugly hoists. Block scoping is a future change that
-        # would extend the rule into procs.
+        # almost always a typo or accidental copy/paste. We track top-level
+        # allocs by their *mangled* name so two imported modules with
+        # `alloc i := ...` don't falsely collide. Inside a proc we don't
+        # enforce this yet — OMG is proc-scoped (no block scoping), so the
+        # "alloc-per-branch" idiom in parser-style code would be forced
+        # into ugly hoists. Block scoping is a future change that would
+        # extend the rule into procs.
         if length(cc_local_scopes) == 1 {
-            alloc dn_scope := cc_local_scopes[0]
-            alloc dn_dup := list_contains_name(dn_scope, stmt[1])
-            if dn_dup {
-                panic("'" + stmt[1] + "' is already declared at the top level on line " + stmt[3])
+            alloc dn_mangled := cc_resolve_store(stmt[1])
+            if list_contains_name(cc_top_level_declared, dn_mangled) {
+                panic("'" + stmt[1] + "' is already declared at the top level on line " + stmt[3] + " in " + cc_current_file)
             }
+            cc_top_level_declared := cc_top_level_declared + [dn_mangled]
         }
         compile_expr(stmt[2])
         # Declare before resolving the storage name so resolve_store sees

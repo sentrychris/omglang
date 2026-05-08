@@ -123,9 +123,9 @@ if mode == "encode" {
     file_close(h)
     alloc s := encode_bytes(bytes)
     if length(args) >= 4 {
-        alloc oh := file_open(args[3], "w")
-        file_write(oh, s)
-        file_close(oh)
+        alloc enc_out := file_open(args[3], "w")
+        file_write(enc_out, s)
+        file_close(enc_out)
     } else {
         emit s
     }
@@ -137,9 +137,9 @@ if mode == "encode" {
     if text == false {
         panic("cannot read input: " + in_path)
     }
-    alloc oh := file_open(args[3], "wb")
-    decode_to_handle(text, oh)
-    file_close(oh)
+    alloc dec_out := file_open(args[3], "wb")
+    decode_to_handle(text, dec_out)
+    file_close(dec_out)
 } else {
     panic("unknown mode: " + mode + " (use 'encode' or 'decode')")
 }
