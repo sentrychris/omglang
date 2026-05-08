@@ -126,7 +126,7 @@ OK
 `omg-bundle.omg` produces a single-file program with identical behaviour:
 
 ```sh
-$ omg tools/omg-bundle.omg examples/import_modules.omg /tmp/bundled.omg
+$ omg tools/omg/omg-bundle.omg examples/import_modules.omg /tmp/bundled.omg
 $ diff <(omg /tmp/bundled.omg) <(omg examples/import_modules.omg) && echo OK
 OK
 ```

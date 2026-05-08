@@ -114,6 +114,36 @@ Forget the `alloc` for a brand-new name and OMG complains:
 UndefinedIdentError: name
 ```
 
+The full rules — they're worth reading once because they save you from
+typos and accidental shadowing:
+
+1. **Every new binding needs `alloc`.** Bare `:=` only works on names
+   that already exist somewhere in scope. `cont := 5` when you meant
+   `count := 5` is an error, not a silent new variable.
+2. **Re-assignment uses `:=`** — no `alloc` the second time:
+   ```omg
+   alloc x := 1
+   x := 2          # fine
+   ```
+3. **Bindings declared inside a function are local to that function.**
+   They aren't visible outside:
+   ```omg
+   proc round2(n) { alloc r := 2 }
+   round2(0)
+   emit r          # UndefinedIdentError: r
+   ```
+4. **Globals can be read *and updated* from inside a function** with
+   plain `:=`:
+   ```omg
+   alloc r := 1
+   proc bump() { r := r + 1 }
+   bump()
+   emit r          # → 2
+   ```
+   If you instead want a fresh local that *shadows* an outer name, use
+   `alloc` again inside the function — `alloc r := 2` would create a
+   new local without touching the global.
+
 ### Numbers and math
 
 OMG has two kinds of numbers: integers (whole numbers) and floats

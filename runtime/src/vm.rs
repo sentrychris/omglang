@@ -174,14 +174,24 @@ fn execute(
                 }
                 Instr::Store(name) => {
                     if let Some(v) = stack.pop() {
+                        // `:=` is *re-assignment only*: the name must already
+                        // be bound somewhere. Use `alloc x := v` to introduce
+                        // a new binding. This catches typos like `cont := 5`
+                        // that would otherwise silently shadow / clobber.
                         if env_stack.is_empty() {
-                            globals.insert(name.clone(), v);
+                            if globals.contains_key(name) {
+                                globals.insert(name.clone(), v);
+                            } else {
+                                break Err(RuntimeError::UndefinedIdentError(
+                                    name.clone(),
+                                ));
+                            }
                         } else if env.contains_key(name) {
                             env.insert(name.clone(), v);
                         } else if globals.contains_key(name) {
                             globals.insert(name.clone(), v);
                         } else {
-                            env.insert(name.clone(), v);
+                            break Err(RuntimeError::UndefinedIdentError(name.clone()));
                         }
                     }
                 }

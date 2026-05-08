@@ -1,6 +1,6 @@
 ;;;omg
 
-import "lib.omg" as lib
+import "./modules/lib.omg" as lib
 
 # base64 — encode binary files to base64 text, or decode base64 text back
 # to binary.  Standard alphabet, `=` padding.  Whitespace in input is

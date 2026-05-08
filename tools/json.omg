@@ -1,6 +1,6 @@
 ;;;omg
 
-import "lib.omg" as lib
+import "./modules/lib.omg" as lib
 
 # json — pretty-print or minify a JSON file.
 #

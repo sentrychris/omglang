@@ -1,6 +1,6 @@
 ;;;omg
 
-import "lib.omg" as lib
+import "../modules/lib.omg" as lib
 
 # grep — print lines containing a literal substring.
 #

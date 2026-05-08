@@ -1,12 +1,12 @@
 ;;;omg
 
-import "lib.omg" as lib
+import "../modules/lib.omg" as lib
 
 # omg-bundle — produce a single self-contained `.omg` file from a program
 # that uses `import`, by inlining each imported module and rewriting its
 # top-level names with a `__alias__` prefix to avoid clashes.
 #
-# Usage:  omg tools/omg-bundle.omg <root.omg> [output.omg]
+# Usage:  omg tools/omg/omg-bundle.omg <root.omg> [output.omg]
 #
 # Strategy:
 #
@@ -331,7 +331,7 @@ proc strip_lines(text, indices) {
 # === driver =============================================================
 
 if length(args) < 2 {
-    panic("usage: omg tools/omg-bundle.omg <root.omg> [output.omg]")
+    panic("usage: omg tools/omg/omg-bundle.omg <root.omg> [output.omg]")
 }
 
 alloc root_path := args[1]
@@ -344,7 +344,7 @@ alloc imports := find_imports(root_text)
 alloc nimp := length(imports)
 alloc root_dir := lib.path_split(root_path)[0]
 
-alloc bundle := ";;;omg\n\n# Bundled by tools/omg-bundle.omg\n\n"
+alloc bundle := ";;;omg\n\n# Bundled by tools/omg/omg-bundle.omg\n\n"
 
 alloc i := 0
 loop i < nimp {
