@@ -27,6 +27,7 @@ pub struct Token {
 pub enum TokKind {
     // Literals
     Number(i64),
+    Float(f64),
     Str(String),
     True,
     False,
@@ -72,6 +73,7 @@ pub enum TokKind {
     Star,
     Percent,
     Slash,
+    DoubleSlash,
 
     // Bitwise
     Shl,
@@ -99,6 +101,7 @@ impl TokKind {
     pub fn describe(&self) -> &'static str {
         match self {
             TokKind::Number(_) => "number",
+            TokKind::Float(_) => "float",
             TokKind::Str(_) => "string",
             TokKind::True => "true",
             TokKind::False => "false",
@@ -134,6 +137,7 @@ impl TokKind {
             TokKind::Star => "*",
             TokKind::Percent => "%",
             TokKind::Slash => "/",
+            TokKind::DoubleSlash => "//",
             TokKind::Shl => "<<",
             TokKind::Shr => ">>",
             TokKind::Amp => "&",
@@ -231,6 +235,51 @@ pub fn tokenize(code: &str, file: &str) -> Result<Vec<Token>, RuntimeError> {
             let start = i;
             while i < chars.len() && chars[i].is_ascii_digit() {
                 i += 1;
+            }
+            // Float literal? Either `.<digit>` or `[eE][+-]?<digit>` after
+            // the integer part promotes to float. A bare trailing `.`
+            // (e.g. `5.`) does NOT — that lets `5.foo` still parse as
+            // attribute access on int 5 and keeps the grammar unambiguous.
+            let is_float_dot = i < chars.len()
+                && chars[i] == '.'
+                && peek(&chars, i + 1).map_or(false, |c| c.is_ascii_digit());
+            let is_float_exp = i < chars.len() && (chars[i] == 'e' || chars[i] == 'E');
+            if is_float_dot || is_float_exp {
+                if is_float_dot {
+                    i += 1; // consume '.'
+                    while i < chars.len() && chars[i].is_ascii_digit() {
+                        i += 1;
+                    }
+                }
+                if i < chars.len() && (chars[i] == 'e' || chars[i] == 'E') {
+                    i += 1;
+                    if i < chars.len() && (chars[i] == '+' || chars[i] == '-') {
+                        i += 1;
+                    }
+                    let exp_start = i;
+                    while i < chars.len() && chars[i].is_ascii_digit() {
+                        i += 1;
+                    }
+                    if exp_start == i {
+                        let bad: String = chars[start..i].iter().collect();
+                        return Err(RuntimeError::SyntaxError(format!(
+                            "Float exponent has no digits in '{}' on line {} in {}",
+                            bad, line, file
+                        )));
+                    }
+                }
+                let s: String = chars[start..i].iter().collect();
+                let v: f64 = s.parse().map_err(|e| {
+                    RuntimeError::SyntaxError(format!(
+                        "Invalid float literal '{}' on line {} in {}: {}",
+                        s, line, file, e
+                    ))
+                })?;
+                tokens.push(Token {
+                    kind: TokKind::Float(v),
+                    line,
+                });
+                continue;
             }
             let s: String = chars[start..i].iter().collect();
             let v: i64 = s.parse().map_err(|e| {
@@ -376,6 +425,14 @@ pub fn tokenize(code: &str, file: &str) -> Result<Vec<Token>, RuntimeError> {
         if c == '>' && peek(&chars, i + 1) == Some('>') {
             tokens.push(Token {
                 kind: TokKind::Shr,
+                line,
+            });
+            i += 2;
+            continue;
+        }
+        if c == '/' && peek(&chars, i + 1) == Some('/') {
+            tokens.push(Token {
+                kind: TokKind::DoubleSlash,
                 line,
             });
             i += 2;

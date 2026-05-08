@@ -53,6 +53,7 @@ pub struct Function {
 #[derive(Clone, Debug)]
 pub enum Instr {
     PushInt(i64),
+    PushFloat(f64),
     PushStr(String),
     PushBool(bool),
     BuildList(usize),
@@ -63,6 +64,7 @@ pub enum Instr {
     Sub,
     Mul,
     Div,
+    FloorDiv,
     Mod,
     Eq,
     Ne,
@@ -162,6 +164,8 @@ mod opcode {
     pub const RAISE: u8 = 46;
     pub const MAKE_FUNC: u8 = 52;
     pub const STORE_LOCAL: u8 = 53;
+    pub const PUSH_FLOAT: u8 = 54;
+    pub const FLOOR_DIV: u8 = 55;
 }
 
 // --- Little-endian readers -------------------------------------------------
@@ -186,6 +190,17 @@ fn read_i64(data: &[u8], idx: &mut usize) -> Result<i64, RuntimeError> {
     let bytes: [u8; 8] = data[*idx..*idx + 8].try_into().unwrap();
     *idx += 8;
     Ok(i64::from_le_bytes(bytes))
+}
+
+fn read_f64(data: &[u8], idx: &mut usize) -> Result<f64, RuntimeError> {
+    if *idx + 8 > data.len() {
+        return Err(RuntimeError::SyntaxError(
+            "truncated bytecode (f64)".to_string(),
+        ));
+    }
+    let bytes: [u8; 8] = data[*idx..*idx + 8].try_into().unwrap();
+    *idx += 8;
+    Ok(f64::from_le_bytes(bytes))
 }
 
 fn read_string(data: &[u8], idx: &mut usize) -> Result<String, RuntimeError> {
@@ -332,6 +347,8 @@ pub fn parse_bytecode(
             }
             MAKE_FUNC => code.push(Instr::MakeFunc(read_string(data, &mut idx)?)),
             STORE_LOCAL => code.push(Instr::StoreLocal(read_string(data, &mut idx)?)),
+            PUSH_FLOAT => code.push(Instr::PushFloat(read_f64(data, &mut idx)?)),
+            FLOOR_DIV => code.push(Instr::FloorDiv),
             other => {
                 return Err(RuntimeError::SyntaxError(format!(
                     "unknown opcode 0x{:02x}",
@@ -349,6 +366,9 @@ fn write_u32(out: &mut Vec<u8>, v: u32) {
     out.extend_from_slice(&v.to_le_bytes());
 }
 fn write_i64(out: &mut Vec<u8>, v: i64) {
+    out.extend_from_slice(&v.to_le_bytes());
+}
+fn write_f64(out: &mut Vec<u8>, v: f64) {
     out.extend_from_slice(&v.to_le_bytes());
 }
 fn write_str(out: &mut Vec<u8>, s: &str) {
@@ -386,6 +406,10 @@ pub fn write_bytecode(code: &[Instr], funcs: &HashMap<String, Function>) -> Vec<
                 out.push(PUSH_INT);
                 write_i64(&mut out, *v);
             }
+            Instr::PushFloat(v) => {
+                out.push(PUSH_FLOAT);
+                write_f64(&mut out, *v);
+            }
             Instr::PushStr(s) => {
                 out.push(PUSH_STR);
                 write_str(&mut out, s);
@@ -414,6 +438,7 @@ pub fn write_bytecode(code: &[Instr], funcs: &HashMap<String, Function>) -> Vec<
             Instr::Sub => out.push(SUB),
             Instr::Mul => out.push(MUL),
             Instr::Div => out.push(DIV),
+            Instr::FloorDiv => out.push(FLOOR_DIV),
             Instr::Mod => out.push(MOD),
             Instr::Eq => out.push(EQ),
             Instr::Ne => out.push(NE),

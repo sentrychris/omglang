@@ -16,6 +16,7 @@ or industrial about it. It exists so I could see what it takes to build a workin
 - [A tour of the language](#a-tour-of-the-language)
   - [Variables](#variables)
   - [Numbers and math](#numbers-and-math)
+  - [Floats](#floats)
   - [Strings](#strings)
   - [Booleans and comparisons](#booleans-and-comparisons)
   - [Conditionals](#conditionals)
@@ -114,7 +115,8 @@ UndefinedIdentError: name
 
 ### Numbers and math
 
-OMG has whole numbers (integers) only: no decimals or no fractions yet:
+OMG has two kinds of numbers: integers (whole numbers) and floats
+(decimals). Plain integer math returns integers:
 
 ```omg
 ;;;omg
@@ -122,12 +124,12 @@ OMG has whole numbers (integers) only: no decimals or no fractions yet:
 emit 1 + 2          # 3
 emit 10 - 3         # 7
 emit 4 * 5          # 20
-emit 10 / 3         # 3      ← integer division, rounds toward minus infinity
+emit 10 / 3         # 3      ← integer division when both sides are ints
 emit 10 % 3         # 1      ← remainder ("modulo")
-emit -7 / 2         # -4     ← negative numbers round the same way
+emit -7 / 2         # -4     ← rounds toward minus infinity
 ```
 
-Bitwise operators exist:
+Bitwise operators exist (integers only):
 
 ```omg
 ;;;omg
@@ -140,6 +142,45 @@ emit 1 << 3         # 8      left shift
 emit 16 >> 2        # 4      right shift
 emit 0b1010         # 10     binary literal
 ```
+
+### Floats
+
+Write a float by including a decimal point or an exponent:
+
+```omg
+;;;omg
+
+emit 1.5            # 1.5
+emit 2.0 + 3.5      # 5.5
+emit 1.0e3          # 1000.0  (scientific notation)
+emit 6.022e23       # 6.022e23
+```
+
+`/` returns a float as soon as either operand is a float (true division);
+between two integers it stays as integer floor division. Use `//` when
+you want explicit floor division regardless of type:
+
+```omg
+;;;omg
+
+emit 10 / 3         # 3        ← int / int → int
+emit 10 / 3.0       # 3.3333…  ← any float → true division
+emit 10 // 3        # 3        ← explicit floor division
+emit 10.5 // 3      # 3.0      ← floor div on float still rounds toward -∞
+```
+
+Other things to know:
+
+- `5 == 5.0` is `true`. Cross-type numeric comparisons compare values.
+- Bitwise operators (`&`, `|`, `^`, `~`, `<<`, `>>`) reject floats with a
+  TypeError. Same for indexing a list with a float (`xs[1.5]`).
+- Float math is IEEE-754 double precision, so `0.1 + 0.2 == 0.3` is
+  `false`. That's not an OMG bug — it's how floats work everywhere.
+- `int(x)` truncates toward zero; `float(x)` widens an int to a float.
+
+The standard math kit is built in: `floor`, `ceil`, `round` (banker's
+rounding), `abs`, `sqrt`, `pow`, `log` (natural), `sin`, `cos`, `tan`.
+See the [built-ins table](#built-in-functions) for the full list.
 
 ### Strings
 
@@ -507,6 +548,14 @@ Always available, no import needed.
 | `file_write(handle, data)`     | write to a handle                                     |
 | `file_close(handle)`           | close a handle                                        |
 | `string_bytes(s)`              | UTF-8 byte values of `s` as a list of integers        |
+| `int(x)` / `float(x)`          | convert between int and float (or parse from string)  |
+| `floor(x)` / `ceil(x)`         | round a float toward `-∞` / `+∞`, returns int         |
+| `round(x)`                     | round-half-to-even (banker's rounding), returns int   |
+| `abs(x)`                       | absolute value (preserves int/float type)             |
+| `sqrt(x)`                      | square root, returns float                            |
+| `pow(a, b)`                    | `a` to the power of `b` (int^int stays int)           |
+| `log(x)`                       | natural log, returns float                            |
+| `sin(x)` / `cos(x)` / `tan(x)` | trigonometry in radians, returns float                |
 | `call_builtin(name, args)`     | call a builtin by name (advanced)                     |
 
 The runtime also hands you three special globals every program can read:

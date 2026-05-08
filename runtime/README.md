@@ -122,7 +122,7 @@ The compiler chooses the right call form automatically:
 
 Magic `OMGB` + packed version `(MAJOR<<16)|(MINOR<<8)|PATCH` (currently
 `0x000101`). Function table → instruction stream. All multi-byte integers
-are little-endian. Two opcodes were added beyond the v0.1 baseline:
+are little-endian. Four opcodes were added beyond the v0.1 baseline:
 
 - **52 (`MakeFunc`)** binds a `proc` as a first-class value: at top level
   it stores `Closure { name, captured: ∅ }` into globals; inside a
@@ -131,6 +131,12 @@ are little-endian. Two opcodes were added beyond the v0.1 baseline:
   in the *innermost* scope (locals inside a function, globals at top
   level). It exists so that `alloc args := ...` inside a function can't
   clobber the runtime-injected `args` global.
+- **54 (`PushFloat`)** pushes an IEEE-754 f64 literal onto the stack
+  (8-byte little-endian payload, same layout as `PushInt`).
+- **55 (`FloorDiv`)** implements the `//` operator. `/` between two ints
+  is still floor division (back-compat), but as soon as either operand
+  is a float `/` becomes true division, so `//` exists for cases where
+  the source needs to *force* the floor.
 
 Functions are emitted in **sorted name order** so the writer is
 deterministic — the self-hosted fixed-point check depends on it.
@@ -149,6 +155,11 @@ deterministic — the self-hosted fixed-point check depends on it.
 | `panic(msg)` / `raise(msg)` | Raise a runtime error    |
 | `read_file(path)` / `file_exists(path)` | Filesystem queries |
 | `file_open / file_read / file_write / file_close` | Streaming I/O |
+| `int(x)` / `float(x)` | Numeric conversions (truncate / widen) |
+| `floor / ceil / round` | Round float to int (banker's rounding for `round`) |
+| `abs / sqrt / pow / log` | Magnitude, root, power, natural log |
+| `sin / cos / tan` | Trig in radians; return float |
+| `float_bits(s)` | Parse a float literal to its i64 bit pattern; used by `bootstrap/compiler.omg` to embed float literals |
 | `call_builtin(name, args)` | Reflection / dynamic dispatch |
 
 The runtime also injects three special globals into every program:

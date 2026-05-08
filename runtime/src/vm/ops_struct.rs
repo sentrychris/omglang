@@ -48,6 +48,13 @@ pub(super) fn handle_build_dict(n: usize, stack: &mut Vec<Value>) -> Result<(), 
 pub(super) fn handle_index(stack: &mut Vec<Value>) -> Result<(), RuntimeError> {
     let idx = pop(stack)?;
     let base = pop(stack)?;
+    // Guard against silent float→int truncation: integer indexing of a
+    // sequence with a float is almost certainly a bug.
+    if matches!(base, Value::List(_) | Value::Str(_)) && matches!(idx, Value::Float(_)) {
+        return Err(RuntimeError::TypeError(
+            "list/string index must be an integer, not a float".to_string(),
+        ));
+    }
     match (base, idx) {
         (Value::List(list), Value::Int(i)) => {
             let l = list.borrow();
@@ -223,10 +230,20 @@ fn resolve_slice_bounds(
 ) -> Result<(usize, usize), RuntimeError> {
     let start_i = match start_val {
         Value::None => 0,
+        Value::Float(_) => {
+            return Err(RuntimeError::TypeError(
+                "slice bounds must be integers, not floats".to_string(),
+            ))
+        }
         v => v.as_int()?,
     };
     let end_i = match end_val {
         Value::None => len as i64,
+        Value::Float(_) => {
+            return Err(RuntimeError::TypeError(
+                "slice bounds must be integers, not floats".to_string(),
+            ))
+        }
         v => v.as_int()?,
     };
     let resolve = |i: i64| -> i64 {

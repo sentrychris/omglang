@@ -25,6 +25,12 @@ use super::pop;
 use crate::error::RuntimeError;
 use crate::value::Value;
 
+/// Either operand is a float? Used to dispatch arithmetic between the
+/// pure-int and promoted-to-float code paths.
+fn is_float(v: &Value) -> bool {
+    matches!(v, Value::Float(_))
+}
+
 /// Handle addition. List + List returns a freshly allocated list.
 pub(super) fn handle_add(stack: &mut Vec<Value>) -> Result<(), RuntimeError> {
     let b = pop(stack)?;
@@ -41,6 +47,9 @@ pub(super) fn handle_add(stack: &mut Vec<Value>) -> Result<(), RuntimeError> {
                 new_vec,
             ))));
         }
+        (a, b) if is_float(&a) || is_float(&b) => {
+            stack.push(Value::Float(a.as_float()? + b.as_float()?));
+        }
         (a, b) => {
             let ai = a.as_int()?;
             let bi = b.as_int()?;
@@ -54,55 +63,119 @@ pub(super) fn handle_add(stack: &mut Vec<Value>) -> Result<(), RuntimeError> {
 }
 
 pub(super) fn handle_sub(stack: &mut Vec<Value>) -> Result<(), RuntimeError> {
-    let b = pop(stack)?.as_int()?;
-    let a = pop(stack)?.as_int()?;
-    let result = a
-        .checked_sub(b)
+    let b = pop(stack)?;
+    let a = pop(stack)?;
+    if is_float(&a) || is_float(&b) {
+        stack.push(Value::Float(a.as_float()? - b.as_float()?));
+        return Ok(());
+    }
+    let ai = a.as_int()?;
+    let bi = b.as_int()?;
+    let result = ai
+        .checked_sub(bi)
         .ok_or_else(|| RuntimeError::ValueError("integer overflow on subtraction".to_string()))?;
     stack.push(Value::Int(result));
     Ok(())
 }
 
 pub(super) fn handle_mul(stack: &mut Vec<Value>) -> Result<(), RuntimeError> {
-    let b = pop(stack)?.as_int()?;
-    let a = pop(stack)?.as_int()?;
-    let result = a
-        .checked_mul(b)
+    let b = pop(stack)?;
+    let a = pop(stack)?;
+    if is_float(&a) || is_float(&b) {
+        stack.push(Value::Float(a.as_float()? * b.as_float()?));
+        return Ok(());
+    }
+    let ai = a.as_int()?;
+    let bi = b.as_int()?;
+    let result = ai
+        .checked_mul(bi)
         .ok_or_else(|| RuntimeError::ValueError("integer overflow on multiplication".to_string()))?;
     stack.push(Value::Int(result));
     Ok(())
 }
 
-/// Floor division (Python `//`). `-7 / 2 == -4`.
+/// Division. Promote-on-float: int/int floor-divides (current behaviour);
+/// any float operand promotes both to f64 and returns a float (true division).
+/// Use `//` for explicit floor division regardless of operand types.
 pub(super) fn handle_div(stack: &mut Vec<Value>) -> Result<(), RuntimeError> {
-    let b = pop(stack)?.as_int()?;
-    if b == 0 {
+    let b = pop(stack)?;
+    let a = pop(stack)?;
+    if is_float(&a) || is_float(&b) {
+        let bf = b.as_float()?;
+        if bf == 0.0 {
+            return Err(RuntimeError::ZeroDivisionError);
+        }
+        stack.push(Value::Float(a.as_float()? / bf));
+        return Ok(());
+    }
+    let bi = b.as_int()?;
+    if bi == 0 {
         return Err(RuntimeError::ZeroDivisionError);
     }
-    let a = pop(stack)?.as_int()?;
-    // i64::MIN / -1 overflows.
-    if a == i64::MIN && b == -1 {
+    let ai = a.as_int()?;
+    if ai == i64::MIN && bi == -1 {
         return Err(RuntimeError::ValueError(
             "integer overflow on division".to_string(),
         ));
     }
-    stack.push(Value::Int(a.div_euclid(b)));
+    stack.push(Value::Int(ai.div_euclid(bi)));
     Ok(())
 }
 
-/// Floor modulus (Python `%`). `-7 % 2 == 1`.
-pub(super) fn handle_mod(stack: &mut Vec<Value>) -> Result<(), RuntimeError> {
-    let b = pop(stack)?.as_int()?;
-    if b == 0 {
+/// Explicit floor division (`//`). Always rounds toward minus infinity.
+/// Returns int when both operands are int; returns float (still floored)
+/// when either operand is float, matching Python's `//`.
+pub(super) fn handle_floor_div(stack: &mut Vec<Value>) -> Result<(), RuntimeError> {
+    let b = pop(stack)?;
+    let a = pop(stack)?;
+    if is_float(&a) || is_float(&b) {
+        let bf = b.as_float()?;
+        if bf == 0.0 {
+            return Err(RuntimeError::ZeroDivisionError);
+        }
+        stack.push(Value::Float((a.as_float()? / bf).floor()));
+        return Ok(());
+    }
+    let bi = b.as_int()?;
+    if bi == 0 {
         return Err(RuntimeError::ZeroDivisionError);
     }
-    let a = pop(stack)?.as_int()?;
-    if a == i64::MIN && b == -1 {
+    let ai = a.as_int()?;
+    if ai == i64::MIN && bi == -1 {
+        return Err(RuntimeError::ValueError(
+            "integer overflow on division".to_string(),
+        ));
+    }
+    stack.push(Value::Int(ai.div_euclid(bi)));
+    Ok(())
+}
+
+/// Floor modulus (Python `%`). `-7 % 2 == 1`. Promotes on float.
+pub(super) fn handle_mod(stack: &mut Vec<Value>) -> Result<(), RuntimeError> {
+    let b = pop(stack)?;
+    let a = pop(stack)?;
+    if is_float(&a) || is_float(&b) {
+        let bf = b.as_float()?;
+        if bf == 0.0 {
+            return Err(RuntimeError::ZeroDivisionError);
+        }
+        // Python-style float modulo: result has the sign of the divisor.
+        let af = a.as_float()?;
+        let r = af - (af / bf).floor() * bf;
+        stack.push(Value::Float(r));
+        return Ok(());
+    }
+    let bi = b.as_int()?;
+    if bi == 0 {
+        return Err(RuntimeError::ZeroDivisionError);
+    }
+    let ai = a.as_int()?;
+    if ai == i64::MIN && bi == -1 {
         return Err(RuntimeError::ValueError(
             "integer overflow on modulo".to_string(),
         ));
     }
-    stack.push(Value::Int(a.rem_euclid(b)));
+    stack.push(Value::Int(ai.rem_euclid(bi)));
     Ok(())
 }
 
@@ -126,6 +199,13 @@ pub(super) fn handle_ne(stack: &mut Vec<Value>) -> Result<(), RuntimeError> {
 pub(crate) fn values_equal(a: &Value, b: &Value) -> bool {
     match (a, b) {
         (Value::Int(x), Value::Int(y)) => x == y,
+        (Value::Float(x), Value::Float(y)) => x == y,
+        // Numeric cross-type: compare via f64. Inside i64 range this is exact;
+        // outside it is consistent with `as f64` rounding (the float side
+        // already lost precision when constructed).
+        (Value::Int(x), Value::Float(y)) | (Value::Float(y), Value::Int(x)) => {
+            (*x as f64) == *y
+        }
         (Value::Bool(x), Value::Bool(y)) => x == y,
         (Value::Str(x), Value::Str(y)) => x == y,
         (Value::None, Value::None) => true,
@@ -168,6 +248,7 @@ pub(super) fn handle_lt(stack: &mut Vec<Value>) -> Result<(), RuntimeError> {
     let a = pop(stack)?;
     let res = match (&a, &b) {
         (Value::Str(sa), Value::Str(sb)) => sa < sb,
+        (a, b) if is_float(a) || is_float(b) => a.as_float()? < b.as_float()?,
         _ => a.as_int()? < b.as_int()?,
     };
     stack.push(Value::Bool(res));
@@ -179,6 +260,7 @@ pub(super) fn handle_le(stack: &mut Vec<Value>) -> Result<(), RuntimeError> {
     let a = pop(stack)?;
     let res = match (&a, &b) {
         (Value::Str(sa), Value::Str(sb)) => sa <= sb,
+        (a, b) if is_float(a) || is_float(b) => a.as_float()? <= b.as_float()?,
         _ => a.as_int()? <= b.as_int()?,
     };
     stack.push(Value::Bool(res));
@@ -190,6 +272,7 @@ pub(super) fn handle_gt(stack: &mut Vec<Value>) -> Result<(), RuntimeError> {
     let a = pop(stack)?;
     let res = match (&a, &b) {
         (Value::Str(sa), Value::Str(sb)) => sa > sb,
+        (a, b) if is_float(a) || is_float(b) => a.as_float()? > b.as_float()?,
         _ => a.as_int()? > b.as_int()?,
     };
     stack.push(Value::Bool(res));
@@ -201,36 +284,47 @@ pub(super) fn handle_ge(stack: &mut Vec<Value>) -> Result<(), RuntimeError> {
     let a = pop(stack)?;
     let res = match (&a, &b) {
         (Value::Str(sa), Value::Str(sb)) => sa >= sb,
+        (a, b) if is_float(a) || is_float(b) => a.as_float()? >= b.as_float()?,
         _ => a.as_int()? >= b.as_int()?,
     };
     stack.push(Value::Bool(res));
     Ok(())
 }
 
+/// Pop two operands and assert neither is a float. Bitwise operators are
+/// integer-only; silent truncation of a float to int would be a footgun.
+fn pop_two_ints(stack: &mut Vec<Value>, op: &str) -> Result<(i64, i64), RuntimeError> {
+    let b = pop(stack)?;
+    let a = pop(stack)?;
+    if is_float(&a) || is_float(&b) {
+        return Err(RuntimeError::TypeError(format!(
+            "operator '{}' is not defined for floats",
+            op
+        )));
+    }
+    Ok((a.as_int()?, b.as_int()?))
+}
+
 pub(super) fn handle_band(stack: &mut Vec<Value>) -> Result<(), RuntimeError> {
-    let b = pop(stack)?.as_int()?;
-    let a = pop(stack)?.as_int()?;
+    let (a, b) = pop_two_ints(stack, "&")?;
     stack.push(Value::Int(a & b));
     Ok(())
 }
 
 pub(super) fn handle_bor(stack: &mut Vec<Value>) -> Result<(), RuntimeError> {
-    let b = pop(stack)?.as_int()?;
-    let a = pop(stack)?.as_int()?;
+    let (a, b) = pop_two_ints(stack, "|")?;
     stack.push(Value::Int(a | b));
     Ok(())
 }
 
 pub(super) fn handle_bxor(stack: &mut Vec<Value>) -> Result<(), RuntimeError> {
-    let b = pop(stack)?.as_int()?;
-    let a = pop(stack)?.as_int()?;
+    let (a, b) = pop_two_ints(stack, "^")?;
     stack.push(Value::Int(a ^ b));
     Ok(())
 }
 
 pub(super) fn handle_shl(stack: &mut Vec<Value>) -> Result<(), RuntimeError> {
-    let b = pop(stack)?.as_int()?;
-    let a = pop(stack)?.as_int()?;
+    let (a, b) = pop_two_ints(stack, "<<")?;
     if !(0..64).contains(&b) {
         return Err(RuntimeError::ValueError(format!(
             "shift count out of range: {}",
@@ -245,8 +339,7 @@ pub(super) fn handle_shl(stack: &mut Vec<Value>) -> Result<(), RuntimeError> {
 }
 
 pub(super) fn handle_shr(stack: &mut Vec<Value>) -> Result<(), RuntimeError> {
-    let b = pop(stack)?.as_int()?;
-    let a = pop(stack)?.as_int()?;
+    let (a, b) = pop_two_ints(stack, ">>")?;
     if !(0..64).contains(&b) {
         return Err(RuntimeError::ValueError(format!(
             "shift count out of range: {}",
@@ -272,14 +365,24 @@ pub(super) fn handle_or(stack: &mut Vec<Value>) -> Result<(), RuntimeError> {
 }
 
 pub(super) fn handle_not(stack: &mut Vec<Value>) -> Result<(), RuntimeError> {
-    let v = pop(stack)?.as_int()?;
-    stack.push(Value::Int(!v));
+    let v = pop(stack)?;
+    if is_float(&v) {
+        return Err(RuntimeError::TypeError(
+            "operator '~' is not defined for floats".to_string(),
+        ));
+    }
+    stack.push(Value::Int(!v.as_int()?));
     Ok(())
 }
 
 pub(super) fn handle_neg(stack: &mut Vec<Value>) -> Result<(), RuntimeError> {
-    let v = pop(stack)?.as_int()?;
-    let result = v
+    let v = pop(stack)?;
+    if let Value::Float(f) = v {
+        stack.push(Value::Float(-f));
+        return Ok(());
+    }
+    let i = v.as_int()?;
+    let result = i
         .checked_neg()
         .ok_or_else(|| RuntimeError::ValueError("integer overflow on negation".to_string()))?;
     stack.push(Value::Int(result));

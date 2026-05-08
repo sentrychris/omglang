@@ -150,6 +150,7 @@ fn execute(
         let instr_res: Result<(), RuntimeError> = loop {
             match &code[pc] {
                 Instr::PushInt(v) => stack.push(Value::Int(*v)),
+                Instr::PushFloat(v) => stack.push(Value::Float(*v)),
                 Instr::PushStr(s) => stack.push(Value::Str(s.clone())),
                 Instr::PushBool(b) => stack.push(Value::Bool(*b)),
                 Instr::BuildList(n) => {
@@ -201,6 +202,11 @@ fn execute(
                 }
                 Instr::Div => {
                     if let Err(e) = ops_arith::handle_div(&mut stack) {
+                        break Err(e);
+                    }
+                }
+                Instr::FloorDiv => {
+                    if let Err(e) = ops_arith::handle_floor_div(&mut stack) {
                         break Err(e);
                     }
                 }

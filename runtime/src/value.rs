@@ -45,6 +45,8 @@ use crate::error::RuntimeError;
 pub enum Value {
     /// 64-bit signed integer.
     Int(i64),
+    /// 64-bit IEEE-754 floating-point number.
+    Float(f64),
     /// UTF-8 string.
     Str(String),
     /// Boolean truth value.
@@ -70,9 +72,47 @@ impl Value {
     /// Convert the value into an integer, applying OMG coercion rules.
     ///
     /// Returns `Ok(i64)` on success, or a [`RuntimeError::TypeError`] if conversion fails.
+    /// Coerce to f64. Used by mixed int/float arithmetic and the
+    /// `float()` builtin.
+    pub fn as_float(&self) -> Result<f64, RuntimeError> {
+        match self {
+            Value::Int(i) => Ok(*i as f64),
+            Value::Float(f) => Ok(*f),
+            Value::Bool(b) => Ok(if *b { 1.0 } else { 0.0 }),
+            Value::Str(s) => s.trim().parse::<f64>().map_err(|_| {
+                RuntimeError::TypeError(format!("Invalid literal for float(): '{}'", s))
+            }),
+            Value::None => Ok(0.0),
+            Value::List(_) | Value::Dict(_) | Value::FrozenDict(_) => {
+                Err(RuntimeError::TypeError(
+                    "cannot convert collection to float".to_string(),
+                ))
+            }
+            Value::Closure { name, .. } => Err(RuntimeError::TypeError(format!(
+                "cannot convert function '{}' to float",
+                name
+            ))),
+        }
+    }
+
     pub fn as_int(&self) -> Result<i64, RuntimeError> {
         match self {
             Value::Int(i) => Ok(*i),
+            Value::Float(f) => {
+                if !f.is_finite() {
+                    return Err(RuntimeError::ValueError(format!(
+                        "cannot convert non-finite float to int: {}",
+                        f
+                    )));
+                }
+                if *f < i64::MIN as f64 || *f > i64::MAX as f64 {
+                    return Err(RuntimeError::ValueError(format!(
+                        "float {} is outside the i64 range",
+                        f
+                    )));
+                }
+                Ok(f.trunc() as i64)
+            }
             Value::Str(s) => s.parse::<i64>().map_err(|_| {
                 RuntimeError::TypeError(format!("Invalid literal for int(): '{}'", s))
             }),
@@ -105,6 +145,8 @@ impl Value {
         match self {
             Value::Bool(b) => *b,
             Value::Int(i) => *i != 0,
+            // 0.0 and -0.0 are falsy; NaN is truthy (matches Python).
+            Value::Float(f) => *f != 0.0,
             Value::Str(s) => !s.is_empty(),
             Value::List(l) => !l.borrow().is_empty(),
             Value::Dict(d) => !d.borrow().is_empty(),
@@ -127,6 +169,7 @@ impl Value {
         fn helper(val: &Value, seen: &mut HashSet<usize>) -> String {
             match val {
                 Value::Int(i) => i.to_string(),
+                Value::Float(f) => format_float(*f),
                 Value::Str(s) => s.clone(),
                 Value::Bool(b) => b.to_string(),
 
@@ -179,5 +222,24 @@ impl Value {
 
         let mut seen = HashSet::new();
         helper(self, &mut seen)
+    }
+}
+
+/// Format an f64 the way OMG prints floats: always with a decimal point so
+/// `1.0` and `1` are visually distinguishable, with NaN/Infinity rendered
+/// in lowercase. Uses Rust's shortest round-trippable repr (`{}`) and
+/// appends `.0` if no exponent or decimal point is already present.
+pub(crate) fn format_float(f: f64) -> String {
+    if f.is_nan() {
+        return "nan".to_string();
+    }
+    if f.is_infinite() {
+        return if f > 0.0 { "inf".to_string() } else { "-inf".to_string() };
+    }
+    let s = format!("{}", f);
+    if s.contains('.') || s.contains('e') || s.contains('E') {
+        s
+    } else {
+        format!("{}.0", s)
     }
 }

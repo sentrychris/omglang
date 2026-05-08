@@ -63,6 +63,43 @@ static FILE_HANDLES: Lazy<Mutex<HashMap<i32, FileEntry>>> =
 /// Monotonic counter to allocate new integer file descriptors.
 static NEXT_FD: AtomicI32 = AtomicI32::new(0);
 
+/// `floor()`/`ceil()`/`round()` return ints. After the float operation the
+/// result is still an f64; convert it to i64 with the same finite/range
+/// checks `Value::as_int` uses on floats.
+fn float_to_int_rounded(f: f64, op: &'static str) -> Result<Value, RuntimeError> {
+    if !f.is_finite() {
+        return Err(RuntimeError::ValueError(format!(
+            "{}() of a non-finite float: {}",
+            op, f
+        )));
+    }
+    if f < i64::MIN as f64 || f > i64::MAX as f64 {
+        return Err(RuntimeError::ValueError(format!(
+            "{}() result {} is outside the i64 range",
+            op, f
+        )));
+    }
+    Ok(Value::Int(f as i64))
+}
+
+/// Round half to even (banker's rounding). Matches Python 3 `round()`.
+fn round_half_even(f: f64) -> f64 {
+    let rounded = f.round(); // half away from zero
+    let diff = (f - f.trunc()).abs();
+    if (diff - 0.5).abs() < 1e-9 {
+        // Exactly halfway: pick the even neighbour.
+        let down = f.trunc();
+        let up = if f >= 0.0 { down + 1.0 } else { down - 1.0 };
+        if (down as i64) % 2 == 0 {
+            down
+        } else {
+            up
+        }
+    } else {
+        rounded
+    }
+}
+
 /// Resolve a user-supplied path relative to `current_dir` (env or globals).
 ///
 /// The VM injects `current_dir` and `module_file` globals/locals on program start.
@@ -396,6 +433,154 @@ pub fn call_builtin(
             }
             _ => Err(RuntimeError::TypeError(
                 "file_exists() expects a path".to_string(),
+            )),
+        },
+
+        // --- Numeric / math --------------------------------------------------
+
+        // int(x) -> i64. Floats truncate toward zero; strings parse as int.
+        "int" => match args {
+            [v] => v.as_int().map(Value::Int),
+            _ => Err(RuntimeError::TypeError(
+                "int() expects one argument".to_string(),
+            )),
+        },
+
+        // float(x) -> f64. Ints widen; strings parse as float.
+        "float" => match args {
+            [v] => v.as_float().map(Value::Float),
+            _ => Err(RuntimeError::TypeError(
+                "float() expects one argument".to_string(),
+            )),
+        },
+
+        // floor(x) -> int. Largest integer <= x.
+        "floor" => match args {
+            [Value::Int(i)] => Ok(Value::Int(*i)),
+            [Value::Float(f)] => float_to_int_rounded(f.floor(), "floor"),
+            _ => Err(RuntimeError::TypeError(
+                "floor() expects one number".to_string(),
+            )),
+        },
+
+        // ceil(x) -> int. Smallest integer >= x.
+        "ceil" => match args {
+            [Value::Int(i)] => Ok(Value::Int(*i)),
+            [Value::Float(f)] => float_to_int_rounded(f.ceil(), "ceil"),
+            _ => Err(RuntimeError::TypeError(
+                "ceil() expects one number".to_string(),
+            )),
+        },
+
+        // round(x) -> int. Banker's rounding (ties to even) — matches Python 3.
+        "round" => match args {
+            [Value::Int(i)] => Ok(Value::Int(*i)),
+            [Value::Float(f)] => float_to_int_rounded(round_half_even(*f), "round"),
+            _ => Err(RuntimeError::TypeError(
+                "round() expects one number".to_string(),
+            )),
+        },
+
+        // abs(x) -> same type as x (int or float).
+        "abs" => match args {
+            [Value::Int(i)] => i
+                .checked_abs()
+                .map(Value::Int)
+                .ok_or_else(|| RuntimeError::ValueError("integer overflow on abs".to_string())),
+            [Value::Float(f)] => Ok(Value::Float(f.abs())),
+            _ => Err(RuntimeError::TypeError(
+                "abs() expects one number".to_string(),
+            )),
+        },
+
+        // sqrt(x) -> float
+        "sqrt" => match args {
+            [v] => {
+                let f = v.as_float()?;
+                if f < 0.0 {
+                    Err(RuntimeError::ValueError(
+                        "sqrt() of a negative number".to_string(),
+                    ))
+                } else {
+                    Ok(Value::Float(f.sqrt()))
+                }
+            }
+            _ => Err(RuntimeError::TypeError(
+                "sqrt() expects one number".to_string(),
+            )),
+        },
+
+        // pow(a, b). int**non_negative_int returns int (overflow-checked);
+        // anything else widens to float.
+        "pow" => match args {
+            [a, b] => {
+                if let (Value::Int(ai), Value::Int(bi)) = (a, b) {
+                    if *bi >= 0 && *bi <= u32::MAX as i64 {
+                        return ai
+                            .checked_pow(*bi as u32)
+                            .map(Value::Int)
+                            .ok_or_else(|| {
+                                RuntimeError::ValueError("integer overflow on pow".to_string())
+                            });
+                    }
+                }
+                Ok(Value::Float(a.as_float()?.powf(b.as_float()?)))
+            }
+            _ => Err(RuntimeError::TypeError(
+                "pow() expects two numbers".to_string(),
+            )),
+        },
+
+        // log(x) -> natural log. Errors on x <= 0.
+        "log" => match args {
+            [v] => {
+                let f = v.as_float()?;
+                if f <= 0.0 {
+                    Err(RuntimeError::ValueError(
+                        "log() requires a positive number".to_string(),
+                    ))
+                } else {
+                    Ok(Value::Float(f.ln()))
+                }
+            }
+            _ => Err(RuntimeError::TypeError(
+                "log() expects one number".to_string(),
+            )),
+        },
+
+        "sin" => match args {
+            [v] => Ok(Value::Float(v.as_float()?.sin())),
+            _ => Err(RuntimeError::TypeError(
+                "sin() expects one number".to_string(),
+            )),
+        },
+        "cos" => match args {
+            [v] => Ok(Value::Float(v.as_float()?.cos())),
+            _ => Err(RuntimeError::TypeError(
+                "cos() expects one number".to_string(),
+            )),
+        },
+        "tan" => match args {
+            [v] => Ok(Value::Float(v.as_float()?.tan())),
+            _ => Err(RuntimeError::TypeError(
+                "tan() expects one number".to_string(),
+            )),
+        },
+
+        // float_bits("3.14") -> i64 reinterpretation of the IEEE-754 bits.
+        // Used by the OMG-in-OMG compiler so it can embed float literals
+        // in the bytecode without doing float math itself: it parses the
+        // literal text to its 64-bit pattern and writes the i64 the same
+        // way it writes any other 8-byte payload.
+        "float_bits" => match args {
+            [Value::Str(s)] => {
+                let f: f64 = s.trim().parse().map_err(|_| {
+                    RuntimeError::ValueError(format!("float_bits(): invalid literal '{}'", s))
+                })?;
+                Ok(Value::Int(f.to_bits() as i64))
+            }
+            _ => Err(RuntimeError::TypeError(
+                "float_bits() expects a numeric string".to_string(),
             )),
         },
 
