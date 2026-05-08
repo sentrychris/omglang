@@ -474,6 +474,7 @@ impl<'a> Parser<'a> {
             let op = match self.peek().kind {
                 TokKind::Star => BinOp::Mul,
                 TokKind::Slash => BinOp::Div,
+                TokKind::DoubleSlash => BinOp::FloorDiv,
                 TokKind::Percent => BinOp::Mod,
                 _ => break,
             };
@@ -511,6 +512,10 @@ impl<'a> Parser<'a> {
             TokKind::Number(v) => {
                 self.advance();
                 Node::Number(v, tok.line)
+            }
+            TokKind::Float(v) => {
+                self.advance();
+                Node::Float(v, tok.line)
             }
             TokKind::Str(s) => {
                 self.advance();
