@@ -690,6 +690,9 @@ and confirms the two byte streams are identical.
 
 ## More reading
 
+- [`docs/compilation-pipeline.md`](docs/compilation-pipeline.md): how
+  `omg foo.omg` actually runs your script — the two-stage compiler, the
+  VM-on-VM dance, what `--rust` does, and the fixed-point check.
 - [`runtime/README.md`](runtime/README.md): runtime architecture and CLI flags.
 - [`tools/README.md`](tools/README.md): the OMG-in-OMG tools.
 - [`vscode/README.md`](vscode/README.md): VS Code extension.
