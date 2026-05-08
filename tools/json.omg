@@ -1,0 +1,204 @@
+;;;omg
+
+import "lib.omg" as lib
+
+# json — pretty-print or minify a JSON file.
+#
+# Usage:
+#   omg tools/json.omg [--minify] <input.json> [output.json]
+#
+# Tokens are scanned out of the source — values aren't actually parsed
+# into in-memory OMG objects, which keeps the printer working over the
+# full JSON spec (including floats and exponents) without needing OMG-
+# native floats.  The output is byte-identical for `--minify` and a
+# 2-space-indented re-emission for the default pretty mode.
+
+# Tokenize JSON.  Each token is a 2-list:
+#   ["punct", "{"|"}"|"["|"]"|","|":"]
+#   ["string", "\"...\""]   (quoted, escapes preserved verbatim)
+#   ["number", "123" | "-1.5e2" | ...]
+#   ["literal", "true" | "false" | "null"]
+proc tokenize(text) {
+    alloc tokens := []
+    alloc n := length(text)
+    alloc i := 0
+    loop i < n {
+        alloc c := text[i]
+        if c == " " or c == "\t" or c == "\n" or c == "\r" {
+            i := i + 1
+        } elif c == "{" or c == "}" or c == "[" or c == "]" or c == "," or c == ":" {
+            tokens := tokens + [["punct", c]]
+            i := i + 1
+        } elif c == "\"" {
+            alloc start := i
+            i := i + 1
+            loop i < n and text[i] != "\"" {
+                if text[i] == "\\" and i + 1 < n {
+                    i := i + 2
+                } else {
+                    i := i + 1
+                }
+            }
+            if i >= n {
+                panic("unterminated string")
+            }
+            i := i + 1
+            tokens := tokens + [["string", text[start:i]]]
+        } elif c == "-" or (c >= "0" and c <= "9") {
+            alloc start := i
+            if c == "-" {
+                i := i + 1
+            }
+            loop i < n and text[i] >= "0" and text[i] <= "9" {
+                i := i + 1
+            }
+            if i < n and text[i] == "." {
+                i := i + 1
+                loop i < n and text[i] >= "0" and text[i] <= "9" {
+                    i := i + 1
+                }
+            }
+            if i < n and (text[i] == "e" or text[i] == "E") {
+                i := i + 1
+                if i < n and (text[i] == "+" or text[i] == "-") {
+                    i := i + 1
+                }
+                loop i < n and text[i] >= "0" and text[i] <= "9" {
+                    i := i + 1
+                }
+            }
+            tokens := tokens + [["number", text[start:i]]]
+        } elif c == "t" {
+            if text[i:i + 4] == "true" {
+                tokens := tokens + [["literal", "true"]]
+                i := i + 4
+            } else {
+                panic("expected 'true' near offset " + i)
+            }
+        } elif c == "f" {
+            if text[i:i + 5] == "false" {
+                tokens := tokens + [["literal", "false"]]
+                i := i + 5
+            } else {
+                panic("expected 'false' near offset " + i)
+            }
+        } elif c == "n" {
+            if text[i:i + 4] == "null" {
+                tokens := tokens + [["literal", "null"]]
+                i := i + 4
+            } else {
+                panic("expected 'null' near offset " + i)
+            }
+        } else {
+            panic("unexpected character '" + c + "' at offset " + i)
+        }
+    }
+    return tokens
+}
+
+# `depth` repetitions of `unit`.
+proc indent_str(depth, unit) {
+    alloc s := ""
+    alloc k := 0
+    loop k < depth {
+        s := s + unit
+        k := k + 1
+    }
+    return s
+}
+
+# Pretty-print: re-emit tokens with newlines and `unit`-indentation.
+proc pretty(tokens, unit) {
+    alloc out := ""
+    alloc depth := 0
+    alloc n := length(tokens)
+    alloc i := 0
+    loop i < n {
+        alloc t := tokens[i]
+        alloc kind := t[0]
+        alloc v := t[1]
+        if kind == "punct" {
+            if v == "{" or v == "[" {
+                # Empty container? Emit `{}` or `[]` with no body.
+                alloc empty := false
+                if i + 1 < n {
+                    alloc nxt := tokens[i + 1]
+                    if nxt[0] == "punct" {
+                        if (v == "{" and nxt[1] == "}") or (v == "[" and nxt[1] == "]") {
+                            out := out + v + nxt[1]
+                            i := i + 2
+                            empty := true
+                        }
+                    }
+                }
+                if empty == false {
+                    depth := depth + 1
+                    out := out + v + "\n" + indent_str(depth, unit)
+                    i := i + 1
+                }
+            } elif v == "}" or v == "]" {
+                depth := depth - 1
+                out := out + "\n" + indent_str(depth, unit) + v
+                i := i + 1
+            } elif v == "," {
+                out := out + ",\n" + indent_str(depth, unit)
+                i := i + 1
+            } elif v == ":" {
+                out := out + ": "
+                i := i + 1
+            }
+        } else {
+            out := out + v
+            i := i + 1
+        }
+    }
+    return out
+}
+
+# Minify: emit tokens back-to-back with no whitespace.
+proc minify(tokens) {
+    alloc out := ""
+    alloc i := 0
+    alloc n := length(tokens)
+    loop i < n {
+        out := out + tokens[i][1]
+        i := i + 1
+    }
+    return out
+}
+
+if length(args) < 2 {
+    panic("usage: omg tools/json.omg [--minify] <input> [output]")
+}
+
+alloc do_minify := false
+alloc start := 1
+if args[1] == "--minify" {
+    do_minify := true
+    start := 2
+}
+
+if length(args) <= start {
+    panic("usage: omg tools/json.omg [--minify] <input> [output]")
+}
+
+alloc src := read_file(args[start])
+if src == false {
+    panic("cannot read: " + args[start])
+}
+
+alloc tokens := tokenize(src)
+alloc result := ""
+if do_minify {
+    result := minify(tokens)
+} else {
+    result := pretty(tokens, "  ")
+}
+
+if length(args) > start + 1 {
+    alloc h := file_open(args[start + 1], "w")
+    file_write(h, result)
+    file_close(h)
+} else {
+    emit result
+}

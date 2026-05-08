@@ -1,0 +1,59 @@
+;;;omg
+
+import "lib.omg" as lib
+
+# hex — xxd-style hex dump of a file.  Reads in binary mode so it works
+# on arbitrary files, not just text.
+#
+# Usage:  omg tools/hex.omg <file>
+#
+# Format (16 bytes per row):
+#   00000000: 6f 6d 67 20 6c 61 6e 67  75 61 67 65 0a 64 6f 63  omg lang uage.doc
+
+if length(args) < 2 {
+    panic("usage: omg tools/hex.omg <file>")
+}
+
+alloc path := args[1]
+if file_exists(path) == false {
+    panic("hex: cannot read '" + path + "'")
+}
+
+alloc h := file_open(path, "rb")
+alloc bytes := file_read(h)
+file_close(h)
+
+alloc n := length(bytes)
+alloc offset := 0
+loop offset < n {
+    alloc line := lib.hex_pad(offset, 8) + ": "
+
+    # Hex bytes (16 per row, with an extra space between bytes 7 and 8).
+    alloc i := 0
+    loop i < 16 {
+        if offset + i < n {
+            line := line + lib.hex_pad(bytes[offset + i], 2)
+        } else {
+            line := line + "  "
+        }
+        if i == 7 {
+            line := line + "  "
+        } else {
+            line := line + " "
+        }
+        i := i + 1
+    }
+
+    # Printable-ASCII gutter.
+    line := line + " "
+    i := 0
+    loop i < 16 {
+        if offset + i < n {
+            line := line + lib.printable(bytes[offset + i])
+        }
+        i := i + 1
+    }
+
+    emit line
+    offset := offset + 16
+}

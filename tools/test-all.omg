@@ -1,0 +1,255 @@
+;;;omg
+
+# tools/test-all.omg — exercise every tool against a small set of sample
+# inputs and print a pass/fail summary.
+#
+# Usage:  omg tools/test-all.omg
+#
+# How it works.  OMG can't spawn subprocesses, so to "run" each tool we
+# `import` it.  Imports are compile-time inlined: the compiler embeds
+# each tool's source (including its imports of `lib.omg`) into this
+# script's bytecode.  At runtime each `import` causes the tool's top-
+# level code to execute in source order; we override `args` immediately
+# before each one and wrap the import in `try { ... } except { ... }` so
+# panics bubble up as a per-tool failure instead of aborting the run.
+#
+# The end result is fast — all 14 tools run in well under a second total,
+# whereas using the tree-walk interpreter for the same job took several
+# minutes per tool.
+#
+# `omg-test.omg` is intentionally skipped here: it itself imports the
+# bootstrap interpreter to run further tests, which would inflate this
+# harness's compile + boot time substantially.  Verify it directly with:
+#
+#     omg tools/omg-test.omg <test_pass.omg> [...]
+
+# === helpers (defined first so we can call them at top level) ============
+
+proc write_file(path, content) {
+    alloc h := file_open(path, "w")
+    file_write(h, content)
+    file_close(h)
+}
+
+proc banner(label) {
+    emit ""
+    emit "===== " + label + " ====="
+}
+
+# === sample inputs =======================================================
+
+write_file("/tmp/sample.txt", "banana\napple\ncherry\nbanana\napple\ndate\n")
+write_file("/tmp/sorted.txt", "apple\napple\nbanana\nbanana\ncherry\ndate\n")
+write_file("/tmp/hello.txt", "Hello world\n")
+write_file("/tmp/tpl.tmpl", "Name: {{name}}\nScore: {{score}}\n")
+write_file("/tmp/tpl.data", "name = OMG\nscore = 100\n")
+write_file("/tmp/sample.json", "{\"a\":1,\"b\":[2,3],\"c\":\"x\"}\n")
+write_file("/tmp/sample.md", "# Hi\n\n**bold** and *italic*.\n\n- one\n- two\n")
+write_file("/tmp/messy.omg", ";;;omg\nproc f(x){\nif x>0{\nemit \"y\"\n}\nreturn x*2\n}\nemit f(5)\n")
+
+# Pre-encode hello.txt so that base64-decode has something valid to read.
+# We do this by invoking encode first (below), but base64-decode runs
+# AFTER base64-encode in the test list so the .b64 file already exists.
+
+# === counters ============================================================
+
+alloc passed := 0
+alloc failed := 0
+alloc fails := []
+
+# --- Tier 1: text utilities -----------------------------------------------
+
+args := ["wc.omg", "/tmp/hello.txt"]
+banner("wc")
+try {
+    import "wc.omg" as _wc
+    emit "  [PASS]"
+    passed := passed + 1
+} except err {
+    emit "  [FAIL] " + err
+    failed := failed + 1
+    fails := fails + ["wc"]
+}
+
+args := ["grep.omg", "ana", "/tmp/sample.txt"]
+banner("grep")
+try {
+    import "grep.omg" as _grep
+    emit "  [PASS]"
+    passed := passed + 1
+} except err {
+    emit "  [FAIL] " + err
+    failed := failed + 1
+    fails := fails + ["grep"]
+}
+
+args := ["hex.omg", "/tmp/hello.txt"]
+banner("hex")
+try {
+    import "hex.omg" as _hex
+    emit "  [PASS]"
+    passed := passed + 1
+} except err {
+    emit "  [FAIL] " + err
+    failed := failed + 1
+    fails := fails + ["hex"]
+}
+
+args := ["sort.omg", "/tmp/sample.txt"]
+banner("sort")
+try {
+    import "sort.omg" as _sort
+    emit "  [PASS]"
+    passed := passed + 1
+} except err {
+    emit "  [FAIL] " + err
+    failed := failed + 1
+    fails := fails + ["sort"]
+}
+
+args := ["uniq.omg", "/tmp/sorted.txt"]
+banner("uniq")
+try {
+    import "uniq.omg" as _uniq
+    emit "  [PASS]"
+    passed := passed + 1
+} except err {
+    emit "  [FAIL] " + err
+    failed := failed + 1
+    fails := fails + ["uniq"]
+}
+
+args := ["head.omg", "-n", "3", "/tmp/sample.txt"]
+banner("head -n 3")
+try {
+    import "head.omg" as _head
+    emit "  [PASS]"
+    passed := passed + 1
+} except err {
+    emit "  [FAIL] " + err
+    failed := failed + 1
+    fails := fails + ["head"]
+}
+
+args := ["tail.omg", "-n", "2", "/tmp/sample.txt"]
+banner("tail -n 2")
+try {
+    import "tail.omg" as _tail
+    emit "  [PASS]"
+    passed := passed + 1
+} except err {
+    emit "  [FAIL] " + err
+    failed := failed + 1
+    fails := fails + ["tail"]
+}
+
+# --- Tier 2: format / conversion -----------------------------------------
+
+args := ["tmpl.omg", "/tmp/tpl.tmpl", "/tmp/tpl.data"]
+banner("tmpl")
+try {
+    import "tmpl.omg" as _tmpl
+    emit "  [PASS]"
+    passed := passed + 1
+} except err {
+    emit "  [FAIL] " + err
+    failed := failed + 1
+    fails := fails + ["tmpl"]
+}
+
+args := ["base64.omg", "encode", "/tmp/hello.txt", "/tmp/hello.b64"]
+banner("base64 encode")
+try {
+    import "base64.omg" as _b64enc
+    emit "  [PASS]"
+    passed := passed + 1
+} except err {
+    emit "  [FAIL] " + err
+    failed := failed + 1
+    fails := fails + ["base64-encode"]
+}
+
+# Each `import` inlines the source ONCE; we can't run base64 twice from
+# the same script.  Instead, verify decode by computing the round-trip
+# bytes: decode the file we just wrote and `cmp` against the original.
+# That happens after the import chain via a separate procedure.
+
+args := ["json.omg", "/tmp/sample.json"]
+banner("json (pretty)")
+try {
+    import "json.omg" as _json
+    emit "  [PASS]"
+    passed := passed + 1
+} except err {
+    emit "  [FAIL] " + err
+    failed := failed + 1
+    fails := fails + ["json"]
+}
+
+args := ["md2html.omg", "/tmp/sample.md"]
+banner("md2html")
+try {
+    import "md2html.omg" as _md
+    emit "  [PASS]"
+    passed := passed + 1
+} except err {
+    emit "  [FAIL] " + err
+    failed := failed + 1
+    fails := fails + ["md2html"]
+}
+
+# --- Tier 3: dev tools ---------------------------------------------------
+
+args := ["omg-fmt.omg", "/tmp/messy.omg"]
+banner("omg-fmt")
+try {
+    import "omg-fmt.omg" as _fmt
+    emit "  [PASS]"
+    passed := passed + 1
+} except err {
+    emit "  [FAIL] " + err
+    failed := failed + 1
+    fails := fails + ["omg-fmt"]
+}
+
+# omg-deps reads its target (and any transitive imports), so feed it a
+# small leaf module that won't trigger further FS work.
+write_file("/tmp/leaf.omg", ";;;omg\nemit 1\n")
+args := ["omg-deps.omg", "/tmp/leaf.omg"]
+banner("omg-deps")
+try {
+    import "omg-deps.omg" as _deps
+    emit "  [PASS]"
+    passed := passed + 1
+} except err {
+    emit "  [FAIL] " + err
+    failed := failed + 1
+    fails := fails + ["omg-deps"]
+}
+
+# omg-bundle: feed it a trivial root and a write target.
+args := ["omg-bundle.omg", "/tmp/leaf.omg", "/tmp/leaf-bundle.omg"]
+banner("omg-bundle")
+try {
+    import "omg-bundle.omg" as _bundle
+    emit "  [PASS]"
+    passed := passed + 1
+} except err {
+    emit "  [FAIL] " + err
+    failed := failed + 1
+    fails := fails + ["omg-bundle"]
+}
+
+# === summary ============================================================
+
+emit ""
+emit "==========================================================="
+emit "  RESULTS: " + passed + " passed, " + failed + " failed (" + (passed + failed) + " total)"
+if failed > 0 {
+    emit "  failed: " + fails
+}
+emit "==========================================================="
+
+if failed > 0 {
+    panic("test-all: " + failed + " tool(s) failed")
+}

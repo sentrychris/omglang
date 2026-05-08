@@ -1,0 +1,43 @@
+;;;omg
+
+import "lib.omg" as lib
+
+# grep — print lines containing a literal substring.
+#
+# Usage:  omg tools/grep.omg <pattern> <file> [file...]
+#
+# Output format:
+#   single file:   <lineno>:<line>
+#   multiple files: <path>:<lineno>:<line>
+
+if length(args) < 3 {
+    panic("usage: omg tools/grep.omg <pattern> <file> [file...]")
+}
+
+alloc pattern := args[1]
+alloc multi := length(args) > 3
+alloc i := 2
+loop i < length(args) {
+    alloc path := args[i]
+    alloc text := read_file(path)
+    if text == false {
+        emit path + ": cannot read"
+    } else {
+        alloc lines := lib.split_lines(text)
+        alloc lineno := 1
+        alloc j := 0
+        alloc nl := length(lines)
+        loop j < nl {
+            if lib.contains(lines[j], pattern) {
+                if multi {
+                    emit path + ":" + lineno + ":" + lines[j]
+                } else {
+                    emit lineno + ":" + lines[j]
+                }
+            }
+            lineno := lineno + 1
+            j := j + 1
+        }
+    }
+    i := i + 1
+}

@@ -1,0 +1,51 @@
+;;;omg
+
+import "lib.omg" as lib
+
+# head — print the first N lines of each file (default 10).  When given
+# more than one file, separates each with a banner header line.
+#
+# Usage:  omg tools/head.omg [-n N] <file> [file...]
+
+alloc count := 10
+alloc start := 1
+
+if length(args) >= 3 and args[1] == "-n" {
+    alloc parsed := lib.parse_int(args[2])
+    if parsed < 0 {
+        panic("head: invalid line count: " + args[2])
+    }
+    count := parsed
+    start := 3
+}
+
+if length(args) <= start {
+    panic("usage: omg tools/head.omg [-n N] <file> [file...]")
+}
+
+alloc multi := length(args) - start > 1
+alloc i := start
+loop i < length(args) {
+    if multi {
+        if i > start {
+            emit ""
+        }
+        emit "==> " + args[i] + " <=="
+    }
+    alloc text := read_file(args[i])
+    if text == false {
+        emit args[i] + ": cannot read"
+    } else {
+        alloc lines := lib.split_lines(text)
+        alloc limit := count
+        if limit > length(lines) {
+            limit := length(lines)
+        }
+        alloc j := 0
+        loop j < limit {
+            emit lines[j]
+            j := j + 1
+        }
+    }
+    i := i + 1
+}

@@ -1,0 +1,33 @@
+;;;omg
+
+import "lib.omg" as lib
+
+# uniq — print each line once, dropping adjacent duplicates.  Matches the
+# Unix `uniq` semantics: input is expected to be (typically) sorted, and
+# only consecutive duplicate lines are collapsed — the same as
+# `sort file | uniq`.
+#
+# Usage:  omg tools/uniq.omg <file>
+
+if length(args) < 2 {
+    panic("usage: omg tools/uniq.omg <file>")
+}
+
+alloc text := read_file(args[1])
+if text == false {
+    panic("uniq: cannot read '" + args[1] + "'")
+}
+
+alloc lines := lib.split_lines(text)
+alloc n := length(lines)
+alloc prev := ""
+alloc has_prev := false
+alloc i := 0
+loop i < n {
+    if has_prev == false or lines[i] != prev {
+        emit lines[i]
+        prev := lines[i]
+        has_prev := true
+    }
+    i := i + 1
+}

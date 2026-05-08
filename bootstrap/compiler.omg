@@ -131,18 +131,15 @@ proc emit_i64(buf, n) {
     return buf
 }
 
-# Length-prefixed UTF-8 string. Each character we encode is treated as a
-# single byte — sufficient for ASCII identifiers; multi-byte source strings
-# are re-encoded by the runtime when they reach `read_file`.
+# Length-prefixed UTF-8 string.  We delegate the encoding to the runtime
+# `string_bytes` builtin so non-ASCII characters serialize as the same
+# UTF-8 byte sequence the Rust frontend produces — preserves byte-for-byte
+# parity with `omg --compile` even when the source contains glyphs like
+# `└──` or `╳`.
 proc emit_str(buf, s) {
-    alloc n := length(s)
-    buf := emit_u32(buf, n)
-    alloc i := 0
-    loop i < n {
-        buf := buf + [ascii(s[i])]
-        i := i + 1
-    }
-    return buf
+    alloc bytes := string_bytes(s)
+    buf := emit_u32(buf, length(bytes))
+    return buf + bytes
 }
 
 # Emit a list of bytes (already individual ints 0-255) into `buf`.
@@ -943,11 +940,23 @@ alloc cc_module_counter := 0
 alloc cc_current_prefix := ""
 alloc cc_current_file := ""
 
+# Cache of compiled imports: each entry is [resolved_path, prefix, exports]
+# where `exports` is a list of [name, kind] pairs.  Subsequent imports of
+# the same module reuse the cached prefix and exports without re-inlining
+# the module body — matching the Rust compiler's behaviour and keeping
+# bytecode size proportional to the number of *distinct* modules rather
+# than the number of import sites.
+alloc cc_loaded_modules := []
+
+# Stack of paths currently being inlined.  Used to reject cyclic imports
+# before they recurse infinitely.
+alloc cc_loading := []
+
 # Builtin names: calls to these become BUILTIN.
 alloc cc_builtins := [
     "chr", "ascii", "hex", "binary", "length", "read_file",
     "freeze", "call_builtin", "file_open", "file_read",
-    "file_write", "file_close", "file_exists"
+    "file_write", "file_close", "file_exists", "string_bytes"
 ]
 
 proc cc_is_builtin(name) {
@@ -1353,47 +1362,101 @@ proc path_join(base, rel) {
     return base + "/" + rel
 }
 
-# Compile an `import "path" as alias` by recursively reading + compiling the
-# referenced file, then emitting a frozen-namespace dict bound to `alias`.
+# Look up a previously-compiled module by its resolved path.  Returns the
+# cached entry [path, prefix, exports] or false.
+proc cc_find_loaded(resolved) {
+    alloc i := 0
+    alloc n := length(cc_loaded_modules)
+    loop i < n {
+        if cc_loaded_modules[i][0] == resolved {
+            return cc_loaded_modules[i]
+        }
+        i := i + 1
+    }
+    return false
+}
+
+# True iff `resolved` is currently on the import-loading stack.
+proc cc_is_loading(resolved) {
+    alloc i := 0
+    alloc n := length(cc_loading)
+    loop i < n {
+        if cc_loading[i] == resolved {
+            return true
+        }
+        i := i + 1
+    }
+    return false
+}
+
+# Compile an `import "path" as alias`.  Each distinct module is inlined
+# at most once across the whole compilation; subsequent imports of the
+# same path reuse the cached prefix and exports to emit only the
+# alias-binding namespace dict.
 proc compile_import(path, alias, line) {
     alloc resolved := path_join(path_dirname(cc_current_file), path)
-    cc_module_counter := cc_module_counter + 1
-    alloc prefix := "__mod_" + cc_module_counter + "__"
-    alloc src := read_file(resolved)
-    if src == false {
-        panic("ModuleImportError: cannot read '" + resolved + "'")
+
+    if cc_is_loading(resolved) {
+        panic("ModuleImportError: recursive import of '" + resolved + "'")
     }
-    alloc tokens := tokenize(src, resolved)
-    alloc ast := parse_program(resolved, tokens)
-    # Collect exports first so we can emit them in declaration order.
+
+    alloc prefix := ""
     alloc exports := []
+    alloc cached := cc_find_loaded(resolved)
+    if cached != false {
+        # Reuse the cached prefix + export list.  No re-inlining: the
+        # module's procs are already in the function table and its
+        # `alloc`s already executed at the original import site.
+        prefix := cached[1]
+        exports := cached[2]
+    } else {
+        cc_module_counter := cc_module_counter + 1
+        prefix := "__mod_" + cc_module_counter + "__"
+        alloc src := read_file(resolved)
+        if src == false {
+            panic("ModuleImportError: cannot read '" + resolved + "'")
+        }
+        alloc tokens := tokenize(src, resolved)
+        alloc ast := parse_program(resolved, tokens)
+        # Collect exports first so we can emit them in declaration order.
+        alloc i := 0
+        alloc n := length(ast)
+        loop i < n {
+            alloc s := ast[i]
+            if s[0] == "decl" {
+                exports := exports + [[s[1], "value"]]
+            }
+            if s[0] == "func" {
+                exports := exports + [[s[1], "func"]]
+            }
+            i := i + 1
+        }
+        # Insert into the cache *before* recursing so a cycle sees the
+        # partially-built entry rather than re-inlining.
+        cc_loaded_modules := cc_loaded_modules + [[resolved, prefix, exports]]
+        cc_loading := cc_loading + [resolved]
+        # Compile the imported module's top-level statements inline at
+        # this import site, with all globals prefixed.
+        alloc saved_prefix := cc_current_prefix
+        alloc saved_file   := cc_current_file
+        cc_current_prefix := prefix
+        cc_current_file   := resolved
+        i := 0
+        loop i < n {
+            compile_stmt(ast[i])
+            i := i + 1
+        }
+        cc_current_prefix := saved_prefix
+        cc_current_file   := saved_file
+        # Pop the loading stack.
+        alloc top := length(cc_loading) - 1
+        cc_loading := cc_loading[0:top]
+    }
+
+    # Build the namespace dict using the prefix + exports we either
+    # cached or just produced.  The dict-build is emitted at every
+    # import site so each alias gets its own frozen-dict binding.
     alloc i := 0
-    alloc n := length(ast)
-    loop i < n {
-        alloc s := ast[i]
-        if s[0] == "decl" {
-            exports := exports + [[s[1], "value"]]
-        }
-        if s[0] == "func" {
-            exports := exports + [[s[1], "func"]]
-        }
-        i := i + 1
-    }
-    # Compile the imported module's top-level statements inline at the
-    # import site, with all globals prefixed.
-    alloc saved_prefix := cc_current_prefix
-    alloc saved_file   := cc_current_file
-    cc_current_prefix := prefix
-    cc_current_file   := resolved
-    i := 0
-    loop i < n {
-        compile_stmt(ast[i])
-        i := i + 1
-    }
-    cc_current_prefix := saved_prefix
-    cc_current_file   := saved_file
-    # Build the namespace dict.
-    i := 0
     alloc ne := length(exports)
     loop i < ne {
         alloc ex := exports[i]
@@ -1654,6 +1717,8 @@ proc compile_program_node(ast, file) {
     cc_module_counter := 0
     cc_current_prefix := ""
     cc_current_file := file
+    cc_loaded_modules := []
+    cc_loading := []
     alloc i := 0
     alloc n := length(ast)
     loop i < n {

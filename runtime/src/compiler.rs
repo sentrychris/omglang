@@ -42,6 +42,7 @@ fn builtin_names() -> &'static [&'static str] {
         "file_write",
         "file_close",
         "file_exists",
+        "string_bytes",
     ]
 }
 

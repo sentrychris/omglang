@@ -1,0 +1,225 @@
+;;;omg
+
+# Shared helpers for the OMG `tools/` utilities.
+#
+# Each tool imports this as `lib` (e.g. `import "lib.omg" as lib`) and
+# reaches into it for line splitting, substring search, sorting,
+# hex-padding, byte rendering, and integer parsing — the bits every
+# small Unix-style tool ends up needing.
+
+# Split `text` into a list of lines.  A trailing newline does NOT produce
+# a phantom empty line at the end (matching `wc`'s line count semantics).
+proc split_lines(text) {
+    alloc lines := []
+    alloc start := 0
+    alloc i := 0
+    alloc n := length(text)
+    loop i < n {
+        if text[i] == "\n" {
+            lines := lines + [text[start:i]]
+            start := i + 1
+        }
+        i := i + 1
+    }
+    if start < n {
+        lines := lines + [text[start:n]]
+    }
+    return lines
+}
+
+# True iff `haystack` contains `needle` as a contiguous substring.
+proc contains(haystack, needle) {
+    alloc h := length(haystack)
+    alloc nn := length(needle)
+    if nn == 0 {
+        return true
+    }
+    if nn > h {
+        return false
+    }
+    alloc i := 0
+    alloc end := h - nn
+    loop i <= end {
+        alloc j := 0
+        alloc match_ok := true
+        loop j < nn {
+            if haystack[i + j] != needle[j] {
+                match_ok := false
+                break
+            }
+            j := j + 1
+        }
+        if match_ok {
+            return true
+        }
+        i := i + 1
+    }
+    return false
+}
+
+# Lexicographic in-place insertion sort over a list of strings.  Returns
+# the same list (mutated).  O(n²) in comparisons but O(1) per swap, which
+# is the cheapest option in OMG: list `+` always allocates so anything
+# better-asymptotic than insertion sort would lose its advantage to
+# allocation overhead anyway.
+proc sort_strings(xs) {
+    alloc n := length(xs)
+    alloc i := 1
+    loop i < n {
+        alloc j := i
+        loop j > 0 and xs[j - 1] > xs[j] {
+            alloc tmp := xs[j - 1]
+            xs[j - 1] := xs[j]
+            xs[j] := tmp
+            j := j - 1
+        }
+        i := i + 1
+    }
+    return xs
+}
+
+# Lower-case hex string for `n`, padded with leading zeros to `width` chars.
+proc hex_pad(n, width) {
+    alloc s := hex(n)
+    loop length(s) < width {
+        s := "0" + s
+    }
+    return s
+}
+
+# Render byte value `b` (0-255) as a printable ASCII glyph or "." for
+# anything outside the printable range.
+proc printable(b) {
+    if b >= 32 and b < 127 {
+        return chr(b)
+    }
+    return "."
+}
+
+# Strip leading and trailing ASCII whitespace (space, tab, CR, newline).
+proc trim(s) {
+    alloc n := length(s)
+    alloc i := 0
+    loop i < n {
+        alloc c := s[i]
+        if c == " " or c == "\t" or c == "\r" or c == "\n" {
+            i := i + 1
+        } else {
+            break
+        }
+    }
+    alloc j := n
+    loop j > i {
+        alloc c := s[j - 1]
+        if c == " " or c == "\t" or c == "\r" or c == "\n" {
+            j := j - 1
+        } else {
+            break
+        }
+    }
+    return s[i:j]
+}
+
+# True iff `s` begins with `prefix`.
+proc starts_with(s, prefix) {
+    alloc lp := length(prefix)
+    if lp > length(s) {
+        return false
+    }
+    alloc i := 0
+    loop i < lp {
+        if s[i] != prefix[i] {
+            return false
+        }
+        i := i + 1
+    }
+    return true
+}
+
+# True iff `c` is a valid first character of an OMG identifier.
+proc is_ident_start(c) {
+    if c >= "a" and c <= "z" {
+        return true
+    }
+    if c >= "A" and c <= "Z" {
+        return true
+    }
+    if c == "_" {
+        return true
+    }
+    return false
+}
+
+# True iff `c` may continue an OMG identifier (start chars + digits).
+proc is_ident_char(c) {
+    if c >= "a" and c <= "z" {
+        return true
+    }
+    if c >= "A" and c <= "Z" {
+        return true
+    }
+    if c >= "0" and c <= "9" {
+        return true
+    }
+    if c == "_" {
+        return true
+    }
+    return false
+}
+
+# Split a `/path/to/file` string into [dir, base].  Forward slash only;
+# backslashes are first normalised.
+proc path_split(p) {
+    alloc s := ""
+    alloc i := 0
+    alloc n := length(p)
+    loop i < n {
+        if p[i] == "\\" {
+            s := s + "/"
+        } else {
+            s := s + p[i]
+        }
+        i := i + 1
+    }
+    alloc j := length(s) - 1
+    loop j >= 0 {
+        if s[j] == "/" {
+            return [s[0:j], s[j + 1:length(s)]]
+        }
+        j := j - 1
+    }
+    return ["", s]
+}
+
+# Test membership: is `word` an exact element of list `xs`?
+proc list_contains(xs, word) {
+    alloc i := 0
+    alloc n := length(xs)
+    loop i < n {
+        if xs[i] == word {
+            return true
+        }
+        i := i + 1
+    }
+    return false
+}
+
+# Parse a non-negative decimal integer.  Returns -1 on any error
+# (empty string, non-digit character).
+proc parse_int(s) {
+    alloc n := length(s)
+    if n == 0 {
+        return -1
+    }
+    alloc i := 0
+    alloc v := 0
+    loop i < n {
+        alloc c := s[i]
+        if c < "0" or c > "9" {
+            return -1
+        }
+        v := v * 10 + ascii(c) - ascii("0")
+        i := i + 1
+    }
+    return v
+}
