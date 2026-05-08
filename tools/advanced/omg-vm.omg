@@ -1,0 +1,874 @@
+;;;omg
+
+# omg-vm — execute `.omgb` bytecode files using a VM written in OMG.
+#
+# This is the third leg of the self-hosting story.  We already had:
+#
+#   1. The Rust runtime that ships with the project (the substrate VM).
+#   2. The OMG-written compiler at `bootstrap/compiler.omg` that produces
+#      byte-identical `.omgb` output to the Rust frontend.
+#
+# What was missing: an OMG-written *executor* for the bytecode the OMG
+# compiler emits.  This file is that executor.  Run it like:
+#
+#     omg --rust ./bootstrap/compiler.omg ./hello.omg ./hello.omgb
+#     omg tools/advanced/omg-vm.omg ./hello.omgb
+#
+# (The Rust frontend is recommended for compiling the VM itself, since
+# the OMG-on-VM compile path will then run on top of this VM, which is
+# slow squared.  The eventual capstone is to compile compiler.omg with
+# our own VM running it — proving the whole pipeline can run inside OMG.)
+#
+# Status: this is milestone 1–3 of the build (loader + dispatch loop +
+# enough opcodes to print "Hello, world!").  Subsequent commits will add
+# arithmetic, control flow, lists/dicts, function calls, try/except.
+
+# === Opcode constants =====================================================
+#
+# Mirror of `runtime/src/bytecode.rs` and `bootstrap/compiler.omg`'s
+# OP_* table.  Anything we emit has to be parseable here.
+
+alloc OP_PUSH_INT       := 0
+alloc OP_PUSH_STR       := 1
+alloc OP_PUSH_BOOL      := 2
+alloc OP_BUILD_LIST     := 3
+alloc OP_BUILD_DICT     := 4
+alloc OP_LOAD           := 5
+alloc OP_STORE          := 6
+alloc OP_ADD            := 7
+alloc OP_SUB            := 8
+alloc OP_MUL            := 9
+alloc OP_DIV            := 10
+alloc OP_MOD            := 11
+alloc OP_EQ             := 12
+alloc OP_NE             := 13
+alloc OP_LT             := 14
+alloc OP_LE             := 15
+alloc OP_GT             := 16
+alloc OP_GE             := 17
+alloc OP_BAND           := 18
+alloc OP_BOR            := 19
+alloc OP_BXOR           := 20
+alloc OP_SHL            := 21
+alloc OP_SHR            := 22
+alloc OP_AND            := 23
+alloc OP_OR             := 24
+alloc OP_NOT            := 25
+alloc OP_NEG            := 26
+alloc OP_INDEX          := 27
+alloc OP_SLICE          := 28
+alloc OP_JUMP           := 29
+alloc OP_JUMP_IF_FALSE  := 30
+alloc OP_CALL           := 31
+alloc OP_TCALL          := 32
+alloc OP_BUILTIN        := 33
+alloc OP_POP            := 34
+alloc OP_PUSH_NONE      := 35
+alloc OP_RET            := 36
+alloc OP_EMIT           := 37
+alloc OP_HALT           := 38
+alloc OP_STORE_INDEX    := 39
+alloc OP_ATTR           := 40
+alloc OP_STORE_ATTR     := 41
+alloc OP_ASSERT         := 42
+alloc OP_CALL_VALUE     := 43
+alloc OP_SETUP_EXCEPT   := 44
+alloc OP_POP_BLOCK      := 45
+alloc OP_RAISE          := 46
+alloc OP_MAKE_FUNC      := 52
+alloc OP_STORE_LOCAL    := 53
+alloc OP_PUSH_FLOAT     := 54
+alloc OP_FLOOR_DIV      := 55
+
+# Bytecode version: must match what `compiler.rs` / `compiler.omg` emit.
+alloc BC_VERSION := 257
+
+# === Byte-stream readers ==================================================
+#
+# `.omgb` is little-endian.  The host reads the file into a list of
+# byte ints (0-255) and these helpers walk that list.  Each returns
+# the new cursor position alongside the value.
+
+proc read_u32_at(bytes, i) {
+    alloc v := bytes[i] | (bytes[i + 1] << 8) | (bytes[i + 2] << 16) | (bytes[i + 3] << 24)
+    return [v, i + 4]
+}
+
+# Read a signed 64-bit little-endian integer.  We assemble it from two
+# u32 halves and rely on OMG's i64 semantics: the top u32 shifted left
+# by 32 produces a negative number when bit 31 of the high half is set,
+# which then OR's with the low half to give the correct two's-complement
+# i64 value.
+proc read_i64_at(bytes, i) {
+    alloc lo_pair := read_u32_at(bytes, i)
+    alloc hi_pair := read_u32_at(bytes, i + 4)
+    alloc v := (hi_pair[0] << 32) | lo_pair[0]
+    return [v, i + 8]
+}
+
+# Read a length-prefixed UTF-8 string (u32 length + raw bytes).
+proc read_str_at(bytes, i) {
+    alloc len_pair := read_u32_at(bytes, i)
+    alloc len := len_pair[0]
+    alloc start := len_pair[1]
+    alloc s := bytes_to_string(bytes[start:start + len])
+    return [s, start + len]
+}
+
+# === Bytecode loader ======================================================
+#
+# Returns [code, funcs] where:
+#   * code is a list of ["OP", payload] tuples mirroring the OMG-written
+#     compiler's intermediate form (see `cc_emit`).
+#   * funcs is a dict mapping unmangled+mangled function names to
+#     [params_list, address].
+
+proc parse_bytecode(bytes) {
+    alloc n := length(bytes)
+    if n < 8 {
+        panic("omg-vm: bytecode too short")
+    }
+    if bytes[0] != ascii("O") or bytes[1] != ascii("M") or bytes[2] != ascii("G") or bytes[3] != ascii("B") {
+        panic("omg-vm: bad magic in header")
+    }
+    alloc cursor := 4
+    alloc ver_pair := read_u32_at(bytes, cursor)
+    cursor := ver_pair[1]
+    if ver_pair[0] != BC_VERSION {
+        panic("omg-vm: unsupported bytecode version " + ver_pair[0])
+    }
+    alloc fc_pair := read_u32_at(bytes, cursor)
+    alloc func_count := fc_pair[0]
+    cursor := fc_pair[1]
+    alloc funcs := {}
+    alloc f := 0
+    loop f < func_count {
+        alloc name_pair := read_str_at(bytes, cursor)
+        alloc name := name_pair[0]
+        cursor := name_pair[1]
+        alloc pc_pair := read_u32_at(bytes, cursor)
+        alloc param_count := pc_pair[0]
+        cursor := pc_pair[1]
+        alloc params := []
+        alloc p := 0
+        loop p < param_count {
+            alloc p_pair := read_str_at(bytes, cursor)
+            params := params + [p_pair[0]]
+            cursor := p_pair[1]
+            p := p + 1
+        }
+        alloc addr_pair := read_u32_at(bytes, cursor)
+        cursor := addr_pair[1]
+        funcs[name] := [params, addr_pair[0]]
+        f := f + 1
+    }
+    alloc cl_pair := read_u32_at(bytes, cursor)
+    alloc code_len := cl_pair[0]
+    cursor := cl_pair[1]
+    alloc code := []
+    alloc k := 0
+    loop k < code_len {
+        if cursor >= n {
+            panic("omg-vm: truncated instruction stream at instruction " + k)
+        }
+        alloc op := bytes[cursor]
+        cursor := cursor + 1
+        alloc instr := decode_one(op, bytes, cursor)
+        code := code + [instr[0]]
+        cursor := instr[1]
+        k := k + 1
+    }
+    return [code, funcs]
+}
+
+# Decode a single instruction starting one byte past the opcode. Returns
+# [["NAME", payload], new_cursor].  Operand-less ops carry a `false`
+# payload to keep the shape uniform.
+
+# Helper: build the [["TAG", arg], new_cursor] tuple for the common
+# read-then-tag pattern. Saves a *lot* of repetition below.
+proc tagged(tag, value, cur) {
+    return [[tag, value], cur]
+}
+
+# Operand-less op: same shape, payload is `false`.
+proc tagged0(tag, cur) {
+    return [[tag, false], cur]
+}
+
+proc decode_one(op, bytes, cursor) {
+    if op == OP_PUSH_INT {
+        alloc r := read_i64_at(bytes, cursor)
+        return tagged("PUSH_INT", r[0], r[1])
+    }
+    if op == OP_PUSH_STR {
+        alloc r := read_str_at(bytes, cursor)
+        return tagged("PUSH_STR", r[0], r[1])
+    }
+    if op == OP_PUSH_BOOL {
+        alloc v := bytes[cursor] != 0
+        return tagged("PUSH_BOOL", v, cursor + 1)
+    }
+    if op == OP_PUSH_FLOAT {
+        alloc r := read_i64_at(bytes, cursor)
+        return tagged("PUSH_FLOAT", bits_to_float(r[0]), r[1])
+    }
+    if op == OP_BUILD_LIST {
+        alloc r := read_u32_at(bytes, cursor)
+        return tagged("BUILD_LIST", r[0], r[1])
+    }
+    if op == OP_BUILD_DICT {
+        alloc r := read_u32_at(bytes, cursor)
+        return tagged("BUILD_DICT", r[0], r[1])
+    }
+    if op == OP_LOAD {
+        alloc r := read_str_at(bytes, cursor)
+        return tagged("LOAD", r[0], r[1])
+    }
+    if op == OP_STORE {
+        alloc r := read_str_at(bytes, cursor)
+        return tagged("STORE", r[0], r[1])
+    }
+    if op == OP_STORE_LOCAL {
+        alloc r := read_str_at(bytes, cursor)
+        return tagged("STORE_LOCAL", r[0], r[1])
+    }
+    if op == OP_ADD       { return tagged0("ADD",       cursor) }
+    if op == OP_SUB       { return tagged0("SUB",       cursor) }
+    if op == OP_MUL       { return tagged0("MUL",       cursor) }
+    if op == OP_DIV       { return tagged0("DIV",       cursor) }
+    if op == OP_FLOOR_DIV { return tagged0("FLOOR_DIV", cursor) }
+    if op == OP_MOD       { return tagged0("MOD",       cursor) }
+    if op == OP_EQ        { return tagged0("EQ",        cursor) }
+    if op == OP_NE        { return tagged0("NE",        cursor) }
+    if op == OP_LT        { return tagged0("LT",        cursor) }
+    if op == OP_LE        { return tagged0("LE",        cursor) }
+    if op == OP_GT        { return tagged0("GT",        cursor) }
+    if op == OP_GE        { return tagged0("GE",        cursor) }
+    if op == OP_BAND      { return tagged0("BAND",      cursor) }
+    if op == OP_BOR       { return tagged0("BOR",       cursor) }
+    if op == OP_BXOR      { return tagged0("BXOR",      cursor) }
+    if op == OP_SHL       { return tagged0("SHL",       cursor) }
+    if op == OP_SHR       { return tagged0("SHR",       cursor) }
+    if op == OP_AND       { return tagged0("AND",       cursor) }
+    if op == OP_OR        { return tagged0("OR",        cursor) }
+    if op == OP_NOT       { return tagged0("NOT",       cursor) }
+    if op == OP_NEG       { return tagged0("NEG",       cursor) }
+    if op == OP_INDEX     { return tagged0("INDEX",     cursor) }
+    if op == OP_SLICE     { return tagged0("SLICE",     cursor) }
+    if op == OP_JUMP {
+        alloc r := read_u32_at(bytes, cursor)
+        return tagged("JUMP", r[0], r[1])
+    }
+    if op == OP_JUMP_IF_FALSE {
+        alloc r := read_u32_at(bytes, cursor)
+        return tagged("JUMP_IF_FALSE", r[0], r[1])
+    }
+    if op == OP_CALL {
+        alloc r := read_str_at(bytes, cursor)
+        return tagged("CALL", r[0], r[1])
+    }
+    if op == OP_TCALL {
+        alloc r := read_str_at(bytes, cursor)
+        return tagged("TCALL", r[0], r[1])
+    }
+    if op == OP_BUILTIN {
+        alloc nm := read_str_at(bytes, cursor)
+        alloc ac := read_u32_at(bytes, nm[1])
+        return tagged("BUILTIN", [nm[0], ac[0]], ac[1])
+    }
+    if op == OP_POP         { return tagged0("POP",         cursor) }
+    if op == OP_PUSH_NONE   { return tagged0("PUSH_NONE",   cursor) }
+    if op == OP_RET         { return tagged0("RET",         cursor) }
+    if op == OP_EMIT        { return tagged0("EMIT",        cursor) }
+    if op == OP_HALT        { return tagged0("HALT",        cursor) }
+    if op == OP_STORE_INDEX { return tagged0("STORE_INDEX", cursor) }
+    if op == OP_ATTR {
+        alloc r := read_str_at(bytes, cursor)
+        return tagged("ATTR", r[0], r[1])
+    }
+    if op == OP_STORE_ATTR {
+        alloc r := read_str_at(bytes, cursor)
+        return tagged("STORE_ATTR", r[0], r[1])
+    }
+    if op == OP_ASSERT      { return tagged0("ASSERT",     cursor) }
+    if op == OP_CALL_VALUE {
+        alloc r := read_u32_at(bytes, cursor)
+        return tagged("CALL_VALUE", r[0], r[1])
+    }
+    if op == OP_SETUP_EXCEPT {
+        alloc r := read_u32_at(bytes, cursor)
+        return tagged("SETUP_EXCEPT", r[0], r[1])
+    }
+    if op == OP_POP_BLOCK   { return tagged0("POP_BLOCK", cursor) }
+    if op == OP_RAISE {
+        alloc kind := bytes[cursor]
+        return tagged("RAISE", kind, cursor + 1)
+    }
+    if op == OP_MAKE_FUNC {
+        alloc r := read_str_at(bytes, cursor)
+        return tagged("MAKE_FUNC", r[0], r[1])
+    }
+    panic("omg-vm: unknown opcode 0x" + hex(op))
+}
+
+# === VM state =============================================================
+#
+# Single global record so each step can mutate it without threading a
+# state dict through every helper. The VM is single-shot: parse, run,
+# done. There's no concurrency so global mutable state is fine.
+
+alloc vm_code      := []     # [["OP", payload], ...]
+alloc vm_funcs     := {}     # name -> [params, address]
+alloc vm_stack     := []     # operand stack
+alloc vm_pc        := 0      # program counter (instruction index)
+alloc vm_halted    := false
+alloc vm_globals   := {}     # program globals (incl. args/module_file/current_dir)
+alloc vm_env       := {}     # current local env (empty when at top level)
+alloc vm_env_stack := []     # saved envs across calls
+alloc vm_ret_stack := []     # saved PCs across calls
+alloc vm_block_stack := []   # try/except blocks: [handler_pc, stack_size, env_depth, ret_depth]
+alloc vm_pending_error := ""  # set by signal_error; checked by run() each tick
+
+# === Sentinels and tag helpers ===========================================
+#
+# OMG doesn't expose `None` as a literal, but the bytecode uses PUSH_NONE
+# (e.g. for omitted slice bounds and for void-proc returns). We model it
+# as a uniquely-keyed dict so structural equality lets us recognise it.
+# Closures get the same treatment: a dict with a magic key whose value
+# is [name, captured_env].
+
+alloc vm_none := freeze({__omg_none__: 0})
+
+proc make_closure(name, captured) {
+    return {__omg_closure__: [name, captured]}
+}
+
+# Probe whether `v` is a dict that contains `key`. Returns false (not an
+# error) for non-dicts. Used to detect our magic-key sentinels without
+# tripping a TypeError on bare ints/strings/booleans.
+proc dict_has(v, key) {
+    try {
+        alloc probe := v[key]
+        return true
+    } except err {
+        return false
+    }
+}
+
+proc is_vm_none(v) {
+    return dict_has(v, "__omg_none__")
+}
+
+proc is_vm_closure(v) {
+    return dict_has(v, "__omg_closure__")
+}
+
+# === Stack helpers ========================================================
+#
+# OMG lists are mutable in their elements but `+` allocates, so push/pop
+# are O(n) per operation. Correct, but the VM will be slow — that's the
+# expected trade-off for running it through itself.
+
+proc vm_push(v) {
+    vm_stack := vm_stack + [v]
+}
+
+proc vm_pop() {
+    alloc top := length(vm_stack) - 1
+    alloc v := vm_stack[top]
+    vm_stack := vm_stack[0:top]
+    return v
+}
+
+# Pop n values; return them in source-order (the order they were pushed).
+proc vm_pop_n(n) {
+    alloc out := []
+    alloc i := 0
+    loop i < n {
+        out := [vm_pop()] + out
+        i := i + 1
+    }
+    return out
+}
+
+# === Variable lookup / store =============================================
+#
+# Scope chain: env first, then globals. Mirrors the Rust VM's Load/Store
+# semantics including the strict-undeclared rule we just shipped.
+
+proc vm_lookup(name) {
+    if dict_has(vm_env, name) {
+        return vm_env[name]
+    }
+    if dict_has(vm_globals, name) {
+        return vm_globals[name]
+    }
+    panic("UndefinedIdentError: " + name)
+}
+
+proc vm_store(name, v) {
+    if length(vm_env_stack) == 0 {
+        if dict_has(vm_globals, name) {
+            vm_globals[name] := v
+            return false
+        }
+        panic("UndefinedIdentError: " + name)
+    }
+    if dict_has(vm_env, name) {
+        vm_env[name] := v
+        return false
+    }
+    if dict_has(vm_globals, name) {
+        vm_globals[name] := v
+        return false
+    }
+    panic("UndefinedIdentError: " + name)
+}
+
+proc vm_store_local(name, v) {
+    if length(vm_env_stack) == 0 {
+        vm_globals[name] := v
+    } else {
+        vm_env[name] := v
+    }
+}
+
+# === Function calls ======================================================
+
+# Copy every key from `src` into `dst`. Used when seeding a callee's env
+# from a closure's captured snapshot. `dict_keys` is a runtime builtin
+# (added alongside this VM) since OMG dicts don't otherwise expose a
+# key enumerator.
+proc dict_copy_into(dst, src) {
+    alloc keys := dict_keys(src)
+    alloc i := 0
+    alloc n := length(keys)
+    loop i < n {
+        dst[keys[i]] := src[keys[i]]
+        i := i + 1
+    }
+}
+
+# Snapshot a dict (deep-copy the top level only — values aren't cloned,
+# matching the Rust VM's "captured env is a clone of the locals at
+# definition time" semantics; mutable values still alias their original).
+proc dict_snapshot(d) {
+    alloc out := {}
+    dict_copy_into(out, d)
+    return out
+}
+
+# Invoke `name` with the given positional args. `captured` is a dict
+# snapshot of the surrounding locals at the closure's definition site,
+# or vm_none for plain top-level procs.
+proc vm_invoke(name, call_args, captured) {
+    if dict_has(vm_funcs, name) == false {
+        panic("UndefinedIdentError: " + name)
+    }
+    alloc info := vm_funcs[name]
+    alloc params := info[0]
+    alloc addr := info[1]
+    if length(params) != length(call_args) {
+        panic("TypeError: function '" + name + "' expects " + length(params) + " arguments, got " + length(call_args))
+    }
+    alloc new_env := {}
+    if is_vm_none(captured) == false {
+        dict_copy_into(new_env, captured)
+    }
+    alloc p := 0
+    alloc np := length(params)
+    loop p < np {
+        new_env[params[p]] := call_args[p]
+        p := p + 1
+    }
+    vm_env_stack := vm_env_stack + [vm_env]
+    vm_ret_stack := vm_ret_stack + [vm_pc + 1]
+    vm_env := new_env
+    vm_pc := addr
+}
+
+# === Slice / index helpers ================================================
+#
+# OMG's own `xs[i]` raises IndexError on out-of-range; we just propagate
+# that. For SLICE we need to handle vm_none for the optional bounds.
+
+proc resolve_slice_bound(v, default_val) {
+    if is_vm_none(v) {
+        return default_val
+    }
+    return v
+}
+
+# === Dispatch ============================================================
+#
+# Big switch on opcode tag.  Most arithmetic/comparison ops are one-liners
+# because OMG's own operators do exactly what the bytecode wants:
+# string concat, list concat, int/float promotion, structural equality,
+# string lexicographic compare, and so on.
+
+# Signal an error from inside step(). We avoid raising it directly because
+# the run-loop's try/except interacts badly with re-raises across nested
+# call frames in the OMG runtime; a sentinel flag is reliable.
+proc signal_error(msg) {
+    vm_pending_error := msg
+}
+
+# Step is wrapped in a try below to convert any host-runtime panic
+# (IndexError, KeyError, divide-by-zero, etc.) into the same sentinel.
+proc step() {
+    try {
+        step_inner()
+    } except err {
+        vm_pending_error := err
+    }
+}
+
+proc step_inner() {
+    alloc instr := vm_code[vm_pc]
+    alloc op := instr[0]
+    alloc arg := instr[1]
+
+    # ---- Pushes ----
+    if op == "PUSH_INT"   { vm_push(arg)         vm_pc := vm_pc + 1   return false }
+    if op == "PUSH_STR"   { vm_push(arg)         vm_pc := vm_pc + 1   return false }
+    if op == "PUSH_BOOL"  { vm_push(arg)         vm_pc := vm_pc + 1   return false }
+    if op == "PUSH_FLOAT" { vm_push(arg)         vm_pc := vm_pc + 1   return false }
+    if op == "PUSH_NONE"  { vm_push(vm_none)     vm_pc := vm_pc + 1   return false }
+
+    # ---- Variable load/store ----
+    if op == "LOAD"        { vm_push(vm_lookup(arg))         vm_pc := vm_pc + 1   return false }
+    if op == "STORE"       { vm_store(arg, vm_pop())         vm_pc := vm_pc + 1   return false }
+    if op == "STORE_LOCAL" { vm_store_local(arg, vm_pop())   vm_pc := vm_pc + 1   return false }
+
+    # ---- Stack manipulation ----
+    if op == "POP" {
+        vm_pop()
+        vm_pc := vm_pc + 1
+        return false
+    }
+    if op == "EMIT" {
+        alloc ev := vm_pop()
+        if is_vm_none(ev) {
+            emit ""
+        } else {
+            emit ev
+        }
+        vm_pc := vm_pc + 1
+        return false
+    }
+    if op == "HALT" {
+        vm_halted := true
+        return false
+    }
+
+    # ---- Arithmetic ----
+    if op == "ADD"       { alloc b := vm_pop()   alloc a := vm_pop()   vm_push(a + b)    vm_pc := vm_pc + 1   return false }
+    if op == "SUB"       { alloc b := vm_pop()   alloc a := vm_pop()   vm_push(a - b)    vm_pc := vm_pc + 1   return false }
+    if op == "MUL"       { alloc b := vm_pop()   alloc a := vm_pop()   vm_push(a * b)    vm_pc := vm_pc + 1   return false }
+    if op == "DIV"       { alloc b := vm_pop()   alloc a := vm_pop()   vm_push(a / b)    vm_pc := vm_pc + 1   return false }
+    if op == "FLOOR_DIV" { alloc b := vm_pop()   alloc a := vm_pop()   vm_push(a // b)   vm_pc := vm_pc + 1   return false }
+    if op == "MOD"       { alloc b := vm_pop()   alloc a := vm_pop()   vm_push(a % b)    vm_pc := vm_pc + 1   return false }
+    if op == "NEG"       { alloc v := vm_pop()   vm_push(-v)           vm_pc := vm_pc + 1   return false }
+
+    # ---- Comparison ----
+    if op == "EQ" { alloc b := vm_pop()   alloc a := vm_pop()   vm_push(a == b)   vm_pc := vm_pc + 1   return false }
+    if op == "NE" { alloc b := vm_pop()   alloc a := vm_pop()   vm_push(a != b)   vm_pc := vm_pc + 1   return false }
+    if op == "LT" { alloc b := vm_pop()   alloc a := vm_pop()   vm_push(a < b)    vm_pc := vm_pc + 1   return false }
+    if op == "LE" { alloc b := vm_pop()   alloc a := vm_pop()   vm_push(a <= b)   vm_pc := vm_pc + 1   return false }
+    if op == "GT" { alloc b := vm_pop()   alloc a := vm_pop()   vm_push(a > b)    vm_pc := vm_pc + 1   return false }
+    if op == "GE" { alloc b := vm_pop()   alloc a := vm_pop()   vm_push(a >= b)   vm_pc := vm_pc + 1   return false }
+
+    # ---- Bitwise / shift / boolean ----
+    if op == "BAND" { alloc b := vm_pop()   alloc a := vm_pop()   vm_push(a & b)    vm_pc := vm_pc + 1   return false }
+    if op == "BOR"  { alloc b := vm_pop()   alloc a := vm_pop()   vm_push(a | b)    vm_pc := vm_pc + 1   return false }
+    if op == "BXOR" { alloc b := vm_pop()   alloc a := vm_pop()   vm_push(a ^ b)    vm_pc := vm_pc + 1   return false }
+    if op == "SHL"  { alloc b := vm_pop()   alloc a := vm_pop()   vm_push(a << b)   vm_pc := vm_pc + 1   return false }
+    if op == "SHR"  { alloc b := vm_pop()   alloc a := vm_pop()   vm_push(a >> b)   vm_pc := vm_pc + 1   return false }
+    if op == "AND"  { alloc b := vm_pop()   alloc a := vm_pop()   vm_push(a and b)  vm_pc := vm_pc + 1   return false }
+    if op == "OR"   { alloc b := vm_pop()   alloc a := vm_pop()   vm_push(a or b)   vm_pc := vm_pc + 1   return false }
+    if op == "NOT"  { alloc v := vm_pop()   vm_push(~v)           vm_pc := vm_pc + 1   return false }
+
+    # ---- Control flow ----
+    if op == "JUMP" {
+        vm_pc := arg
+        return false
+    }
+    if op == "JUMP_IF_FALSE" {
+        alloc cond := vm_pop()
+        if cond {
+            vm_pc := vm_pc + 1
+        } else {
+            vm_pc := arg
+        }
+        return false
+    }
+
+    # ---- Lists / dicts / index / slice / attr ----
+    if op == "BUILD_LIST" {
+        alloc items := vm_pop_n(arg)
+        vm_push(items)
+        vm_pc := vm_pc + 1
+        return false
+    }
+    if op == "BUILD_DICT" {
+        alloc d := {}
+        alloc i := 0
+        alloc pairs := []
+        loop i < arg {
+            alloc v := vm_pop()
+            alloc k := vm_pop()
+            pairs := [[k, v]] + pairs
+            i := i + 1
+        }
+        alloc j := 0
+        loop j < arg {
+            d[pairs[j][0]] := pairs[j][1]
+            j := j + 1
+        }
+        vm_push(d)
+        vm_pc := vm_pc + 1
+        return false
+    }
+    if op == "INDEX" {
+        alloc idx := vm_pop()
+        alloc base := vm_pop()
+        vm_push(base[idx])
+        vm_pc := vm_pc + 1
+        return false
+    }
+    if op == "STORE_INDEX" {
+        alloc v := vm_pop()
+        alloc idx := vm_pop()
+        alloc base := vm_pop()
+        base[idx] := v
+        vm_pc := vm_pc + 1
+        return false
+    }
+    if op == "SLICE" {
+        alloc end_v := vm_pop()
+        alloc start_v := vm_pop()
+        alloc base := vm_pop()
+        alloc len_b := length(base)
+        alloc start := resolve_slice_bound(start_v, 0)
+        alloc end := resolve_slice_bound(end_v, len_b)
+        vm_push(base[start:end])
+        vm_pc := vm_pc + 1
+        return false
+    }
+    if op == "ATTR" {
+        alloc obj := vm_pop()
+        vm_push(obj[arg])
+        vm_pc := vm_pc + 1
+        return false
+    }
+    if op == "STORE_ATTR" {
+        alloc av := vm_pop()
+        alloc obj := vm_pop()
+        obj[arg] := av
+        vm_pc := vm_pc + 1
+        return false
+    }
+
+    # ---- Assertions / raises ----
+    if op == "ASSERT" {
+        alloc v := vm_pop()
+        if v {
+            vm_pc := vm_pc + 1
+            return false
+        }
+        signal_error("AssertionError: assertion failed")
+        return false
+    }
+    if op == "RAISE" {
+        alloc msg := vm_pop()
+        # `arg` is the ErrorKind tag (0..5). We prefix the message with
+        # the kind name so try/except handlers see useful text; an
+        # extra "RuntimeError: " wrapper from the host's panic-display
+        # path is the cosmetic price of running on the host runtime.
+        if arg == 1 {
+            signal_error("SyntaxError: " + msg)
+        } elif arg == 2 {
+            signal_error("TypeError: " + msg)
+        } elif arg == 3 {
+            signal_error("UndefinedIdentError: " + msg)
+        } elif arg == 4 {
+            signal_error("ValueError: " + msg)
+        } elif arg == 5 {
+            signal_error("ModuleImportError: " + msg)
+        } else {
+            signal_error("RuntimeError: " + msg)
+        }
+        return false
+    }
+
+    # ---- Functions ----
+    if op == "MAKE_FUNC" {
+        # At top level: empty captured env. Inside a function: snapshot
+        # the current locals so the closure can read them later.
+        alloc captured := vm_none
+        if length(vm_env_stack) > 0 {
+            captured := dict_snapshot(vm_env)
+        }
+        alloc closure := make_closure(arg, captured)
+        if length(vm_env_stack) == 0 {
+            vm_globals[arg] := closure
+        } else {
+            vm_env[arg] := closure
+        }
+        vm_pc := vm_pc + 1
+        return false
+    }
+    if op == "CALL" {
+        # Direct call by name: look up the function in vm_funcs, pop its
+        # args, jump in. No closure capture (top-level proc).
+        alloc info := vm_funcs[arg]
+        alloc params := info[0]
+        alloc call_args := vm_pop_n(length(params))
+        vm_invoke(arg, call_args, vm_none)
+        return false
+    }
+    if op == "TCALL" {
+        # Tail call: replace the current frame instead of pushing a new
+        # one. The compiler emits TCALL where a CALL would be followed
+        # immediately by RET, so the callee should return to *our*
+        # caller — meaning we keep the existing top of vm_env_stack
+        # and vm_ret_stack and just rewrite the local env and PC.
+        alloc info := vm_funcs[arg]
+        alloc params := info[0]
+        alloc call_args := vm_pop_n(length(params))
+        alloc new_env := {}
+        alloc p := 0
+        alloc np := length(params)
+        loop p < np {
+            new_env[params[p]] := call_args[p]
+            p := p + 1
+        }
+        vm_env := new_env
+        vm_pc := info[1]
+        return false
+    }
+    if op == "CALL_VALUE" {
+        alloc cv_args := vm_pop_n(arg)
+        alloc callable := vm_pop()
+        if is_vm_closure(callable) {
+            alloc cinfo := callable["__omg_closure__"]
+            vm_invoke(cinfo[0], cv_args, cinfo[1])
+            return false
+        }
+        # Otherwise treat as a function name (string).
+        vm_invoke(callable, cv_args, vm_none)
+        return false
+    }
+    if op == "RET" {
+        alloc rv := vm_pop()
+        alloc top_e := length(vm_env_stack) - 1
+        vm_env := vm_env_stack[top_e]
+        vm_env_stack := vm_env_stack[0:top_e]
+        alloc top_r := length(vm_ret_stack) - 1
+        vm_pc := vm_ret_stack[top_r]
+        vm_ret_stack := vm_ret_stack[0:top_r]
+        vm_push(rv)
+        return false
+    }
+
+    # ---- Builtins (delegate to host) ----
+    if op == "BUILTIN" {
+        alloc bname := arg[0]
+        alloc bargc := arg[1]
+        alloc bargs := vm_pop_n(bargc)
+        vm_push(call_builtin(bname, bargs))
+        vm_pc := vm_pc + 1
+        return false
+    }
+
+    # ---- Try / except ----
+    if op == "SETUP_EXCEPT" {
+        # Push a block recording where to unwind to on RAISE / runtime
+        # error. Snapshot enough state to rebuild the operand and call
+        # stacks at the handler.
+        vm_block_stack := vm_block_stack + [[arg, length(vm_stack), length(vm_env_stack), length(vm_ret_stack)]]
+        vm_pc := vm_pc + 1
+        return false
+    }
+    if op == "POP_BLOCK" {
+        alloc bt := length(vm_block_stack) - 1
+        vm_block_stack := vm_block_stack[0:bt]
+        vm_pc := vm_pc + 1
+        return false
+    }
+
+    panic("omg-vm: unhandled opcode '" + op + "'")
+}
+
+proc unwind_to_block(err) {
+    # Pop the topmost block; truncate the operand, env, and return stacks
+    # to the saved depths; restore env by popping env_stack until depth
+    # matches; push the error message as the value the `except` handler
+    # binds; jump to the handler PC.
+    alloc bt := length(vm_block_stack) - 1
+    alloc block := vm_block_stack[bt]
+    vm_block_stack := vm_block_stack[0:bt]
+    alloc target_pc := block[0]
+    alloc saved_stack_size := block[1]
+    alloc saved_env_depth := block[2]
+    alloc saved_ret_depth := block[3]
+    loop length(vm_env_stack) > saved_env_depth {
+        alloc top := length(vm_env_stack) - 1
+        vm_env := vm_env_stack[top]
+        vm_env_stack := vm_env_stack[0:top]
+    }
+    vm_ret_stack := vm_ret_stack[0:saved_ret_depth]
+    vm_stack := vm_stack[0:saved_stack_size]
+    vm_push(err)
+    vm_pc := target_pc
+}
+
+proc run() {
+    loop vm_halted == false and vm_pc < length(vm_code) {
+        step()
+        if length(vm_pending_error) > 0 {
+            alloc err_msg := vm_pending_error
+            vm_pending_error := ""
+            if length(vm_block_stack) > 0 {
+                unwind_to_block(err_msg)
+            } else {
+                vm_halted := true
+                vm_pending_error := err_msg
+            }
+        }
+    }
+}
+
+# === Main =================================================================
+
+if length(args) < 2 {
+    panic("usage: omg tools/advanced/omg-vm.omg <program.omgb> [program-args...]")
+}
+
+alloc bc_path := args[1]
+alloc fh := file_open(bc_path, "rb")
+alloc bc_bytes := file_read(fh)
+file_close(fh)
+
+alloc parsed := parse_bytecode(bc_bytes)
+vm_code := parsed[0]
+vm_funcs := parsed[1]
+
+# Seed the program's runtime-injected globals so `args`, `module_file`,
+# and `current_dir` look like they would under a normal `omg <prog>`
+# invocation. The hosted program's `args[0]` is its own path, with the
+# rest of its argv following. Top-level procs need no seeding here —
+# the bytecode emits a `MAKE_FUNC` for each at the very top of the code
+# stream, and our dispatcher handles those normally.
+vm_globals["args"] := args[1:length(args)]
+vm_globals["module_file"] := args[1]
+vm_globals["current_dir"] := current_dir
+
+run()
+# If the hosted program ended with an unhandled error, re-raise it at
+# the top level. (Re-raising from inside `run()` itself was unreliable
+# in the OMG runtime — caller-frame panics propagate cleanly.)
+if length(vm_pending_error) > 0 {
+    panic(vm_pending_error)
+}

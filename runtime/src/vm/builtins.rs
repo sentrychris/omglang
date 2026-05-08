@@ -627,6 +627,74 @@ pub fn call_builtin(
             )),
         },
 
+        // dict_keys(d) -> [String]. Returns the keys of a dict (or frozen
+        // dict) as a list. Order is *unspecified* (HashMap iteration);
+        // callers that need determinism should sort. OMG previously had
+        // no way to enumerate a dict's keys from inside the language.
+        "dict_keys" => match args {
+            [Value::Dict(map)] => {
+                let keys: Vec<Value> = map
+                    .borrow()
+                    .keys()
+                    .map(|k| Value::Str(k.clone()))
+                    .collect();
+                Ok(Value::List(Rc::new(RefCell::new(keys))))
+            }
+            [Value::FrozenDict(map)] => {
+                let keys: Vec<Value> = map
+                    .keys()
+                    .map(|k| Value::Str(k.clone()))
+                    .collect();
+                Ok(Value::List(Rc::new(RefCell::new(keys))))
+            }
+            _ => Err(RuntimeError::TypeError(
+                "dict_keys() expects a dict".to_string(),
+            )),
+        },
+
+        // bytes_to_string([byte, ...]) -> String. Inverse of `string_bytes`.
+        // The input list must be UTF-8 byte values (0-255). Used by the
+        // OMG-in-OMG VM (`tools/advanced/omg-vm.omg`) to read length-
+        // prefixed strings out of a `.omgb` byte stream.
+        "bytes_to_string" => match args {
+            [Value::List(list)] => {
+                let borrowed = list.borrow();
+                let mut bytes: Vec<u8> = Vec::with_capacity(borrowed.len());
+                for v in borrowed.iter() {
+                    match v {
+                        Value::Int(b) if *b >= 0 && *b <= 255 => bytes.push(*b as u8),
+                        _ => {
+                            return Err(RuntimeError::TypeError(
+                                "bytes_to_string() expects a list of bytes (0-255)".to_string(),
+                            ))
+                        }
+                    }
+                }
+                String::from_utf8(bytes)
+                    .map(Value::Str)
+                    .map_err(|e| {
+                        RuntimeError::ValueError(format!(
+                            "bytes_to_string(): invalid UTF-8: {}",
+                            e
+                        ))
+                    })
+            }
+            _ => Err(RuntimeError::TypeError(
+                "bytes_to_string() expects a list of bytes".to_string(),
+            )),
+        },
+
+        // bits_to_float(i64) -> f64 reinterpretation of an IEEE-754 bit
+        // pattern. Inverse of `float_bits`. Used by the OMG-in-OMG VM
+        // to reconstruct float literals from the 8 raw bytes they were
+        // written as in the bytecode stream.
+        "bits_to_float" => match args {
+            [Value::Int(bits)] => Ok(Value::Float(f64::from_bits(*bits as u64))),
+            _ => Err(RuntimeError::TypeError(
+                "bits_to_float() expects an integer".to_string(),
+            )),
+        },
+
         // float_bits("3.14") -> i64 reinterpretation of the IEEE-754 bits.
         // Used by the OMG-in-OMG compiler so it can embed float literals
         // in the bytecode without doing float math itself: it parses the
