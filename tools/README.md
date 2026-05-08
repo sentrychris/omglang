@@ -23,15 +23,18 @@ omg tools/hex.omg bootstrap/compiler.omgb | head
 
 ## Path handling
 
-Relative paths in command-line arguments are resolved against the **tool's
-directory** (`tools/`), not your shell's current working directory. The
-runtime sets `current_dir` based on the script being run, and `read_file`
-/ `file_open` honour it. In practice that means:
+Relative paths in command-line arguments resolve against your **shell's
+current working directory**, the same way `wc`, `cat`, `python`, etc.
+behave. The script's location on disk is irrelevant for runtime file I/O.
 
-- Use absolute paths for files outside `tools/`:
-  `omg tools/wc.omg /etc/hosts`
-- Or paths relative to the tool's location:
-  `omg tools/wc.omg ../examples/maze_solver.omg`
+```sh
+$ cd ~
+$ omg ~/workspace/omglang/tools/wc.omg notes.txt
+   ←     # reads ~/notes.txt
+```
+
+(`import` paths still resolve relative to the importing source file —
+that's a *compile-time* path concern, not a runtime one.)
 
 ## The tools
 

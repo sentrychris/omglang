@@ -1,170 +1,168 @@
-# OMG Language
+# OMG
 
-OMG is a personal, educational programming language. It ships with a fully
-**self-hosted Rust runtime** — lexer, parser, bytecode compiler, stack VM,
-and REPL all in Rust, with **no Python dependency** at build or run time.
-The original Python implementation in `omglang/` is retained for reference
-only.
+A small programming language made for fun and for learning how
+languages get put together end-to-end.
 
-The language provides a minimal but expressive syntax: variables,
-arithmetic, lists, dictionaries, first-class functions, closures,
-conditionals, loops, modules with `import`, exception handling, and more.
+OMG has the usual stuff every language has: variables, math, strings, lists,
+dictionaries, conditionals, loops, functions, files etc. There's nothing flashy 
+or industrial about it. It exists so I could see what it takes to build a working programming language, all the way up to writing OMG's own compiler **in OMG**.
 
-#### Documents:
-- [`OMG_SPEC.md`](./spec/OMG_SPEC.md): the canonical language reference.
-- [`OMG_LEXER.md`](./spec/OMG_LEXER.md): the lexical analysis stage (the
-  Rust runtime mirrors this exactly; the doc is also accurate for the
-  original Python implementation).
-- [`OMG_PARSER.md`](./spec/OMG_PARSER.md): the parser's structure, flow,
-  and grammar handling.
-- [`runtime/README.md`](./runtime/README.md): runtime architecture and CLI.
+---
 
-The original `bootstrap/interpreter.omg` (a 1200-line OMG-implemented
-interpreter) is preserved as a sample program, but it is no longer used to
-execute `.omg` files. The Rust runtime compiles `.omg` directly to bytecode
-in-process.
+## Get it running
 
-
-## How to Run OMG Scripts
+You need [Rust](https://rustup.rs/) installed (one command from the
+website). Then:
 
 ```sh
-# Build (no Python required)
+git clone https://github.com/sentrychris/omglang
+cd omglang
 cargo build --release --manifest-path runtime/Cargo.toml
-
-# Run a script directly (compiles in-process)
-./runtime/target/release/omg_runtime path/to/script.omg
-
-# Compile to a portable .omgb bytecode file
-./runtime/target/release/omg_runtime --compile path/to/script.omg out.omgb
-
-# Run precompiled bytecode
-./runtime/target/release/omg_runtime out.omgb
-
-# Disassemble (.omg or .omgb)
-./runtime/target/release/omg_runtime --disasm path/to/script.omg
 ```
 
-Every `.omg` script must begin with the `;;;omg` header on the first
-non-empty line.
-
-### Interactive REPL
-
-Run with no arguments:
+That builds the OMG runtime as `runtime/target/release/omg`. From here
+on this README assumes you have it on your `PATH` as `omg`. Either
+copy/symlink the binary somewhere on your `PATH`, or alias it:
 
 ```sh
-./runtime/target/release/omg_runtime
+alias omg=$(pwd)/runtime/target/release/omg
 ```
 
-Example session:
+### Hello, world
 
-```plaintext
->>> alloc x := 42
->>> emit x
-42
->>> if x > 0 {
-...     emit "positive"
-... }
-positive
->>> quit
-```
-
----
-
-## Syntax
-
-### Statements
-
-| Form             | Purpose                         |
-| ---------------- | ------------------------------- |
-| `alloc x := 1`   | Declare and initialize variable |
-| `x := x + 1`     | Reassign existing variable      |
-| `emit x`         | Output value to console         |
-| `import "file.omg" as name` | Load another script under an alias |
-| `facts x > 0`    | Assert a condition              |
-| `if/elif/else`   | Branching control flow          |
-| `loop cond {}`   | While-style loop                |
-| `break`          | Exit from current loop          |
-| `proc name(...)` | Define a function               |
-| `return`         | Return from a function          |
-
-Module imports run another `.omg` script and expose its top-level `proc` and `alloc` bindings under a read-only namespace.
-
----
-
-## Supported Data Types
-
-| Type       | Example                    | Notes                             |
-| ---------- | -------------------------- | --------------------------------- |
-| Integer    | `42`, `-1`                 | Whole numbers only                |
-| Boolean    | `true`, `false`            | Lowercase literals                |
-| String     | `"Hello\nWorld"`           | Double-quoted, supports escapes   |
-| List       | `[1, 2, 3]`                | Supports indexing and slicing     |
-| Dictionary | `{name: "Chris", age: 32}` | Access with `x.key` or `x["key"]` |
-
-### Falsy Values
-
-* `false`
-* `""`
-* `[]`
-* `undefined` (unassigned variables)
-
----
-
-## Language Design
-
-### Lexer
-
-* Uses a single-pass regex-based scanner to tokenize input.
-* Skips whitespace and comments.
-* Produces `Token(type, value, line)` tuples.
-* Strips `;;;omg` header before processing.
-
-### Parser
-
-* Hand-written recursive-descent parser with LL(1)+ lookahead.
-* Divided into:
-  * `expressions.py`: Precedence-based expression parsing.
-  * `statements.py`: Control flow and structural forms.
-* Produces ASTs as tagged tuples: `(operation, operands..., line)`
-
-### Interpreter
-
-* Tree-walk interpreter over the AST.
-* Maintains:
-  * `vars`: Current scope.
-  * `global_vars`: Preserved globals.
-* Function calls isolate scopes, bind parameters, and restore the previous environment.
-* Expression evaluator supports:
-  * Arithmetic, logical, comparison, bitwise ops
-  * Lists, slices, dictionaries
-  * Function calls, built-ins
-
----
-
-## Example Snippets
-
-### Declaration and Assignment
+Make a file called `hello.omg`:
 
 ```omg
-alloc name := "Chris"
-emit name
-name := name + "!"
-emit name
+;;;omg
+
+emit "Hello, world!"
 ```
 
-### Arithmetic
+Run it:
 
-```omg
-alloc x := 10
-alloc y := 3
-emit x + y
-emit x * y
-emit x % y
+```sh
+omg hello.omg
 ```
 
-### Control Flow and Conditionals
+You should see:
+
+```
+Hello, world!
+```
+
+A few things to know up front:
+
+- Every `.omg` file **must** start with `;;;omg` on its first non-empty
+  line. That's the "this is an OMG program" marker. If you forget it, the
+  compiler will refuse it.
+- `emit` prints something to the screen.
+- `#` starts a comment. Comments run to the end of the line.
+
+---
+
+## A tour of the language
+
+Each section is a few lines you can paste into a `.omg` file (don't
+forget the `;;;omg` header) and run with `omg yourfile.omg`.
+
+### Variables
+
+You introduce a brand-new variable with `alloc`. You change an existing
+one with `:=`:
 
 ```omg
+;;;omg
+
+alloc name := "Chris"        # introduce a new variable
+emit name                    # → Chris
+
+name := "Bob"                # update it (no `alloc` the second time)
+emit name                    # → Bob
+```
+
+Forget the `alloc` for a brand-new name and OMG complains:
+
+```
+UndefinedIdentError: name
+```
+
+### Numbers and math
+
+OMG has whole numbers (integers) only: no decimals or no fractions yet:
+
+```omg
+;;;omg
+
+emit 1 + 2          # 3
+emit 10 - 3         # 7
+emit 4 * 5          # 20
+emit 10 / 3         # 3      ← integer division, rounds toward minus infinity
+emit 10 % 3         # 1      ← remainder ("modulo")
+emit -7 / 2         # -4     ← negative numbers round the same way
+```
+
+Bitwise operators exist:
+
+```omg
+;;;omg
+
+emit 6 & 3          # 2      bitwise AND
+emit 6 | 3          # 7      bitwise OR
+emit 6 ^ 3          # 5      bitwise XOR
+emit ~1             # -2     bitwise NOT
+emit 1 << 3         # 8      left shift
+emit 16 >> 2        # 4      right shift
+emit 0b1010         # 10     binary literal
+```
+
+### Strings
+
+Strings are written between double quotes:
+
+```omg
+;;;omg
+
+alloc greeting := "Hello"
+alloc name := "world"
+emit greeting + ", " + name + "!"   # Hello, world!
+
+emit length(greeting)               # 5
+emit greeting[0]                    # H
+emit greeting[1:4]                  # ell    ← slice from 1 up to (not including) 4
+emit greeting[-1]                   # o      ← negative index counts from the end
+```
+
+Inside a string these escapes work: `\n` (newline), `\t` (tab), `\r`,
+`\\`, `\"`, `\0`.
+
+### Booleans and comparisons
+
+```omg
+;;;omg
+
+emit 5 > 3              # true
+emit 5 == 5             # true
+emit 5 != 4             # true
+emit "abc" < "abd"      # true     ← strings compare alphabetically
+emit true and false     # false
+emit true or false      # true
+```
+
+Things considered **falsy** (treated as false in `if` and `loop`):
+
+- `false`
+- `0` (the integer zero)
+- `""` (the empty string)
+- `[]` (the empty list)
+- `{}` (the empty dictionary)
+
+Everything else is truthy.
+
+### Conditionals
+
+```omg
+;;;omg
+
 alloc score := 75
 
 if score >= 90 {
@@ -178,9 +176,18 @@ if score >= 90 {
 }
 ```
 
+`elif` is short for "else if". You can have any number of `elif`
+branches, and `else` is optional.
+
 ### Loops
 
+OMG has one looping construct: `loop <condition> { ... }`. It keeps
+running the body as long as the condition is truthy. Same idea as a
+`while` loop in other languages:
+
 ```omg
+;;;omg
+
 alloc i := 0
 loop i < 5 {
     emit i
@@ -188,43 +195,381 @@ loop i < 5 {
 }
 ```
 
-### Binary Ops
+Output:
 
-```omg
-emit 6 & 3      # 2
-emit 6 | 3      # 7
-emit 6 ^ 3      # 5
-emit ~1         # -2
-emit 1 << 3     # 8
+```
+0
+1
+2
+3
+4
 ```
 
-### Function Definitions
+`break` exits the innermost loop early:
 
 ```omg
+;;;omg
+
+alloc n := 1
+loop true {
+    if n > 100 {
+        break
+    }
+    n := n * 2
+}
+emit n              # 128: the first power of 2 greater than 100
+```
+
+There's no `for` loop. Use `loop` with a counter, like the example above.
+
+### Lists
+
+```omg
+;;;omg
+
+alloc xs := [10, 20, 30]
+emit xs                 # [10, 20, 30]
+emit length(xs)         # 3
+emit xs[0]              # 10
+emit xs[-1]             # 30          ← negative indices count from the end
+emit xs[1:3]            # [20, 30]    ← slicing also works on lists
+
+xs[0] := 99             # replace one element
+emit xs                 # [99, 20, 30]
+
+xs := xs + [40]         # append (creates a new list)
+emit xs                 # [99, 20, 30, 40]
+```
+
+Two variables holding the "same" list share it, changing one is
+visible through the other:
+
+```omg
+;;;omg
+
+alloc a := [1, 2, 3]
+alloc b := a
+b[0] := 99
+emit a              # [99, 2, 3]: `a` and `b` point at the same list
+```
+
+### Dictionaries
+
+A dictionary maps keys to values. Keys are strings. You can read or
+write entries either with dot notation (`d.name`) or with brackets
+(`d["name"]`):
+
+```omg
+;;;omg
+
+alloc person := {name: "Chris", age: 32}
+
+emit person.name        # Chris
+emit person["age"]      # 32
+
+person.age := 33                # change a value
+person["job"] := "engineer"     # add a new key
+
+emit person                     # {name: Chris, age: 33, job: engineer}
+emit length(person)             # 3
+```
+
+### Functions
+
+`proc` (short for "procedure") defines a function. `return` returns a
+value:
+
+```omg
+;;;omg
+
 proc square(x) {
     return x * x
 }
 
-emit square(4)
+emit square(4)          # 16
+emit square(7)          # 49
+```
 
-proc call_twice(f, x) {
+Functions are **first class**, you can pass them as arguments, store
+them in variables, and return them from other functions:
+
+```omg
+;;;omg
+
+proc apply_twice(f, x) {
     return f(f(x))
 }
 
-emit call_twice(square, 2)  # 16
+proc inc(n) {
+    return n + 1
+}
+
+emit apply_twice(inc, 5)        # 7   (5 → 6 → 7)
 ```
 
-### Module Imports
+A function defined inside another function remembers the variables it
+saw at the time it was defined. That's called a **closure**:
 
 ```omg
-import "utils.omg" as utils
-emit utils.greet("world")
+;;;omg
+
+proc make_adder(n) {
+    proc add(x) {
+        return x + n        # `n` was captured from `make_adder`
+    }
+    return add
+}
+
+alloc add5 := make_adder(5)
+alloc add100 := make_adder(100)
+
+emit add5(10)           # 15
+emit add100(7)          # 107
+```
+
+Each call to `make_adder` produces its own `add` that remembers its
+own `n`.
+
+### Multi-file programs: `import`
+
+Save this as `mathlib.omg`:
+
+```omg
+;;;omg
+
+proc square(x) {
+    return x * x
+}
+
+proc cube(x) {
+    return x * x * x
+}
+```
+
+Then in another file in the same folder:
+
+```omg
+;;;omg
+
+import "mathlib.omg" as math
+
+emit math.square(5)     # 25
+emit math.cube(3)       # 27
+```
+
+The path inside the quotes is **relative to the importing file's
+directory**. The name after `as` is what you'll call it from the other
+file. Imports run the imported file once, and capture its top-level
+`proc` and `alloc` definitions under that name.
+
+### Files
+
+Read a file as text in one shot:
+
+```omg
+;;;omg
+
+alloc text := read_file("notes.txt")
+if text == false {
+    emit "couldn't read notes.txt"
+} else {
+    emit "got " + length(text) + " characters"
+}
+```
+
+Or open a handle for finer control:
+
+```omg
+;;;omg
+
+# write text to a file
+alloc h := file_open("greeting.txt", "w")
+file_write(h, "hi from OMG\n")
+file_close(h)
+
+# and read it back
+alloc h2 := file_open("greeting.txt", "r")
+emit file_read(h2)              # hi from OMG
+file_close(h2)
+```
+
+Binary mode (`"rb"`, `"wb"`, `"ab"`) reads and writes lists of bytes
+(integers 0–255):
+
+```omg
+;;;omg
+
+alloc h := file_open("photo.jpg", "rb")
+alloc bytes := file_read(h)
+file_close(h)
+
+emit length(bytes)              # how many bytes long the file is
+emit bytes[0]                   # the first byte, as an integer
+```
+
+Relative paths in `read_file` and `file_open` are resolved against
+**your shell's current directory**, the same way `cat`, `wc`,
+`python`, etc. behave.
+
+### Errors and `try` / `except`
+
+Things sometimes go wrong. A bad index or a missing key, dividing by zero... By
+default the program stops with an error message. To recover, wrap the
+risky bit in `try` / `except`:
+
+```omg
+;;;omg
+
+try {
+    alloc xs := [1, 2, 3]
+    emit xs[99]                 # IndexError: index 99 out of range
+} except err {
+    emit "oops: " + err
+}
+emit "still running"
+```
+
+You can raise your own errors with `panic`:
+
+```omg
+;;;omg
+
+proc divide(a, b) {
+    if b == 0 {
+        panic("division by zero")
+    }
+    return a / b
+}
+
+try {
+    emit divide(10, 0)
+} except err {
+    emit "caught: " + err       # caught: RuntimeError: division by zero
+}
+```
+
+`facts` is shorthand for "assert this is true; if not, error out". It's
+useful inside tests:
+
+```omg
+;;;omg
+
+alloc x := 1 + 1
+facts x == 2            # silent (passes)
+facts x == 3            # AssertionError: assertion failed
 ```
 
 ---
 
-## License and Status
+## Built-in functions
 
-OMG is an experimental educational project and not intended for production use. The implementation is stable and complete as a toy language but may evolve to support additional features like deeper type introspection.
+Always available, no import needed.
 
-This software is open-sourced software licensed under the [MIT license](./LICENSE).
+| Function                       | What it does                                          |
+| ------------------------------ | ----------------------------------------------------- |
+| `length(x)`                    | length of a list or string                            |
+| `chr(n)`                       | one-character string for byte value `n`               |
+| `ascii(c)`                     | code point of a one-character string `c`              |
+| `hex(n)`                       | lowercase hex string for integer `n`                  |
+| `binary(n)` / `binary(n, w)`   | binary string for `n`, optionally `w` bits wide       |
+| `freeze(d)`                    | turn a dict into a read-only one                      |
+| `panic(msg)` / `raise(msg)`    | raise a runtime error (catchable with `try`/`except`) |
+| `read_file(path)`              | read a text file in one shot, or `false` on error     |
+| `file_exists(path)`            | does the file exist?                                  |
+| `file_open(path, mode)`        | open and return a handle (`r`, `rb`, `w`, `wb`, `a`, `ab`) |
+| `file_read(handle)`            | read everything remaining from a handle               |
+| `file_write(handle, data)`     | write to a handle                                     |
+| `file_close(handle)`           | close a handle                                        |
+| `string_bytes(s)`              | UTF-8 byte values of `s` as a list of integers        |
+| `call_builtin(name, args)`     | call a builtin by name (advanced)                     |
+
+The runtime also hands you three special globals every program can read:
+
+- `args`: a list of strings: the command-line arguments. `args[0]` is
+  the script's path; `args[1]`, `args[2]` … are user-supplied arguments.
+- `module_file`: the path of the running script.
+- `current_dir`: the directory the user ran `omg` from.
+
+---
+
+## The REPL
+
+Run `omg` with no arguments to drop into an interactive shell:
+
+```
+$ omg
+OMG Language Interpreter - REPL
+Type `exit` or `quit` to leave.
+>>> alloc x := 21
+>>> emit x * 2
+42
+>>> proc greet(name) {
+...     return "Hello " + name
+... }
+>>> emit greet("OMG")
+Hello OMG
+>>> quit
+```
+
+Variables, functions, and imports persist across lines until you `quit`.
+
+---
+
+## What's in this repo
+
+```
+omglang/
+├── runtime/         the Rust implementation: lexer, parser, compiler, VM, REPL
+├── bootstrap/
+│   ├── compiler.omg   the OMG compiler, written in OMG
+│   └── compiler.omgb  its compiled bytecode (re-built on `cargo build`)
+├── examples/        small standalone programs
+├── tools/           command-line utilities written in OMG (wc, grep, sort, etc.)
+├── reference/       the legacy Python implementation + a tree-walk OMG-in-OMG interpreter
+├── spec/            language reference docs
+└── vscode/          VS Code extension (syntax highlighting + LSP completion)
+```
+
+Some interesting starting points:
+
+- [`examples/prime_sieve.omg`](examples/prime_sieve.omg): finds primes up to 100.
+- [`examples/maze_solver.omg`](examples/maze_solver.omg): breadth-first search over a grid.
+- [`examples/higher_order.omg`](examples/higher_order.omg): closures + first-class functions.
+- [`tools/wc.omg`](tools/wc.omg), [`tools/grep.omg`](tools/grep.omg),
+  [`tools/json.omg`](tools/json.omg): Unix-style utilities,
+  written in OMG. See [`tools/README.md`](tools/README.md) for the
+  full list.
+
+---
+
+## A small piece of trivia
+
+OMG's compiler is itself written in OMG. The file
+[`bootstrap/compiler.omg`](bootstrap/compiler.omg) reads OMG source
+code and produces the bytecode the runtime executes, which is exactly
+what the Rust frontend in `runtime/` does. Run
+
+```sh
+omg --verify-self-hosted bootstrap/compiler.omg
+```
+
+and the runtime compiles `compiler.omg` two different ways, once with
+the Rust frontend, once with the OMG-written compiler running on the
+VM, and confirms the two byte streams are identical.
+
+---
+
+## More reading
+
+- [`spec/OMG_SPEC.md`](spec/OMG_SPEC.md): formal language reference.
+- [`runtime/README.md`](runtime/README.md): runtime architecture and CLI flags.
+- [`tools/README.md`](tools/README.md): the OMG-in-OMG tools.
+- [`vscode/README.md`](vscode/README.md): VS Code extension.
+
+---
+
+## License
+
+MIT.
+
+Educational project, not intended for production use.

@@ -62,29 +62,25 @@ pub fn seed_program_globals(globals: &mut HashMap<String, Value>, program_args: 
         "args".to_string(),
         Value::List(Rc::new(RefCell::new(arg_values))),
     );
-    if let Some(first) = program_args.first() {
-        let path = PathBuf::from(first.replace("\\", "/"));
-        globals.insert(
-            "module_file".to_string(),
-            Value::Str(path.to_string_lossy().replace("\\", "/")),
-        );
-        if let Some(parent) = path.parent() {
-            let s = parent.to_string_lossy().replace("\\", "/");
-            globals.insert(
-                "current_dir".to_string(),
-                Value::Str(if s.is_empty() {
-                    ".".to_string()
-                } else {
-                    s
-                }),
-            );
-        } else {
-            globals.insert("current_dir".to_string(), Value::Str(".".to_string()));
-        }
-    } else {
-        globals.insert("module_file".to_string(), Value::Str("<stdin>".to_string()));
-        globals.insert("current_dir".to_string(), Value::Str(".".to_string()));
-    }
+    // `module_file` is the script path, kept for diagnostics.  Falls back
+    // to "<stdin>" when there is no script (e.g. REPL).
+    let module_file = program_args
+        .first()
+        .map(|s| s.replace("\\", "/"))
+        .unwrap_or_else(|| "<stdin>".to_string());
+    globals.insert("module_file".to_string(), Value::Str(module_file));
+
+    // `current_dir` is the *shell's* current working directory, not the
+    // script's parent.  This matches every other CLI tool — `omg
+    // tools/wc.omg foo.txt` resolves `foo.txt` against where the user is
+    // standing, the way `wc foo.txt` would.  Imports don't read this
+    // global (they're resolved at compile time using `current_file`), so
+    // no part of the language relies on the older script-dir-based value.
+    let cwd = std::env::current_dir()
+        .ok()
+        .map(|p| p.to_string_lossy().replace("\\", "/"))
+        .unwrap_or_else(|| ".".to_string());
+    globals.insert("current_dir".to_string(), Value::Str(cwd));
 }
 
 /// One-shot execution of a complete program.
