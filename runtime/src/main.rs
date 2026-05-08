@@ -49,6 +49,13 @@ const VERSION: &str = "0.2.0";
 const SELF_HOSTED_COMPILER: &[u8] =
     include_bytes!("../../bootstrap/compiler.omgb");
 
+/// Embedded `bootstrap/vm.omgb` — the OMG-written OMG VM, similarly
+/// pre-compiled at build time. Loaded on demand by `--verify-omg-vm` to
+/// run the OMG compiler *on* the OMG VM and confirm the triple-meta
+/// fixed point.
+const SELF_HOSTED_VM: &[u8] =
+    include_bytes!("../../bootstrap/vm.omgb");
+
 fn usage() -> String {
     format!(
         r#"OMG Language Runtime v{0}
@@ -80,13 +87,19 @@ Options:
         --verify-self-hosted Run the fixed-point check: compile a `.omg` with
                              both the Rust and OMG-in-OMG compilers and
                              confirm the byte streams are identical.
+        --verify-omg-vm      Run the *triple-meta* fixed-point check: compile
+                             a `.omg` with the Rust frontend AND with the
+                             OMG-written compiler running on the OMG-written
+                             VM (both pre-compiled and embedded), then
+                             confirm the byte streams are identical.
 
 Examples:
     omg hello.omg                    # self-hosted (default)
     omg --rust hello.omg             # Rust frontend
     omg hello.omgb -- arg1 arg2
     omg --compile hello.omg hello.omgb
-    omg --verify-self-hosted bootstrap/compiler.omg"#,
+    omg --verify-self-hosted bootstrap/compiler.omg
+    omg --verify-omg-vm examples/prime_sieve.omg"#,
         VERSION
     )
 }
@@ -135,6 +148,7 @@ fn main() -> ExitCode {
         "--disasm" => return cmd_disasm(&args[2..]),
         "--self-hosted-compile" => return cmd_self_hosted_compile(&args[2..]),
         "--verify-self-hosted" => return cmd_verify_self_hosted(&args[2..]),
+        "--verify-omg-vm" => return cmd_verify_omg_vm(&args[2..]),
         _ => {}
     }
 
@@ -385,6 +399,115 @@ fn self_hosted_compile(in_path: &PathBuf) -> Result<Vec<u8>, RuntimeError> {
     })?;
     let _ = fs::remove_file(&tmp);
     Ok(bytes)
+}
+
+/// Drive the OMG-written compiler running on the OMG-written VM against a
+/// source file and return the `.omgb` bytes. This is the "triple-meta"
+/// path: the Rust runtime hosts the embedded `vm.omgb`, which interprets
+/// the embedded `compiler.omgb`, which compiles the user's source. Used
+/// only by `--verify-omg-vm`; ordinary execution doesn't need this layer.
+fn omg_vm_compile(in_path: &PathBuf) -> Result<Vec<u8>, RuntimeError> {
+    let (vm_code, vm_funcs) = parse_bytecode(SELF_HOSTED_VM)?;
+    let abs_in = fs::canonicalize(in_path).map_err(|e| {
+        RuntimeError::ModuleImportError(format!(
+            "cannot canonicalise '{}': {}",
+            in_path.display(),
+            e
+        ))
+    })?;
+    // The embedded VM expects to *read* the bytecode it's interpreting
+    // from a file, the same way it would with `omg bootstrap/vm.omg
+    // <prog.omgb>`. Stage the embedded compiler.omgb to a temp file so
+    // the VM can open it normally.
+    let tmp_compiler = std::env::temp_dir().join(format!(
+        "omg-meta-cmp-{}-{}.omgb",
+        std::process::id(),
+        rand_suffix()
+    ));
+    fs::write(&tmp_compiler, SELF_HOSTED_COMPILER).map_err(|e| {
+        RuntimeError::ModuleImportError(format!(
+            "cannot stage embedded compiler.omgb to '{}': {}",
+            tmp_compiler.display(),
+            e
+        ))
+    })?;
+    let tmp_out = std::env::temp_dir().join(format!(
+        "omg-meta-out-{}-{}.omgb",
+        std::process::id(),
+        rand_suffix()
+    ));
+    // vm.omg's argv: [self, <prog.omgb>, <prog-args...>]. The compiler
+    // it's interpreting then sees its argv as [<prog.omgb>, in_path,
+    // out_path] — first element is "the script's own path" by
+    // convention, then the inner program's args.
+    let args = [
+        "<embedded-vm>".to_string(),
+        tmp_compiler.to_string_lossy().to_string(),
+        abs_in.to_string_lossy().to_string(),
+        tmp_out.to_string_lossy().to_string(),
+    ];
+    let run_result = run(&vm_code, &vm_funcs, &args);
+    let _ = fs::remove_file(&tmp_compiler);
+    run_result?;
+    let bytes = fs::read(&tmp_out).map_err(|e| {
+        RuntimeError::ModuleImportError(format!(
+            "cannot read OMG-VM output '{}': {}",
+            tmp_out.display(),
+            e
+        ))
+    })?;
+    let _ = fs::remove_file(&tmp_out);
+    Ok(bytes)
+}
+
+/// Triple-meta fixed-point check: compile a `.omg` with the Rust frontend
+/// and with the OMG compiler running on the OMG VM, then assert the byte
+/// streams are identical. The strongest self-hosting invariant the
+/// project tests — proves *both* the OMG compiler and the OMG VM behave
+/// like their Rust counterparts on the input.
+fn cmd_verify_omg_vm(args: &[String]) -> ExitCode {
+    if args.is_empty() {
+        eprintln!("--verify-omg-vm expects a .omg path");
+        return ExitCode::FAILURE;
+    }
+    let in_path = PathBuf::from(&args[0]);
+    let source = match fs::read_to_string(&in_path) {
+        Ok(s) => s,
+        Err(e) => {
+            eprintln!("cannot read '{}': {}", in_path.display(), e);
+            return ExitCode::FAILURE;
+        }
+    };
+    let rust_bytes = match compile_source(&source, &in_path) {
+        Ok(p) => write_bytecode(&p.code, &p.funcs),
+        Err(e) => {
+            eprintln!("Rust frontend failed: {}", e);
+            return ExitCode::FAILURE;
+        }
+    };
+    let meta_bytes = match omg_vm_compile(&in_path) {
+        Ok(b) => b,
+        Err(e) => {
+            eprintln!("OMG-on-OMG-VM failed: {}", e);
+            return ExitCode::FAILURE;
+        }
+    };
+    if rust_bytes == meta_bytes {
+        println!(
+            "OK  {} ({} bytes) — OMG-on-OMG-VM output matches Rust output",
+            in_path.display(),
+            rust_bytes.len()
+        );
+        ExitCode::SUCCESS
+    } else {
+        println!(
+            "FAIL  {}: Rust={} bytes, OMG-on-OMG-VM={} bytes — outputs differ",
+            in_path.display(),
+            rust_bytes.len(),
+            meta_bytes.len()
+        );
+        ExitCode::FAILURE
+    }
 }
 
 fn rand_suffix() -> u64 {

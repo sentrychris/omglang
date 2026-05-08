@@ -150,6 +150,7 @@ behavior choice.
 | `omg --compile <in> [<out>]`                | Rust        | Stays Rust by default. Compiling is interactive iteration; the slow path would hurt. |
 | `omg --self-hosted-compile <in> [<out>]`    | self-hosted | Explicit opt-in to the self-hosted compiler for AOT compile. |
 | `omg --verify-self-hosted <file>`           | both        | Compiles `<file>` with both compilers and asserts byte-identical output. The self-hosting fixed-point check. |
+| `omg --verify-omg-vm <file>`                | both, plus the OMG-written VM | Triple-meta fixed-point check: compares the Rust-frontend output against running the OMG compiler **on the OMG VM** (`bootstrap/vm.omg`, also embedded). Proves both stage-1 components behave like their Rust counterparts on the input. |
 | `omg --disasm <file>`                       | Rust (only for `.omg` input) | Backend-agnostic for `.omgb` input. |
 | `omg` (no args)                             | Rust        | REPL. Stays Rust because per-turn compile latency matters interactively. |
 
@@ -260,6 +261,36 @@ change *does* affect emitted bytecode, the Rust frontend has to be
 updated in lockstep (see the float-literal and implicit-return changes
 for examples). Otherwise the bootstrap will succeed but the fixed-point
 check will fail — your two compilers have drifted.
+
+### The triple-meta fixed point
+
+There's a third leg now: an OMG-written *VM* at
+[`bootstrap/vm.omg`](../bootstrap/vm.omg). It executes `.omgb` bytecode
+the same way the Rust VM does — bytecode loader, dispatch loop,
+operand stack, env stacks, the whole thing — only it's all written in
+OMG. `cargo build` compiles it to `bootstrap/vm.omgb` and embeds it in
+the runtime alongside `compiler.omgb`.
+
+Running the OMG compiler *on top of* the OMG VM gives you an entire
+language-level pipeline that lives inside OMG: the Rust runtime is
+just the substrate at the bottom. `--verify-omg-vm` compares this
+triple-meta path against the Rust frontend's output and asserts
+byte-identical equality:
+
+```sh
+omg --verify-omg-vm bootstrap/compiler.omg
+```
+
+That command, when it passes (which it does, in ~45 s), is the
+strongest claim the project makes about itself: the OMG compiler and
+the OMG VM, both running on a Rust *substrate* but otherwise expressed
+entirely in OMG, produce the same artifact for the same input as the
+reference Rust toolchain does.
+
+For day-to-day use the triple-meta path is too slow (the OMG VM
+running the OMG compiler running the OMG-source-language is slow³).
+For verification it's perfect: any drift in either stage-1 component
+shows up immediately as a byte mismatch.
 
 ### What the Rust frontend still has to do
 

@@ -45,3 +45,13 @@ jobs:
       # frontend when compiling its own source.
       - name: Verify self-hosted fixed point
         run: ./runtime/target/release/omg --verify-self-hosted bootstrap/compiler.omg
+
+      # Triple-meta regression guard: same as above, but with the OMG
+      # compiler running on the OMG-written VM (bootstrap/vm.omg).
+      # Strongest fixed-point check the project supports — guarantees
+      # both stage-1 components behave like their Rust counterparts on
+      # the input. We use prime_sieve.omg here rather than compiler.omg
+      # itself to keep CI runtime under a second; the equivalent check
+      # against compiler.omg passes locally but takes ~45 s.
+      - name: Verify triple-meta fixed point
+        run: ./runtime/target/release/omg --verify-omg-vm examples/prime_sieve.omg

@@ -51,6 +51,11 @@ cargo build --release --manifest-path runtime/Cargo.toml
 # Fixed-point check: Rust and OMG-in-OMG compilers produce identical bytes
 ./runtime/target/release/omg --verify-self-hosted bootstrap/compiler.omg
 
+# Triple-meta fixed-point check: Rust frontend vs (OMG compiler running
+# on the OMG VM). Proves both stage-1 components behave like their Rust
+# counterparts on the input.
+./runtime/target/release/omg --verify-omg-vm examples/prime_sieve.omg
+
 # Interactive REPL (state persists across turns)
 ./runtime/target/release/omg
 ```

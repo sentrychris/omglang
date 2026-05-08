@@ -654,7 +654,7 @@ pub fn call_builtin(
 
         // bytes_to_string([byte, ...]) -> String. Inverse of `string_bytes`.
         // The input list must be UTF-8 byte values (0-255). Used by the
-        // OMG-in-OMG VM (`tools/advanced/omg-vm.omg`) to read length-
+        // OMG-in-OMG VM (`bootstrap/vm.omg`) to read length-
         // prefixed strings out of a `.omgb` byte stream.
         "bytes_to_string" => match args {
             [Value::List(list)] => {

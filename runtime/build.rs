@@ -1,15 +1,21 @@
 //! Build script for the OMG runtime.
 //!
-//! Bootstraps `bootstrap/compiler.omg` (the OMG-written OMG compiler) into
-//! `bootstrap/compiler.omgb` so the runtime can ship it embedded for
-//! `--self-hosted` mode.
+//! Bootstraps two stage-1 OMG-language artifacts into bytecode the runtime
+//! ships embedded:
 //!
-//! The bootstrap is performed by directly using the runtime's *own* lexer,
-//! parser and compiler — no Python, no external tools. This is the
-//! "stage-0" Rust compiler bootstrapping the "stage-1" OMG-in-OMG compiler.
-//! Subsequent self-hosted runs (and the `verify-self-hosted` make target)
-//! confirm the fixed point: stage-1 compiling its own source produces the
-//! exact same `.omgb` bytes as stage-0 did.
+//! * `bootstrap/compiler.omg` → `bootstrap/compiler.omgb` — the OMG-written
+//!   OMG compiler (used by the default `omg <script>` execution path and
+//!   by `--self-hosted-compile` / `--verify-self-hosted`).
+//! * `bootstrap/vm.omg` → `bootstrap/vm.omgb` — the OMG-written OMG VM
+//!   (used by `--verify-omg-vm` for the triple-meta fixed-point check).
+//!
+//! Both are compiled by the runtime's own lexer/parser/compiler — no
+//! Python, no external tools. The Rust frontend is the "stage-0" that
+//! bootstraps the "stage-1" OMG-in-OMG implementations. Subsequent
+//! self-hosted runs (and the `verify-*` flags) confirm fixed points:
+//! stage-1 compiling its own source produces the same `.omgb` bytes as
+//! stage-0 did, and the OMG VM running stage-1 produces the same
+//! bytes as either.
 
 use std::env;
 use std::fs;
@@ -40,18 +46,26 @@ mod compiler;
 
 fn main() {
     println!("cargo:rerun-if-changed=bootstrap/compiler.omg");
+    println!("cargo:rerun-if-changed=bootstrap/vm.omg");
 
     let manifest_dir = env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR");
     let project_root = PathBuf::from(&manifest_dir)
         .parent()
         .expect("project root")
         .to_path_buf();
-    let src_path = project_root.join("bootstrap/compiler.omg");
-    let out_path = project_root.join("bootstrap/compiler.omgb");
 
-    let src = fs::read_to_string(&src_path).expect("read compiler.omg");
+    bootstrap_one(&project_root, "bootstrap/compiler.omg", "bootstrap/compiler.omgb");
+    bootstrap_one(&project_root, "bootstrap/vm.omg", "bootstrap/vm.omgb");
+}
+
+fn bootstrap_one(project_root: &PathBuf, src_rel: &str, out_rel: &str) {
+    let src_path = project_root.join(src_rel);
+    let out_path = project_root.join(out_rel);
+    let src = fs::read_to_string(&src_path)
+        .unwrap_or_else(|e| panic!("read {}: {}", src_path.display(), e));
     let program = compiler::compile_source(&src, &src_path)
-        .unwrap_or_else(|e| panic!("failed to compile compiler.omg: {}", e));
+        .unwrap_or_else(|e| panic!("compile {}: {}", src_path.display(), e));
     let bytes = bytecode::write_bytecode(&program.code, &program.funcs);
-    fs::write(&out_path, &bytes).expect("write compiler.omgb");
+    fs::write(&out_path, &bytes)
+        .unwrap_or_else(|e| panic!("write {}: {}", out_path.display(), e));
 }

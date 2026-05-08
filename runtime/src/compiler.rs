@@ -61,7 +61,7 @@ fn builtin_names() -> &'static [&'static str] {
         "tan",
         // Used by `bootstrap/compiler.omg` to embed float literals as i64 bits.
         "float_bits",
-        // Inverse pair, used by `tools/advanced/omg-vm.omg` to read float
+        // Inverse pair, used by `bootstrap/vm.omg` to read float
         // and string literals back out of a `.omgb` byte stream.
         "bits_to_float",
         "bytes_to_string",

@@ -1,27 +1,28 @@
 ;;;omg
 
-# omg-vm — execute `.omgb` bytecode files using a VM written in OMG.
+# bootstrap/vm.omg — execute `.omgb` bytecode files using a VM written in OMG.
 #
-# This is the third leg of the self-hosting story.  We already had:
+# This is the third leg of the self-hosting story:
 #
 #   1. The Rust runtime that ships with the project (the substrate VM).
 #   2. The OMG-written compiler at `bootstrap/compiler.omg` that produces
 #      byte-identical `.omgb` output to the Rust frontend.
+#   3. THIS FILE — an OMG-written *executor* for the bytecode the OMG
+#      compiler emits. Together with #2 it means every act of language-
+#      level interpretation can happen inside OMG; the Rust runtime is
+#      just the substrate at the bottom.
 #
-# What was missing: an OMG-written *executor* for the bytecode the OMG
-# compiler emits.  This file is that executor.  Run it like:
+# Used by:
+#   * `omg --verify-omg-vm <file>` (the triple-meta fixed-point check)
+#   * Direct invocation:
+#         omg --rust bootstrap/vm.omg ./hello.omgb
 #
-#     omg --rust ./bootstrap/compiler.omg ./hello.omg ./hello.omgb
-#     omg tools/advanced/omg-vm.omg ./hello.omgb
+# `cargo build` compiles this source to `bootstrap/vm.omgb` and embeds
+# the bytecode in the runtime binary alongside `bootstrap/compiler.omgb`.
 #
-# (The Rust frontend is recommended for compiling the VM itself, since
-# the OMG-on-VM compile path will then run on top of this VM, which is
-# slow squared.  The eventual capstone is to compile compiler.omg with
-# our own VM running it — proving the whole pipeline can run inside OMG.)
-#
-# Status: this is milestone 1–3 of the build (loader + dispatch loop +
-# enough opcodes to print "Hello, world!").  Subsequent commits will add
-# arithmetic, control flow, lists/dicts, function calls, try/except.
+# The Rust frontend is recommended for compiling this file directly:
+# the OMG-on-VM compile path would otherwise run on top of this VM,
+# which is slow squared.
 
 # === Opcode constants =====================================================
 #
@@ -843,7 +844,7 @@ proc run() {
 # === Main =================================================================
 
 if length(args) < 2 {
-    panic("usage: omg tools/advanced/omg-vm.omg <program.omgb> [program-args...]")
+    panic("usage: omg bootstrap/vm.omg <program.omgb> [program-args...]")
 }
 
 alloc bc_path := args[1]

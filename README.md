@@ -722,6 +722,19 @@ The runtime compiles `compiler.omg` two different ways, once with the
 Rust frontend, once with the OMG-written compiler running on the VM,
 and confirms the two byte streams are identical.
 
+There's a stronger version too. The runtime ships an *OMG-written VM*
+at [`bootstrap/vm.omg`](bootstrap/vm.omg) that interprets `.omgb`
+bytecode. With it, you can run the OMG compiler *on the OMG VM* — three
+levels of meta — and ask whether *that* still produces the same bytes:
+
+```sh
+omg --verify-omg-vm bootstrap/compiler.omg
+```
+
+If it passes, every act of language-level interpretation in the chain
+happened inside OMG; the Rust runtime is just the substrate at the
+bottom.
+
 ---
 
 ## More reading
