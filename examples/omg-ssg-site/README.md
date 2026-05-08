@@ -1,4 +1,4 @@
-# tools/advanced
+# ./tools/advanced/ssg.omg
 
 Demo-quality projects that show OMG handling something larger than a
 single Unix-style utility. Each tool here imports from `tools/` and
