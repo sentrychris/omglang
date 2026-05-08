@@ -15,10 +15,14 @@ Python toolchain in `reference/` is retained for reference only.
 ```text
 .omg source ──► lexer ──► parser ──► AST ──► compiler ──► bytecode ──► stack VM
    │                                            │             ▲
-   └─ Rust stage-0 (default; fast)              │             │
-   └─ stage-1: bootstrap/compiler.omgb ─────────┘             │
-                       (run on the VM via --self-hosted) ─────┘
+   └─ stage-1: bootstrap/compiler.omgb (default)│             │
+   └─ stage-0: Rust frontend (faster; via --rust)─────────────┘
 ```
+
+By default `omg <script>` compiles via the embedded OMG-in-OMG compiler
+running on the VM — the language compiles itself end to end. Pass
+`--rust` to use the Rust frontend instead, which is significantly faster
+but bypasses the self-hosted toolchain.
 
 ## Quick start
 
@@ -38,8 +42,8 @@ cargo build --release --manifest-path runtime/Cargo.toml
 # Disassemble a .omg or .omgb file
 ./runtime/target/release/omg --disasm examples/hello_world.omg
 
-# Compile and run via the OMG-in-OMG compiler (slower; proves self-hosting)
-./runtime/target/release/omg --self-hosted examples/prime_sieve.omg
+# Run a script via the Rust frontend (faster; bypasses self-hosting)
+./runtime/target/release/omg --rust examples/prime_sieve.omg
 
 # Compile to bytecode using the OMG-in-OMG compiler
 ./runtime/target/release/omg --self-hosted-compile examples/prime_sieve.omg prime.omgb

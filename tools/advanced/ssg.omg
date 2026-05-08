@@ -1,0 +1,325 @@
+;;;omg
+
+import "../lib.omg" as lib
+import "../md2html.omg" as md
+
+# ssg — a tiny static site generator written in OMG.
+#
+# Usage:
+#     omg tools/advanced/ssg.omg <site-dir>
+#
+# Reads:
+#     <site-dir>/content/**/*.md
+#     <site-dir>/templates/default.html      required
+#     <site-dir>/templates/index.html        optional (renders the home page)
+#
+# Writes:
+#     <site-dir>/out/**/*.html               (mirrors content/ layout)
+#
+# Each markdown file may begin with a "front-matter" block: a few
+# `key: value` lines followed by a `---` separator.  Recognized keys:
+#
+#     title        used in <title> and template substitution
+#     date         displayed on listings; treated as a string
+#
+# Templates use `{{name}}` placeholders.  The body of each rendered page
+# is available as `{{body}}`; arbitrary front-matter keys are also
+# substituted.  The index template additionally gets `{{posts}}`, an
+# `<li>`-formatted list of every post under content/posts/.
+#
+# Limitations (intentional, this is a demo):
+#   - No drafts, no taxonomy, no incremental rebuilds.
+#   - Templates are flat: no `{{#if}}` / `{{#each}}` blocks.
+#   - Front-matter is line-oriented `key: value`; no quoting/escaping.
+#   - Two passes: first collect post metadata, then render.
+
+# === path helpers ========================================================
+
+proc path_join(a, b) {
+    if length(a) == 0 {
+        return b
+    }
+    alloc tail := a[length(a) - 1:length(a)]
+    if tail == "/" {
+        return a + b
+    }
+    return a + "/" + b
+}
+
+# Replace the trailing ".md" with ".html". Anything else returns unchanged.
+proc swap_ext_md_html(name) {
+    alloc n := length(name)
+    if n < 3 {
+        return name
+    }
+    if name[n - 3:n] == ".md" {
+        return name[0:n - 3] + ".html"
+    }
+    return name
+}
+
+# Recursive directory walk. Returns a list of *relative* file paths under
+# `root` (excluding `root` itself), depth-first, lexicographically sorted.
+proc walk(root, prefix) {
+    alloc results := []
+    alloc entries := read_dir(root)
+    alloc n := length(entries)
+    alloc i := 0
+    loop i < n {
+        alloc name := entries[i]
+        alloc full := path_join(root, name)
+        alloc rel := path_join(prefix, name)
+        if is_dir(full) {
+            results := results + walk(full, rel)
+        } else {
+            results := results + [rel]
+        }
+        i := i + 1
+    }
+    return results
+}
+
+# === front-matter & template substitution ================================
+
+# Parse a leading front-matter block. Returns [meta_dict, body_text].
+# Front-matter must start at the very first line and end at a `---`
+# separator. If no front-matter is detected, meta is `{}` and the full
+# input is returned as body.
+proc parse_front_matter(text) {
+    alloc lines := lib.split_lines(text)
+    alloc nl := length(lines)
+    if nl == 0 or lines[0] != "---" {
+        # Implicit form: bare `key: value` lines until a blank line.
+        # We only treat the explicit `---` form below; without it, no
+        # front-matter is parsed.
+        return [{}, text]
+    }
+    alloc meta := {}
+    alloc i := 1
+    loop i < nl and lines[i] != "---" {
+        alloc line := lines[i]
+        alloc colon := -1
+        alloc j := 0
+        alloc lj := length(line)
+        loop j < lj and colon == -1 {
+            if line[j] == ":" {
+                colon := j
+            }
+            j := j + 1
+        }
+        if colon != -1 {
+            alloc key := lib.trim(line[0:colon])
+            alloc val := lib.trim(line[colon + 1:lj])
+            meta[key] := val
+        }
+        i := i + 1
+    }
+    if i >= nl {
+        # No closing `---`; treat as no front-matter.
+        return [{}, text]
+    }
+    # Skip the closing `---` and a single optional blank line after it.
+    i := i + 1
+    if i < nl and lib.trim(lines[i]) == "" {
+        i := i + 1
+    }
+    alloc body := ""
+    loop i < nl {
+        if length(body) > 0 {
+            body := body + "\n"
+        }
+        body := body + lines[i]
+        i := i + 1
+    }
+    return [meta, body]
+}
+
+# Substitute `{{key}}` placeholders in `tpl` with values from `vars`.
+# Unknown placeholders are left as-is, which makes typos visible in the
+# output rather than silently dropped.
+proc render_template(tpl, vars) {
+    alloc out := ""
+    alloc n := length(tpl)
+    alloc i := 0
+    loop i < n {
+        if i + 1 < n and tpl[i] == "{" and tpl[i + 1] == "{" {
+            # Find closing `}}`.
+            alloc j := i + 2
+            loop j + 1 < n and (tpl[j] != "}" or tpl[j + 1] != "}") {
+                j := j + 1
+            }
+            if j + 1 < n {
+                alloc key := lib.trim(tpl[i + 2:j])
+                alloc val := dict_get(vars, key, "")
+                if val == "" {
+                    # Preserve unresolved placeholders verbatim.
+                    out := out + tpl[i:j + 2]
+                } else {
+                    out := out + val
+                }
+                i := j + 2
+            } else {
+                out := out + tpl[i]
+                i := i + 1
+            }
+        } else {
+            out := out + tpl[i]
+            i := i + 1
+        }
+    }
+    return out
+}
+
+# Dict lookup with default. OMG raises KeyError on missing keys; we want
+# templates to leave unknown placeholders alone (see render_template).
+proc dict_get(d, key, default_val) {
+    try {
+        return d[key]
+    } except _ {
+        return default_val
+    }
+}
+
+# === site model ==========================================================
+
+# Build a single post record from a content/ source path. Returns
+# [src_rel, dst_rel, meta_dict, body_html].
+proc load_post(content_root, src_rel) {
+    alloc src_full := path_join(content_root, src_rel)
+    alloc raw := read_file(src_full)
+    if raw == false {
+        panic("cannot read: " + src_full)
+    }
+    alloc parsed := parse_front_matter(raw)
+    alloc meta := parsed[0]
+    alloc body_md := parsed[1]
+    alloc body_html := md.convert(body_md)
+    alloc dst_rel := swap_ext_md_html(src_rel)
+    return [src_rel, dst_rel, meta, body_html]
+}
+
+# Render `<li>` list items for the index page. Skips the index.md itself
+# and pages outside content/posts/.
+proc render_post_list(posts, prefix) {
+    alloc out := ""
+    alloc n := length(posts)
+    alloc i := 0
+    loop i < n {
+        alloc post := posts[i]
+        alloc src_rel := post[0]
+        alloc dst_rel := post[1]
+        alloc meta := post[2]
+        if lib.starts_with(src_rel, "posts/") {
+            alloc title := dict_get(meta, "title", dst_rel)
+            alloc date := dict_get(meta, "date", "")
+            out := out + "  <li><a href=\"" + prefix + dst_rel + "\">" + title + "</a>"
+            if date != "" {
+                out := out + " <small>" + date + "</small>"
+            }
+            out := out + "</li>\n"
+        }
+        i := i + 1
+    }
+    return out
+}
+
+# === filesystem helpers ==================================================
+
+proc write_text(path, text) {
+    alloc h := file_open(path, "w")
+    file_write(h, text)
+    file_close(h)
+}
+
+# Ensure the parent directory of `path` exists.
+proc ensure_parent(path) {
+    alloc parts := lib.path_split(path)
+    if length(parts[0]) > 0 {
+        make_dir(parts[0])
+    }
+}
+
+# === main ================================================================
+
+if length(args) < 2 {
+    panic("usage: omg tools/advanced/ssg.omg <site-dir>")
+}
+
+alloc site := args[1]
+alloc content_root := path_join(site, "content")
+alloc tpl_default := read_file(path_join(site, "templates/default.html"))
+if tpl_default == false {
+    panic("missing required template: " + path_join(site, "templates/default.html"))
+}
+alloc tpl_index := read_file(path_join(site, "templates/index.html"))
+
+if is_dir(content_root) == false {
+    panic("missing content directory: " + content_root)
+}
+
+emit "[ssg] scanning " + content_root
+alloc all := walk(content_root, "")
+emit "[ssg] found " + length(all) + " entries"
+
+# Pass 1: load every .md file (we need post metadata before rendering the index).
+alloc posts := []
+alloc i := 0
+alloc nall := length(all)
+loop i < nall {
+    alloc rel := all[i]
+    alloc rl := length(rel)
+    if rl >= 3 and rel[rl - 3:rl] == ".md" {
+        posts := posts + [load_post(content_root, rel)]
+    }
+    i := i + 1
+}
+
+emit "[ssg] " + length(posts) + " markdown files"
+
+# Pass 2: render and write each page.
+alloc out_root := path_join(site, "out")
+make_dir(out_root)
+
+i := 0
+alloc np := length(posts)
+loop i < np {
+    alloc post := posts[i]
+    alloc src_rel := post[0]
+    alloc dst_rel := post[1]
+    alloc meta := post[2]
+    alloc body_html := post[3]
+
+    # Pick the template. content/index.md uses index.html when present;
+    # everything else uses default.html.
+    alloc tpl := tpl_default
+    if src_rel == "index.md" and tpl_index != false {
+        tpl := tpl_index
+    }
+
+    # Build the variables dict from front-matter, then layer on the page
+    # body and (for the index) the post listing. We pluck a couple of
+    # well-known keys explicitly rather than iterate the meta dict —
+    # OMG dicts don't expose a key list.
+    alloc vars := {}
+    alloc title := dict_get(meta, "title", "")
+    if title != "" {
+        vars["title"] := title
+    }
+    alloc date := dict_get(meta, "date", "")
+    if date != "" {
+        vars["date"] := date
+    }
+    vars["body"] := body_html
+    if src_rel == "index.md" {
+        vars["posts"] := render_post_list(posts, "")
+    }
+
+    alloc rendered := render_template(tpl, vars)
+    alloc dst_full := path_join(out_root, dst_rel)
+    ensure_parent(dst_full)
+    write_text(dst_full, rendered)
+    emit "[ssg]   " + src_rel + "  ->  " + dst_rel
+    i := i + 1
+}
+
+emit "[ssg] done. output: " + out_root

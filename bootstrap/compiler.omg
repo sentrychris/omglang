@@ -1004,7 +1004,8 @@ alloc cc_loading := []
 alloc cc_builtins := [
     "chr", "ascii", "hex", "binary", "length", "read_file",
     "freeze", "call_builtin", "file_open", "file_read",
-    "file_write", "file_close", "file_exists", "string_bytes",
+    "file_write", "file_close", "file_exists",
+    "is_dir", "read_dir", "make_dir", "string_bytes",
     "int", "float", "floor", "ceil", "round", "abs",
     "sqrt", "pow", "log", "sin", "cos", "tan", "float_bits"
 ]
@@ -1739,6 +1740,11 @@ proc compile_function_body(params, body) {
     }
     cc_local_scopes := cc_local_scopes + [new_scope]
     compile_block_node(body)
+    # Implicit return for procs that fall off the end. PUSH_NONE ensures
+    # RET pops a real value rather than consuming whatever the caller
+    # left on the operand stack (e.g. `xs + [void_proc()]` would have
+    # RET consume `xs`).
+    cc_emit_simple("PUSH_NONE")
     cc_emit_simple("RET")
     alloc popped := cc_local_scopes[0:length(cc_local_scopes) - 1]
     cc_local_scopes := popped

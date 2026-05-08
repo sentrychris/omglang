@@ -436,6 +436,66 @@ pub fn call_builtin(
             )),
         },
 
+        // is_dir("path") -> Bool
+        "is_dir" => match args {
+            [Value::Str(path)] => {
+                let path_buf = resolve_path(path, env, globals);
+                Ok(Value::Bool(path_buf.is_dir()))
+            }
+            _ => Err(RuntimeError::TypeError(
+                "is_dir() expects a path".to_string(),
+            )),
+        },
+
+        // read_dir("path") -> [String, ...] of entry names (no `.` or `..`).
+        // Sorted lexicographically so output is deterministic across runs.
+        "read_dir" => match args {
+            [Value::Str(path)] => {
+                let path_buf = resolve_path(path, env, globals);
+                let entries = fs::read_dir(&path_buf).map_err(|e| {
+                    RuntimeError::ValueError(format!(
+                        "cannot read directory '{}': {}",
+                        path_buf.display(),
+                        e
+                    ))
+                })?;
+                let mut names: Vec<String> = Vec::new();
+                for entry in entries {
+                    let entry = entry.map_err(|e| RuntimeError::ValueError(e.to_string()))?;
+                    if let Some(name) = entry.file_name().to_str() {
+                        names.push(name.to_string());
+                    }
+                }
+                names.sort();
+                Ok(Value::List(Rc::new(RefCell::new(
+                    names.into_iter().map(Value::Str).collect(),
+                ))))
+            }
+            _ => Err(RuntimeError::TypeError(
+                "read_dir() expects a directory path".to_string(),
+            )),
+        },
+
+        // make_dir("path") -> Bool. Creates intermediate directories
+        // (`mkdir -p` semantics). Returns `true` on success or if the
+        // directory already exists; raises ValueError on real failures.
+        "make_dir" => match args {
+            [Value::Str(path)] => {
+                let path_buf = resolve_path(path, env, globals);
+                fs::create_dir_all(&path_buf).map_err(|e| {
+                    RuntimeError::ValueError(format!(
+                        "cannot create directory '{}': {}",
+                        path_buf.display(),
+                        e
+                    ))
+                })?;
+                Ok(Value::Bool(true))
+            }
+            _ => Err(RuntimeError::TypeError(
+                "make_dir() expects a path".to_string(),
+            )),
+        },
+
         // --- Numeric / math --------------------------------------------------
 
         // int(x) -> i64. Floats truncate toward zero; strings parse as int.

@@ -21,9 +21,13 @@ import "lib.omg" as lib
 #   - Tables, blockquotes, footnotes, reference links, setext headers,
 #     nested lists.  Add as needed.
 
-# === document state (module globals) =====================================
+# === document state =======================================================
+#
+# These were per-document globals when md2html was a pure CLI script. The
+# `convert(input)` proc still uses them as a single-document scratchpad
+# but resets each one on entry, so multiple back-to-back calls (e.g. from
+# the SSG in `tools/advanced/ssg.omg`) don't bleed state into each other.
 
-# Output buffer; written incrementally as we walk the input.
 alloc out := ""
 alloc in_code := false       # inside a fenced code block?
 alloc in_ul := false
@@ -188,106 +192,136 @@ proc unordered_body(line) {
     return false
 }
 
-# === entry point =========================================================
+# === public API ===========================================================
+#
+# Convert a markdown string to HTML and return it. Resets the per-document
+# scratchpad globals on entry so successive calls don't bleed state.
 
-if length(args) < 2 {
-    panic("usage: omg tools/md2html.omg <input.md> [output.html]")
-}
-
-alloc input := read_file(args[1])
-if input == false {
-    panic("cannot read: " + args[1])
-}
-
-alloc lines := lib.split_lines(input)
-alloc nl := length(lines)
-alloc i := 0
-loop i < nl {
-    alloc line := lines[i]
-    if lib.starts_with(line, "```") {
-        if in_code {
-            out := out + "</code></pre>\n"
-            in_code := false
-        } else {
-            close_block()
-            alloc lang := line[3:length(line)]
-            if length(lang) > 0 {
-                out := out + "<pre><code class=\"language-" + lang + "\">"
+proc convert(input) {
+    out := ""
+    in_code := false
+    in_ul := false
+    in_ol := false
+    in_para := false
+    alloc lines := lib.split_lines(input)
+    alloc nl := length(lines)
+    alloc i := 0
+    loop i < nl {
+        alloc line := lines[i]
+        if lib.starts_with(line, "```") {
+            if in_code {
+                out := out + "</code></pre>\n"
+                in_code := false
             } else {
-                out := out + "<pre><code>"
+                close_block()
+                alloc lang := line[3:length(line)]
+                if length(lang) > 0 {
+                    out := out + "<pre><code class=\"language-" + lang + "\">"
+                } else {
+                    out := out + "<pre><code>"
+                }
+                in_code := true
             }
-            in_code := true
-        }
-    } elif in_code {
-        out := out + html_escape(line) + "\n"
-    } elif lib.starts_with(line, "######") {
-        close_block()
-        out := out + "<h6>" + format_inline(lib.trim(line[6:length(line)])) + "</h6>\n"
-    } elif lib.starts_with(line, "#####") {
-        close_block()
-        out := out + "<h5>" + format_inline(lib.trim(line[5:length(line)])) + "</h5>\n"
-    } elif lib.starts_with(line, "####") {
-        close_block()
-        out := out + "<h4>" + format_inline(lib.trim(line[4:length(line)])) + "</h4>\n"
-    } elif lib.starts_with(line, "###") {
-        close_block()
-        out := out + "<h3>" + format_inline(lib.trim(line[3:length(line)])) + "</h3>\n"
-    } elif lib.starts_with(line, "##") {
-        close_block()
-        out := out + "<h2>" + format_inline(lib.trim(line[2:length(line)])) + "</h2>\n"
-    } elif lib.starts_with(line, "#") {
-        close_block()
-        out := out + "<h1>" + format_inline(lib.trim(line[1:length(line)])) + "</h1>\n"
-    } elif lib.trim(line) == "---" or lib.trim(line) == "***" {
-        close_block()
-        out := out + "<hr>\n"
-    } else {
-        alloc ub := unordered_body(line)
-        alloc ob := false
-        if ub == false {
-            ob := ordered_body(line)
-        }
-        if ub != false {
-            close_para()
-            close_ol()
-            if in_ul == false {
-                out := out + "<ul>\n"
-                in_ul := true
-            }
-            out := out + "<li>" + format_inline(ub) + "</li>\n"
-        } elif ob != false {
-            close_para()
-            close_ul()
-            if in_ol == false {
-                out := out + "<ol>\n"
-                in_ol := true
-            }
-            out := out + "<li>" + format_inline(ob) + "</li>\n"
-        } elif length(lib.trim(line)) == 0 {
+        } elif in_code {
+            out := out + html_escape(line) + "\n"
+        } elif lib.starts_with(line, "######") {
             close_block()
+            out := out + "<h6>" + format_inline(lib.trim(line[6:length(line)])) + "</h6>\n"
+        } elif lib.starts_with(line, "#####") {
+            close_block()
+            out := out + "<h5>" + format_inline(lib.trim(line[5:length(line)])) + "</h5>\n"
+        } elif lib.starts_with(line, "####") {
+            close_block()
+            out := out + "<h4>" + format_inline(lib.trim(line[4:length(line)])) + "</h4>\n"
+        } elif lib.starts_with(line, "###") {
+            close_block()
+            out := out + "<h3>" + format_inline(lib.trim(line[3:length(line)])) + "</h3>\n"
+        } elif lib.starts_with(line, "##") {
+            close_block()
+            out := out + "<h2>" + format_inline(lib.trim(line[2:length(line)])) + "</h2>\n"
+        } elif lib.starts_with(line, "#") {
+            close_block()
+            out := out + "<h1>" + format_inline(lib.trim(line[1:length(line)])) + "</h1>\n"
+        } elif lib.trim(line) == "---" or lib.trim(line) == "***" {
+            close_block()
+            out := out + "<hr>\n"
         } else {
-            if in_para == false {
-                close_ul()
+            alloc ub := unordered_body(line)
+            alloc ob := false
+            if ub == false {
+                ob := ordered_body(line)
+            }
+            if ub != false {
+                close_para()
                 close_ol()
-                out := out + "<p>"
-                in_para := true
+                if in_ul == false {
+                    out := out + "<ul>\n"
+                    in_ul := true
+                }
+                out := out + "<li>" + format_inline(ub) + "</li>\n"
+            } elif ob != false {
+                close_para()
+                close_ul()
+                if in_ol == false {
+                    out := out + "<ol>\n"
+                    in_ol := true
+                }
+                out := out + "<li>" + format_inline(ob) + "</li>\n"
+            } elif length(lib.trim(line)) == 0 {
+                close_block()
             } else {
-                out := out + " "
+                if in_para == false {
+                    close_ul()
+                    close_ol()
+                    out := out + "<p>"
+                    in_para := true
+                } else {
+                    out := out + " "
+                }
+                out := out + format_inline(lib.trim(line))
             }
-            out := out + format_inline(lib.trim(line))
         }
+        i := i + 1
     }
-    i := i + 1
-}
-close_block()
-if in_code {
-    out := out + "</code></pre>\n"
+    close_block()
+    if in_code {
+        out := out + "</code></pre>\n"
+    }
+    return out
 }
 
-if length(args) >= 3 {
-    alloc h := file_open(args[2], "w")
-    file_write(h, out)
-    file_close(h)
-} else {
-    emit out
+# === entry point =========================================================
+#
+# md2html runs as a CLI when invoked directly (the script's filename is
+# the last segment of `args[0]`). When *imported* as a module, args[0] is
+# the importing program's path, so this block stays inert and only the
+# `convert()` proc above is exposed.
+
+proc invoked_as_main() {
+    alloc a0 := args[0]
+    alloc na := length(a0)
+    alloc need := "md2html.omg"
+    alloc nn := length(need)
+    if na < nn {
+        return false
+    }
+    return a0[na - nn:na] == need
+}
+
+if invoked_as_main() {
+    if length(args) < 2 {
+        panic("usage: omg tools/md2html.omg <input.md> [output.html]")
+    }
+    alloc input := read_file(args[1])
+    if input == false {
+        panic("cannot read: " + args[1])
+    }
+    alloc html := convert(input)
+    if length(args) >= 3 {
+        alloc h := file_open(args[2], "w")
+        file_write(h, html)
+        file_close(h)
+    } else {
+        emit html
+    }
 }

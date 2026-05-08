@@ -42,6 +42,9 @@ fn builtin_names() -> &'static [&'static str] {
         "file_write",
         "file_close",
         "file_exists",
+        "is_dir",
+        "read_dir",
+        "make_dir",
         "string_bytes",
         // Numeric / math
         "int",
@@ -511,6 +514,12 @@ impl Compiler {
         }
         self.local_scopes.push(new_scope);
         self.compile_block_node(body)?;
+        // Implicit return for procs that fall off the end. Without the
+        // PushNone, Ret would pop whatever happened to be on top of the
+        // operand stack — including values the *caller* pushed before
+        // the call (e.g. `xs + [void_proc()]` would have `Ret` consume
+        // `xs`).
+        self.emit(Instr::PushNone);
         self.emit(Instr::Ret);
         self.local_scopes.pop();
         let func_code = mem::replace(&mut self.code, saved_code);
