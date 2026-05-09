@@ -44,7 +44,7 @@ jobs:
       # (running on the VM) produces byte-identical output to the Rust
       # frontend when compiling its own source.
       - name: Verify self-hosted fixed point
-        run: ./runtime/target/release/omg --verify-self-hosted bootstrap/compiler.omg
+        run: ./runtime/target/release/omg --verify-self-hosted bootstrap/src/compiler.omg
 
       # Triple-meta regression guard: same as above, but with the OMG
       # compiler running on the OMG-written VM (bootstrap/vm.omg).
