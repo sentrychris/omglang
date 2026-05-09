@@ -1,0 +1,54 @@
+#!/bin/bash
+# Rust-free `omg` driver. Compile and run, run precompiled bytecode,
+# compile-only, or AOT-build to a native ELF.
+#
+# Usage:
+#   omg <file.omg> [args...]               Compile and run
+#   omg <file.omgb> [args...]              Run precompiled bytecode
+#   omg --compile <in.omg> <out.omgb>      Compile to bytecode (no run)
+#   omg --build <in.omg> [<out_binary>]    AOT-build to native ELF
+set -e
+
+DIR=$(dirname "$(readlink -f "$0")")
+
+case "$1" in
+    --compile)
+        shift
+        exec "$DIR/omgc" "$@"
+        ;;
+    --build)
+        shift
+        exec "$DIR/omg-build" "$@"
+        ;;
+    -h|--help|"")
+        cat <<EOF
+usage:
+  omg <file.omg> [args...]            Compile and run
+  omg <file.omgb> [args...]           Run precompiled bytecode
+  omg --compile <in.omg> <out.omgb>   Compile to bytecode (no run)
+  omg --build <in.omg> [<out>]        AOT-build to a native ELF
+EOF
+        exit 0
+        ;;
+esac
+
+FILE=$1
+shift
+case "$FILE" in
+    *.omgb)
+        exec "$DIR/omgvm" "$FILE" "$@"
+        ;;
+    *.omg)
+        WORK=$(mktemp -d)
+        trap "rm -rf $WORK" EXIT
+        "$DIR/omgc" "$FILE" "$WORK/a.omgb"
+        # Note: the hosted program sees args[0] as the .omgb tempfile,
+        # not the original .omg path. Most programs don't care — they
+        # use args[0] for usage strings, where the difference is cosmetic.
+        exec "$DIR/omgvm" "$WORK/a.omgb" "$@"
+        ;;
+    *)
+        echo "unknown file type: $FILE (need .omg or .omgb)" >&2
+        exit 1
+        ;;
+esac
