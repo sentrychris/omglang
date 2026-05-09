@@ -241,9 +241,17 @@ proc repl_install_funcs(chunk_funcs, base) {
 
 proc repl_compile_and_run(source) {
     cc.compile_reset()
+    # Tell the compiler about names already in the VM's globals so
+    # that references to them in this turn compile to LOAD +
+    # CALL_VALUE (the closure path) rather than CALL (direct
+    # function-table lookup). Without this, calling a global that
+    # holds a closure value — e.g. `add5(10)` where
+    # `add5 := make_adder(5)` was evaluated on a prior turn —
+    # fails because the name isn't in the function table.
+    alloc known := vm.vm_global_names()
     alloc compiled := false
     try {
-        compiled := cc.compile_source(source, "<repl>")
+        compiled := cc.compile_source_with_globals(source, "<repl>", known)
     } except err {
         emit err
         return false

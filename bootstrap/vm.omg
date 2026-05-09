@@ -913,6 +913,13 @@ proc vm_seed_global(name, val) {
     vm_globals[name] := val
 }
 
+# REPL-helper: list every name currently in vm_globals. The REPL feeds
+# this back into the compiler as `known_globals` so subsequent turns
+# emit LOAD + CALL_VALUE for closures held in globals (not CALL).
+proc vm_global_names() {
+    return dict_keys(vm_globals)
+}
+
 # === Main =================================================================
 
 # Path-suffix helper used by the script-main gate below. Cheap; saves
@@ -926,10 +933,36 @@ proc vm_path_ends_with(s, suffix) {
     return s[ls - lp:] == suffix
 }
 
-# Script-main dispatch — runs only when args[1] is a `.omgb` input. When
-# this file is imported by another OMG program (e.g. the REPL), args
-# don't match and main is a no-op so the import has no side effects.
-if length(args) >= 2 and vm_path_ends_with(args[1], ".omgb") {
+# Extract the basename of args[0] (the running binary's path). Used by
+# the script-main gate to decide whether *we* are being invoked
+# directly versus being imported as a library.
+proc vm_argv0_basename() {
+    alloc p := args[0]
+    alloc i := length(p) - 1
+    loop i >= 0 {
+        if p[i] == "/" or p[i] == "\\" {
+            return p[i + 1:]
+        }
+        i := i - 1
+    }
+    return p
+}
+
+# Script-main dispatch — runs only when this file is the top-level
+# program. We detect that via args[0] basename: when omgvm is invoked
+# directly (`./omgvm` or `omg bootstrap/vm.omg`), args[0] ends in one
+# of the names below. When this file is imported by another program
+# (e.g. the unified `omg` driver), args[0] is the importer's binary
+# and main is a no-op.
+proc vm_is_main_invocation() {
+    alloc bn := vm_argv0_basename()
+    # `<embedded-vm>` is the args[0] runtime/src/main.rs sets when it
+    # invokes the embedded vm.omgb for `--verify-omg-vm`'s triple-meta
+    # path; recognise it here so the gate doesn't reject that mode.
+    return bn == "omgvm" or bn == "vm.omg" or bn == "vm.omgb" or bn == "<embedded-vm>"
+}
+
+if vm_is_main_invocation() and length(args) >= 2 and vm_path_ends_with(args[1], ".omgb") {
     alloc bc_path := args[1]
     alloc fh := file_open(bc_path, "rb")
     alloc bc_bytes := file_read(fh)
