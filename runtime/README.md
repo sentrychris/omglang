@@ -79,7 +79,7 @@ Run `omg --help` for the full CLI reference.
 | `src/vm/ops_arith.rs`   | Arithmetic / comparison / bitwise / boolean handlers (overflow-checked, floor division). |
 | `src/vm/ops_struct.rs`  | List / dict / index / slice handlers (bounds-checked; Python-style slice clamping). |
 | `src/vm/ops_control.rs` | Calls, returns, jumps, builtins, exceptions; `CallValue` accepts strings *and* closures. |
-| `src/vm/builtins.rs`    | Built-ins: strings (`length`, `chr`, `ascii`, `string_bytes`, `bytes_to_string`), formatting (`hex`, `binary`, `float_bits`, `bits_to_float`), numeric/math (`int`, `float`, `floor`, `ceil`, `round`, `abs`, `sqrt`, `pow`, `log`, `sin`, `cos`, `tan`), collections (`freeze`, `dict_keys`), errors (`panic`, `raise`, `exit_with_error`), file I/O (`read_file`, `file_exists`, `is_dir`, `read_dir`, `make_dir`, `file_open`/`read`/`write`/`close`), reflection (`call_builtin`). |
+| `src/vm/builtins.rs`    | Built-ins: strings (`length`, `chr`, `ascii`, `string_bytes`, `bytes_to_string`), formatting (`hex`, `binary`, `float_bits`, `bits_to_float`), numeric/math (`int`, `float`, `floor`, `ceil`, `round`, `abs`, `sqrt`, `pow`, `log`, `sin`, `cos`, `tan`), collections (`freeze`, `dict_keys`), errors (`panic`, `raise`, `exit_with_error`), file I/O (`read_file`, `file_exists`, `is_dir`, `read_dir`, `make_dir`, `file_open`/`read`/`write`/`close`), process control (`subprocess`, `exit`, `getpid`), reflection (`call_builtin`). |
 | `src/repl.rs`           | In-process REPL with persistent globals + function table.          |
 
 ## Native imports
@@ -168,6 +168,7 @@ deterministic — the self-hosted fixed-point check depends on it.
 | `dict_keys(d)` | List the keys of a dict (insertion order) |
 | `panic(msg)` / `raise(msg)` | Raise a catchable runtime error |
 | `exit_with_error(msg)` | Print to stderr verbatim and exit 1 (uncatchable) |
+| `subprocess(argv)` / `exit(code)` / `getpid()` | Process control (used by the OMG-native `omg`/`omg-build` drivers) |
 | `read_file(path)` / `file_exists(path)` | Read text file / existence check |
 | `is_dir(path)` / `read_dir(path)` / `make_dir(path)` | Directory ops (`mkdir -p`) |
 | `file_open / file_read / file_write / file_close` | Streaming I/O |

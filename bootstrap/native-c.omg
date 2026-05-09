@@ -339,6 +339,12 @@ proc emit_builtin1(c_func) {
     return "    { Value v = stack[--sp]; Value r = " + c_func + "(v); omg_dec(v); stack[sp++] = r; }\n"
 }
 
+# Zero-argument builtin call. Pushes the result directly; no operand
+# popping or refcounting needed.
+proc emit_builtin0(c_func) {
+    return "    stack[sp++] = " + c_func + "();\n"
+}
+
 # Two-argument builtin call. Pops b then a (source order: a came first).
 proc emit_builtin2(c_func) {
     return "    { Value b = stack[--sp]; Value a = stack[--sp]; Value r = " + c_func + "(a, b); omg_dec(a); omg_dec(b); stack[sp++] = r; }\n"
@@ -391,6 +397,11 @@ proc emit_builtin(name, argc) {
     if name == "raise" and argc == 1 { return emit_builtin1("omg_builtin_raise") }
     # exit_with_error: print to stderr verbatim (no kind prefix) + exit 1.
     if name == "exit_with_error" and argc == 1 { return emit_builtin1("omg_builtin_exit_with_error") }
+
+    # Process control (used by the OMG-native `omg`/`omg-build` drivers).
+    if name == "exit"       and argc == 1 { return emit_builtin1("omg_builtin_exit") }
+    if name == "getpid"     and argc == 0 { return emit_builtin0("omg_builtin_getpid") }
+    if name == "subprocess" and argc == 1 { return emit_builtin1("omg_builtin_subprocess") }
 
     # Reflective dispatch (used by the OMG-in-OMG interpreter).
     if name == "call_builtin" and argc == 2 { return emit_builtin2("omg_call_builtin") }

@@ -228,6 +228,10 @@ The full list, grouped by area. Argument counts in parens.
 **Errors**
 `panic(msg)`, `raise(msg)`, `exit_with_error(msg)`
 
+**Process control**
+`subprocess(argv_list)` (run a child, return its exit code),
+`exit(code)`, `getpid()`
+
 **Reflection**
 `call_builtin(name, args_list)` — dispatches to another builtin. Used by
 the OMG-in-OMG interpreter; rarely useful in user code.

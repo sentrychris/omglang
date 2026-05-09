@@ -1,0 +1,105 @@
+;;;omg
+
+# OMG driver — `omg <file>` user-facing entry point. Compiles to a
+# native ELF (bootstrap/native/omg) and dispatches to omgc / omgvm /
+# omg-build via subprocess(). Equivalent surface to the previous bash
+# wrapper, but no shell required.
+#
+# Usage:
+#   omg <file.omg> [args...]            Compile and run
+#   omg <file.omgb> [args...]           Run precompiled bytecode
+#   omg --compile <in.omg> <out.omgb>   Compile to bytecode (no run)
+#   omg --build <in.omg> [<out>]        AOT-build to a native ELF
+
+# Strip the trailing path component to get the directory the binary
+# lives in. We use args[0] (argv[0]) and walk back to the last "/" or
+# "\\". When the binary is invoked without a path component (e.g. via
+# $PATH lookup), `dirname` returns "." so the sibling-binary lookups
+# fall back to the OS PATH search inside execvp.
+proc dirname(path) {
+    alloc i := length(path) - 1
+    loop i >= 0 {
+        if path[i] == "/" or path[i] == "\\" {
+            return path[0:i]
+        }
+        i := i - 1
+    }
+    return "."
+}
+
+proc bin_dir() {
+    return dirname(args[0])
+}
+
+# True iff `s` ends with `suffix`. No regex; we just compare the tail
+# slice.
+proc ends_with(s, suffix) {
+    alloc ls := length(s)
+    alloc lp := length(suffix)
+    if lp > ls {
+        return false
+    }
+    return s[ls - lp:] == suffix
+}
+
+# Drop args[0..keep] and return the remaining tail. Used to forward
+# the user's args to the inner subprocess.
+proc args_tail(keep) {
+    return args[keep:]
+}
+
+proc usage() {
+    emit "usage:"
+    emit "  omg <file.omg> [args...]            Compile and run"
+    emit "  omg <file.omgb> [args...]           Run precompiled bytecode"
+    emit "  omg --compile <in.omg> <out.omgb>   Compile to bytecode (no run)"
+    emit "  omg --build <in.omg> [<out>]        AOT-build to a native ELF"
+}
+
+# Compile-and-run path: omgc writes a tempfile, omgvm reads it. We use
+# /tmp/omg-<pid>.omgb so concurrent runs don't collide.
+proc run_omg_source(file, forward_args) {
+    alloc dir := bin_dir()
+    alloc tmp := "/tmp/omg-" + getpid() + ".omgb"
+    alloc rc := subprocess([dir + "/omgc", file, tmp])
+    if rc != 0 {
+        exit(rc)
+    }
+    alloc cmd := [dir + "/omgvm", tmp] + forward_args
+    alloc rc2 := subprocess(cmd)
+    exit(rc2)
+}
+
+# Already bytecode — skip omgc and go straight to omgvm.
+proc run_omgb(file, forward_args) {
+    alloc dir := bin_dir()
+    alloc cmd := [dir + "/omgvm", file] + forward_args
+    exit(subprocess(cmd))
+}
+
+if length(args) < 2 {
+    usage()
+    exit(1)
+}
+
+alloc cmd := args[1]
+
+if cmd == "-h" or cmd == "--help" {
+    usage()
+} elif cmd == "--compile" {
+    if length(args) < 4 {
+        emit "usage: omg --compile <in.omg> <out.omgb>"
+        exit(1)
+    }
+    exit(subprocess([bin_dir() + "/omgc", args[2], args[3]]))
+} elif cmd == "--build" {
+    alloc build_args := [bin_dir() + "/omg-build"] + args_tail(2)
+    exit(subprocess(build_args))
+} elif ends_with(cmd, ".omg") {
+    run_omg_source(cmd, args_tail(2))
+} elif ends_with(cmd, ".omgb") {
+    run_omgb(cmd, args_tail(2))
+} else {
+    emit "unknown file type: " + cmd + " (need .omg or .omgb)"
+    exit(1)
+}
