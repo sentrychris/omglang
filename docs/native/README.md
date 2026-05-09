@@ -15,42 +15,43 @@ into standalone ELF binaries with no Rust runtime needed.
 | ...add a new builtin, opcode, or syntax form       | [05-extending.md](05-extending.md) |
 | ...understand how `omg_rt.h` works                 | [06-runtime.md](06-runtime.md) |
 | ...debug something that's gone wrong               | [07-debugging.md](07-debugging.md) |
+| ...ship a Rust-free dist of just the native bits   | [packaging.md](packaging.md) |
 
 ## TL;DR
 
 ```sh
 # One-time bootstrap (uses the Rust runtime to build the native toolchain)
 cd runtime && cargo build --release && cd ..
-bootstrap/build-native-toolchain.sh
+bootstrap/build.sh
 
 # After that: no Rust required
-./bootstrap/native/omg foo.omg              # compile and run
-./bootstrap/native/omg --build foo.omg foo  # AOT to a small ELF (~30 KB)
+./bootstrap/bin/omg foo.omg              # compile and run
+./bootstrap/bin/omg --build foo.omg foo  # AOT to a small ELF (~30 KB)
 ./foo
 ```
 
-## What's in `bootstrap/native/`
+## What's in `bootstrap/bin/`
 
-| Binary    | Role                                       | Size    |
-| --------- | ------------------------------------------ | ------- |
-| `omg`     | User-facing driver (run / compile / build) | 39 KB   |
-| `omg-build` | One-shot AOT: `.omg` → ELF               | 31 KB   |
-| `omgc`    | Compiler: `.omg` → `.omgb` bytecode        | 432 KB  |
-| `omgcc`   | Transpiler: `.omgb` → `.c`                 | 295 KB  |
-| `omgvm`   | Bytecode interpreter                       | 197 KB  |
-| `omg_rt.h`| C runtime header (inlined into output)     | 65 KB   |
+| Binary    | Role                                          |
+| --------- | --------------------------------------------- |
+| `omg`     | Unified driver: run / compile / build / REPL  |
+| `omgc`    | Compiler: `.omg` → `.omgb` bytecode           |
+| `omgcc`   | Transpiler: `.omgb` → `.c`                    |
+| `omgvm`   | Bytecode interpreter (executes `.omgb`)       |
+| `omg_rt.h`| C runtime header (inlined into AOT output)    |
 
-All five binaries are native ELFs compiled from OMG source. The drivers
-(`omg`, `omg-build`) dispatch to the others via the `subprocess()`
-builtin. No shell scripts in the toolchain.
+All four binaries are native ELFs compiled from OMG source. `omg`
+imports `compiler.omg`, `vm.omg`, and `native-c.omg` directly so
+compile, run, and REPL happen in-process — the only external command
+invoked is `cc` for the final ELF link in `--build`.
 
 ## Conventions in these docs
 
 | Shorthand                          | Means                                         |
 | ---------------------------------- | --------------------------------------------- |
-| `omg <file>`                       | `bootstrap/native/omg <file>` (native driver) |
+| `omg <file>`                       | `bootstrap/bin/omg <file>` (native driver) |
 | `runtime/target/release/omg <…>`   | the Rust runtime, spelled out in full         |
 
 Some commands (notably `--disasm` and `--verify-omg-vm`) only exist on the
-Rust runtime, so they're always written out in full. Drop `bootstrap/native/`
+Rust runtime, so they're always written out in full. Drop `bootstrap/bin/`
 on your `$PATH` if you'd like to use the bare `omg` form yourself.

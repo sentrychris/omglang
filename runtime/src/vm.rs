@@ -431,7 +431,7 @@ fn execute(
                     // a local can shadow a global of the same name.
                     //
                     // Same-scope re-declaration is rejected at *compile
-                    // time* (see compiler.rs / bootstrap/compiler.omg);
+                    // time* (see compiler.rs / bootstrap/src/compiler.omg);
                     // at runtime an `alloc` inside a loop body legitimately
                     // re-runs every iteration and must just re-bind.
                     if let Some(v) = stack.pop() {

@@ -1,6 +1,6 @@
 # 06 · The C runtime (`omg_rt.h`)
 
-`bootstrap/omg_rt.h` is the only piece of non-OMG, non-Rust code that ships
+`bootstrap/src/omg_rt.h` is the only piece of non-OMG, non-Rust code that ships
 with native binaries. ~1700 lines of C99, inlined into every AOT output.
 
 This doc covers what's in it and why.
@@ -272,8 +272,8 @@ where decimal would be unwieldy, falls back to `%.17g` scientific notation.
 ## How big is everything?
 
 ```
-$ wc -l bootstrap/omg_rt.h
-1697 bootstrap/omg_rt.h
+$ wc -l bootstrap/src/omg_rt.h
+1697 bootstrap/src/omg_rt.h
 ```
 
 | Program                  | Source size | AOT binary |
@@ -294,5 +294,5 @@ itself — the runtime is < 5%.
 - [05-extending.md](05-extending.md) — practical guide to adding new opcodes
   and builtins
 - [07-debugging.md](07-debugging.md) — diagnosing problems
-- The source: [bootstrap/omg_rt.h](../../bootstrap/omg_rt.h) is well-commented
+- The source: [bootstrap/src/omg_rt.h](../../bootstrap/src/omg_rt.h) is well-commented
   and worth reading directly.

@@ -44,7 +44,7 @@ disasm is usually the first place to look.
 
 ```sh
 omg --compile foo.omg foo.omgb
-bootstrap/native/omgcc foo.omgb /tmp/foo.c     # or runtime/target/release/omg bootstrap/native-c.omg foo.omgb /tmp/foo.c
+bootstrap/bin/omgcc foo.omgb /tmp/foo.c     # or runtime/target/release/omg bootstrap/src/native-c.omg foo.omgb /tmp/foo.c
 less /tmp/foo.c
 ```
 
@@ -124,7 +124,7 @@ To get cc's stderr:
 
 ```sh
 omg --compile foo.omg foo.omgb
-bootstrap/native/omgcc foo.omgb /tmp/foo.c
+bootstrap/bin/omgcc foo.omgb /tmp/foo.c
 cc -O2 /tmp/foo.c -o /tmp/foo -lm   # no -w; see all warnings
 ```
 
@@ -230,7 +230,7 @@ Check that all your tail-call args are passed inline (a0..a7 slots).
 ### Fixed-point check broke
 
 ```
-$ omg --verify-omg-vm bootstrap/compiler.omg
+$ omg --verify-omg-vm bootstrap/src/compiler.omg
 DIFF: Rust output ≠ OMG-on-OMG-VM output
 ```
 
@@ -238,8 +238,8 @@ Means you changed the Rust toolchain without updating the OMG side
 (or vice versa). Use `diff` on the two intermediate `.omgb` files:
 
 ```sh
-runtime/target/release/omg --compile bootstrap/compiler.omg /tmp/rust.omgb
-runtime/target/release/omg --self-hosted-compile bootstrap/compiler.omg /tmp/omg.omgb
+runtime/target/release/omg --compile bootstrap/src/compiler.omg /tmp/rust.omgb
+runtime/target/release/omg --self-hosted-compile bootstrap/src/compiler.omg /tmp/omg.omgb
 cmp /tmp/rust.omgb /tmp/omg.omgb && echo "OK" || diff <(xxd /tmp/rust.omgb) <(xxd /tmp/omg.omgb) | head
 ```
 

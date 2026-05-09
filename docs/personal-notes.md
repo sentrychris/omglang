@@ -1,10 +1,10 @@
-## What is `bootstrap/native/omg`?
+## What is `bootstrap/bin/omg`?
 
 It's a regular Linux executable like `cat` or `ls`. The OS knows how to run it. It contains x86-64 machine code and is dynamically linked against libc.
 
-## What's inside `bootstrap/native/omg`?
+## What's inside `bootstrap/bin/omg`?
 
-1. A small C runtime (`bootstrap/omg_rt.h`) which provides things like:
+1. A small C runtime (`bootstrap/src/omg_rt.h`) which provides things like:
   - A `Value` type to hold int / string / list / dict / closure etc.
   - Refcounted lists, dicts and closures
   - `omg_add`, `omg_emit`, `omg_subprocess` etc.

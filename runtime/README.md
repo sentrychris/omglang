@@ -3,9 +3,9 @@
 The **OMG Runtime** is the execution engine for the OMG language.
 
 OMG is **genuinely self-hosting**: the OMG compiler is written in OMG itself
-([`bootstrap/compiler.omg`](../bootstrap/compiler.omg)), and reproduces its
+([`bootstrap/src/compiler.omg`](../bootstrap/src/compiler.omg)), and reproduces its
 own bootstrap byte-for-byte (verified with `omg --verify-self-hosted
-bootstrap/compiler.omg`). The Rust crate is the substrate: it hosts the VM,
+bootstrap/src/compiler.omg`). The Rust crate is the substrate: it hosts the VM,
 the built-ins, and a stage-0 frontend used to bootstrap the OMG-in-OMG
 compiler at `cargo build` time.
 
@@ -15,7 +15,7 @@ Python toolchain in `reference/` is retained for reference only.
 ```text
 .omg source ──► lexer ──► parser ──► AST ──► compiler ──► bytecode ──► stack VM
    │                                            │             ▲
-   └─ stage-1: bootstrap/compiler.omgb (default)│             │
+   └─ stage-1: bootstrap/src/compiler.omgb (default)│             │
    └─ stage-0: Rust frontend (faster; via --rust)─────────────┘
                                                               │
                                           (alternative: transpile to C)
@@ -52,7 +52,7 @@ cargo build --release --manifest-path runtime/Cargo.toml
 ./runtime/target/release/omg --self-hosted-compile examples/prime_sieve.omg prime.omgb
 
 # Fixed-point check: Rust and OMG-in-OMG compilers produce identical bytes
-./runtime/target/release/omg --verify-self-hosted bootstrap/compiler.omg
+./runtime/target/release/omg --verify-self-hosted bootstrap/src/compiler.omg
 
 # Triple-meta fixed-point check: Rust frontend vs (OMG compiler running
 # on the OMG VM). Proves both stage-1 components behave like their Rust
@@ -101,7 +101,7 @@ The compiler resolves imports recursively at compile time:
    and `alloc` bindings) and assigns it to the alias.
 4. Already-compiled modules are cached by canonical path, so importing the
    same module from two places runs its top-level code only once. Both the
-   Rust compiler and `bootstrap/compiler.omg` apply the same caching, which
+   Rust compiler and `bootstrap/src/compiler.omg` apply the same caching, which
    is required for the byte-identical fixed-point check.
 5. Cyclic imports raise `ModuleImportError`.
 
@@ -176,7 +176,7 @@ deterministic — the self-hosted fixed-point check depends on it.
 | `floor / ceil / round` | Round float to int (banker's rounding for `round`) |
 | `abs / sqrt / pow / log` | Magnitude, root, power, natural log |
 | `sin / cos / tan` | Trig in radians; return float |
-| `float_bits(s)` / `bits_to_float(i)` | IEEE-754 bits ↔ float; used by `bootstrap/{compiler,vm}.omg` to read/write float literals |
+| `float_bits(s)` / `bits_to_float(i)` | IEEE-754 bits ↔ float; used by `bootstrap/src/{compiler,vm}.omg` to read/write float literals |
 | `call_builtin(name, args)` | Reflection / dynamic dispatch |
 
 The runtime also injects three special globals into every program:
@@ -208,7 +208,7 @@ remain callable later.
 
 The Rust runtime is one of two execution paths. There's also a
 **native-compilation path** that turns OMG source into standalone ELF
-binaries with no Rust runtime needed: `bootstrap/native-c.omg`
+binaries with no Rust runtime needed: `bootstrap/src/native-c.omg`
 transpiles bytecode to C, which `cc -O2` compiles to a small native
 binary. Both paths share this runtime's compiler and bytecode format —
 they differ only in the backend that executes the bytecode. See

@@ -25,8 +25,8 @@ After any change, run:
 
 ```sh
 cd runtime && cargo build --release && cd ..
-runtime/target/release/omg --verify-omg-vm bootstrap/compiler.omg
-bootstrap/build-native-toolchain.sh
+runtime/target/release/omg --verify-omg-vm bootstrap/src/compiler.omg
+bootstrap/build.sh
 ```
 
 If the fixed-point check passes and the toolchain rebuilds, you're aligned.
@@ -64,7 +64,7 @@ This tells the compiler that calls to `square(...)` should compile to
 
 ### Step C — OMG compiler allowlist
 
-Add to the `cc_builtins` list in [bootstrap/compiler.omg](../../bootstrap/compiler.omg)
+Add to the `cc_builtins` list in [bootstrap/src/compiler.omg](../../bootstrap/src/compiler.omg)
 (don't forget the comma if it's not the last element):
 
 ```omg
@@ -77,7 +77,7 @@ alloc cc_builtins := [
 
 ### Step D — C runtime
 
-Add the implementation to [bootstrap/omg_rt.h](../../bootstrap/omg_rt.h):
+Add the implementation to [bootstrap/src/omg_rt.h](../../bootstrap/src/omg_rt.h):
 
 ```c
 static Value omg_builtin_square(Value v) {
@@ -96,7 +96,7 @@ if (strcmp(n, "square") == 0)         return omg_builtin_square(a[0]);
 
 ### Step E — Native-c.omg dispatch
 
-Add a case to `emit_builtin` in [bootstrap/native-c.omg](../../bootstrap/native-c.omg):
+Add a case to `emit_builtin` in [bootstrap/src/native-c.omg](../../bootstrap/src/native-c.omg):
 
 ```omg
 if name == "square" and argc == 1 { return emit_builtin1("omg_builtin_square") }
@@ -106,13 +106,13 @@ if name == "square" and argc == 1 { return emit_builtin1("omg_builtin_square") }
 
 ```sh
 cd runtime && cargo build --release && cd ..
-runtime/target/release/omg --verify-omg-vm bootstrap/compiler.omg
-bootstrap/build-native-toolchain.sh
+runtime/target/release/omg --verify-omg-vm bootstrap/src/compiler.omg
+bootstrap/build.sh
 
 echo ';;;omg
 emit square(7)' > /tmp/sq.omg
-bootstrap/native/omg /tmp/sq.omg          # 49
-bootstrap/native/omg --build /tmp/sq.omg /tmp/sq && /tmp/sq    # 49
+bootstrap/bin/omg /tmp/sq.omg          # 49
+bootstrap/bin/omg --build /tmp/sq.omg /tmp/sq && /tmp/sq    # 49
 ```
 
 Both paths should print `49`.
@@ -175,13 +175,13 @@ in [compiler.rs](../../runtime/src/compiler.rs). If it's only used by
 
 In each of these files, add `alloc OP_DUP := 56`:
 
-- [bootstrap/compiler.omg](../../bootstrap/compiler.omg)
-- [bootstrap/vm.omg](../../bootstrap/vm.omg)
-- [bootstrap/native-c.omg](../../bootstrap/native-c.omg)
+- [bootstrap/src/compiler.omg](../../bootstrap/src/compiler.omg)
+- [bootstrap/src/vm.omg](../../bootstrap/src/vm.omg)
+- [bootstrap/src/native-c.omg](../../bootstrap/src/native-c.omg)
 
 ### Step E — OMG VM dispatch
 
-In [vm.omg](../../bootstrap/vm.omg)'s `step_inner` switch:
+In [vm.omg](../../bootstrap/src/vm.omg)'s `step_inner` switch:
 
 ```omg
 if op == "DUP" {
@@ -197,7 +197,7 @@ both the OMG compiler and OMG VM share decoding logic in `compiler.omg`.)
 
 ### Step F — OMG compiler decoder
 
-In [compiler.omg](../../bootstrap/compiler.omg)'s `decode_one`:
+In [compiler.omg](../../bootstrap/src/compiler.omg)'s `decode_one`:
 
 ```omg
 if op == OP_DUP { return tagged0("DUP", cursor) }
@@ -207,7 +207,7 @@ if op == OP_DUP { return tagged0("DUP", cursor) }
 
 ### Step G — Native-c emit handler
 
-In [native-c.omg](../../bootstrap/native-c.omg)'s `emit_c_for_instr`:
+In [native-c.omg](../../bootstrap/src/native-c.omg)'s `emit_c_for_instr`:
 
 ```omg
 if op == "DUP" {
@@ -222,8 +222,8 @@ slots own a reference.
 
 ```sh
 cd runtime && cargo build --release && cd ..
-runtime/target/release/omg --verify-omg-vm bootstrap/compiler.omg
-bootstrap/build-native-toolchain.sh
+runtime/target/release/omg --verify-omg-vm bootstrap/src/compiler.omg
+bootstrap/build.sh
 ```
 
 The fixed-point check is your safety net: if the OMG-side decoder doesn't
@@ -242,7 +242,7 @@ Suppose we want to add `unless cond { ... }` — the inverse of `if`.
 If `unless` is a new keyword, register it as such in:
 
 - [runtime/src/lexer.rs](../../runtime/src/lexer.rs) — Rust lexer
-- The token-class lookup in [bootstrap/compiler.omg](../../bootstrap/compiler.omg)
+- The token-class lookup in [bootstrap/src/compiler.omg](../../bootstrap/src/compiler.omg)
 
 If it's a soft keyword (just an identifier with special meaning to the
 parser), you can skip this — but soft keywords are usually a mistake.
@@ -253,7 +253,7 @@ Add an `Unless(cond, body)` AST node. In each parser, recognize the
 keyword and produce that node.
 
 - Rust: [runtime/src/parser.rs](../../runtime/src/parser.rs)
-- OMG: [bootstrap/compiler.omg](../../bootstrap/compiler.omg)
+- OMG: [bootstrap/src/compiler.omg](../../bootstrap/src/compiler.omg)
 
 ### Step C — Compiler
 
@@ -281,7 +281,7 @@ Lockstep this in both `compiler.rs` and `compiler.omg`.
 
 ### Step D — Verify
 
-The fixed-point check covers it: compile `bootstrap/compiler.omg` (which
+The fixed-point check covers it: compile `bootstrap/src/compiler.omg` (which
 hopefully now uses `unless` for some test) three ways and ensure they
 match.
 
@@ -297,7 +297,7 @@ fixed-point check is `--verify-omg-vm` — it runs `compiler.omg` *on*
 
 ### Bytecode versioning
 
-`bootstrap/compiler.omg` has `BC_VERSION := 257` (and matching in `bytecode.rs`).
+`bootstrap/src/compiler.omg` has `BC_VERSION := 257` (and matching in `bytecode.rs`).
 If you change the bytecode format incompatibly, bump this. Otherwise old
 `.omgb` files will silently break.
 

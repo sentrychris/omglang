@@ -3,11 +3,11 @@
 //! Bootstraps two stage-1 OMG-language artifacts into bytecode the runtime
 //! ships embedded:
 //!
-//! * `bootstrap/compiler.omg` → `bootstrap/compiler.omgb` — the OMG-written
-//!   OMG compiler (used by the default `omg <script>` execution path and
-//!   by `--self-hosted-compile` / `--verify-self-hosted`).
-//! * `bootstrap/vm.omg` → `bootstrap/vm.omgb` — the OMG-written OMG VM
-//!   (used by `--verify-omg-vm` for the triple-meta fixed-point check).
+//! * `bootstrap/src/compiler.omg` → `bootstrap/src/compiler.omgb` — the
+//!   OMG-written OMG compiler (used by the default `omg <script>` execution
+//!   path and by `--self-hosted-compile` / `--verify-self-hosted`).
+//! * `bootstrap/src/vm.omg` → `bootstrap/src/vm.omgb` — the OMG-written OMG
+//!   VM (used by `--verify-omg-vm` for the triple-meta fixed-point check).
 //!
 //! Both are compiled by the runtime's own lexer/parser/compiler — no
 //! Python, no external tools. The Rust frontend is the "stage-0" that
@@ -45,8 +45,8 @@ mod bytecode;
 mod compiler;
 
 fn main() {
-    println!("cargo:rerun-if-changed=bootstrap/compiler.omg");
-    println!("cargo:rerun-if-changed=bootstrap/vm.omg");
+    println!("cargo:rerun-if-changed=bootstrap/src/compiler.omg");
+    println!("cargo:rerun-if-changed=bootstrap/src/vm.omg");
 
     let manifest_dir = env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR");
     let project_root = PathBuf::from(&manifest_dir)
@@ -54,8 +54,8 @@ fn main() {
         .expect("project root")
         .to_path_buf();
 
-    bootstrap_one(&project_root, "bootstrap/compiler.omg", "bootstrap/compiler.omgb");
-    bootstrap_one(&project_root, "bootstrap/vm.omg", "bootstrap/vm.omgb");
+    bootstrap_one(&project_root, "bootstrap/src/compiler.omg", "bootstrap/src/compiler.omgb");
+    bootstrap_one(&project_root, "bootstrap/src/vm.omg", "bootstrap/src/vm.omgb");
 }
 
 fn bootstrap_one(project_root: &PathBuf, src_rel: &str, out_rel: &str) {

@@ -649,22 +649,28 @@ Variables, functions, and imports persist across lines until you `quit`.
 
 OMG can also be compiled to standalone native ELF binaries — no Rust
 required at runtime. The OMG-to-C transpiler at
-[`bootstrap/native-c.omg`](bootstrap/native-c.omg) emits self-contained
+[`bootstrap/src/native-c.omg`](bootstrap/src/native-c.omg) emits self-contained
 C, which `cc -O2` turns into a small (~30 KB) executable.
 
 ```sh
 # One-time bootstrap (uses the Rust runtime to build the native toolchain)
 cargo build --release --manifest-path runtime/Cargo.toml
-bootstrap/build-native-toolchain.sh
+bootstrap/build.sh
 
 # After that: no Rust required to compile or run OMG
-bootstrap/native/omg foo.omg              # compile and run
-bootstrap/native/omg --build foo.omg foo  # AOT to a native ELF
+bootstrap/bin/omg foo.omg              # compile and run
+bootstrap/bin/omg --build foo.omg foo  # AOT to a native ELF
 ./foo
 ```
 
 The full guide — architecture, language tour, pipeline, extension guide,
 runtime internals, debugging — lives in [`docs/native/`](docs/native/).
+
+To produce a slimmed-down, Rust-free distribution of just the native
+toolchain (matching the layout of the standalone
+[`omglang-native`](https://github.com/sentrychris/omglang-native)
+companion repo), run [`bootstrap/package.sh`](bootstrap/package.sh).
+See [`docs/native/packaging.md`](docs/native/packaging.md).
 
 ---
 
@@ -715,15 +721,18 @@ highlighting and the OMG file icon. Start typing `proc`, `loop`,
 omglang/
 ├── runtime/         the Rust implementation: lexer, parser, compiler, VM, REPL
 ├── bootstrap/
-│   ├── compiler.omg   the OMG compiler, written in OMG
-│   ├── compiler.omgb  its compiled bytecode (re-built on `cargo build`)
-│   ├── vm.omg         the OMG-in-OMG VM (used for fixed-point verification)
-│   ├── native-c.omg   OMG-to-C transpiler (used by the native build path)
-│   ├── omg.omg        user-facing driver (run / compile / build), in OMG
-│   ├── omg-build.omg  one-shot AOT driver, in OMG
-│   ├── omg_rt.h       C runtime header inlined into native binaries
-│   ├── native/        Rust-free toolchain (5 native ELFs)
-│   └── build-native-toolchain.sh   builds bootstrap/native/
+│   ├── src/         OMG sources for the self-hosted toolchain + C runtime header
+│   │   ├── compiler.omg   the OMG compiler, written in OMG
+│   │   ├── compiler.omgb  its compiled bytecode (re-built on `cargo build`)
+│   │   ├── vm.omg         the OMG-in-OMG VM (used for fixed-point verification)
+│   │   ├── native-c.omg   OMG-to-C transpiler (used by the native build path)
+│   │   ├── omg.omg        user-facing driver (run / compile / build), in OMG
+│   │   ├── omg-build.omg  legacy one-shot AOT driver, superseded by `omg --build`
+│   │   ├── repl.omg       standalone REPL implementation
+│   │   └── omg_rt.h       C runtime header inlined into native binaries
+│   ├── bin/         Rust-free toolchain (4 native ELFs + omg_rt.h)
+│   ├── build.sh     builds bootstrap/bin/ from bootstrap/src/
+│   └── package.sh   spins out a slim native-only distribution into dist/
 ├── examples/        small standalone programs
 ├── tools/           command-line utilities written in OMG (wc, grep, sort, etc.)
 ├── reference/       the legacy Python implementation + a tree-walk OMG-in-OMG interpreter
@@ -746,7 +755,7 @@ Some interesting starting points:
 ## A small piece of trivia
 
 OMG's compiler is itself written in OMG. The file
-[`bootstrap/compiler.omg`](bootstrap/compiler.omg) reads OMG source
+[`bootstrap/src/compiler.omg`](bootstrap/src/compiler.omg) reads OMG source
 code and produces the bytecode the runtime executes, which is exactly
 what the Rust frontend in `runtime/` does.
 
@@ -764,7 +773,7 @@ To verify both compilers agree byte-for-byte on the compiler's own
 source — the fixed-point check — run:
 
 ```sh
-omg --verify-self-hosted bootstrap/compiler.omg
+omg --verify-self-hosted bootstrap/src/compiler.omg
 ```
 
 The runtime compiles `compiler.omg` two different ways, once with the
@@ -772,12 +781,12 @@ Rust frontend, once with the OMG-written compiler running on the VM,
 and confirms the two byte streams are identical.
 
 There's a stronger version too. The runtime ships an *OMG-written VM*
-at [`bootstrap/vm.omg`](bootstrap/vm.omg) that interprets `.omgb`
+at [`bootstrap/src/vm.omg`](bootstrap/src/vm.omg) that interprets `.omgb`
 bytecode. With it, you can run the OMG compiler *on the OMG VM* — three
 levels of meta — and ask whether *that* still produces the same bytes:
 
 ```sh
-omg --verify-omg-vm bootstrap/compiler.omg
+omg --verify-omg-vm bootstrap/src/compiler.omg
 ```
 
 If it passes, every act of language-level interpretation in the chain

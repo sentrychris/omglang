@@ -13,12 +13,12 @@ You'll be running and compiling OMG programs in five minutes.
 # Build the Rust runtime (used once to seed the native toolchain)
 cd runtime && cargo build --release && cd ..
 
-# Build the OMG-native toolchain (omgc, omgcc, omgvm) into bootstrap/native/
-bootstrap/build-native-toolchain.sh
+# Build the OMG-native toolchain (omgc, omgcc, omgvm) into bootstrap/bin/
+bootstrap/build.sh
 ```
 
 You'll see four steps print: bootstrap source → bytecode → C → ELF. Takes
-~10 seconds. After this, `bootstrap/native/` has everything you need.
+~10 seconds. After this, `bootstrap/bin/` has everything you need.
 
 ## Hello world
 
@@ -28,7 +28,7 @@ cat > hello.omg <<'EOF'
 emit "hello, world"
 EOF
 
-bootstrap/native/omg hello.omg
+bootstrap/bin/omg hello.omg
 # → hello, world
 ```
 
@@ -44,7 +44,7 @@ omg --build foo.omg foo   # AOT-compile to a standalone ELF binary
 ./foo                     # Run the ELF directly
 ```
 
-(`omg` here is `bootstrap/native/omg`. See [README.md](README.md#conventions-in-these-docs).)
+(`omg` here is `bootstrap/bin/omg`. See [README.md](README.md#conventions-in-these-docs).)
 
 | Mode      | What happens                              | Output         | When to use            |
 | --------- | ----------------------------------------- | -------------- | ---------------------- |
@@ -102,7 +102,7 @@ omg --compile foo.omg foo.omgb
 runtime/target/release/omg --disasm foo.omgb
 
 # Rebuild the native toolchain (after you've changed compiler.omg etc.)
-bootstrap/build-native-toolchain.sh
+bootstrap/build.sh
 ```
 
 ## Where to go next

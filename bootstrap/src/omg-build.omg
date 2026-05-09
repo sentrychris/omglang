@@ -1,9 +1,9 @@
 ;;;omg
 
 # omg-build — one-shot AOT: .omg → native ELF.
-# Compiles to a native ELF (bootstrap/native/omg-build); dispatches to
-# omgc + omgcc + cc via subprocess(). Replaces the previous bash
-# wrapper.
+# Legacy standalone driver, superseded by `omg --build` in omg.omg.
+# Compiles to a native ELF; dispatches to omgc + omgcc + cc via
+# subprocess(). Replaces the previous bash wrapper.
 #
 # Usage:
 #   omg-build <input.omg> [<output_binary>]

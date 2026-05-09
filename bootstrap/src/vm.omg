@@ -1,11 +1,11 @@
 ;;;omg
 
-# bootstrap/vm.omg — execute `.omgb` bytecode files using a VM written in OMG.
+# bootstrap/src/vm.omg — execute `.omgb` bytecode files using a VM written in OMG.
 #
 # This is the third leg of the self-hosting story:
 #
 #   1. The Rust runtime that ships with the project (the substrate VM).
-#   2. The OMG-written compiler at `bootstrap/compiler.omg` that produces
+#   2. The OMG-written compiler at `bootstrap/src/compiler.omg` that produces
 #      byte-identical `.omgb` output to the Rust frontend.
 #   3. THIS FILE — an OMG-written *executor* for the bytecode the OMG
 #      compiler emits. Together with #2 it means every act of language-
@@ -15,10 +15,10 @@
 # Used by:
 #   * `omg --verify-omg-vm <file>` (the triple-meta fixed-point check)
 #   * Direct invocation:
-#         omg --rust bootstrap/vm.omg ./hello.omgb
+#         omg --rust bootstrap/src/vm.omg ./hello.omgb
 #
-# `cargo build` compiles this source to `bootstrap/vm.omgb` and embeds
-# the bytecode in the runtime binary alongside `bootstrap/compiler.omgb`.
+# `cargo build` compiles this source to `bootstrap/src/vm.omgb` and embeds
+# the bytecode in the runtime binary alongside `bootstrap/src/compiler.omgb`.
 #
 # The Rust frontend is recommended for compiling this file directly:
 # the OMG-on-VM compile path would otherwise run on top of this VM,
@@ -26,7 +26,7 @@
 
 # === Opcode constants =====================================================
 #
-# Mirror of `runtime/src/bytecode.rs` and `bootstrap/compiler.omg`'s
+# Mirror of `runtime/src/bytecode.rs` and `bootstrap/src/compiler.omg`'s
 # OP_* table.  Anything we emit has to be parseable here.
 
 alloc OP_PUSH_INT       := 0
@@ -950,7 +950,7 @@ proc vm_argv0_basename() {
 
 # Script-main dispatch — runs only when this file is the top-level
 # program. We detect that via args[0] basename: when omgvm is invoked
-# directly (`./omgvm` or `omg bootstrap/vm.omg`), args[0] ends in one
+# directly (`./omgvm` or `omg bootstrap/src/vm.omg`), args[0] ends in one
 # of the names below. When this file is imported by another program
 # (e.g. the unified `omg` driver), args[0] is the importer's binary
 # and main is a no-op.

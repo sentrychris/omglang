@@ -42,9 +42,9 @@ cd "$REPO_ROOT"
 # === Triple-meta fixed-point check ====================================
 section "Parity: triple-meta fixed-point"
 
-# Compile bootstrap/compiler.omg via three paths and confirm the bytes
+# Compile bootstrap/src/compiler.omg via three paths and confirm the bytes
 # match. This is the load-bearing self-hosting check.
-fp_out=$("$OMG_RUST" --verify-omg-vm bootstrap/compiler.omg 2>&1)
+fp_out=$("$OMG_RUST" --verify-omg-vm bootstrap/src/compiler.omg 2>&1)
 if echo "$fp_out" | grep -q "OMG-on-OMG-VM output matches Rust output"; then
     pass "compiler.omg: Rust frontend == OMG-on-Rust-VM == OMG-on-OMG-VM"
 else
@@ -115,7 +115,7 @@ section "Parity: native toolchain self-rebuild"
 # The toolchain should be able to rebuild itself with no Rust runtime
 # involved. We trigger a fresh build and check the resulting binaries
 # all run.
-build_out=$("$REPO_ROOT/bootstrap/build-native-toolchain.sh" 2>&1)
+build_out=$("$REPO_ROOT/bootstrap/build.sh" 2>&1)
 if echo "$build_out" | grep -q "Self-rebuild from existing native toolchain"; then
     pass "build script chose self-rebuild path"
 else

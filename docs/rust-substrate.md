@@ -6,7 +6,7 @@ to "what's the substrate":
 1. **The Rust VM** — `runtime/src/vm.rs`. The default. Interprets bytecode
    directly, fast and well-tested.
 2. **A native ELF binary** — produced by transpiling bytecode to C via
-   `bootstrap/native-c.omg` and compiling with `cc -O2`. No VM at runtime;
+   `bootstrap/src/native-c.omg` and compiling with `cc -O2`. No VM at runtime;
    the OS and CPU host the resulting machine code directly.
 
 ```txt

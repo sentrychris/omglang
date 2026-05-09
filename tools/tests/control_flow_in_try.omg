@@ -7,7 +7,7 @@
 # unwinds to the dead handler.
 
 # Case 1: `return true` inside `try` — the original symptom that
-# surfaced when bootstrap/native-c.omg called this kind of helper
+# surfaced when bootstrap/src/native-c.omg called this kind of helper
 # in a loop.
 proc has_key(d, key) {
     try {

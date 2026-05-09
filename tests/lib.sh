@@ -19,10 +19,10 @@ FAILED_TESTS=${FAILED_TESTS:-}
 # any binary via $OMG_NATIVE / $OMG_RUST / $OMGC etc.
 TESTS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$TESTS_DIR/.." && pwd)"
-OMG_NATIVE="$REPO_ROOT/bootstrap/native/omg"
-OMGC_NATIVE="$REPO_ROOT/bootstrap/native/omgc"
-OMGCC_NATIVE="$REPO_ROOT/bootstrap/native/omgcc"
-OMGVM_NATIVE="$REPO_ROOT/bootstrap/native/omgvm"
+OMG_NATIVE="$REPO_ROOT/bootstrap/bin/omg"
+OMGC_NATIVE="$REPO_ROOT/bootstrap/bin/omgc"
+OMGCC_NATIVE="$REPO_ROOT/bootstrap/bin/omgcc"
+OMGVM_NATIVE="$REPO_ROOT/bootstrap/bin/omgvm"
 OMG_RUST="$REPO_ROOT/runtime/target/release/omg"
 
 # Per-suite tempdir. Cleaned up by the runner; tests just write into it.
@@ -114,7 +114,7 @@ require_native_toolchain() {
     for bin in "$OMG_NATIVE" "$OMGC_NATIVE" "$OMGCC_NATIVE" "$OMGVM_NATIVE"; do
         if [ ! -x "$bin" ]; then
             echo -e "${RED}Native toolchain missing.${NC} Run:"
-            echo "  bootstrap/build-native-toolchain.sh"
+            echo "  bootstrap/build.sh"
             exit 2
         fi
     done

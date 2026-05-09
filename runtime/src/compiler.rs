@@ -9,7 +9,7 @@
 //! mangles their function names so they don't collide, and emits inline
 //! initialisation that builds a frozen-namespace dict for each module.
 //!
-//! There is no longer a need for the OMG-implemented `bootstrap/interpreter.omg`
+//! There is no longer a need for the OMG-implemented `bootstrap/src/interpreter.omg`
 //! — running a `.omg` file goes straight through this compiler in-process.
 
 use std::collections::{HashMap, HashSet};
@@ -59,16 +59,16 @@ fn builtin_names() -> &'static [&'static str] {
         "sin",
         "cos",
         "tan",
-        // Used by `bootstrap/compiler.omg` to embed float literals as i64 bits.
+        // Used by `bootstrap/src/compiler.omg` to embed float literals as i64 bits.
         "float_bits",
-        // Inverse pair, used by `bootstrap/vm.omg` to read float
+        // Inverse pair, used by `bootstrap/src/vm.omg` to read float
         // and string literals back out of a `.omgb` byte stream.
         "bits_to_float",
         "bytes_to_string",
         // Dict-keys enumeration, used by the OMG-in-OMG VM to iterate a
         // closure's captured environment (and useful generally).
         "dict_keys",
-        // Print msg to stderr verbatim and exit 1. Used by `bootstrap/vm.omg`
+        // Print msg to stderr verbatim and exit 1. Used by `bootstrap/src/vm.omg`
         // to surface a hosted program's uncaught error without re-wrapping
         // it through `panic`'s "RuntimeError:" prefix.
         "exit_with_error",

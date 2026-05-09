@@ -43,18 +43,18 @@ use vm::run;
 /// Human-facing runtime version. Bump in lockstep with `Cargo.toml`.
 const VERSION: &str = "0.2.0";
 
-/// Embedded `bootstrap/compiler.omgb` — the OMG-written OMG compiler,
+/// Embedded `bootstrap/src/compiler.omgb` — the OMG-written OMG compiler,
 /// pre-compiled by the Rust frontend at build time. Loaded on demand by
 /// `--self-hosted` and `--verify-self-hosted`.
 const SELF_HOSTED_COMPILER: &[u8] =
-    include_bytes!("../../bootstrap/compiler.omgb");
+    include_bytes!("../../bootstrap/src/compiler.omgb");
 
-/// Embedded `bootstrap/vm.omgb` — the OMG-written OMG VM, similarly
+/// Embedded `bootstrap/src/vm.omgb` — the OMG-written OMG VM, similarly
 /// pre-compiled at build time. Loaded on demand by `--verify-omg-vm` to
 /// run the OMG compiler *on* the OMG VM and confirm the triple-meta
 /// fixed point.
 const SELF_HOSTED_VM: &[u8] =
-    include_bytes!("../../bootstrap/vm.omgb");
+    include_bytes!("../../bootstrap/src/vm.omgb");
 
 fn usage() -> String {
     format!(
@@ -98,7 +98,7 @@ Examples:
     omg --rust hello.omg             # Rust frontend
     omg hello.omgb -- arg1 arg2
     omg --compile hello.omg hello.omgb
-    omg --verify-self-hosted bootstrap/compiler.omg
+    omg --verify-self-hosted bootstrap/src/compiler.omg
     omg --verify-omg-vm examples/prime_sieve.omg"#,
         VERSION
     )
@@ -416,7 +416,7 @@ fn omg_vm_compile(in_path: &PathBuf) -> Result<Vec<u8>, RuntimeError> {
         ))
     })?;
     // The embedded VM expects to *read* the bytecode it's interpreting
-    // from a file, the same way it would with `omg bootstrap/vm.omg
+    // from a file, the same way it would with `omg bootstrap/src/vm.omg
     // <prog.omgb>`. Stage the embedded compiler.omgb to a temp file so
     // the VM can open it normally.
     let tmp_compiler = std::env::temp_dir().join(format!(

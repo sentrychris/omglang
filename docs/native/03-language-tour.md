@@ -251,7 +251,7 @@ exactly `args[0]` is depends on how you invoke the program:
 | Invocation                              | `args[0]` is             |
 | --------------------------------------- | ------------------------ |
 | `runtime/target/release/omg foo.omg a b`| `foo.omg` (user-typed)   |
-| `bootstrap/native/omg foo.omg a b`      | a `/tmp/.../a.omgb` tempfile |
+| `bootstrap/bin/omg foo.omg a b`      | a `/tmp/.../a.omgb` tempfile |
 | `./foo a b` (after `omg --build`)       | `./foo` (the binary)     |
 
 Most programs only care that `args[1..]` are their user-supplied arguments;

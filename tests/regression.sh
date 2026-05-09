@@ -169,8 +169,8 @@ assert_eq "AOT stdout flushes before stderr" "$expected" "$actual"
 
 section "Regression: compiler.omg fixed point"
 
-"$OMG_RUST"   --compile bootstrap/compiler.omg "$TMPDIR_TEST/cmp-rust.omgb"
-"$OMGC_NATIVE" bootstrap/compiler.omg          "$TMPDIR_TEST/cmp-native.omgb"
+"$OMG_RUST"   --compile bootstrap/src/compiler.omg "$TMPDIR_TEST/cmp-rust.omgb"
+"$OMGC_NATIVE" bootstrap/src/compiler.omg          "$TMPDIR_TEST/cmp-native.omgb"
 if cmp -s "$TMPDIR_TEST/cmp-rust.omgb" "$TMPDIR_TEST/cmp-native.omgb"; then
     pass "compiler.omg via Rust == via omgc"
 else
@@ -186,9 +186,9 @@ fi
 
 section "Regression: compile_source isolates state"
 
-# Place the test program in bootstrap/ so the relative `import
-# "compiler.omg"` resolves against bootstrap/compiler.omg.
-cat > "$REPO_ROOT/bootstrap/_two_progs_test.omg" <<'EOF'
+# Place the test program in bootstrap/src/ so the relative `import
+# "compiler.omg"` resolves against bootstrap/src/compiler.omg.
+cat > "$REPO_ROOT/bootstrap/src/_two_progs_test.omg" <<'EOF'
 ;;;omg
 import "compiler.omg" as cc
 
@@ -205,8 +205,8 @@ emit "len_a: " + length(a[0])
 emit "len_b: " + length(b[0])
 EOF
 
-actual=$("$OMG_RUST" "$REPO_ROOT/bootstrap/_two_progs_test.omg" 2>&1)
-rm -f "$REPO_ROOT/bootstrap/_two_progs_test.omg"
+actual=$("$OMG_RUST" "$REPO_ROOT/bootstrap/src/_two_progs_test.omg" 2>&1)
+rm -f "$REPO_ROOT/bootstrap/src/_two_progs_test.omg"
 # The two programs are structurally identical, so their bytecode
 # lengths must match. Specific lengths can change with compiler
 # tweaks; we only assert equality.

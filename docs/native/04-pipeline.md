@@ -65,7 +65,7 @@ The lexer turns the source into a stream of typed tokens.
 
 Tokens aren't a serialized artefact you can dump — they live in memory only.
 The Rust frontend's lexer is at [runtime/src/lexer.rs](../../runtime/src/lexer.rs);
-the OMG-in-OMG version is the first half of [bootstrap/compiler.omg](../../bootstrap/compiler.omg).
+the OMG-in-OMG version is the first half of [bootstrap/src/compiler.omg](../../bootstrap/src/compiler.omg).
 
 ## Stage 2 — AST
 
@@ -140,7 +140,7 @@ If you took the AOT path instead, `native-c.omg` reads the same bytecode
 and emits C. You can see the output:
 
 ```sh
-bootstrap/native/omgcc /tmp/trace.omgb /tmp/trace.c
+bootstrap/bin/omgcc /tmp/trace.omgb /tmp/trace.c
 head -200 /tmp/trace.c
 ```
 
@@ -224,12 +224,12 @@ that any OMG runtime can execute, no source required.
 
 | Stage          | Rust impl                       | OMG impl                          |
 | -------------- | ------------------------------- | --------------------------------- |
-| Lexer          | `runtime/src/lexer.rs`          | first half of `bootstrap/compiler.omg` |
-| Parser         | `runtime/src/parser.rs`         | second half of `bootstrap/compiler.omg` |
-| Compiler       | `runtime/src/compiler.rs`       | rest of `bootstrap/compiler.omg`  |
-| Bytecode VM    | `runtime/src/vm.rs` + `vm/ops_*.rs` | `bootstrap/vm.omg`            |
-| Bytecode → C   | (none)                          | `bootstrap/native-c.omg`          |
-| C runtime      | (none)                          | `bootstrap/omg_rt.h`              |
+| Lexer          | `runtime/src/lexer.rs`          | first half of `bootstrap/src/compiler.omg` |
+| Parser         | `runtime/src/parser.rs`         | second half of `bootstrap/src/compiler.omg` |
+| Compiler       | `runtime/src/compiler.rs`       | rest of `bootstrap/src/compiler.omg`  |
+| Bytecode VM    | `runtime/src/vm.rs` + `vm/ops_*.rs` | `bootstrap/src/vm.omg`            |
+| Bytecode → C   | (none)                          | `bootstrap/src/native-c.omg`          |
+| C runtime      | (none)                          | `bootstrap/src/omg_rt.h`              |
 
 The Rust and OMG implementations of stages 1-4 are kept in lockstep — see
 [05-extending.md](05-extending.md).

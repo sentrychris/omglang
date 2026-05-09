@@ -8,7 +8,7 @@ the REPL, and the cross-implementation parity invariants.
 ```sh
 # Build prerequisites first
 cd runtime && cargo build --release && cd ..
-bootstrap/build-native-toolchain.sh
+bootstrap/build.sh
 
 # Run everything
 tests/run.sh

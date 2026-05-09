@@ -22,7 +22,7 @@ OMG runs on three substrates. Knowing which is which prevents most confusion.
                             │
        ┌────────────────────────────────────┐
        │  C: the native target.             │     The other way:
-       │  bootstrap/native-c.omg generates  │ ◄── compile to C,
+       │  bootstrap/src/native-c.omg generates  │ ◄── compile to C,
        │  C source from bytecode; cc        │     then ELF.
        │  produces an ELF.                  │
        └────────────────────────────────────┘
@@ -43,18 +43,18 @@ C compiles to native and disappears once `cc` finishes.
 | AOT path: run            | OS + CPU  | Native ELF, no VM, no Rust    |
 
 The "running on the VM" rows can use either the Rust VM (`runtime/src/vm.rs`)
-or the OMG-in-OMG VM (`bootstrap/vm.omg`) — but the OMG-in-OMG VM is itself
+or the OMG-in-OMG VM (`bootstrap/src/vm.omg`) — but the OMG-in-OMG VM is itself
 bytecode that runs on a host VM, so something Rust-or-C-shaped is always at
 the bottom.
 
 ## The bootstrap chain
 
 ```
-bootstrap/compiler.omg          (OMG source — the compiler)
+bootstrap/src/compiler.omg          (OMG source — the compiler)
         │
         │ compiled by
         ▼
-bootstrap/compiler.omgb          (bytecode — what the runtime executes)
+bootstrap/src/compiler.omgb          (bytecode — what the runtime executes)
         │
         │ produced by
         ▼
@@ -79,13 +79,13 @@ byte-identical no matter which historical iteration you started from.
    so the very first run can compile and execute `.omg` sources without the
    user already having either.
 
-The native toolchain (`bootstrap/native/`) replaces #1 and #2 with C-compiled
+The native toolchain (`bootstrap/bin/`) replaces #1 and #2 with C-compiled
 versions: `omgc` is #1 + #3's compiler fused into a binary, `omgvm` is #2.
 
 ## Native toolchain inventory
 
 ```
-bootstrap/native/
+bootstrap/bin/
 ├── omg         user-facing driver: dispatches to the right tool by file ext
 ├── omg-build   one-shot AOT: orchestrates omgc + omgcc + cc
 ├── omgc        compiler.omg compiled to native
@@ -95,11 +95,11 @@ bootstrap/native/
 ```
 
 All five tools are native ELFs compiled from OMG source. `omg` and
-`omg-build` are written in OMG (see [`bootstrap/omg.omg`](../../bootstrap/omg.omg)
-and [`bootstrap/omg-build.omg`](../../bootstrap/omg-build.omg)) and
+`omg-build` are written in OMG (see [`bootstrap/src/omg.omg`](../../bootstrap/src/omg.omg)
+and [`bootstrap/src/omg-build.omg`](../../bootstrap/src/omg-build.omg)) and
 dispatch to the lower-level tools via the `subprocess()` builtin.
 
-These are produced by `bootstrap/build-native-toolchain.sh`, which:
+These are produced by `bootstrap/build.sh`, which:
 
 1. Uses the Rust binary (or itself, if already present) to compile each
    of the five `.omg` sources to bytecode.
@@ -114,7 +114,7 @@ in place from a prior build).
 ## The fixed-point check
 
 ```
-runtime/target/release/omg --verify-omg-vm bootstrap/compiler.omg
+runtime/target/release/omg --verify-omg-vm bootstrap/src/compiler.omg
 ```
 
 This compiles `compiler.omg` three different ways:
@@ -138,7 +138,7 @@ in `compiler.omg`, or this check will fail. See [05-extending.md](05-extending.m
 ## What's *not* OMG
 
 - `runtime/src/` — Rust. Production VM, parser, frontend, CLI.
-- `bootstrap/omg_rt.h` — C. Value representation, refcounting, builtins,
+- `bootstrap/src/omg_rt.h` — C. Value representation, refcounting, builtins,
   setjmp-based exception handling. ~1700 lines. Linked into every AOT binary.
 
 That's the whole non-OMG surface. Everything else is `.omg`.
