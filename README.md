@@ -108,7 +108,7 @@ name := "Bob"                # update it (no `alloc` the second time)
 emit name                    # → Bob
 ```
 
-Forget the `alloc` for a brand-new name and OMG complains:
+If you forget the `alloc` for a brand-new name, OMG complains:
 
 ```
 UndefinedIdentError: name
