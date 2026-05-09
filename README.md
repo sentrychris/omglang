@@ -117,7 +117,7 @@ UndefinedIdentError: name
 The full rules — they're worth reading once because they save you from
 typos and accidental shadowing:
 
-1. **Every new binding needs `alloc`.** Bare `:=` only works on names
+1. **Every new binding needs `alloc`.** `:=` only works on names
    that already exist somewhere in scope. `cont := 5` when you meant
    `count := 5` is an error, not a silent new variable.
 2. **Re-assignment uses `:=`** — no `alloc` the second time:
