@@ -16,23 +16,31 @@ Save as `/tmp/trace.omg`.
 ## The pipeline at a glance
 
 ```
-   foo.omg   .─────────────.   foo.omgb
-   source ──▶│   compiler  │──▶ bytecode
-            '─────────────'
-                                    │
-                                    ▼
-                              ┌─────────────┐
-                              │  vm (run)   │  ← if you stay on the bytecode path
-                              └─────────────┘
-                                    │ or
-                                    ▼
-                              ┌─────────────┐  foo.c     ┌──────┐  foo
-                              │  native-c   │──────────▶ │  cc  │ ──▶ ELF
-                              └─────────────┘            └──────┘
+                   ┌────────────┐         ┌─────────┐
+   foo.omg ───────▶│  compiler  │────────▶│  .omgb  │
+   (source)        └────────────┘         │bytecode │
+                                          └────┬────┘
+                                               │
+                          ┌────────────────────┴────────────────────┐
+                          │                                         │
+                          ▼  (interpreted)                          ▼  (transpiled)
+                   ┌────────────┐                            ┌─────────────┐
+                   │     vm     │ ──▶ output                 │  native-c   │
+                   └────────────┘                            └──────┬──────┘
+                                                                    │
+                                                              ┌─────▼─────┐
+                                                              │   foo.c   │
+                                                              └─────┬─────┘
+                                                                    │ cc -O2
+                                                              ┌─────▼─────┐
+                                                              │    ELF    │ ──▶ output
+                                                              └───────────┘
 ```
 
-There are five distinct artefacts: source, tokens, AST, bytecode, C, ELF.
-You can stop at any stage and inspect.
+The `vm` and `native-c` paths are **alternatives**, not sequential. From
+bytecode, you pick one. There are five distinct artefacts you can inspect:
+source, bytecode (`.omgb`), C source (`.c`), ELF, and the runtime output.
+Tokens and AST exist in memory only.
 
 ## Stage 0 — Source
 
@@ -42,8 +50,9 @@ alloc x := 7
 emit x * 6
 ```
 
-Plain UTF-8 text. The `;;;omg` header is a sanity check; the rest is OMG
-syntax.
+Plain UTF-8 text. The `;;;omg` header is conventional and stripped by the
+lexer if present (see [03-language-tour.md](03-language-tour.md#the-header)).
+The rest is OMG syntax.
 
 ## Stage 1 — Tokens
 
@@ -108,10 +117,10 @@ The `.omgb` file format is documented in
 [runtime/src/bytecode.rs](../../runtime/src/bytecode.rs) — header magic
 `OMGB`, version, function table, then the code.
 
-## Stage 4a — Run via VM
+## Stage 4 (option A) — Run via VM
 
-If you `omg /tmp/trace.omg`, execution stops here: the VM walks the
-bytecode and updates a value stack. No more stages.
+If you `omg /tmp/trace.omg`, this is where execution happens. The VM walks
+the bytecode and updates a value stack:
 
 ```
 PC  Instr           Stack after
@@ -125,41 +134,44 @@ PC  Instr           Stack after
 6   Halt            []          # done
 ```
 
-## Stage 4b — C source (`.c`)
+## Stage 4 (option B) — C source (`.c`)
 
-If you took the AOT path, `native-c.omg` reads the same bytecode and emits
-C. You can see the output:
+If you took the AOT path instead, `native-c.omg` reads the same bytecode
+and emits C. You can see the output:
 
 ```sh
-runtime/target/release/omg bootstrap/native-c.omg /tmp/trace.omgb /tmp/trace.c
+bootstrap/native/omgcc /tmp/trace.omgb /tmp/trace.c
 head -200 /tmp/trace.c
 ```
 
-You'll see `omg_rt.h` inlined at the top (~1600 lines), then your program:
+You'll see `omg_rt.h` inlined at the top (~1700 lines), then runtime-injected
+globals (`args`, `module_file`, `current_dir`), then your program — one
+straight-line block of C:
 
 ```c
 int main(int argc, char **argv) {
     setvbuf(stdout, NULL, _IOLBF, 0);
     Value stack[1024];
     int sp = 0;
-    /* runtime-injected globals: args, module_file, current_dir */
-    ...
-    stack[sp++] = omg_int(7LL);            /* PushInt(7) */
-    omg_assign(&v_x, stack[--sp]);         /* StoreLocal("x") */
-    { Value v = v_x; omg_inc(v); stack[sp++] = v; }   /* Load("x") */
-    stack[sp++] = omg_int(6LL);            /* PushInt(6) */
+    /* ... cwd / args / module_file setup ... */
+
+    stack[sp++] = omg_int(7LL);                              // PushInt(7)
+    omg_assign(&v_x, stack[--sp]);                           // StoreLocal("x")
+    { Value v = v_x; omg_inc(v); stack[sp++] = v; }          // Load("x")
+    stack[sp++] = omg_int(6LL);                              // PushInt(6)
     { Value b = stack[--sp]; Value a = stack[--sp];
       Value r = omg_mul(a, b); omg_dec(a); omg_dec(b);
-      stack[sp++] = r; }                   /* Mul */
-    { Value v = stack[--sp]; omg_emit(v); omg_dec(v); }  /* Emit */
-    return 0;                              /* Halt */
+      stack[sp++] = r; }                                     // Mul
+    { Value v = stack[--sp]; omg_emit(v); omg_dec(v); }      // Emit
+    return 0;                                                // Halt
 }
 ```
 
-Each bytecode op becomes a few lines of C. There's no opcode dispatch loop
-at runtime — it's been "unrolled" at transpile time.
+(The `// ...` annotations are added here for clarity; the generated C
+doesn't include them.) Each bytecode op becomes a few lines of C. There's
+no opcode dispatch loop at runtime — it's been "unrolled" at transpile time.
 
-## Stage 5 — ELF (`./foo`)
+## Stage 5 — ELF (`./foo`)  *(continues option B only)*
 
 ```sh
 cc -O2 -w /tmp/trace.c -o /tmp/trace -lm
@@ -169,8 +181,9 @@ cc -O2 -w /tmp/trace.c -o /tmp/trace -lm
 
 `cc -O2` does all the heavy lifting: register allocation, sibling-call
 optimization (so OMG tail calls become real `jmp` instructions),
-dead-code elimination, constant propagation. The resulting ELF is a normal
-native binary.
+dead-code elimination, constant propagation. The `-w` flag suppresses cc
+warnings (mostly false positives around setjmp/longjmp). The resulting ELF
+is a normal native binary.
 
 ## How long does each stage take?
 
@@ -183,7 +196,7 @@ For a 50-line program on a modern laptop:
 | `.c` → ELF        | ~500 ms| ~30 KB            |
 | **Total AOT**     | ~525 ms| 30 KB binary      |
 
-For larger programs (the 2200-line `compiler.omg`):
+For larger programs (the ~2100-line `compiler.omg`):
 
 | Stage             | Time   | Output size       |
 | ----------------- | ------ | ----------------- |

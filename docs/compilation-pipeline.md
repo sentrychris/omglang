@@ -5,6 +5,12 @@ The high-level pitch is simple ("OMG is self-hosted") but the moving
 parts are worth knowing if you're going to hack on the runtime, the
 compiler, or the bootstrap.
 
+> This doc covers the **bytecode-VM path** — how the Rust runtime
+> compiles and executes OMG. There's also a **native-compilation path**
+> ([`docs/native/`](native/)) that turns OMG into standalone ELF
+> binaries with no Rust runtime. Both paths share the same compiler
+> and bytecode format; they're alternative backends.
+
 ## The cast
 
 There are three pieces of code involved. They live in different places
@@ -201,10 +207,10 @@ omg --self-hosted-compile bootstrap/compiler.omg /tmp/recompiled.omgb
 cmp bootstrap/compiler.omgb /tmp/recompiled.omgb && echo byte-identical
 ```
 
-The two files are 51 894 bytes each and compare equal. The first one
-was produced at `cargo build` time by the Rust frontend; the second
-was produced just now by the OMG-in-OMG compiler running on the VM.
-Both took the same source as input. They agree.
+The two files are byte-for-byte equal (53 376 bytes at time of writing).
+The first one was produced at `cargo build` time by the Rust frontend;
+the second was produced just now by the OMG-in-OMG compiler running on
+the VM. Both took the same source as input. They agree.
 
 This is the same demonstration as `--verify-self-hosted`, just with the
 two outputs surfaced as files you can inspect. `--verify-self-hosted`
@@ -331,17 +337,21 @@ mis-execution.
 
 ## Things this design *doesn't* do
 
-**It doesn't make the runtime independent of Rust.** The VM, the
-built-ins, the file I/O, the garbage-collected closures — all in Rust.
-"Self-hosting" here means *the compiler* is self-hosted. The
-*evaluator* is Rust through and through.
-
 **It doesn't make `omg <script>` fast.** Compiling 200 lines of OMG via
 the OMG-on-VM compiler takes hundreds of milliseconds; compiling all of
 `tools/test-all.omg` (with its 14 imported tools) takes ~11 seconds.
 The Rust frontend does the same work in single-digit milliseconds.
 That's the cost you pay for dogfooding by default, and the reason
 `--rust` exists.
+
+> **Note**: the *bytecode-VM* path described above is one of two ways
+> OMG can run. There's also a **native-compilation path** —
+> [`bootstrap/native-c.omg`](../bootstrap/native-c.omg) transpiles
+> bytecode to C, which `cc -O2` turns into a standalone ELF binary.
+> Programs compiled that way have no Rust dependency at runtime: not
+> the VM, not the built-ins, nothing. See [`docs/native/`](native/)
+> for the full story. The two paths share the same bytecode format;
+> they're alternative *backends*.
 
 ## History of the implicit-return bug
 

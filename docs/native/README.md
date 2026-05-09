@@ -25,7 +25,7 @@ bootstrap/build-native-toolchain.sh
 
 # After that: no Rust required
 ./bootstrap/native/omg foo.omg              # compile and run
-./bootstrap/native/omg --build foo.omg foo  # AOT to a 30 KB ELF
+./bootstrap/native/omg --build foo.omg foo  # AOT to a small ELF (~30 KB)
 ./foo
 ```
 
@@ -38,6 +38,17 @@ bootstrap/build-native-toolchain.sh
 | `omgc`    | Compiler: `.omg` → `.omgb` bytecode   | 432 KB  |
 | `omgcc`   | Transpiler: `.omgb` → `.c`            | 290 KB  |
 | `omgvm`   | Bytecode interpreter                  | 197 KB  |
-| `omg_rt.h`| C runtime header (inlined into output) | 60 KB   |
+| `omg_rt.h`| C runtime header (inlined into output) | 63 KB   |
 
 `omg` and `omg-build` are shell scripts; everything else is a native ELF.
+
+## Conventions in these docs
+
+| Shorthand                          | Means                                         |
+| ---------------------------------- | --------------------------------------------- |
+| `omg <file>`                       | `bootstrap/native/omg <file>` (native driver) |
+| `runtime/target/release/omg <…>`   | the Rust runtime, spelled out in full         |
+
+Some commands (notably `--disasm` and `--verify-omg-vm`) only exist on the
+Rust runtime, so they're always written out in full. Drop `bootstrap/native/`
+on your `$PATH` if you'd like to use the bare `omg` form yourself.

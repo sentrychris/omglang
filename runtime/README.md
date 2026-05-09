@@ -17,6 +17,9 @@ Python toolchain in `reference/` is retained for reference only.
    │                                            │             ▲
    └─ stage-1: bootstrap/compiler.omgb (default)│             │
    └─ stage-0: Rust frontend (faster; via --rust)─────────────┘
+                                                              │
+                                          (alternative: transpile to C)
+                                          bytecode ──► native-c.omg ──► .c ──► ELF
 ```
 
 By default `omg <script>` compiles via the embedded OMG-in-OMG compiler
@@ -76,7 +79,7 @@ Run `omg --help` for the full CLI reference.
 | `src/vm/ops_arith.rs`   | Arithmetic / comparison / bitwise / boolean handlers (overflow-checked, floor division). |
 | `src/vm/ops_struct.rs`  | List / dict / index / slice handlers (bounds-checked; Python-style slice clamping). |
 | `src/vm/ops_control.rs` | Calls, returns, jumps, builtins, exceptions; `CallValue` accepts strings *and* closures. |
-| `src/vm/builtins.rs`    | Built-ins: `length`, `chr`, `ascii`, `hex`, `binary`, `string_bytes`, `freeze`, `panic`, `raise`, `read_file`, `file_exists`, file I/O, `call_builtin`. |
+| `src/vm/builtins.rs`    | Built-ins: strings (`length`, `chr`, `ascii`, `string_bytes`, `bytes_to_string`), formatting (`hex`, `binary`, `float_bits`, `bits_to_float`), numeric/math (`int`, `float`, `floor`, `ceil`, `round`, `abs`, `sqrt`, `pow`, `log`, `sin`, `cos`, `tan`), collections (`freeze`, `dict_keys`), errors (`panic`, `raise`, `exit_with_error`), file I/O (`read_file`, `file_exists`, `is_dir`, `read_dir`, `make_dir`, `file_open`/`read`/`write`/`close`), reflection (`call_builtin`). |
 | `src/repl.rs`           | In-process REPL with persistent globals + function table.          |
 
 ## Native imports
@@ -156,19 +159,23 @@ deterministic — the self-hosted fixed-point check depends on it.
 | ------------ | ------------------------------------------ |
 | `chr(n)`     | Single-character string for byte `n`       |
 | `ascii(c)`   | Codepoint of single-character string `c`   |
-| `hex(n)`     | Hex string of integer `n` (lowercase)      |
-| `binary(n[, width])` | Binary string, optionally masked + padded |
 | `length(x)`  | Length of list or string                   |
 | `string_bytes(s)` | UTF-8 byte values of `s` as a list of ints |
+| `bytes_to_string(bytes)` | Inverse of `string_bytes` |
+| `hex(n)`     | Hex string of integer `n` (lowercase)      |
+| `binary(n[, width])` | Binary string, optionally masked + padded |
 | `freeze(d)`  | Convert a dict to an immutable namespace   |
-| `panic(msg)` / `raise(msg)` | Raise a runtime error    |
-| `read_file(path)` / `file_exists(path)` | Filesystem queries |
+| `dict_keys(d)` | List the keys of a dict (insertion order) |
+| `panic(msg)` / `raise(msg)` | Raise a catchable runtime error |
+| `exit_with_error(msg)` | Print to stderr verbatim and exit 1 (uncatchable) |
+| `read_file(path)` / `file_exists(path)` | Read text file / existence check |
+| `is_dir(path)` / `read_dir(path)` / `make_dir(path)` | Directory ops (`mkdir -p`) |
 | `file_open / file_read / file_write / file_close` | Streaming I/O |
 | `int(x)` / `float(x)` | Numeric conversions (truncate / widen) |
 | `floor / ceil / round` | Round float to int (banker's rounding for `round`) |
 | `abs / sqrt / pow / log` | Magnitude, root, power, natural log |
 | `sin / cos / tan` | Trig in radians; return float |
-| `float_bits(s)` | Parse a float literal to its i64 bit pattern; used by `bootstrap/compiler.omg` to embed float literals |
+| `float_bits(s)` / `bits_to_float(i)` | IEEE-754 bits ↔ float; used by `bootstrap/{compiler,vm}.omg` to read/write float literals |
 | `call_builtin(name, args)` | Reflection / dynamic dispatch |
 
 The runtime also injects three special globals into every program:
@@ -196,8 +203,20 @@ afresh and **stitched** onto the persistent code stream: jumps and
 function addresses are rebased so closures defined in earlier turns
 remain callable later.
 
+## Native compilation
+
+The Rust runtime is one of two execution paths. There's also a
+**native-compilation path** that turns OMG source into standalone ELF
+binaries with no Rust runtime needed: `bootstrap/native-c.omg`
+transpiles bytecode to C, which `cc -O2` compiles to a small native
+binary. Both paths share this runtime's compiler and bytecode format —
+they differ only in the backend that executes the bytecode. See
+[`docs/native/`](../docs/native/) for the full guide.
+
 ## Links
 
-* [Top-level README](../README.MD)
+* [Top-level README](../README.md)
+* [Native compilation guide](../docs/native/)
+* [Compilation pipeline](../docs/compilation-pipeline.md)
 * [OMG-in-OMG tools](../tools/README.md)
 * [VS Code extension](../vscode/README.md)

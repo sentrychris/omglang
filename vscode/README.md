@@ -7,7 +7,7 @@ Python dependency.
 ## Features
 
 - **Syntax highlighting** for `.omg` files, including:
-  - The required `;;;omg` header
+  - The conventional `;;;omg` header
   - Keywords (`alloc`, `proc`, `if/elif/else`, `loop`, `break`, `try`,
     `except`, `import`, `as`, `emit`, `facts`, `return`, `and`, `or`)
   - Built-in functions (`length`, `chr`, `ascii`, `hex`, `binary`,
@@ -94,8 +94,10 @@ the extension is loaded and you can edit/test against any `.omg` file.
 
 ## Notes
 
-- Only files that begin with the required `;;;omg` header are treated as
-  OMG; the language server doesn't try to compile other files.
+- Only files whose first non-empty line is `;;;omg` are treated as OMG by
+  the language server. (The header is conventional, not strictly required
+  by the compiler — but the LSP keys off it to avoid analysing unrelated
+  files.)
 - The server uses a line-based scanner (regex over each line) rather than
   hooking into the actual Rust compiler. That keeps the LSP fast and
   decouples it from the runtime — at the cost of less precise diagnostics.

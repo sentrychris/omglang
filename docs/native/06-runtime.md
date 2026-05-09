@@ -1,7 +1,7 @@
 # 06 · The C runtime (`omg_rt.h`)
 
 `bootstrap/omg_rt.h` is the only piece of non-OMG, non-Rust code that ships
-with native binaries. ~1600 lines of C99, inlined into every AOT output.
+with native binaries. ~1700 lines of C99, inlined into every AOT output.
 
 This doc covers what's in it and why.
 
@@ -272,17 +272,21 @@ where decimal would be unwieldy, falls back to `%.17g` scientific notation.
 
 ```
 $ wc -l bootstrap/omg_rt.h
-1640 bootstrap/omg_rt.h
+1697 bootstrap/omg_rt.h
 ```
 
-For an empty program (`emit "hi"`), the compiled binary is ~30 KB. Most of
-that is libc; about 4 KB is the runtime itself.
+| Program                  | Source size | AOT binary |
+| ------------------------ | ----------- | ---------- |
+| Hello world (1 emit)     | 22 B        | 16 KB      |
+| Calculator (~25 lines)   | 1 KB        | 35 KB      |
+| `compiler.omg` (omgc)    | 65 KB       | 432 KB     |
+| `native-c.omg` (omgcc)   | 54 KB       | 290 KB     |
+| `vm.omg` (omgvm)         | 30 KB       | 197 KB     |
 
-For the calculator (`/tmp/foo.omg`), still ~30 KB. The constant overhead
-is small; you only pay for what you use.
-
-For the OMG compiler (`omgc`, 432 KB), almost all the size is the generated
-code for `compiler.omg` itself — the runtime is < 5%.
+The constant overhead is small (~16 KB for trivial programs, mostly libc);
+the rest scales with how much OMG you've got. For `omgc` (the largest of the
+toolchain binaries), almost all the size is generated code for `compiler.omg`
+itself — the runtime is < 5%.
 
 ## Read next
 

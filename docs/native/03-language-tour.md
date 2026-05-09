@@ -6,13 +6,15 @@ keywords like `proc` and `facts`).
 
 ## The header
 
-Every OMG file starts with:
+OMG files conventionally start with:
 
 ```omg
 ;;;omg
 ```
 
-It's required. The compiler refuses to read a file without it.
+It's stripped by the lexer if present. The header isn't strictly required —
+files without it parse fine — but it's the canonical way to mark a file as
+OMG source (so editors and tools can recognize it).
 
 ## Types
 
@@ -22,7 +24,7 @@ It's required. The compiler refuses to read a file without it.
 | Float   | `3.14`, `1.0e-3`, `nan`, `inf`      |
 | String  | `"hello"`, `"line\n"`               |
 | Bool    | `true`, `false`                     |
-| None    | (no literal — `emit_no_value` etc.) |
+| None    | no literal; produced when a `proc` falls off the end without `return`. `emit` of None prints a blank line. |
 | List    | `[1, 2, 3]`, `[]`, `["a", 5, true]` |
 | Dict    | `{name: "Ada", age: 36}`            |
 | Closure | from `proc` definitions             |
@@ -39,14 +41,13 @@ x := 6           # reassigns the existing binding
 y := 7           # ERROR: y is not declared
 ```
 
-This catches typos that would otherwise silently shadow:
+This catches typos. Without `alloc`, a misspelled name like `cont` instead
+of `count` would either silently create a new binding or shadow the outer
+one. With `:=` requiring prior declaration, the typo errors immediately:
 
 ```omg
 alloc count := 0
-loop count < 10 {
-    cont := count + 1   # typo — would have been a silent bug
-    count := count + 1
-}
+cont := count + 1   # → UndefinedIdentError: cont
 ```
 
 Use `alloc` once per name per scope. Re-declaring inside a loop body is fine
@@ -181,12 +182,13 @@ The error kinds you'll see: `RuntimeError`, `TypeError`, `ValueError`,
 
 ```omg
 panic("something went wrong")         # → RuntimeError: something went wrong
-raise("bad input")                    # same as panic, but conventionally for user errors
+raise("bad input")                    # functionally identical to panic
 facts x > 0                           # like `assert x > 0` — fails as AssertionError
 ```
 
-`exit_with_error("msg")` prints to stderr without a kind prefix and exits 1.
-Used by `vm.omg` itself; you probably won't need it.
+`panic` and `raise` produce the same `RuntimeError: ...` and are catchable
+with try/except. `exit_with_error("msg")` prints to stderr verbatim (no kind
+prefix) and exits 1; mostly used by `vm.omg`.
 
 ## Imports
 
@@ -239,9 +241,17 @@ emit "first: " + args[0]   # the script path or binary
 emit "count: " + length(args)
 ```
 
-When run via `omg foo.omg a b c`, `args` is `[foo.omg, a, b, c]`.
-When run as a native binary `./foo a b c`, `args` is `[./foo, a, b, c]`.
-`args[0]` is your "argv[0]"; user-supplied args start at `args[1]`.
+`args[0]` is your "argv[0]"; user-supplied args start at `args[1]`. What
+exactly `args[0]` is depends on how you invoke the program:
+
+| Invocation                              | `args[0]` is             |
+| --------------------------------------- | ------------------------ |
+| `runtime/target/release/omg foo.omg a b`| `foo.omg` (user-typed)   |
+| `bootstrap/native/omg foo.omg a b`      | a `/tmp/.../a.omgb` tempfile |
+| `./foo a b` (after `omg --build`)       | `./foo` (the binary)     |
+
+Most programs only care that `args[1..]` are their user-supplied arguments;
+`args[0]` is mainly useful in usage messages.
 
 ## Two more globals
 

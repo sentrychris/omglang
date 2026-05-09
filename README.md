@@ -30,6 +30,7 @@ or industrial about it. It exists so I could see what it takes to build a workin
   - [Errors and `try` / `except`](#errors-and-try--except)
 - [Built-in functions](#built-in-functions)
 - [The REPL](#the-repl)
+- [Compile to a native binary](#compile-to-a-native-binary)
 - [Editor support (VS Code)](#editor-support-vs-code)
 - [What's in this repo](#whats-in-this-repo)
 - [A small piece of trivia](#a-small-piece-of-trivia)
@@ -80,9 +81,9 @@ Hello, world!
 
 A few things to know up front:
 
-- Every `.omg` file **must** start with `;;;omg` on its first non-empty
-  line. That's the "this is an OMG program" marker. If you forget it, the
-  compiler will refuse it.
+- OMG files conventionally start with `;;;omg` on the first non-empty
+  line. The lexer strips it if present. It's optional but recommended —
+  editors and tools key off it.
 - `emit` prints something to the screen.
 - `#` starts a comment. Comments run to the end of the line.
 
@@ -571,20 +572,13 @@ Always available, no import needed.
 
 | Function                       | What it does                                          |
 | ------------------------------ | ----------------------------------------------------- |
+| **Strings & chars**            |                                                       |
 | `length(x)`                    | length of a list or string                            |
 | `chr(n)`                       | one-character string for byte value `n`               |
 | `ascii(c)`                     | code point of a one-character string `c`              |
-| `hex(n)`                       | lowercase hex string for integer `n`                  |
-| `binary(n)` / `binary(n, w)`   | binary string for `n`, optionally `w` bits wide       |
-| `freeze(d)`                    | turn a dict into a read-only one                      |
-| `panic(msg)` / `raise(msg)`    | raise a runtime error (catchable with `try`/`except`) |
-| `read_file(path)`              | read a text file in one shot, or `false` on error     |
-| `file_exists(path)`            | does the file exist?                                  |
-| `file_open(path, mode)`        | open and return a handle (`r`, `rb`, `w`, `wb`, `a`, `ab`) |
-| `file_read(handle)`            | read everything remaining from a handle               |
-| `file_write(handle, data)`     | write to a handle                                     |
-| `file_close(handle)`           | close a handle                                        |
 | `string_bytes(s)`              | UTF-8 byte values of `s` as a list of integers        |
+| `bytes_to_string(bytes)`       | inverse of `string_bytes`: list of bytes → string     |
+| **Numeric & math**             |                                                       |
 | `int(x)` / `float(x)`          | convert between int and float (or parse from string)  |
 | `floor(x)` / `ceil(x)`         | round a float toward `-∞` / `+∞`, returns int         |
 | `round(x)`                     | round-half-to-even (banker's rounding), returns int   |
@@ -593,6 +587,28 @@ Always available, no import needed.
 | `pow(a, b)`                    | `a` to the power of `b` (int^int stays int)           |
 | `log(x)`                       | natural log, returns float                            |
 | `sin(x)` / `cos(x)` / `tan(x)` | trigonometry in radians, returns float                |
+| **Formatting**                 |                                                       |
+| `hex(n)`                       | lowercase hex string for integer `n`                  |
+| `binary(n)` / `binary(n, w)`   | binary string for `n`, optionally `w` bits wide       |
+| `float_bits(s)`                | parse a float literal to its IEEE-754 i64 bit pattern |
+| `bits_to_float(i)`             | inverse: i64 bits → float                             |
+| **Collections**                |                                                       |
+| `freeze(d)`                    | turn a dict into a read-only one                      |
+| `dict_keys(d)`                 | list of a dict's keys (strings, in insertion order)   |
+| **File I/O**                   |                                                       |
+| `read_file(path)`              | read a text file in one shot, or `false` on error     |
+| `file_open(path, mode)`        | open and return a handle (`r`, `rb`, `w`, `wb`, `a`, `ab`) |
+| `file_read(handle)`            | read everything remaining from a handle               |
+| `file_write(handle, data)`     | write to a handle                                     |
+| `file_close(handle)`           | close a handle                                        |
+| `file_exists(path)`            | does the file exist?                                  |
+| `is_dir(path)`                 | is the path a directory?                              |
+| `read_dir(path)`               | list of entry names (sorted, no `.`/`..`)             |
+| `make_dir(path)`               | create directories (mkdir -p semantics)               |
+| **Errors**                     |                                                       |
+| `panic(msg)` / `raise(msg)`    | raise a runtime error (catchable with `try`/`except`) |
+| `exit_with_error(msg)`         | print `msg` to stderr verbatim and exit 1 (uncatchable) |
+| **Reflection**                 |                                                       |
 | `call_builtin(name, args)`     | call a builtin by name (advanced)                     |
 
 The runtime also hands you three special globals every program can read:
@@ -624,6 +640,29 @@ Hello OMG
 ```
 
 Variables, functions, and imports persist across lines until you `quit`.
+
+---
+
+## Compile to a native binary
+
+OMG can also be compiled to standalone native ELF binaries — no Rust
+required at runtime. The OMG-to-C transpiler at
+[`bootstrap/native-c.omg`](bootstrap/native-c.omg) emits self-contained
+C, which `cc -O2` turns into a small (~30 KB) executable.
+
+```sh
+# One-time bootstrap (uses the Rust runtime to build the native toolchain)
+cargo build --release --manifest-path runtime/Cargo.toml
+bootstrap/build-native-toolchain.sh
+
+# After that: no Rust required to compile or run OMG
+bootstrap/native/omg foo.omg              # compile and run
+bootstrap/native/omg --build foo.omg foo  # AOT to a native ELF
+./foo
+```
+
+The full guide — architecture, language tour, pipeline, extension guide,
+runtime internals, debugging — lives in [`docs/native/`](docs/native/).
 
 ---
 
@@ -675,10 +714,16 @@ omglang/
 ├── runtime/         the Rust implementation: lexer, parser, compiler, VM, REPL
 ├── bootstrap/
 │   ├── compiler.omg   the OMG compiler, written in OMG
-│   └── compiler.omgb  its compiled bytecode (re-built on `cargo build`)
+│   ├── compiler.omgb  its compiled bytecode (re-built on `cargo build`)
+│   ├── vm.omg         the OMG-in-OMG VM (used for fixed-point verification)
+│   ├── native-c.omg   OMG-to-C transpiler (used by the native build path)
+│   ├── omg_rt.h       C runtime header inlined into native binaries
+│   ├── native/        Rust-free toolchain (omgc, omgcc, omgvm, omg)
+│   └── build-native-toolchain.sh   builds bootstrap/native/
 ├── examples/        small standalone programs
 ├── tools/           command-line utilities written in OMG (wc, grep, sort, etc.)
 ├── reference/       the legacy Python implementation + a tree-walk OMG-in-OMG interpreter
+├── docs/            documentation; see docs/native/ for the native compilation path
 └── vscode/          VS Code extension (syntax highlighting + LSP completion)
 ```
 
@@ -687,7 +732,7 @@ Some interesting starting points:
 - [`examples/prime_sieve.omg`](examples/prime_sieve.omg): finds primes up to 100.
 - [`examples/maze_solver.omg`](examples/maze_solver.omg): breadth-first search over a grid.
 - [`examples/higher_order.omg`](examples/higher_order.omg): closures + first-class functions.
-- [`tools/wc.omg`](tools/wc.omg), [`tools/grep.omg`](tools/grep.omg),
+- [`tools/unix/wc.omg`](tools/unix/wc.omg), [`tools/unix/grep.omg`](tools/unix/grep.omg),
   [`tools/json.omg`](tools/json.omg): Unix-style utilities,
   written in OMG. See [`tools/README.md`](tools/README.md) for the
   full list.
@@ -739,6 +784,10 @@ bottom.
 
 ## More reading
 
+- [`docs/native/`](docs/native/): the **native compilation path** —
+  turning `.omg` source into standalone ELF binaries with no Rust runtime
+  needed. Covers the architecture, language, pipeline, runtime header,
+  and how to add new features in lockstep across Rust + OMG + C.
 - [`docs/compilation-pipeline.md`](docs/compilation-pipeline.md): how
   `omg foo.omg` actually runs your script — the two-stage compiler, the
   VM-on-VM dance, what `--rust` does, and the fixed-point check.

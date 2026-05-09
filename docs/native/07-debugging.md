@@ -9,9 +9,13 @@ problems second.
 | ------------- | ---------------------------------------------------- |
 | Source        | `cat foo.omg`                                        |
 | Tokens / AST  | (no dump tool yet — read the parser if needed)       |
-| Bytecode      | `omg --disasm foo.omgb` (Rust runtime)               |
-| C source      | inspect the file produced by `--build`'s tempdir, or run `omgcc` manually |
+| Bytecode      | `runtime/target/release/omg --disasm foo.omgb`       |
+| C source      | run `omgcc` manually to produce a `.c` you can keep  |
 | Native binary | gdb, strace, valgrind                                |
+
+`--disasm` is Rust-only (the native `omg` driver doesn't implement it).
+`omg --build` cleans up its tempdir, so to keep the intermediate `.c`,
+run the transpiler yourself.
 
 ### Disassembling bytecode
 
@@ -39,11 +43,12 @@ disasm is usually the first place to look.
 ### Inspecting generated C
 
 ```sh
-runtime/target/release/omg bootstrap/native-c.omg foo.omgb /tmp/foo.c
+omg --compile foo.omg foo.omgb
+bootstrap/native/omgcc foo.omgb /tmp/foo.c     # or runtime/target/release/omg bootstrap/native-c.omg foo.omgb /tmp/foo.c
 less /tmp/foo.c
 ```
 
-The runtime header is at the top (~1600 lines) — skip past it. Each
+The runtime header is at the top (~1700 lines) — skip past it. Each
 generated proc starts with:
 
 ```c
@@ -51,7 +56,10 @@ static Value omg_pN(Value *captured, int cap_count, int argc,
                     Value omg_a0, Value omg_a1, ...) {
 ```
 
-Each bytecode instruction has a `/* COMMENT */` showing what it came from.
+Each bytecode instruction is a small block — usually a `{ ... }` scope
+that pops, computes, and pushes. There are no per-instruction comments in
+the generated C, so to map a C line back to a bytecode op, run `--disasm`
+in parallel and match patterns by hand.
 
 ### Disassembling the binary
 
@@ -63,14 +71,6 @@ Useful for confirming `cc -O2` did the optimizations you expected (e.g.
 sibling-call TCO showing as `jmp omg_pN` rather than `call omg_pN`).
 
 ## Common errors and what they mean
-
-### `;;;omg` header missing
-
-```
-SyntaxError: missing ;;;omg header
-```
-
-Add `;;;omg` as the first line of the file.
 
 ### `UndefinedIdentError: foo`
 
@@ -123,7 +123,8 @@ If `cc -O2 ...` emits a warning, it's almost always a false positive. The
 To get cc's stderr:
 
 ```sh
-runtime/target/release/omg bootstrap/native-c.omg foo.omgb /tmp/foo.c
+omg --compile foo.omg foo.omgb
+bootstrap/native/omgcc foo.omgb /tmp/foo.c
 cc -O2 /tmp/foo.c -o /tmp/foo -lm   # no -w; see all warnings
 ```
 

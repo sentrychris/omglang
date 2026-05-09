@@ -32,8 +32,8 @@ bootstrap/native/omg hello.omg
 # → hello, world
 ```
 
-The `;;;omg` line at the top is the source-type marker — it's not a comment;
-the runtime checks for it.
+The `;;;omg` line at the top is the source-type marker. It's optional but
+conventional — the lexer strips it if present.
 
 ## Three ways to run a program
 
@@ -44,14 +44,13 @@ omg --build foo.omg foo   # AOT-compile to a standalone ELF binary
 ./foo                     # Run the ELF directly
 ```
 
-(Throughout these docs, `omg` means `bootstrap/native/omg` — drop it on your
-`$PATH` if you'd like.)
+(`omg` here is `bootstrap/native/omg`. See [README.md](README.md#conventions-in-these-docs).)
 
 | Mode      | What happens                              | Output         | When to use            |
 | --------- | ----------------------------------------- | -------------- | ---------------------- |
-| `omg foo.omg`  | Compile in memory, interpret in `omgvm` | runs        | dev loop               |
-| `omg --compile foo.omg foo.omgb` | Save bytecode | `.omgb` file | distribute portable bc |
-| `omg --build foo.omg foo`        | Full AOT     | native ELF    | ship a binary          |
+| `omg foo.omg`  | Compile to a tempfile, interpret with `omgvm` | runs   | dev loop               |
+| `omg --compile foo.omg foo.omgb` | Save bytecode             | `.omgb` file   | distribute portable bc |
+| `omg --build foo.omg foo`        | Full AOT                  | native ELF     | ship a binary          |
 
 ## A bigger example
 

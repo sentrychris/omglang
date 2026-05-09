@@ -74,12 +74,13 @@ byte-identical no matter which historical iteration you started from.
    for speed; otherwise the OMG-in-OMG compiler is used.
 2. **A bytecode VM** — `vm.rs` plus `vm/ops_*.rs`. This is what runs the OMG
    compiler, the OMG transpiler, and any `.omgb` you give it.
-3. **An embedded `compiler.omgb`** — the OMG-in-OMG compiler is shipped
-   inside the binary as bytecode, so the very first run can compile `.omg`
-   sources without the user already having a compiler.
+3. **Embedded `compiler.omgb` and `vm.omgb`** — the OMG-in-OMG compiler and
+   VM are shipped inside the binary as bytecode (via Rust's `include_bytes!`),
+   so the very first run can compile and execute `.omg` sources without the
+   user already having either.
 
 The native toolchain (`bootstrap/native/`) replaces #1 and #2 with C-compiled
-versions: `omgc` is #1 + #3 fused into a binary, `omgvm` is #2.
+versions: `omgc` is #1 + #3's compiler fused into a binary, `omgvm` is #2.
 
 ## Native toolchain inventory
 
@@ -133,7 +134,7 @@ in `compiler.omg`, or this check will fail. See [05-extending.md](05-extending.m
 
 - `runtime/src/` — Rust. Production VM, parser, frontend, CLI.
 - `bootstrap/omg_rt.h` — C. Value representation, refcounting, builtins,
-  setjmp-based exception handling. ~1600 lines. Linked into every AOT binary.
+  setjmp-based exception handling. ~1700 lines. Linked into every AOT binary.
 
 That's the whole non-OMG surface. Everything else is `.omg`.
 

@@ -37,9 +37,9 @@ If the fixed-point check passes and the toolchain rebuilds, you're aligned.
 
 We'll add `square(x)` — returns `x * x`.
 
-### Step A — Rust runtime (3 lines)
+### Step A — Rust runtime
 
-[runtime/src/vm/builtins.rs](../../runtime/src/vm/builtins.rs):
+Add a match arm in [runtime/src/vm/builtins.rs](../../runtime/src/vm/builtins.rs):
 
 ```rust
 "square" => match args {
@@ -51,9 +51,9 @@ We'll add `square(x)` — returns `x * x`.
 },
 ```
 
-### Step B — Rust compiler allowlist (1 line)
+### Step B — Rust compiler allowlist
 
-[runtime/src/compiler.rs](../../runtime/src/compiler.rs), in `builtin_names()`:
+Add to [runtime/src/compiler.rs](../../runtime/src/compiler.rs), in `builtin_names()`:
 
 ```rust
 "square",
@@ -62,17 +62,22 @@ We'll add `square(x)` — returns `x * x`.
 This tells the compiler that calls to `square(...)` should compile to
 `OP_BUILTIN("square", argc)` rather than a regular function call.
 
-### Step C — OMG compiler allowlist (1 line)
+### Step C — OMG compiler allowlist
 
-[bootstrap/compiler.omg](../../bootstrap/compiler.omg), in `cc_builtins`:
+Add to the `cc_builtins` list in [bootstrap/compiler.omg](../../bootstrap/compiler.omg)
+(don't forget the comma if it's not the last element):
 
 ```omg
-"square"
+alloc cc_builtins := [
+    "chr", "ascii", "hex", "binary", "length", "read_file",
+    ...
+    "exit_with_error", "square"
+]
 ```
 
-### Step D — C runtime (5 lines)
+### Step D — C runtime
 
-[bootstrap/omg_rt.h](../../bootstrap/omg_rt.h):
+Add the implementation to [bootstrap/omg_rt.h](../../bootstrap/omg_rt.h):
 
 ```c
 static Value omg_builtin_square(Value v) {
@@ -89,9 +94,9 @@ Also add it to `omg_call_builtin`'s switch (used by reflective dispatch):
 if (strcmp(n, "square") == 0)         return omg_builtin_square(a[0]);
 ```
 
-### Step E — Native-c.omg dispatch (1 line)
+### Step E — Native-c.omg dispatch
 
-[bootstrap/native-c.omg](../../bootstrap/native-c.omg), in `emit_builtin`:
+Add a case to `emit_builtin` in [bootstrap/native-c.omg](../../bootstrap/native-c.omg):
 
 ```omg
 if name == "square" and argc == 1 { return emit_builtin1("omg_builtin_square") }
@@ -180,13 +185,15 @@ In [vm.omg](../../bootstrap/vm.omg)'s `step_inner` switch:
 
 ```omg
 if op == "DUP" {
-    vm_push(vm_peek())
+    alloc top := vm_stack[length(vm_stack) - 1]
+    vm_push(top)
     vm_pc := vm_pc + 1
     return false
 }
 ```
 
-(And register the opcode in the decoder.)
+(And register the opcode in vm.omg's decoder if it has its own — currently
+both the OMG compiler and OMG VM share decoding logic in `compiler.omg`.)
 
 ### Step F — OMG compiler decoder
 
