@@ -141,10 +141,9 @@ typos and accidental shadowing:
    emit r          # → 2
    ```
    If you instead want a fresh local that *shadows* an outer name, use
-   `alloc` again inside the function — `alloc r := 2` would create a
+   `alloc` again inside the function. `alloc r := 2` would create a
    new local without touching the global.
-5. **`alloc` twice for the same name at the top level is an error**,
-   for the same typo-catching reason as rule 1:
+5. **`alloc` twice for the same name at the top level is an error**:
    ```omg
    alloc count := 0
    alloc count := 5    # → SyntaxError: 'count' is already declared at the top level
