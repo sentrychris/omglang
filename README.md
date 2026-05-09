@@ -91,8 +91,7 @@ A few things to know up front:
 
 ## A tour of the language
 
-Each section is a few lines you can paste into a `.omg` file (don't
-forget the `;;;omg` header) and run with `omg yourfile.omg`.
+Each section is a few lines you can paste into a `.omg` file and run with `omg yourfile.omg`.
 
 ### Variables
 
