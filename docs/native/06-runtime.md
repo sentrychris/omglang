@@ -16,6 +16,7 @@ This doc covers what's in it and why.
 | String operations     | `omg_str_concat`, `omg_str_index`, `omg_str_slice` |
 | Exception handling    | `OmgBlock`, `omg_panic`, `omg_raise`      |
 | Builtins              | `omg_builtin_int`, `omg_builtin_file_open`, etc. |
+| Process control       | `omg_builtin_subprocess`, `omg_builtin_exit`, `omg_builtin_getpid` |
 | I/O                   | `omg_emit`, file table                    |
 
 ## The Value type

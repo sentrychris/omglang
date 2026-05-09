@@ -257,6 +257,127 @@ pub fn call_builtin(
             )),
         },
 
+        // exit(code) -> std::process::exit(code). Used by the OMG-native
+        // `omg`/`omg-build` drivers to propagate child-process exit codes.
+        "exit" => match args {
+            [Value::Int(code)] => {
+                std::process::exit(*code as i32);
+            }
+            _ => Err(RuntimeError::TypeError(
+                "exit() expects an integer".to_string(),
+            )),
+        },
+
+        // getpid() -> int. Used by the OMG-native drivers to make
+        // unique tempfile paths without needing a mktemp builtin.
+        "getpid" => {
+            if !args.is_empty() {
+                return Err(RuntimeError::TypeError(
+                    "getpid() takes no arguments".to_string(),
+                ));
+            }
+            Ok(Value::Int(std::process::id() as i64))
+        }
+
+        // stdin_readline() -> str | bool. Reads one line from stdin
+        // (without the trailing newline). Returns `false` on EOF — the
+        // same convention `read_file` uses, so callers can `if line ==
+        // false`. Used by the OMG-native REPL.
+        "stdin_readline" => {
+            if !args.is_empty() {
+                return Err(RuntimeError::TypeError(
+                    "stdin_readline() takes no arguments".to_string(),
+                ));
+            }
+            use std::io::BufRead;
+            let stdin = std::io::stdin();
+            let mut line = String::new();
+            match stdin.lock().read_line(&mut line) {
+                Ok(0) => Ok(Value::Bool(false)),
+                Ok(_) => {
+                    // Strip trailing \n (and \r if present, for Windows
+                    // line endings). Keep everything else verbatim.
+                    if line.ends_with('\n') {
+                        line.pop();
+                        if line.ends_with('\r') {
+                            line.pop();
+                        }
+                    }
+                    Ok(Value::Str(line))
+                }
+                Err(e) => Err(RuntimeError::ValueError(format!(
+                    "stdin_readline: {}", e
+                ))),
+            }
+        }
+
+        // print(s) -> None. Like emit, but no trailing newline. Used by
+        // the REPL so the prompt sits on the same line as user input.
+        "print" => match args {
+            [Value::Str(s)] => {
+                use std::io::Write;
+                print!("{}", s);
+                let _ = std::io::stdout().flush();
+                Ok(Value::None)
+            }
+            _ => Err(RuntimeError::TypeError(
+                "print() expects a string".to_string(),
+            )),
+        },
+
+        // subprocess(["cmd", "arg1", ...]) -> int (exit code).
+        // Forks, execs the command (PATH-resolved), waits for it.
+        // stdin/stdout/stderr are inherited. Used by the OMG-native
+        // `omg` driver to dispatch to omgc/omgvm/cc.
+        //
+        // Returns the child's exit code (or 128+signal if killed).
+        // Raises ValueError if exec itself fails (e.g. binary not
+        // found) — lets the caller decide whether to swallow it.
+        "subprocess" => match args {
+            [Value::List(list)] => {
+                let borrowed = list.borrow();
+                let argv: Vec<String> = borrowed
+                    .iter()
+                    .map(|v| match v {
+                        Value::Str(s) => Ok(s.clone()),
+                        _ => Err(RuntimeError::TypeError(
+                            "subprocess() expects a list of strings".to_string(),
+                        )),
+                    })
+                    .collect::<Result<Vec<_>, _>>()?;
+                if argv.is_empty() {
+                    return Err(RuntimeError::ValueError(
+                        "subprocess() needs at least the command".to_string(),
+                    ));
+                }
+                let mut cmd = std::process::Command::new(&argv[0]);
+                cmd.args(&argv[1..]);
+                match cmd.status() {
+                    Ok(status) => {
+                        let code = status.code().unwrap_or_else(|| {
+                            #[cfg(unix)]
+                            {
+                                use std::os::unix::process::ExitStatusExt;
+                                128 + status.signal().unwrap_or(0)
+                            }
+                            #[cfg(not(unix))]
+                            {
+                                -1
+                            }
+                        });
+                        Ok(Value::Int(code as i64))
+                    }
+                    Err(e) => Err(RuntimeError::ValueError(format!(
+                        "subprocess: cannot exec '{}': {}",
+                        argv[0], e
+                    ))),
+                }
+            }
+            _ => Err(RuntimeError::TypeError(
+                "subprocess() expects a list of strings".to_string(),
+            )),
+        },
+
         // raise("message") -> synthesize a VM raise of ErrorKind::Generic
         //
         // We reuse the VM’s raise path to ensure handlers (SetupExcept) can catch it.

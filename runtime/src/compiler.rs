@@ -72,6 +72,16 @@ fn builtin_names() -> &'static [&'static str] {
         // to surface a hosted program's uncaught error without re-wrapping
         // it through `panic`'s "RuntimeError:" prefix.
         "exit_with_error",
+        // Process control. Used by the OMG-native `omg`/`omg-build`
+        // drivers to dispatch to other binaries (omgc, omgvm, cc) and
+        // propagate their exit codes.
+        "exit",
+        "getpid",
+        "subprocess",
+        // I/O primitives for the OMG-native REPL: stdin line reader and
+        // a `print` (no-newline) for prompts.
+        "stdin_readline",
+        "print",
     ]
 }
 

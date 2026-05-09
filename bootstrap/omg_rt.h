@@ -21,6 +21,7 @@
 #include <errno.h>
 #include <sys/stat.h>
 #include <sys/types.h>
+#include <sys/wait.h>
 #include <dirent.h>
 #include <unistd.h>
 
@@ -1384,6 +1385,122 @@ static Value omg_builtin_exit_with_error(Value v) {
     return omg_none(); /* unreachable */
 }
 
+/* exit(code): exit the current process with the given status code.
+ * Used by the OMG-native `omg`/`omg-build` drivers to propagate child
+ * exit codes from subprocess() back up to the shell. */
+static Value omg_builtin_exit(Value v) {
+    if (v.tag != OMG_INT) omg_panic("TypeError", "exit() expects an integer");
+    fflush(stdout);
+    fflush(stderr);
+    exit((int)v.v.i);
+    return omg_none(); /* unreachable */
+}
+
+/* getpid(): return the process ID. Used by the OMG-native drivers to
+ * generate unique tempfile paths (e.g. /tmp/omg-<pid>.omgb) without
+ * needing a mktemp builtin. */
+static Value omg_builtin_getpid(void) {
+    return omg_int((int64_t)getpid());
+}
+
+/* stdin_readline(): read one line from stdin (no trailing newline).
+ * Returns `false` on EOF (same convention as read_file). Used by the
+ * OMG-native REPL. */
+static Value omg_builtin_stdin_readline(void) {
+    /* Grow buffer dynamically. fgetc loop is simple and portable. */
+    size_t cap = 256, len = 0;
+    char *buf = (char *)malloc(cap);
+    if (!buf) { fprintf(stderr, "out of memory\n"); exit(1); }
+    int c;
+    int saw_anything = 0;
+    while ((c = fgetc(stdin)) != EOF) {
+        saw_anything = 1;
+        if (c == '\n') break;
+        if (len + 1 >= cap) {
+            cap *= 2;
+            char *nb = (char *)realloc(buf, cap);
+            if (!nb) { free(buf); fprintf(stderr, "out of memory\n"); exit(1); }
+            buf = nb;
+        }
+        buf[len++] = (char)c;
+    }
+    if (!saw_anything) {
+        free(buf);
+        return omg_bool(0);
+    }
+    /* Strip trailing \r if present (Windows line endings). */
+    if (len > 0 && buf[len - 1] == '\r') len--;
+    buf[len] = 0;
+    return omg_str(buf);
+}
+
+/* print(s): like emit, but no trailing newline. Used for REPL prompts. */
+static Value omg_builtin_print(Value v) {
+    if (v.tag != OMG_STR) omg_panic("TypeError", "print() expects a string");
+    fputs(v.v.s, stdout);
+    fflush(stdout);
+    return omg_none();
+}
+
+/* subprocess(argv): fork + execvp + waitpid. argv is a list of strings;
+ * argv[0] is the program (PATH-resolved via execvp), the rest are args.
+ * stdin/stdout/stderr are inherited. Returns the child's exit code.
+ *
+ * Mirrors std::process::Command::status() in the Rust runtime so the
+ * OMG-native `omg` driver can dispatch to omgc/omgvm/cc the same way
+ * the bash wrapper used to. */
+static Value omg_builtin_subprocess(Value v) {
+    if (v.tag != OMG_LIST) omg_panic("TypeError", "subprocess() expects a list of strings");
+    OmgList *l = v.v.l;
+    if (l->len == 0) omg_panic("ValueError", "subprocess() needs at least the command");
+
+    /* Build NULL-terminated argv array. We borrow the string pointers
+     * from the OMG values; execvp doesn't require them to be writable
+     * even though its prototype says char *const[]. */
+    char **argv = (char **)malloc(((size_t)l->len + 1) * sizeof(char *));
+    if (!argv) { fprintf(stderr, "out of memory\n"); exit(1); }
+    for (int i = 0; i < l->len; i++) {
+        if (l->items[i].tag != OMG_STR) {
+            free(argv);
+            omg_panic("TypeError", "subprocess() expects a list of strings");
+        }
+        argv[i] = (char *)l->items[i].v.s;
+    }
+    argv[l->len] = NULL;
+
+    /* Flush stdio so output ordering matches Rust's behaviour around
+     * the fork. */
+    fflush(stdout);
+    fflush(stderr);
+
+    pid_t pid = fork();
+    if (pid < 0) {
+        free(argv);
+        omg_panicf("ValueError", "subprocess: fork failed: %s", strerror(errno));
+    }
+    if (pid == 0) {
+        /* Child: exec replaces this process. */
+        execvp(argv[0], argv);
+        /* If we get here, exec failed. Mirror Rust's "cannot exec" path. */
+        fprintf(stderr, "subprocess: cannot exec '%s': %s\n", argv[0], strerror(errno));
+        _exit(127);
+    }
+
+    /* Parent: wait for child. */
+    int status = 0;
+    if (waitpid(pid, &status, 0) < 0) {
+        free(argv);
+        omg_panicf("ValueError", "subprocess: waitpid failed: %s", strerror(errno));
+    }
+    free(argv);
+
+    int code;
+    if (WIFEXITED(status))        code = WEXITSTATUS(status);
+    else if (WIFSIGNALED(status)) code = 128 + WTERMSIG(status);
+    else                          code = -1;
+    return omg_int((int64_t)code);
+}
+
 /* === File I/O ============================================================ */
 
 /* Path-resolution base. main() initialises this from getcwd(); file
@@ -1684,6 +1801,15 @@ static Value omg_call_builtin(Value name, Value args) {
         if (strcmp(n, "panic") == 0)           return omg_builtin_panic(a[0]);
         if (strcmp(n, "raise") == 0)           return omg_builtin_raise(a[0]);
         if (strcmp(n, "exit_with_error") == 0) return omg_builtin_exit_with_error(a[0]);
+        if (strcmp(n, "exit") == 0)            return omg_builtin_exit(a[0]);
+        if (strcmp(n, "subprocess") == 0)      return omg_builtin_subprocess(a[0]);
+    }
+    if (argc == 0) {
+        if (strcmp(n, "getpid") == 0)          return omg_builtin_getpid();
+        if (strcmp(n, "stdin_readline") == 0)  return omg_builtin_stdin_readline();
+    }
+    if (argc == 1) {
+        if (strcmp(n, "print") == 0)           return omg_builtin_print(a[0]);
     }
     if (argc == 2) {
         if (strcmp(n, "pow") == 0)        return omg_builtin_pow(a[0], a[1]);

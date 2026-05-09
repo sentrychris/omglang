@@ -1,0 +1,177 @@
+;;;omg
+
+# OMG REPL — interactive read-eval-print loop, OMG-native edition.
+# Mirrors `runtime/src/repl.rs` but lives entirely in OMG. Imports the
+# compiler and the OMG VM as libraries, accumulates a persistent
+# bytecode buffer across turns, and runs only the freshly appended
+# chunk each turn against persistent globals.
+#
+# Usage:
+#   omg-repl                    interactive REPL
+#   (or invoked by `omg` with no args via the user-facing driver)
+
+import "compiler.omg" as cc
+import "vm.omg" as vm
+
+# === Bracket-balance tracker ============================================
+# When a turn's input ends with unbalanced { ( [, we read more lines
+# before compiling. Mirrors the Rust REPL's depth tracker.
+
+alloc brace_depth   := 0
+alloc paren_depth   := 0
+alloc bracket_depth := 0
+# in_string == "" when not in a string; otherwise it's the quote char.
+alloc in_string     := ""
+alloc escape_next   := false
+
+proc reset_balance() {
+    brace_depth   := 0
+    paren_depth   := 0
+    bracket_depth := 0
+    in_string     := ""
+    escape_next   := false
+}
+
+proc update_balance(line) {
+    alloc i := 0
+    alloc n := length(line)
+    loop i < n {
+        alloc ch := line[i]
+        if escape_next {
+            escape_next := false
+        } elif ch == "\\" and in_string != "" {
+            escape_next := true
+        } elif ch == "\"" or ch == "'" {
+            if in_string == ch {
+                in_string := ""
+            } elif in_string == "" {
+                in_string := ch
+            }
+        } elif in_string == "" {
+            if ch == "{"      { brace_depth   := brace_depth   + 1
+            } elif ch == "}"  { brace_depth   := brace_depth   - 1
+            } elif ch == "("  { paren_depth   := paren_depth   + 1
+            } elif ch == ")"  { paren_depth   := paren_depth   - 1
+            } elif ch == "["  { bracket_depth := bracket_depth + 1
+            } elif ch == "]"  { bracket_depth := bracket_depth - 1
+            }
+        }
+        i := i + 1
+    }
+}
+
+proc input_complete() {
+    if brace_depth   > 0 { return false }
+    if paren_depth   > 0 { return false }
+    if bracket_depth > 0 { return false }
+    if in_string    != "" { return false }
+    return true
+}
+
+# === Persistent VM state ================================================
+# accum_len is the length of vm_code up to (and not including) the
+# current turn's bytes. Each turn appends new code; accum_len is the
+# base for rebasing jumps and the start PC for the run.
+
+alloc accum_len := 0
+
+# Seed the runtime-injected globals the way `omg <prog>` would.
+vm.vm_seed_global("args", [args[0]])
+vm.vm_seed_global("module_file", args[0])
+vm.vm_seed_global("current_dir", current_dir)
+
+# === Per-turn dispatch ==================================================
+
+# Convert a list of [name, params, address] entries (compiler output)
+# into vm_funcs entries, rebased onto the persistent buffer.
+proc install_funcs(chunk_funcs, base) {
+    alloc i := 0
+    alloc n := length(chunk_funcs)
+    loop i < n {
+        alloc f := chunk_funcs[i]
+        vm.vm_set_funcs_entry(f[0], f[1], f[2] + base)
+        i := i + 1
+    }
+}
+
+proc compile_and_run(source) {
+    # Each turn is its own compile, with fresh compiler module-level
+    # state. Persistent state lives in the VM, not here.
+    cc.compile_reset()
+    alloc compiled := false
+    try {
+        compiled := cc.compile_source(source, "<repl>")
+    } except err {
+        emit err
+        return false
+    }
+    alloc chunk_code  := compiled[0]
+    alloc chunk_funcs := compiled[1]
+
+    # Rebase the new chunk onto the end of the accumulated buffer.
+    alloc base := accum_len
+    alloc rebased := cc.cc_rebase(chunk_code, base)
+    vm.vm_extend_code(rebased)
+    install_funcs(chunk_funcs, base)
+    accum_len := vm.vm_get_code_length()
+
+    vm.vm_set_pc(base)
+    vm.vm_clear_pending_error()
+    vm.run()
+
+    alloc err := vm.vm_get_pending_error()
+    if length(err) > 0 {
+        emit err
+        vm.vm_clear_pending_error()
+    }
+}
+
+# === Main loop ==========================================================
+
+emit "OMG Language Interpreter - REPL (native)"
+emit "Type `exit` or `quit` to leave."
+
+alloc buffer := ""
+alloc multiline := false
+
+loop true {
+    if multiline {
+        print("... ")
+    } else {
+        print(">>> ")
+    }
+    alloc line := stdin_readline()
+    if line == false {
+        # EOF
+        emit ""
+        return_repl()
+    }
+    # First line of a fresh buffer: catch exit/quit early.
+    if multiline == false {
+        alloc trimmed := line
+        # Trim trailing whitespace (we don't have a builtin trim, do it inline).
+        loop length(trimmed) > 0 and trimmed[length(trimmed) - 1] == " " {
+            trimmed := trimmed[0:length(trimmed) - 1]
+        }
+        if trimmed == "exit" or trimmed == "quit" {
+            return_repl()
+        }
+    }
+
+    update_balance(line)
+    buffer := buffer + line + "\n"
+    multiline := input_complete() == false
+
+    if input_complete() {
+        compile_and_run(";;;omg\n" + buffer)
+        buffer := ""
+        multiline := false
+        reset_balance()
+    }
+}
+
+# OMG doesn't have a built-in early-return from top level; emulate via a
+# proc that calls exit(0).
+proc return_repl() {
+    exit(0)
+}

@@ -31,16 +31,18 @@ bootstrap/build-native-toolchain.sh
 
 ## What's in `bootstrap/native/`
 
-| Binary    | Role                                  | Size    |
-| --------- | ------------------------------------- | ------- |
-| `omg`     | User-facing driver (run / compile / build) | 1.5 KB  |
-| `omg-build` | One-shot AOT: `.omg` → ELF          | 0.6 KB  |
-| `omgc`    | Compiler: `.omg` → `.omgb` bytecode   | 432 KB  |
-| `omgcc`   | Transpiler: `.omgb` → `.c`            | 290 KB  |
-| `omgvm`   | Bytecode interpreter                  | 197 KB  |
-| `omg_rt.h`| C runtime header (inlined into output) | 63 KB   |
+| Binary    | Role                                       | Size    |
+| --------- | ------------------------------------------ | ------- |
+| `omg`     | User-facing driver (run / compile / build) | 39 KB   |
+| `omg-build` | One-shot AOT: `.omg` → ELF               | 31 KB   |
+| `omgc`    | Compiler: `.omg` → `.omgb` bytecode        | 432 KB  |
+| `omgcc`   | Transpiler: `.omgb` → `.c`                 | 295 KB  |
+| `omgvm`   | Bytecode interpreter                       | 197 KB  |
+| `omg_rt.h`| C runtime header (inlined into output)     | 65 KB   |
 
-`omg` and `omg-build` are shell scripts; everything else is a native ELF.
+All five binaries are native ELFs compiled from OMG source. The drivers
+(`omg`, `omg-build`) dispatch to the others via the `subprocess()`
+builtin. No shell scripts in the toolchain.
 
 ## Conventions in these docs
 

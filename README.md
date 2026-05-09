@@ -606,6 +606,10 @@ Always available, no import needed.
 | **Errors**                     |                                                       |
 | `panic(msg)` / `raise(msg)`    | raise a runtime error (catchable with `try`/`except`) |
 | `exit_with_error(msg)`         | print `msg` to stderr verbatim and exit 1 (uncatchable) |
+| **Process control**            |                                                       |
+| `subprocess([cmd, args...])`   | run a child process; returns its exit code           |
+| `exit(code)`                   | exit the current process with the given status       |
+| `getpid()`                     | current process ID (useful for unique tempfile names) |
 | **Reflection**                 |                                                       |
 | `call_builtin(name, args)`     | call a builtin by name (advanced)                     |
 
@@ -715,8 +719,10 @@ omglang/
 │   ├── compiler.omgb  its compiled bytecode (re-built on `cargo build`)
 │   ├── vm.omg         the OMG-in-OMG VM (used for fixed-point verification)
 │   ├── native-c.omg   OMG-to-C transpiler (used by the native build path)
+│   ├── omg.omg        user-facing driver (run / compile / build), in OMG
+│   ├── omg-build.omg  one-shot AOT driver, in OMG
 │   ├── omg_rt.h       C runtime header inlined into native binaries
-│   ├── native/        Rust-free toolchain (omgc, omgcc, omgvm, omg)
+│   ├── native/        Rust-free toolchain (5 native ELFs)
 │   └── build-native-toolchain.sh   builds bootstrap/native/
 ├── examples/        small standalone programs
 ├── tools/           command-line utilities written in OMG (wc, grep, sort, etc.)

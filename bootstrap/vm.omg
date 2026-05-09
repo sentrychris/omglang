@@ -517,11 +517,22 @@ proc signal_error(msg) {
 
 # Step is wrapped in a try below to convert any host-runtime panic
 # (IndexError, KeyError, divide-by-zero, etc.) into the same sentinel.
+# Strips a leading "RuntimeError: " — the host's panic-display path
+# always prepends it, but vm.omg's internal helpers (vm_lookup, etc)
+# already format their messages with the right Kind prefix, so the
+# wrapper is redundant and visually noisy.
 proc step() {
     try {
         step_inner()
     } except err {
-        vm_pending_error := err
+        alloc prefix := "RuntimeError: "
+        alloc le := length(err)
+        alloc lp := length(prefix)
+        if le >= lp and err[0:lp] == prefix {
+            vm_pending_error := err[lp:]
+        } else {
+            vm_pending_error := err
+        }
     }
 }
 
@@ -841,38 +852,111 @@ proc run() {
     }
 }
 
-# === Main =================================================================
+# === REPL helpers =========================================================
+# Procs the REPL calls to drive the VM across multiple turns. The dict
+# returned by `import "vm.omg" as vm` is a snapshot of values at import
+# time, so non-function members (vm_code, vm_pc, etc) can't be written
+# directly through the alias. These helper procs mutate the live state.
 
-if length(args) < 2 {
-    panic("usage: omg bootstrap/vm.omg <program.omgb> [program-args...]")
+proc vm_extend_code(new_chunk) {
+    vm_code := vm_code + new_chunk
 }
 
-alloc bc_path := args[1]
-alloc fh := file_open(bc_path, "rb")
-alloc bc_bytes := file_read(fh)
-file_close(fh)
+proc vm_set_funcs_entry(name, params, addr) {
+    vm_funcs[name] := [params, addr]
+}
 
-alloc parsed := parse_bytecode(bc_bytes)
-vm_code := parsed[0]
-vm_funcs := parsed[1]
+# Replace the function table wholesale. Used by the unified `omg`
+# driver to load a freshly-parsed bytecode's funcs (a name→[params,
+# addr] dict) without iterating one entry at a time.
+proc vm_set_funcs(funcs_dict) {
+    vm_funcs := funcs_dict
+}
 
-# Seed the program's runtime-injected globals so `args`, `module_file`,
-# and `current_dir` look like they would under a normal `omg <prog>`
-# invocation. The hosted program's `args[0]` is its own path, with the
-# rest of its argv following. Top-level procs need no seeding here —
-# the bytecode emits a `MAKE_FUNC` for each at the very top of the code
-# stream, and our dispatcher handles those normally.
-vm_globals["args"] := args[1:length(args)]
-vm_globals["module_file"] := args[1]
-vm_globals["current_dir"] := current_dir
+# Reset every piece of VM state to its initial value. Used by the
+# unified `omg` driver before running a fresh program — without this,
+# leftover state from a previous run (or from import-time
+# initialisation) would contaminate the new run.
+proc vm_reset() {
+    vm_code := []
+    vm_funcs := {}
+    vm_stack := []
+    vm_pc := 0
+    vm_halted := false
+    vm_globals := {}
+    vm_env := {}
+    vm_env_stack := []
+    vm_ret_stack := []
+    vm_block_stack := []
+    vm_pending_error := ""
+}
 
-run()
-# If the hosted program ended with an unhandled error, surface it at
-# the top level. We use `exit_with_error` rather than `panic` because
-# `vm_pending_error` already carries the formatted "Kind: message"
-# string; routing it through panic would prepend another
-# "RuntimeError: " layer and diverge from the Rust VM, which prints
-# the error's Display form directly to stderr and exits non-zero.
-if length(vm_pending_error) > 0 {
-    exit_with_error(vm_pending_error)
+proc vm_set_pc(pc) {
+    vm_pc := pc
+    vm_halted := false
+}
+
+proc vm_get_code_length() {
+    return length(vm_code)
+}
+
+proc vm_get_pending_error() {
+    return vm_pending_error
+}
+
+proc vm_clear_pending_error() {
+    vm_pending_error := ""
+    vm_halted := false
+}
+
+proc vm_seed_global(name, val) {
+    vm_globals[name] := val
+}
+
+# === Main =================================================================
+
+# Path-suffix helper used by the script-main gate below. Cheap; saves
+# importers from having to re-implement the same idiom.
+proc vm_path_ends_with(s, suffix) {
+    alloc ls := length(s)
+    alloc lp := length(suffix)
+    if lp > ls {
+        return false
+    }
+    return s[ls - lp:] == suffix
+}
+
+# Script-main dispatch — runs only when args[1] is a `.omgb` input. When
+# this file is imported by another OMG program (e.g. the REPL), args
+# don't match and main is a no-op so the import has no side effects.
+if length(args) >= 2 and vm_path_ends_with(args[1], ".omgb") {
+    alloc bc_path := args[1]
+    alloc fh := file_open(bc_path, "rb")
+    alloc bc_bytes := file_read(fh)
+    file_close(fh)
+
+    alloc parsed := parse_bytecode(bc_bytes)
+    vm_code := parsed[0]
+    vm_funcs := parsed[1]
+
+    # Seed the program's runtime-injected globals so `args`, `module_file`,
+    # and `current_dir` look like they would under a normal `omg <prog>`
+    # invocation. The hosted program's `args[0]` is its own path, with the
+    # rest of its argv following. Top-level procs need no seeding here —
+    # the bytecode emits a `MAKE_FUNC` for each at the very top of the code
+    # stream, and our dispatcher handles those normally.
+    vm_globals["args"] := args[1:length(args)]
+    vm_globals["module_file"] := args[1]
+    vm_globals["current_dir"] := current_dir
+
+    run()
+    # If the hosted program ended with an unhandled error, surface it at
+    # the top level. We use `exit_with_error` rather than `panic` because
+    # `vm_pending_error` already carries the formatted "Kind: message"
+    # string; routing it through panic would prepend another
+    # "RuntimeError: " layer and diverge from the Rust VM, which prints
+    # the error's Display form directly to stderr and exits non-zero.
+    if length(vm_pending_error) > 0 {
+        exit_with_error(vm_pending_error)
+    }
 }

@@ -86,20 +86,25 @@ versions: `omgc` is #1 + #3's compiler fused into a binary, `omgvm` is #2.
 
 ```
 bootstrap/native/
-├── omg         shell wrapper: pick the right tool by file ext
-├── omg-build   shell wrapper: AOT in one shot
+├── omg         user-facing driver: dispatches to the right tool by file ext
+├── omg-build   one-shot AOT: orchestrates omgc + omgcc + cc
 ├── omgc        compiler.omg compiled to native
 ├── omgcc       native-c.omg compiled to native (transpiler)
 ├── omgvm       vm.omg compiled to native (interpreter)
 └── omg_rt.h    C runtime header (linked into AOT outputs)
 ```
 
+All five tools are native ELFs compiled from OMG source. `omg` and
+`omg-build` are written in OMG (see [`bootstrap/omg.omg`](../../bootstrap/omg.omg)
+and [`bootstrap/omg-build.omg`](../../bootstrap/omg-build.omg)) and
+dispatch to the lower-level tools via the `subprocess()` builtin.
+
 These are produced by `bootstrap/build-native-toolchain.sh`, which:
 
-1. Uses the Rust binary (or itself, if already present) to compile each of
-   `compiler.omg`, `native-c.omg`, `vm.omg` to bytecode.
+1. Uses the Rust binary (or itself, if already present) to compile each
+   of the five `.omg` sources to bytecode.
 2. Runs `native-c.omg` on each bytecode file to emit C.
-3. Runs `cc -O2` to produce the three native binaries.
+3. Runs `cc -O2` to produce the five native binaries.
 4. Copies `omg_rt.h` next to them so AOT builds find it.
 
 **The script is idempotent.** Run it again and the native binaries rebuild

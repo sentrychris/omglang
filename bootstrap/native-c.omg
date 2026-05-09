@@ -339,6 +339,12 @@ proc emit_builtin1(c_func) {
     return "    { Value v = stack[--sp]; Value r = " + c_func + "(v); omg_dec(v); stack[sp++] = r; }\n"
 }
 
+# Zero-argument builtin call. Pushes the result directly; no operand
+# popping or refcounting needed.
+proc emit_builtin0(c_func) {
+    return "    stack[sp++] = " + c_func + "();\n"
+}
+
 # Two-argument builtin call. Pops b then a (source order: a came first).
 proc emit_builtin2(c_func) {
     return "    { Value b = stack[--sp]; Value a = stack[--sp]; Value r = " + c_func + "(a, b); omg_dec(a); omg_dec(b); stack[sp++] = r; }\n"
@@ -391,6 +397,14 @@ proc emit_builtin(name, argc) {
     if name == "raise" and argc == 1 { return emit_builtin1("omg_builtin_raise") }
     # exit_with_error: print to stderr verbatim (no kind prefix) + exit 1.
     if name == "exit_with_error" and argc == 1 { return emit_builtin1("omg_builtin_exit_with_error") }
+
+    # Process control (used by the OMG-native `omg`/`omg-build` drivers).
+    if name == "exit"       and argc == 1 { return emit_builtin1("omg_builtin_exit") }
+    if name == "getpid"     and argc == 0 { return emit_builtin0("omg_builtin_getpid") }
+    if name == "subprocess" and argc == 1 { return emit_builtin1("omg_builtin_subprocess") }
+    # I/O primitives used by the OMG-native REPL.
+    if name == "stdin_readline" and argc == 0 { return emit_builtin0("omg_builtin_stdin_readline") }
+    if name == "print"          and argc == 1 { return emit_builtin1("omg_builtin_print") }
 
     # Reflective dispatch (used by the OMG-in-OMG interpreter).
     if name == "call_builtin" and argc == 2 { return emit_builtin2("omg_call_builtin") }
@@ -1310,31 +1324,43 @@ proc dirname(path) {
 
 # === Main =================================================================
 
-if length(args) < 3 {
-    panic("usage: omg bootstrap/native-c.omg <in.omgb> <out.c>")
+# Path-suffix helper used by the script-main gate below.
+proc nc_path_ends_with(s, suffix) {
+    alloc ls := length(s)
+    alloc lp := length(suffix)
+    if lp > ls {
+        return false
+    }
+    return s[ls - lp:] == suffix
 }
 
-alloc bc_path := args[1]
-alloc out_path := args[2]
-alloc rt_path := dirname(module_file) + "/omg_rt.h"
+# Script-main dispatch — runs only when args look like a transpiler
+# invocation (a `.omgb` input plus a `.c` output). When this file is
+# imported by another OMG program (e.g. the unified `omg` driver), args
+# don't match and main is a no-op so the import has no side effects.
+if length(args) >= 3 and nc_path_ends_with(args[1], ".omgb") and nc_path_ends_with(args[2], ".c") {
+    alloc bc_path := args[1]
+    alloc out_path := args[2]
+    alloc rt_path := dirname(module_file) + "/omg_rt.h"
 
-alloc fh := file_open(bc_path, "rb")
-alloc bc_bytes := file_read(fh)
-file_close(fh)
+    alloc fh := file_open(bc_path, "rb")
+    alloc bc_bytes := file_read(fh)
+    file_close(fh)
 
-alloc parsed := parse_bytecode(bc_bytes)
-alloc code := parsed[0]
-alloc funcs := parsed[1]
+    alloc parsed := parse_bytecode(bc_bytes)
+    alloc code := parsed[0]
+    alloc funcs := parsed[1]
 
-alloc runtime_header := read_file(rt_path)
-if runtime_header == false {
-    panic("native-c: cannot read runtime header at " + rt_path)
+    alloc runtime_header := read_file(rt_path)
+    if runtime_header == false {
+        panic("native-c: cannot read runtime header at " + rt_path)
+    }
+
+    alloc c_src := generate(code, funcs, runtime_header, bc_path)
+
+    alloc out_h := file_open(out_path, "w")
+    file_write(out_h, c_src)
+    file_close(out_h)
+
+    emit "[native-c] " + bc_path + " -> " + out_path + " (" + length(c_src) + " bytes)"
 }
-
-alloc c_src := generate(code, funcs, runtime_header, bc_path)
-
-alloc out_h := file_open(out_path, "w")
-file_write(out_h, c_src)
-file_close(out_h)
-
-emit "[native-c] " + bc_path + " -> " + out_path + " (" + length(c_src) + " bytes)"
