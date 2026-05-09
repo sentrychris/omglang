@@ -1334,11 +1334,29 @@ proc nc_path_ends_with(s, suffix) {
     return s[ls - lp:] == suffix
 }
 
-# Script-main dispatch — runs only when args look like a transpiler
-# invocation (a `.omgb` input plus a `.c` output). When this file is
-# imported by another OMG program (e.g. the unified `omg` driver), args
-# don't match and main is a no-op so the import has no side effects.
-if length(args) >= 3 and nc_path_ends_with(args[1], ".omgb") and nc_path_ends_with(args[2], ".c") {
+# Extract the basename of args[0]. Used to detect "am I being run
+# directly as the transpiler" vs. "I've been imported as a library".
+proc nc_argv0_basename() {
+    alloc p := args[0]
+    alloc i := length(p) - 1
+    loop i >= 0 {
+        if p[i] == "/" or p[i] == "\\" {
+            return p[i + 1:]
+        }
+        i := i - 1
+    }
+    return p
+}
+
+proc nc_is_main_invocation() {
+    alloc bn := nc_argv0_basename()
+    return bn == "omgcc" or bn == "native-c.omg" or bn == "native-c.omgb"
+}
+
+# Script-main dispatch — runs only when this file is the top-level
+# program. When imported by another OMG program (e.g. the unified
+# `omg` driver), args[0] is the importer's binary and main is a no-op.
+if nc_is_main_invocation() and length(args) >= 3 and nc_path_ends_with(args[1], ".omgb") and nc_path_ends_with(args[2], ".c") {
     alloc bc_path := args[1]
     alloc out_path := args[2]
     alloc rt_path := dirname(module_file) + "/omg_rt.h"

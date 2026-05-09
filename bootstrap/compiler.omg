@@ -1854,11 +1854,21 @@ proc cc_rebase(body, base) {
 # Drive a full program compilation. Returns [final_code, funcs_list], where
 # funcs_list is a list of [name, params, address] sorted by name.
 proc compile_program_node(ast, file) {
+    return compile_program_node_seeded(ast, file, [])
+}
+
+# Same as compile_program_node, but seeds the outermost scope with
+# `known_globals` after the state reset. Used by the REPL so calls to
+# names declared in previous turns compile to LOAD + CALL_VALUE
+# (closure path) instead of CALL (direct function-table lookup).
+proc compile_program_node_seeded(ast, file, known_globals) {
     cc_code := []
     cc_pending_funcs := []
     cc_funcs := []
     cc_break_stack := []
-    cc_local_scopes := [[]]
+    # Copy the seed list so subsequent mutations of cc_local_scopes
+    # don't bleed back to the caller's `known_globals`.
+    cc_local_scopes := [known_globals[0:length(known_globals)]]
     cc_module_counter := 0
     cc_current_prefix := ""
     cc_current_file := file
@@ -2096,9 +2106,19 @@ proc do_compile(in_path, out_path) {
 # here, leaving the in-memory `code` indistinguishable from what
 # parse_bytecode would have produced.
 proc compile_source(text, file_path) {
+    return compile_source_with_globals(text, file_path, [])
+}
+
+# REPL entry point: like compile_source but pre-seeds the outermost
+# scope with names known to be globals (e.g. names declared in
+# previous REPL turns). Mirrors `compile_source_with_globals` in
+# runtime/src/compiler.rs. With the seed, the compiler emits LOAD +
+# CALL_VALUE for `add5(10)` even when `add5` was declared in an
+# earlier turn — the closure path through the function table.
+proc compile_source_with_globals(text, file_path, known_globals) {
     alloc tokens := tokenize(text, file_path)
     alloc ast := parse_program(file_path, tokens)
-    alloc compiled := compile_program_node(ast, file_path)
+    alloc compiled := compile_program_node_seeded(ast, file_path, known_globals)
     return [cc_decode_floats(compiled[0]), compiled[1]]
 }
 
@@ -2136,6 +2156,25 @@ proc compile_reset() {
     cc_loop_try_depth := []
 }
 
+# Seed the outermost scope with names that exist in the VM's globals
+# from prior REPL turns. Without this, a call like `add5(10)` in turn 3
+# (where add5 was defined in turn 2 as a closure) would compile to
+# `CALL("add5")` (direct function-table lookup) and fail at runtime,
+# because add5 is a closure value in vm_globals — not a function. With
+# the seed, cc_is_value_binding("add5") returns true and the compiler
+# emits `LOAD + CALL_VALUE` instead, which works through both the
+# function-table and the closure paths.
+#
+# Mirror of `compile_source_with_globals` in runtime/src/compiler.rs.
+proc cc_seed_globals(names) {
+    alloc i := 0
+    alloc n := length(names)
+    loop i < n {
+        cc_local_scopes[0] := cc_local_scopes[0] + [names[i]]
+        i := i + 1
+    }
+}
+
 # Small helper for the gate below. Avoids needing to expose cc_ends_with
 # to importers — keeps the library surface minimal.
 proc cc_path_ends_with(s, suffix) {
@@ -2147,10 +2186,40 @@ proc cc_path_ends_with(s, suffix) {
     return s[ls - lp:] == suffix
 }
 
-# Script-main dispatch — runs only when args look like a compiler
-# invocation (a `.omg` input plus a `.omgb` output). When this file is
-# imported by another OMG program (e.g. the REPL), args don't match
-# and main is a no-op so the import has no side effects.
-if length(args) >= 3 and cc_path_ends_with(args[1], ".omg") {
+# Extract the basename of args[0]. Used to detect "am I being run
+# directly as the compiler" vs. "I've been imported as a library".
+proc cc_argv0_basename() {
+    alloc p := args[0]
+    alloc i := length(p) - 1
+    loop i >= 0 {
+        if p[i] == "/" or p[i] == "\\" {
+            return p[i + 1:]
+        }
+        i := i - 1
+    }
+    return p
+}
+
+proc cc_is_main_invocation() {
+    alloc bn := cc_argv0_basename()
+    # `<embedded>` is what runtime/src/main.rs sets argv[0] to when it
+    # invokes the embedded compiler.omgb on a user's source.
+    if bn == "omgc" or bn == "compiler.omg" or bn == "compiler.omgb" or bn == "<embedded>" {
+        return true
+    }
+    # `--verify-omg-vm` runs the compiler under vm.omg, which forwards
+    # its own args[1] (a tempfile path ending in .omgb) as the inner
+    # program's args[0]. Treat any .omgb argv[0] as "we're being run
+    # as a compiler bytecode", since that's the only case it happens.
+    if cc_path_ends_with(bn, ".omgb") {
+        return true
+    }
+    return false
+}
+
+# Script-main dispatch — runs only when this file is the top-level
+# program. When imported by another OMG program (e.g. the unified
+# `omg` driver), args[0] is the importer's binary and main is a no-op.
+if cc_is_main_invocation() and length(args) >= 3 and cc_path_ends_with(args[1], ".omg") {
     do_compile(args[1], args[2])
 }
