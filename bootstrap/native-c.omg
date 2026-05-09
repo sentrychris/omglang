@@ -401,6 +401,7 @@ proc emit_builtin(name, argc) {
     # Process control (used by the OMG-native `omg`/`omg-build` drivers).
     if name == "exit"       and argc == 1 { return emit_builtin1("omg_builtin_exit") }
     if name == "getpid"     and argc == 0 { return emit_builtin0("omg_builtin_getpid") }
+    if name == "executable_path" and argc == 0 { return emit_builtin0("omg_builtin_executable_path") }
     if name == "subprocess" and argc == 1 { return emit_builtin1("omg_builtin_subprocess") }
     # I/O primitives used by the OMG-native REPL.
     if name == "stdin_readline" and argc == 0 { return emit_builtin0("omg_builtin_stdin_readline") }
@@ -1356,10 +1357,32 @@ proc nc_is_main_invocation() {
 # Script-main dispatch — runs only when this file is the top-level
 # program. When imported by another OMG program (e.g. the unified
 # `omg` driver), args[0] is the importer's binary and main is a no-op.
+# Resolve the directory containing the running binary. Prefer
+# /proc/self/exe-style introspection (so PATH-resolved invocation
+# works — e.g. `omgcc foo.omgb foo.c` from any CWD finds omg_rt.h).
+# Falls back to dirname(args[0]) when executable_path() returns false
+# (non-Linux, until those branches get added). Uses call_builtin so
+# bootstrap toolchains predating the executable_path builtin still
+# transpile cleanly — call_builtin has always been a builtin and its
+# argc==0 dispatch in omg_call_builtin handles unknown names by
+# panicking, which the try/except below catches.
+proc nc_runtime_dir() {
+    alloc exe := false
+    try {
+        exe := call_builtin("executable_path", [])
+    } except err {
+        exe := false
+    }
+    if exe == false {
+        return dirname(module_file)
+    }
+    return dirname(exe)
+}
+
 if nc_is_main_invocation() and length(args) >= 3 and nc_path_ends_with(args[1], ".omgb") and nc_path_ends_with(args[2], ".c") {
     alloc bc_path := args[1]
     alloc out_path := args[2]
-    alloc rt_path := dirname(module_file) + "/omg_rt.h"
+    alloc rt_path := nc_runtime_dir() + "/omg_rt.h"
 
     alloc fh := file_open(bc_path, "rb")
     alloc bc_bytes := file_read(fh)

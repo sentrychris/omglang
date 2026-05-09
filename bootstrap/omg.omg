@@ -30,8 +30,23 @@ proc dirname(path) {
     return "."
 }
 
+# Directory the running binary lives in — used to find sibling files
+# (omg_rt.h). Prefer /proc/self/exe-style introspection so PATH
+# invocation works; fall back to dirname(args[0]) when
+# executable_path() isn't available (non-Linux). Uses call_builtin
+# wrapped in try/except so bootstrap toolchains predating the
+# executable_path builtin still transpile cleanly.
 proc bin_dir() {
-    return dirname(args[0])
+    alloc exe := false
+    try {
+        exe := call_builtin("executable_path", [])
+    } except err {
+        exe := false
+    }
+    if exe == false {
+        return dirname(args[0])
+    }
+    return dirname(exe)
 }
 
 proc ends_with(s, suffix) {
