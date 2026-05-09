@@ -1,15 +1,6 @@
 /*
  * omg_rt.h — the OMG C runtime, prepended to every program emitted by
  * `bootstrap/native-c.omg`.
- *
- * Phase 1 (this file): just the value representation, an operand stack
- * primitive, and `omg_emit`. Subsequent phases will add arithmetic,
- * comparisons, lists, dicts, closures, GC, error handling, and more.
- *
- * Self-contained: include nothing from OMG, just standard C. Compile
- * the generated program with any C99 compiler:
- *
- *     cc /tmp/hello.c -o /tmp/hello
  */
 #include <stdio.h>
 #include <stdint.h>
@@ -1403,6 +1394,30 @@ static Value omg_builtin_getpid(void) {
     return omg_int((int64_t)getpid());
 }
 
+/* executable_path(): absolute path of the currently running binary, so
+ * the toolchain can locate sibling files (omg_rt.h) regardless of how
+ * it was invoked. Returns `false` on platforms where we don't have a
+ * way to look this up — callers fall back to dirname(args[0]).
+ *
+ * Only Linux is implemented for now (readlink on /proc/self/exe). Mac
+ * would use _NSGetExecutablePath; BSDs vary. The fallback path keeps
+ * the toolchain working on those platforms when invoked via an
+ * absolute or relative path. */
+static Value omg_builtin_executable_path(void) {
+#if defined(__linux__)
+    char buf[4096];
+    ssize_t n = readlink("/proc/self/exe", buf, sizeof(buf) - 1);
+    if (n < 0) return omg_bool(0);
+    buf[n] = 0;
+    char *out = (char *)malloc((size_t)n + 1);
+    if (!out) { fprintf(stderr, "out of memory\n"); exit(1); }
+    memcpy(out, buf, (size_t)n + 1);
+    return omg_str(out);
+#else
+    return omg_bool(0);
+#endif
+}
+
 /* stdin_readline(): read one line from stdin (no trailing newline).
  * Returns `false` on EOF (same convention as read_file). Used by the
  * OMG-native REPL. */
@@ -1807,6 +1822,7 @@ static Value omg_call_builtin(Value name, Value args) {
     if (argc == 0) {
         if (strcmp(n, "getpid") == 0)          return omg_builtin_getpid();
         if (strcmp(n, "stdin_readline") == 0)  return omg_builtin_stdin_readline();
+        if (strcmp(n, "executable_path") == 0) return omg_builtin_executable_path();
     }
     if (argc == 1) {
         if (strcmp(n, "print") == 0)           return omg_builtin_print(a[0]);
