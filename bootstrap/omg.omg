@@ -1,21 +1,24 @@
 ;;;omg
 
-# OMG driver — `omg <file>` user-facing entry point. Compiles to a
-# native ELF (bootstrap/native/omg) and dispatches to omgc / omgvm /
-# omg-build via subprocess(). Equivalent surface to the previous bash
-# wrapper, but no shell required.
+# OMG driver — single self-contained binary that does everything the
+# Rust runtime's `omg` does:
 #
-# Usage:
-#   omg <file.omg> [args...]            Compile and run
-#   omg <file.omgb> [args...]           Run precompiled bytecode
-#   omg --compile <in.omg> <out.omgb>   Compile to bytecode (no run)
-#   omg --build <in.omg> [<out>]        AOT-build to a native ELF
+#   omg                                Start the interactive REPL
+#   omg <file.omg> [args...]           Compile and run
+#   omg <file.omgb> [args...]          Run precompiled bytecode
+#   omg --compile <in.omg> <out.omgb>  Compile to bytecode (no run)
+#   omg --build <in.omg> [<out>]       AOT-build to a native ELF
+#
+# Compile / run / REPL all happen IN-PROCESS via imports of the
+# compiler, VM, and (for --build) the OMG-to-C transpiler. No
+# subprocess() calls except `cc` for the AOT-build's final step.
 
-# Strip the trailing path component to get the directory the binary
-# lives in. We use args[0] (argv[0]) and walk back to the last "/" or
-# "\\". When the binary is invoked without a path component (e.g. via
-# $PATH lookup), `dirname` returns "." so the sibling-binary lookups
-# fall back to the OS PATH search inside execvp.
+import "compiler.omg" as cc
+import "vm.omg" as vm
+import "native-c.omg" as ncc
+
+# === Path / string helpers ================================================
+
 proc dirname(path) {
     alloc i := length(path) - 1
     loop i >= 0 {
@@ -31,8 +34,6 @@ proc bin_dir() {
     return dirname(args[0])
 }
 
-# True iff `s` ends with `suffix`. No regex; we just compare the tail
-# slice.
 proc ends_with(s, suffix) {
     alloc ls := length(s)
     alloc lp := length(suffix)
@@ -42,11 +43,265 @@ proc ends_with(s, suffix) {
     return s[ls - lp:] == suffix
 }
 
-# Drop args[0..keep] and return the remaining tail. Used to forward
-# the user's args to the inner subprocess.
+proc strip_omg(path) {
+    alloc n := length(path)
+    if n >= 4 and path[n - 4:] == ".omg" {
+        return path[0:n - 4]
+    }
+    return path
+}
+
+# Drop args[0..keep] and return the remaining tail.
 proc args_tail(keep) {
     return args[keep:]
 }
+
+# === Load bytecode's func table into the VM ==============================
+# parse_bytecode returns funcs as a dict (name → [params, addr]); the
+# OMG compiler returns them as a list of [name, params, addr]. The two
+# helpers below normalise both into vm_funcs entries.
+
+proc install_funcs_dict(funcs_dict) {
+    alloc names := dict_keys(funcs_dict)
+    alloc i := 0
+    alloc n := length(names)
+    loop i < n {
+        alloc nm := names[i]
+        alloc f := funcs_dict[nm]
+        vm.vm_set_funcs_entry(nm, f[0], f[1])
+        i := i + 1
+    }
+}
+
+proc install_funcs_list(funcs_list) {
+    alloc i := 0
+    alloc n := length(funcs_list)
+    loop i < n {
+        alloc f := funcs_list[i]
+        vm.vm_set_funcs_entry(f[0], f[1], f[2])
+        i := i + 1
+    }
+}
+
+# === Run a program (fresh state) =========================================
+
+proc seed_vm_globals(hosted_args, hosted_module_file) {
+    vm.vm_seed_global("args", hosted_args)
+    vm.vm_seed_global("module_file", hosted_module_file)
+    vm.vm_seed_global("current_dir", current_dir)
+}
+
+proc check_unhandled_error() {
+    alloc err := vm.vm_get_pending_error()
+    if length(err) > 0 {
+        exit_with_error(err)
+    }
+}
+
+# Compile <file.omg> in-process and run it. forward_args becomes the
+# hosted program's args[1..], with file as args[0].
+proc run_omg_source(file, forward_args) {
+    alloc src := read_file(file)
+    if src == false {
+        exit_with_error("ModuleImportError: cannot read '" + file + "'")
+    }
+    cc.compile_reset()
+    alloc compiled := cc.compile_source(src, file)
+    vm.vm_reset()
+    vm.vm_extend_code(compiled[0])
+    install_funcs_list(compiled[1])
+    seed_vm_globals([file] + forward_args, file)
+    vm.vm_set_pc(0)
+    vm.run()
+    check_unhandled_error()
+}
+
+# Run a precompiled .omgb directly.
+proc run_omgb(file, forward_args) {
+    alloc fh := file_open(file, "rb")
+    alloc bytes := file_read(fh)
+    file_close(fh)
+    alloc parsed := vm.parse_bytecode(bytes)
+    vm.vm_reset()
+    vm.vm_extend_code(parsed[0])
+    install_funcs_dict(parsed[1])
+    seed_vm_globals([file] + forward_args, file)
+    vm.vm_set_pc(0)
+    vm.run()
+    check_unhandled_error()
+}
+
+# === --compile (compile only, no run) ====================================
+
+proc compile_only(in_path, out_path) {
+    cc.compile_reset()
+    cc.do_compile(in_path, out_path)
+}
+
+# === --build (AOT to native ELF) =========================================
+
+proc build_aot(in_path, out_path) {
+    alloc pid := getpid()
+    alloc tmp_omgb := "/tmp/omg-build-" + pid + ".omgb"
+    alloc tmp_c    := "/tmp/omg-build-" + pid + ".c"
+    cc.compile_reset()
+    cc.do_compile(in_path, tmp_omgb)
+
+    # Read the bytecode, transpile in-process to C.
+    alloc fh := file_open(tmp_omgb, "rb")
+    alloc bc_bytes := file_read(fh)
+    file_close(fh)
+    alloc rt_path := bin_dir() + "/omg_rt.h"
+    alloc runtime_header := read_file(rt_path)
+    if runtime_header == false {
+        exit_with_error("ModuleImportError: cannot read runtime header at " + rt_path)
+    }
+    alloc parsed := ncc.parse_bytecode(bc_bytes)
+    alloc c_src := ncc.generate(parsed[0], parsed[1], runtime_header, in_path)
+
+    alloc out_h := file_open(tmp_c, "w")
+    file_write(out_h, c_src)
+    file_close(out_h)
+
+    # Final step shells out to cc; that's the only external dependency.
+    alloc rc := subprocess(["cc", "-O2", "-w", tmp_c, "-o", out_path, "-lm"])
+    if rc != 0 {
+        exit(rc)
+    }
+    emit "built: " + out_path
+}
+
+# === REPL ================================================================
+# Inline implementation. Mirrors bootstrap/repl.omg, but uses our own
+# imports of cc/vm so state is shared with the rest of the driver.
+
+alloc repl_brace_depth   := 0
+alloc repl_paren_depth   := 0
+alloc repl_bracket_depth := 0
+alloc repl_in_string     := ""
+alloc repl_escape_next   := false
+
+proc repl_reset_balance() {
+    repl_brace_depth   := 0
+    repl_paren_depth   := 0
+    repl_bracket_depth := 0
+    repl_in_string     := ""
+    repl_escape_next   := false
+}
+
+proc repl_update_balance(line) {
+    alloc i := 0
+    alloc n := length(line)
+    loop i < n {
+        alloc ch := line[i]
+        if repl_escape_next {
+            repl_escape_next := false
+        } elif ch == "\\" and repl_in_string != "" {
+            repl_escape_next := true
+        } elif ch == "\"" or ch == "'" {
+            if repl_in_string == ch {
+                repl_in_string := ""
+            } elif repl_in_string == "" {
+                repl_in_string := ch
+            }
+        } elif repl_in_string == "" {
+            if ch == "{"      { repl_brace_depth   := repl_brace_depth   + 1
+            } elif ch == "}"  { repl_brace_depth   := repl_brace_depth   - 1
+            } elif ch == "("  { repl_paren_depth   := repl_paren_depth   + 1
+            } elif ch == ")"  { repl_paren_depth   := repl_paren_depth   - 1
+            } elif ch == "["  { repl_bracket_depth := repl_bracket_depth + 1
+            } elif ch == "]"  { repl_bracket_depth := repl_bracket_depth - 1
+            }
+        }
+        i := i + 1
+    }
+}
+
+proc repl_input_complete() {
+    if repl_brace_depth   > 0 { return false }
+    if repl_paren_depth   > 0 { return false }
+    if repl_bracket_depth > 0 { return false }
+    if repl_in_string    != "" { return false }
+    return true
+}
+
+# accum_len is the length of vm_code before the current turn's chunk.
+# Used as the base for jump-rebasing and the start PC for vm.run().
+alloc repl_accum_len := 0
+
+proc repl_install_funcs(chunk_funcs, base) {
+    alloc i := 0
+    alloc n := length(chunk_funcs)
+    loop i < n {
+        alloc f := chunk_funcs[i]
+        vm.vm_set_funcs_entry(f[0], f[1], f[2] + base)
+        i := i + 1
+    }
+}
+
+proc repl_compile_and_run(source) {
+    cc.compile_reset()
+    alloc compiled := false
+    try {
+        compiled := cc.compile_source(source, "<repl>")
+    } except err {
+        emit err
+        return false
+    }
+    alloc base := repl_accum_len
+    alloc rebased := cc.cc_rebase(compiled[0], base)
+    vm.vm_extend_code(rebased)
+    repl_install_funcs(compiled[1], base)
+    repl_accum_len := vm.vm_get_code_length()
+    vm.vm_set_pc(base)
+    vm.vm_clear_pending_error()
+    vm.run()
+    alloc err := vm.vm_get_pending_error()
+    if length(err) > 0 {
+        emit err
+        vm.vm_clear_pending_error()
+    }
+}
+
+proc run_repl() {
+    # Seed the VM. We don't reset because we want a single accumulating
+    # state across all turns.
+    seed_vm_globals([args[0]], args[0])
+    emit "OMG Language Interpreter - REPL (native)"
+    emit "Type `exit` or `quit` to leave."
+
+    alloc buffer := ""
+    alloc multiline := false
+
+    loop true {
+        if multiline { print("... ") } else { print(">>> ") }
+        alloc line := stdin_readline()
+        if line == false {
+            emit ""
+            return false
+        }
+        if multiline == false {
+            alloc trimmed := line
+            loop length(trimmed) > 0 and trimmed[length(trimmed) - 1] == " " {
+                trimmed := trimmed[0:length(trimmed) - 1]
+            }
+            if trimmed == "exit" or trimmed == "quit" {
+                return false
+            }
+        }
+        repl_update_balance(line)
+        buffer := buffer + line + "\n"
+        multiline := repl_input_complete() == false
+        if repl_input_complete() {
+            repl_compile_and_run(";;;omg\n" + buffer)
+            buffer := ""
+            multiline := false
+            repl_reset_balance()
+        }
+    }
+}
+
+# === Usage ===============================================================
 
 proc usage() {
     emit "usage:"
@@ -57,33 +312,11 @@ proc usage() {
     emit "  omg --build <in.omg> [<out>]        AOT-build to a native ELF"
 }
 
-# Compile-and-run path: omgc writes a tempfile, omgvm reads it. We use
-# /tmp/omg-<pid>.omgb so concurrent runs don't collide.
-proc run_omg_source(file, forward_args) {
-    alloc dir := bin_dir()
-    alloc tmp := "/tmp/omg-" + getpid() + ".omgb"
-    alloc rc := subprocess([dir + "/omgc", file, tmp])
-    if rc != 0 {
-        exit(rc)
-    }
-    alloc cmd := [dir + "/omgvm", tmp] + forward_args
-    alloc rc2 := subprocess(cmd)
-    exit(rc2)
-}
-
-# Already bytecode — skip omgc and go straight to omgvm.
-proc run_omgb(file, forward_args) {
-    alloc dir := bin_dir()
-    alloc cmd := [dir + "/omgvm", file] + forward_args
-    exit(subprocess(cmd))
-}
+# === Main dispatch =======================================================
 
 if length(args) < 2 {
-    # No args → start the REPL by exec'ing the omg-repl binary that
-    # lives next to us. The REPL is a separate ELF because it imports
-    # compiler.omg and vm.omg and needs to be its own program; keeping
-    # it out of the omg driver also keeps the driver tiny.
-    exit(subprocess([bin_dir() + "/omg-repl"]))
+    run_repl()
+    exit(0)
 }
 
 alloc cmd := args[1]
@@ -93,18 +326,23 @@ if cmd == "-h" or cmd == "--help" {
     exit(0)
 } elif cmd == "--compile" {
     if length(args) < 4 {
-        emit "usage: omg --compile <in.omg> <out.omgb>"
-        exit(1)
+        exit_with_error("usage: omg --compile <in.omg> <out.omgb>")
     }
-    exit(subprocess([bin_dir() + "/omgc", args[2], args[3]]))
+    compile_only(args[2], args[3])
 } elif cmd == "--build" {
-    alloc build_args := [bin_dir() + "/omg-build"] + args_tail(2)
-    exit(subprocess(build_args))
+    if length(args) < 3 {
+        exit_with_error("usage: omg --build <in.omg> [<out>]")
+    }
+    alloc in_path := args[2]
+    alloc out_path := strip_omg(in_path)
+    if length(args) >= 4 {
+        out_path := args[3]
+    }
+    build_aot(in_path, out_path)
 } elif ends_with(cmd, ".omg") {
     run_omg_source(cmd, args_tail(2))
 } elif ends_with(cmd, ".omgb") {
     run_omgb(cmd, args_tail(2))
 } else {
-    emit "unknown file type: " + cmd + " (need .omg or .omgb)"
-    exit(1)
+    exit_with_error("unknown file type: " + cmd + " (need .omg or .omgb)")
 }

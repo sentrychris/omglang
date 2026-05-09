@@ -10,12 +10,17 @@
 #      existing omgc + omgcc to rebuild themselves.
 #
 # Sources compiled (each .omg → .omgb → .c → ELF):
-#   bootstrap/compiler.omg  → omgc        compiler  (.omg → .omgb)
-#   bootstrap/native-c.omg  → omgcc       transpiler (.omgb → .c)
-#   bootstrap/vm.omg        → omgvm       bytecode VM (executes .omgb)
-#   bootstrap/omg.omg       → omg         user-facing driver
-#   bootstrap/omg-build.omg → omg-build   one-shot AOT driver
-#   bootstrap/repl.omg      → omg-repl    interactive REPL
+#   bootstrap/compiler.omg  → omgc   compiler   (.omg → .omgb)        standalone
+#   bootstrap/native-c.omg  → omgcc  transpiler (.omgb → .c)          standalone
+#   bootstrap/vm.omg        → omgvm  bytecode VM (executes .omgb)     standalone
+#   bootstrap/omg.omg       → omg    unified driver (run/compile/    primary
+#                                    build/REPL all in-process)      user-facing
+#
+# `omg` is the "all-in-one" binary, mirroring the Rust runtime: it
+# imports compiler.omg, vm.omg, and native-c.omg directly so compile,
+# run, and REPL happen in-process. The standalone tools (omgc, omgvm,
+# omgcc) are kept around for direct use, but day-to-day usage goes
+# through `omg`.
 set -e
 
 cd "$(dirname "$0")/.."
@@ -72,10 +77,12 @@ build_binary bootstrap/compiler.omg  "$NATIVE_DIR/omgc"
 build_binary bootstrap/native-c.omg  "$NATIVE_DIR/omgcc"
 build_binary bootstrap/vm.omg        "$NATIVE_DIR/omgvm"
 
-echo "[3/4] Building user-facing drivers (omg, omg-build, omg-repl)"
+echo "[3/4] Building unified driver (omg)"
 build_binary bootstrap/omg.omg       "$NATIVE_DIR/omg"
-build_binary bootstrap/omg-build.omg "$NATIVE_DIR/omg-build"
-build_binary bootstrap/repl.omg      "$NATIVE_DIR/omg-repl"
+
+# Remove obsolete dispatcher-era binaries if a previous build left them
+# behind. The unified `omg` does what they did, all in-process.
+rm -f "$NATIVE_DIR/omg-build" "$NATIVE_DIR/omg-repl"
 
 echo "[4/4] Installing runtime header"
 cp bootstrap/omg_rt.h "$NATIVE_DIR/omg_rt.h"

@@ -866,6 +866,31 @@ proc vm_set_funcs_entry(name, params, addr) {
     vm_funcs[name] := [params, addr]
 }
 
+# Replace the function table wholesale. Used by the unified `omg`
+# driver to load a freshly-parsed bytecode's funcs (a name→[params,
+# addr] dict) without iterating one entry at a time.
+proc vm_set_funcs(funcs_dict) {
+    vm_funcs := funcs_dict
+}
+
+# Reset every piece of VM state to its initial value. Used by the
+# unified `omg` driver before running a fresh program — without this,
+# leftover state from a previous run (or from import-time
+# initialisation) would contaminate the new run.
+proc vm_reset() {
+    vm_code := []
+    vm_funcs := {}
+    vm_stack := []
+    vm_pc := 0
+    vm_halted := false
+    vm_globals := {}
+    vm_env := {}
+    vm_env_stack := []
+    vm_ret_stack := []
+    vm_block_stack := []
+    vm_pending_error := ""
+}
+
 proc vm_set_pc(pc) {
     vm_pc := pc
     vm_halted := false

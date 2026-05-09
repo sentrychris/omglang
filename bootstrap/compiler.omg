@@ -2084,12 +2084,38 @@ proc do_compile(in_path, out_path) {
 }
 
 # Library entry point: compile a source string in-memory and return
-# [code, funcs]. Used by the OMG-native REPL, which runs each turn
-# through this rather than the file-based do_compile path.
+# [code, funcs]. Used by the OMG-native REPL and the unified `omg`
+# driver, which runs each turn / each program through this rather
+# than the file-based do_compile path.
+#
+# The compiler emits PUSH_FLOAT with the f64's i64 bit pattern as the
+# payload, intending the bytecode reader to convert via bits_to_float
+# at decode time (see vm.omg's decode_one). When we skip the
+# serialise→parse round-trip and feed compile_program_node's output
+# straight into the VM, that conversion never happens — so we do it
+# here, leaving the in-memory `code` indistinguishable from what
+# parse_bytecode would have produced.
 proc compile_source(text, file_path) {
     alloc tokens := tokenize(text, file_path)
     alloc ast := parse_program(file_path, tokens)
-    return compile_program_node(ast, file_path)
+    alloc compiled := compile_program_node(ast, file_path)
+    return [cc_decode_floats(compiled[0]), compiled[1]]
+}
+
+proc cc_decode_floats(code) {
+    alloc out := []
+    alloc i := 0
+    alloc n := length(code)
+    loop i < n {
+        alloc instr := code[i]
+        if instr[0] == "PUSH_FLOAT" {
+            out := out + [["PUSH_FLOAT", bits_to_float(instr[1])]]
+        } else {
+            out := out + [instr]
+        }
+        i := i + 1
+    }
+    return out
 }
 
 # Reset module-level compiler state. The REPL calls this between turns
