@@ -389,6 +389,8 @@ proc emit_builtin(name, argc) {
     # Value-returning so the BUILTIN slot still pushes a (dead) result.
     if name == "panic" and argc == 1 { return emit_builtin1("omg_builtin_panic") }
     if name == "raise" and argc == 1 { return emit_builtin1("omg_builtin_raise") }
+    # exit_with_error: print to stderr verbatim (no kind prefix) + exit 1.
+    if name == "exit_with_error" and argc == 1 { return emit_builtin1("omg_builtin_exit_with_error") }
 
     # Reflective dispatch (used by the OMG-in-OMG interpreter).
     if name == "call_builtin" and argc == 2 { return emit_builtin2("omg_call_builtin") }

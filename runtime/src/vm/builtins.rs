@@ -242,6 +242,21 @@ pub fn call_builtin(
             )),
         },
 
+        // exit_with_error("message") -> print msg to stderr verbatim
+        // (no kind prefix), then std::process::exit(1). Bypasses the
+        // try/except machinery deliberately — used by `vm.omg` to
+        // surface an already-formatted error message at top level
+        // without wrapping it in another `RuntimeError:` prefix.
+        "exit_with_error" => match args {
+            [Value::Str(msg)] => {
+                eprintln!("{}", msg);
+                std::process::exit(1);
+            }
+            _ => Err(RuntimeError::TypeError(
+                "exit_with_error() expects a string".to_string(),
+            )),
+        },
+
         // raise("message") -> synthesize a VM raise of ErrorKind::Generic
         //
         // We reuse the VM’s raise path to ensure handlers (SetupExcept) can catch it.

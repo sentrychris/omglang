@@ -867,9 +867,12 @@ vm_globals["module_file"] := args[1]
 vm_globals["current_dir"] := current_dir
 
 run()
-# If the hosted program ended with an unhandled error, re-raise it at
-# the top level. (Re-raising from inside `run()` itself was unreliable
-# in the OMG runtime — caller-frame panics propagate cleanly.)
+# If the hosted program ended with an unhandled error, surface it at
+# the top level. We use `exit_with_error` rather than `panic` because
+# `vm_pending_error` already carries the formatted "Kind: message"
+# string; routing it through panic would prepend another
+# "RuntimeError: " layer and diverge from the Rust VM, which prints
+# the error's Display form directly to stderr and exits non-zero.
 if length(vm_pending_error) > 0 {
-    panic(vm_pending_error)
+    exit_with_error(vm_pending_error)
 }

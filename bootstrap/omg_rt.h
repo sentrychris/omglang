@@ -1372,6 +1372,18 @@ static Value omg_builtin_raise(Value v) {
     return omg_none(); /* unreachable */
 }
 
+/* Print msg to stderr verbatim (no kind prefix) and exit 1. Used by
+ * vm.omg to surface an already-formatted error string at top level
+ * without `panic`'s "RuntimeError:" wrapper. */
+static Value omg_builtin_exit_with_error(Value v) {
+    if (v.tag != OMG_STR) omg_panic("TypeError", "exit_with_error() expects a string");
+    fflush(stdout);
+    fprintf(stderr, "%s\n", v.v.s);
+    fflush(stderr);
+    exit(1);
+    return omg_none(); /* unreachable */
+}
+
 /* === File I/O ============================================================ */
 
 /* Path-resolution base. main() initialises this from getcwd(); file
@@ -1671,6 +1683,7 @@ static Value omg_call_builtin(Value name, Value args) {
         if (strcmp(n, "make_dir") == 0)        return omg_builtin_make_dir(a[0]);
         if (strcmp(n, "panic") == 0)           return omg_builtin_panic(a[0]);
         if (strcmp(n, "raise") == 0)           return omg_builtin_raise(a[0]);
+        if (strcmp(n, "exit_with_error") == 0) return omg_builtin_exit_with_error(a[0]);
     }
     if (argc == 2) {
         if (strcmp(n, "pow") == 0)        return omg_builtin_pow(a[0], a[1]);

@@ -68,6 +68,10 @@ fn builtin_names() -> &'static [&'static str] {
         // Dict-keys enumeration, used by the OMG-in-OMG VM to iterate a
         // closure's captured environment (and useful generally).
         "dict_keys",
+        // Print msg to stderr verbatim and exit 1. Used by `bootstrap/vm.omg`
+        // to surface a hosted program's uncaught error without re-wrapping
+        // it through `panic`'s "RuntimeError:" prefix.
+        "exit_with_error",
     ]
 }
 

@@ -1016,7 +1016,8 @@ alloc cc_builtins := [
     "is_dir", "read_dir", "make_dir", "string_bytes",
     "int", "float", "floor", "ceil", "round", "abs",
     "sqrt", "pow", "log", "sin", "cos", "tan",
-    "float_bits", "bits_to_float", "bytes_to_string", "dict_keys"
+    "float_bits", "bits_to_float", "bytes_to_string", "dict_keys",
+    "exit_with_error"
 ]
 
 proc cc_is_builtin(name) {
