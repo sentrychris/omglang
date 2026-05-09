@@ -1,0 +1,51 @@
+;;;omg
+
+# Tiny calculator. Usage: foo <a> <op> <b>
+# Operators: + - * / % // ** (works on ints and floats; promotes on float)
+
+proc parse_num(s) {
+    # Float if it has a `.` or an exponent; otherwise int.
+    alloc i := 0
+    alloc n := length(s)
+    alloc has_dot := false
+    loop i < n {
+        if s[i] == "." or s[i] == "e" or s[i] == "E" {
+            has_dot := true
+            break
+        }
+        i := i + 1
+    }
+    if has_dot {
+        return float(s)
+    }
+    return int(s)
+}
+
+proc calc(a, op, b) {
+    if op == "+"  { return a + b }
+    if op == "-"  { return a - b }
+    if op == "*"  { return a * b }
+    if op == "/"  { return a / b }
+    if op == "%"  { return a % b }
+    if op == "//" { return a // b }
+    if op == "**" { return pow(a, b) }
+    panic("unknown operator: '" + op + "' (try + - * / % // **)")
+}
+
+if length(args) < 4 {
+    emit "usage: " + args[0] + " <a> <op> <b>"
+    emit "ops:   + - * / % // **"
+    emit ""
+    emit "examples:"
+    emit "  " + args[0] + " 7 + 5"
+    emit "  " + args[0] + " 22 / 7"
+    emit "  " + args[0] + " 22 // 7"
+    emit "  " + args[0] + " 2 ** 10"
+    emit "  " + args[0] + " 3.14 * 2.0"
+} else {
+    alloc a := parse_num(args[1])
+    alloc op := args[2]
+    alloc b := parse_num(args[3])
+    alloc r := calc(a, op, b)
+    emit "" + a + " " + op + " " + b + " = " + r
+}
