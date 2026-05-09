@@ -1403,6 +1403,45 @@ static Value omg_builtin_getpid(void) {
     return omg_int((int64_t)getpid());
 }
 
+/* stdin_readline(): read one line from stdin (no trailing newline).
+ * Returns `false` on EOF (same convention as read_file). Used by the
+ * OMG-native REPL. */
+static Value omg_builtin_stdin_readline(void) {
+    /* Grow buffer dynamically. fgetc loop is simple and portable. */
+    size_t cap = 256, len = 0;
+    char *buf = (char *)malloc(cap);
+    if (!buf) { fprintf(stderr, "out of memory\n"); exit(1); }
+    int c;
+    int saw_anything = 0;
+    while ((c = fgetc(stdin)) != EOF) {
+        saw_anything = 1;
+        if (c == '\n') break;
+        if (len + 1 >= cap) {
+            cap *= 2;
+            char *nb = (char *)realloc(buf, cap);
+            if (!nb) { free(buf); fprintf(stderr, "out of memory\n"); exit(1); }
+            buf = nb;
+        }
+        buf[len++] = (char)c;
+    }
+    if (!saw_anything) {
+        free(buf);
+        return omg_bool(0);
+    }
+    /* Strip trailing \r if present (Windows line endings). */
+    if (len > 0 && buf[len - 1] == '\r') len--;
+    buf[len] = 0;
+    return omg_str(buf);
+}
+
+/* print(s): like emit, but no trailing newline. Used for REPL prompts. */
+static Value omg_builtin_print(Value v) {
+    if (v.tag != OMG_STR) omg_panic("TypeError", "print() expects a string");
+    fputs(v.v.s, stdout);
+    fflush(stdout);
+    return omg_none();
+}
+
 /* subprocess(argv): fork + execvp + waitpid. argv is a list of strings;
  * argv[0] is the program (PATH-resolved via execvp), the rest are args.
  * stdin/stdout/stderr are inherited. Returns the child's exit code.
@@ -1767,6 +1806,10 @@ static Value omg_call_builtin(Value name, Value args) {
     }
     if (argc == 0) {
         if (strcmp(n, "getpid") == 0)          return omg_builtin_getpid();
+        if (strcmp(n, "stdin_readline") == 0)  return omg_builtin_stdin_readline();
+    }
+    if (argc == 1) {
+        if (strcmp(n, "print") == 0)           return omg_builtin_print(a[0]);
     }
     if (argc == 2) {
         if (strcmp(n, "pow") == 0)        return omg_builtin_pow(a[0], a[1]);

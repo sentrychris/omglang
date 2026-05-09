@@ -50,6 +50,7 @@ proc args_tail(keep) {
 
 proc usage() {
     emit "usage:"
+    emit "  omg                                 Start the interactive REPL"
     emit "  omg <file.omg> [args...]            Compile and run"
     emit "  omg <file.omgb> [args...]           Run precompiled bytecode"
     emit "  omg --compile <in.omg> <out.omgb>   Compile to bytecode (no run)"
@@ -78,14 +79,18 @@ proc run_omgb(file, forward_args) {
 }
 
 if length(args) < 2 {
-    usage()
-    exit(1)
+    # No args → start the REPL by exec'ing the omg-repl binary that
+    # lives next to us. The REPL is a separate ELF because it imports
+    # compiler.omg and vm.omg and needs to be its own program; keeping
+    # it out of the omg driver also keeps the driver tiny.
+    exit(subprocess([bin_dir() + "/omg-repl"]))
 }
 
 alloc cmd := args[1]
 
 if cmd == "-h" or cmd == "--help" {
     usage()
+    exit(0)
 } elif cmd == "--compile" {
     if length(args) < 4 {
         emit "usage: omg --compile <in.omg> <out.omgb>"

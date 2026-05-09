@@ -402,6 +402,9 @@ proc emit_builtin(name, argc) {
     if name == "exit"       and argc == 1 { return emit_builtin1("omg_builtin_exit") }
     if name == "getpid"     and argc == 0 { return emit_builtin0("omg_builtin_getpid") }
     if name == "subprocess" and argc == 1 { return emit_builtin1("omg_builtin_subprocess") }
+    # I/O primitives used by the OMG-native REPL.
+    if name == "stdin_readline" and argc == 0 { return emit_builtin0("omg_builtin_stdin_readline") }
+    if name == "print"          and argc == 1 { return emit_builtin1("omg_builtin_print") }
 
     # Reflective dispatch (used by the OMG-in-OMG interpreter).
     if name == "call_builtin" and argc == 2 { return emit_builtin2("omg_call_builtin") }

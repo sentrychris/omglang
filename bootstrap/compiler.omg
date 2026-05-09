@@ -1017,7 +1017,8 @@ alloc cc_builtins := [
     "int", "float", "floor", "ceil", "round", "abs",
     "sqrt", "pow", "log", "sin", "cos", "tan",
     "float_bits", "bits_to_float", "bytes_to_string", "dict_keys",
-    "exit_with_error", "exit", "getpid", "subprocess"
+    "exit_with_error", "exit", "getpid", "subprocess",
+    "stdin_readline", "print"
 ]
 
 proc cc_is_builtin(name) {
@@ -2082,10 +2083,48 @@ proc do_compile(in_path, out_path) {
     file_close(h)
 }
 
-# `args[0]` is the script path itself (the embedded compiler.omgb); the
-# real arguments start at args[1].  Mirrors `argv[0]` in Python / C.
-if length(args) < 3 {
-    panic("usage: compiler <in.omg> <out.omgb>")
+# Library entry point: compile a source string in-memory and return
+# [code, funcs]. Used by the OMG-native REPL, which runs each turn
+# through this rather than the file-based do_compile path.
+proc compile_source(text, file_path) {
+    alloc tokens := tokenize(text, file_path)
+    alloc ast := parse_program(file_path, tokens)
+    return compile_program_node(ast, file_path)
 }
 
-do_compile(args[1], args[2])
+# Reset module-level compiler state. The REPL calls this between turns
+# so each turn compiles in a clean compiler context (the persistent
+# state lives in the VM's globals/funcs, not here).
+proc compile_reset() {
+    cc_code := []
+    cc_pending_funcs := []
+    cc_funcs := []
+    cc_break_stack := []
+    cc_local_scopes := [[]]
+    cc_module_counter := 0
+    cc_current_prefix := ""
+    cc_current_file := ""
+    cc_loaded_modules := []
+    cc_loading := []
+    cc_try_depth := 0
+    cc_loop_try_depth := []
+}
+
+# Small helper for the gate below. Avoids needing to expose cc_ends_with
+# to importers — keeps the library surface minimal.
+proc cc_path_ends_with(s, suffix) {
+    alloc ls := length(s)
+    alloc lp := length(suffix)
+    if lp > ls {
+        return false
+    }
+    return s[ls - lp:] == suffix
+}
+
+# Script-main dispatch — runs only when args look like a compiler
+# invocation (a `.omg` input plus a `.omgb` output). When this file is
+# imported by another OMG program (e.g. the REPL), args don't match
+# and main is a no-op so the import has no side effects.
+if length(args) >= 3 and cc_path_ends_with(args[1], ".omg") {
+    do_compile(args[1], args[2])
+}

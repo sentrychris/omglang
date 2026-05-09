@@ -279,6 +279,52 @@ pub fn call_builtin(
             Ok(Value::Int(std::process::id() as i64))
         }
 
+        // stdin_readline() -> str | bool. Reads one line from stdin
+        // (without the trailing newline). Returns `false` on EOF — the
+        // same convention `read_file` uses, so callers can `if line ==
+        // false`. Used by the OMG-native REPL.
+        "stdin_readline" => {
+            if !args.is_empty() {
+                return Err(RuntimeError::TypeError(
+                    "stdin_readline() takes no arguments".to_string(),
+                ));
+            }
+            use std::io::BufRead;
+            let stdin = std::io::stdin();
+            let mut line = String::new();
+            match stdin.lock().read_line(&mut line) {
+                Ok(0) => Ok(Value::Bool(false)),
+                Ok(_) => {
+                    // Strip trailing \n (and \r if present, for Windows
+                    // line endings). Keep everything else verbatim.
+                    if line.ends_with('\n') {
+                        line.pop();
+                        if line.ends_with('\r') {
+                            line.pop();
+                        }
+                    }
+                    Ok(Value::Str(line))
+                }
+                Err(e) => Err(RuntimeError::ValueError(format!(
+                    "stdin_readline: {}", e
+                ))),
+            }
+        }
+
+        // print(s) -> None. Like emit, but no trailing newline. Used by
+        // the REPL so the prompt sits on the same line as user input.
+        "print" => match args {
+            [Value::Str(s)] => {
+                use std::io::Write;
+                print!("{}", s);
+                let _ = std::io::stdout().flush();
+                Ok(Value::None)
+            }
+            _ => Err(RuntimeError::TypeError(
+                "print() expects a string".to_string(),
+            )),
+        },
+
         // subprocess(["cmd", "arg1", ...]) -> int (exit code).
         // Forks, execs the command (PATH-resolved), waits for it.
         // stdin/stdout/stderr are inherited. Used by the OMG-native
