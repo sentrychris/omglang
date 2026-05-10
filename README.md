@@ -1,6 +1,6 @@
 # OMG
 
-[![CodeQL](https://github.com/sentrychris/omglang/actions/workflows/github-code-scanning/codeql/badge.svg)](https://github.com/sentrychris/omglang/actions/workflows/github-code-scanning/codeql)
+[![CodeQL](https://github.com/sentrychris/omglang/actions/workflows/codeql.yml/badge.svg)](https://github.com/sentrychris/omglang/actions/workflows/codeql.yml)
 [![CI](https://github.com/sentrychris/omglang/actions/workflows/ci.yml/badge.svg)](https://github.com/sentrychris/omglang/actions/workflows/ci.yml)
 
 A small programming language made for fun and for learning how
