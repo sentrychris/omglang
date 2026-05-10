@@ -40,6 +40,23 @@ use std::rc::Rc;
 
 use crate::error::RuntimeError;
 
+/// One slot in a function's local environment. Wrapped in
+/// `Rc<RefCell<...>>` so closures can share live storage with the
+/// scope they captured — mutation in either place is visible from
+/// the other, like Python or JavaScript closures. (See
+/// `runtime/src/vm.rs` for the read/write paths through this cell.)
+pub type EnvCell = Rc<RefCell<Value>>;
+
+/// A function's local environment (params + `alloc`-allocated locals).
+/// Each binding is its own [`EnvCell`]; cloning the map clones only
+/// the `Rc`s, not the values, so closures end up referencing the same
+/// cells as the enclosing scope.
+pub type Env = HashMap<String, EnvCell>;
+
+pub fn new_cell(v: Value) -> EnvCell {
+    Rc::new(RefCell::new(v))
+}
+
 /// Value type for the VM stack and environments.
 #[derive(Clone)]
 pub enum Value {
@@ -60,9 +77,12 @@ pub enum Value {
     /// First-class function reference. Top-level procs are stored as
     /// `Closure { name, captured: empty }`; nested procs capture the
     /// surrounding local environment at the point of definition.
+    /// Captured bindings are [`EnvCell`]s — closures and their
+    /// enclosing scope share the same cells, so mutation flows both
+    /// ways (Python/JS-style by-reference capture).
     Closure {
         name: String,
-        captured: Rc<HashMap<String, Value>>,
+        captured: Rc<Env>,
     },
     /// Sentinel for "no value".
     None,

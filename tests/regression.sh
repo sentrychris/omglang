@@ -281,3 +281,87 @@ actual=$("$TMPDIR_TEST/closure_aot" 2>&1)
 assert_eq "AOT binary: closure-as-arg across module" "42" "$actual"
 
 rm -f "$REPO_ROOT/bootstrap/src/_closure_mod_lib.omg"
+
+# === Regression: closures capture by reference ============================
+#
+# Closures must share the *cell* of an outer binding, not a snapshot
+# of its value at MAKE_FUNC time. Without this, the classic
+# `make_counter` pattern (mutate `n` from inside an inner proc) would
+# return 1, 1, 1 instead of 1, 2, 3 — and each call to make_counter
+# would also share state with previous calls.
+#
+# Three scenarios are covered:
+#   1. Counter: inner proc mutates an outer local. Three calls to the
+#      same counter must observe 1, 2, 3.
+#   2. Independence: two counters built from the same factory must
+#      have independent state (each call to the factory creates a
+#      fresh cell).
+#   3. Two-closure shared state: two closures returned together share
+#      the same cell — a get/set pair.
+#
+# Verified across all four backends: Rust runtime, OMG VM, native
+# interp, AOT, and (if node is available) native-js.
+
+section "Regression: closures capture by reference"
+
+cat > "$TMPDIR_TEST/closure_byref.omg" <<'OMG_EOF'
+;;;omg
+proc make_counter() {
+    alloc n := 0
+    proc tick() {
+        n := n + 1
+        return n
+    }
+    return tick
+}
+
+# Independent counters from the same factory must not share state.
+alloc a := make_counter()
+alloc b := make_counter()
+emit a()
+emit a()
+emit a()
+emit b()
+emit b()
+emit a()
+
+# Two closures sharing the same cell — one reads, one writes.
+proc make_pair() {
+    alloc v := 100
+    proc get() { return v }
+    proc set(x) { v := x }
+    return [get, set]
+}
+alloc pair := make_pair()
+alloc g := pair[0]
+alloc s := pair[1]
+emit g()
+s(7)
+emit g()
+s(g() + 1)
+emit g()
+OMG_EOF
+
+EXPECTED=$'1\n2\n3\n1\n2\n4\n100\n7\n8'
+
+actual=$("$OMG_RUST" "$TMPDIR_TEST/closure_byref.omg" 2>&1)
+assert_eq "Rust runtime: closures by reference" "$EXPECTED" "$actual"
+
+actual=$("$OMG_NATIVE" "$TMPDIR_TEST/closure_byref.omg" 2>&1)
+assert_eq "Native interp: closures by reference" "$EXPECTED" "$actual"
+
+# OMG VM (omgvm executes a .omgb produced by omgc).
+"$OMGC_NATIVE" "$TMPDIR_TEST/closure_byref.omg" "$TMPDIR_TEST/closure_byref.omgb" >/dev/null
+actual=$("$OMGVM_NATIVE" "$TMPDIR_TEST/closure_byref.omgb" 2>&1)
+assert_eq "OMG VM: closures by reference" "$EXPECTED" "$actual"
+
+"$OMG_NATIVE" --build "$TMPDIR_TEST/closure_byref.omg" "$TMPDIR_TEST/closure_byref_aot" >/dev/null
+actual=$("$TMPDIR_TEST/closure_byref_aot" 2>&1)
+assert_eq "AOT binary: closures by reference" "$EXPECTED" "$actual"
+
+if command -v node >/dev/null 2>&1; then
+    "$OMG_NATIVE" "$REPO_ROOT/bootstrap/src/native-js.omg" \
+        "$TMPDIR_TEST/closure_byref.omgb" "$TMPDIR_TEST/closure_byref.js" >/dev/null
+    actual=$(node "$TMPDIR_TEST/closure_byref.js" 2>&1)
+    assert_eq "native-js: closures by reference" "$EXPECTED" "$actual"
+fi

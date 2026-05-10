@@ -421,11 +421,18 @@ proc vm_pop_n(n) {
 # === Variable lookup / store =============================================
 #
 # Scope chain: env first, then globals. Mirrors the Rust VM's Load/Store
-# semantics including the strict-undeclared rule we just shipped.
+# semantics, *including* by-reference closure capture: each entry in
+# `vm_env` is a single-element list `[v]` rather than the value itself.
+# Lists in OMG alias by reference, so when MAKE_FUNC snapshots the env
+# (creating the captured dict for a nested proc), the snapshot's
+# `[v]` cells are the *same* lists as the enclosing scope's cells.
+# Mutating either side via `cell[0] := new` is visible everywhere.
+# Globals stay as plain values — closures don't capture globals.
 
 proc vm_lookup(name) {
     if dict_has(vm_env, name) {
-        return vm_env[name]
+        # vm_env entries are 1-element cells; unwrap.
+        return vm_env[name][0]
     }
     if dict_has(vm_globals, name) {
         return vm_globals[name]
@@ -442,7 +449,10 @@ proc vm_store(name, v) {
         panic("UndefinedIdentError: " + name)
     }
     if dict_has(vm_env, name) {
-        vm_env[name] := v
+        # Mutate the existing cell in place so closures that captured
+        # this name see the update. (`cell[0] := v` mutates the shared
+        # list; rebinding the dict entry would break the share.)
+        vm_env[name][0] := v
         return false
     }
     if dict_has(vm_globals, name) {
@@ -456,7 +466,11 @@ proc vm_store_local(name, v) {
     if length(vm_env_stack) == 0 {
         vm_globals[name] := v
     } else {
-        vm_env[name] := v
+        # `alloc` always installs a *fresh* cell. If a captured cell
+        # for this name already lived in env, replacing the dict entry
+        # cuts the closure tie — the new local doesn't reach back into
+        # captured state, matching Rust semantics.
+        vm_env[name] := [v]
     }
 }
 
@@ -500,12 +514,17 @@ proc vm_invoke(name, call_args, captured) {
     }
     alloc new_env := {}
     if is_vm_none(captured) == false {
+        # Cloning the dict shares the cell-lists by reference, which is
+        # exactly what we want: closures and the enclosing scope read
+        # and write the same `[v]` cells.
         dict_copy_into(new_env, captured)
     }
     alloc p := 0
     alloc np := length(params)
     loop p < np {
-        new_env[params[p]] := call_args[p]
+        # Params are *fresh* cells: a new call shouldn't share its
+        # argument slots with the previous call's frame.
+        new_env[params[p]] := [call_args[p]]
         p := p + 1
     }
     vm_env_stack := vm_env_stack + [vm_env]
@@ -742,7 +761,10 @@ proc step_inner() {
     # ---- Functions ----
     if op == "MAKE_FUNC" {
         # At top level: empty captured env. Inside a function: snapshot
-        # the current locals so the closure can read them later.
+        # the current locals so the closure can read them later. The
+        # snapshot's entries are the *same* `[v]` cells as the env's,
+        # so closure mutations write through to the enclosing scope —
+        # by-reference capture, matching Python/JS semantics.
         alloc captured := vm_none
         if length(vm_env_stack) > 0 {
             captured := dict_snapshot(vm_env)
@@ -751,7 +773,8 @@ proc step_inner() {
         if length(vm_env_stack) == 0 {
             vm_globals[arg] := closure
         } else {
-            vm_env[arg] := closure
+            # Wrap in a fresh cell, like every other env entry.
+            vm_env[arg] := [closure]
             # Mirror the Rust runtime: when the compiler mangled this
             # name (`__mod_N__bare`), also bind the bare suffix so
             # source-level `Load(bare)` resolves inside imported
@@ -760,7 +783,7 @@ proc step_inner() {
             # UndefinedIdentError.
             alloc bare := strip_mod_prefix(arg)
             if bare != false {
-                vm_env[bare] := closure
+                vm_env[bare] := [closure]
             }
         }
         vm_pc := vm_pc + 1
@@ -788,7 +811,7 @@ proc step_inner() {
         alloc p := 0
         alloc np := length(params)
         loop p < np {
-            new_env[params[p]] := call_args[p]
+            new_env[params[p]] := [call_args[p]]
             p := p + 1
         }
         vm_env := new_env

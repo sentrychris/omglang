@@ -406,22 +406,44 @@ proc emit_js_for_instr(instr, ctx) {
     if op == "PUSH_NONE" { return "    _s.push(null);\n" }
     if op == "PUSH_FLOAT_BITS" { return emit_push_float_bits(arg) }
 
-    # Variables — captured names live on the `_captured` Map passed in
-    # at call time; everything else is a JS local or a top-level
-    # `let v_X` global. The current func's analysis tells us which.
+    # Variables — three storage modes:
+    #   1. Captured from outer (in `current_captured_set`): the cell
+    #      lives in `_captured` (JS Map of name → 1-element arrays);
+    #      access via `_captured.get(name)[0]`.
+    #   2. Local & boxed (in `current_boxed_set`): the cell is the JS
+    #      local `v_x` itself, which holds a 1-element array; access
+    #      via `v_x[0]`.
+    #   3. Local & unboxed: plain `v_x = ...`.
+    # By-reference closure capture works because boxed locals and
+    # captured cells are *the same arrays*, shared by reference.
     if op == "LOAD" {
         if has_key(ctx["current_captured_set"], arg) {
-            return "    _s.push(_captured.get(\"" + js_escape(arg) + "\"));\n"
+            return "    _s.push(_captured.get(\"" + js_escape(arg) + "\")[0]);\n"
+        }
+        if has_key(ctx["current_boxed_set"], arg) {
+            return "    _s.push(" + js_var(arg) + "[0]);\n"
         }
         return "    _s.push(" + js_var(arg) + ");\n"
     }
     if op == "STORE" {
         if has_key(ctx["current_captured_set"], arg) {
-            return "    _captured.set(\"" + js_escape(arg) + "\", _s.pop());\n"
+            return "    _captured.get(\"" + js_escape(arg) + "\")[0] = _s.pop();\n"
+        }
+        if has_key(ctx["current_boxed_set"], arg) {
+            return "    " + js_var(arg) + "[0] = _s.pop();\n"
         }
         return "    " + js_var(arg) + " = _s.pop();\n"
     }
-    if op == "STORE_LOCAL" { return "    " + js_var(arg) + " = _s.pop();\n" }
+    if op == "STORE_LOCAL" {
+        # `alloc` always installs a fresh storage slot. For boxed
+        # locals, that's a fresh single-element array (so any
+        # previously-captured cell with this name is shadowed —
+        # matching Rust/OMG-VM semantics).
+        if has_key(ctx["current_boxed_set"], arg) {
+            return "    " + js_var(arg) + " = [_s.pop()];\n"
+        }
+        return "    " + js_var(arg) + " = _s.pop();\n"
+    }
 
     # Arithmetic
     if op == "ADD"        { return emit_binop("omg_add") }
@@ -522,10 +544,9 @@ proc emit_js_for_instr(instr, ctx) {
     }
     if op == "MAKE_FUNC" {
         # Build a closure: snapshot the names the inner function
-        # captures into a JS Map, then return a wrapper that calls
-        # the underlying function body with `_captured` and `args`.
-        # Captured names come from the analyzer's captured_list for
-        # the inner function.
+        # captures by storing the OUTER's *cell* (its 1-element array)
+        # into the closure's _cap Map. The inner reads/writes through
+        # `_cap.get(name)[0]`, so mutation flows back to the outer.
         alloc fname := arg
         alloc fidx := ctx["func_index"][fname]
         alloc inner_info := ctx["func_info"][fname]
@@ -537,9 +558,14 @@ proc emit_js_for_instr(instr, ctx) {
         alloc i := 0
         loop i < nc {
             alloc cn := inner_captured[i]
-            # If the captured name is itself a captured var of the
-            # CURRENT function, read from the parent's _captured Map;
-            # otherwise read the local JS variable.
+            # Source for the cell. Three cases, mirroring LOAD:
+            #   - the name is in the current function's captured_set
+            #     (i.e. captured-from-grandparent): read from the
+            #     parent's _captured. The cell lives there.
+            #   - the name is in the current function's boxed_set
+            #     (this function's local): the cell IS v_<cn>.
+            #   - else: (shouldn't happen for a properly captured
+            #     name; defensive fallback).
             alloc src := js_var(cn)
             if has_key(ctx["current_captured_set"], cn) {
                 src := "_captured.get(\"" + js_escape(cn) + "\")"
@@ -548,11 +574,13 @@ proc emit_js_for_instr(instr, ctx) {
             i := i + 1
         }
         # The wrapper takes only the user-facing args and forwards
-        # them with _cap as the captured dict. If the inner function
-        # declares params [p0, p1, ...], we'd need to forward them
-        # explicitly — but we can use rest args because the inner
-        # function uses (_captured, ...params).
-        out := out + "        " + js_var(fname) + " = (...args) => " + js_fn_name(fidx) + "(_cap, ...args);\n"
+        # them with _cap as the captured dict.
+        alloc closure_expr := "(...args) => " + js_fn_name(fidx) + "(_cap, ...args)"
+        if has_key(ctx["current_boxed_set"], fname) {
+            out := out + "        " + js_var(fname) + " = [" + closure_expr + "];\n"
+        } else {
+            out := out + "        " + js_var(fname) + " = " + closure_expr + ";\n"
+        }
 
         # Cross-module alias (mirror of vm.rs / vm.omg / native-c.omg).
         alloc bare := strip_mod_prefix(fname)
@@ -817,6 +845,50 @@ proc analyze_all_functions(code, funcs, globals) {
         analyses[nm] := analyze_function(nm, params, body_start, body_end, code, globals, all_locals)
         i := i + 1
     }
+    # Second pass: compute the *boxed_set* for each function — its
+    # locals/params that are captured by any other function. Boxed
+    # names live in 1-element JS arrays (`[v]`) so closures can share
+    # storage with the enclosing scope. The current_captured_set we
+    # already compute is the inverse view (this function's references
+    # to outer-boxed names).
+    alloc all_captured := {}
+    alloc names := dict_keys(analyses)
+    alloc k := 0
+    loop k < length(names) {
+        alloc cl := analyses[names[k]]["captured_list"]
+        alloc j := 0
+        loop j < length(cl) {
+            all_captured[cl[j]] := true
+            j := j + 1
+        }
+        k := k + 1
+    }
+    k := 0
+    loop k < length(names) {
+        alloc nm := names[k]
+        alloc info := analyses[nm]
+        alloc boxed := {}
+        # Params are also locals, and may be captured by an inner.
+        alloc pkeys := dict_keys(info["params_set"])
+        alloc pi := 0
+        loop pi < length(pkeys) {
+            if has_key(all_captured, pkeys[pi]) {
+                boxed[pkeys[pi]] := true
+            }
+            pi := pi + 1
+        }
+        alloc lkeys := dict_keys(info["locals"])
+        alloc li := 0
+        loop li < length(lkeys) {
+            if has_key(all_captured, lkeys[li]) {
+                boxed[lkeys[li]] := true
+            }
+            li := li + 1
+        }
+        info["boxed_set"] := boxed
+        analyses[nm] := info
+        k := k + 1
+    }
     return analyses
 }
 
@@ -865,8 +937,7 @@ proc emit_function(name, code, funcs, func_index, func_info, globals) {
     alloc body_end := info["body_end"]
     alloc fidx := func_index[name]
 
-    # Build the captured-set lookup for this function so emit_js_for_instr
-    # can decide whether `LOAD x` reads a JS local or `_captured.get("x")`.
+    # Captured-from-outer: where `LOAD x` reads from `_captured`.
     alloc captured_set := {}
     alloc cl := info["captured_list"]
     alloc ci := 0
@@ -874,6 +945,10 @@ proc emit_function(name, code, funcs, func_index, func_info, globals) {
         captured_set[cl[ci]] := true
         ci := ci + 1
     }
+    # Boxed-locals: locals/params of *this* function that some inner
+    # captures. They're stored as `[v]` so the inner's _captured can
+    # share the same array.
+    alloc boxed_set := info["boxed_set"]
 
     alloc out := "function " + js_fn_name(fidx) + "("
     out := out + "_captured"
@@ -884,8 +959,20 @@ proc emit_function(name, code, funcs, func_index, func_info, globals) {
     }
     out := out + ") {\n"
 
-    # Declare every STORE_LOCAL / MAKE_FUNC target so JS lets us assign
-    # without a ReferenceError on first use.
+    # Box any param that's captured-by-inner. Calling code passes the
+    # raw value; we wrap in a fresh array on entry so subsequent
+    # writes update through the box. Each call therefore gets its own
+    # box — captures of params see *that* call's slot.
+    alloc pi := 0
+    loop pi < length(params) {
+        alloc pn := params[pi]
+        if has_key(boxed_set, pn) {
+            out := out + "    " + js_var(pn) + " = [" + js_var(pn) + "];\n"
+        }
+        pi := pi + 1
+    }
+
+    # Declare every STORE_LOCAL / MAKE_FUNC target.
     alloc locals := collect_function_locals(body_start, body_end, code)
     alloc lkeys := dict_keys(locals)
     alloc lk := 0
@@ -900,7 +987,8 @@ proc emit_function(name, code, funcs, func_index, func_info, globals) {
         func_index: func_index,
         func_info: func_info,
         globals: globals,
-        current_captured_set: captured_set
+        current_captured_set: captured_set,
+        current_boxed_set: boxed_set
     }
     out := out + emit_body(code, body_start, body_end, ctx)
     out := out + "}\n\n"
@@ -966,7 +1054,8 @@ proc generate(code, funcs, runtime_js, source_path) {
         func_index: func_index,
         func_info: func_info,
         globals: globals,
-        current_captured_set: {}
+        current_captured_set: {},
+        current_boxed_set: {}
     }
     # The IIFE is wrapped in a try/catch so an uncaught OmgError
     # surfaces like the Rust runtime: a single "Kind: message" line

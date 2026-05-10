@@ -10,12 +10,13 @@
 
 use std::collections::HashMap;
 use std::mem;
+use std::rc::Rc;
 
 use super::builtins::call_builtin;
 use super::{pop, Block};
 use crate::bytecode::Function;
 use crate::error::{ErrorKind, RuntimeError};
-use crate::value::Value;
+use crate::value::{new_cell, Env, Value};
 
 pub(super) fn handle_assert(stack: &mut Vec<Value>) -> Result<(), RuntimeError> {
     let cond = pop(stack)?.as_bool();
@@ -48,8 +49,8 @@ pub(super) fn handle_call_value(
     argc: usize,
     stack: &mut Vec<Value>,
     funcs: &HashMap<String, Function>,
-    env: &mut HashMap<String, Value>,
-    env_stack: &mut Vec<HashMap<String, Value>>,
+    env: &mut Env,
+    env_stack: &mut Vec<Env>,
     ret_stack: &mut Vec<usize>,
     pc: &mut usize,
     advance_pc: &mut bool,
@@ -60,12 +61,12 @@ pub(super) fn handle_call_value(
     }
     args_vec.reverse();
     let func_val = pop(stack)?;
-    // `Value::Str` and `Value::Closure` both name a function in the global
-    // function table.  Closures additionally carry a captured environment
-    // that becomes the basis for the called frame's locals — that's how
-    // nested procs (`proc inner(...)` inside `proc outer(...)`) preserve
-    // access to the enclosing scope.
-    let (name, captured): (String, Option<std::rc::Rc<HashMap<String, Value>>>) =
+    // `Value::Str` and `Value::Closure` both name a function in the
+    // global function table. Closures additionally carry a captured
+    // environment whose cells are *shared* with the enclosing scope,
+    // so closures see (and can mutate) outer locals — Python/JS-style
+    // by-reference capture.
+    let (name, captured): (String, Option<Rc<Env>>) =
         match func_val {
             Value::Str(n) => (n, None),
             Value::Closure { name, captured } => (name, Some(captured)),
@@ -87,12 +88,16 @@ pub(super) fn handle_call_value(
             argc
         )));
     }
-    let mut new_env: HashMap<String, Value> = match captured {
+    // Cloning the captured map clones only the Rcs — both the
+    // closure and this new frame end up referencing the same cells.
+    let mut new_env: Env = match captured {
         Some(cap) => (*cap).clone(),
-        None => HashMap::new(),
+        None => Env::new(),
     };
+    // Params are always *fresh* cells: a new call shouldn't see (or
+    // share) the previous call's argument slot.
     for (i, param) in func.params.iter().enumerate() {
-        new_env.insert(param.clone(), args_vec[i].clone());
+        new_env.insert(param.clone(), new_cell(args_vec[i].clone()));
     }
     env_stack.push(mem::take(env));
     ret_stack.push(*pc + 1);
@@ -106,8 +111,8 @@ pub(super) fn handle_call(
     name: &String,
     funcs: &HashMap<String, Function>,
     stack: &mut Vec<Value>,
-    env: &mut HashMap<String, Value>,
-    env_stack: &mut Vec<HashMap<String, Value>>,
+    env: &mut Env,
+    env_stack: &mut Vec<Env>,
     ret_stack: &mut Vec<usize>,
     pc: &mut usize,
     advance_pc: &mut bool,
@@ -118,9 +123,9 @@ pub(super) fn handle_call(
             args.push(pop(stack)?);
         }
         args.reverse();
-        let mut new_env = HashMap::new();
+        let mut new_env: Env = Env::new();
         for (i, param) in func.params.iter().enumerate() {
-            new_env.insert(param.clone(), args[i].clone());
+            new_env.insert(param.clone(), new_cell(args[i].clone()));
         }
         env_stack.push(mem::take(env));
         ret_stack.push(*pc + 1);
@@ -137,7 +142,7 @@ pub(super) fn handle_tail_call(
     name: &String,
     funcs: &HashMap<String, Function>,
     stack: &mut Vec<Value>,
-    env: &mut HashMap<String, Value>,
+    env: &mut Env,
     pc: &mut usize,
     advance_pc: &mut bool,
 ) -> Result<(), RuntimeError> {
@@ -147,9 +152,9 @@ pub(super) fn handle_tail_call(
             args.push(pop(stack)?);
         }
         args.reverse();
-        let mut new_env = HashMap::new();
+        let mut new_env: Env = Env::new();
         for (i, param) in func.params.iter().enumerate() {
-            new_env.insert(param.clone(), args[i].clone());
+            new_env.insert(param.clone(), new_cell(args[i].clone()));
         }
         *env = new_env;
         *pc = func.address;
@@ -164,7 +169,7 @@ pub(super) fn handle_call_builtin(
     name: &String,
     argc: usize,
     stack: &mut Vec<Value>,
-    env: &HashMap<String, Value>,
+    env: &Env,
     globals: &HashMap<String, Value>,
 ) -> Result<(), RuntimeError> {
     let mut args: Vec<Value> = Vec::new();
@@ -190,8 +195,8 @@ pub(super) fn handle_pop(stack: &mut Vec<Value>) {
 pub(super) fn handle_ret(
     stack: &mut Vec<Value>,
     pc: &mut usize,
-    env: &mut HashMap<String, Value>,
-    env_stack: &mut Vec<HashMap<String, Value>>,
+    env: &mut Env,
+    env_stack: &mut Vec<Env>,
     ret_stack: &mut Vec<usize>,
     advance_pc: &mut bool,
 ) -> Result<(), RuntimeError> {
@@ -223,7 +228,7 @@ pub(super) fn handle_halt(code_len: usize, pc: &mut usize, advance_pc: &mut bool
 pub(super) fn handle_setup_except(
     target: usize,
     stack: &Vec<Value>,
-    env_stack: &Vec<HashMap<String, Value>>,
+    env_stack: &Vec<Env>,
     ret_stack: &Vec<usize>,
     block_stack: &mut Vec<Block>,
 ) {

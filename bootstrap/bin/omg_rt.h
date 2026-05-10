@@ -821,6 +821,33 @@ static Value omg_list_build(Value *items, int n) {
     return v;
 }
 
+/* By-reference closure cells. A "cell" is a 1-element OMG_LIST that
+ * lets a parent and its closures share the same storage slot for a
+ * captured local. Mirrors `Rc<RefCell<Value>>` in the Rust runtime
+ * and `[v]` in the OMG VM / native-js path. omg_cell_new takes
+ * ownership of `v` (the cell becomes its sole owner). */
+static Value omg_cell_new(Value v) {
+    Value cell;
+    cell.tag = OMG_LIST;
+    cell.v.l = omg_list_alloc(1);
+    omg_list_push(cell.v.l, v);
+    return cell;
+}
+
+static Value omg_cell_get(Value cell) {
+    /* Same semantics as omg_index(cell, omg_int(0)): returns a
+     * fresh ref to the contents (caller will push to stack). */
+    Value v = cell.v.l->items[0];
+    omg_inc(v);
+    return v;
+}
+
+static void omg_cell_set(Value cell, Value v) {
+    /* Transfers `v` into the cell, dec'ing the previous occupant.
+     * Doesn't touch the cell's own rc — the caller still owns it. */
+    omg_assign(&cell.v.l->items[0], v);
+}
+
 static int64_t omg_normalise_index(int64_t idx, int len, const char *opname) {
     int64_t real = idx < 0 ? idx + len : idx;
     if (real < 0 || real >= len) {

@@ -46,6 +46,7 @@ use once_cell::sync::Lazy;
 
 use super::ops_control;
 use crate::error::{ErrorKind, RuntimeError};
+use crate::value::Env;
 use crate::value::Value;
 
 /// Entry in the in-process file descriptor table.
@@ -105,13 +106,14 @@ fn round_half_even(f: f64) -> f64 {
 /// The VM injects `current_dir` and `module_file` globals/locals on program start.
 /// If `path` is relative, we join it against `current_dir`. Backslashes are
 /// normalized to forward slashes for portability.
-fn resolve_path(path: &str, env: &HashMap<String, Value>, globals: &HashMap<String, Value>) -> PathBuf {
+fn resolve_path(path: &str, env: &Env, globals: &HashMap<String, Value>) -> PathBuf {
     let mut path_buf = PathBuf::from(path.replace("\\", "/"));
     if path_buf.is_relative() {
-        if let Some(Value::Str(cur)) = env
-            .get("current_dir")
-            .or_else(|| globals.get("current_dir"))
-        {
+        // env's slots are EnvCells; borrow the cell to read its current
+        // value. Fall back to globals (which stay plain Values).
+        let env_val: Option<Value> = env.get("current_dir").map(|c| c.borrow().clone());
+        let candidate = env_val.as_ref().or_else(|| globals.get("current_dir"));
+        if let Some(Value::Str(cur)) = candidate {
             let base = PathBuf::from(cur.replace("\\", "/"));
             path_buf = base.join(path_buf);
         }
@@ -130,7 +132,7 @@ fn resolve_path(path: &str, env: &HashMap<String, Value>, globals: &HashMap<Stri
 pub fn call_builtin(
     name: &str,
     args: &[Value],
-    env: &HashMap<String, Value>,
+    env: &Env,
     globals: &HashMap<String, Value>,
 ) -> Result<Value, RuntimeError> {
     match name {

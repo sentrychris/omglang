@@ -452,21 +452,44 @@ proc emit_c_for_instr(instr, ctx) {
     if op == "POP"       { return "    omg_dec(stack[--sp]);\n" }
     if op == "HALT"      { return "    return 0;\n" }
 
-    # LOAD: copy v_<name> onto the stack; both slot and stack own it,
-    # so inc. STORE / STORE_LOCAL: pop transfers ownership to the
-    # slot — omg_assign dec's the old occupant before installing.
-    if op == "LOAD"        { return "    { Value v = " + c_var(arg) + "; omg_inc(v); stack[sp++] = v; }\n" }
+    # LOAD/STORE/STORE_LOCAL handling depends on whether the name is
+    # *boxed* in this function's emit context. A name is boxed iff:
+    #   1. It's in current_captured_set — captured from outer; the
+    #      enclosing frame already wrapped it in a 1-element list cell
+    #      and stuffed the cell pointer into our captured[] array.
+    #   2. It's in current_boxed_set — a local/param of *this* function
+    #      that some inner function captures; we wrap it in a cell at
+    #      bind time so closures share storage with us.
+    # For boxed names, LOAD reads element 0 of the cell and STORE
+    # writes element 0; subsequent stores propagate to closures.
+    # Plain (non-boxed) names go through the existing fast path.
+    if op == "LOAD" {
+        if name_is_boxed(arg, ctx) {
+            return "    stack[sp++] = omg_cell_get(" + c_var(arg) + ");\n"
+        }
+        return "    { Value v = " + c_var(arg) + "; omg_inc(v); stack[sp++] = v; }\n"
+    }
     # STORE / STORE_LOCAL of `current_dir` also updates omg_cwd_str so
     # path resolution (file_open, read_file, etc.) tracks user mutations
     # the way the OMG VM does. We do this only for `current_dir` —
     # everything else is just a plain assign.
     if op == "STORE" {
+        if name_is_boxed(arg, ctx) {
+            return "    omg_cell_set(" + c_var(arg) + ", stack[--sp]);\n"
+        }
         if arg == "current_dir" {
             return "    omg_assign(&" + c_var(arg) + ", stack[--sp]); if (" + c_var(arg) + ".tag == OMG_STR) omg_cwd_str = " + c_var(arg) + ".v.s;\n"
         }
         return "    omg_assign(&" + c_var(arg) + ", stack[--sp]);\n"
     }
     if op == "STORE_LOCAL" {
+        # Boxed STORE_LOCAL creates a *fresh* cell each time (so each
+        # iteration of a loop gets a new slot — closures over the old
+        # binding keep seeing the old value). omg_assign dec's the
+        # previous cell, dropping its contents.
+        if name_is_boxed(arg, ctx) {
+            return "    omg_assign(&" + c_var(arg) + ", omg_cell_new(stack[--sp]));\n"
+        }
         if arg == "current_dir" {
             return "    omg_assign(&" + c_var(arg) + ", stack[--sp]); if (" + c_var(arg) + ".tag == OMG_STR) omg_cwd_str = " + c_var(arg) + ".v.s;\n"
         }
@@ -843,6 +866,22 @@ proc has_key(d, key) {
     }
 }
 
+# Is the given name stored as a 1-element cell in this emit context?
+# Captured-from-outer (current_captured_set) is always boxed: the
+# enclosing frame allocates the cell. Captured-by-inner
+# (current_boxed_set) is boxed in *this* frame so inner MAKE_FUNCs
+# can share the cell. Top-level / non-boxed names short-circuit to
+# false (top_ctx supplies empty sets).
+proc name_is_boxed(name, ctx) {
+    if has_key(ctx, "current_captured_set") and has_key(ctx["current_captured_set"], name) {
+        return true
+    }
+    if has_key(ctx, "current_boxed_set") and has_key(ctx["current_boxed_set"], name) {
+        return true
+    }
+    return false
+}
+
 # If `name` is a module-mangled identifier (`__mod_N__bare`), return
 # the bare suffix. Otherwise return `false`. Mirrors the helper in
 # the Rust runtime + OMG VM (see vm.rs / vm.omg) so MAKE_FUNC code
@@ -1072,6 +1111,50 @@ proc analyze_all_functions(code, funcs, globals) {
         analyses[nm] := analyze_function(nm, params, body_start, body_end, code, globals, all_locals)
         i := i + 1
     }
+    # Second pass: compute the *boxed_set* for each function — its
+    # locals/params that are captured by any inner. Boxed names live
+    # in a 1-element OMG_LIST cell so closures share storage with
+    # the enclosing scope (mirrors Rc<RefCell> in Rust and `[v]` in
+    # the OMG VM / native-js path). A name's captured_set (already
+    # in info["captured_list"]) is the inverse view: this function's
+    # references to outer-boxed names.
+    alloc all_captured := {}
+    alloc names := dict_keys(analyses)
+    alloc k := 0
+    loop k < length(names) {
+        alloc cl := analyses[names[k]]["captured_list"]
+        alloc j := 0
+        loop j < length(cl) {
+            all_captured[cl[j]] := true
+            j := j + 1
+        }
+        k := k + 1
+    }
+    k := 0
+    loop k < length(names) {
+        alloc nm := names[k]
+        alloc info := analyses[nm]
+        alloc boxed := {}
+        alloc pkeys := dict_keys(info["params_set"])
+        alloc pi := 0
+        loop pi < length(pkeys) {
+            if has_key(all_captured, pkeys[pi]) {
+                boxed[pkeys[pi]] := true
+            }
+            pi := pi + 1
+        }
+        alloc lkeys := dict_keys(info["locals"])
+        alloc li := 0
+        loop li < length(lkeys) {
+            if has_key(all_captured, lkeys[li]) {
+                boxed[lkeys[li]] := true
+            }
+            li := li + 1
+        }
+        info["boxed_set"] := boxed
+        analyses[nm] := info
+        k := k + 1
+    }
     return analyses
 }
 
@@ -1145,6 +1228,16 @@ proc emit_function(name, code, funcs, func_index, func_info, globals) {
     alloc body_start := info["body_start"]
     alloc body_end := info["body_end"]
     alloc fidx := func_index[name]
+    alloc boxed_set := info["boxed_set"]
+    # Captured-from-outer set: each captured_list entry is a cell in
+    # this emit context. We use a dict so name_is_boxed() can probe
+    # in O(1).
+    alloc captured_set := {}
+    alloc ci := 0
+    loop ci < length(captured_list) {
+        captured_set[captured_list[ci]] := true
+        ci := ci + 1
+    }
 
     alloc out := "static Value " + c_fn_name(fidx) + "(Value *captured, int cap_count, int argc,\n"
     out := out + "                            Value omg_a0, Value omg_a1, Value omg_a2, Value omg_a3,\n"
@@ -1168,9 +1261,16 @@ proc emit_function(name, code, funcs, func_index, func_info, globals) {
 
     # Unpack parameters: caller transferred ownership, so we just take
     # them without inc'ing. They'll be dec'd on every return path.
+    # Boxed params are wrapped in a fresh cell on entry — each call
+    # therefore gets its own cell so a closure capturing the param
+    # sees *that* call's slot, not a shared one across recursions.
     alloc p := 0
     loop p < np {
-        out := out + "    Value " + c_var(params[p]) + " = omg_a" + p + ";\n"
+        if has_key(boxed_set, params[p]) {
+            out := out + "    Value " + c_var(params[p]) + " = omg_cell_new(omg_a" + p + ");\n"
+        } else {
+            out := out + "    Value " + c_var(params[p]) + " = omg_a" + p + ";\n"
+        }
         p := p + 1
     }
 
@@ -1190,6 +1290,9 @@ proc emit_function(name, code, funcs, func_index, func_info, globals) {
 
     # Unpack captured values: the closure still owns its captured
     # array, so we inc each one to give the local slot its own ref.
+    # captured[i] is a *cell* (1-element list); LOAD/STORE for the
+    # captured name go through omg_cell_get / omg_cell_set, so this
+    # frame and the closure's enclosing scope share storage.
     alloc nc := length(captured_list)
     alloc c := 0
     loop c < nc {
@@ -1204,7 +1307,9 @@ proc emit_function(name, code, funcs, func_index, func_info, globals) {
         func_info: func_info,
         globals: globals,
         in_function: true,
-        current_func: name
+        current_func: name,
+        current_captured_set: captured_set,
+        current_boxed_set: boxed_set
     }
     out := out + emit_body(code, body_start, body_end, ctx)
     # Implicit return for paths that fall off the end. The OMG
@@ -1328,7 +1433,9 @@ proc generate(code, funcs, runtime_header, source_path) {
         func_info: func_info,
         globals: globals,
         in_function: false,
-        current_func: ""
+        current_func: "",
+        current_captured_set: {},
+        current_boxed_set: {}
     }
     # Find the HALT to know where main ends.
     alloc main_end := length(code)

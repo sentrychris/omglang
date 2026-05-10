@@ -26,7 +26,7 @@ use std::rc::Rc;
 
 use crate::bytecode::{Function, Instr};
 use crate::error::RuntimeError;
-use crate::value::Value;
+use crate::value::{new_cell, Env, Value};
 
 /// If `name` looks like a module-mangled identifier (`__mod_N__bare`),
 /// return the bare suffix. Otherwise None. Used by `MakeFunc` to bind
@@ -156,8 +156,8 @@ fn execute(
     start_pc: usize,
 ) -> Result<(), RuntimeError> {
     let mut stack: Vec<Value> = Vec::new();
-    let mut env: HashMap<String, Value> = HashMap::new();
-    let mut env_stack: Vec<HashMap<String, Value>> = Vec::new();
+    let mut env: Env = HashMap::new();
+    let mut env_stack: Vec<Env> = Vec::new();
     let mut ret_stack: Vec<usize> = Vec::new();
     let mut block_stack: Vec<Block> = Vec::new();
     let mut error_flag: Option<RuntimeError> = None;
@@ -183,8 +183,9 @@ fn execute(
                     }
                 }
                 Instr::Load(name) => {
-                    if let Some(v) = env.get(name) {
-                        stack.push(v.clone());
+                    // Read through the cell so closures see live state.
+                    if let Some(cell) = env.get(name) {
+                        stack.push(cell.borrow().clone());
                     } else if let Some(v) = globals.get(name) {
                         stack.push(v.clone());
                     } else {
@@ -197,6 +198,9 @@ fn execute(
                         // be bound somewhere. Use `alloc x := v` to introduce
                         // a new binding. This catches typos like `cont := 5`
                         // that would otherwise silently shadow / clobber.
+                        //
+                        // For local bindings, mutate the cell *in place* so
+                        // closures that captured this name see the update.
                         if env_stack.is_empty() {
                             if globals.contains_key(name) {
                                 globals.insert(name.clone(), v);
@@ -205,8 +209,8 @@ fn execute(
                                     name.clone(),
                                 ));
                             }
-                        } else if env.contains_key(name) {
-                            env.insert(name.clone(), v);
+                        } else if let Some(cell) = env.get(name) {
+                            *cell.borrow_mut() = v;
                         } else if globals.contains_key(name) {
                             globals.insert(name.clone(), v);
                         } else {
@@ -452,12 +456,14 @@ fn execute(
                     // Same-scope re-declaration is rejected at *compile
                     // time* (see compiler.rs / bootstrap/src/compiler.omg);
                     // at runtime an `alloc` inside a loop body legitimately
-                    // re-runs every iteration and must just re-bind.
+                    // re-runs every iteration. We always install a *fresh*
+                    // cell so the new binding doesn't reach back into any
+                    // closure that captured the previous value.
                     if let Some(v) = stack.pop() {
                         if env_stack.is_empty() {
                             globals.insert(name.clone(), v);
                         } else {
-                            env.insert(name.clone(), v);
+                            env.insert(name.clone(), new_cell(v));
                         }
                     }
                 }
@@ -471,28 +477,29 @@ fn execute(
                             name.clone(),
                             Value::Closure {
                                 name: name.clone(),
-                                captured: std::rc::Rc::new(std::collections::HashMap::new()),
+                                captured: std::rc::Rc::new(HashMap::new()),
                             },
                         );
                     } else {
-                        // Inside a function: capture a snapshot of the
-                        // current local env. The compiler always emits
-                        // `MakeFunc` immediately after the function body has
-                        // been registered, so the closure is constructed
-                        // exactly where the user wrote `proc`.
-                        let captured = std::rc::Rc::new(env.clone());
+                        // Inside a function: capture the *cells* of the
+                        // current local env, not their contents. Cloning a
+                        // HashMap of Rcs just clones the Rcs — the closure
+                        // and the enclosing scope end up referencing the
+                        // same RefCells, so mutations flow both ways
+                        // (Python/JS-style by-reference capture).
+                        let captured: Rc<Env> = Rc::new(env.clone());
                         let closure = Value::Closure {
                             name: name.clone(),
                             captured,
                         };
-                        env.insert(name.clone(), closure.clone());
+                        env.insert(name.clone(), new_cell(closure.clone()));
                         // The compiler mangles names in imported modules
                         // with `__mod_N__` for module isolation, but
                         // source-level `Load` references the bare name.
                         // Bind both so a closure value passed across an
                         // import boundary resolves correctly.
                         if let Some(bare) = strip_mod_prefix(name) {
-                            env.insert(bare.to_string(), closure);
+                            env.insert(bare.to_string(), new_cell(closure));
                         }
                     }
                 }
