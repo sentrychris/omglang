@@ -109,6 +109,40 @@ for src in "${EXAMPLES[@]}"; do
     fi
 done
 
+# === native-js (OMG → JS, run via node) parity ========================
+# Skipped if `node` isn't installed — the JS backend is opt-in.
+
+if command -v node >/dev/null 2>&1; then
+    section "Parity: native-js (node) vs Rust runtime"
+    for src in "${EXAMPLES[@]}"; do
+        name=$(basename "$src" .omg)
+        skip=0
+        for s in "${INTERPRETED_SKIP[@]}"; do
+            [ "$s" = "$src" ] && skip=1
+        done
+        if [ "$skip" = 1 ]; then
+            continue
+        fi
+        omgb="$TMPDIR_TEST/$name.js.omgb"
+        jsfile="$TMPDIR_TEST/$name.js"
+        if ! "$OMG_NATIVE" --compile "$src" "$omgb" >/dev/null 2>&1; then
+            fail "JS == Rust: $name (compile)"
+            continue
+        fi
+        if ! "$OMG_NATIVE" "$REPO_ROOT/bootstrap/src/native-js.omg" "$omgb" "$jsfile" >/dev/null 2>&1; then
+            fail "JS == Rust: $name (transpile)"
+            continue
+        fi
+        rust_out=$("$OMG_RUST" "$src" 2>&1)
+        js_out=$(node "$jsfile" 2>&1)
+        if [ "$rust_out" = "$js_out" ]; then
+            pass "JS == Rust: $name"
+        else
+            fail "JS == Rust: $name" "stdout differs"
+        fi
+    done
+fi
+
 # === Toolchain self-rebuild ===========================================
 section "Parity: native toolchain self-rebuild"
 

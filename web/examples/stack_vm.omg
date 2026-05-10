@@ -1,0 +1,158 @@
+;;;omg
+
+# === Bytecode Program ===
+alloc program := [
+    ["push", 5],                    # push 5   -> stack  = [5]
+    ["push", 3],                    # push 3   -> stack  = [5,3]
+    ["add"],                        # add      -> stack  = [8]
+    ["store", "x"],                 # store 8  -> memory = [[x,8]] -> stack = []
+    ["push", 10],                   # push 10  -> stack  = [10]
+    ["load", "x"],                  # load x   -> stack  = [10,8]
+    ["mul"],                        # multiply -> stack  = [80]
+    ["emit_top"],                   # output top of stack (80)
+    ["pop"],                        # pop the stack -> stack = []
+    ["label", "loop"],              # loop start
+    ["load", "x"],                  # load x   -> stack  = [8]
+    ["push", 1],                    # push 1   -> stack  = [8,1]
+    ["sub"],                        # subtract -> stack  = [7]
+    ["store", "x"],                 # store 7  -> memory = [[x,7]]
+    ["load", "x"],                  # load x   -> stack  = [7,1]
+    ["jmp_if_nonzero", "loop"],     # jmp to 'loop' while x != 0 (x is stored after each sub)
+    ["halt"]
+]
+
+# === VM State ===
+alloc ptr := 0
+alloc instr  := []
+alloc stack  := []
+alloc memory := []
+alloc labels := []
+
+# === Helper: Initialize memory map
+proc store_var(name, val) {
+    alloc i := 0
+    loop i < length(memory) {
+        alloc entry := memory[i]
+        alloc key := entry[0]
+        if key == name {
+            alloc new_entry := [name, val]
+            memory := memory[0:i] + [new_entry] + memory[i + 1:length(memory)]
+            return memory
+        }
+        i := i + 1
+    }
+    alloc pair := [name, val]
+    memory := memory + [pair]
+    return memory
+}
+
+proc load_var(name) {
+    alloc i := 0
+    loop i < length(memory) {
+        alloc entry := memory[i]
+        alloc key := entry[0]
+        if key == name {
+            return entry[1]
+        }
+        i := i + 1
+    }
+    emit "Undefined variable: " + name
+    return 0
+}
+
+# === Preprocess labels ===
+alloc idx := 0
+loop idx < length(program) {
+    instr := program[idx]
+    if instr[0] == "label" {
+        labels := labels + [[instr[1], idx]]
+    }
+    idx := idx + 1
+}
+
+proc find_label(label) {
+    alloc j := 0
+    loop j < length(labels) {
+        alloc entry := labels[j]
+        if entry[0] == label {
+            return entry[1]
+        }
+        j := j + 1
+    }
+    emit "Missing label: " + label
+    return 0
+}
+
+alloc _    := false # no-op
+alloc lhs  := false
+alloc rhs  := false
+alloc op   := false
+alloc val  := false
+alloc cond := false
+# === VM Loop ===
+loop ptr < length(program) {
+    instr := program[ptr]
+    ptr := ptr + 1
+    op := instr[0]
+
+    if op == "push" {
+        stack := stack + [instr[1]]
+        emit "Pushed to stack: [" + instr + "] stack value: " + stack
+    } elif op == "pop" {
+        stack := stack[0:length(stack) - 1]
+        emit "Stack popped, stack value: " + stack
+    } elif op == "add" {
+        rhs := stack[length(stack) - 1]
+        stack := stack[0:length(stack) - 1]
+        lhs := stack[length(stack) - 1]
+        stack := stack[0:length(stack) - 1]
+        stack := stack + [lhs + rhs]
+        emit "Added and pushed sum: [" + instr + "[" + lhs + ", " + rhs +"]]" +  " Stack value: " + stack 
+    } elif op == "sub" {
+        rhs := stack[length(stack) - 1]
+        stack := stack[0:length(stack) - 1]
+        lhs := stack[length(stack) - 1]
+        stack := stack[0:length(stack) - 1]
+        stack := stack + [lhs - rhs]
+        emit "Subtracted and pushed difference: [" + instr + "[" + lhs + ", " + rhs +"]]" +  " Stack value: " + stack 
+    } elif op == "mul" {
+        rhs := stack[length(stack) - 1]
+        stack := stack[0:length(stack) - 1]
+        lhs := stack[length(stack) - 1]
+        stack := stack[0:length(stack) - 1]
+        stack := stack + [lhs * rhs]
+        emit "Multiplied and pushed product: [" + instr + "[" + lhs + ", " + rhs +"]]" +  " Stack value: " + stack
+    } elif op == "div" {
+        rhs := stack[length(stack) - 1]
+        stack := stack[0:length(stack) - 1]
+        lhs := stack[length(stack) - 1]
+        stack := stack[0:length(stack) - 1]
+        stack := stack + [lhs / rhs]
+    } elif op == "store" {
+        val := stack[length(stack) - 1]
+        stack := stack[0:length(stack) - 1]
+        memory := store_var(instr[1], val)
+        emit "Stored value: " + val + " in '" + instr[1] + "' in memory," + " stack value " + stack
+    } elif op == "load" {
+        stack := stack + [load_var(instr[1])]
+        emit "Loaded " + instr[1] + " from memory: [" + instr + "] stack value: " + stack
+    } elif op == "emit_top" {
+        val := stack[length(stack) - 1]
+        emit "Top of stack: " + val + " stack value: "+ stack
+    } elif op == "jmp" {
+        ptr := find_label(instr[1])
+    } elif op == "jmp_if_nonzero" {
+        cond := stack[length(stack) - 1]
+        stack := stack[0:length(stack) - 1]
+        if cond != 0 {
+            ptr := find_label(instr[1])
+        }
+    } elif op == "label" {
+        _:=0 # no-op
+    } elif op == "halt" {
+        break
+    } else {
+        emit "Unknown instruction: " + op
+        break
+    }
+}

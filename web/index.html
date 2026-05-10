@@ -1,0 +1,92 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>OMG playground</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <style>
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      max-width: 1100px;
+      margin: 0 auto;
+      padding: 20px;
+      background: #fafafa;
+      color: #222;
+    }
+    h1 { margin-top: 0; font-weight: 600; }
+    .lede { color: #555; margin-bottom: 24px; line-height: 1.5; }
+    .controls { display: flex; gap: 12px; align-items: center; margin-bottom: 12px; }
+    .controls label { color: #444; }
+    select, button {
+      font: inherit; padding: 6px 12px;
+      border: 1px solid #c0c0c0; border-radius: 4px;
+      background: #fff; cursor: pointer;
+    }
+    button { background: #2563eb; color: #fff; border-color: #2563eb; font-weight: 500; }
+    button:hover { background: #1d4ed8; }
+    .panes { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+    .pane { display: flex; flex-direction: column; }
+    .pane h2 {
+      font-size: 13px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em;
+      margin: 0 0 6px 0; color: #555;
+    }
+    pre, textarea {
+      flex: 1; min-height: 420px;
+      font-family: 'SF Mono', Menlo, Consolas, monospace;
+      font-size: 13px; line-height: 1.45;
+      padding: 12px; margin: 0;
+      border: 1px solid #d0d0d0; border-radius: 4px;
+      background: #fff;
+      white-space: pre-wrap; word-wrap: break-word;
+    }
+    textarea { resize: none; outline: none; }
+    textarea:focus { border-color: #2563eb; }
+    #output { background: #1e1e1e; color: #d4d4d4; }
+    #output.error { color: #f48771; }
+    footer {
+      margin-top: 24px; padding-top: 12px; border-top: 1px solid #e5e5e5;
+      color: #777; font-size: 13px;
+    }
+    footer a { color: #2563eb; }
+  </style>
+</head>
+<body>
+
+<h1>OMG playground</h1>
+
+<p class="lede">
+  Pick an example below and hit <strong>Run</strong>. The OMG source on the
+  left was compiled to JavaScript ahead of time by
+  <code>bootstrap/src/native-js.omg</code> (and the runtime helpers in
+  <code>bootstrap/src/omg_rt.js</code>); the right pane shows what the
+  compiled program prints when run in your browser. Same OMG source, same
+  bytecode, same output as the Rust runtime byte-for-byte.
+</p>
+
+<div class="controls">
+  <label for="example">Example:</label>
+  <select id="example"></select>
+  <button id="run">Run</button>
+  <span id="status" style="color:#777"></span>
+</div>
+
+<div class="panes">
+  <div class="pane">
+    <h2>OMG source</h2>
+    <textarea id="source" readonly spellcheck="false"></textarea>
+  </div>
+  <div class="pane">
+    <h2>Output</h2>
+    <pre id="output"></pre>
+  </div>
+</div>
+
+<footer>
+  Pre-built examples are static assets in <code>web/examples/</code>. The
+  full project — compiler, runtime, native toolchain, this JS backend
+  — lives at <a href="https://github.com/sentrychris/omglang">sentrychris/omglang</a>.
+</footer>
+
+<script src="app.js"></script>
+</body>
+</html>

@@ -1,0 +1,1060 @@
+;;;omg
+
+# bootstrap/src/native-js.omg — OMG bytecode → JavaScript transpiler.
+#
+# Sister of bootstrap/src/native-c.omg, but emits JavaScript instead
+# of C. The output `.js` file is self-contained: every program inlines
+# bootstrap/src/omg_rt.js at the top of its output, so `node out.js`
+# (or pasting the file into a browser playground) just works.
+#
+# Usage:
+#     omg bootstrap/src/native-js.omg <in.omgb> <out.js>
+#     node <out.js>
+#
+# Why JS as a target? OMG already has a self-hosted compiler and a
+# native-C backend; adding a second backend at the same point in the
+# pipeline proves the toolchain is genuinely retargetable, and the JS
+# output runs anywhere — node, browser, Deno, Bun.
+#
+# What's different from native-c.omg:
+#   - JS has GC, so no refcount calls (omg_inc/omg_dec disappear).
+#   - JS has real closures, so cap[] arrays disappear too — we just
+#     pass the captured environment as the first arg to each function
+#     and access its fields by name.
+#   - BigInt represents OMG ints (i64 precision past 2^53).
+#   - Lists are JS arrays, dicts are JS Maps, none is null.
+#
+# Supported opcodes are the same set native-c.omg supports today.
+# Anything not yet wired panics at code-gen time with a clear message.
+
+alloc VERSION := "0.2.0"
+
+# === Opcode constants ====================================================
+# Mirror of runtime/src/bytecode.rs. Kept in sync with native-c.omg.
+
+alloc OP_PUSH_INT       := 0
+alloc OP_PUSH_STR       := 1
+alloc OP_PUSH_BOOL      := 2
+alloc OP_BUILD_LIST     := 3
+alloc OP_BUILD_DICT     := 4
+alloc OP_LOAD           := 5
+alloc OP_STORE          := 6
+alloc OP_ADD            := 7
+alloc OP_SUB            := 8
+alloc OP_MUL            := 9
+alloc OP_DIV            := 10
+alloc OP_MOD            := 11
+alloc OP_EQ             := 12
+alloc OP_NE             := 13
+alloc OP_LT             := 14
+alloc OP_LE             := 15
+alloc OP_GT             := 16
+alloc OP_GE             := 17
+alloc OP_BAND           := 18
+alloc OP_BOR            := 19
+alloc OP_BXOR           := 20
+alloc OP_SHL            := 21
+alloc OP_SHR            := 22
+alloc OP_AND            := 23
+alloc OP_OR             := 24
+alloc OP_NOT            := 25
+alloc OP_NEG            := 26
+alloc OP_INDEX          := 27
+alloc OP_SLICE          := 28
+alloc OP_JUMP           := 29
+alloc OP_JUMP_IF_FALSE  := 30
+alloc OP_CALL           := 31
+alloc OP_TCALL          := 32
+alloc OP_BUILTIN        := 33
+alloc OP_POP            := 34
+alloc OP_PUSH_NONE      := 35
+alloc OP_RET            := 36
+alloc OP_EMIT           := 37
+alloc OP_HALT           := 38
+alloc OP_STORE_INDEX    := 39
+alloc OP_ATTR           := 40
+alloc OP_STORE_ATTR     := 41
+alloc OP_ASSERT         := 42
+alloc OP_CALL_VALUE     := 43
+alloc OP_SETUP_EXCEPT   := 44
+alloc OP_POP_BLOCK      := 45
+alloc OP_RAISE          := 46
+alloc OP_MAKE_FUNC      := 52
+alloc OP_STORE_LOCAL    := 53
+alloc OP_PUSH_FLOAT     := 54
+alloc OP_FLOOR_DIV      := 55
+
+alloc BC_VERSION := 257
+
+# === Bytecode reader =====================================================
+# Identical to native-c.omg's parser; duplicated here to keep this file
+# standalone (no cross-module imports needed for the transpiler core).
+
+proc read_u32_at(bytes, i) {
+    alloc v := bytes[i] | (bytes[i + 1] << 8) | (bytes[i + 2] << 16) | (bytes[i + 3] << 24)
+    return [v, i + 4]
+}
+
+proc read_i64_at(bytes, i) {
+    alloc lo_pair := read_u32_at(bytes, i)
+    alloc hi_pair := read_u32_at(bytes, i + 4)
+    alloc v := (hi_pair[0] << 32) | lo_pair[0]
+    return [v, i + 8]
+}
+
+proc read_str_at(bytes, i) {
+    alloc len_pair := read_u32_at(bytes, i)
+    alloc len := len_pair[0]
+    alloc start := len_pair[1]
+    alloc s := bytes_to_string(bytes[start:start + len])
+    return [s, start + len]
+}
+
+proc tagged(tag, value, cur)  { return [[tag, value], cur] }
+proc tagged0(tag, cur)        { return [[tag, false], cur] }
+
+proc decode_one(op, bytes, cursor) {
+    if op == OP_PUSH_INT {
+        alloc r := read_i64_at(bytes, cursor)
+        return tagged("PUSH_INT", r[0], r[1])
+    }
+    if op == OP_PUSH_STR {
+        alloc r := read_str_at(bytes, cursor)
+        return tagged("PUSH_STR", r[0], r[1])
+    }
+    if op == OP_PUSH_BOOL {
+        alloc v := bytes[cursor] != 0
+        return tagged("PUSH_BOOL", v, cursor + 1)
+    }
+    if op == OP_PUSH_FLOAT {
+        alloc r := read_i64_at(bytes, cursor)
+        return tagged("PUSH_FLOAT_BITS", r[0], r[1])
+    }
+    if op == OP_PUSH_NONE   { return tagged0("PUSH_NONE",   cursor) }
+    if op == OP_EMIT        { return tagged0("EMIT",        cursor) }
+    if op == OP_HALT        { return tagged0("HALT",        cursor) }
+    if op == OP_POP         { return tagged0("POP",         cursor) }
+    if op == OP_BUILD_LIST   { alloc r := read_u32_at(bytes, cursor) return tagged("BUILD_LIST",  r[0], r[1]) }
+    if op == OP_BUILD_DICT   { alloc r := read_u32_at(bytes, cursor) return tagged("BUILD_DICT",  r[0], r[1]) }
+    if op == OP_LOAD         { alloc r := read_str_at(bytes, cursor) return tagged("LOAD",        r[0], r[1]) }
+    if op == OP_STORE        { alloc r := read_str_at(bytes, cursor) return tagged("STORE",       r[0], r[1]) }
+    if op == OP_STORE_LOCAL  { alloc r := read_str_at(bytes, cursor) return tagged("STORE_LOCAL", r[0], r[1]) }
+    if op == OP_ADD          { return tagged0("ADD",        cursor) }
+    if op == OP_SUB          { return tagged0("SUB",        cursor) }
+    if op == OP_MUL          { return tagged0("MUL",        cursor) }
+    if op == OP_DIV          { return tagged0("DIV",        cursor) }
+    if op == OP_FLOOR_DIV    { return tagged0("FLOOR_DIV",  cursor) }
+    if op == OP_MOD          { return tagged0("MOD",        cursor) }
+    if op == OP_NEG          { return tagged0("NEG",        cursor) }
+    if op == OP_EQ           { return tagged0("EQ",         cursor) }
+    if op == OP_NE           { return tagged0("NE",         cursor) }
+    if op == OP_LT           { return tagged0("LT",         cursor) }
+    if op == OP_LE           { return tagged0("LE",         cursor) }
+    if op == OP_GT           { return tagged0("GT",         cursor) }
+    if op == OP_GE           { return tagged0("GE",         cursor) }
+    if op == OP_BAND         { return tagged0("BAND",       cursor) }
+    if op == OP_BOR          { return tagged0("BOR",        cursor) }
+    if op == OP_BXOR         { return tagged0("BXOR",       cursor) }
+    if op == OP_SHL          { return tagged0("SHL",        cursor) }
+    if op == OP_SHR          { return tagged0("SHR",        cursor) }
+    if op == OP_AND          { return tagged0("AND",        cursor) }
+    if op == OP_OR           { return tagged0("OR",         cursor) }
+    if op == OP_NOT          { return tagged0("NOT",        cursor) }
+    if op == OP_INDEX        { return tagged0("INDEX",      cursor) }
+    if op == OP_SLICE        { return tagged0("SLICE",      cursor) }
+    if op == OP_STORE_INDEX  { return tagged0("STORE_INDEX",cursor) }
+    if op == OP_ASSERT       { return tagged0("ASSERT",     cursor) }
+    if op == OP_POP_BLOCK    { return tagged0("POP_BLOCK",  cursor) }
+    if op == OP_JUMP         { alloc r := read_u32_at(bytes, cursor) return tagged("JUMP",         r[0], r[1]) }
+    if op == OP_JUMP_IF_FALSE { alloc r := read_u32_at(bytes, cursor) return tagged("JUMP_IF_FALSE", r[0], r[1]) }
+    if op == OP_CALL         { alloc r := read_str_at(bytes, cursor) return tagged("CALL",         r[0], r[1]) }
+    if op == OP_TCALL        { alloc r := read_str_at(bytes, cursor) return tagged("TCALL",        r[0], r[1]) }
+    if op == OP_BUILTIN {
+        alloc nm := read_str_at(bytes, cursor)
+        alloc ac := read_u32_at(bytes, nm[1])
+        return tagged("BUILTIN", [nm[0], ac[0]], ac[1])
+    }
+    if op == OP_ATTR         { alloc r := read_str_at(bytes, cursor) return tagged("ATTR",         r[0], r[1]) }
+    if op == OP_STORE_ATTR   { alloc r := read_str_at(bytes, cursor) return tagged("STORE_ATTR",   r[0], r[1]) }
+    if op == OP_CALL_VALUE   { alloc r := read_u32_at(bytes, cursor) return tagged("CALL_VALUE",   r[0], r[1]) }
+    if op == OP_SETUP_EXCEPT { alloc r := read_u32_at(bytes, cursor) return tagged("SETUP_EXCEPT", r[0], r[1]) }
+    if op == OP_RAISE        { alloc kind := bytes[cursor] return tagged("RAISE", kind, cursor + 1) }
+    if op == OP_RET          { return tagged0("RET",        cursor) }
+    if op == OP_MAKE_FUNC    { alloc r := read_str_at(bytes, cursor) return tagged("MAKE_FUNC",    r[0], r[1]) }
+    panic("native-js: unknown opcode 0x" + hex(op))
+}
+
+proc parse_bytecode(bytes) {
+    alloc n := length(bytes)
+    if n < 8 { panic("native-js: bytecode too short") }
+    if bytes[0] != ascii("O") or bytes[1] != ascii("M") or bytes[2] != ascii("G") or bytes[3] != ascii("B") {
+        panic("native-js: bad magic in header")
+    }
+    alloc cursor := 4
+    alloc ver_pair := read_u32_at(bytes, cursor)
+    cursor := ver_pair[1]
+    if ver_pair[0] != BC_VERSION {
+        panic("native-js: unsupported bytecode version " + ver_pair[0])
+    }
+    alloc fc_pair := read_u32_at(bytes, cursor)
+    alloc func_count := fc_pair[0]
+    cursor := fc_pair[1]
+    alloc funcs := {}
+    alloc f := 0
+    loop f < func_count {
+        alloc name_pair := read_str_at(bytes, cursor)
+        alloc name := name_pair[0]
+        cursor := name_pair[1]
+        alloc pc_pair := read_u32_at(bytes, cursor)
+        alloc param_count := pc_pair[0]
+        cursor := pc_pair[1]
+        alloc params := []
+        alloc p := 0
+        loop p < param_count {
+            alloc p_pair := read_str_at(bytes, cursor)
+            params := params + [p_pair[0]]
+            cursor := p_pair[1]
+            p := p + 1
+        }
+        alloc addr_pair := read_u32_at(bytes, cursor)
+        cursor := addr_pair[1]
+        funcs[name] := [params, addr_pair[0]]
+        f := f + 1
+    }
+    alloc cl_pair := read_u32_at(bytes, cursor)
+    alloc code_len := cl_pair[0]
+    cursor := cl_pair[1]
+    alloc code := []
+    alloc k := 0
+    loop k < code_len {
+        if cursor >= n {
+            panic("native-js: truncated instruction stream at instruction " + k)
+        }
+        alloc op := bytes[cursor]
+        cursor := cursor + 1
+        alloc instr := decode_one(op, bytes, cursor)
+        code := code + [instr[0]]
+        cursor := instr[1]
+        k := k + 1
+    }
+    return [code, funcs]
+}
+
+# === JS string escaping ==================================================
+
+proc js_escape(s) {
+    alloc out := ""
+    alloc i := 0
+    alloc n := length(s)
+    loop i < n {
+        alloc c := s[i]
+        if c == "\\" {
+            out := out + "\\\\"
+        } elif c == "\"" {
+            out := out + "\\\""
+        } elif c == "\n" {
+            out := out + "\\n"
+        } elif c == "\r" {
+            out := out + "\\r"
+        } elif c == "\t" {
+            out := out + "\\t"
+        } else {
+            out := out + c
+        }
+        i := i + 1
+    }
+    return out
+}
+
+# === Code generator ======================================================
+
+# JS-friendly identifier for an OMG variable. Same `v_` prefix as
+# native-c.omg so the analysis bookkeeping reads identically.
+proc js_var(name) {
+    return "v_" + name
+}
+
+# Numeric JS function name for an OMG proc. Matches native-c's c_fn_name.
+proc js_fn_name(idx) {
+    return "omg_p" + idx
+}
+
+proc label_for(i) {
+    alloc s := "L"
+    alloc n := i
+    alloc digits := ""
+    if n == 0 {
+        digits := "0000"
+    } else {
+        loop n > 0 {
+            alloc d := n % 10
+            digits := chr(d + ascii("0")) + digits
+            n := n / 10
+        }
+        loop length(digits) < 4 {
+            digits := "0" + digits
+        }
+    }
+    return s + digits
+}
+
+# === Per-instruction emit ================================================
+
+# Each generated function maintains its own `_s` (stack) JS array.
+# Most ops are "pop two, push result" so we lean on inline templates.
+
+proc emit_binop(js_op) {
+    return "    { const _b = _s.pop(); const _a = _s.pop(); _s.push(" + js_op + "(_a, _b)); }\n"
+}
+
+proc emit_unop(js_op) {
+    return "    { const _a = _s.pop(); _s.push(" + js_op + "(_a)); }\n"
+}
+
+proc emit_builtin1(js_func) {
+    return "    { const _a = _s.pop(); _s.push(" + js_func + "(_a)); }\n"
+}
+proc emit_builtin2(js_func) {
+    return "    { const _b = _s.pop(); const _a = _s.pop(); _s.push(" + js_func + "(_a, _b)); }\n"
+}
+proc emit_builtin0(js_func) {
+    return "    _s.push(" + js_func + "());\n"
+}
+
+# Handle BUILTIN with a small dispatch table — enough to cover most
+# corpus programs. Anything missing falls back to omg_call_builtin
+# which has a runtime dispatch.
+proc emit_builtin(name, argc) {
+    if name == "length"        and argc == 1 { return emit_builtin1("omg_length") }
+    if name == "chr"           and argc == 1 { return emit_builtin1("omg_chr") }
+    if name == "ascii"         and argc == 1 { return emit_builtin1("omg_ascii") }
+    if name == "freeze"        and argc == 1 { return emit_builtin1("omg_freeze") }
+    if name == "dict_keys"     and argc == 1 { return emit_builtin1("omg_dict_keys") }
+    if name == "int"           and argc == 1 { return emit_builtin1("omg_int") }
+    if name == "float"         and argc == 1 { return emit_builtin1("omg_float") }
+    if name == "floor"         and argc == 1 { return emit_builtin1("omg_floor") }
+    if name == "ceil"          and argc == 1 { return emit_builtin1("omg_ceil") }
+    if name == "round"         and argc == 1 { return emit_builtin1("omg_round") }
+    if name == "abs"           and argc == 1 { return emit_builtin1("omg_abs") }
+    if name == "sqrt"          and argc == 1 { return emit_builtin1("omg_sqrt") }
+    if name == "log"           and argc == 1 { return emit_builtin1("omg_log") }
+    if name == "sin"           and argc == 1 { return emit_builtin1("omg_sin") }
+    if name == "cos"           and argc == 1 { return emit_builtin1("omg_cos") }
+    if name == "tan"           and argc == 1 { return emit_builtin1("omg_tan") }
+    if name == "pow"           and argc == 2 { return emit_builtin2("omg_pow") }
+    if name == "hex"           and argc == 1 { return emit_builtin1("omg_hex") }
+    if name == "binary"        and argc == 1 { return "    { const _a = _s.pop(); _s.push(omg_binary(_a)); }\n" }
+    if name == "binary"        and argc == 2 { return emit_builtin2("omg_binary") }
+    if name == "string_bytes"  and argc == 1 { return emit_builtin1("omg_string_bytes") }
+    if name == "bytes_to_string" and argc == 1 { return emit_builtin1("omg_bytes_to_string") }
+    if name == "float_bits"    and argc == 1 { return emit_builtin1("omg_float_bits") }
+    if name == "bits_to_float" and argc == 1 { return emit_builtin1("omg_bits_to_float") }
+    if name == "panic"         and argc == 1 { return emit_builtin1("omg_panic_user") }
+    if name == "raise"         and argc == 1 { return emit_builtin1("omg_panic_user") }
+    if name == "exit_with_error" and argc == 1 { return emit_builtin1("omg_exit_with_error") }
+    if name == "exit"          and argc == 1 { return emit_builtin1("omg_exit") }
+    if name == "print"         and argc == 1 { return emit_builtin1("omg_print") }
+    if name == "call_builtin"  and argc == 2 { return emit_builtin2("omg_call_builtin") }
+
+    # File I/O. Most are direct passthroughs to omg_rt.js helpers.
+    if name == "read_file"     and argc == 1 { return emit_builtin1("omg_read_file") }
+    if name == "file_open"     and argc == 2 { return emit_builtin2("omg_file_open") }
+    if name == "file_read"     and argc == 1 { return emit_builtin1("omg_file_read") }
+    if name == "file_write"    and argc == 2 { return emit_builtin2("omg_file_write") }
+    if name == "file_close"    and argc == 1 { return emit_builtin1("omg_file_close") }
+    if name == "file_seek"     and argc == 2 { return emit_builtin2("omg_file_seek") }
+    if name == "file_tell"     and argc == 1 { return emit_builtin1("omg_file_tell") }
+    if name == "file_exists"   and argc == 1 { return emit_builtin1("omg_file_exists") }
+    if name == "is_dir"        and argc == 1 { return emit_builtin1("omg_is_dir") }
+    if name == "read_dir"      and argc == 1 { return emit_builtin1("omg_read_dir") }
+    if name == "make_dir"      and argc == 1 { return emit_builtin1("omg_make_dir") }
+
+    # Stdin / process control.
+    if name == "stdin_readline"   and argc == 0 { return emit_builtin0("omg_stdin_readline") }
+    if name == "stdin_read"       and argc == 0 { return emit_builtin0("omg_stdin_read") }
+    if name == "stdin_read_bytes" and argc == 0 { return emit_builtin0("omg_stdin_read_bytes") }
+    if name == "subprocess"       and argc == 1 { return emit_builtin1("omg_subprocess") }
+    if name == "getpid"           and argc == 0 { return emit_builtin0("omg_getpid") }
+    if name == "executable_path"  and argc == 0 { return emit_builtin0("omg_executable_path") }
+
+    panic("native-js: builtin '" + name + "' (argc=" + argc + ") not implemented yet")
+}
+
+# Float-bits → JS Number literal. The bytecode carries the IEEE-754
+# i64 bit pattern; emit a JS expression that recovers the double via
+# the runtime's omg_bits_to_float helper. (We could compute the value
+# at transpile-time but using the helper keeps the transpiler simple
+# and avoids float-printing edge cases.)
+proc emit_push_float_bits(bits) {
+    return "    _s.push(omg_bits_to_float(" + bits + "n));\n"
+}
+
+# Emit JS for a single bytecode instruction. `ctx` carries:
+#   ctx.func_index   — name → numeric index
+#   ctx.func_info    — analysis dicts (currently unused; reserved)
+proc emit_js_for_instr(instr, ctx) {
+    alloc op := instr[0]
+    alloc arg := instr[1]
+
+    # Pushes
+    if op == "PUSH_INT"  { return "    _s.push(" + arg + "n);\n" }
+    if op == "PUSH_STR"  { return "    _s.push(\"" + js_escape(arg) + "\");\n" }
+    if op == "PUSH_BOOL" {
+        if arg { return "    _s.push(true);\n" }
+        return "    _s.push(false);\n"
+    }
+    if op == "PUSH_NONE" { return "    _s.push(null);\n" }
+    if op == "PUSH_FLOAT_BITS" { return emit_push_float_bits(arg) }
+
+    # Variables — captured names live on the `_captured` Map passed in
+    # at call time; everything else is a JS local or a top-level
+    # `let v_X` global. The current func's analysis tells us which.
+    if op == "LOAD" {
+        if has_key(ctx["current_captured_set"], arg) {
+            return "    _s.push(_captured.get(\"" + js_escape(arg) + "\"));\n"
+        }
+        return "    _s.push(" + js_var(arg) + ");\n"
+    }
+    if op == "STORE" {
+        if has_key(ctx["current_captured_set"], arg) {
+            return "    _captured.set(\"" + js_escape(arg) + "\", _s.pop());\n"
+        }
+        return "    " + js_var(arg) + " = _s.pop();\n"
+    }
+    if op == "STORE_LOCAL" { return "    " + js_var(arg) + " = _s.pop();\n" }
+
+    # Arithmetic
+    if op == "ADD"        { return emit_binop("omg_add") }
+    if op == "SUB"        { return emit_binop("omg_sub") }
+    if op == "MUL"        { return emit_binop("omg_mul") }
+    if op == "DIV"        { return emit_binop("omg_div") }
+    if op == "FLOOR_DIV"  { return emit_binop("omg_floor_div") }
+    if op == "MOD"        { return emit_binop("omg_mod") }
+    if op == "NEG"        { return emit_unop("omg_neg") }
+
+    # Comparisons
+    if op == "EQ" { return emit_binop("omg_eq") }
+    if op == "NE" { return emit_binop("omg_ne") }
+    if op == "LT" { return emit_binop("omg_lt") }
+    if op == "LE" { return emit_binop("omg_le") }
+    if op == "GT" { return emit_binop("omg_gt") }
+    if op == "GE" { return emit_binop("omg_ge") }
+
+    # Bitwise
+    if op == "BAND" { return emit_binop("omg_band") }
+    if op == "BOR"  { return emit_binop("omg_bor") }
+    if op == "BXOR" { return emit_binop("omg_bxor") }
+    if op == "SHL"  { return emit_binop("omg_shl") }
+    if op == "SHR"  { return emit_binop("omg_shr") }
+    # OMG OP_NOT is the bitwise `~` (matches Rust's handle_not in
+    # runtime/src/vm/ops_arith.rs). Logical-not on booleans goes
+    # through comparison ops at the AST level, not a dedicated op.
+    if op == "NOT"  { return emit_unop("omg_bnot") }
+    # AND/OR are eager; the OMG compiler emits explicit branch ops for
+    # short-circuit semantics, so the bytecode-level versions just
+    # combine two pre-evaluated operands.
+    if op == "AND" { return "    { const _b = _s.pop(); const _a = _s.pop(); _s.push(omg_truthy(_a) && omg_truthy(_b)); }\n" }
+    if op == "OR"  { return "    { const _b = _s.pop(); const _a = _s.pop(); _s.push(omg_truthy(_a) || omg_truthy(_b)); }\n" }
+
+    # Indexing / slicing
+    if op == "INDEX" { return emit_binop("omg_index") }
+    if op == "SLICE" {
+        return "    { const _e = _s.pop(); const _b = _s.pop(); const _a = _s.pop(); _s.push(omg_slice(_a, _b, _e)); }\n"
+    }
+    if op == "STORE_INDEX" {
+        # Stack: [..., base, idx, val] (pre-computed by compiler).
+        return "    { const _v = _s.pop(); const _i = _s.pop(); const _b = _s.pop(); omg_index_set(_b, _i, _v); }\n"
+    }
+    if op == "ATTR" { return "    { const _b = _s.pop(); _s.push(omg_attr(_b, \"" + js_escape(arg) + "\")); }\n" }
+    if op == "STORE_ATTR" { return "    { const _v = _s.pop(); const _b = _s.pop(); omg_attr_set(_b, \"" + js_escape(arg) + "\", _v); }\n" }
+
+    # Container building
+    if op == "BUILD_LIST" {
+        return "    { const _arr = _s.splice(_s.length - " + arg + ", " + arg + "); _s.push(_arr); }\n"
+    }
+    if op == "BUILD_DICT" {
+        # arg = number of (key, value) pairs. Pop 2*arg items.
+        return "    { const _n = " + arg + "; const _items = _s.splice(_s.length - 2 * _n, 2 * _n); const _d = new Map(); for (let _i = 0; _i < _n; _i++) { _d.set(_items[2*_i], _items[2*_i + 1]); } _s.push(_d); }\n"
+    }
+
+    # Control flow
+    if op == "POP"   { return "    _s.pop();\n" }
+    if op == "EMIT"  { return "    omg_emit(_s.pop());\n" }
+    if op == "JUMP"  { return "    _ip = " + arg + "; continue;\n" }
+    if op == "JUMP_IF_FALSE" {
+        return "    { const _c = _s.pop(); if (!omg_truthy(_c)) { _ip = " + arg + "; continue; } }\n"
+    }
+
+    # Function calls. Top-level procs are addressed by name (mangled
+    # → numeric idx); the `_captured` arg is null because top-level
+    # procs have no enclosing scope. Closures (built by MAKE_FUNC)
+    # carry their own bound `_captured` and are dispatched via
+    # CALL_VALUE.
+    if op == "CALL" {
+        alloc fname := arg
+        alloc fidx := ctx["func_index"][fname]
+        alloc nparams := length(ctx["funcs"][fname][0])
+        return "    { const _argv = _s.splice(_s.length - " + nparams + ", " + nparams + "); _s.push(" + js_fn_name(fidx) + "(null, ..._argv)); }\n"
+    }
+    if op == "TCALL" {
+        alloc fname := arg
+        alloc fidx := ctx["func_index"][fname]
+        alloc nparams := length(ctx["funcs"][fname][0])
+        return "    { const _argv = _s.splice(_s.length - " + nparams + ", " + nparams + "); return " + js_fn_name(fidx) + "(null, ..._argv); }\n"
+    }
+    if op == "CALL_VALUE" {
+        alloc nparams := arg
+        # Stack: [..., callee, arg0, ..., argN-1]. Callees can be:
+        #   - a JS function from MAKE_FUNC (already wrapped to bind
+        #     its own _captured); call as `_cf(..._argv)`.
+        #   - a string naming a top-level proc (import-module dispatch
+        #     packs function names as string values in the frozen dict);
+        #     resolve via omg_func_table and prepend a null _captured
+        #     so the function gets its arg list correctly.
+        return "    { const _argv = _s.splice(_s.length - " + nparams + ", " + nparams + "); let _cf = _s.pop(); if (typeof _cf === 'string') { const _fn = omg_lookup_fn(_cf); _s.push(_fn(null, ..._argv)); } else if (typeof _cf === 'function') { _s.push(_cf(..._argv)); } else { omg_panic('TypeError', 'cannot call non-function value'); } }\n"
+    }
+    if op == "RET" {
+        return "    return _s.pop();\n"
+    }
+
+    if op == "BUILTIN" {
+        return emit_builtin(arg[0], arg[1])
+    }
+    if op == "MAKE_FUNC" {
+        # Build a closure: snapshot the names the inner function
+        # captures into a JS Map, then return a wrapper that calls
+        # the underlying function body with `_captured` and `args`.
+        # Captured names come from the analyzer's captured_list for
+        # the inner function.
+        alloc fname := arg
+        alloc fidx := ctx["func_index"][fname]
+        alloc inner_info := ctx["func_info"][fname]
+        alloc inner_captured := inner_info["captured_list"]
+        alloc nc := length(inner_captured)
+
+        alloc out := "    {\n"
+        out := out + "        const _cap = new Map();\n"
+        alloc i := 0
+        loop i < nc {
+            alloc cn := inner_captured[i]
+            # If the captured name is itself a captured var of the
+            # CURRENT function, read from the parent's _captured Map;
+            # otherwise read the local JS variable.
+            alloc src := js_var(cn)
+            if has_key(ctx["current_captured_set"], cn) {
+                src := "_captured.get(\"" + js_escape(cn) + "\")"
+            }
+            out := out + "        _cap.set(\"" + js_escape(cn) + "\", " + src + ");\n"
+            i := i + 1
+        }
+        # The wrapper takes only the user-facing args and forwards
+        # them with _cap as the captured dict. If the inner function
+        # declares params [p0, p1, ...], we'd need to forward them
+        # explicitly — but we can use rest args because the inner
+        # function uses (_captured, ...params).
+        out := out + "        " + js_var(fname) + " = (...args) => " + js_fn_name(fidx) + "(_cap, ...args);\n"
+
+        # Cross-module alias (mirror of vm.rs / vm.omg / native-c.omg).
+        alloc bare := strip_mod_prefix(fname)
+        if bare != false and has_key(ctx["globals"], bare) {
+            out := out + "        " + js_var(bare) + " = " + js_var(fname) + ";\n"
+        }
+        out := out + "    }\n"
+        return out
+    }
+
+    # try/except: SETUP_EXCEPT marks a handler; POP_BLOCK clears it;
+    # RAISE jumps to the most recent handler. We emit JS try/catch
+    # blocks at function-start by pre-walking the body to find every
+    # SETUP_EXCEPT target, then nesting try/catch around the appropriate
+    # instruction range. For Day-1 v1 we emit a simpler approximation:
+    # every function wraps in one try/catch that respects active
+    # SETUP_EXCEPT frames via a runtime stack.
+    if op == "SETUP_EXCEPT" {
+        return "    _eh.push(" + arg + ");\n"
+    }
+    if op == "POP_BLOCK" {
+        return "    _eh.pop();\n"
+    }
+    if op == "RAISE" {
+        return "    omg_panic('RuntimeError', omg_to_string(_s.pop()));\n"
+    }
+
+    if op == "ASSERT" {
+        return "    { const _c = _s.pop(); if (!omg_truthy(_c)) omg_panic('AssertionError', 'assertion failed'); }\n"
+    }
+
+    if op == "HALT" { return "    return;\n" }
+
+    panic("native-js: opcode '" + op + "' not implemented yet")
+}
+
+# === has_key + strip_mod_prefix ==========================================
+
+proc has_key(d, key) {
+    try {
+        alloc probe := d[key]
+        return true
+    } except err {
+        return false
+    }
+}
+
+proc strip_mod_prefix(name) {
+    alloc n := length(name)
+    if n < 9 { return false }
+    if name[0:6] != "__mod_" { return false }
+    alloc i := 6
+    loop i < n and name[i] >= "0" and name[i] <= "9" {
+        i := i + 1
+    }
+    if i == 6 { return false }
+    if i + 2 > n { return false }
+    if name[i:i + 2] != "__" { return false }
+    alloc bare := name[i + 2:]
+    if length(bare) == 0 { return false }
+    return bare
+}
+
+# === Pre-analysis ========================================================
+
+proc collect_globals(code) {
+    alloc globals := {}
+    alloc injected := ["args", "module_file", "current_dir"]
+    alloc i := 0
+    alloc n := length(code)
+    loop i < n {
+        alloc instr := code[i]
+        alloc op := instr[0]
+        if op == "STORE_LOCAL" or op == "STORE" or op == "LOAD" {
+            globals[instr[1]] := true
+        }
+        if op == "MAKE_FUNC" {
+            globals[instr[1]] := true
+        }
+        if op == "HALT" {
+            alloc j := 0
+            loop j < length(injected) {
+                globals[injected[j]] := true
+                j := j + 1
+            }
+            return globals
+        }
+        i := i + 1
+    }
+    alloc j := 0
+    loop j < length(injected) {
+        globals[injected[j]] := true
+        j := j + 1
+    }
+    return globals
+}
+
+proc sorted_funcs_by_addr(funcs) {
+    alloc names := dict_keys(funcs)
+    alloc pairs := []
+    alloc i := 0
+    alloc n := length(names)
+    loop i < n {
+        alloc nm := names[i]
+        pairs := pairs + [[funcs[nm][1], nm]]
+        i := i + 1
+    }
+    alloc np := length(pairs)
+    alloc j := 1
+    loop j < np {
+        alloc k := j
+        loop k > 0 and pairs[k][0] < pairs[k - 1][0] {
+            alloc tmp := pairs[k]
+            pairs[k] := pairs[k - 1]
+            pairs[k - 1] := tmp
+            k := k - 1
+        }
+        j := j + 1
+    }
+    return pairs
+}
+
+proc build_func_index(funcs) {
+    alloc names := dict_keys(funcs)
+    alloc sorted := names
+    # Insertion sort by name for deterministic numbering.
+    alloc np := length(sorted)
+    alloc j := 1
+    loop j < np {
+        alloc k := j
+        loop k > 0 and sorted[k] < sorted[k - 1] {
+            alloc tmp := sorted[k]
+            sorted[k] := sorted[k - 1]
+            sorted[k - 1] := tmp
+            k := k - 1
+        }
+        j := j + 1
+    }
+    alloc out := {}
+    alloc i := 0
+    loop i < np {
+        out[sorted[i]] := i
+        i := i + 1
+    }
+    return out
+}
+
+# Walk a function body to find every name it stores or loads; used to
+# decide which variables to declare in the JS `let` preamble.
+proc collect_function_locals(body_start, body_end, code) {
+    alloc locals := {}
+    alloc i := body_start
+    loop i < body_end {
+        alloc instr := code[i]
+        alloc op := instr[0]
+        if op == "STORE_LOCAL" or op == "MAKE_FUNC" {
+            locals[instr[1]] := true
+        }
+        i := i + 1
+    }
+    return locals
+}
+
+proc collect_all_local_names(code, funcs) {
+    alloc all := {}
+    alloc sorted := sorted_funcs_by_addr(funcs)
+    alloc n := length(sorted)
+    alloc code_len := length(code)
+    alloc i := 0
+    loop i < n {
+        alloc addr := sorted[i][0]
+        alloc nm := sorted[i][1]
+        alloc body_start := addr
+        alloc body_end := code_len
+        if i + 1 < n {
+            body_end := sorted[i + 1][0]
+        }
+        alloc params := funcs[nm][0]
+        alloc p := 0
+        loop p < length(params) {
+            all[params[p]] := true
+            p := p + 1
+        }
+        alloc j := body_start
+        loop j < body_end {
+            alloc instr := code[j]
+            alloc op := instr[0]
+            if op == "STORE_LOCAL" or op == "MAKE_FUNC" {
+                all[instr[1]] := true
+            }
+            j := j + 1
+        }
+        i := i + 1
+    }
+    return all
+}
+
+# For each function, identify which referenced names are locals of an
+# *enclosing* function — those need to be passed via the `_captured`
+# arg at call time. Mirrors native-c.omg's analyze_function.
+proc analyze_function(fname, params, body_start, body_end, code, globals, all_locals) {
+    alloc params_set := {}
+    alloc i := 0
+    loop i < length(params) {
+        params_set[params[i]] := true
+        i := i + 1
+    }
+    alloc locals := {}
+    alloc referenced := {}
+    alloc j := body_start
+    loop j < body_end {
+        alloc instr := code[j]
+        alloc op := instr[0]
+        if op == "STORE_LOCAL" or op == "MAKE_FUNC" {
+            locals[instr[1]] := true
+            referenced[instr[1]] := true
+        } elif op == "LOAD" or op == "STORE" {
+            referenced[instr[1]] := true
+        }
+        j := j + 1
+    }
+    alloc captured_list := []
+    alloc ref_keys := dict_keys(referenced)
+    alloc k := 0
+    loop k < length(ref_keys) {
+        alloc nm := ref_keys[k]
+        if has_key(params_set, nm) == false and has_key(locals, nm) == false and has_key(globals, nm) == false {
+            if has_key(all_locals, nm) {
+                captured_list := captured_list + [nm]
+            } else {
+                globals[nm] := true
+            }
+        }
+        k := k + 1
+    }
+    return {
+        params: params,
+        params_set: params_set,
+        locals: locals,
+        captured_list: captured_list,
+        body_start: body_start,
+        body_end: body_end
+    }
+}
+
+proc analyze_all_functions(code, funcs, globals) {
+    alloc all_locals := collect_all_local_names(code, funcs)
+    alloc sorted := sorted_funcs_by_addr(funcs)
+    alloc analyses := {}
+    alloc i := 0
+    alloc n := length(sorted)
+    alloc code_len := length(code)
+    loop i < n {
+        alloc addr := sorted[i][0]
+        alloc nm := sorted[i][1]
+        alloc body_start := addr
+        alloc body_end := code_len
+        if i + 1 < n {
+            body_end := sorted[i + 1][0]
+        }
+        alloc params := funcs[nm][0]
+        analyses[nm] := analyze_function(nm, params, body_start, body_end, code, globals, all_locals)
+        i := i + 1
+    }
+    return analyses
+}
+
+# === Code emission =======================================================
+
+# Emit `from..to` of `code` (the function body, or top-level program)
+# as a flat IP-dispatching loop. We use a giant `switch (_ip)` with
+# fall-through-by-default — the simplest way to handle JUMP/JIF
+# without a real goto.
+proc emit_body(code, body_start, body_end, ctx) {
+    alloc out := "    let _ip = " + body_start + ";\n"
+    out := out + "    let _eh = [];\n"
+    out := out + "    while (true) {\n"
+    out := out + "        switch (_ip) {\n"
+    alloc i := body_start
+    loop i < body_end {
+        out := out + "        case " + i + ": {\n"
+        out := out + emit_js_for_instr(code[i], ctx)
+        out := out + "        }\n"
+        out := out + "        // fall through to " + (i + 1) + "\n"
+        i := i + 1
+    }
+    # Implicit fall-off-the-end: treat as return undefined.
+    out := out + "        default: return;\n"
+    out := out + "        }\n"
+    out := out + "        _ip += 1;\n"
+    out := out + "    }\n"
+    return out
+}
+
+proc emit_function(name, code, funcs, func_index, func_info, globals) {
+    alloc info := func_info[name]
+    alloc params := info["params"]
+    alloc body_start := info["body_start"]
+    alloc body_end := info["body_end"]
+    alloc fidx := func_index[name]
+
+    # Build the captured-set lookup for this function so emit_js_for_instr
+    # can decide whether `LOAD x` reads a JS local or `_captured.get("x")`.
+    alloc captured_set := {}
+    alloc cl := info["captured_list"]
+    alloc ci := 0
+    loop ci < length(cl) {
+        captured_set[cl[ci]] := true
+        ci := ci + 1
+    }
+
+    alloc out := "function " + js_fn_name(fidx) + "("
+    out := out + "_captured"
+    alloc i := 0
+    loop i < length(params) {
+        out := out + ", " + js_var(params[i])
+        i := i + 1
+    }
+    out := out + ") {\n"
+
+    # Declare every STORE_LOCAL / MAKE_FUNC target so JS lets us assign
+    # without a ReferenceError on first use.
+    alloc locals := collect_function_locals(body_start, body_end, code)
+    alloc lkeys := dict_keys(locals)
+    alloc lk := 0
+    loop lk < length(lkeys) {
+        out := out + "    let " + js_var(lkeys[lk]) + ";\n"
+        lk := lk + 1
+    }
+
+    out := out + "    const _s = [];\n"
+    alloc ctx := {
+        funcs: funcs,
+        func_index: func_index,
+        func_info: func_info,
+        globals: globals,
+        current_captured_set: captured_set
+    }
+    out := out + emit_body(code, body_start, body_end, ctx)
+    out := out + "}\n\n"
+    return out
+}
+
+proc generate(code, funcs, runtime_js, source_path) {
+    alloc globals := collect_globals(code)
+    alloc func_index := build_func_index(funcs)
+    alloc func_info := analyze_all_functions(code, funcs, globals)
+
+    alloc out := "// Generated by bootstrap/src/native-js.omg from " + source_path + "\n"
+    out := out + "// Do not edit by hand.\n\n"
+    out := out + runtime_js
+    out := out + "\n// === Program ==============================================================\n\n"
+
+    # Top-level globals. The analysis may have promoted additional
+    # names to globals while bucketing each function's references, so
+    # re-read after analyze_all_functions.
+    alloc gkeys := dict_keys(globals)
+    alloc gk := 0
+    loop gk < length(gkeys) {
+        alloc nm := gkeys[gk]
+        if nm != "args" and nm != "module_file" and nm != "current_dir" {
+            out := out + "let " + js_var(nm) + ";\n"
+        }
+        gk := gk + 1
+    }
+    if gk > 0 { out := out + "\n" }
+
+    # Function definitions.
+    alloc all_func_names := dict_keys(funcs)
+    alloc fi := 0
+    loop fi < length(all_func_names) {
+        out := out + emit_function(all_func_names[fi], code, funcs, func_index, func_info, globals)
+        fi := fi + 1
+    }
+
+    # Register every function in omg_func_table so CALL_VALUE on a
+    # string-typed callee (the way imported-module dicts dispatch)
+    # can resolve it. Mirror of the omg_func_table in native-c.omg.
+    fi := 0
+    loop fi < length(all_func_names) {
+        alloc fn := all_func_names[fi]
+        out := out + "omg_func_table.set(\"" + js_escape(fn) + "\", " + js_fn_name(func_index[fn]) + ");\n"
+        fi := fi + 1
+    }
+    if length(all_func_names) > 0 { out := out + "\n" }
+
+    # Top-level: emit_body wrapped in an IIFE. The top level has no
+    # enclosing scope, so its captured_set is empty.
+    alloc top_end := length(code)
+    alloc i := 0
+    loop i < length(code) {
+        if code[i][0] == "HALT" {
+            top_end := i + 1
+            break
+        }
+        i := i + 1
+    }
+    alloc top_ctx := {
+        funcs: funcs,
+        func_index: func_index,
+        func_info: func_info,
+        globals: globals,
+        current_captured_set: {}
+    }
+    # The IIFE is wrapped in a try/catch so an uncaught OmgError
+    # surfaces like the Rust runtime: a single "Kind: message" line
+    # to stderr, then exit 1 (not a JS stack trace).
+    out := out + "try {\n"
+    out := out + "(function _omg_main() {\n"
+    out := out + "    const _s = [];\n"
+    out := out + emit_body(code, 0, top_end, top_ctx)
+    out := out + "})();\n"
+    out := out + "} catch (_e) {\n"
+    out := out + "    if (_e instanceof OmgError) {\n"
+    out := out + "        if (typeof process !== 'undefined') { process.stderr.write(_e.kind + ': ' + _e.omgMessage + '\\n'); process.exit(1); }\n"
+    out := out + "        else throw _e;\n"
+    out := out + "    } else { throw _e; }\n"
+    out := out + "}\n"
+
+    return out
+}
+
+# === Runtime path resolution =============================================
+
+proc dirname(path) {
+    alloc i := length(path) - 1
+    loop i >= 0 {
+        if path[i] == "/" or path[i] == "\\" {
+            return path[0:i]
+        }
+        i := i - 1
+    }
+    return "."
+}
+
+# === Main dispatch =======================================================
+
+proc nj_path_ends_with(s, suffix) {
+    alloc ls := length(s)
+    alloc lp := length(suffix)
+    if lp > ls { return false }
+    return s[ls - lp:] == suffix
+}
+
+proc nj_argv0_basename() {
+    alloc p := args[0]
+    alloc i := length(p) - 1
+    loop i >= 0 {
+        if p[i] == "/" or p[i] == "\\" {
+            return p[i + 1:]
+        }
+        i := i - 1
+    }
+    return p
+}
+
+proc nj_is_main_invocation() {
+    alloc bn := nj_argv0_basename()
+    return bn == "omgjs" or bn == "native-js.omg" or bn == "native-js.omgb"
+}
+
+proc nj_runtime_dir() {
+    alloc exe := false
+    try {
+        exe := call_builtin("executable_path", [])
+    } except err {
+        exe := false
+    }
+    if exe == false {
+        return dirname(module_file)
+    }
+    return dirname(exe)
+}
+
+if length(args) >= 2 and (args[1] == "-v" or args[1] == "--version") {
+    emit "omgjs-native-build: v" + VERSION
+    exit(0)
+}
+
+if nj_is_main_invocation() and length(args) >= 3 and nj_path_ends_with(args[1], ".omgb") and nj_path_ends_with(args[2], ".js") {
+    alloc bc_path := args[1]
+    alloc out_path := args[2]
+    alloc rt_path := nj_runtime_dir() + "/omg_rt.js"
+
+    alloc fh := file_open(bc_path, "rb")
+    alloc bc_bytes := file_read(fh)
+    file_close(fh)
+
+    alloc parsed := parse_bytecode(bc_bytes)
+    alloc code := parsed[0]
+    alloc funcs := parsed[1]
+
+    alloc runtime_js := read_file(rt_path)
+    if runtime_js == false {
+        panic("native-js: cannot read runtime at " + rt_path)
+    }
+
+    alloc js_src := generate(code, funcs, runtime_js, bc_path)
+
+    alloc out_h := file_open(out_path, "w")
+    file_write(out_h, js_src)
+    file_close(out_h)
+
+    emit "[native-js] " + bc_path + " -> " + out_path + " (" + length(js_src) + " bytes)"
+}

@@ -1,0 +1,34 @@
+;;;omg
+
+# Sieve of Eratosthenes to generate primes up to a limit
+
+proc sieve(limit) {
+    # Initialize list of numbers from 2 to limit
+    alloc nums := []
+    alloc i := 2
+    loop i <= limit {
+        nums := nums + [i]
+        i := i + 1
+    }
+
+    # Collect primes by filtering multiples
+    alloc primes := []
+    loop length(nums) > 0 {
+        alloc p := nums[0]
+        primes := primes + [p]
+        alloc filtered := []
+        alloc j := 0
+        loop j < length(nums) {
+            if nums[j] % p != 0 {
+                filtered := filtered + [nums[j]]
+            }
+            j := j + 1
+        }
+        nums := filtered
+    }
+    return primes
+}
+
+# Generate and emit primes up to 100
+alloc primes := sieve(100)
+emit primes

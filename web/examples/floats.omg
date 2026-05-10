@@ -1,0 +1,31 @@
+;;;omg
+
+# Newton's method for square root.
+# Demonstrates floats, mixed arithmetic, and the math kit.
+
+proc my_sqrt(x) {
+    alloc guess := x / 2.0
+    alloc i := 0
+    loop i < 20 {
+        guess := (guess + x / guess) / 2.0
+        i := i + 1
+    }
+    return guess
+}
+
+emit my_sqrt(2.0)
+emit my_sqrt(50.0)
+
+# `/` between two ints stays floor division; promote on float for true div.
+emit 10 / 3                 # 3
+emit 10 / 3.0               # 3.3333333333333335
+emit 10 // 3                # 3 (explicit floor)
+emit 10.5 // 3              # 3.0
+
+# Cross-type comparison: 5 == 5.0 is true.
+emit 5 == 5.0
+
+# Standard math: sin^2 + cos^2 == 1 (within rounding).
+proc square(x) { return x * x }
+alloc theta := 1.234
+emit square(sin(theta)) + square(cos(theta))

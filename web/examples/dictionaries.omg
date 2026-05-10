@@ -1,0 +1,28 @@
+;;;omg
+
+alloc person := {
+    name: "Chris",
+    age: 32
+}
+
+person.age := 33
+person["city"] := "Milton Keynes"
+
+alloc key := "age"
+
+alloc company := {
+    ceo: person
+}
+
+proc get_city(p) {
+    return p.city
+}
+
+facts person.age == 33
+facts person["city"] == "Milton Keynes"
+facts person[key] == 33
+facts company.ceo.name == "Chris"
+facts get_city(company.ceo) == "Milton Keynes"
+
+emit person.name
+emit person["city"]
