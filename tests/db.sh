@@ -220,3 +220,137 @@ assert_eq "missing table rejected (Rust)" "caught" "$actual"
 
 rm -f "$REPO_ROOT/tools/db/_test_dup.omg" \
       "$REPO_ROOT/tools/db/_test_missing.omg"
+
+# === SQL: lexer + parser ==================================================
+section "SQL: lexer + parser"
+
+cat > "$REPO_ROOT/tools/db/_test_parse.omg" <<EOF
+;;;omg
+import "sql.omg" as sql
+alloc src := "CREATE TABLE u (id INT, name TEXT);
+INSERT INTO u VALUES (1, 'Alice');
+SELECT name FROM u WHERE id = 1 ORDER BY name;
+DELETE FROM u WHERE id != 0;
+DROP TABLE u;"
+alloc stmts := sql.parse_all(sql.tokenise(src))
+emit "n=" + length(stmts)
+alloc i := 0
+loop i < length(stmts) {
+    emit stmts[i].kind
+    i := i + 1
+}
+EOF
+expected="n=5
+create_table
+insert
+select
+delete
+drop_table"
+actual=$("$OMG_RUST" "$REPO_ROOT/tools/db/_test_parse.omg" 2>&1)
+assert_eq "parse_all: 5 statement kinds" "$expected" "$actual"
+rm -f "$REPO_ROOT/tools/db/_test_parse.omg"
+
+# String escapes round-trip through the lexer.
+cat > "$REPO_ROOT/tools/db/_test_escape.omg" <<EOF
+;;;omg
+import "sql.omg" as sql
+alloc src := "INSERT INTO t VALUES ('a\\\\nb');"
+alloc stmts := sql.parse_all(sql.tokenise(src))
+emit length(stmts[0].values[0])
+emit stmts[0].values[0]
+EOF
+# Bash heredoc swallows one \, so \\\\n in the heredoc -> \\n in the
+# OMG source -> \n at lex time -> a single newline in the value.
+actual=$("$OMG_RUST" "$REPO_ROOT/tools/db/_test_escape.omg" 2>&1)
+assert_eq "string-escape \\\\n becomes newline" "3
+a
+b" "$actual"
+rm -f "$REPO_ROOT/tools/db/_test_escape.omg"
+
+# === SQL: end-to-end via omgdb -e =========================================
+section "SQL: end-to-end via omgdb -e"
+
+DB="$TMPDIR_TEST/sql.db"
+rm -f "$DB"
+
+# Multi-statement batch: create + insert + select + filter + sort.
+actual=$("$OMG_RUST" tools/db/omgdb.omg "$DB" -e "
+CREATE TABLE users (id INT, name TEXT, age INT);
+INSERT INTO users VALUES (1, 'Alice', 30);
+INSERT INTO users VALUES (2, 'Bob', 25);
+INSERT INTO users VALUES (3, 'Carol', 42);
+SELECT name, age FROM users WHERE age >= 30 ORDER BY name;" 2>&1)
+expected="OK
+OK (rowid=1)
+OK (rowid=2)
+OK (rowid=3)
+name    | age
+--------+----
+'Alice' | 30
+'Carol' | 42
+(2 rows)"
+assert_eq "CREATE + INSERT + filtered SELECT (Rust)" "$expected" "$actual"
+
+# DELETE then SELECT should drop the matching rows.
+actual=$("$OMG_RUST" tools/db/omgdb.omg "$DB" -e "
+DELETE FROM users WHERE id = 2;
+SELECT * FROM users ORDER BY id;" 2>&1)
+expected="OK (1 row deleted)
+id | name    | age
+---+---------+----
+1  | 'Alice' | 30
+3  | 'Carol' | 42
+(2 rows)"
+assert_eq "DELETE WHERE then SELECT (Rust)" "$expected" "$actual"
+
+# DELETE matching nothing reports 0 deletes.
+actual=$("$OMG_RUST" tools/db/omgdb.omg "$DB" -e "DELETE FROM users WHERE id = 999;" 2>&1)
+assert_eq "DELETE matching nothing → 0" "OK (0 rows deleted)" "$actual"
+
+# DROP TABLE removes from catalog; subsequent SELECT errors.
+actual=$("$OMG_RUST" tools/db/omgdb.omg "$DB" -e "DROP TABLE users; SELECT * FROM users;" 2>&1)
+assert_contains "DROP then SELECT errors with 'no such table'" \
+    "no such table: users" "$actual"
+
+rm -f "$DB"
+
+# === SQL: stdin pipeline ==================================================
+section "SQL: stdin pipeline (omgdb db -)"
+
+DB="$TMPDIR_TEST/stdin.db"
+rm -f "$DB"
+actual=$(printf "CREATE TABLE k (n INT, s TEXT);\nINSERT INTO k VALUES (1, 'one');\nINSERT INTO k VALUES (2, 'two');\nSELECT * FROM k ORDER BY s;" | "$OMG_RUST" tools/db/omgdb.omg "$DB" - 2>&1)
+expected="OK
+OK (rowid=1)
+OK (rowid=2)
+n | s
+--+------
+1 | 'one'
+2 | 'two'
+(2 rows)"
+assert_eq "stdin pipeline: schema + data + ordered select" "$expected" "$actual"
+rm -f "$DB"
+
+# === SQL: native + AOT parity =============================================
+section "SQL: native + AOT parity vs Rust"
+
+DB_RUST="$TMPDIR_TEST/parity_rust.db"
+DB_NATIVE="$TMPDIR_TEST/parity_native.db"
+DB_AOT="$TMPDIR_TEST/parity_aot.db"
+rm -f "$DB_RUST" "$DB_NATIVE" "$DB_AOT"
+SQL="
+CREATE TABLE t (id INT, label TEXT, score INT);
+INSERT INTO t VALUES (1, 'a', 10);
+INSERT INTO t VALUES (2, 'b', 20);
+INSERT INTO t VALUES (3, 'c', 30);
+SELECT * FROM t WHERE score > 10 ORDER BY label;
+DELETE FROM t WHERE score = 20;
+SELECT * FROM t ORDER BY id;"
+
+rust_out=$("$OMG_RUST"   tools/db/omgdb.omg "$DB_RUST"   -e "$SQL" 2>&1)
+native_out=$("$OMG_NATIVE" tools/db/omgdb.omg "$DB_NATIVE" -e "$SQL" 2>&1)
+"$OMG_NATIVE" --build tools/db/omgdb.omg "$TMPDIR_TEST/omgdb_aot" >/dev/null
+aot_out=$("$TMPDIR_TEST/omgdb_aot" "$DB_AOT" -e "$SQL" 2>&1)
+
+assert_eq "SQL output: Rust == native interpreted" "$rust_out" "$native_out"
+assert_eq "SQL output: Rust == AOT"                 "$rust_out" "$aot_out"

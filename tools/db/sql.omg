@@ -1,0 +1,445 @@
+;;;omg
+
+# sql.omg — SQL lexer + recursive-descent parser for the omgdb subset.
+#
+# Subset (matching plans/02-omgdb.md):
+#   CREATE TABLE <name> (<col> <type> [, ...]);
+#   INSERT INTO <name> VALUES (<value> [, ...]);
+#   SELECT <cols> FROM <name> [WHERE <cmp>] [ORDER BY <col>];
+#   DELETE FROM <name> WHERE <cmp>;
+#   DROP TABLE <name>;
+#
+# Types: INT, TEXT.
+# WHERE: a single comparison `<col> <op> <value>` where op is one of
+#        = != <> < <= > >= . No AND/OR in v1.
+# ORDER BY: ascending only. Single column. ASC/DESC keywords accepted
+#           but DESC raises a "not implemented" parse error.
+#
+# Tokens are 2-element lists: [kind, value]. Parser output is a dict
+# in the shape consumed by exec.omg's run_statement.
+
+# === Token kinds ==========================================================
+
+alloc TK_KW    := "KW"     # reserved word, value is uppercased
+alloc TK_IDENT := "IDENT"  # identifier (table/column name); value is the source text
+alloc TK_INT   := "INT"    # integer literal; value is the OMG int
+alloc TK_STR   := "STR"    # string literal; value is the unescaped string
+alloc TK_OP    := "OP"     # = != <> < <= > >= ; value is the operator text
+alloc TK_PUNC  := "PUNC"   # ( ) , ; * ; value is the single character
+alloc TK_EOF   := "EOF"
+
+alloc KEYWORDS := [
+    "CREATE", "TABLE", "DROP",
+    "INSERT", "INTO", "VALUES",
+    "SELECT", "FROM", "WHERE", "ORDER", "BY", "ASC", "DESC",
+    "DELETE",
+    "INT", "TEXT",
+    "AND", "OR", "NOT", "NULL", "TRUE", "FALSE"
+]
+
+# === Helpers ==============================================================
+
+proc is_digit(c) {
+    return c >= "0" and c <= "9"
+}
+proc is_alpha(c) {
+    return (c >= "a" and c <= "z") or (c >= "A" and c <= "Z") or c == "_"
+}
+proc is_ident_cont(c) {
+    return is_alpha(c) or is_digit(c)
+}
+proc is_space(c) {
+    return c == " " or c == "\t" or c == "\n" or c == "\r"
+}
+
+# Uppercase a single ASCII char.
+proc upper_char(c) {
+    if c >= "a" and c <= "z" {
+        return chr(ascii(c) - 32)
+    }
+    return c
+}
+proc upper_str(s) {
+    alloc out := ""
+    alloc i := 0
+    loop i < length(s) {
+        out := out + upper_char(s[i])
+        i := i + 1
+    }
+    return out
+}
+
+proc is_keyword(name) {
+    alloc i := 0
+    loop i < length(KEYWORDS) {
+        if KEYWORDS[i] == name {
+            return true
+        }
+        i := i + 1
+    }
+    return false
+}
+
+# Convert a digit string (no sign) to an int. Pure: no error path.
+# Caller scans the digits first.
+proc digits_to_int(s) {
+    alloc n := 0
+    alloc i := 0
+    loop i < length(s) {
+        n := n * 10 + (ascii(s[i]) - ascii("0"))
+        i := i + 1
+    }
+    return n
+}
+
+# === Lexer ================================================================
+
+# tokenise(src) -> list of [kind, value] tokens, terminated with EOF.
+# Whitespace and `--` line comments are skipped.
+proc tokenise(src) {
+    alloc tokens := []
+    alloc i := 0
+    alloc n := length(src)
+    loop i < n {
+        alloc c := src[i]
+
+        # Whitespace.
+        if is_space(c) {
+            i := i + 1
+        } elif c == "-" and i + 1 < n and src[i + 1] == "-" {
+            # `--` comment to end of line.
+            loop i < n and src[i] != "\n" {
+                i := i + 1
+            }
+        } elif c == "-" and i + 1 < n and is_digit(src[i + 1]) {
+            # Negative integer literal: `-` directly followed by a
+            # digit. We don't support binary subtraction so this is
+            # unambiguous in v1.
+            alloc start := i + 1
+            i := i + 1
+            loop i < n and is_digit(src[i]) {
+                i := i + 1
+            }
+            tokens := tokens + [[TK_INT, 0 - digits_to_int(src[start:i])]]
+        } elif is_digit(c) {
+            alloc start := i
+            loop i < n and is_digit(src[i]) {
+                i := i + 1
+            }
+            tokens := tokens + [[TK_INT, digits_to_int(src[start:i])]]
+        } elif is_alpha(c) {
+            alloc start := i
+            loop i < n and is_ident_cont(src[i]) {
+                i := i + 1
+            }
+            alloc word := src[start:i]
+            alloc up := upper_str(word)
+            if is_keyword(up) {
+                tokens := tokens + [[TK_KW, up]]
+            } else {
+                # Identifiers are stored verbatim (preserving case);
+                # the executor lowercases at lookup time if needed.
+                tokens := tokens + [[TK_IDENT, word]]
+            }
+        } elif c == "\"" or c == "'" {
+            alloc quote := c
+            i := i + 1
+            alloc s := ""
+            loop i < n and src[i] != quote {
+                if src[i] == "\\" and i + 1 < n {
+                    alloc esc := src[i + 1]
+                    if esc == "n" {
+                        s := s + "\n"
+                    } elif esc == "t" {
+                        s := s + "\t"
+                    } elif esc == "r" {
+                        s := s + "\r"
+                    } elif esc == "\\" {
+                        s := s + "\\"
+                    } elif esc == "\"" {
+                        s := s + "\""
+                    } elif esc == "'" {
+                        s := s + "'"
+                    } else {
+                        s := s + esc
+                    }
+                    i := i + 2
+                } else {
+                    s := s + src[i]
+                    i := i + 1
+                }
+            }
+            if i >= n {
+                panic("sql: unterminated string literal")
+            }
+            i := i + 1   # skip closing quote
+            tokens := tokens + [[TK_STR, s]]
+        } elif c == "<" {
+            if i + 1 < n and src[i + 1] == "=" {
+                tokens := tokens + [[TK_OP, "<="]]
+                i := i + 2
+            } elif i + 1 < n and src[i + 1] == ">" {
+                tokens := tokens + [[TK_OP, "<>"]]
+                i := i + 2
+            } else {
+                tokens := tokens + [[TK_OP, "<"]]
+                i := i + 1
+            }
+        } elif c == ">" {
+            if i + 1 < n and src[i + 1] == "=" {
+                tokens := tokens + [[TK_OP, ">="]]
+                i := i + 2
+            } else {
+                tokens := tokens + [[TK_OP, ">"]]
+                i := i + 1
+            }
+        } elif c == "!" {
+            if i + 1 < n and src[i + 1] == "=" {
+                tokens := tokens + [[TK_OP, "!="]]
+                i := i + 2
+            } else {
+                panic("sql: unexpected '!' (use != for not-equal)")
+            }
+        } elif c == "=" {
+            tokens := tokens + [[TK_OP, "="]]
+            i := i + 1
+        } elif c == "(" or c == ")" or c == "," or c == ";" or c == "*" {
+            tokens := tokens + [[TK_PUNC, c]]
+            i := i + 1
+        } else {
+            panic("sql: unexpected character '" + c + "' at offset " + i)
+        }
+    }
+    tokens := tokens + [[TK_EOF, ""]]
+    return tokens
+}
+
+# === Parser ===============================================================
+#
+# Parser state is held in a small dict so helpers can advance the
+# position without threading explicit indices through every call.
+
+proc parse_init(tokens) {
+    return {tokens: tokens, pos: 0}
+}
+
+proc peek(p) {
+    return p.tokens[p.pos]
+}
+proc peek_kind(p)  { return peek(p)[0] }
+proc peek_value(p) { return peek(p)[1] }
+
+proc advance(p) {
+    alloc t := p.tokens[p.pos]
+    p.pos := p.pos + 1
+    return t
+}
+
+# Consume a token expected to be of kind+value. Returns the token.
+proc expect(p, kind, value) {
+    alloc t := peek(p)
+    if t[0] != kind or t[1] != value {
+        panic("sql: expected " + kind + " '" + value + "' but got " + t[0] + " '" + t[1] + "'")
+    }
+    return advance(p)
+}
+proc expect_kind(p, kind) {
+    alloc t := peek(p)
+    if t[0] != kind {
+        panic("sql: expected " + kind + " but got " + t[0] + " '" + t[1] + "'")
+    }
+    return advance(p)
+}
+
+# Optional consume: advance iff the next token matches; returns bool.
+proc accept(p, kind, value) {
+    alloc t := peek(p)
+    if t[0] == kind and t[1] == value {
+        advance(p)
+        return true
+    }
+    return false
+}
+
+# === Top-level dispatch ===================================================
+
+# parse_statement -> dict (or panics). Consumes one statement plus the
+# terminating semicolon (the semicolon is optional at end of input).
+proc parse_statement(p) {
+    alloc t := peek(p)
+    if t[0] != TK_KW {
+        panic("sql: statement must start with a keyword (got " + t[0] + " '" + t[1] + "')")
+    }
+    alloc kw := t[1]
+    if kw == "CREATE" {
+        return parse_create(p)
+    } elif kw == "INSERT" {
+        return parse_insert(p)
+    } elif kw == "SELECT" {
+        return parse_select(p)
+    } elif kw == "DELETE" {
+        return parse_delete(p)
+    } elif kw == "DROP" {
+        return parse_drop(p)
+    }
+    panic("sql: unknown statement: " + kw)
+}
+
+# Parse all statements in the token stream. Each statement may be
+# terminated by `;`; trailing `;` before EOF is allowed.
+proc parse_all(tokens) {
+    alloc p := parse_init(tokens)
+    alloc stmts := []
+    loop peek_kind(p) != TK_EOF {
+        stmts := stmts + [parse_statement(p)]
+        # Optional `;` between/after statements.
+        loop accept(p, TK_PUNC, ";") {
+            # consume successive semicolons; falls through to next iter
+        }
+    }
+    return stmts
+}
+
+# === CREATE TABLE =========================================================
+
+proc parse_create(p) {
+    expect(p, TK_KW, "CREATE")
+    expect(p, TK_KW, "TABLE")
+    alloc name := expect_kind(p, TK_IDENT)[1]
+    expect(p, TK_PUNC, "(")
+    alloc cols := []
+    loop true {
+        alloc col_name := expect_kind(p, TK_IDENT)[1]
+        alloc type_tok := peek(p)
+        if type_tok[0] != TK_KW or (type_tok[1] != "INT" and type_tok[1] != "TEXT") {
+            panic("sql: column type must be INT or TEXT (got " + type_tok[1] + ")")
+        }
+        advance(p)
+        cols := cols + [{name: col_name, type: type_tok[1]}]
+        if accept(p, TK_PUNC, ",") {
+            # next column
+        } else {
+            expect(p, TK_PUNC, ")")
+            break
+        }
+    }
+    return {kind: "create_table", name: name, columns: cols}
+}
+
+# === INSERT INTO ==========================================================
+
+proc parse_insert(p) {
+    expect(p, TK_KW, "INSERT")
+    expect(p, TK_KW, "INTO")
+    alloc name := expect_kind(p, TK_IDENT)[1]
+    expect(p, TK_KW, "VALUES")
+    expect(p, TK_PUNC, "(")
+    alloc values := []
+    loop true {
+        values := values + [parse_value(p)]
+        if accept(p, TK_PUNC, ",") {
+            # next value
+        } else {
+            expect(p, TK_PUNC, ")")
+            break
+        }
+    }
+    return {kind: "insert", table: name, values: values}
+}
+
+# A literal value: INT or STR. (NULL / TRUE / FALSE could land here in
+# a richer subset; v1 panics on them.)
+proc parse_value(p) {
+    alloc t := advance(p)
+    if t[0] == TK_INT { return t[1] }
+    if t[0] == TK_STR { return t[1] }
+    panic("sql: expected literal value (got " + t[0] + " '" + t[1] + "')")
+}
+
+# === SELECT ===============================================================
+
+proc parse_select(p) {
+    expect(p, TK_KW, "SELECT")
+
+    # Column list: `*` or comma-separated identifiers.
+    alloc cols := []
+    if accept(p, TK_PUNC, "*") {
+        cols := ["*"]
+    } else {
+        loop true {
+            cols := cols + [expect_kind(p, TK_IDENT)[1]]
+            if accept(p, TK_PUNC, ",") {
+                # next column
+            } else {
+                break
+            }
+        }
+    }
+
+    expect(p, TK_KW, "FROM")
+    alloc table := expect_kind(p, TK_IDENT)[1]
+
+    alloc where := false
+    if accept(p, TK_KW, "WHERE") {
+        where := parse_comparison(p)
+    }
+
+    alloc order_by := false
+    if accept(p, TK_KW, "ORDER") {
+        expect(p, TK_KW, "BY")
+        order_by := expect_kind(p, TK_IDENT)[1]
+        # Optional ASC/DESC. v1 silently accepts ASC; rejects DESC.
+        if accept(p, TK_KW, "ASC") {
+            # default; nothing to record
+        } elif accept(p, TK_KW, "DESC") {
+            panic("sql: DESC not supported in v1")
+        }
+    }
+
+    return {
+        kind: "select",
+        columns: cols,
+        table: table,
+        where: where,
+        order_by: order_by
+    }
+}
+
+# Single binary comparison: <ident> <op> <literal>. No AND/OR in v1.
+proc parse_comparison(p) {
+    alloc left := expect_kind(p, TK_IDENT)[1]
+    alloc op_tok := peek(p)
+    if op_tok[0] != TK_OP {
+        panic("sql: WHERE expected comparison operator (got " + op_tok[0] + " '" + op_tok[1] + "')")
+    }
+    advance(p)
+    alloc right := parse_value(p)
+    # Normalise <> to !=.
+    alloc op := op_tok[1]
+    if op == "<>" {
+        op := "!="
+    }
+    return {op: op, left: left, right: right}
+}
+
+# === DELETE ===============================================================
+
+proc parse_delete(p) {
+    expect(p, TK_KW, "DELETE")
+    expect(p, TK_KW, "FROM")
+    alloc table := expect_kind(p, TK_IDENT)[1]
+    # WHERE is required for v1 — accidental "DELETE FROM users;" wiping
+    # everything is too easy to do by mistake.
+    expect(p, TK_KW, "WHERE")
+    alloc where := parse_comparison(p)
+    return {kind: "delete", table: table, where: where}
+}
+
+# === DROP TABLE ===========================================================
+
+proc parse_drop(p) {
+    expect(p, TK_KW, "DROP")
+    expect(p, TK_KW, "TABLE")
+    alloc name := expect_kind(p, TK_IDENT)[1]
+    return {kind: "drop_table", name: name}
+}

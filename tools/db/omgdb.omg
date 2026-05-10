@@ -2,183 +2,282 @@
 
 import "wire.omg" as wire
 import "exec.omg" as exec
+import "sql.omg" as sql
 
 # omgdb.omg — entry point for the OMG embedded database.
 #
-# Day-2 surface: subcommand-style CLI exposing the storage layer
-# directly. Day-3 will add a SQL parser and replace these subcommands
-# with `omgdb file.db -e "SQL ..."` and an interactive REPL.
+# Three invocation modes:
 #
-# Usage:
-#   omg tools/db/omgdb.omg <file.db> tables                 # list tables
-#   omg tools/db/omgdb.omg <file.db> schema <table>         # show columns
-#   omg tools/db/omgdb.omg <file.db> create <table> <col...>
-#   omg tools/db/omgdb.omg <file.db> insert <table> <val...>
-#   omg tools/db/omgdb.omg <file.db> select <table>
+#   omg tools/db/omgdb.omg <file.db>                           # REPL
+#   omg tools/db/omgdb.omg <file.db> -e "SQL ..."              # one-shot
+#   cat schema.sql | omg tools/db/omgdb.omg <file.db>          # stdin
 #
-# `<val>` arguments to `insert` are parsed as integers if they look
-# numeric, otherwise as strings. Negative integers are supported.
+# The `-e` form accepts any number of statements separated by `;`. The
+# stdin form does the same. The REPL accumulates input until it sees a
+# `;` outside a string literal, then runs that statement.
 
 proc usage() {
-    emit "usage: omgdb <file.db> <subcommand> [args...]"
-    emit ""
-    emit "Subcommands:"
-    emit "  tables                       List all tables"
-    emit "  schema <table>               Print column names"
-    emit "  create <table> <col...>      Create a new table"
-    emit "  insert <table> <val...>      Append a row"
-    emit "  select <table>               Print all rows"
+    emit "usage:"
+    emit "  omgdb <file.db>                Interactive SQL REPL"
+    emit "  omgdb <file.db> -e \"SQL ...\"   Run one or more statements"
+    emit "  cat file.sql | omgdb <file.db>  Run statements from stdin"
 }
 
-# === Argv parsing ==========================================================
+# === Output formatting ====================================================
 
-# Parse a CLI argument as int if it parses cleanly; otherwise string.
-# `int("42")` succeeds; `int("hello")` panics. Use try/except as the
-# discriminator.
-proc parse_value(s) {
-    try {
-        return int(s)
-    } except err {
-        return s
-    }
-}
-
-# === Format helpers ========================================================
-
-# Render an OMG value for display. Strings appear quoted so empty
-# values are visible.
+# Render an OMG value the way SQL CLIs do: bare for ints, quoted for
+# strings. We use length() to discriminate (panics on int).
 proc fmt_value(v) {
     try {
-        # length() on int panics; fall through means it's a string.
         alloc _ := length(v)
-        return "\"" + v + "\""
+        return "'" + v + "'"
     } except err {
         return "" + v
     }
 }
 
-proc print_row(rid, values) {
-    alloc out := "" + rid + " |"
+# Print a SELECT result as a fixed-width text table. Computes column
+# widths from the data so output stays readable on small results.
+proc print_table(columns, rows) {
+    alloc widths := []
     alloc i := 0
-    loop i < length(values) {
-        out := out + " " + fmt_value(values[i])
+    loop i < length(columns) {
+        widths := widths + [length(columns[i])]
         i := i + 1
     }
-    emit out
-}
-
-# === Subcommands ===========================================================
-
-proc cmd_tables(db) {
-    alloc tables := exec.list_tables(db)
-    if length(tables) == 0 {
-        emit "(no tables)"
-        return false
-    }
-    alloc i := 0
-    loop i < length(tables) {
-        alloc t := tables[i]
-        alloc cols := ""
+    # Each row may widen a column.
+    alloc r := 0
+    loop r < length(rows) {
         alloc j := 0
-        loop j < length(t.columns) {
-            if j > 0 { cols := cols + ", " }
-            cols := cols + t.columns[j]
+        loop j < length(columns) {
+            alloc cell := fmt_value(rows[r][j])
+            if length(cell) > widths[j] {
+                widths[j] := length(cell)
+            }
             j := j + 1
         }
-        emit t.name + "(" + cols + ")"
-        i := i + 1
+        r := r + 1
     }
+    emit format_row(columns, widths, true)
+    emit format_separator(widths)
+    alloc rr := 0
+    loop rr < length(rows) {
+        alloc cells := []
+        alloc cc := 0
+        loop cc < length(columns) {
+            cells := cells + [fmt_value(rows[rr][cc])]
+            cc := cc + 1
+        }
+        emit format_row(cells, widths, false)
+        rr := rr + 1
+    }
+    emit "(" + length(rows) + " row" + plural(length(rows)) + ")"
 }
 
-proc cmd_schema(db, table) {
-    alloc cols := exec.table_columns(db, table)
+proc plural(n) {
+    if n == 1 { return "" }
+    return "s"
+}
+
+proc pad_right(s, w) {
+    alloc out := s
+    loop length(out) < w {
+        out := out + " "
+    }
+    return out
+}
+
+proc format_row(cells, widths, header) {
+    alloc out := ""
     alloc i := 0
-    loop i < length(cols) {
-        emit cols[i]
+    alloc last := length(cells) - 1
+    loop i < length(cells) {
+        if i > 0 { out := out + " | " }
+        # Pad every cell except the last (trailing whitespace is noise
+        # and breaks tests that compare lines verbatim).
+        if i == last {
+            out := out + cells[i]
+        } else {
+            out := out + pad_right(cells[i], widths[i])
+        }
         i := i + 1
     }
+    return out
 }
 
-proc cmd_create(db, table, cols) {
-    exec.create_table(db, table, cols)
-    emit "created: " + table
-}
-
-proc cmd_insert(db, table, raw_values) {
-    alloc parsed := []
+proc format_separator(widths) {
+    alloc out := ""
     alloc i := 0
-    loop i < length(raw_values) {
-        parsed := parsed + [parse_value(raw_values[i])]
+    loop i < length(widths) {
+        if i > 0 { out := out + "-+-" }
+        alloc dashes := ""
+        alloc k := 0
+        loop k < widths[i] {
+            dashes := dashes + "-"
+            k := k + 1
+        }
+        out := out + dashes
         i := i + 1
     }
-    alloc rid := exec.insert(db, table, parsed)
-    emit "inserted: rowid=" + rid
+    return out
 }
 
-proc cmd_select(db, table) {
-    alloc cols := exec.table_columns(db, table)
-    alloc header := "rowid |"
-    alloc j := 0
-    loop j < length(cols) {
-        header := header + " " + cols[j]
-        j := j + 1
-    }
-    emit header
+# === Result printing ======================================================
 
-    alloc rows := exec.select_all(db, table)
+proc print_result(res) {
+    if res.kind == "select" {
+        if length(res.rows) == 0 {
+            emit "(no rows)"
+        } else {
+            print_table(res.columns, res.rows)
+        }
+    } elif res.kind == "insert" {
+        emit "OK (rowid=" + res.rowid + ")"
+    } elif res.kind == "delete" {
+        emit "OK (" + res.deleted + " row" + plural(res.deleted) + " deleted)"
+    } else {
+        emit res.message
+    }
+}
+
+# === Multi-statement execution ============================================
+
+# Tokenise + parse `src`, then run each statement against `db`.
+# A parse or runtime error inside any statement is caught so the REPL
+# (or a multi-statement -e batch) can keep going.
+proc run_sql(db, src) {
+    try {
+        alloc tokens := sql.tokenise(src)
+        alloc stmts := sql.parse_all(tokens)
+        alloc i := 0
+        loop i < length(stmts) {
+            try {
+                alloc res := exec.run_statement(db, stmts[i])
+                print_result(res)
+            } except runtime_err {
+                emit runtime_err
+            }
+            i := i + 1
+        }
+    } except parse_err {
+        emit parse_err
+    }
+}
+
+# === REPL =================================================================
+# Statement boundaries are detected by `;` outside a string literal.
+# A line that doesn't terminate a statement gets a continuation prompt.
+
+alloc repl_in_string := ""
+alloc repl_escape := false
+
+proc repl_reset_state() {
+    repl_in_string := ""
+    repl_escape := false
+}
+
+# Returns true iff `buffer` contains at least one `;` outside of a
+# quoted string. Updates the running quote-state. After return, the
+# buffer can be split on the *first* outside-of-string `;`.
+proc repl_has_terminator(buffer) {
+    repl_reset_state()
     alloc i := 0
-    loop i < length(rows) {
-        print_row(rows[i][0], rows[i][1])
+    loop i < length(buffer) {
+        alloc c := buffer[i]
+        if repl_escape {
+            repl_escape := false
+        } elif c == "\\" and repl_in_string != "" {
+            repl_escape := true
+        } elif c == "\"" or c == "'" {
+            if repl_in_string == c {
+                repl_in_string := ""
+            } elif repl_in_string == "" {
+                repl_in_string := c
+            }
+        } elif repl_in_string == "" and c == ";" {
+            return true
+        }
         i := i + 1
     }
-    if length(rows) == 0 {
-        emit "(no rows)"
+    return false
+}
+
+proc run_repl(db) {
+    emit "OMG database (omgdb). Type SQL terminated by `;`. `quit` or Ctrl-D to exit."
+    alloc buffer := ""
+    alloc multiline := false
+    loop true {
+        if multiline {
+            print("...> ")
+        } else {
+            print("omgdb> ")
+        }
+        alloc line := stdin_readline()
+        if line == false {
+            emit ""
+            return false
+        }
+        # Bare `quit` / `exit` only at top of a fresh statement.
+        if multiline == false {
+            alloc trimmed := line
+            loop length(trimmed) > 0 and trimmed[length(trimmed) - 1] == " " {
+                trimmed := trimmed[0:length(trimmed) - 1]
+            }
+            if trimmed == "quit" or trimmed == "exit" or trimmed == "\\q" {
+                return false
+            }
+            if trimmed == "" {
+                # Empty line at fresh prompt — re-prompt.
+                continue_blank()
+            }
+        }
+        buffer := buffer + line + "\n"
+        if repl_has_terminator(buffer) {
+            run_sql(db, buffer)
+            buffer := ""
+            multiline := false
+        } else {
+            multiline := true
+        }
     }
 }
 
-# === Dispatch ==============================================================
+# A no-op procedure used to skip the rest of a loop iteration after an
+# empty REPL line. (OMG has no `continue` keyword.)
+proc continue_blank() {
+    return false
+}
 
-if length(args) < 3 {
+# === Argv dispatch ========================================================
+
+if length(args) < 2 {
     usage()
     exit(1)
 }
 
 alloc db_path := args[1]
-alloc cmd := args[2]
-alloc rest := args[3:]
-
 alloc db := exec.open_db(db_path)
 
-if cmd == "tables" {
-    cmd_tables(db)
-} elif cmd == "schema" {
-    if length(rest) < 1 {
-        emit "schema: needs <table>"
+if length(args) >= 3 and args[2] == "-e" {
+    if length(args) < 4 {
+        emit "-e requires a SQL string"
+        exec.close_db(db)
         exit(1)
     }
-    cmd_schema(db, rest[0])
-} elif cmd == "create" {
-    if length(rest) < 2 {
-        emit "create: needs <table> <col...>"
-        exit(1)
-    }
-    cmd_create(db, rest[0], rest[1:])
-} elif cmd == "insert" {
-    if length(rest) < 2 {
-        emit "insert: needs <table> <val...>"
-        exit(1)
-    }
-    cmd_insert(db, rest[0], rest[1:])
-} elif cmd == "select" {
-    if length(rest) < 1 {
-        emit "select: needs <table>"
-        exit(1)
-    }
-    cmd_select(db, rest[0])
-} else {
-    emit "unknown subcommand: " + cmd
+    run_sql(db, args[3])
+} elif length(args) >= 3 and args[2] == "-" {
+    # Read all of stdin as SQL. Designed for `cat schema.sql | omgdb db -`.
+    run_sql(db, stdin_read())
+} elif length(args) >= 3 {
+    emit "unknown argument: " + args[2]
     usage()
+    exec.close_db(db)
     exit(1)
+} else {
+    # No subcommand: run the interactive REPL. Pipe-style use should
+    # pass an explicit `-` (we don't auto-detect a TTY because OMG has
+    # no isatty() builtin).
+    run_repl(db)
 }
 
 exec.close_db(db)
