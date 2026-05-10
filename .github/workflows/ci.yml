@@ -16,7 +16,7 @@ env:
   RUSTFLAGS: "-D warnings"
 
 jobs:
-  test:
+  rust:
     name: Build & test (Rust runtime)
     runs-on: ubuntu-latest
     steps:
@@ -32,8 +32,9 @@ jobs:
           workspaces: runtime -> target
 
       # Building also runs `runtime/build.rs`, which bootstraps
-      # `bootstrap/compiler.omgb` from `bootstrap/compiler.omg` using the
-      # Rust frontend. If the bootstrap is broken, the build fails here.
+      # `bootstrap/src/compiler.omgb` from `bootstrap/src/compiler.omg`
+      # using the Rust frontend. If the bootstrap is broken, the build
+      # fails here.
       - name: Build (release)
         run: cargo build --release --manifest-path runtime/Cargo.toml
 
@@ -47,7 +48,7 @@ jobs:
         run: ./runtime/target/release/omg --verify-self-hosted bootstrap/src/compiler.omg
 
       # Triple-meta regression guard: same as above, but with the OMG
-      # compiler running on the OMG-written VM (bootstrap/vm.omg).
+      # compiler running on the OMG-written VM (bootstrap/src/vm.omg).
       # Strongest fixed-point check the project supports — guarantees
       # both stage-1 components behave like their Rust counterparts on
       # the input. We use prime_sieve.omg here rather than compiler.omg
@@ -55,3 +56,63 @@ jobs:
       # against compiler.omg passes locally but takes ~45 s.
       - name: Verify triple-meta fixed point
         run: ./runtime/target/release/omg --verify-omg-vm examples/prime_sieve.omg
+
+  native:
+    name: Build & test (native toolchain)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo registry & target
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: runtime -> target
+
+      # The native toolchain self-rebuilds from existing `bootstrap/bin/`
+      # ELFs that ship in-repo, but on a fresh CI checkout we still need
+      # the Rust runtime as the bootstrap seed for build.rs (which
+      # produces `bootstrap/src/{compiler,vm}.omgb`). After this step
+      # the rest of the job uses the OMG-written compiler / VM only.
+      - name: Build Rust runtime (bootstrap seed)
+        run: cargo build --release --manifest-path runtime/Cargo.toml
+
+      # Compiles bootstrap/src/*.omg → bootstrap/bin/{omg,omgc,omgcc,
+      # omgvm} via the existing native toolchain (self-rebuild). This
+      # validates that the four ELFs in-repo can rebuild themselves from
+      # the current OMG sources, the load-bearing self-hosting
+      # invariant for the native pipeline.
+      - name: Self-rebuild native toolchain
+        run: bootstrap/build.sh
+
+      # tests/run.sh is the comprehensive end-to-end suite. It exercises
+      # the four omg / omgc / omgcc / omgvm binaries directly:
+      #   * builtins   — process & I/O builtins via Rust + native AOT
+      #   * driver     — every omg invocation form (interpret / --build
+      #                  / --compile / REPL) and the standalone tools
+      #   * repl       — REPL state, multi-line input, error recovery
+      #   * regression — specific bugs we've fixed, each through every
+      #                  applicable backend
+      #   * parity     — triple-meta fixed-point + byte-identical
+      #                  bytecode (Rust frontend vs omgc) + AOT corpus
+      #                  parity (Rust runtime vs `omg --build` vs
+      #                  `omg <file.omg>`) + native self-rebuild
+      - name: Run end-to-end test suite
+        run: tests/run.sh
+
+      # Sanity check: the packaging script produces a working,
+      # standalone Rust-free distribution at dist/omglang-native/.
+      # We don't run its tests here (that's a strict subset of
+      # tests/run.sh above), but we do verify a smoke-test program
+      # still runs after going through the dist's binaries.
+      - name: Package native distribution
+        run: bootstrap/package.sh --clean
+
+      - name: Smoke-test packaged distribution
+        run: |
+          dist/omglang-native/bin/omg dist/omglang-native/examples/hello_world.omg
+          dist/omglang-native/bin/omg --build dist/omglang-native/examples/hello_world.omg /tmp/dist-smoke
+          /tmp/dist-smoke
