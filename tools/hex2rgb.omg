@@ -56,17 +56,12 @@ if mode == "hex" {
     if length(args) < 3 {
         panic("usage: omg tools/hex2rgb.omg hex hexstr")
     }
-
-    # e.g. FF8800
     alloc in_hex := args[2]
     emit hex_to_rgb(in_hex)
 } elif mode == "rgb" {
     if length(args) < 5 {
         panic("usage: omg tools/hex2rgb.omg rgb r g b")
     }
-
-    # e.g. 255 136 0. argv elements are strings; coerce to int so the
-    # arithmetic in byte_to_hex doesn't operate on the raw strings.
     emit rgb_to_hex(args[2], args[3], args[4])
 } else {
     panic("usage: omg tools/hex2rgb.omg <hex|rgb> [hexstr|r g b]")
