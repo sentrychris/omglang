@@ -24,7 +24,7 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
 
-use crate::bytecode::{Function, Instr};
+use crate::bytecode::{Function, Instr, SourceMap};
 use crate::error::RuntimeError;
 use crate::value::{new_cell, Env, Value};
 
@@ -63,6 +63,88 @@ pub(super) struct Block {
     stack_size: usize,
     env_depth: usize,
     ret_depth: usize,
+    /// Number of call frames on the call-frame stack when this block was
+    /// set up. On unwind, we drop frames until we reach this depth.
+    frame_depth: usize,
+}
+
+/// One entry in the user-visible call-frame stack. Used purely for
+/// traceback rendering — the VM's actual control flow rides on
+/// `env_stack` + `ret_stack`. We track frames here so an error can
+/// describe which function it's in and where each caller is.
+///
+/// `name` is the called function's name (mangled by the compiler — we
+/// strip module prefixes only when printing). `call_pc` is the bytecode
+/// offset of the `CALL` / `CALL_VALUE` instruction in the *caller*, so
+/// `src_map.lookup(call_pc)` gives the call site for the traceback.
+pub(super) struct CallFrame {
+    name: String,
+    call_pc: usize,
+}
+
+/// Strip a module-mangling prefix for display in tracebacks. Mirrors
+/// `strip_mod_prefix` above but always returns a `String`.
+fn display_fn_name(mangled: &str) -> String {
+    match strip_mod_prefix(mangled) {
+        Some(bare) => bare.to_string(),
+        None => mangled.to_string(),
+    }
+}
+
+/// Build a Python-style traceback for an unhandled runtime error.
+///
+/// Output shape (frames listed innermost-last, matching Python):
+/// ```text
+/// Traceback (most recent call last):
+///   File "main.omg", line 5, in <top-level>
+///   File "main.omg", line 12, in make_counter
+///   File "main.omg", line 17, in tick
+/// UndefinedIdentError: undefined_var
+/// ```
+///
+/// When the source map has no entry for a pc (compiler-synthesised
+/// instruction, or a REPL-eval'd chunk with no map), the line shows
+/// `File "<unknown>", line 0` so the trace stays well-formed.
+fn format_traceback(
+    err_pc: usize,
+    frames: &[CallFrame],
+    src_map: &SourceMap,
+    err: &RuntimeError,
+) -> String {
+    let mut out = String::from("Traceback (most recent call last):\n");
+    let push_line = |out: &mut String, pc: usize, fn_name: &str| {
+        match src_map.lookup(pc) {
+            Some((file, line)) => out.push_str(&format!(
+                "  File \"{}\", line {}, in {}\n",
+                file, line, fn_name
+            )),
+            None => out.push_str(&format!(
+                "  File \"<unknown>\", line 0, in {}\n",
+                fn_name
+            )),
+        }
+    };
+    // First line: where top-level made its outermost call (or the
+    // error site itself if no calls were active).
+    if let Some(first) = frames.first() {
+        push_line(&mut out, first.call_pc, "<top-level>");
+    }
+    // Each subsequent frame's call site lives inside the previous
+    // frame's function — name it accordingly.
+    for i in 1..frames.len() {
+        let caller_name = display_fn_name(&frames[i - 1].name);
+        push_line(&mut out, frames[i].call_pc, &caller_name);
+    }
+    // The error site itself: pc is `err_pc`, function is whichever
+    // frame we're currently inside (or top-level for zero-frame errors).
+    let cur_fn = frames
+        .last()
+        .map(|f| display_fn_name(&f.name))
+        .unwrap_or_else(|| "<top-level>".to_string());
+    push_line(&mut out, err_pc, &cur_fn);
+    // Final line: the underlying error (already formats as "Kind: msg").
+    out.push_str(&err.to_string());
+    out
 }
 
 /// Pop one [`Value`] from the operand stack with an underflow check.
@@ -108,12 +190,13 @@ pub fn seed_program_globals(globals: &mut HashMap<String, Value>, program_args: 
 pub fn run(
     code: &[Instr],
     funcs: &HashMap<String, Function>,
+    src_map: &SourceMap,
     program_args: &[String],
 ) -> Result<(), RuntimeError> {
     let mut globals: HashMap<String, Value> = HashMap::new();
     seed_program_globals(&mut globals, program_args);
     let mut funcs_owned: HashMap<String, Function> = funcs.clone();
-    run_program(code, funcs, &mut globals, &mut funcs_owned)
+    run_program(code, funcs, src_map, &mut globals, &mut funcs_owned)
 }
 
 /// Resident execution against caller-owned globals and a function table.
@@ -125,6 +208,7 @@ pub fn run(
 pub fn run_program(
     code: &[Instr],
     funcs_in: &HashMap<String, Function>,
+    src_map: &SourceMap,
     globals: &mut HashMap<String, Value>,
     funcs_persistent: &mut HashMap<String, Function>,
 ) -> Result<(), RuntimeError> {
@@ -134,7 +218,7 @@ pub fn run_program(
     // The caller passes the full bytecode each turn (REPL) or once (one-shot
     // run). Function addresses are absolute indexes into `code`, so the same
     // table works for both call paths.
-    execute(code, funcs_persistent, globals, 0)
+    execute(code, funcs_persistent, src_map, globals, 0)
 }
 
 /// Execute `code` against caller-owned `globals` and `funcs`, starting at
@@ -143,15 +227,17 @@ pub fn run_program(
 pub fn run_program_from(
     code: &[Instr],
     funcs: &HashMap<String, Function>,
+    src_map: &SourceMap,
     globals: &mut HashMap<String, Value>,
     start_pc: usize,
 ) -> Result<(), RuntimeError> {
-    execute(code, funcs, globals, start_pc)
+    execute(code, funcs, src_map, globals, start_pc)
 }
 
 fn execute(
     code: &[Instr],
     funcs: &HashMap<String, Function>,
+    src_map: &SourceMap,
     globals: &mut HashMap<String, Value>,
     start_pc: usize,
 ) -> Result<(), RuntimeError> {
@@ -160,8 +246,12 @@ fn execute(
     let mut env_stack: Vec<Env> = Vec::new();
     let mut ret_stack: Vec<usize> = Vec::new();
     let mut block_stack: Vec<Block> = Vec::new();
+    let mut frames: Vec<CallFrame> = Vec::new();
     let mut error_flag: Option<RuntimeError> = None;
     let mut pc: usize = start_pc;
+    // The pc where execution failed. We capture this *before* unwinding
+    // any frames, since the traceback formatter needs the original site.
+    let mut err_pc: usize = start_pc;
 
     while pc < code.len() {
         let mut advance_pc = true;
@@ -354,6 +444,20 @@ fn execute(
                     }
                 }
                 Instr::CallValue(argc) => {
+                    let call_pc = pc;
+                    // Peek the callee (sits just below the args on the
+                    // operand stack) so we can record its name for the
+                    // traceback. Cheap and lets us avoid threading
+                    // `frames` through the call handler.
+                    let callee_name = if stack.len() > *argc {
+                        match &stack[stack.len() - argc - 1] {
+                            Value::Str(s) => Some(s.clone()),
+                            Value::Closure { name, .. } => Some(name.clone()),
+                            _ => None,
+                        }
+                    } else {
+                        None
+                    };
                     if let Err(e) = ops_control::handle_call_value(
                         *argc,
                         &mut stack,
@@ -365,6 +469,9 @@ fn execute(
                         &mut advance_pc,
                     ) {
                         break Err(e);
+                    }
+                    if let Some(name) = callee_name {
+                        frames.push(CallFrame { name, call_pc });
                     }
                 }
                 Instr::PushNone => {
@@ -384,6 +491,7 @@ fn execute(
                     }
                 }
                 Instr::Call(name) => {
+                    let call_pc = pc;
                     if let Err(e) = ops_control::handle_call(
                         name,
                         funcs,
@@ -396,6 +504,10 @@ fn execute(
                     ) {
                         break Err(e);
                     }
+                    frames.push(CallFrame {
+                        name: name.clone(),
+                        call_pc,
+                    });
                 }
                 Instr::TailCall(name) => {
                     if let Err(e) = ops_control::handle_tail_call(
@@ -407,6 +519,13 @@ fn execute(
                         &mut advance_pc,
                     ) {
                         break Err(e);
+                    }
+                    // Tail calls reuse the caller's frame slot, so we
+                    // overwrite the name and leave call_pc alone. The
+                    // compiler only emits TCALL from inside a function
+                    // body — frames is therefore guaranteed non-empty.
+                    if let Some(top) = frames.last_mut() {
+                        top.name = name.clone();
                     }
                 }
                 Instr::CallBuiltin(name, argc) => {
@@ -432,6 +551,7 @@ fn execute(
                     ) {
                         break Err(e);
                     }
+                    frames.pop();
                 }
                 Instr::Emit => ops_control::handle_emit(&mut stack),
                 Instr::Halt => {
@@ -443,6 +563,7 @@ fn execute(
                     &env_stack,
                     &ret_stack,
                     &mut block_stack,
+                    frames.len(),
                 ),
                 Instr::PopBlock => ops_control::handle_pop_block(&mut block_stack),
                 Instr::Raise(kind) => {
@@ -508,6 +629,10 @@ fn execute(
         };
 
         if let Err(e) = instr_res {
+            // Capture the pc *before* any unwinding so the traceback's
+            // last frame reports the actual fault site, not whatever
+            // handler we end up jumping to.
+            err_pc = pc;
             error_flag = Some(e);
         }
 
@@ -520,13 +645,28 @@ fn execute(
                 }
                 ret_stack.truncate(block.ret_depth);
                 stack.truncate(block.stack_size);
+                frames.truncate(block.frame_depth);
                 pc = block.handler;
                 stack.push(Value::Str(err.to_string()));
                 handled = true;
                 break;
             }
             if !handled {
-                return Err(err);
+                // VmInvariant errors are internal bugs and already
+                // include enough detail; wrapping them in a traceback
+                // muddles the message. Pass them through unchanged.
+                if matches!(err, RuntimeError::VmInvariant(_)) {
+                    return Err(err);
+                }
+                // Skip the wrapper when there is no source-map info to
+                // build a useful traceback from — handwritten test
+                // programs and bare REPL chunks both fall through here
+                // and stay readable as raw `Kind: msg`.
+                if src_map.lines.is_empty() {
+                    return Err(err);
+                }
+                let trace = format_traceback(err_pc, &frames, src_map, &err);
+                return Err(RuntimeError::Traced(trace));
             } else {
                 continue;
             }

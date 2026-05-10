@@ -107,6 +107,12 @@ pub enum RuntimeError {
     Raised(String),
     /// Internal VM invariant violation (represents a bug or logic failure).
     VmInvariant(String),
+    /// A runtime error captured along with its formatted traceback. The
+    /// VM wraps the underlying error in this variant when it propagates
+    /// out of `execute`, so callers (and the `Display` impl) can print
+    /// the call-stack context without re-deriving it. The full message
+    /// — traceback header + frames + "Kind: detail" line — is preformatted.
+    Traced(String),
 }
 
 impl fmt::Display for RuntimeError {
@@ -147,6 +153,11 @@ impl fmt::Display for RuntimeError {
             }
             RuntimeError::VmInvariant(msg) => {
                 write!(f, "VmInvariant: {}", msg)
+            }
+            RuntimeError::Traced(s) => {
+                // The trace already includes the "Kind: detail" line at
+                // the bottom; pass it through unchanged.
+                f.write_str(s)
             }
         }
     }

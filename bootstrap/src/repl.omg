@@ -82,14 +82,17 @@ vm.vm_seed_global("current_dir", current_dir)
 
 # === Per-turn dispatch ==================================================
 
-# Convert a list of [name, params, address] entries (compiler output)
-# into vm_funcs entries, rebased onto the persistent buffer.
+# Convert a list of [name, params, address, source_file_idx] entries
+# (compiler output) into vm_funcs entries, rebased onto the persistent
+# buffer. The file_idx is relative to the chunk's own src_files; the
+# vm_extend_src_map call in compile_and_run shifts it into the running
+# map.
 proc install_funcs(chunk_funcs, base) {
     alloc i := 0
     alloc n := length(chunk_funcs)
     loop i < n {
         alloc f := chunk_funcs[i]
-        vm.vm_set_funcs_entry(f[0], f[1], f[2] + base)
+        vm.vm_set_funcs_entry(f[0], f[1], f[2] + base, f[3])
         i := i + 1
     }
 }
@@ -107,12 +110,15 @@ proc compile_and_run(source) {
     }
     alloc chunk_code  := compiled[0]
     alloc chunk_funcs := compiled[1]
+    alloc chunk_files := compiled[2]
+    alloc chunk_lines := compiled[3]
 
     # Rebase the new chunk onto the end of the accumulated buffer.
     alloc base := accum_len
     alloc rebased := cc.cc_rebase(chunk_code, base)
     vm.vm_extend_code(rebased)
     install_funcs(chunk_funcs, base)
+    vm.vm_extend_src_map(chunk_files, chunk_lines)
     accum_len := vm.vm_get_code_length()
 
     vm.vm_set_pc(base)

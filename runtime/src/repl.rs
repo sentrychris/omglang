@@ -18,7 +18,7 @@
 use std::collections::HashMap;
 use std::io::{self, Write};
 
-use crate::bytecode::{Function, Instr};
+use crate::bytecode::{Function, Instr, SourceMap};
 use crate::compiler::compile_source_with_globals;
 use crate::value::Value;
 use crate::vm::{run_program_from, seed_program_globals};
@@ -29,6 +29,7 @@ pub fn repl_interpret() {
     println!("Type `exit` or `quit` to leave.");
 
     let mut accum_code: Vec<Instr> = Vec::new();
+    let mut accum_map = SourceMap::default();
     let mut funcs: HashMap<String, Function> = HashMap::new();
     let mut globals: HashMap<String, Value> = HashMap::new();
     seed_program_globals(&mut globals, &[]);
@@ -120,17 +121,35 @@ pub fn repl_interpret() {
                 for instr in program.code.into_iter() {
                     accum_code.push(rebase(instr, base));
                 }
+                // Merge this chunk's source files into the REPL's
+                // running map, remapping per-instruction file indices
+                // accordingly so error tracebacks across turns still
+                // resolve to the right path.
+                let file_offset = accum_map.files.len() as u32;
+                for f in program.src_map.files {
+                    accum_map.files.push(f);
+                }
+                for (fi, ln) in program.src_map.lines {
+                    let mapped_fi = if fi == u32::MAX { fi } else { fi + file_offset };
+                    accum_map.lines.push((mapped_fi, ln));
+                }
                 for (name, f) in program.funcs {
+                    let mapped_file_idx = if f.source_file_idx == u32::MAX {
+                        f.source_file_idx
+                    } else {
+                        f.source_file_idx + file_offset
+                    };
                     funcs.insert(
                         name,
                         Function {
                             params: f.params,
                             address: f.address + base,
+                            source_file_idx: mapped_file_idx,
                         },
                     );
                 }
                 if let Err(e) =
-                    run_program_from(&accum_code, &funcs, &mut globals, base)
+                    run_program_from(&accum_code, &funcs, &accum_map, &mut globals, base)
                 {
                     eprintln!("{}", e);
                 }

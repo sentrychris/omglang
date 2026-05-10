@@ -5,12 +5,17 @@
 //! little-endian and unchanged from the legacy Python compiler so existing
 //! `.omgb` files remain readable.
 //!
-//! ## Binary layout
+//! ## Binary layout (v2)
 //! ```text
 //! +------------------+----------------------------+
 //! | Magic "OMGB"     | 4 bytes                    |
 //! +------------------+----------------------------+
 //! | Version          | u32                        |
+//! +------------------+----------------------------+
+//! | Source-file cnt  | u32                        |
+//! +------------------+----------------------------+
+//! | For each file:                                |
+//! |   Path           | u32 len + UTF-8 bytes      |
 //! +------------------+----------------------------+
 //! | Func count       | u32                        |
 //! +------------------+----------------------------+
@@ -20,6 +25,7 @@
 //! |   Params[...]    | (Param count times)        |
 //! |                  |   u32 len + UTF-8 bytes    |
 //! |   Address        | u32                        |
+//! |   Source file ix | u32                        |
 //! +------------------+----------------------------+
 //! | Code length      | u32                        |
 //! +------------------+----------------------------+
@@ -27,7 +33,18 @@
 //! |   Opcode         | u8                         |
 //! |   Operands       | opcode-specific payload    |
 //! +------------------+----------------------------+
+//! | Src-map length   | u32  (= code length)       |
+//! +------------------+----------------------------+
+//! | For each entry:                               |
+//! |   Source file ix | u32                        |
+//! |   Line number    | u32 (1-based; 0 = unknown) |
+//! +------------------+----------------------------+
 //! ```
+//!
+//! The source-file table + the per-instruction source map are what give
+//! runtime errors their `File "foo.omg", line 12, in bar` framing.
+//! Version 0x0001xx (no source map) is rejected with a clear "recompile
+//! your .omgb" SyntaxError — there's no fallback path.
 //!
 //! Errors during decode are returned as
 //! [`crate::error::RuntimeError::SyntaxError`] (the closest fit for
@@ -39,13 +56,51 @@ use std::collections::HashMap;
 use crate::error::{ErrorKind, RuntimeError};
 
 /// Packed bytecode version: `(MAJOR << 16) | (MINOR << 8) | PATCH`.
-pub const BC_VERSION: u32 = (0 << 16) | (1 << 8) | 1;
+///
+/// Bumped to 0x000200 when the source-file table + per-instruction source
+/// map were added. Older .omgb files have no source info and would
+/// silently truncate at the new sections; we reject them by version.
+pub const BC_VERSION: u32 = (0 << 16) | (2 << 8) | 0;
 
 /// Compiled function metadata.
 #[derive(Clone, Debug)]
 pub struct Function {
     pub params: Vec<String>,
     pub address: usize,
+    /// Index into [`SourceMap::files`]. Used by the VM's traceback
+    /// formatter to print `File "<path>", line N, in <fn>`. A value of
+    /// `u32::MAX` means "unknown source" (REPL-evaluated chunks).
+    pub source_file_idx: u32,
+}
+
+/// Per-instruction source location, parallel to the instruction stream.
+///
+/// `files[i]` is the absolute (or repo-relative) path of the i'th source
+/// file referenced by this bytecode image. `lines[pc]` gives the
+/// `(file_idx, line)` of the bytecode instruction at offset `pc`.
+///
+/// Line numbers are 1-based and match what the lexer attaches to tokens.
+/// A `(u32::MAX, 0)` entry means "no source info" — used for compiler-
+/// synthesised instructions that don't correspond to any source span
+/// (the trailing `PushNone+Ret` after a function body, for instance).
+#[derive(Clone, Debug, Default)]
+pub struct SourceMap {
+    pub files: Vec<String>,
+    pub lines: Vec<(u32, u32)>,
+}
+
+impl SourceMap {
+    /// Look up the (file path, line) for a given instruction. Returns
+    /// `None` if either the pc is out of range or the entry's file index
+    /// is the sentinel "unknown source" value.
+    pub fn lookup(&self, pc: usize) -> Option<(&str, u32)> {
+        let (fi, line) = *self.lines.get(pc)?;
+        if fi == u32::MAX {
+            return None;
+        }
+        let file = self.files.get(fi as usize)?;
+        Some((file.as_str(), line))
+    }
 }
 
 /// One bytecode instruction. Variants match the on-disk opcode table; see
@@ -219,10 +274,11 @@ fn read_string(data: &[u8], idx: &mut usize) -> Result<String, RuntimeError> {
 
 // --- Parser ---------------------------------------------------------------
 
-/// Decode a `.omgb` byte image into instruction stream + function table.
+/// Decode a `.omgb` byte image into instruction stream + function table
+/// + source map.
 pub fn parse_bytecode(
     data: &[u8],
-) -> Result<(Vec<Instr>, HashMap<String, Function>), RuntimeError> {
+) -> Result<(Vec<Instr>, HashMap<String, Function>, SourceMap), RuntimeError> {
     let mut idx = 0;
     if data.len() < 8 {
         return Err(RuntimeError::SyntaxError(
@@ -238,10 +294,28 @@ pub fn parse_bytecode(
 
     let version = read_u32(data, &mut idx)?;
     if version != BC_VERSION {
+        // Guide v1 users — a major .omgb format change (added source
+        // map) means old files need recompiling. The error message is
+        // user-facing, so call out the action they need to take rather
+        // than just dumping the hex versions.
+        if version & 0xFFFF_FF00 == 0x0001_0000 {
+            return Err(RuntimeError::SyntaxError(
+                "bytecode pre-dates source-map support (v1). Recompile \
+                 your .omgb with the current toolchain."
+                    .to_string(),
+            ));
+        }
         return Err(RuntimeError::SyntaxError(format!(
             "unsupported bytecode version 0x{:x} (expected 0x{:x})",
             version, BC_VERSION
         )));
+    }
+
+    // Source-file table.
+    let file_count = read_u32(data, &mut idx)? as usize;
+    let mut files: Vec<String> = Vec::with_capacity(file_count);
+    for _ in 0..file_count {
+        files.push(read_string(data, &mut idx)?);
     }
 
     let func_count = read_u32(data, &mut idx)? as usize;
@@ -254,7 +328,15 @@ pub fn parse_bytecode(
             params.push(read_string(data, &mut idx)?);
         }
         let address = read_u32(data, &mut idx)? as usize;
-        funcs.insert(name, Function { params, address });
+        let source_file_idx = read_u32(data, &mut idx)?;
+        funcs.insert(
+            name,
+            Function {
+                params,
+                address,
+                source_file_idx,
+            },
+        );
     }
 
     let code_len = read_u32(data, &mut idx)? as usize;
@@ -357,7 +439,23 @@ pub fn parse_bytecode(
             }
         }
     }
-    Ok((code, funcs))
+
+    // Source map — parallel to the instruction stream.
+    let map_len = read_u32(data, &mut idx)? as usize;
+    if map_len != code_len {
+        return Err(RuntimeError::SyntaxError(format!(
+            "source map length ({}) does not match code length ({})",
+            map_len, code_len
+        )));
+    }
+    let mut lines: Vec<(u32, u32)> = Vec::with_capacity(map_len);
+    for _ in 0..map_len {
+        let fi = read_u32(data, &mut idx)?;
+        let ln = read_u32(data, &mut idx)?;
+        lines.push((fi, ln));
+    }
+
+    Ok((code, funcs, SourceMap { files, lines }))
 }
 
 // --- Writer ---------------------------------------------------------------
@@ -382,10 +480,19 @@ fn write_str(out: &mut Vec<u8>, s: &str) {
 /// Functions are emitted in **sorted name order** so the output is
 /// deterministic across runs — essential for the self-hosted fixed-point
 /// check (`bootstrap-fixed-point`).
-pub fn write_bytecode(code: &[Instr], funcs: &HashMap<String, Function>) -> Vec<u8> {
+pub fn write_bytecode(
+    code: &[Instr],
+    funcs: &HashMap<String, Function>,
+    src_map: &SourceMap,
+) -> Vec<u8> {
     let mut out: Vec<u8> = Vec::with_capacity(64 + code.len() * 4);
     out.extend_from_slice(b"OMGB");
     write_u32(&mut out, BC_VERSION);
+    // Source-file table.
+    write_u32(&mut out, src_map.files.len() as u32);
+    for f in &src_map.files {
+        write_str(&mut out, f);
+    }
     write_u32(&mut out, funcs.len() as u32);
     let mut names: Vec<&String> = funcs.keys().collect();
     names.sort();
@@ -397,6 +504,7 @@ pub fn write_bytecode(code: &[Instr], funcs: &HashMap<String, Function>) -> Vec<
             write_str(&mut out, p);
         }
         write_u32(&mut out, f.address as u32);
+        write_u32(&mut out, f.source_file_idx);
     }
     write_u32(&mut out, code.len() as u32);
     use opcode::*;
@@ -516,6 +624,16 @@ pub fn write_bytecode(code: &[Instr], funcs: &HashMap<String, Function>) -> Vec<
             }
         }
     }
+    // Source map — parallel to the instruction stream. We emit even
+    // when the map is empty or shorter than the code (e.g. a hand-
+    // built program), padding with `(u32::MAX, 0)` so readers always
+    // see a length matching the code.
+    write_u32(&mut out, code.len() as u32);
+    for i in 0..code.len() {
+        let (fi, ln) = src_map.lines.get(i).copied().unwrap_or((u32::MAX, 0));
+        write_u32(&mut out, fi);
+        write_u32(&mut out, ln);
+    }
     out
 }
 
@@ -527,12 +645,29 @@ mod tests {
     fn round_trips_a_minimal_program() {
         let code = vec![Instr::PushInt(7), Instr::Emit, Instr::Halt];
         let funcs = HashMap::new();
-        let bytes = write_bytecode(&code, &funcs);
-        let (decoded, _) = parse_bytecode(&bytes).unwrap();
+        let src_map = SourceMap::default();
+        let bytes = write_bytecode(&code, &funcs, &src_map);
+        let (decoded, _, _) = parse_bytecode(&bytes).unwrap();
         assert_eq!(decoded.len(), 3);
         assert!(matches!(decoded[0], Instr::PushInt(7)));
         assert!(matches!(decoded[1], Instr::Emit));
         assert!(matches!(decoded[2], Instr::Halt));
+    }
+
+    #[test]
+    fn round_trips_a_source_map() {
+        let code = vec![Instr::PushInt(7), Instr::Emit, Instr::Halt];
+        let funcs = HashMap::new();
+        let src_map = SourceMap {
+            files: vec!["test.omg".to_string()],
+            lines: vec![(0, 1), (0, 1), (0, 2)],
+        };
+        let bytes = write_bytecode(&code, &funcs, &src_map);
+        let (_, _, decoded_map) = parse_bytecode(&bytes).unwrap();
+        assert_eq!(decoded_map.files, vec!["test.omg".to_string()]);
+        assert_eq!(decoded_map.lines, vec![(0, 1), (0, 1), (0, 2)]);
+        assert_eq!(decoded_map.lookup(0), Some(("test.omg", 1)));
+        assert_eq!(decoded_map.lookup(2), Some(("test.omg", 2)));
     }
 
     #[test]

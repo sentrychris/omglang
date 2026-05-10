@@ -87,7 +87,9 @@ alloc OP_PUSH_FLOAT     := 54
 alloc OP_FLOOR_DIV      := 55
 
 # Bytecode version: must match what `compiler.rs` / `compiler.omg` emit.
-alloc BC_VERSION := 257
+# Bumped from 0x000101 (257) to 0x000200 (512) when the source-file
+# table + per-instruction source map were added.
+alloc BC_VERSION := 512
 
 # === Byte-stream readers ==================================================
 #
@@ -123,11 +125,17 @@ proc read_str_at(bytes, i) {
 
 # === Bytecode loader ======================================================
 #
-# Returns [code, funcs] where:
+# Returns [code, funcs, src_files, src_lines] where:
 #   * code is a list of ["OP", payload] tuples mirroring the OMG-written
 #     compiler's intermediate form (see `cc_emit`).
 #   * funcs is a dict mapping unmangled+mangled function names to
-#     [params_list, address].
+#     [params_list, address, source_file_idx].
+#   * src_files is a list of source-file paths referenced by this image.
+#   * src_lines is a list of [file_idx, line] per code instruction (parallel
+#     to `code`).
+# The last two are used by the traceback formatter to show `File "x.omg",
+# line N, in <fn>` on errors. They mirror the v2 .omgb sections written
+# by compiler.rs / compiler.omg.
 
 proc parse_bytecode(bytes) {
     alloc n := length(bytes)
@@ -142,6 +150,18 @@ proc parse_bytecode(bytes) {
     cursor := ver_pair[1]
     if ver_pair[0] != BC_VERSION {
         panic("omg-vm: unsupported bytecode version " + ver_pair[0])
+    }
+    # Source-file table.
+    alloc sfc_pair := read_u32_at(bytes, cursor)
+    alloc sf_count := sfc_pair[0]
+    cursor := sfc_pair[1]
+    alloc src_files := []
+    alloc si := 0
+    loop si < sf_count {
+        alloc sf_pair := read_str_at(bytes, cursor)
+        src_files := src_files + [sf_pair[0]]
+        cursor := sf_pair[1]
+        si := si + 1
     }
     alloc fc_pair := read_u32_at(bytes, cursor)
     alloc func_count := fc_pair[0]
@@ -165,7 +185,9 @@ proc parse_bytecode(bytes) {
         }
         alloc addr_pair := read_u32_at(bytes, cursor)
         cursor := addr_pair[1]
-        funcs[name] := [params, addr_pair[0]]
+        alloc sfi_pair := read_u32_at(bytes, cursor)
+        cursor := sfi_pair[1]
+        funcs[name] := [params, addr_pair[0], sfi_pair[0]]
         f := f + 1
     }
     alloc cl_pair := read_u32_at(bytes, cursor)
@@ -184,7 +206,23 @@ proc parse_bytecode(bytes) {
         cursor := instr[1]
         k := k + 1
     }
-    return [code, funcs]
+    # Per-instruction source map. Parallel to `code`; a (u32::MAX, 0)
+    # entry means "no source info" — the traceback formatter falls back
+    # to `File "<unknown>", line 0` for those.
+    alloc ml_pair := read_u32_at(bytes, cursor)
+    alloc map_len := ml_pair[0]
+    cursor := ml_pair[1]
+    alloc src_lines := []
+    alloc mi := 0
+    loop mi < map_len {
+        alloc fi_pair := read_u32_at(bytes, cursor)
+        cursor := fi_pair[1]
+        alloc ln_pair := read_u32_at(bytes, cursor)
+        cursor := ln_pair[1]
+        src_lines := src_lines + [[fi_pair[0], ln_pair[0]]]
+        mi := mi + 1
+    }
+    return [code, funcs, src_files, src_lines]
 }
 
 # Decode a single instruction starting one byte past the opcode. Returns
@@ -325,7 +363,9 @@ proc decode_one(op, bytes, cursor) {
 # done. There's no concurrency so global mutable state is fine.
 
 alloc vm_code      := []     # [["OP", payload], ...]
-alloc vm_funcs     := {}     # name -> [params, address]
+alloc vm_funcs     := {}     # name -> [params, address, source_file_idx]
+alloc vm_src_files := []     # source-file paths referenced by this image
+alloc vm_src_lines := []     # per-instruction [file_idx, line], parallel to vm_code
 alloc vm_stack     := []     # operand stack
 alloc vm_pc        := 0      # program counter (instruction index)
 alloc vm_halted    := false
@@ -333,8 +373,19 @@ alloc vm_globals   := {}     # program globals (incl. args/module_file/current_d
 alloc vm_env       := {}     # current local env (empty when at top level)
 alloc vm_env_stack := []     # saved envs across calls
 alloc vm_ret_stack := []     # saved PCs across calls
-alloc vm_block_stack := []   # try/except blocks: [handler_pc, stack_size, env_depth, ret_depth]
+alloc vm_block_stack := []   # try/except blocks: [handler_pc, stack_size, env_depth, ret_depth, frame_depth]
+# User-visible call-frame stack for traceback rendering. Each entry is
+# [name, call_pc] where call_pc is the bytecode offset of the CALL /
+# CALL_VALUE / TCALL in the *caller* — vm_src_lines[call_pc] gives the
+# call site to print. Mirrors `frames: Vec<CallFrame>` in the Rust VM.
+alloc vm_frames    := []
 alloc vm_pending_error := ""  # set by signal_error; checked by run() each tick
+# PC where the error fired, captured before any unwinding so the
+# traceback's last frame reports the actual fault site.
+alloc vm_err_pc := 0
+# u32::MAX sentinel — matches what Rust writes for instructions with no
+# source span (compiler-synthesised PushNone+Ret, for example).
+alloc VM_UNKNOWN_FILE_IDX := 4294967295
 
 # === Sentinels and tag helpers ===========================================
 #
@@ -557,6 +608,72 @@ proc resolve_slice_bound(v, default_val) {
 # call frames in the OMG runtime; a sentinel flag is reliable.
 proc signal_error(msg) {
     vm_pending_error := msg
+    vm_err_pc := vm_pc
+}
+
+# Look up a (file_idx, line) entry in the source map. Returns
+# `["<unknown>", 0]` for synthesised instructions (file_idx == u32::MAX)
+# or when the pc is out of range — the formatter still emits a
+# well-formed "File ..., line ..." line in that case.
+proc vm_lookup_src(pc) {
+    if pc < 0 or pc >= length(vm_src_lines) {
+        return ["<unknown>", 0]
+    }
+    alloc entry := vm_src_lines[pc]
+    alloc fi := entry[0]
+    alloc ln := entry[1]
+    if fi == VM_UNKNOWN_FILE_IDX or fi >= length(vm_src_files) {
+        return ["<unknown>", 0]
+    }
+    return [vm_src_files[fi], ln]
+}
+
+# Strip the __mod_N__ prefix for display so the traceback shows the
+# bare source name. Identical idea to the Rust VM's `display_fn_name`.
+proc vm_display_name(mangled) {
+    alloc bare := strip_mod_prefix(mangled)
+    if bare == false {
+        return mangled
+    }
+    return bare
+}
+
+# Build a Python-style traceback. Mirrors `format_traceback` in
+# runtime/src/vm.rs exactly:
+#
+#   Traceback (most recent call last):
+#     File "main.omg", line 5, in <top-level>
+#     File "main.omg", line 12, in make_counter
+#     File "main.omg", line 17, in tick
+#   <kind>: <message>
+proc vm_format_traceback(err_pc, msg) {
+    alloc out := "Traceback (most recent call last):\n"
+    # Top-level entry: where main called the outermost frame from.
+    if length(vm_frames) > 0 {
+        alloc first := vm_frames[0]
+        alloc loc := vm_lookup_src(first[1])
+        out := out + "  File \"" + loc[0] + "\", line " + loc[1] + ", in <top-level>\n"
+    }
+    # Each intermediate frame's call site sits inside the previous
+    # frame's function; name it accordingly.
+    alloc i := 1
+    alloc n := length(vm_frames)
+    loop i < n {
+        alloc caller_name := vm_display_name(vm_frames[i - 1][0])
+        alloc loc := vm_lookup_src(vm_frames[i][1])
+        out := out + "  File \"" + loc[0] + "\", line " + loc[1] + ", in " + caller_name + "\n"
+        i := i + 1
+    }
+    # Error site: pc is err_pc, function is whichever frame we're
+    # currently inside (or top-level for zero-frame errors).
+    alloc cur_fn := "<top-level>"
+    if length(vm_frames) > 0 {
+        cur_fn := vm_display_name(vm_frames[length(vm_frames) - 1][0])
+    }
+    alloc site := vm_lookup_src(err_pc)
+    out := out + "  File \"" + site[0] + "\", line " + site[1] + ", in " + cur_fn + "\n"
+    out := out + msg
+    return out
 }
 
 # Step is wrapped in a try below to convert any host-runtime panic
@@ -564,8 +681,11 @@ proc signal_error(msg) {
 # Strips a leading "RuntimeError: " — the host's panic-display path
 # always prepends it, but vm.omg's internal helpers (vm_lookup, etc)
 # already format their messages with the right Kind prefix, so the
-# wrapper is redundant and visually noisy.
+# wrapper is redundant and visually noisy. Also captures vm_err_pc
+# so the traceback formatter can report the failing instruction even
+# when the error came from a host-raised panic rather than signal_error.
 proc step() {
+    alloc started_at := vm_pc
     try {
         step_inner()
     } except err {
@@ -577,6 +697,7 @@ proc step() {
         } else {
             vm_pending_error := err
         }
+        vm_err_pc := started_at
     }
 }
 
@@ -792,10 +913,12 @@ proc step_inner() {
     if op == "CALL" {
         # Direct call by name: look up the function in vm_funcs, pop its
         # args, jump in. No closure capture (top-level proc).
+        alloc call_pc := vm_pc
         alloc info := vm_funcs[arg]
         alloc params := info[0]
         alloc call_args := vm_pop_n(length(params))
         vm_invoke(arg, call_args, vm_none)
+        vm_frames := vm_frames + [[arg, call_pc]]
         return false
     }
     if op == "TCALL" {
@@ -816,18 +939,28 @@ proc step_inner() {
         }
         vm_env := new_env
         vm_pc := info[1]
+        # Replace the caller's frame name (TCO reuses its slot).
+        # The compiler only emits TCALL inside a function body, so
+        # vm_frames is guaranteed non-empty.
+        alloc top_f := length(vm_frames) - 1
+        if top_f >= 0 {
+            vm_frames[top_f] := [arg, vm_frames[top_f][1]]
+        }
         return false
     }
     if op == "CALL_VALUE" {
+        alloc call_pc := vm_pc
         alloc cv_args := vm_pop_n(arg)
         alloc callable := vm_pop()
         if is_vm_closure(callable) {
             alloc cinfo := callable["__omg_closure__"]
             vm_invoke(cinfo[0], cv_args, cinfo[1])
+            vm_frames := vm_frames + [[cinfo[0], call_pc]]
             return false
         }
         # Otherwise treat as a function name (string).
         vm_invoke(callable, cv_args, vm_none)
+        vm_frames := vm_frames + [[callable, call_pc]]
         return false
     }
     if op == "RET" {
@@ -838,6 +971,10 @@ proc step_inner() {
         alloc top_r := length(vm_ret_stack) - 1
         vm_pc := vm_ret_stack[top_r]
         vm_ret_stack := vm_ret_stack[0:top_r]
+        alloc top_f := length(vm_frames) - 1
+        if top_f >= 0 {
+            vm_frames := vm_frames[0:top_f]
+        }
         vm_push(rv)
         return false
     }
@@ -856,8 +993,9 @@ proc step_inner() {
     if op == "SETUP_EXCEPT" {
         # Push a block recording where to unwind to on RAISE / runtime
         # error. Snapshot enough state to rebuild the operand and call
-        # stacks at the handler.
-        vm_block_stack := vm_block_stack + [[arg, length(vm_stack), length(vm_env_stack), length(vm_ret_stack)]]
+        # stacks at the handler, including the user-visible frame depth
+        # so the traceback formatter ignores frames inside the try.
+        vm_block_stack := vm_block_stack + [[arg, length(vm_stack), length(vm_env_stack), length(vm_ret_stack), length(vm_frames)]]
         vm_pc := vm_pc + 1
         return false
     }
@@ -875,7 +1013,8 @@ proc unwind_to_block(err) {
     # Pop the topmost block; truncate the operand, env, and return stacks
     # to the saved depths; restore env by popping env_stack until depth
     # matches; push the error message as the value the `except` handler
-    # binds; jump to the handler PC.
+    # binds; jump to the handler PC. Frames also get truncated so the
+    # traceback for a *later* uncaught error stays accurate.
     alloc bt := length(vm_block_stack) - 1
     alloc block := vm_block_stack[bt]
     vm_block_stack := vm_block_stack[0:bt]
@@ -883,6 +1022,7 @@ proc unwind_to_block(err) {
     alloc saved_stack_size := block[1]
     alloc saved_env_depth := block[2]
     alloc saved_ret_depth := block[3]
+    alloc saved_frame_depth := block[4]
     loop length(vm_env_stack) > saved_env_depth {
         alloc top := length(vm_env_stack) - 1
         vm_env := vm_env_stack[top]
@@ -890,6 +1030,7 @@ proc unwind_to_block(err) {
     }
     vm_ret_stack := vm_ret_stack[0:saved_ret_depth]
     vm_stack := vm_stack[0:saved_stack_size]
+    vm_frames := vm_frames[0:saved_frame_depth]
     vm_push(err)
     vm_pc := target_pc
 }
@@ -904,7 +1045,16 @@ proc run() {
                 unwind_to_block(err_msg)
             } else {
                 vm_halted := true
-                vm_pending_error := err_msg
+                # Wrap the raw error in a Python-style traceback so the
+                # OMG driver surfaces a frame-by-frame call stack
+                # identical to what the Rust runtime produces. Skip
+                # the wrapper when there's no source-map info — bare
+                # bytecode (REPL chunks) stays readable as `Kind: msg`.
+                if length(vm_src_lines) == 0 {
+                    vm_pending_error := err_msg
+                } else {
+                    vm_pending_error := vm_format_traceback(vm_err_pc, err_msg)
+                }
             }
         }
     }
@@ -920,15 +1070,55 @@ proc vm_extend_code(new_chunk) {
     vm_code := vm_code + new_chunk
 }
 
-proc vm_set_funcs_entry(name, params, addr) {
-    vm_funcs[name] := [params, addr]
+proc vm_set_funcs_entry(name, params, addr, source_file_idx) {
+    # source_file_idx is u32::MAX (VM_UNKNOWN_FILE_IDX) for REPL chunks
+    # or any synthesised function with no source. The traceback
+    # formatter falls back to `<unknown>` when the index resolves to
+    # nothing in vm_src_files.
+    vm_funcs[name] := [params, addr, source_file_idx]
 }
 
 # Replace the function table wholesale. Used by the unified `omg`
 # driver to load a freshly-parsed bytecode's funcs (a name→[params,
-# addr] dict) without iterating one entry at a time.
+# addr, source_file_idx] dict) without iterating one entry at a time.
 proc vm_set_funcs(funcs_dict) {
     vm_funcs := funcs_dict
+}
+
+# Install the source-file table + per-instruction source map for this
+# bytecode image. The driver calls this right after parse_bytecode so
+# the traceback formatter has everything it needs when run() reports
+# an uncaught error.
+proc vm_set_src_map(files, lines) {
+    vm_src_files := files
+    vm_src_lines := lines
+}
+
+# Append a chunk's source-map entries to the running map. Used by the
+# REPL where each turn is its own compiled chunk: file indices need
+# to be remapped by an offset so paths from different turns don't
+# alias. Mirrors the merge logic in runtime/src/repl.rs.
+proc vm_extend_src_map(new_files, new_lines) {
+    alloc file_offset := length(vm_src_files)
+    alloc i := 0
+    alloc nf := length(new_files)
+    loop i < nf {
+        vm_src_files := vm_src_files + [new_files[i]]
+        i := i + 1
+    }
+    alloc j := 0
+    alloc nl := length(new_lines)
+    loop j < nl {
+        alloc entry := new_lines[j]
+        alloc fi := entry[0]
+        alloc ln := entry[1]
+        if fi == VM_UNKNOWN_FILE_IDX {
+            vm_src_lines := vm_src_lines + [[fi, ln]]
+        } else {
+            vm_src_lines := vm_src_lines + [[fi + file_offset, ln]]
+        }
+        j := j + 1
+    }
 }
 
 # Reset every piece of VM state to its initial value. Used by the
@@ -938,6 +1128,8 @@ proc vm_set_funcs(funcs_dict) {
 proc vm_reset() {
     vm_code := []
     vm_funcs := {}
+    vm_src_files := []
+    vm_src_lines := []
     vm_stack := []
     vm_pc := 0
     vm_halted := false
@@ -946,6 +1138,8 @@ proc vm_reset() {
     vm_env_stack := []
     vm_ret_stack := []
     vm_block_stack := []
+    vm_frames := []
+    vm_err_pc := 0
     vm_pending_error := ""
 }
 
@@ -1033,6 +1227,8 @@ if vm_is_main_invocation() and length(args) >= 2 and vm_path_ends_with(args[1], 
     alloc parsed := parse_bytecode(bc_bytes)
     vm_code := parsed[0]
     vm_funcs := parsed[1]
+    vm_src_files := parsed[2]
+    vm_src_lines := parsed[3]
 
     # Seed the program's runtime-injected globals so `args`, `module_file`,
     # and `current_dir` look like they would under a normal `omg <prog>`

@@ -32,7 +32,8 @@ proc install_funcs_list(funcs_list) {
     alloc i := 0
     loop i < length(funcs_list) {
         alloc f := funcs_list[i]
-        vm.vm_set_funcs_entry(f[0], f[1], f[2])
+        # Entries are [name, params, addr, source_file_idx] in v2.
+        vm.vm_set_funcs_entry(f[0], f[1], f[2], f[3])
         i := i + 1
     }
 }
@@ -56,6 +57,7 @@ alloc compiled := cc.compile_source(user_src, "<playground>")
 vm.vm_reset()
 vm.vm_extend_code(compiled[0])
 install_funcs_list(compiled[1])
+vm.vm_set_src_map(compiled[2], compiled[3])
 seed_vm_globals(["<playground>"] + forward_args, "<playground>")
 vm.vm_set_pc(0)
 vm.run()

@@ -65,7 +65,7 @@ fn bootstrap_one(project_root: &PathBuf, src_rel: &str, out_rel: &str) {
         .unwrap_or_else(|e| panic!("read {}: {}", src_path.display(), e));
     let program = compiler::compile_source(&src, &src_path)
         .unwrap_or_else(|e| panic!("compile {}: {}", src_path.display(), e));
-    let bytes = bytecode::write_bytecode(&program.code, &program.funcs);
+    let bytes = bytecode::write_bytecode(&program.code, &program.funcs, &program.src_map);
     fs::write(&out_path, &bytes)
         .unwrap_or_else(|e| panic!("write {}: {}", out_path.display(), e));
 }

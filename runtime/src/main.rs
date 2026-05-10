@@ -201,7 +201,7 @@ fn run_omg(path: &PathBuf, full_args: &[String]) -> Result<(), RuntimeError> {
     })?;
     check_header(&source, path)?;
     let program = compile_source(&source, path)?;
-    run(&program.code, &program.funcs, full_args)
+    run(&program.code, &program.funcs, &program.src_map, full_args)
 }
 
 /// Default execution path for a `.omg` file: compile it via the embedded
@@ -209,8 +209,8 @@ fn run_omg(path: &PathBuf, full_args: &[String]) -> Result<(), RuntimeError> {
 /// what bare `omg <script>` invokes when `--rust` isn't passed.
 fn run_omg_self_hosted(path: &PathBuf, full_args: &[String]) -> Result<(), RuntimeError> {
     let bytes = self_hosted_compile(path)?;
-    let (code, funcs) = parse_bytecode(&bytes)?;
-    run(&code, &funcs, full_args)
+    let (code, funcs, src_map) = parse_bytecode(&bytes)?;
+    run(&code, &funcs, &src_map, full_args)
 }
 
 fn run_omgb(path: &PathBuf, full_args: &[String]) -> Result<(), RuntimeError> {
@@ -221,8 +221,8 @@ fn run_omgb(path: &PathBuf, full_args: &[String]) -> Result<(), RuntimeError> {
             e
         ))
     })?;
-    let (code, funcs) = parse_bytecode(&bytes)?;
-    run(&code, &funcs, full_args)
+    let (code, funcs, src_map) = parse_bytecode(&bytes)?;
+    run(&code, &funcs, &src_map, full_args)
 }
 
 fn check_header(source: &str, path: &PathBuf) -> Result<(), RuntimeError> {
@@ -267,7 +267,7 @@ fn cmd_compile(args: &[String]) -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
-    let bytes = write_bytecode(&program.code, &program.funcs);
+    let bytes = write_bytecode(&program.code, &program.funcs, &program.src_map);
     match out {
         Some(p) => {
             if let Err(e) = fs::write(&p, &bytes) {
@@ -334,8 +334,13 @@ fn cmd_verify_self_hosted(args: &[String]) -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
-    let rust_bytes = match compile_source(&source, &in_path) {
-        Ok(p) => write_bytecode(&p.code, &p.funcs),
+    // Canonicalise the input path before either compile so the
+    // embedded source-file table is byte-identical across both
+    // frontends. (The OMG self-hosted path canonicalises internally;
+    // mirror that here.)
+    let canon_path = fs::canonicalize(&in_path).unwrap_or_else(|_| in_path.clone());
+    let rust_bytes = match compile_source(&source, &canon_path) {
+        Ok(p) => write_bytecode(&p.code, &p.funcs, &p.src_map),
         Err(e) => {
             eprintln!("Rust frontend failed: {}", e);
             return ExitCode::FAILURE;
@@ -371,7 +376,7 @@ fn cmd_verify_self_hosted(args: &[String]) -> ExitCode {
 /// into the host process — the embedded compiler is a normal OMG program
 /// that takes [in.omg, out.omgb] as args and writes the bytecode to disk.
 fn self_hosted_compile(in_path: &PathBuf) -> Result<Vec<u8>, RuntimeError> {
-    let (code, funcs) = parse_bytecode(SELF_HOSTED_COMPILER)?;
+    let (code, funcs, src_map) = parse_bytecode(SELF_HOSTED_COMPILER)?;
     let abs_in = fs::canonicalize(in_path).map_err(|e| {
         RuntimeError::ModuleImportError(format!(
             "cannot canonicalise '{}': {}",
@@ -389,7 +394,7 @@ fn self_hosted_compile(in_path: &PathBuf) -> Result<Vec<u8>, RuntimeError> {
         abs_in.to_string_lossy().to_string(),
         tmp.to_string_lossy().to_string(),
     ];
-    run(&code, &funcs, &args)?;
+    run(&code, &funcs, &src_map, &args)?;
     let bytes = fs::read(&tmp).map_err(|e| {
         RuntimeError::ModuleImportError(format!(
             "cannot read self-hosted output '{}': {}",
@@ -407,7 +412,7 @@ fn self_hosted_compile(in_path: &PathBuf) -> Result<Vec<u8>, RuntimeError> {
 /// the embedded `compiler.omgb`, which compiles the user's source. Used
 /// only by `--verify-omg-vm`; ordinary execution doesn't need this layer.
 fn omg_vm_compile(in_path: &PathBuf) -> Result<Vec<u8>, RuntimeError> {
-    let (vm_code, vm_funcs) = parse_bytecode(SELF_HOSTED_VM)?;
+    let (vm_code, vm_funcs, vm_src_map) = parse_bytecode(SELF_HOSTED_VM)?;
     let abs_in = fs::canonicalize(in_path).map_err(|e| {
         RuntimeError::ModuleImportError(format!(
             "cannot canonicalise '{}': {}",
@@ -446,7 +451,7 @@ fn omg_vm_compile(in_path: &PathBuf) -> Result<Vec<u8>, RuntimeError> {
         abs_in.to_string_lossy().to_string(),
         tmp_out.to_string_lossy().to_string(),
     ];
-    let run_result = run(&vm_code, &vm_funcs, &args);
+    let run_result = run(&vm_code, &vm_funcs, &vm_src_map, &args);
     let _ = fs::remove_file(&tmp_compiler);
     run_result?;
     let bytes = fs::read(&tmp_out).map_err(|e| {
@@ -478,8 +483,9 @@ fn cmd_verify_omg_vm(args: &[String]) -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
-    let rust_bytes = match compile_source(&source, &in_path) {
-        Ok(p) => write_bytecode(&p.code, &p.funcs),
+    let canon_path = fs::canonicalize(&in_path).unwrap_or_else(|_| in_path.clone());
+    let rust_bytes = match compile_source(&source, &canon_path) {
+        Ok(p) => write_bytecode(&p.code, &p.funcs, &p.src_map),
         Err(e) => {
             eprintln!("Rust frontend failed: {}", e);
             return ExitCode::FAILURE;
@@ -534,7 +540,7 @@ fn cmd_disasm(args: &[String]) -> ExitCode {
     let (code, funcs): (Vec<Instr>, std::collections::HashMap<String, Function>) =
         if path.extension().map(|e| e == "omgb").unwrap_or(false) {
             match parse_bytecode(&bytes) {
-                Ok(p) => p,
+                Ok((code, funcs, _src_map)) => (code, funcs),
                 Err(e) => {
                     eprintln!("{}", e);
                     return ExitCode::FAILURE;

@@ -91,8 +91,10 @@ alloc EK_VALUE          := 4
 alloc EK_MODULE_IMPORT  := 5
 
 # Bytecode version: same packed layout as the Rust runtime
-# (MAJOR<<16) | (MINOR<<8) | PATCH = 0.1.1.
-alloc BC_VERSION := 257
+# (MAJOR<<16) | (MINOR<<8) | PATCH = 0.2.0. Bumped from 0.1.1 when
+# the source-file table + per-instruction source map were added so
+# runtime errors can show file/line tracebacks.
+alloc BC_VERSION := 512
 
 # === Tiny utilities =========================================================
 
@@ -976,8 +978,26 @@ proc parse_program(file, tokens) {
 
 # Compiler state (no closures so we keep this in globals).
 alloc cc_code := []
-alloc cc_pending_funcs := []   # list of [name, params, body_code]
-alloc cc_funcs := []           # list of [name, params, address]
+# Parallel to cc_code: per-instruction [file_idx, line]. Updated by
+# every cc_emit / cc_placeholder call from cc_current_file_idx +
+# cc_current_line. compile_stmt / compile_expr refresh the line at
+# their top so all subsequent emits tag their instruction with the
+# originating source line. Mirrors `Compiler::lines` in compiler.rs.
+alloc cc_lines := []
+# All source files ever loaded by this compile, in the order they
+# were first seen. Entry-point is always index 0.
+alloc cc_src_files := []
+# Path index of the file currently being compiled. Swapped when
+# entering / leaving an imported module body so traceback frames
+# inside an import resolve to the imported file's path, not the entry's.
+alloc cc_current_file_idx := 0
+# Line of the AST node currently being compiled. Refreshed at the top
+# of every compile_stmt / compile_expr; compiler-synthesised
+# instructions (e.g. the implicit PushNone+Ret after a function body)
+# inherit whatever the last refresh set.
+alloc cc_current_line := 0
+alloc cc_pending_funcs := []   # list of [name, params, body_code, body_lines, source_file_idx]
+alloc cc_funcs := []           # list of [name, params, address, source_file_idx]
 alloc cc_break_stack := []     # list of (list of patch indices)
 # Number of `SETUP_EXCEPT` blocks currently open in the function being
 # compiled. `return` / `break` / tail-call sites must emit a matching
@@ -1158,10 +1178,33 @@ proc cc_resolve_store(name) {
 
 proc cc_emit(instr) {
     cc_code := cc_code + [instr]
+    cc_lines := cc_lines + [[cc_current_file_idx, cc_current_line]]
 }
 
 proc cc_emit_simple(opname) {
     cc_emit([opname, false])
+}
+
+# Intern a source-file path into cc_src_files, returning its index.
+# Used by the entry-point setup and by import handling.
+proc cc_intern_file(path) {
+    alloc i := 0
+    alloc n := length(cc_src_files)
+    loop i < n {
+        if cc_src_files[i] == path {
+            return i
+        }
+        i := i + 1
+    }
+    cc_src_files := cc_src_files + [path]
+    return n
+}
+
+# Every AST node carries its originating source line as its last element.
+# Refresh cc_current_line before emitting any bytecode for a node so the
+# parallel cc_lines array tags the instruction with the right source span.
+proc cc_node_line(node) {
+    return node[length(node) - 1]
 }
 
 # Emit `n` POP_BLOCK instructions. Used by return / break / tail-call
@@ -1188,6 +1231,7 @@ proc cc_patch(idx, target) {
 # Walk over the AST node and emit code; expressions push exactly one value.
 
 proc compile_expr(node) {
+    cc_current_line := cc_node_line(node)
     alloc kind := node[0]
     if kind == "num"  {
         cc_emit(["PUSH_INT",  node[1]])
@@ -1459,12 +1503,88 @@ proc path_dirname(p) {
 
 proc path_join(base, rel) {
     if length(rel) > 0 and (rel[0] == "/" or rel[0] == "\\") {
-        return rel
+        return path_normalize(rel)
     }
     if length(base) == 0 {
-        return rel
+        return path_normalize(rel)
     }
-    return base + "/" + rel
+    return path_normalize(base + "/" + rel)
+}
+
+# Collapse `./` and `../` segments in a path so it matches what the
+# Rust compiler stores after `fs::canonicalize`. The triple-meta
+# fixed-point check compares .omgb bytes; if one side keeps `./` in
+# the source-file table and the other doesn't, the bytes diverge.
+proc path_normalize(p) {
+    if length(p) == 0 {
+        return p
+    }
+    alloc absolute := p[0] == "/"
+    # Split on `/` into segments. Multiple consecutive slashes collapse
+    # to one (the empty segments between them get skipped below).
+    alloc parts := []
+    alloc cur := ""
+    alloc i := 0
+    alloc n := length(p)
+    loop i < n {
+        alloc ch := p[i]
+        if ch == "/" or ch == "\\" {
+            if length(cur) > 0 {
+                parts := parts + [cur]
+            }
+            cur := ""
+        } else {
+            cur := cur + ch
+        }
+        i := i + 1
+    }
+    if length(cur) > 0 {
+        parts := parts + [cur]
+    }
+    # Walk segments: `.` drops, `..` pops a prior non-`..` segment if
+    # any, otherwise stays (so relative paths with too many `..`s
+    # don't crash).
+    alloc stack := []
+    alloc j := 0
+    alloc np := length(parts)
+    loop j < np {
+        alloc seg := parts[j]
+        if seg == "." {
+            # drop
+        } elif seg == ".." {
+            alloc top := length(stack) - 1
+            if top >= 0 and stack[top] != ".." {
+                stack := stack[0:top]
+            } else {
+                # Only meaningful on relative paths — absolute paths
+                # cannot legitimately go above `/`, so we just drop.
+                if absolute == false {
+                    stack := stack + [seg]
+                }
+            }
+        } else {
+            stack := stack + [seg]
+        }
+        j := j + 1
+    }
+    # Rebuild the path.
+    alloc out := ""
+    if absolute {
+        out := "/"
+    }
+    alloc k := 0
+    alloc ns := length(stack)
+    loop k < ns {
+        if k > 0 {
+            out := out + "/"
+        }
+        out := out + stack[k]
+        k := k + 1
+    }
+    if length(out) == 0 {
+        return "."
+    }
+    return out
 }
 
 # Look up a previously-compiled module by its resolved path.  Returns the
@@ -1541,11 +1661,15 @@ proc compile_import(path, alias, line) {
         cc_loaded_modules := cc_loaded_modules + [[resolved, prefix, exports]]
         cc_loading := cc_loading + [resolved]
         # Compile the imported module's top-level statements inline at
-        # this import site, with all globals prefixed.
+        # this import site, with all globals prefixed. The file_idx swap
+        # is what lets traceback frames inside this module's body show
+        # the imported file's path, not the entry's.
         alloc saved_prefix := cc_current_prefix
         alloc saved_file   := cc_current_file
+        alloc saved_file_idx := cc_current_file_idx
         cc_current_prefix := prefix
         cc_current_file   := resolved
+        cc_current_file_idx := cc_intern_file(resolved)
         i := 0
         loop i < n {
             compile_stmt(ast[i])
@@ -1553,6 +1677,7 @@ proc compile_import(path, alias, line) {
         }
         cc_current_prefix := saved_prefix
         cc_current_file   := saved_file
+        cc_current_file_idx := saved_file_idx
         # Pop the loading stack.
         alloc top := length(cc_loading) - 1
         cc_loading := cc_loading[0:top]
@@ -1584,6 +1709,7 @@ proc compile_import(path, alias, line) {
 }
 
 proc compile_stmt(stmt) {
+    cc_current_line := cc_node_line(stmt)
     alloc kind := stmt[0]
     if kind == "emit" {
         compile_expr(stmt[1])
@@ -1739,9 +1865,12 @@ proc compile_stmt(stmt) {
         alloc name := stmt[1]
         alloc params := stmt[2]
         alloc body := stmt[3]
-        alloc body_code := compile_function_body(params, body)
+        alloc body_pair := compile_function_body(params, body)
+        alloc body_code := body_pair[0]
+        alloc body_lines := body_pair[1]
         alloc mangled := cc_mangle(name)
-        cc_pending_funcs := cc_pending_funcs + [[mangled, params, body_code]]
+        alloc fn_file_idx := cc_current_file_idx
+        cc_pending_funcs := cc_pending_funcs + [[mangled, params, body_code, body_lines, fn_file_idx]]
         cc_emit(["MAKE_FUNC", mangled])
         if length(cc_local_scopes) > 1 {
             cc_declare_local(name)
@@ -1804,6 +1933,7 @@ proc compile_stmt(stmt) {
 
 proc compile_function_body(params, body) {
     alloc saved_code   := cc_code
+    alloc saved_lines  := cc_lines
     alloc saved_breaks := cc_break_stack
     # Each function tracks its own try-block depth, independent of the
     # enclosing scope's. (Outer try/except blocks don't carry through a
@@ -1811,6 +1941,7 @@ proc compile_function_body(params, body) {
     alloc saved_try_depth := cc_try_depth
     alloc saved_loop_try := cc_loop_try_depth
     cc_code := []
+    cc_lines := []
     cc_break_stack := []
     cc_try_depth := 0
     cc_loop_try_depth := []
@@ -1831,12 +1962,14 @@ proc compile_function_body(params, body) {
     cc_emit_simple("RET")
     alloc popped := cc_local_scopes[0:length(cc_local_scopes) - 1]
     cc_local_scopes := popped
-    alloc out := cc_code
+    alloc out_code := cc_code
+    alloc out_lines := cc_lines
     cc_code := saved_code
+    cc_lines := saved_lines
     cc_break_stack := saved_breaks
     cc_try_depth := saved_try_depth
     cc_loop_try_depth := saved_loop_try
-    return out
+    return [out_code, out_lines]
 }
 
 # Rebase a function body's jump targets so they land at absolute PCs after
@@ -1870,6 +2003,7 @@ proc compile_program_node(ast, file) {
 # (closure path) instead of CALL (direct function-table lookup).
 proc compile_program_node_seeded(ast, file, known_globals) {
     cc_code := []
+    cc_lines := []
     cc_pending_funcs := []
     cc_funcs := []
     cc_break_stack := []
@@ -1879,6 +2013,9 @@ proc compile_program_node_seeded(ast, file, known_globals) {
     cc_module_counter := 0
     cc_current_prefix := ""
     cc_current_file := file
+    cc_src_files := [file]
+    cc_current_file_idx := 0
+    cc_current_line := 0
     cc_loaded_modules := []
     cc_loading := []
     alloc i := 0
@@ -1889,17 +2026,19 @@ proc compile_program_node_seeded(ast, file, known_globals) {
     }
     cc_emit_simple("HALT")
     alloc final_code := cc_code
+    alloc final_lines := cc_lines
     alloc pf := cc_pending_funcs
     i := 0
     n := length(pf)
     loop i < n {
         alloc f := pf[i]
         alloc addr := length(final_code)
-        cc_funcs := cc_funcs + [[f[0], f[1], addr]]
+        cc_funcs := cc_funcs + [[f[0], f[1], addr, f[4]]]
         final_code := final_code + cc_rebase(f[2], addr)
+        final_lines := final_lines + f[3]
         i := i + 1
     }
-    return [final_code, cc_funcs]
+    return [final_code, cc_funcs, cc_src_files, final_lines]
 }
 
 # === Bytecode writer =======================================================
@@ -2048,14 +2187,27 @@ proc sort_funcs(funcs) {
     return out
 }
 
-# Build the full .omgb byte string.
-proc write_bytecode(code, funcs) {
+# Build the full .omgb byte string. The v2 layout adds two sections:
+# a source-file table (right after the version) and a per-instruction
+# source map (right after the code blob). Both are what give runtime
+# errors their `File "foo.omg", line N, in <fn>` traceback context.
+# Layout mirrors `write_bytecode` in runtime/src/bytecode.rs exactly
+# so the triple-meta fixed-point check stays byte-for-byte identical.
+proc write_bytecode(code, funcs, src_files, src_lines) {
     alloc buf := []
     buf := bytes_append(buf, ascii("O"))
     buf := bytes_append(buf, ascii("M"))
     buf := bytes_append(buf, ascii("G"))
     buf := bytes_append(buf, ascii("B"))
     buf := emit_u32(buf, BC_VERSION)
+    # Source-file table.
+    buf := emit_u32(buf, length(src_files))
+    alloc fi := 0
+    alloc fn := length(src_files)
+    loop fi < fn {
+        buf := emit_str(buf, src_files[fi])
+        fi := fi + 1
+    }
     alloc sorted := sort_funcs(funcs)
     buf := emit_u32(buf, length(sorted))
     alloc i := 0
@@ -2072,6 +2224,7 @@ proc write_bytecode(code, funcs) {
             j := j + 1
         }
         buf := emit_u32(buf, f[2])
+        buf := emit_u32(buf, f[3])
         i := i + 1
     }
     buf := emit_u32(buf, length(code))
@@ -2079,6 +2232,18 @@ proc write_bytecode(code, funcs) {
     n := length(code)
     loop i < n {
         buf := encode_instr(buf, code[i])
+        i := i + 1
+    }
+    # Per-instruction source map, parallel to the code blob. Each
+    # entry is [file_idx, line]; we trust the compiler kept it the
+    # same length as `code` (debug-asserted in the Rust side via
+    # `debug_assert_eq!`).
+    buf := emit_u32(buf, length(src_lines))
+    i := 0
+    n := length(src_lines)
+    loop i < n {
+        buf := emit_u32(buf, src_lines[i][0])
+        buf := emit_u32(buf, src_lines[i][1])
         i := i + 1
     }
     return buf
@@ -2094,7 +2259,7 @@ proc do_compile(in_path, out_path) {
     alloc tokens := tokenize(src, in_path)
     alloc ast := parse_program(in_path, tokens)
     alloc compiled := compile_program_node(ast, in_path)
-    alloc bytes := write_bytecode(compiled[0], compiled[1])
+    alloc bytes := write_bytecode(compiled[0], compiled[1], compiled[2], compiled[3])
     alloc h := file_open(out_path, "wb")
     file_write(h, bytes)
     file_close(h)
@@ -2126,7 +2291,10 @@ proc compile_source_with_globals(text, file_path, known_globals) {
     alloc tokens := tokenize(text, file_path)
     alloc ast := parse_program(file_path, tokens)
     alloc compiled := compile_program_node_seeded(ast, file_path, known_globals)
-    return [cc_decode_floats(compiled[0]), compiled[1]]
+    # Pass the source-file table + per-instruction line map through to
+    # the caller alongside the code/funcs so the OMG-native driver
+    # can build the same traceback the Rust runtime does.
+    return [cc_decode_floats(compiled[0]), compiled[1], compiled[2], compiled[3]]
 }
 
 proc cc_decode_floats(code) {
@@ -2150,6 +2318,10 @@ proc cc_decode_floats(code) {
 # state lives in the VM's globals/funcs, not here).
 proc compile_reset() {
     cc_code := []
+    cc_lines := []
+    cc_src_files := []
+    cc_current_file_idx := 0
+    cc_current_line := 0
     cc_pending_funcs := []
     cc_funcs := []
     cc_break_stack := []

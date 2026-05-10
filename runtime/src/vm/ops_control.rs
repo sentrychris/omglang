@@ -231,12 +231,14 @@ pub(super) fn handle_setup_except(
     env_stack: &Vec<Env>,
     ret_stack: &Vec<usize>,
     block_stack: &mut Vec<Block>,
+    frame_depth: usize,
 ) {
     block_stack.push(Block {
         handler: target,
         stack_size: stack.len(),
         env_depth: env_stack.len(),
         ret_depth: ret_stack.len(),
+        frame_depth,
     });
 }
 

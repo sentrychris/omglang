@@ -83,7 +83,7 @@ alloc OP_STORE_LOCAL    := 53
 alloc OP_PUSH_FLOAT     := 54
 alloc OP_FLOOR_DIV      := 55
 
-alloc BC_VERSION := 257
+alloc BC_VERSION := 512
 
 # === Bytecode reader ======================================================
 #
@@ -211,6 +211,18 @@ proc parse_bytecode(bytes) {
     if ver_pair[0] != BC_VERSION {
         panic("native-c: unsupported bytecode version " + ver_pair[0])
     }
+    # v2: source-file table. We skip it — the AOT path doesn't yet
+    # surface source-aware tracebacks (planned next), but we must read
+    # past these bytes or the function table reader sees garbage.
+    alloc sfc_pair := read_u32_at(bytes, cursor)
+    alloc sf_count := sfc_pair[0]
+    cursor := sfc_pair[1]
+    alloc si := 0
+    loop si < sf_count {
+        alloc sf_pair := read_str_at(bytes, cursor)
+        cursor := sf_pair[1]
+        si := si + 1
+    }
     alloc fc_pair := read_u32_at(bytes, cursor)
     alloc func_count := fc_pair[0]
     cursor := fc_pair[1]
@@ -233,6 +245,10 @@ proc parse_bytecode(bytes) {
         }
         alloc addr_pair := read_u32_at(bytes, cursor)
         cursor := addr_pair[1]
+        # v2: source_file_idx for the function. AOT skips it for now;
+        # a later pass will use it to label traceback frames.
+        alloc sfi_pair := read_u32_at(bytes, cursor)
+        cursor := sfi_pair[1]
         funcs[name] := [params, addr_pair[0]]
         f := f + 1
     }
@@ -251,6 +267,19 @@ proc parse_bytecode(bytes) {
         code := code + [instr[0]]
         cursor := instr[1]
         k := k + 1
+    }
+    # v2: per-instruction source map. Skipped here; the AOT path
+    # doesn't yet thread line info into emitted C.
+    alloc ml_pair := read_u32_at(bytes, cursor)
+    alloc map_len := ml_pair[0]
+    cursor := ml_pair[1]
+    alloc mi := 0
+    loop mi < map_len {
+        alloc fi_pair := read_u32_at(bytes, cursor)
+        cursor := fi_pair[1]
+        alloc ln_pair := read_u32_at(bytes, cursor)
+        cursor := ln_pair[1]
+        mi := mi + 1
     }
     return [code, funcs]
 }
