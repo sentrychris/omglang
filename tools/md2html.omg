@@ -26,7 +26,7 @@ import "./modules/lib.omg" as lib
 # These were per-document globals when md2html was a pure CLI script. The
 # `convert(input)` proc still uses them as a single-document scratchpad
 # but resets each one on entry, so multiple back-to-back calls (e.g. from
-# the SSG in `tools/advanced/ssg.omg`) don't bleed state into each other.
+# the SSG in `tools/web/ssg.omg`) don't bleed state into each other.
 
 alloc out := ""
 alloc in_code := false       # inside a fenced code block?

@@ -6,7 +6,7 @@ import "../md2html.omg" as md
 # ssg — a tiny static site generator written in OMG.
 #
 # Usage:
-#     omg tools/advanced/ssg.omg <site-dir>
+#     omg tools/web/ssg.omg <site-dir>
 #
 # Reads:
 #     <site-dir>/content/**/*.md
@@ -242,7 +242,7 @@ proc ensure_parent(path) {
 # === main ================================================================
 
 if length(args) < 2 {
-    panic("usage: omg tools/advanced/ssg.omg <site-dir>")
+    panic("usage: omg tools/web/ssg.omg <site-dir>")
 }
 
 alloc site := args[1]

@@ -73,7 +73,7 @@ Larger, demo-quality programs that compose the smaller tools.
 
 | Tool                  | What it does |
 |-----------------------|--------------|
-| `advanced/ssg.omg`    | Static site generator. Walks `<site>/content/`, parses front-matter, converts each markdown file via `md2html.omg`, applies `<site>/templates/*.html`, and writes a parallel directory tree to `<site>/out/`. See [`examples/omg-ssg-site/README.md`](../examples/omg-ssg-site/README.md) for the layout, template variables, and an example site. |
+| `web/ssg.omg`    | Static site generator. Walks `<site>/content/`, parses front-matter, converts each markdown file via `md2html.omg`, applies `<site>/templates/*.html`, and writes a parallel directory tree to `<site>/out/`. See [`examples/omg-ssg-site/README.md`](../examples/omg-ssg-site/README.md) for the layout, template variables, and an example site. |
 
 ### Shared helpers
 
