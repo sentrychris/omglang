@@ -1,12 +1,17 @@
 #!/bin/bash
-# Build the static assets for web/ — pre-transpile each example to
-# JavaScript so the playground can run them without the OMG toolchain.
+# Build the static assets for web/.
 #
-# Output: web/examples/<name>.omg + web/examples/<name>.js
+# Primary artifact:
+#   web/omg-web.js — the OMG-in-OMG compiler + VM + driver, compiled
+#                    to a single JS bundle. This is what the playground
+#                    actually loads and re-evaluates per Run click;
+#                    user-typed source goes in via globalThis.args[1],
+#                    output comes back through the redirected omg_emit.
 #
-# In-browser compilation (`vm.omg` compiled to JS, running
-# `compiler.omgb` on user input) is a future step; this script ships
-# the simpler "fixed corpus" demo.
+# Reference artifacts (web/examples/):
+#   <name>.omg + <name>.js — pre-built example pairs so visitors can
+#                            inspect what native-js.omg's output looks
+#                            like without running the build themselves.
 
 set -e
 cd "$(dirname "$0")/.."
@@ -14,10 +19,18 @@ cd "$(dirname "$0")/.."
 NATIVE=bootstrap/bin/omg
 WEB_OUT=web/examples
 mkdir -p "$WEB_OUT"
+WORK=$(mktemp -d)
+trap "rm -rf $WORK" EXIT
 
-# Examples that round-trip cleanly through native-js (matches the
-# parity-test corpus minus self_hosted, which has a known meta-
-# interpreter divergence on every native path).
+# === Primary: the meta-circular bundle ====================================
+
+echo "Building web/omg-web.js (compiler + VM + driver) ..."
+"$NATIVE" --compile bootstrap/src/omg-web.omg "$WORK/omg-web.omgb"
+"$NATIVE" bootstrap/src/native-js.omg "$WORK/omg-web.omgb" web/omg-web.js
+echo "  $(wc -c < web/omg-web.js | tr -d ' ') bytes"
+
+# === Reference example pairs ==============================================
+
 EXAMPLES=(
     assignment bitwise dictionaries floats hello_world hex_to_rgb
     higher_order import_modules matrix_ops maze_solver merge_sort
@@ -25,14 +38,10 @@ EXAMPLES=(
     tabula_recta
 )
 
-WORK=$(mktemp -d)
-trap "rm -rf $WORK" EXIT
-
 count=0
 for name in "${EXAMPLES[@]}"; do
     src="examples/$name.omg"
     if [ ! -f "$src" ]; then
-        echo "skip: $src (missing)"
         continue
     fi
     cp "$src" "$WEB_OUT/$name.omg"
@@ -40,8 +49,8 @@ for name in "${EXAMPLES[@]}"; do
     "$NATIVE" bootstrap/src/native-js.omg "$WORK/$name.omgb" "$WEB_OUT/$name.js" >/dev/null
     count=$((count + 1))
 done
+echo "Built $count reference example pairs in $WEB_OUT/"
 
-echo "Built $count example pairs in $WEB_OUT/"
 echo
 echo "Serve the playground:"
 echo "  cd web && python3 -m http.server"

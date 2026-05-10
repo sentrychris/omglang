@@ -829,20 +829,31 @@ proc analyze_all_functions(code, funcs, globals) {
 proc emit_body(code, body_start, body_end, ctx) {
     alloc out := "    let _ip = " + body_start + ";\n"
     out := out + "    let _eh = [];\n"
+    # Each iteration runs one instruction inside a try/catch so that
+    # OmgErrors can be redirected to the most recent SETUP_EXCEPT
+    # handler (matching the OMG VM's block-stack semantics: pop one
+    # handler, jump to it, push the formatted error message).
     out := out + "    while (true) {\n"
-    out := out + "        switch (_ip) {\n"
+    out := out + "        try {\n"
+    out := out + "            switch (_ip) {\n"
     alloc i := body_start
     loop i < body_end {
-        out := out + "        case " + i + ": {\n"
+        out := out + "            case " + i + ": {\n"
         out := out + emit_js_for_instr(code[i], ctx)
-        out := out + "        }\n"
-        out := out + "        // fall through to " + (i + 1) + "\n"
+        out := out + "            }\n"
+        out := out + "            // fall through to " + (i + 1) + "\n"
         i := i + 1
     }
-    # Implicit fall-off-the-end: treat as return undefined.
-    out := out + "        default: return;\n"
+    out := out + "            default: return;\n"
+    out := out + "            }\n"
+    out := out + "            _ip += 1;\n"
+    out := out + "        } catch (_e) {\n"
+    out := out + "            if (_e instanceof OmgError && _eh.length > 0) {\n"
+    out := out + "                _ip = _eh.pop();\n"
+    out := out + "                _s.length = 0;\n"
+    out := out + "                _s.push(_e.kind + ': ' + _e.omgMessage);\n"
+    out := out + "            } else { throw _e; }\n"
     out := out + "        }\n"
-    out := out + "        _ip += 1;\n"
     out := out + "    }\n"
     return out
 }

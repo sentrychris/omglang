@@ -813,6 +813,13 @@ function omg_lookup_fn(name) {
 }
 
 // Default-injected globals. Programs may shadow these.
-const args = (typeof process !== 'undefined') ? process.argv.slice(1) : [];
+// `args` and friends are `let` so the page can override them before
+// re-eval-ing the playground bundle on each Run click. The `v_*`
+// aliases match what native-js.omg's `js_var()` emits for source-
+// level references (LOAD "args" → `v_args`).
+let args = (typeof process !== 'undefined') ? process.argv.slice(1) : [];
 let module_file = '';
 let current_dir = (typeof process !== 'undefined') ? process.cwd() : '/';
+let v_args = args;
+let v_module_file = module_file;
+let v_current_dir = current_dir;

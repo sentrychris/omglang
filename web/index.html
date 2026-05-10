@@ -55,12 +55,13 @@
 <h1>OMG playground</h1>
 
 <p class="lede">
-  Pick an example below and hit <strong>Run</strong>. The OMG source on the
-  left was compiled to JavaScript ahead of time by
-  <code>bootstrap/src/native-js.omg</code> (and the runtime helpers in
-  <code>bootstrap/src/omg_rt.js</code>); the right pane shows what the
-  compiled program prints when run in your browser. Same OMG source, same
-  bytecode, same output as the Rust runtime byte-for-byte.
+  Type any OMG program in the left pane and hit <strong>Run</strong>.
+  Everything happens in your browser: a JavaScript bundle of the
+  OMG-in-OMG compiler and VM (built by the same self-hosted toolchain
+  that produces the native binaries) reads your source, compiles it
+  to bytecode, and runs that bytecode — same answer the Rust runtime
+  would give, byte-for-byte. The dropdown picks a starter program;
+  edit freely from there.
 </p>
 
 <div class="controls">
@@ -73,7 +74,7 @@
 <div class="panes">
   <div class="pane">
     <h2>OMG source</h2>
-    <textarea id="source" readonly spellcheck="false"></textarea>
+    <textarea id="source" spellcheck="false"></textarea>
   </div>
   <div class="pane">
     <h2>Output</h2>
