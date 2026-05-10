@@ -17,6 +17,12 @@ import "compiler.omg" as cc
 import "vm.omg" as vm
 import "native-c.omg" as ncc
 
+# Human-facing version string. Keep in sync with runtime/Cargo.toml and
+# runtime/src/main.rs's VERSION constant. The OMG driver can't read
+# Cargo.toml at build time, so version drift between the two surfaces
+# is caught only by review.
+alloc VERSION := "0.2.0"
+
 # === Path / string helpers ================================================
 
 proc dirname(path) {
@@ -333,6 +339,12 @@ proc usage() {
     emit "  omg <file.omgb> [args...]           Run precompiled bytecode"
     emit "  omg --compile <in.omg> <out.omgb>   Compile to bytecode (no run)"
     emit "  omg --build <in.omg> [<out>]        AOT-build to a native ELF"
+    emit "  omg -v | --version                  Show driver version"
+    emit "  omg -h | --help                     Show this help"
+}
+
+proc print_version() {
+    emit "omg-native-build: v" + VERSION
 }
 
 # === Main dispatch =======================================================
@@ -346,6 +358,9 @@ alloc cmd := args[1]
 
 if cmd == "-h" or cmd == "--help" {
     usage()
+    exit(0)
+} elif cmd == "-v" or cmd == "--version" {
+    print_version()
     exit(0)
 } elif cmd == "--compile" {
     if length(args) < 4 {
