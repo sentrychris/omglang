@@ -1449,6 +1449,46 @@ static Value omg_builtin_stdin_readline(void) {
     return omg_str(buf);
 }
 
+/* stdin_read(): slurp all of stdin to EOF as a UTF-8 string. The
+ * pipe-friendly counterpart to read_file() — `cat input | tool` works
+ * once the tool calls stdin_read(). Returns the empty string when stdin
+ * is already at EOF (no input piped in).
+ *
+ * Buffer ownership matches stdin_readline / omg_str: the heap
+ * allocation is handed to the Value and not freed (OMG_STR is a bare
+ * `const char *` with no refcount). */
+static Value omg_builtin_stdin_read(void) {
+    size_t cap = 4096, len = 0;
+    char *buf = (char *)malloc(cap);
+    if (!buf) { fprintf(stderr, "out of memory\n"); exit(1); }
+    int c;
+    while ((c = fgetc(stdin)) != EOF) {
+        if (len + 1 >= cap) {
+            cap *= 2;
+            char *nb = (char *)realloc(buf, cap);
+            if (!nb) { free(buf); fprintf(stderr, "out of memory\n"); exit(1); }
+            buf = nb;
+        }
+        buf[len++] = (char)c;
+    }
+    buf[len] = 0;
+    return omg_str(buf);
+}
+
+/* stdin_read_bytes(): slurp all of stdin to EOF as a list of byte
+ * values (0-255). Pipe-friendly counterpart to file_open(path, "rb") +
+ * file_read(). Empty list on no input. */
+static Value omg_builtin_stdin_read_bytes(void) {
+    Value v;
+    v.tag = OMG_LIST;
+    v.v.l = omg_list_alloc(0);
+    int c;
+    while ((c = fgetc(stdin)) != EOF) {
+        omg_list_push(v.v.l, omg_int((int64_t)(unsigned char)c));
+    }
+    return v;
+}
+
 /* print(s): like emit, but no trailing newline. Used for REPL prompts. */
 static Value omg_builtin_print(Value v) {
     if (v.tag != OMG_STR) omg_panic("TypeError", "print() expects a string");
@@ -1820,9 +1860,11 @@ static Value omg_call_builtin(Value name, Value args) {
         if (strcmp(n, "subprocess") == 0)      return omg_builtin_subprocess(a[0]);
     }
     if (argc == 0) {
-        if (strcmp(n, "getpid") == 0)          return omg_builtin_getpid();
-        if (strcmp(n, "stdin_readline") == 0)  return omg_builtin_stdin_readline();
-        if (strcmp(n, "executable_path") == 0) return omg_builtin_executable_path();
+        if (strcmp(n, "getpid") == 0)            return omg_builtin_getpid();
+        if (strcmp(n, "stdin_readline") == 0)    return omg_builtin_stdin_readline();
+        if (strcmp(n, "stdin_read") == 0)        return omg_builtin_stdin_read();
+        if (strcmp(n, "stdin_read_bytes") == 0)  return omg_builtin_stdin_read_bytes();
+        if (strcmp(n, "executable_path") == 0)   return omg_builtin_executable_path();
     }
     if (argc == 1) {
         if (strcmp(n, "print") == 0)           return omg_builtin_print(a[0]);

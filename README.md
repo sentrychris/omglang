@@ -603,6 +603,10 @@ Always available, no import needed.
 | `is_dir(path)`                 | is the path a directory?                              |
 | `read_dir(path)`               | list of entry names (sorted, no `.`/`..`)             |
 | `make_dir(path)`               | create directories (mkdir -p semantics)               |
+| **Standard input**             |                                                       |
+| `stdin_readline()`             | read one line from stdin, or `false` on EOF           |
+| `stdin_read()`                 | slurp all of stdin to EOF as a string (empty on no input) |
+| `stdin_read_bytes()`           | slurp all of stdin to EOF as a list of bytes (0–255)  |
 | **Errors**                     |                                                       |
 | `panic(msg)` / `raise(msg)`    | raise a runtime error (catchable with `try`/`except`) |
 | `exit_with_error(msg)`         | print `msg` to stderr verbatim and exit 1 (uncatchable) |

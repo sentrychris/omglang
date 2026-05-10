@@ -408,9 +408,13 @@ proc emit_builtin(name, argc) {
     if name == "getpid"     and argc == 0 { return emit_builtin0("omg_builtin_getpid") }
     if name == "executable_path" and argc == 0 { return emit_builtin0("omg_builtin_executable_path") }
     if name == "subprocess" and argc == 1 { return emit_builtin1("omg_builtin_subprocess") }
-    # I/O primitives used by the OMG-native REPL.
-    if name == "stdin_readline" and argc == 0 { return emit_builtin0("omg_builtin_stdin_readline") }
-    if name == "print"          and argc == 1 { return emit_builtin1("omg_builtin_print") }
+    # I/O primitives. stdin_readline + print are used by the OMG-native
+    # REPL; stdin_read[_bytes] make tools pipe-friendly by slurping all
+    # of stdin to EOF (text or bytes).
+    if name == "stdin_readline"   and argc == 0 { return emit_builtin0("omg_builtin_stdin_readline") }
+    if name == "stdin_read"       and argc == 0 { return emit_builtin0("omg_builtin_stdin_read") }
+    if name == "stdin_read_bytes" and argc == 0 { return emit_builtin0("omg_builtin_stdin_read_bytes") }
+    if name == "print"            and argc == 1 { return emit_builtin1("omg_builtin_print") }
 
     # Reflective dispatch (used by the OMG-in-OMG interpreter).
     if name == "call_builtin" and argc == 2 { return emit_builtin2("omg_call_builtin") }

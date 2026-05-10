@@ -1023,7 +1023,8 @@ alloc cc_builtins := [
     "sqrt", "pow", "log", "sin", "cos", "tan",
     "float_bits", "bits_to_float", "bytes_to_string", "dict_keys",
     "exit_with_error", "exit", "getpid", "subprocess",
-    "stdin_readline", "print", "executable_path"
+    "stdin_readline", "stdin_read", "stdin_read_bytes",
+    "print", "executable_path"
 ]
 
 proc cc_is_builtin(name) {

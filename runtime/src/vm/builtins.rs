@@ -311,6 +311,51 @@ pub fn call_builtin(
             }
         }
 
+        // stdin_read() -> str. Slurps all of stdin to EOF and returns
+        // it as a UTF-8 string. The pipe-friendly counterpart to
+        // read_file(): `cat input | omg tool.omg` works once the tool
+        // calls stdin_read(). Returns the empty string if stdin is
+        // already at EOF (e.g. no input piped in).
+        "stdin_read" => {
+            if !args.is_empty() {
+                return Err(RuntimeError::TypeError(
+                    "stdin_read() takes no arguments".to_string(),
+                ));
+            }
+            use std::io::Read;
+            let mut buf = String::new();
+            match std::io::stdin().read_to_string(&mut buf) {
+                Ok(_) => Ok(Value::Str(buf)),
+                Err(e) => Err(RuntimeError::ValueError(format!(
+                    "stdin_read: {}", e
+                ))),
+            }
+        }
+
+        // stdin_read_bytes() -> [int, ...]. Like stdin_read but for
+        // binary pipes — returns a list of byte values (0-255). The
+        // pipe-friendly counterpart to file_open(path, "rb") +
+        // file_read().
+        "stdin_read_bytes" => {
+            if !args.is_empty() {
+                return Err(RuntimeError::TypeError(
+                    "stdin_read_bytes() takes no arguments".to_string(),
+                ));
+            }
+            use std::io::Read;
+            let mut buf: Vec<u8> = Vec::new();
+            match std::io::stdin().read_to_end(&mut buf) {
+                Ok(_) => {
+                    let list: Vec<Value> =
+                        buf.into_iter().map(|b| Value::Int(b as i64)).collect();
+                    Ok(Value::List(Rc::new(RefCell::new(list))))
+                }
+                Err(e) => Err(RuntimeError::ValueError(format!(
+                    "stdin_read_bytes: {}", e
+                ))),
+            }
+        }
+
         // print(s) -> None. Like emit, but no trailing newline. Used by
         // the REPL so the prompt sits on the same line as user input.
         "print" => match args {

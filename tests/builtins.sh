@@ -217,6 +217,103 @@ line=[abc]"
 actual=$(printf 'abc\r\n' | "$TMPDIR_TEST/readline_crlf")
 assert_eq "stdin_readline: strips trailing CRLF" "$expected" "$actual"
 
+section "Builtins: stdin_read / stdin_read_bytes"
+
+# stdin_read() slurps all of stdin to EOF as a UTF-8 string. The
+# pipe-friendly counterpart to read_file().
+cat > "$TMPDIR_TEST/stdin_read_text.omg" <<'EOF'
+;;;omg
+alloc text := stdin_read()
+emit "len=" + length(text)
+emit "first=" + text[0:5]
+emit "last=" + text[length(text) - 4:]
+EOF
+build_aot "$TMPDIR_TEST/stdin_read_text.omg" "$TMPDIR_TEST/stdin_read_text" >/dev/null
+expected="len=11
+first=hello
+last=orld"
+actual=$(printf 'hello world' | "$TMPDIR_TEST/stdin_read_text")
+assert_eq "stdin_read: AOT binary"      "$expected" "$actual"
+actual=$(printf 'hello world' | "$OMG_RUST" "$TMPDIR_TEST/stdin_read_text.omg")
+assert_eq "stdin_read: Rust runtime"    "$expected" "$actual"
+actual=$(printf 'hello world' | "$OMG_NATIVE" "$TMPDIR_TEST/stdin_read_text.omg")
+assert_eq "stdin_read: native interpreted" "$expected" "$actual"
+
+# Empty stdin → empty string (NOT false, unlike stdin_readline). This
+# matches read_file() semantics for an empty file.
+cat > "$TMPDIR_TEST/stdin_read_empty.omg" <<'EOF'
+;;;omg
+alloc text := stdin_read()
+emit "len=" + length(text)
+EOF
+build_aot "$TMPDIR_TEST/stdin_read_empty.omg" "$TMPDIR_TEST/stdin_read_empty" >/dev/null
+actual=$(echo -n '' | "$TMPDIR_TEST/stdin_read_empty")
+assert_eq "stdin_read: empty stdin → empty string (native)" "len=0" "$actual"
+actual=$(echo -n '' | "$OMG_RUST" "$TMPDIR_TEST/stdin_read_empty.omg")
+assert_eq "stdin_read: empty stdin → empty string (Rust)"   "len=0" "$actual"
+
+# Multi-line input is preserved verbatim, including the trailing
+# newline (read_file behaves the same way).
+cat > "$TMPDIR_TEST/stdin_read_multiline.omg" <<'EOF'
+;;;omg
+alloc text := stdin_read()
+emit "len=" + length(text)
+emit "ends_with_newline=" + (text[length(text) - 1] == "\n")
+EOF
+build_aot "$TMPDIR_TEST/stdin_read_multiline.omg" "$TMPDIR_TEST/stdin_read_multiline" >/dev/null
+expected="len=14
+ends_with_newline=true"
+actual=$(printf 'one\ntwo\nthree\n' | "$TMPDIR_TEST/stdin_read_multiline")
+assert_eq "stdin_read: multi-line preserves newlines" "$expected" "$actual"
+
+# stdin_read_bytes() is the binary-pipe form. Bytes 0-255 round-trip
+# losslessly, including bytes that wouldn't be valid UTF-8.
+cat > "$TMPDIR_TEST/stdin_read_bytes.omg" <<'EOF'
+;;;omg
+alloc bs := stdin_read_bytes()
+emit "len=" + length(bs)
+alloc i := 0
+loop i < length(bs) {
+    emit "b" + i + "=" + bs[i]
+    i := i + 1
+}
+EOF
+build_aot "$TMPDIR_TEST/stdin_read_bytes.omg" "$TMPDIR_TEST/stdin_read_bytes" >/dev/null
+expected="len=4
+b0=65
+b1=66
+b2=255
+b3=0"
+actual=$(printf '\x41\x42\xff\x00' | "$TMPDIR_TEST/stdin_read_bytes")
+assert_eq "stdin_read_bytes: AOT preserves 0x00 / 0xff" "$expected" "$actual"
+actual=$(printf '\x41\x42\xff\x00' | "$OMG_RUST" "$TMPDIR_TEST/stdin_read_bytes.omg")
+assert_eq "stdin_read_bytes: Rust preserves 0x00 / 0xff" "$expected" "$actual"
+
+# Empty stdin → empty list.
+cat > "$TMPDIR_TEST/stdin_read_bytes_empty.omg" <<'EOF'
+;;;omg
+alloc bs := stdin_read_bytes()
+emit length(bs)
+EOF
+build_aot "$TMPDIR_TEST/stdin_read_bytes_empty.omg" "$TMPDIR_TEST/stdin_read_bytes_empty" >/dev/null
+actual=$(echo -n '' | "$TMPDIR_TEST/stdin_read_bytes_empty")
+assert_eq "stdin_read_bytes: empty stdin → empty list (native)" "0" "$actual"
+actual=$(echo -n '' | "$OMG_RUST" "$TMPDIR_TEST/stdin_read_bytes_empty.omg")
+assert_eq "stdin_read_bytes: empty stdin → empty list (Rust)"   "0" "$actual"
+
+# Round-trip: read text via stdin_read_bytes, reassemble with
+# bytes_to_string. Confirms the byte-list shape is identical to what
+# string_bytes / file_open("rb") + file_read would produce.
+cat > "$TMPDIR_TEST/stdin_round_trip.omg" <<'EOF'
+;;;omg
+alloc bs := stdin_read_bytes()
+alloc s := bytes_to_string(bs)
+emit s
+EOF
+build_aot "$TMPDIR_TEST/stdin_round_trip.omg" "$TMPDIR_TEST/stdin_round_trip" >/dev/null
+actual=$(printf 'round trip' | "$TMPDIR_TEST/stdin_round_trip")
+assert_eq "stdin_read_bytes round-trip via bytes_to_string" "round trip" "$actual"
+
 section "Builtins: print"
 
 # print(s) writes to stdout WITHOUT a trailing newline. Three prints

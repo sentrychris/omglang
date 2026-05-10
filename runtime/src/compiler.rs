@@ -78,9 +78,12 @@ fn builtin_names() -> &'static [&'static str] {
         "exit",
         "getpid",
         "subprocess",
-        // I/O primitives for the OMG-native REPL: stdin line reader and
-        // a `print` (no-newline) for prompts.
+        // I/O primitives. stdin_readline + print are used by the
+        // OMG-native REPL; stdin_read[_bytes] make tools pipe-friendly
+        // by slurping all of stdin to EOF (text or bytes).
         "stdin_readline",
+        "stdin_read",
+        "stdin_read_bytes",
         "print",
     ]
 }
