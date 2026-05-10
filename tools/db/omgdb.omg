@@ -1,0 +1,283 @@
+;;;omg
+
+import "wire.omg" as wire
+import "exec.omg" as exec
+import "sql.omg" as sql
+
+# omgdb.omg — entry point for the OMG embedded database.
+#
+# Three invocation modes:
+#
+#   omg tools/db/omgdb.omg <file.db>                           # REPL
+#   omg tools/db/omgdb.omg <file.db> -e "SQL ..."              # one-shot
+#   cat schema.sql | omg tools/db/omgdb.omg <file.db>          # stdin
+#
+# The `-e` form accepts any number of statements separated by `;`. The
+# stdin form does the same. The REPL accumulates input until it sees a
+# `;` outside a string literal, then runs that statement.
+
+proc usage() {
+    emit "usage:"
+    emit "  omgdb <file.db>                Interactive SQL REPL"
+    emit "  omgdb <file.db> -e \"SQL ...\"   Run one or more statements"
+    emit "  cat file.sql | omgdb <file.db>  Run statements from stdin"
+}
+
+# === Output formatting ====================================================
+
+# Render an OMG value the way SQL CLIs do: bare for ints, quoted for
+# strings. We use length() to discriminate (panics on int).
+proc fmt_value(v) {
+    try {
+        alloc _ := length(v)
+        return "'" + v + "'"
+    } except err {
+        return "" + v
+    }
+}
+
+# Print a SELECT result as a fixed-width text table. Computes column
+# widths from the data so output stays readable on small results.
+proc print_table(columns, rows) {
+    alloc widths := []
+    alloc i := 0
+    loop i < length(columns) {
+        widths := widths + [length(columns[i])]
+        i := i + 1
+    }
+    # Each row may widen a column.
+    alloc r := 0
+    loop r < length(rows) {
+        alloc j := 0
+        loop j < length(columns) {
+            alloc cell := fmt_value(rows[r][j])
+            if length(cell) > widths[j] {
+                widths[j] := length(cell)
+            }
+            j := j + 1
+        }
+        r := r + 1
+    }
+    emit format_row(columns, widths, true)
+    emit format_separator(widths)
+    alloc rr := 0
+    loop rr < length(rows) {
+        alloc cells := []
+        alloc cc := 0
+        loop cc < length(columns) {
+            cells := cells + [fmt_value(rows[rr][cc])]
+            cc := cc + 1
+        }
+        emit format_row(cells, widths, false)
+        rr := rr + 1
+    }
+    emit "(" + length(rows) + " row" + plural(length(rows)) + ")"
+}
+
+proc plural(n) {
+    if n == 1 { return "" }
+    return "s"
+}
+
+proc pad_right(s, w) {
+    alloc out := s
+    loop length(out) < w {
+        out := out + " "
+    }
+    return out
+}
+
+proc format_row(cells, widths, header) {
+    alloc out := ""
+    alloc i := 0
+    alloc last := length(cells) - 1
+    loop i < length(cells) {
+        if i > 0 { out := out + " | " }
+        # Pad every cell except the last (trailing whitespace is noise
+        # and breaks tests that compare lines verbatim).
+        if i == last {
+            out := out + cells[i]
+        } else {
+            out := out + pad_right(cells[i], widths[i])
+        }
+        i := i + 1
+    }
+    return out
+}
+
+proc format_separator(widths) {
+    alloc out := ""
+    alloc i := 0
+    loop i < length(widths) {
+        if i > 0 { out := out + "-+-" }
+        alloc dashes := ""
+        alloc k := 0
+        loop k < widths[i] {
+            dashes := dashes + "-"
+            k := k + 1
+        }
+        out := out + dashes
+        i := i + 1
+    }
+    return out
+}
+
+# === Result printing ======================================================
+
+proc print_result(res) {
+    if res.kind == "select" {
+        if length(res.rows) == 0 {
+            emit "(no rows)"
+        } else {
+            print_table(res.columns, res.rows)
+        }
+    } elif res.kind == "insert" {
+        emit "OK (rowid=" + res.rowid + ")"
+    } elif res.kind == "delete" {
+        emit "OK (" + res.deleted + " row" + plural(res.deleted) + " deleted)"
+    } else {
+        emit res.message
+    }
+}
+
+# === Multi-statement execution ============================================
+
+# Tokenise + parse `src`, then run each statement against `db`.
+# A parse or runtime error inside any statement is caught so the REPL
+# (or a multi-statement -e batch) can keep going.
+proc run_sql(db, src) {
+    try {
+        alloc tokens := sql.tokenise(src)
+        alloc stmts := sql.parse_all(tokens)
+        alloc i := 0
+        loop i < length(stmts) {
+            try {
+                alloc res := exec.run_statement(db, stmts[i])
+                print_result(res)
+            } except runtime_err {
+                emit runtime_err
+            }
+            i := i + 1
+        }
+    } except parse_err {
+        emit parse_err
+    }
+}
+
+# === REPL =================================================================
+# Statement boundaries are detected by `;` outside a string literal.
+# A line that doesn't terminate a statement gets a continuation prompt.
+
+alloc repl_in_string := ""
+alloc repl_escape := false
+
+proc repl_reset_state() {
+    repl_in_string := ""
+    repl_escape := false
+}
+
+# Returns true iff `buffer` contains at least one `;` outside of a
+# quoted string. Updates the running quote-state. After return, the
+# buffer can be split on the *first* outside-of-string `;`.
+proc repl_has_terminator(buffer) {
+    repl_reset_state()
+    alloc i := 0
+    loop i < length(buffer) {
+        alloc c := buffer[i]
+        if repl_escape {
+            repl_escape := false
+        } elif c == "\\" and repl_in_string != "" {
+            repl_escape := true
+        } elif c == "\"" or c == "'" {
+            if repl_in_string == c {
+                repl_in_string := ""
+            } elif repl_in_string == "" {
+                repl_in_string := c
+            }
+        } elif repl_in_string == "" and c == ";" {
+            return true
+        }
+        i := i + 1
+    }
+    return false
+}
+
+proc run_repl(db) {
+    emit "OMG database (omgdb). Type SQL terminated by `;`. `quit` or Ctrl-D to exit."
+    alloc buffer := ""
+    alloc multiline := false
+    loop true {
+        if multiline {
+            print("...> ")
+        } else {
+            print("omgdb> ")
+        }
+        alloc line := stdin_readline()
+        if line == false {
+            emit ""
+            return false
+        }
+        # Bare `quit` / `exit` only at top of a fresh statement.
+        if multiline == false {
+            alloc trimmed := line
+            loop length(trimmed) > 0 and trimmed[length(trimmed) - 1] == " " {
+                trimmed := trimmed[0:length(trimmed) - 1]
+            }
+            if trimmed == "quit" or trimmed == "exit" or trimmed == "\\q" {
+                return false
+            }
+            if trimmed == "" {
+                # Empty line at fresh prompt — re-prompt.
+                continue_blank()
+            }
+        }
+        buffer := buffer + line + "\n"
+        if repl_has_terminator(buffer) {
+            run_sql(db, buffer)
+            buffer := ""
+            multiline := false
+        } else {
+            multiline := true
+        }
+    }
+}
+
+# A no-op procedure used to skip the rest of a loop iteration after an
+# empty REPL line. (OMG has no `continue` keyword.)
+proc continue_blank() {
+    return false
+}
+
+# === Argv dispatch ========================================================
+
+if length(args) < 2 {
+    usage()
+    exit(1)
+}
+
+alloc db_path := args[1]
+alloc db := exec.open_db(db_path)
+
+if length(args) >= 3 and args[2] == "-e" {
+    if length(args) < 4 {
+        emit "-e requires a SQL string"
+        exec.close_db(db)
+        exit(1)
+    }
+    run_sql(db, args[3])
+} elif length(args) >= 3 and args[2] == "-" {
+    # Read all of stdin as SQL. Designed for `cat schema.sql | omgdb db -`.
+    run_sql(db, stdin_read())
+} elif length(args) >= 3 {
+    emit "unknown argument: " + args[2]
+    usage()
+    exec.close_db(db)
+    exit(1)
+} else {
+    # No subcommand: run the interactive REPL. Pipe-style use should
+    # pass an explicit `-` (we don't auto-detect a TTY because OMG has
+    # no isatty() builtin).
+    run_repl(db)
+}
+
+exec.close_db(db)

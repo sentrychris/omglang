@@ -1,0 +1,510 @@
+;;;omg
+
+import "wire.omg" as wire
+
+# exec.omg — Day-2 storage layer for omgdb.
+#
+# Phase 1 (this file): a flat-file backend. Each table is a singly
+# linked list of leaf pages, grown on demand. INSERT appends to the
+# tail page; SELECT walks from the head. No B-tree, no indexes, no
+# transactions.
+#
+# The on-disk format already matches the Phase-2 B-tree layout (see
+# wire.omg), so swapping this file's `insert` / `select_all` for
+# B-tree-using equivalents in Day 4 is the only change required.
+#
+# Public surface (all `db` is a dict in the shape returned by open_db):
+#
+#   open_db(path)                       open or create
+#   close_db(db)                        flush meta page + close fh
+#   create_table(db, name, columns)     register a new table
+#   list_tables(db)                     list of {name, columns} dicts
+#   table_columns(db, name)             list of column names
+#   insert(db, table, values)           append a row, returns rowid
+#   select_all(db, table)               list of [rowid, [values...]]
+#
+# v1 stores column names in the catalog as a single TEXT cell on the
+# table's first page (cell 0). This keeps the catalog tiny and treats
+# the schema as just-another-row, so DROP TABLE later means "free the
+# pages" and CREATE TABLE means "allocate a page + write cell 0."
+
+# === Public: open / close ==================================================
+
+# Open `path` for read+write. Creates the file with a fresh meta page
+# if it doesn't exist, otherwise validates it.
+proc open_db(path) {
+    alloc fh := false
+    if file_exists(path) {
+        fh := file_open(path, "rb+")
+    } else {
+        fh := file_open(path, "wb+")
+        # Brand-new file: write a fresh meta page at offset 0.
+        wire.write_page(fh, 0, wire.fresh_meta_page())
+    }
+    alloc meta_page := wire.read_page(fh, 0)
+    alloc meta := wire.read_meta(meta_page)
+    return {fh: fh, path: path, meta: meta, dirty: false}
+}
+
+# Flush the meta page (if it changed) and close the file handle.
+# Pages other than meta are written eagerly by insert(); only catalog
+# changes are buffered, so this is the only flush needed at close time.
+proc close_db(db) {
+    if db.dirty {
+        wire.write_page(db.fh, 0, wire.write_meta(db.meta))
+    }
+    file_close(db.fh)
+}
+
+# === Public: schema ========================================================
+
+proc create_table(db, name, columns) {
+    if dict_keys(db.meta.tables) != [] {
+        # Reject duplicate names.
+        alloc names := dict_keys(db.meta.tables)
+        alloc i := 0
+        loop i < length(names) {
+            if names[i] == name {
+                panic("exec: table '" + name + "' already exists")
+            }
+            i := i + 1
+        }
+    }
+    # Allocate the table's first leaf page.
+    alloc first_pg := alloc_page(db)
+    # Initialise the page: empty leaf, no chain successor.
+    alloc page := wire.empty_page()
+    page := wire.set_leaf_header(page, 0, 16, 0, 0)
+
+    # Cell 0 of the first page holds the schema row: a single TEXT
+    # value listing column names separated by '\x01'. Hidden from the
+    # cell_count visible to SELECT (we treat cell index 0 as schema).
+    alloc joined := join_columns(columns)
+    alloc payload := wire.pack_value(joined)
+    alloc cell := wire.pack_u32(0) + wire.pack_u32(length(payload)) + payload
+    # cell_count remains 0 because the schema cell is metadata; visible
+    # rows start at the cell after it. Track schema-end via free_offset.
+    page := wire.splice_into(page, 16, cell)
+    alloc new_free := 16 + length(cell)
+    page := wire.set_leaf_header(page, 0, new_free, 0, 0)
+    wire.write_page(db.fh, first_pg, page)
+
+    db.meta.tables[name] := {
+        first_page: first_pg,
+        last_page: first_pg,
+        next_rowid: 1
+    }
+    db.dirty := true
+}
+
+# Join column names with a separator that won't appear in SQL idents
+# (\x01). pack_text would otherwise need a length-prefixed list shape;
+# this is simpler.
+proc join_columns(cols) {
+    alloc out := ""
+    alloc i := 0
+    loop i < length(cols) {
+        if i > 0 { out := out + chr(1) }
+        out := out + cols[i]
+        i := i + 1
+    }
+    return out
+}
+proc split_columns(joined) {
+    alloc out := []
+    alloc cur := ""
+    alloc i := 0
+    alloc n := length(joined)
+    loop i < n {
+        if joined[i] == chr(1) {
+            out := out + [cur]
+            cur := ""
+        } else {
+            cur := cur + joined[i]
+        }
+        i := i + 1
+    }
+    out := out + [cur]
+    return out
+}
+
+# Read column names back out of cell 0 of a table's first page.
+proc table_columns(db, name) {
+    if has_key(db.meta.tables, name) == false {
+        panic("exec: no such table: " + name)
+    }
+    alloc t := db.meta.tables[name]
+    alloc page := wire.read_page(db.fh, t.first_page)
+    # Schema cell sits immediately after the 16-byte header. Skip the
+    # rowid (4) and payload_len (4) to get to the value tag at offset 24.
+    alloc value := wire.unpack_value(page, 24)
+    return split_columns(value[0])
+}
+
+proc list_tables(db) {
+    alloc out := []
+    alloc names := dict_keys(db.meta.tables)
+    alloc i := 0
+    loop i < length(names) {
+        out := out + [{name: names[i], columns: table_columns(db, names[i])}]
+        i := i + 1
+    }
+    return out
+}
+
+# === Public: data ==========================================================
+
+# Append a row and return the assigned rowid. `values` is a list of
+# OMG values (ints or strings); arity isn't checked against the
+# schema in v1 — that's the SQL layer's job.
+proc insert(db, table, values) {
+    if has_key(db.meta.tables, table) == false {
+        panic("exec: no such table: " + table)
+    }
+    alloc t := db.meta.tables[table]
+    alloc rowid := t.next_rowid
+    alloc payload := wire.pack_row(values)
+    alloc cell := wire.pack_u32(rowid) + wire.pack_u32(length(payload)) + payload
+
+    # Try to fit on the current last page; otherwise allocate a new one.
+    alloc page := wire.read_page(db.fh, t.last_page)
+    alloc hdr := wire.read_leaf_header(page)
+    if hdr.free_offset + length(cell) <= wire.PAGE_SIZE {
+        page := wire.splice_into(page, hdr.free_offset, cell)
+        page := wire.set_leaf_header(page, hdr.cell_count + 1,
+                                     hdr.free_offset + length(cell),
+                                     hdr.next_leaf, hdr.parent_page)
+        wire.write_page(db.fh, t.last_page, page)
+    } else {
+        # Cell doesn't fit. Allocate a new leaf, link the chain, and
+        # write the cell there.
+        alloc new_pg := alloc_page(db)
+        # Update the old last page's next_leaf pointer first.
+        page := wire.set_leaf_header(page, hdr.cell_count, hdr.free_offset,
+                                     new_pg, hdr.parent_page)
+        wire.write_page(db.fh, t.last_page, page)
+
+        alloc fresh := wire.empty_page()
+        fresh := wire.set_leaf_header(fresh, 1, 16 + length(cell), 0, 0)
+        fresh := wire.splice_into(fresh, 16, cell)
+        wire.write_page(db.fh, new_pg, fresh)
+
+        t.last_page := new_pg
+    }
+    t.next_rowid := rowid + 1
+    db.meta.tables[table] := t
+    db.dirty := true
+    return rowid
+}
+
+# Tombstone marker. DELETE writes 0xFFFFFFFF as the rowid in place of
+# the original; SELECT skips cells with this rowid. The schema cell on
+# page 0 keeps rowid = 0 and is skipped via the offset adjustment.
+alloc TOMBSTONE := 4294967295
+
+# Walk every leaf page in the table chain and return [rowid, values]
+# pairs in storage order. Tombstoned cells are filtered out.
+proc select_all(db, table) {
+    if has_key(db.meta.tables, table) == false {
+        panic("exec: no such table: " + table)
+    }
+    alloc t := db.meta.tables[table]
+    alloc col_count := length(table_columns(db, table))
+    alloc out := []
+    alloc pg := t.first_page
+    alloc is_first_page := true
+    loop pg != 0 {
+        alloc page := wire.read_page(db.fh, pg)
+        alloc hdr := wire.read_leaf_header(page)
+        # Visible cells start after the schema cell on page 0 of the
+        # table chain; subsequent pages have no schema cell.
+        alloc off := 16
+        if is_first_page {
+            # Skip past the schema cell: u32 rowid + u32 len + payload.
+            alloc plen_pair := wire.unpack_u32(page, 20)
+            off := 24 + plen_pair[0]
+        }
+        alloc seen := 0
+        loop seen < hdr.cell_count {
+            alloc rid_pair := wire.unpack_u32(page, off)
+            alloc rid := rid_pair[0]
+            alloc plen_pair := wire.unpack_u32(page, rid_pair[1])
+            alloc plen := plen_pair[0]
+            alloc payload_off := plen_pair[1]
+            alloc row_pair := wire.unpack_row(page, payload_off, col_count)
+            if rid != TOMBSTONE {
+                out := out + [[rid, row_pair[0]]]
+            }
+            off := payload_off + plen
+            seen := seen + 1
+        }
+        pg := hdr.next_leaf
+        is_first_page := false
+    }
+    return out
+}
+
+# Tombstone every cell whose row matches the WHERE comparison. Returns
+# the number of rows deleted. Bytes aren't reclaimed in v1.
+proc delete_where(db, table, where_dict) {
+    if has_key(db.meta.tables, table) == false {
+        panic("exec: no such table: " + table)
+    }
+    alloc t := db.meta.tables[table]
+    alloc cols := table_columns(db, table)
+    alloc col_count := length(cols)
+    alloc col_idx := index_of(cols, where_dict.left)
+    if col_idx < 0 {
+        panic("exec: WHERE column not found: " + where_dict.left)
+    }
+    alloc deleted := 0
+    alloc pg := t.first_page
+    alloc is_first_page := true
+    loop pg != 0 {
+        alloc page := wire.read_page(db.fh, pg)
+        alloc hdr := wire.read_leaf_header(page)
+        alloc off := 16
+        if is_first_page {
+            alloc plen_pair := wire.unpack_u32(page, 20)
+            off := 24 + plen_pair[0]
+        }
+        alloc page_dirty := false
+        alloc seen := 0
+        loop seen < hdr.cell_count {
+            alloc rid_pair := wire.unpack_u32(page, off)
+            alloc rid := rid_pair[0]
+            alloc plen_pair := wire.unpack_u32(page, rid_pair[1])
+            alloc plen := plen_pair[0]
+            alloc payload_off := plen_pair[1]
+            alloc row_pair := wire.unpack_row(page, payload_off, col_count)
+            alloc values := row_pair[0]
+            if rid != TOMBSTONE and compare_op(values[col_idx], where_dict.op, where_dict.right) {
+                # Overwrite just the rowid bytes with TOMBSTONE.
+                page := wire.splice_into(page, off, wire.pack_u32(TOMBSTONE))
+                page_dirty := true
+                deleted := deleted + 1
+            }
+            off := payload_off + plen
+            seen := seen + 1
+        }
+        if page_dirty {
+            wire.write_page(db.fh, pg, page)
+        }
+        pg := hdr.next_leaf
+        is_first_page := false
+    }
+    return deleted
+}
+
+# Remove a table from the catalog. Pages aren't reclaimed in v1; the
+# disk space leaks until VACUUM (a future feature). The table is
+# however invisible to subsequent statements.
+proc drop_table(db, name) {
+    if has_key(db.meta.tables, name) == false {
+        panic("exec: no such table: " + name)
+    }
+    # OMG dicts have no `del` keyword; rebuild without the dropped key.
+    alloc names := dict_keys(db.meta.tables)
+    alloc fresh := {}
+    alloc i := 0
+    loop i < length(names) {
+        if names[i] != name {
+            fresh[names[i]] := db.meta.tables[names[i]]
+        }
+        i := i + 1
+    }
+    db.meta.tables := fresh
+    db.dirty := true
+}
+
+# select_all + WHERE filter + ORDER BY sort + column projection.
+# Returns {columns: [name...], rows: [[v...], ...]} ready for printing.
+# Note: rowids are dropped from the output (the SQL surface doesn't
+# expose them in v1).
+proc select_filtered(db, table, columns, where_dict, order_by) {
+    alloc all_cols := table_columns(db, table)
+    alloc rows := select_all(db, table)
+
+    # Filter.
+    if where_dict != false {
+        alloc col_idx := index_of(all_cols, where_dict.left)
+        if col_idx < 0 {
+            panic("exec: WHERE column not found: " + where_dict.left)
+        }
+        alloc filtered := []
+        alloc i := 0
+        loop i < length(rows) {
+            alloc values := rows[i][1]
+            if compare_op(values[col_idx], where_dict.op, where_dict.right) {
+                filtered := filtered + [rows[i]]
+            }
+            i := i + 1
+        }
+        rows := filtered
+    }
+
+    # ORDER BY: in-memory insertion sort by the requested column.
+    if order_by != false {
+        alloc sort_idx := index_of(all_cols, order_by)
+        if sort_idx < 0 {
+            panic("exec: ORDER BY column not found: " + order_by)
+        }
+        rows := sort_rows(rows, sort_idx)
+    }
+
+    # Projection.
+    alloc out_cols := all_cols
+    alloc out_rows := []
+    if length(columns) == 1 and columns[0] == "*" {
+        # Identity projection; copy values only (drop rowid).
+        alloc i := 0
+        loop i < length(rows) {
+            out_rows := out_rows + [rows[i][1]]
+            i := i + 1
+        }
+    } else {
+        # Validate every requested column exists, then project.
+        alloc indices := []
+        alloc j := 0
+        loop j < length(columns) {
+            alloc idx := index_of(all_cols, columns[j])
+            if idx < 0 {
+                panic("exec: SELECT column not found: " + columns[j])
+            }
+            indices := indices + [idx]
+            j := j + 1
+        }
+        out_cols := columns
+        alloc i := 0
+        loop i < length(rows) {
+            alloc src := rows[i][1]
+            alloc proj := []
+            alloc k := 0
+            loop k < length(indices) {
+                proj := proj + [src[indices[k]]]
+                k := k + 1
+            }
+            out_rows := out_rows + [proj]
+            i := i + 1
+        }
+    }
+    return {columns: out_cols, rows: out_rows}
+}
+
+# === SQL dispatch ==========================================================
+
+# Run a parsed statement. Returns a result dict:
+#   create_table / drop_table / insert: {kind: "...", message: "OK"}
+#   delete:                              {kind: "delete", deleted: n}
+#   select:                              {kind: "select", columns: [...], rows: [[...]]}
+proc run_statement(db, stmt) {
+    if stmt.kind == "create_table" {
+        # The exec layer doesn't enforce types in v1 (column types are
+        # advisory metadata); we still record the names.
+        alloc col_names := []
+        alloc i := 0
+        loop i < length(stmt.columns) {
+            col_names := col_names + [stmt.columns[i].name]
+            i := i + 1
+        }
+        create_table(db, stmt.name, col_names)
+        return {kind: "create_table", message: "OK"}
+    }
+    if stmt.kind == "drop_table" {
+        drop_table(db, stmt.name)
+        return {kind: "drop_table", message: "OK"}
+    }
+    if stmt.kind == "insert" {
+        alloc rid := insert(db, stmt.table, stmt.values)
+        return {kind: "insert", message: "OK", rowid: rid}
+    }
+    if stmt.kind == "delete" {
+        alloc n := delete_where(db, stmt.table, stmt.where)
+        return {kind: "delete", deleted: n}
+    }
+    if stmt.kind == "select" {
+        alloc res := select_filtered(db, stmt.table, stmt.columns, stmt.where, stmt.order_by)
+        return {kind: "select", columns: res.columns, rows: res.rows}
+    }
+    panic("exec: unknown statement kind: " + stmt.kind)
+}
+
+# === Internal helpers ======================================================
+
+# Bump total_pages and return the freshly-allocated page index. The
+# new page is NOT written by this function — caller must write_page
+# to it before close_db (otherwise the on-disk file may have a "hole"
+# that read_page treats as zero-filled).
+proc alloc_page(db) {
+    alloc n := db.meta.total_pages
+    db.meta.total_pages := n + 1
+    db.dirty := true
+    return n
+}
+
+# OMG has no built-in `in` operator for dicts; this is the standard idiom.
+proc has_key(d, key) {
+    alloc names := dict_keys(d)
+    alloc i := 0
+    loop i < length(names) {
+        if names[i] == key {
+            return true
+        }
+        i := i + 1
+    }
+    return false
+}
+
+# Return the index of `name` in the list `xs`, or -1 if missing. Used
+# by the executor to resolve WHERE / ORDER BY / SELECT column names
+# against the table's schema.
+proc index_of(xs, name) {
+    alloc i := 0
+    loop i < length(xs) {
+        if xs[i] == name {
+            return i
+        }
+        i := i + 1
+    }
+    return -1
+}
+
+# Evaluate a WHERE comparison `lhs op rhs` against the OMG comparison
+# operators. Strings sort lexicographically; mixed-type comparisons
+# fall through to OMG's native semantics (an int never equals a
+# string, etc.).
+proc compare_op(lhs, op, rhs) {
+    if op == "="  { return lhs == rhs }
+    if op == "!=" { return lhs != rhs }
+    if op == "<"  { return lhs <  rhs }
+    if op == "<=" { return lhs <= rhs }
+    if op == ">"  { return lhs >  rhs }
+    if op == ">=" { return lhs >= rhs }
+    panic("exec: unknown comparison op: " + op)
+}
+
+# Insertion sort (stable, in-place over a fresh list copy) by the
+# `sort_idx`-th column value of each row. Rows are [rowid, [values]],
+# so sort_idx is into the inner list. O(n²) — fine up to a few
+# thousand rows.
+proc sort_rows(rows, sort_idx) {
+    alloc xs := []
+    alloc i := 0
+    loop i < length(rows) {
+        xs := xs + [rows[i]]
+        i := i + 1
+    }
+    alloc n := length(xs)
+    alloc k := 1
+    loop k < n {
+        alloc j := k
+        loop j > 0 and xs[j - 1][1][sort_idx] > xs[j][1][sort_idx] {
+            alloc tmp := xs[j - 1]
+            xs[j - 1] := xs[j]
+            xs[j] := tmp
+            j := j - 1
+        }
+        k := k + 1
+    }
+    return xs
+}

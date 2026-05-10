@@ -41,6 +41,10 @@ fn builtin_names() -> &'static [&'static str] {
         "file_read",
         "file_write",
         "file_close",
+        // Random-access file I/O. Used by tools/db (omgdb) for paged
+        // storage; pairs with file_open's `rb+` / `wb+` modes.
+        "file_seek",
+        "file_tell",
         "file_exists",
         "is_dir",
         "read_dir",

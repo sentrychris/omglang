@@ -458,7 +458,11 @@ pub fn call_builtin(
             )),
         },
 
-        // file_open("path", "r|rb|w|wb|a|ab") -> handle (int)
+        // file_open("path", "r|rb|w|wb|a|ab|rb+|wb+") -> handle (int)
+        // The `+` modes are binary-only random-access:
+        //   rb+ — open existing for read+write; preserves contents.
+        //   wb+ — create/truncate for read+write.
+        // Pair with file_seek + file_tell for page-level I/O.
         "file_open" => match args {
             [Value::Str(path), Value::Str(mode)] => {
                 let path_buf = resolve_path(path, env, globals);
@@ -474,6 +478,12 @@ pub fn call_builtin(
                     }
                     "a" | "ab" => {
                         opts.write(true).create(true).append(true);
+                    }
+                    "rb+" => {
+                        opts.read(true).write(true);
+                    }
+                    "wb+" => {
+                        opts.read(true).write(true).create(true).truncate(true);
                     }
                     _ => {
                         return Err(RuntimeError::ValueError(
@@ -588,6 +598,55 @@ pub fn call_builtin(
             }
             _ => Err(RuntimeError::TypeError(
                 "file_write() expects handle and data".to_string(),
+            )),
+        },
+
+        // file_seek(handle, offset) -> Int (new absolute position)
+        // Seeks the handle to `offset` bytes from the start of the file.
+        // Negative offsets are rejected. Pair with file_tell.
+        "file_seek" => match args {
+            [Value::Int(handle), Value::Int(offset)] => {
+                if *offset < 0 {
+                    return Err(RuntimeError::ValueError(
+                        "file_seek() expects a non-negative offset".to_string(),
+                    ));
+                }
+                use std::io::Seek;
+                let mut table = FILE_HANDLES.lock().unwrap();
+                if let Some(entry) = table.get_mut(&(*handle as i32)) {
+                    match entry.file.seek(std::io::SeekFrom::Start(*offset as u64)) {
+                        Ok(pos) => Ok(Value::Int(pos as i64)),
+                        Err(e) => Err(RuntimeError::ValueError(format!(
+                            "file_seek: {}", e
+                        ))),
+                    }
+                } else {
+                    Err(RuntimeError::ValueError("invalid file handle".to_string()))
+                }
+            }
+            _ => Err(RuntimeError::TypeError(
+                "file_seek() expects handle and offset".to_string(),
+            )),
+        },
+
+        // file_tell(handle) -> Int (current absolute position)
+        "file_tell" => match args {
+            [Value::Int(handle)] => {
+                use std::io::Seek;
+                let mut table = FILE_HANDLES.lock().unwrap();
+                if let Some(entry) = table.get_mut(&(*handle as i32)) {
+                    match entry.file.stream_position() {
+                        Ok(pos) => Ok(Value::Int(pos as i64)),
+                        Err(e) => Err(RuntimeError::ValueError(format!(
+                            "file_tell: {}", e
+                        ))),
+                    }
+                } else {
+                    Err(RuntimeError::ValueError("invalid file handle".to_string()))
+                }
+            }
+            _ => Err(RuntimeError::TypeError(
+                "file_tell() expects a handle".to_string(),
             )),
         },
 

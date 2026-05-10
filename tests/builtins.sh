@@ -314,6 +314,124 @@ build_aot "$TMPDIR_TEST/stdin_round_trip.omg" "$TMPDIR_TEST/stdin_round_trip" >/
 actual=$(printf 'round trip' | "$TMPDIR_TEST/stdin_round_trip")
 assert_eq "stdin_read_bytes round-trip via bytes_to_string" "round trip" "$actual"
 
+section "Builtins: file_seek / file_tell / rb+ / wb+"
+
+# Random-access read-after-write: write known bytes, seek mid-file,
+# overwrite three of them, read everything back. Exercises wb+ (create
+# for read+write+truncate) and the seek/tell pair.
+cat > "$TMPDIR_TEST/seek_overwrite.omg" <<'EOF'
+;;;omg
+alloc h := file_open(args[1], "wb+")
+file_write(h, [65, 66, 67, 68, 69, 70, 71, 72, 73, 74])
+emit "wrote_at=" + file_tell(h)
+file_seek(h, 4)
+emit "seek_to=" + file_tell(h)
+file_write(h, [120, 121, 122])
+file_seek(h, 0)
+alloc bs := file_read(h)
+file_close(h)
+emit "len=" + length(bs)
+alloc i := 0
+loop i < length(bs) {
+    emit "b" + i + "=" + bs[i]
+    i := i + 1
+}
+EOF
+build_aot "$TMPDIR_TEST/seek_overwrite.omg" "$TMPDIR_TEST/seek_overwrite" >/dev/null
+
+expected="wrote_at=10
+seek_to=4
+len=10
+b0=65
+b1=66
+b2=67
+b3=68
+b4=120
+b5=121
+b6=122
+b7=72
+b8=73
+b9=74"
+actual=$("$OMG_RUST" "$TMPDIR_TEST/seek_overwrite.omg" "$TMPDIR_TEST/seek_a.bin")
+assert_eq "wb+/seek/tell: Rust runtime" "$expected" "$actual"
+actual=$("$TMPDIR_TEST/seek_overwrite" "$TMPDIR_TEST/seek_b.bin")
+assert_eq "wb+/seek/tell: AOT binary"   "$expected" "$actual"
+actual=$("$OMG_NATIVE" "$TMPDIR_TEST/seek_overwrite.omg" "$TMPDIR_TEST/seek_c.bin")
+assert_eq "wb+/seek/tell: native interpreted" "$expected" "$actual"
+
+# rb+ preserves existing contents (does NOT truncate). Create a file,
+# reopen with rb+, overwrite the middle, and confirm the unwritten
+# bytes survived.
+cat > "$TMPDIR_TEST/rb_plus.omg" <<'EOF'
+;;;omg
+# Phase 1: create a 10-byte file (contents 0..9) via wb.
+alloc h := file_open(args[1], "wb")
+file_write(h, [0, 1, 2, 3, 4, 5, 6, 7, 8, 9])
+file_close(h)
+
+# Phase 2: open existing for read+write WITHOUT truncating.
+alloc h2 := file_open(args[1], "rb+")
+file_seek(h2, 5)
+file_write(h2, [99])
+file_seek(h2, 0)
+alloc bs := file_read(h2)
+file_close(h2)
+emit "len=" + length(bs)
+alloc i := 0
+loop i < length(bs) {
+    emit "b" + i + "=" + bs[i]
+    i := i + 1
+}
+EOF
+build_aot "$TMPDIR_TEST/rb_plus.omg" "$TMPDIR_TEST/rb_plus" >/dev/null
+expected="len=10
+b0=0
+b1=1
+b2=2
+b3=3
+b4=4
+b5=99
+b6=6
+b7=7
+b8=8
+b9=9"
+actual=$("$OMG_RUST" "$TMPDIR_TEST/rb_plus.omg" "$TMPDIR_TEST/rbplus_a.bin")
+assert_eq "rb+ preserves contents (Rust)" "$expected" "$actual"
+actual=$("$TMPDIR_TEST/rb_plus" "$TMPDIR_TEST/rbplus_b.bin")
+assert_eq "rb+ preserves contents (AOT)"  "$expected" "$actual"
+
+# file_seek with negative offset → ValueError.
+cat > "$TMPDIR_TEST/seek_neg.omg" <<'EOF'
+;;;omg
+alloc h := file_open(args[1], "wb+")
+file_write(h, [1, 2, 3])
+try {
+    file_seek(h, -1)
+    emit "no-error"
+} except err {
+    emit "caught"
+}
+file_close(h)
+EOF
+actual=$("$OMG_RUST" "$TMPDIR_TEST/seek_neg.omg" "$TMPDIR_TEST/neg_a.bin" 2>&1)
+assert_eq "file_seek negative offset rejected (Rust)" "caught" "$actual"
+build_aot "$TMPDIR_TEST/seek_neg.omg" "$TMPDIR_TEST/seek_neg" >/dev/null
+actual=$("$TMPDIR_TEST/seek_neg" "$TMPDIR_TEST/neg_b.bin" 2>&1)
+assert_eq "file_seek negative offset rejected (AOT)" "caught" "$actual"
+
+# Invalid mode → ValueError.
+cat > "$TMPDIR_TEST/bad_mode.omg" <<'EOF'
+;;;omg
+try {
+    alloc h := file_open(args[1], "zzz")
+    emit "no-error"
+} except err {
+    emit "caught"
+}
+EOF
+actual=$("$OMG_RUST" "$TMPDIR_TEST/bad_mode.omg" "$TMPDIR_TEST/bad.bin" 2>&1)
+assert_eq "file_open invalid mode rejected (Rust)" "caught" "$actual"
+
 section "Builtins: print"
 
 # print(s) writes to stdout WITHOUT a trailing newline. Three prints

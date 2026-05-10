@@ -1622,6 +1622,11 @@ static Value omg_builtin_file_open(Value path, Value mode) {
     if (strcmp(m, "r") == 0 || strcmp(m, "rb") == 0) fm = binary ? "rb" : "r";
     else if (strcmp(m, "w") == 0 || strcmp(m, "wb") == 0) fm = binary ? "wb" : "w";
     else if (strcmp(m, "a") == 0 || strcmp(m, "ab") == 0) fm = binary ? "ab" : "a";
+    /* Random-access binary modes (used by tools/db for paged I/O):
+     *   rb+ — open existing for read+write; preserves contents.
+     *   wb+ — create/truncate for read+write. */
+    else if (strcmp(m, "rb+") == 0) fm = "rb+";
+    else if (strcmp(m, "wb+") == 0) fm = "wb+";
     else omg_panic("ValueError", "invalid file mode");
     const char *full = omg_resolve_path(path.v.s);
     FILE *fp = fopen(full, fm);
@@ -1714,6 +1719,33 @@ static Value omg_builtin_file_close(Value h) {
     e->fp = NULL;
     e->valid = 0;
     return omg_none();
+}
+
+/* file_seek(handle, offset): seek the handle to `offset` bytes from
+ * the start of the file. Negative offsets rejected. Returns the new
+ * absolute position (always equals `offset` on success). */
+static Value omg_builtin_file_seek(Value h, Value off) {
+    if (h.tag != OMG_INT) omg_panic("TypeError", "file_seek() expects a handle");
+    if (off.tag != OMG_INT) omg_panic("TypeError", "file_seek() expects an integer offset");
+    if (off.v.i < 0) omg_panic("ValueError", "file_seek() expects a non-negative offset");
+    OmgFileEntry *e = omg_file_get((int)h.v.i);
+    if (!e) omg_panic("ValueError", "invalid file handle");
+    if (fseek(e->fp, (long)off.v.i, SEEK_SET) != 0) {
+        omg_panicf("ValueError", "file_seek: %s", strerror(errno));
+    }
+    return omg_int(off.v.i);
+}
+
+/* file_tell(handle): current absolute byte position of the handle. */
+static Value omg_builtin_file_tell(Value h) {
+    if (h.tag != OMG_INT) omg_panic("TypeError", "file_tell() expects a handle");
+    OmgFileEntry *e = omg_file_get((int)h.v.i);
+    if (!e) omg_panic("ValueError", "invalid file handle");
+    long pos = ftell(e->fp);
+    if (pos < 0) {
+        omg_panicf("ValueError", "file_tell: %s", strerror(errno));
+    }
+    return omg_int((int64_t)pos);
 }
 
 static Value omg_builtin_read_file(Value path) {
@@ -1848,6 +1880,7 @@ static Value omg_call_builtin(Value name, Value args) {
         if (strcmp(n, "bits_to_float") == 0)   return omg_builtin_bits_to_float(a[0]);
         if (strcmp(n, "file_read") == 0)       return omg_builtin_file_read(a[0]);
         if (strcmp(n, "file_close") == 0)      return omg_builtin_file_close(a[0]);
+        if (strcmp(n, "file_tell") == 0)       return omg_builtin_file_tell(a[0]);
         if (strcmp(n, "read_file") == 0)       return omg_builtin_read_file(a[0]);
         if (strcmp(n, "file_exists") == 0)     return omg_builtin_file_exists(a[0]);
         if (strcmp(n, "is_dir") == 0)          return omg_builtin_is_dir(a[0]);
@@ -1874,6 +1907,7 @@ static Value omg_call_builtin(Value name, Value args) {
         if (strcmp(n, "binary") == 0)     return omg_builtin_binary2(a[0], a[1]);
         if (strcmp(n, "file_open") == 0)  return omg_builtin_file_open(a[0], a[1]);
         if (strcmp(n, "file_write") == 0) return omg_builtin_file_write(a[0], a[1]);
+        if (strcmp(n, "file_seek") == 0)  return omg_builtin_file_seek(a[0], a[1]);
         if (strcmp(n, "call_builtin") == 0) return omg_call_builtin(a[0], a[1]);
     }
     omg_panicf("TypeError", "unknown builtin: %s", n);
