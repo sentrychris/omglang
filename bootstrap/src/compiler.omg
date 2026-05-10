@@ -1017,7 +1017,8 @@ alloc cc_loading := []
 alloc cc_builtins := [
     "chr", "ascii", "hex", "binary", "length", "read_file",
     "freeze", "call_builtin", "file_open", "file_read",
-    "file_write", "file_close", "file_exists",
+    "file_write", "file_close", "file_seek", "file_tell",
+    "file_exists",
     "is_dir", "read_dir", "make_dir", "string_bytes",
     "int", "float", "floor", "ceil", "round", "abs",
     "sqrt", "pow", "log", "sin", "cos", "tan",

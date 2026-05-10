@@ -390,6 +390,8 @@ proc emit_builtin(name, argc) {
     if name == "file_read"   and argc == 1 { return emit_builtin1("omg_builtin_file_read") }
     if name == "file_write"  and argc == 2 { return emit_builtin2("omg_builtin_file_write") }
     if name == "file_close"  and argc == 1 { return emit_builtin1("omg_builtin_file_close") }
+    if name == "file_seek"   and argc == 2 { return emit_builtin2("omg_builtin_file_seek") }
+    if name == "file_tell"   and argc == 1 { return emit_builtin1("omg_builtin_file_tell") }
     if name == "read_file"   and argc == 1 { return emit_builtin1("omg_builtin_read_file") }
     if name == "file_exists" and argc == 1 { return emit_builtin1("omg_builtin_file_exists") }
     if name == "is_dir"      and argc == 1 { return emit_builtin1("omg_builtin_is_dir") }
