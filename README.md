@@ -3,7 +3,7 @@
 [![CodeQL](https://github.com/sentrychris/omglang/actions/workflows/codeql.yml/badge.svg)](https://github.com/sentrychris/omglang/actions/workflows/codeql.yml)
 [![CI](https://github.com/sentrychris/omglang/actions/workflows/ci.yml/badge.svg)](https://github.com/sentrychris/omglang/actions/workflows/ci.yml)
 
-A small programming language made for fun and for learning how
+OMG (Omg Much Grammar) is a small programming language made for fun and for learning how
 languages get put together end-to-end.
 
 OMG has the usual stuff every language has: variables, math, strings, lists,
