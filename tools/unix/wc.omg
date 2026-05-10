@@ -4,6 +4,9 @@
 # Output columns match `wc -l -w -m`.
 #
 # Usage:  omg tools/wc.omg <file> [file...]
+#         cat file | omg tools/wc.omg            # bare → reads stdin
+#         cat file | omg tools/wc.omg -          # `-` → reads stdin
+#         omg tools/wc.omg a.txt - b.txt         # mix files and stdin
 
 proc count(text) {
     alloc n := length(text)
@@ -27,17 +30,24 @@ proc count(text) {
     return [lines, words, n]
 }
 
-if length(args) < 2 {
-    panic("usage: omg tools/wc.omg <file> [file...]")
+# No file args → behave like `wc` with no arguments: read stdin.
+alloc inputs := args[1:]
+if length(inputs) == 0 {
+    inputs := ["-"]
 }
 
 alloc total_l := 0
 alloc total_w := 0
 alloc total_c := 0
-alloc i := 1
-loop i < length(args) {
-    alloc path := args[i]
-    alloc text := read_file(path)
+alloc i := 0
+loop i < length(inputs) {
+    alloc path := inputs[i]
+    alloc text := false
+    if path == "-" {
+        text := stdin_read()
+    } else {
+        text := read_file(path)
+    }
     if text == false {
         emit path + ": cannot read"
     } else {
@@ -49,6 +59,6 @@ loop i < length(args) {
     }
     i := i + 1
 }
-if length(args) > 3 {
+if length(inputs) > 1 {
     emit total_l + "\t" + total_w + "\t" + total_c + "\ttotal"
 }

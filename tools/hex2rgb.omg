@@ -1,0 +1,69 @@
+;;;omg
+
+# Character lookup for hex digits
+alloc HEXCHARS := "0123456789ABCDEF"
+
+# Convert a single hex digit to decimal
+proc hex_char_to_int(ch) {
+    alloc i := 0
+    loop i < 16 {
+        if HEXCHARS[i] == ch {
+            return i
+        }
+        i := i + 1
+    }
+    return 0  # fallback (shouldn't be reached)
+}
+
+# Convert two hex characters to a decimal byte
+proc hex_to_byte(pair) {
+    alloc high := hex_char_to_int(pair[0])
+    alloc low := hex_char_to_int(pair[1])
+    return high * 16 + low
+}
+
+# Convert full hex string to RGB
+proc hex_to_rgb(hexstr) {
+    alloc r := hex_to_byte(hexstr[0:2])
+    alloc g := hex_to_byte(hexstr[2:4])
+    alloc b := hex_to_byte(hexstr[4:6])
+    return r + "," + g + "," + b
+}
+
+# Convert decimal 0–15 to a hex digit
+proc nibble_to_hex(n) {
+    return HEXCHARS[n]
+}
+
+# Convert a byte (0–255) to two hex characters
+proc byte_to_hex(n) {
+    alloc hi := n / 16
+    alloc lo := n % 16
+    return nibble_to_hex(hi) + nibble_to_hex(lo)
+}
+
+# Convert RGB values to hex string
+proc rgb_to_hex(r, g, b) {
+    return byte_to_hex(r) + byte_to_hex(g) + byte_to_hex(b)
+}
+
+if length(args) < 2 {
+    panic("usage: omg tools/hex2rgb.omg <hex|rgb> [hexstr|r g b]")
+}
+
+alloc mode := args[1]
+if mode == "hex" {
+
+    # e.g. FF8800
+    alloc in_hex := args[2]
+    emit hex_to_rgb(in_hex)
+} elif mode == "rgb" {
+    if length(args) < 5 {
+        panic("usage: omg tools/hex2rgb.omg rgb r g b")
+    }
+
+    # e.g. 255 136 0
+    emit rgb_to_hex(args[2], args[3], args[4])
+} else {
+    panic("usage: omg tools/hex2rgb.omg <hex|rgb> [hexstr|r g b]")
+}

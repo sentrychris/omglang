@@ -6,22 +6,28 @@ import "../modules/lib.omg" as lib
 # on arbitrary files, not just text.
 #
 # Usage:  omg tools/hex.omg <file>
+#         cat file | omg tools/hex.omg          # bare → reads stdin
+#         cat file | omg tools/hex.omg -        # `-` → reads stdin
 #
 # Format (16 bytes per row):
 #   00000000: 6f 6d 67 20 6c 61 6e 67  75 61 67 65 0a 64 6f 63  omg lang uage.doc
 
-if length(args) < 2 {
-    panic("usage: omg tools/hex.omg <file>")
+alloc path := "-"
+if length(args) >= 2 {
+    path := args[1]
 }
 
-alloc path := args[1]
-if file_exists(path) == false {
-    panic("hex: cannot read '" + path + "'")
+alloc bytes := false
+if path == "-" {
+    bytes := stdin_read_bytes()
+} else {
+    if file_exists(path) == false {
+        panic("hex: cannot read '" + path + "'")
+    }
+    alloc h := file_open(path, "rb")
+    bytes := file_read(h)
+    file_close(h)
 }
-
-alloc h := file_open(path, "rb")
-alloc bytes := file_read(h)
-file_close(h)
 
 alloc n := length(bytes)
 alloc offset := 0

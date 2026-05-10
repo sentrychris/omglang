@@ -5,21 +5,32 @@ import "../modules/lib.omg" as lib
 # grep — print lines containing a literal substring.
 #
 # Usage:  omg tools/grep.omg <pattern> <file> [file...]
+#         cat file | omg tools/grep.omg <pattern>     # bare → reads stdin
+#         cat file | omg tools/grep.omg <pattern> -   # `-` → reads stdin
 #
 # Output format:
 #   single file:   <lineno>:<line>
 #   multiple files: <path>:<lineno>:<line>
 
-if length(args) < 3 {
-    panic("usage: omg tools/grep.omg <pattern> <file> [file...]")
+if length(args) < 2 {
+    panic("usage: omg tools/grep.omg <pattern> [file...]")
 }
 
 alloc pattern := args[1]
-alloc multi := length(args) > 3
-alloc i := 2
-loop i < length(args) {
-    alloc path := args[i]
-    alloc text := read_file(path)
+alloc inputs := args[2:]
+if length(inputs) == 0 {
+    inputs := ["-"]
+}
+alloc multi := length(inputs) > 1
+alloc i := 0
+loop i < length(inputs) {
+    alloc path := inputs[i]
+    alloc text := false
+    if path == "-" {
+        text := stdin_read()
+    } else {
+        text := read_file(path)
+    }
     if text == false {
         emit path + ": cannot read"
     } else {

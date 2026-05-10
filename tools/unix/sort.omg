@@ -5,20 +5,28 @@ import "../modules/lib.omg" as lib
 # sort — print all input lines sorted lexicographically.
 #
 # Usage:  omg tools/sort.omg <file> [file...]
+#         cat file | omg tools/sort.omg          # bare → reads stdin
+#         cat file | omg tools/sort.omg -        # `-` → reads stdin
 #
 # All input files are concatenated before sorting.  Performance is
 # `O(N²)` (insertion sort) — fine up to a few thousand lines.
 
-if length(args) < 2 {
-    panic("usage: omg tools/sort.omg <file> [file...]")
+alloc inputs := args[1:]
+if length(inputs) == 0 {
+    inputs := ["-"]
 }
 
 alloc all_lines := []
-alloc i := 1
-loop i < length(args) {
-    alloc text := read_file(args[i])
+alloc i := 0
+loop i < length(inputs) {
+    alloc text := false
+    if inputs[i] == "-" {
+        text := stdin_read()
+    } else {
+        text := read_file(inputs[i])
+    }
     if text == false {
-        emit args[i] + ": cannot read"
+        emit inputs[i] + ": cannot read"
     } else {
         alloc lns := lib.split_lines(text)
         alloc j := 0

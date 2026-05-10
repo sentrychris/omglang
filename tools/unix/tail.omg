@@ -6,6 +6,8 @@ import "../modules/lib.omg" as lib
 # more than one file, separates each with a banner header line.
 #
 # Usage:  omg tools/tail.omg [-n N] <file> [file...]
+#         cat file | omg tools/tail.omg                   # bare → reads stdin
+#         cat file | omg tools/tail.omg [-n N] -          # `-` → reads stdin
 
 alloc count := 10
 alloc start := 1
@@ -19,22 +21,28 @@ if length(args) >= 3 and args[1] == "-n" {
     start := 3
 }
 
-if length(args) <= start {
-    panic("usage: omg tools/tail.omg [-n N] <file> [file...]")
+alloc inputs := args[start:]
+if length(inputs) == 0 {
+    inputs := ["-"]
 }
 
-alloc multi := length(args) - start > 1
-alloc i := start
-loop i < length(args) {
+alloc multi := length(inputs) > 1
+alloc i := 0
+loop i < length(inputs) {
     if multi {
-        if i > start {
+        if i > 0 {
             emit ""
         }
-        emit "==> " + args[i] + " <=="
+        emit "==> " + inputs[i] + " <=="
     }
-    alloc text := read_file(args[i])
+    alloc text := false
+    if inputs[i] == "-" {
+        text := stdin_read()
+    } else {
+        text := read_file(inputs[i])
+    }
     if text == false {
-        emit args[i] + ": cannot read"
+        emit inputs[i] + ": cannot read"
     } else {
         alloc lines := lib.split_lines(text)
         alloc nl := length(lines)

@@ -8,14 +8,22 @@ import "../modules/lib.omg" as lib
 # `sort file | uniq`.
 #
 # Usage:  omg tools/uniq.omg <file>
+#         cat file | omg tools/uniq.omg          # bare → reads stdin
+#         cat file | omg tools/uniq.omg -        # `-` → reads stdin
 
-if length(args) < 2 {
-    panic("usage: omg tools/uniq.omg <file>")
+alloc path := "-"
+if length(args) >= 2 {
+    path := args[1]
 }
 
-alloc text := read_file(args[1])
+alloc text := false
+if path == "-" {
+    text := stdin_read()
+} else {
+    text := read_file(path)
+}
 if text == false {
-    panic("uniq: cannot read '" + args[1] + "'")
+    panic("uniq: cannot read '" + path + "'")
 }
 
 alloc lines := lib.split_lines(text)
