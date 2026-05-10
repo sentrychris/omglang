@@ -53,6 +53,9 @@ if length(args) < 2 {
 
 alloc mode := args[1]
 if mode == "hex" {
+    if length(args) < 3 {
+        panic("usage: omg tools/hex2rgb.omg hex hexstr")
+    }
 
     # e.g. FF8800
     alloc in_hex := args[2]
