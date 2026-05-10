@@ -65,8 +65,9 @@ if mode == "hex" {
         panic("usage: omg tools/hex2rgb.omg rgb r g b")
     }
 
-    # e.g. 255 136 0
-    emit rgb_to_hex(args[2], args[3], args[4])
+    # e.g. 255 136 0. argv elements are strings; coerce to int so the
+    # arithmetic in byte_to_hex doesn't operate on the raw strings.
+    emit rgb_to_hex(int(args[2]), int(args[3]), int(args[4]))
 } else {
     panic("usage: omg tools/hex2rgb.omg <hex|rgb> [hexstr|r g b]")
 }
