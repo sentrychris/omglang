@@ -23,6 +23,7 @@ SUITES=(
     driver
     repl
     regression
+    db
     parity
 )
 

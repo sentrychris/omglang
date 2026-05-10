@@ -1,0 +1,377 @@
+;;;omg
+
+# wire.omg — byte packing + paged I/O for omgdb.
+#
+# This module is pure encoding: it doesn't know about tables, queries,
+# or B-trees. It exposes:
+#
+#   pack_u8 / pack_u16 / pack_u32 / pack_i64       — emit byte lists
+#   unpack_u8 / unpack_u16 / unpack_u32 / unpack_i64 — read at offset
+#   pack_text(s)        / unpack_text(bytes, off)  — length-prefixed UTF-8
+#   read_page(fh, n)    / write_page(fh, n, bs)    — page-level I/O
+#   alloc_page(meta)                               — bump total_pages
+#
+# All multi-byte integers are big-endian.
+#
+# The on-disk format is described in plans/02-omgdb.md. Day-2 phase only
+# uses leaf pages (page_type=2) chained via the next_leaf field; the
+# B-tree migration in Day 4 reuses the same bytes.
+
+# === Constants =============================================================
+
+alloc PAGE_SIZE := 4096
+
+# Page type tags. Phase 1 only allocates META and LEAF pages.
+alloc PT_META     := 0
+alloc PT_INTERNAL := 1
+alloc PT_LEAF     := 2
+alloc PT_OVERFLOW := 3
+
+# Value type tags inside a row's payload.
+alloc VT_INT  := 1
+alloc VT_TEXT := 2
+
+# Page-0 magic + format version. Bumped if the layout changes.
+alloc MAGIC := [79, 77, 71, 68]   # "OMGD"
+alloc FORMAT_VERSION := 1
+
+# === Byte packing ==========================================================
+
+# Each pack_* returns a fresh list of byte ints. Each unpack_* reads
+# from `bytes` starting at `off` and returns [value, new_off] so chains
+# of unpacks can thread the offset.
+
+proc pack_u8(n) {
+    return [n & 255]
+}
+proc unpack_u8(bytes, off) {
+    return [bytes[off], off + 1]
+}
+
+proc pack_u16(n) {
+    return [(n >> 8) & 255, n & 255]
+}
+proc unpack_u16(bytes, off) {
+    alloc v := (bytes[off] << 8) | bytes[off + 1]
+    return [v, off + 2]
+}
+
+proc pack_u32(n) {
+    return [(n >> 24) & 255, (n >> 16) & 255, (n >> 8) & 255, n & 255]
+}
+proc unpack_u32(bytes, off) {
+    alloc v := (bytes[off] << 24) | (bytes[off + 1] << 16) | (bytes[off + 2] << 8) | bytes[off + 3]
+    return [v, off + 4]
+}
+
+proc pack_i64(n) {
+    alloc out := []
+    alloc i := 7
+    loop i >= 0 {
+        out := out + [(n >> (i * 8)) & 255]
+        i := i - 1
+    }
+    return out
+}
+proc unpack_i64(bytes, off) {
+    # Assemble the eight bytes back into an int. OMG ints are i64 so
+    # values that go negative on disk reappear correctly here as long
+    # as we sign-extend from byte 0's high bit.
+    alloc hi := bytes[off]
+    alloc v := 0
+    alloc i := 0
+    loop i < 8 {
+        v := (v << 8) | bytes[off + i]
+        i := i + 1
+    }
+    # Sign-extend: if the top bit was set, v is currently a 64-bit
+    # unsigned value held in OMG's i64 (which already wraps), so the
+    # bit pattern is correct. No extra fix-up needed in OMG.
+    return [v, off + 8]
+}
+
+# UTF-8 text, framed as <u32 byte_length><bytes>.
+proc pack_text(s) {
+    alloc bs := string_bytes(s)
+    return pack_u32(length(bs)) + bs
+}
+proc unpack_text(bytes, off) {
+    alloc head := unpack_u32(bytes, off)
+    alloc len := head[0]
+    alloc start := head[1]
+    alloc slice := []
+    alloc i := 0
+    loop i < len {
+        slice := slice + [bytes[start + i]]
+        i := i + 1
+    }
+    return [bytes_to_string(slice), start + len]
+}
+
+# === Per-cell value packing ================================================
+
+# A row's payload is a sequence of typed values: [tag(u8), bytes...].
+# pack_value emits one such typed value; unpack_value reads one and
+# returns [omg_value, new_off].
+
+proc pack_value(v) {
+    if v == false { panic("wire: cannot pack false") }
+    # OMG has no typeof builtin. length() panics cleanly on ints across
+    # both backends (Rust + native), so we use it as the discriminator:
+    # if length(v) succeeds, treat as text; otherwise it's an int.
+    # length() also works on lists, but v1 row values are only INT and
+    # TEXT — a list in a row would fall through to pack_text and raise
+    # inside string_bytes, which is the right diagnostic.
+    #
+    # (Bitwise ops would be a cleaner discriminator but the native
+    # runtime currently doesn't type-check operands of `&` / `|` / `^`
+    # the way the Rust runtime does — a divergence to fix separately.)
+    try {
+        alloc _ := length(v)
+        return [VT_TEXT] + pack_text(v)
+    } except err {
+        return [VT_INT] + pack_i64(v)
+    }
+}
+
+proc unpack_value(bytes, off) {
+    alloc tag_pair := unpack_u8(bytes, off)
+    alloc tag := tag_pair[0]
+    alloc next := tag_pair[1]
+    if tag == VT_INT {
+        return unpack_i64(bytes, next)
+    }
+    if tag == VT_TEXT {
+        return unpack_text(bytes, next)
+    }
+    panic("wire: unknown value tag: " + tag)
+}
+
+# Pack a row (a list of OMG values) into the cell payload bytes.
+proc pack_row(values) {
+    alloc out := []
+    alloc i := 0
+    loop i < length(values) {
+        out := out + pack_value(values[i])
+        i := i + 1
+    }
+    return out
+}
+
+# Inverse: read `count` values starting at offset `off`, return
+# [list_of_values, new_off].
+proc unpack_row(bytes, off, count) {
+    alloc vs := []
+    alloc cur := off
+    alloc i := 0
+    loop i < count {
+        alloc pair := unpack_value(bytes, cur)
+        vs := vs + [pair[0]]
+        cur := pair[1]
+        i := i + 1
+    }
+    return [vs, cur]
+}
+
+# === Page-level helpers ====================================================
+
+# Build a fresh empty page (PAGE_SIZE bytes, all zero). Higher-level
+# helpers fill in headers + cells.
+proc empty_page() {
+    alloc bs := []
+    alloc i := 0
+    loop i < PAGE_SIZE {
+        bs := bs + [0]
+        i := i + 1
+    }
+    return bs
+}
+
+# Construct a leaf page header. Returns the first 16 bytes; cells are
+# appended by the caller (or written via page_write_cell).
+proc leaf_header(cell_count, free_offset, next_leaf, parent_page) {
+    alloc out := []
+    out := out + pack_u8(PT_LEAF)
+    out := out + pack_u8(0)
+    out := out + pack_u16(cell_count)
+    out := out + pack_u16(free_offset)
+    out := out + pack_u32(next_leaf)
+    out := out + pack_u32(parent_page)
+    out := out + pack_u16(0)
+    return out
+}
+
+# Write a 16-byte header at the start of an existing page buffer.
+proc set_leaf_header(page, cell_count, free_offset, next_leaf, parent_page) {
+    alloc hdr := leaf_header(cell_count, free_offset, next_leaf, parent_page)
+    alloc i := 0
+    loop i < 16 {
+        page[i] := hdr[i]
+        i := i + 1
+    }
+    return page
+}
+
+# Read the leaf-page header at offset 0 of `page`. Returns a dict so
+# fields are name-addressable.
+proc read_leaf_header(page) {
+    alloc t := unpack_u8(page, 0)
+    alloc rsv := unpack_u8(page, t[1])
+    alloc cc := unpack_u16(page, rsv[1])
+    alloc fo := unpack_u16(page, cc[1])
+    alloc nl := unpack_u32(page, fo[1])
+    alloc pp := unpack_u32(page, nl[1])
+    return {
+        page_type: t[0],
+        cell_count: cc[0],
+        free_offset: fo[0],
+        next_leaf: nl[0],
+        parent_page: pp[0]
+    }
+}
+
+# Splice `bs` into `page` starting at `off`, in place. Length-checked
+# only at the page boundary (callers guard for cell-fits-in-page).
+proc splice_into(page, off, bs) {
+    alloc i := 0
+    loop i < length(bs) {
+        page[off + i] := bs[i]
+        i := i + 1
+    }
+    return page
+}
+
+# === Disk I/O ==============================================================
+
+# Read page `n` from an open `rb+` handle. Returns a list of PAGE_SIZE
+# byte ints (0 if past EOF). Callers must ensure the page exists; a
+# read past EOF returns a zero-filled page (matching Phase-1 semantics
+# for "freshly allocated, never written").
+proc read_page(fh, n) {
+    file_seek(fh, n * PAGE_SIZE)
+    # file_read on a binary handle returns the remainder. Slice to the
+    # first PAGE_SIZE bytes; pad with zeros if short.
+    alloc rest := file_read(fh)
+    alloc out := []
+    alloc i := 0
+    loop i < PAGE_SIZE {
+        if i < length(rest) {
+            out := out + [rest[i]]
+        } else {
+            out := out + [0]
+        }
+        i := i + 1
+    }
+    return out
+}
+
+# Write `page` (must be exactly PAGE_SIZE bytes) at page-index `n`.
+proc write_page(fh, n, page) {
+    if length(page) != PAGE_SIZE {
+        panic("wire: page must be PAGE_SIZE bytes, got " + length(page))
+    }
+    file_seek(fh, n * PAGE_SIZE)
+    file_write(fh, page)
+}
+
+# === Meta page (page 0) ====================================================
+
+# Construct a fresh meta page with no tables in the catalog.
+proc fresh_meta_page() {
+    alloc page := empty_page()
+    splice_into(page, 0, MAGIC)
+    splice_into(page, 4, pack_u16(FORMAT_VERSION))
+    # bytes 6..7: reserved (zero)
+    splice_into(page, 8, pack_u32(1))   # total_pages = 1 (just this meta page)
+    # bytes 12..15: reserved
+    # byte 16: catalog terminator (0)
+    return page
+}
+
+# Read meta-page fields. `page` is the raw 4096-byte buffer.
+# Catalog parsing: walk entries from offset 16 until name_length=0.
+# Each entry: <u8 name_len><name bytes><u32 first_page><u32 last_page><u32 next_rowid>
+proc read_meta(page) {
+    # Magic check.
+    alloc i := 0
+    loop i < 4 {
+        if page[i] != MAGIC[i] {
+            panic("wire: bad magic at byte " + i + " (expected " + MAGIC[i] + ", got " + page[i] + ")")
+        }
+        i := i + 1
+    }
+    alloc ver_pair := unpack_u16(page, 4)
+    if ver_pair[0] != FORMAT_VERSION {
+        panic("wire: unsupported format version " + ver_pair[0])
+    }
+    alloc tp := unpack_u32(page, 8)
+    alloc total_pages := tp[0]
+
+    # Walk catalog.
+    alloc tables := {}
+    alloc off := 16
+    loop true {
+        alloc nl := unpack_u8(page, off)
+        if nl[0] == 0 {
+            break
+        }
+        alloc name_len := nl[0]
+        alloc name_off := nl[1]
+        alloc name_slice := []
+        alloc k := 0
+        loop k < name_len {
+            name_slice := name_slice + [page[name_off + k]]
+            k := k + 1
+        }
+        alloc name := bytes_to_string(name_slice)
+        alloc fp := unpack_u32(page, name_off + name_len)
+        alloc lp := unpack_u32(page, fp[1])
+        alloc rid := unpack_u32(page, lp[1])
+        tables[name] := {
+            first_page: fp[0],
+            last_page: lp[0],
+            next_rowid: rid[0]
+        }
+        off := rid[1]
+    }
+    return {total_pages: total_pages, tables: tables}
+}
+
+# Serialise meta state back into a fresh page-0 buffer. `meta` is a
+# dict in the shape returned by read_meta.
+proc write_meta(meta) {
+    alloc page := empty_page()
+    splice_into(page, 0, MAGIC)
+    splice_into(page, 4, pack_u16(FORMAT_VERSION))
+    splice_into(page, 8, pack_u32(meta.total_pages))
+
+    # Catalog at offset 16.
+    alloc names := dict_keys(meta.tables)
+    alloc i := 0
+    alloc off := 16
+    loop i < length(names) {
+        alloc name := names[i]
+        alloc bs := string_bytes(name)
+        if length(bs) > 255 {
+            panic("wire: table name too long: " + name)
+        }
+        page[off] := length(bs)
+        off := off + 1
+        splice_into(page, off, bs)
+        off := off + length(bs)
+        alloc t := meta.tables[name]
+        splice_into(page, off, pack_u32(t.first_page))
+        off := off + 4
+        splice_into(page, off, pack_u32(t.last_page))
+        off := off + 4
+        splice_into(page, off, pack_u32(t.next_rowid))
+        off := off + 4
+        if off > PAGE_SIZE - 16 {
+            panic("wire: catalog overflow (too many tables)")
+        }
+        i := i + 1
+    }
+    # off currently points to the byte where the next entry would go;
+    # leave it as a 0 byte to terminate the catalog list.
+    return page
+}

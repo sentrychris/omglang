@@ -1,0 +1,184 @@
+;;;omg
+
+import "wire.omg" as wire
+import "exec.omg" as exec
+
+# omgdb.omg — entry point for the OMG embedded database.
+#
+# Day-2 surface: subcommand-style CLI exposing the storage layer
+# directly. Day-3 will add a SQL parser and replace these subcommands
+# with `omgdb file.db -e "SQL ..."` and an interactive REPL.
+#
+# Usage:
+#   omg tools/db/omgdb.omg <file.db> tables                 # list tables
+#   omg tools/db/omgdb.omg <file.db> schema <table>         # show columns
+#   omg tools/db/omgdb.omg <file.db> create <table> <col...>
+#   omg tools/db/omgdb.omg <file.db> insert <table> <val...>
+#   omg tools/db/omgdb.omg <file.db> select <table>
+#
+# `<val>` arguments to `insert` are parsed as integers if they look
+# numeric, otherwise as strings. Negative integers are supported.
+
+proc usage() {
+    emit "usage: omgdb <file.db> <subcommand> [args...]"
+    emit ""
+    emit "Subcommands:"
+    emit "  tables                       List all tables"
+    emit "  schema <table>               Print column names"
+    emit "  create <table> <col...>      Create a new table"
+    emit "  insert <table> <val...>      Append a row"
+    emit "  select <table>               Print all rows"
+}
+
+# === Argv parsing ==========================================================
+
+# Parse a CLI argument as int if it parses cleanly; otherwise string.
+# `int("42")` succeeds; `int("hello")` panics. Use try/except as the
+# discriminator.
+proc parse_value(s) {
+    try {
+        return int(s)
+    } except err {
+        return s
+    }
+}
+
+# === Format helpers ========================================================
+
+# Render an OMG value for display. Strings appear quoted so empty
+# values are visible.
+proc fmt_value(v) {
+    try {
+        # length() on int panics; fall through means it's a string.
+        alloc _ := length(v)
+        return "\"" + v + "\""
+    } except err {
+        return "" + v
+    }
+}
+
+proc print_row(rid, values) {
+    alloc out := "" + rid + " |"
+    alloc i := 0
+    loop i < length(values) {
+        out := out + " " + fmt_value(values[i])
+        i := i + 1
+    }
+    emit out
+}
+
+# === Subcommands ===========================================================
+
+proc cmd_tables(db) {
+    alloc tables := exec.list_tables(db)
+    if length(tables) == 0 {
+        emit "(no tables)"
+        return false
+    }
+    alloc i := 0
+    loop i < length(tables) {
+        alloc t := tables[i]
+        alloc cols := ""
+        alloc j := 0
+        loop j < length(t.columns) {
+            if j > 0 { cols := cols + ", " }
+            cols := cols + t.columns[j]
+            j := j + 1
+        }
+        emit t.name + "(" + cols + ")"
+        i := i + 1
+    }
+}
+
+proc cmd_schema(db, table) {
+    alloc cols := exec.table_columns(db, table)
+    alloc i := 0
+    loop i < length(cols) {
+        emit cols[i]
+        i := i + 1
+    }
+}
+
+proc cmd_create(db, table, cols) {
+    exec.create_table(db, table, cols)
+    emit "created: " + table
+}
+
+proc cmd_insert(db, table, raw_values) {
+    alloc parsed := []
+    alloc i := 0
+    loop i < length(raw_values) {
+        parsed := parsed + [parse_value(raw_values[i])]
+        i := i + 1
+    }
+    alloc rid := exec.insert(db, table, parsed)
+    emit "inserted: rowid=" + rid
+}
+
+proc cmd_select(db, table) {
+    alloc cols := exec.table_columns(db, table)
+    alloc header := "rowid |"
+    alloc j := 0
+    loop j < length(cols) {
+        header := header + " " + cols[j]
+        j := j + 1
+    }
+    emit header
+
+    alloc rows := exec.select_all(db, table)
+    alloc i := 0
+    loop i < length(rows) {
+        print_row(rows[i][0], rows[i][1])
+        i := i + 1
+    }
+    if length(rows) == 0 {
+        emit "(no rows)"
+    }
+}
+
+# === Dispatch ==============================================================
+
+if length(args) < 3 {
+    usage()
+    exit(1)
+}
+
+alloc db_path := args[1]
+alloc cmd := args[2]
+alloc rest := args[3:]
+
+alloc db := exec.open_db(db_path)
+
+if cmd == "tables" {
+    cmd_tables(db)
+} elif cmd == "schema" {
+    if length(rest) < 1 {
+        emit "schema: needs <table>"
+        exit(1)
+    }
+    cmd_schema(db, rest[0])
+} elif cmd == "create" {
+    if length(rest) < 2 {
+        emit "create: needs <table> <col...>"
+        exit(1)
+    }
+    cmd_create(db, rest[0], rest[1:])
+} elif cmd == "insert" {
+    if length(rest) < 2 {
+        emit "insert: needs <table> <val...>"
+        exit(1)
+    }
+    cmd_insert(db, rest[0], rest[1:])
+} elif cmd == "select" {
+    if length(rest) < 1 {
+        emit "select: needs <table>"
+        exit(1)
+    }
+    cmd_select(db, rest[0])
+} else {
+    emit "unknown subcommand: " + cmd
+    usage()
+    exit(1)
+}
+
+exec.close_db(db)
