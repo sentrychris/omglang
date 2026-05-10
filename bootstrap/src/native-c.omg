@@ -22,6 +22,11 @@
 # Future phases will extend coverage to arithmetic, control flow,
 # functions, lists/dicts, closures, try/except.
 
+# Human-facing version string. Keep in sync with VERSION in
+# bootstrap/src/{omg,compiler,vm}.omg, runtime/Cargo.toml, and
+# runtime/src/main.rs.
+alloc VERSION := "0.2.0"
+
 # === Opcode constants =====================================================
 #
 # Mirror of `runtime/src/bytecode.rs` and `bootstrap/src/{compiler,vm}.omg`.
@@ -1379,6 +1384,10 @@ proc nc_runtime_dir() {
     return dirname(exe)
 }
 
+if nc_is_main_invocation() and length(args) >= 2 and (args[1] == "-v" or args[1] == "--version") {
+    emit "omgcc-native-build: v" + VERSION
+    exit(0)
+}
 if nc_is_main_invocation() and length(args) >= 3 and nc_path_ends_with(args[1], ".omgb") and nc_path_ends_with(args[2], ".c") {
     alloc bc_path := args[1]
     alloc out_path := args[2]
