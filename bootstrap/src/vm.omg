@@ -350,6 +350,26 @@ proc make_closure(name, captured) {
     return {__omg_closure__: [name, captured]}
 }
 
+# If `name` is a module-mangled identifier (`__mod_N__bare`), return
+# the bare suffix. Otherwise return `false`. Mirrors the helper in
+# the Rust runtime so nested-proc closures bind under both their
+# mangled funcs-table key and the bare source name.
+proc strip_mod_prefix(name) {
+    alloc n := length(name)
+    if n < 9 { return false }
+    if name[0:6] != "__mod_" { return false }
+    alloc i := 6
+    loop i < n and name[i] >= "0" and name[i] <= "9" {
+        i := i + 1
+    }
+    if i == 6 { return false }
+    if i + 2 > n { return false }
+    if name[i:i + 2] != "__" { return false }
+    alloc bare := name[i + 2:]
+    if length(bare) == 0 { return false }
+    return bare
+}
+
 # Probe whether `v` is a dict that contains `key`. Returns false (not an
 # error) for non-dicts. Used to detect our magic-key sentinels without
 # tripping a TypeError on bare ints/strings/booleans.
@@ -732,6 +752,16 @@ proc step_inner() {
             vm_globals[arg] := closure
         } else {
             vm_env[arg] := closure
+            # Mirror the Rust runtime: when the compiler mangled this
+            # name (`__mod_N__bare`), also bind the bare suffix so
+            # source-level `Load(bare)` resolves inside imported
+            # modules. Without this, a closure passed as a function
+            # argument inside an imported module fails with
+            # UndefinedIdentError.
+            alloc bare := strip_mod_prefix(arg)
+            if bare != false {
+                vm_env[bare] := closure
+            }
         }
         vm_pc := vm_pc + 1
         return false

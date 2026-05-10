@@ -1,5 +1,8 @@
 # native-js — OMG → JavaScript + web playground
 
+Status: To Do
+Owner: sentrychris + claude
+
 ## Goal
 
 Add a JavaScript backend that mirrors the existing OMG-to-C path, then

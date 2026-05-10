@@ -1,5 +1,8 @@
 # omgtetris — TUI apps in OMG (2048 → vim-clone → Tetris)
 
+Status: To Do
+Owner: sentrychris + claude
+
 ## Goal
 
 Three terminal apps in escalating complexity, each doable as a

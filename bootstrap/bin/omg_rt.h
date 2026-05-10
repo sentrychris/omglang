@@ -944,7 +944,16 @@ static int omg_dict_eq(OmgDict *a, OmgDict *b) {
 }
 
 /* dict_keys(d) — returns a list of the dict's keys as strings.
- * Mirrors the runtime builtin. */
+ * Mirrors the runtime builtin.
+ *
+ * Each returned string is a *fresh heap copy* of the dict's key, not
+ * an alias. The dict frees its `keys[i]` storage when the dict's
+ * refcount drops to zero (see OMG_DICT in omg_dec); if we returned
+ * aliases the list's OMG_STR pointers would dangle as soon as the
+ * dict went out of scope — and OMG_STR has no refcount, so list-held
+ * strings can outlive their source. The cost is one strdup per key
+ * per call, which leaks per the rest of omg_rt.h's string story
+ * (strings are immutable, malloc'd, never explicitly freed). */
 static Value omg_dict_keys(Value v) {
     if (v.tag != OMG_DICT) {
         omg_panic("TypeError", "dict_keys() expects a dict");
@@ -954,9 +963,13 @@ static Value omg_dict_keys(Value v) {
     out.tag = OMG_LIST;
     out.v.l = omg_list_alloc(d->len);
     for (int i = 0; i < d->len; i++) {
+        size_t klen = strlen(d->keys[i]);
+        char *kc = (char *)malloc(klen + 1);
+        if (!kc) { fprintf(stderr, "out of memory\n"); exit(1); }
+        memcpy(kc, d->keys[i], klen + 1);
         Value s;
         s.tag = OMG_STR;
-        s.v.s = d->keys[i];
+        s.v.s = kc;
         omg_list_push(out.v.l, s);
     }
     return out;

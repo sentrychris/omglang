@@ -1,5 +1,8 @@
 # omgdb — SQL-subset embedded database
 
+Status: Complete
+Owner: sentrychris + claude
+
 ## Goal
 
 A SQLite-shaped tool, all in OMG: persistent on-disk pages, a B-tree

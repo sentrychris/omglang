@@ -28,6 +28,25 @@ use crate::bytecode::{Function, Instr};
 use crate::error::RuntimeError;
 use crate::value::Value;
 
+/// If `name` looks like a module-mangled identifier (`__mod_N__bare`),
+/// return the bare suffix. Otherwise None. Used by `MakeFunc` to bind
+/// nested-proc closures under both their mangled funcs-table key and
+/// the bare source name that `Load` instructions reference.
+fn strip_mod_prefix(name: &str) -> Option<&str> {
+    let rest = name.strip_prefix("__mod_")?;
+    let end_idx = rest.find("__")?;
+    let digits = &rest[..end_idx];
+    if digits.is_empty() || !digits.bytes().all(|b| b.is_ascii_digit()) {
+        return None;
+    }
+    let bare = &rest[end_idx + 2..];
+    if bare.is_empty() {
+        None
+    } else {
+        Some(bare)
+    }
+}
+
 mod builtins;
 mod ops_arith;
 mod ops_control;
@@ -462,13 +481,19 @@ fn execute(
                         // been registered, so the closure is constructed
                         // exactly where the user wrote `proc`.
                         let captured = std::rc::Rc::new(env.clone());
-                        env.insert(
-                            name.clone(),
-                            Value::Closure {
-                                name: name.clone(),
-                                captured,
-                            },
-                        );
+                        let closure = Value::Closure {
+                            name: name.clone(),
+                            captured,
+                        };
+                        env.insert(name.clone(), closure.clone());
+                        // The compiler mangles names in imported modules
+                        // with `__mod_N__` for module isolation, but
+                        // source-level `Load` references the bare name.
+                        // Bind both so a closure value passed across an
+                        // import boundary resolves correctly.
+                        if let Some(bare) = strip_mod_prefix(name) {
+                            env.insert(bare.to_string(), closure);
+                        }
                     }
                 }
             }

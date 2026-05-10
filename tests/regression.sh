@@ -218,3 +218,66 @@ else
     fail "compile_source: state isolation" \
          "len_a=$len_a len_b=$len_b ($actual)"
 fi
+
+# === Closure-as-arg across module boundary ================================
+# Two related bugs hit while building tools/db (omgdb), where exec.omg
+# needed to pass an alloc-page closure to btree.btree_insert across
+# the module boundary:
+#
+# Bug 1 (VM half — vm.rs / vm.omg): the compiler mangles names with
+# `__mod_N__` for module isolation, so the nested-proc body lives in
+# the funcs table under e.g. `__mod_1__capt`. MakeFunc bound the env
+# entry under that mangled key, but `Load("capt")` (the source-level
+# reference) used the bare name. UndefinedIdentError.
+#
+# Bug 2 (AOT half — omg_rt.h's omg_dict_keys + native-c.omg's
+# MAKE_FUNC emitter):
+#   (a) omg_dict_keys returned aliases into the dict's owned key
+#       storage. When the dict was freed, the list of returned keys
+#       dangled; the captured_list inside native-c.omg's analyze
+#       step ended up containing freed memory, so the wrong variable
+#       got marked as captured.
+#   (b) The MAKE_FUNC C-emission only assigned to the mangled C
+#       variable; cross-module Load(bare) read a different,
+#       never-assigned variable and saw omg_none() — surfacing as
+#       "cannot call non-function value".
+#
+# Both halves are fixed; this regression locks them down across
+# Rust runtime, native interpreter, AND AOT.
+
+section "Regression: nested-closure-as-arg across module boundary"
+
+cat > "$REPO_ROOT/bootstrap/src/_closure_mod_lib.omg" <<'OMG_LIB'
+;;;omg
+proc invoke_zero_arg(f) {
+    return f()
+}
+proc identity(x) {
+    return x
+}
+proc apply_with_closure(seed) {
+    proc capt() {
+        return identity(seed) + 1
+    }
+    return invoke_zero_arg(capt)
+}
+OMG_LIB
+
+cat > "$TMPDIR_TEST/closure_mod_main.omg" <<MAIN_EOF
+;;;omg
+import "$REPO_ROOT/bootstrap/src/_closure_mod_lib.omg" as lib
+emit lib.apply_with_closure(41)
+MAIN_EOF
+
+# All three paths must produce 42 (41 + 1 with `seed` correctly captured).
+actual=$("$OMG_RUST" "$TMPDIR_TEST/closure_mod_main.omg" 2>&1)
+assert_eq "Rust runtime: closure-as-arg across module" "42" "$actual"
+
+actual=$("$OMG_NATIVE" "$TMPDIR_TEST/closure_mod_main.omg" 2>&1)
+assert_eq "Native interp: closure-as-arg across module" "42" "$actual"
+
+"$OMG_NATIVE" --build "$TMPDIR_TEST/closure_mod_main.omg" "$TMPDIR_TEST/closure_aot" >/dev/null
+actual=$("$TMPDIR_TEST/closure_aot" 2>&1)
+assert_eq "AOT binary: closure-as-arg across module" "42" "$actual"
+
+rm -f "$REPO_ROOT/bootstrap/src/_closure_mod_lib.omg"

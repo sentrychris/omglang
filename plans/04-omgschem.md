@@ -1,5 +1,8 @@
 # omgschem — Scheme/Lisp interpreter in OMG
 
+Status: To Do
+Owner: sentrychris + claude
+
 ## Goal
 
 A small but real Scheme interpreter, written in pure OMG. Single file,

@@ -662,8 +662,20 @@ proc emit_c_for_instr(instr, ctx) {
         alloc inner_info := ctx["func_info"][fname]
         alloc inner_captured := inner_info["captured_list"]
         alloc nc := length(inner_captured)
+        # Cross-module alias. The compiler mangles top-level names with
+        # `__mod_N__` for module isolation, but source-level Load uses
+        # the bare name. If the bare suffix is a known global (i.e. the
+        # analysis already promoted it because something Load'd it),
+        # also assign the closure to that global so subsequent
+        # Load(bare) finds it. Mirrors the strip_mod_prefix path in
+        # vm.rs / vm.omg.
+        alloc alias_assign := ""
+        alloc bare := strip_mod_prefix(fname)
+        if bare != false and has_key(ctx["globals"], bare) {
+            alias_assign := "    { Value v = " + c_var(fname) + "; omg_inc(v); omg_assign(&" + c_var(bare) + ", v); }\n"
+        }
         if nc == 0 {
-            return "    omg_assign(&" + c_var(fname) + ", omg_closure(" + c_fn_name(fidx) + ", NULL, 0));\n"
+            return "    omg_assign(&" + c_var(fname) + ", omg_closure(" + c_fn_name(fidx) + ", NULL, 0));\n" + alias_assign
         }
         alloc out := "    {\n"
         out := out + "        Value *cap = (Value *)malloc(" + nc + " * sizeof(Value));\n"
@@ -674,7 +686,7 @@ proc emit_c_for_instr(instr, ctx) {
         }
         out := out + "        omg_assign(&" + c_var(fname) + ", omg_closure(" + c_fn_name(fidx) + ", cap, " + nc + "));\n"
         out := out + "    }\n"
-        return out
+        return out + alias_assign
     }
 
     panic("native-c: opcode '" + op + "' not implemented yet")
@@ -829,6 +841,27 @@ proc has_key(d, key) {
     } except err {
         return false
     }
+}
+
+# If `name` is a module-mangled identifier (`__mod_N__bare`), return
+# the bare suffix. Otherwise return `false`. Mirrors the helper in
+# the Rust runtime + OMG VM (see vm.rs / vm.omg) so MAKE_FUNC code
+# generation can also bind the closure under its bare source name —
+# resolving cross-module Load(bare) at the AOT level.
+proc strip_mod_prefix(name) {
+    alloc n := length(name)
+    if n < 9 { return false }
+    if name[0:6] != "__mod_" { return false }
+    alloc i := 6
+    loop i < n and name[i] >= "0" and name[i] <= "9" {
+        i := i + 1
+    }
+    if i == 6 { return false }
+    if i + 2 > n { return false }
+    if name[i:i + 2] != "__" { return false }
+    alloc bare := name[i + 2:]
+    if length(bare) == 0 { return false }
+    return bare
 }
 
 # === Pre-analysis =========================================================
