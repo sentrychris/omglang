@@ -71,13 +71,14 @@ build_binary() {
     cc -O2 -w "$WORK/$base.c" -o "$out" -lm
 }
 
-# Install the runtime header FIRST. omgcc reads omg_rt.h via
-# bin_dir/omg_rt.h to splice into transpiled C output, so any change
-# to bootstrap/src/omg_rt.h must take effect on the *first* rebuild —
-# otherwise omgcc reads the stale copy in bin/ and the rebuilt
-# binaries don't pick up the new header.
-echo "[2/4] Installing runtime header"
-cp "$SRC_DIR/omg_rt.h" "$BIN_DIR/omg_rt.h"
+# Install the runtime headers FIRST. omgcc reads omg_rt.h via
+# bin_dir/omg_rt.h to splice into transpiled C output, and native-js
+# reads bin_dir/omg_rt.js the same way for transpiled JS output, so
+# any change to either source must take effect on the *first* rebuild —
+# otherwise the rebuilt binaries read stale copies in bin/.
+echo "[2/4] Installing runtime headers"
+cp "$SRC_DIR/omg_rt.h"  "$BIN_DIR/omg_rt.h"
+cp "$SRC_DIR/omg_rt.js" "$BIN_DIR/omg_rt.js"
 
 echo "[3/4] Building toolchain core (omgc, omgcc, omgvm)"
 build_binary "$SRC_DIR/compiler.omg" "$BIN_DIR/omgc"

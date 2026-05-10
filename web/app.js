@@ -128,14 +128,191 @@ emit "prime = " + is_prime(n)
     },
 ];
 
-const $select = document.getElementById('example');
-const $source = document.getElementById('source');
-const $output = document.getElementById('output');
-const $status = document.getElementById('status');
-const $run    = document.getElementById('run');
+const $select   = document.getElementById('example');
+const $source   = document.getElementById('source');
+const $sourceHL = document.getElementById('source-hl');
+const $output   = document.getElementById('output');
+const $status   = document.getElementById('status');
+const $run      = document.getElementById('run');
 
 // Make the source editable now that we can compile any input.
 $source.removeAttribute('readonly');
+
+// === OMG syntax highlighting =============================================
+// Mirrors the scopes in vscode/syntaxes/omg.tmLanguage.json. The
+// tokenizer is intentionally line-by-line and forgiving: it never
+// throws on malformed input, it just falls back to a plain ident
+// token so the editor stays usable while the user is mid-typing.
+
+const OMG_KEYWORDS = new Set([
+    'if', 'elif', 'else', 'loop', 'break', 'return',
+    'try', 'except', 'facts',
+    'alloc', 'proc', 'import', 'as', 'emit',
+    'and', 'or'
+]);
+
+const OMG_BUILTINS = new Set([
+    'length', 'chr', 'ascii', 'hex', 'binary', 'freeze',
+    'panic', 'raise',
+    'read_file', 'file_exists', 'file_open', 'file_read',
+    'file_write', 'file_close', 'call_builtin'
+]);
+
+const OMG_LANGVARS = new Set(['args', 'module_file', 'current_dir']);
+
+function omgTokenize(src) {
+    // Returns an array of {type, text}. `ws`/`ident`/`punct` carry
+    // a falsy type so they emit as plain text in renderHighlight.
+    const tokens = [];
+    const n = src.length;
+    let i = 0;
+    while (i < n) {
+        const ch = src[i];
+
+        // Whitespace runs — pass through untouched.
+        if (ch === ' ' || ch === '\t' || ch === '\n' || ch === '\r') {
+            let j = i;
+            while (j < n && (src[j] === ' ' || src[j] === '\t' || src[j] === '\n' || src[j] === '\r')) j++;
+            tokens.push({ text: src.slice(i, j) });
+            i = j;
+            continue;
+        }
+
+        // ;;;omg header (only at start of a line).
+        if (ch === ';') {
+            const lineStart = i === 0 || src[i - 1] === '\n';
+            if (lineStart && src.slice(i, i + 6) === ';;;omg') {
+                let j = i + 6;
+                while (j < n && src[j] !== '\n') j++;
+                tokens.push({ type: 'comment', text: src.slice(i, j) });
+                i = j;
+                continue;
+            }
+        }
+
+        // # line comment to EOL.
+        if (ch === '#') {
+            let j = i;
+            while (j < n && src[j] !== '\n') j++;
+            tokens.push({ type: 'comment', text: src.slice(i, j) });
+            i = j;
+            continue;
+        }
+
+        // /* ... */ block comment (also catches /** docblocks).
+        if (ch === '/' && src[i + 1] === '*') {
+            let j = i + 2;
+            while (j < n - 1 && !(src[j] === '*' && src[j + 1] === '/')) j++;
+            j = Math.min(j + 2, n);
+            tokens.push({ type: 'comment', text: src.slice(i, j) });
+            i = j;
+            continue;
+        }
+
+        // "..." string with \-escapes; stops at unescaped " or EOL
+        // (so an unterminated string still highlights up to the
+        // newline rather than swallowing the rest of the file).
+        if (ch === '"') {
+            let j = i + 1;
+            while (j < n) {
+                if (src[j] === '\\' && j + 1 < n) { j += 2; continue; }
+                if (src[j] === '"') { j++; break; }
+                if (src[j] === '\n') break;
+                j++;
+            }
+            tokens.push({ type: 'string', text: src.slice(i, j) });
+            i = j;
+            continue;
+        }
+
+        // Numbers: 0bNNNN binary, or plain decimal.
+        if (ch >= '0' && ch <= '9') {
+            let j = i;
+            if (ch === '0' && (src[i + 1] === 'b' || src[i + 1] === 'B')) {
+                j = i + 2;
+                while (j < n && (src[j] === '0' || src[j] === '1')) j++;
+            } else {
+                while (j < n && src[j] >= '0' && src[j] <= '9') j++;
+            }
+            tokens.push({ type: 'number', text: src.slice(i, j) });
+            i = j;
+            continue;
+        }
+
+        // Identifier — bucket into keyword / builtin / boolean /
+        // langvar / fn (followed by `(`) / plain.
+        if ((ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') || ch === '_') {
+            let j = i;
+            while (j < n && /[A-Za-z0-9_]/.test(src[j])) j++;
+            const word = src.slice(i, j);
+            let type;
+            if (OMG_KEYWORDS.has(word)) type = 'keyword';
+            else if (OMG_BUILTINS.has(word)) type = 'builtin';
+            else if (word === 'true' || word === 'false') type = 'boolean';
+            else if (OMG_LANGVARS.has(word)) type = 'langvar';
+            else {
+                let k = j;
+                while (k < n && (src[k] === ' ' || src[k] === '\t')) k++;
+                if (src[k] === '(') type = 'fn';
+            }
+            tokens.push({ type, text: word });
+            i = j;
+            continue;
+        }
+
+        // Multi-char operators first.
+        const two = src.slice(i, i + 2);
+        if (two === ':=' || two === '==' || two === '!=' ||
+            two === '<=' || two === '>=' || two === '<<' || two === '>>') {
+            tokens.push({ type: 'op', text: two });
+            i += 2;
+            continue;
+        }
+        if ('+-*/%<>=&|^~'.indexOf(ch) >= 0) {
+            tokens.push({ type: 'op', text: ch });
+            i++;
+            continue;
+        }
+
+        // Punctuation / unrecognised — pass through plain.
+        tokens.push({ text: ch });
+        i++;
+    }
+    return tokens;
+}
+
+function escapeHTML(s) {
+    return s
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;');
+}
+
+function renderHighlight() {
+    const src = $source.value;
+    const tokens = omgTokenize(src);
+    let html = '';
+    for (const t of tokens) {
+        const safe = escapeHTML(t.text);
+        if (t.type) html += '<span class="tok-' + t.type + '">' + safe + '</span>';
+        else html += safe;
+    }
+    // A trailing newline in a <pre> collapses to zero height; pad
+    // with a space so the highlight layer always has the same line
+    // count as the textarea.
+    if (src.endsWith('\n')) html += ' ';
+    $sourceHL.innerHTML = html;
+}
+
+function syncEditorScroll() {
+    $sourceHL.scrollTop = $source.scrollTop;
+    $sourceHL.scrollLeft = $source.scrollLeft;
+}
+
+$source.addEventListener('input', renderHighlight);
+$source.addEventListener('scroll', syncEditorScroll);
+
+// === Example dropdown ====================================================
 
 // Populate dropdown.
 STARTERS.forEach((s, i) => {
@@ -146,8 +323,10 @@ STARTERS.forEach((s, i) => {
 });
 $select.addEventListener('change', () => {
     $source.value = STARTERS[$select.value].src;
+    renderHighlight();
 });
 $source.value = STARTERS[0].src;
+renderHighlight();
 
 // Load the bundle text once, eval per click.
 let bundleSource = null;

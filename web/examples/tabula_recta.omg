@@ -1,0 +1,46 @@
+;;;omg
+
+# Generate alphabet
+proc alphabet() {
+    alloc i := 0
+    alloc result := []
+    loop i < 26 {
+        result := result + [chr(65 + i)]
+        i := i + 1
+    }
+    return result
+}
+
+# Shift the list by n positions
+proc shift(a_list, n) {
+    alloc i := 0
+    alloc result := []
+    alloc len := length(a_list)
+    alloc shifted := []
+    loop i < len {
+        shifted := a_list[(i + n) % len]
+        result := result + [shifted]
+        i := i + 1
+    }
+    return result
+}
+
+# Generate Tabula Recta (list of 26 shifted alphabets)
+proc tabula_recta() {
+    alloc i := 0
+    alloc base := alphabet()
+    alloc result := []
+    loop i < 26 {
+        result := result + [shift(base, i)]
+        i := i + 1
+    }
+    return result
+}
+
+# Entry point
+alloc table := tabula_recta()
+alloc i := 0
+loop i < length(table) {
+    emit table[i]
+    i := i + 1
+}

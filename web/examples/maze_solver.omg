@@ -1,0 +1,106 @@
+;;;omg
+
+# Breadth-first search on a maze represented as a grid
+
+alloc maze := [
+    [0, 0, 0, 0, 0],
+    [1, 1, 0, 1, 0],
+    [0, 0, 0, 1, 0],
+    [0, 1, 1, 1, 0],
+    [0, 0, 0, 0, 0]
+]
+
+alloc start := [0, 0]
+alloc goal := [4, 4]
+
+proc key(p) {
+    return p[0] + "," + p[1]
+}
+
+proc contains(xs, x) {
+    alloc i := 0
+    loop i < length(xs) {
+        if xs[i] == x {
+            return true
+        }
+        i := i + 1
+    }
+    return false
+}
+
+proc set_prev(prev, k, v) {
+    alloc i := 0
+    loop i < length(prev) {
+        if prev[i][0] == k {
+            prev := prev[0:i] + [[k, v]] + prev[i + 1:length(prev)]
+            return prev
+        }
+        i := i + 1
+    }
+    prev := prev + [[k, v]]
+    return prev
+}
+
+proc get_prev(prev, k) {
+    alloc i := 0
+    loop i < length(prev) {
+        if prev[i][0] == k {
+            return prev[i][1]
+        }
+        i := i + 1
+    }
+    return []
+}
+
+proc neighbors(p) {
+    alloc dirs := [[1, 0], [-1, 0], [0, 1], [0, -1]]
+    alloc result := []
+    alloc i := 0
+    loop i < length(dirs) {
+        alloc nx := p[0] + dirs[i][0]
+        alloc ny := p[1] + dirs[i][1]
+        if nx >= 0 and nx < length(maze) and ny >= 0 and ny < length(maze[0]) and maze[nx][ny] == 0 {
+            result := result + [[nx, ny]]
+        }
+        i := i + 1
+    }
+    return result
+}
+
+proc bfs(start, goal) {
+    alloc queue := [start]
+    alloc visited := [key(start)]
+    alloc prev := []
+    alloc current := []
+    loop length(queue) > 0 {
+        current := queue[0]
+        queue := queue[1:length(queue)]
+        if current[0] == goal[0] and current[1] == goal[1] {
+            alloc path := [current]
+            alloc k := key(current)
+            alloc p := get_prev(prev, k)
+            loop length(p) > 0 {
+                path := [p] + path
+                k := key(p)
+                p := get_prev(prev, k)
+            }
+            return path
+        }
+        alloc neigh := neighbors(current)
+        alloc i := 0
+        loop i < length(neigh) {
+            alloc n := neigh[i]
+            alloc k := key(n)
+            if contains(visited, k) == false {
+                visited := visited + [k]
+                prev := set_prev(prev, k, current)
+                queue := queue + [n]
+            }
+            i := i + 1
+        }
+    }
+    return []
+}
+
+alloc path := bfs(start, goal)
+emit path

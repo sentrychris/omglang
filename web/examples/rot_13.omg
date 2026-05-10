@@ -1,0 +1,83 @@
+;;;omg
+
+# Shift the list by n positions
+proc shift(a_list, n) {
+    alloc i := 0
+    alloc result := []
+    alloc len := length(a_list)
+    alloc shifted := []
+    loop i < len {
+        shifted := a_list[(i + n) % len]
+        result := result + [shifted]
+        i := i + 1
+    }
+    return result
+}
+
+# Generate alphabet
+proc alphabet() {                               # create a procedure named alphabet
+    alloc i := 0                                # allocate 0  to i
+    alloc result := []                          # allocate [] to result
+    loop i < 26 {                               # loop through the code below while i is smaller than 26
+        result := result + [chr(65 + i)]        # get next alphabet char and push to result ([])
+        i := i + 1                              # increment i (is now 1)
+    }                                           # close the loop
+    return result                               # return result (allocated: [a, b, c, d...])
+}
+
+# Generate Tabula Recta (list of 26 shifted alphabets)
+proc tabula_recta() {
+    alloc i := 0
+    alloc base := alphabet()                     # Call the 'alphabet' procedure
+    alloc result := []
+    loop i < 26 {
+        result := result + [shift(base, i)]
+        i := i + 1
+    }
+    return result
+}
+
+# Perform ROT-13 using tabula recta and return joined string
+proc rot13(input) {
+    alloc base := alphabet()
+    alloc table := tabula_recta()
+    alloc i := 0
+    alloc j := 0
+    alloc k  := 0
+    alloc char   := 0
+    alloc found  := false
+    alloc result := ""
+    alloc rot    := ""
+
+    loop i < length(input) {
+        char := input[i]
+        j := 0
+        k := 0
+        found := false
+
+        loop j < length(base) {
+            if base[j] == char {
+                found := true
+                k := j
+                j := length(base)
+            } else {
+                j := j + 1
+            }
+        }
+
+        if found {
+            rot := table[13]
+            result := result + rot[k]
+        } else {
+            result := result + c
+        }
+
+        i := i + 1
+    }
+    return result
+}
+
+# Entry point
+alloc message := ["H", "E", "L", "L", "O"]
+alloc encoded := rot13(message)
+emit encoded

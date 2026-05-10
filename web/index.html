@@ -5,12 +5,9 @@
   <title>OMG playground</title>
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="description" content="Interactive playground for the OMG programming language. Compile and run OMG code directly in your browser using the self-hosted OMG compiler and VM.">
-
   <meta name="keywords" content="OMG language, programming language, compiler, virtual machine, bytecode, self-hosting, playground, interpreter">
-
-  <meta name="author" content="Chris">
-
-  <meta name="theme-color" content="#2563eb">
+  <meta name="author" content="Chris Rowles">
+  <meta name="theme-color" content="#2a7159">
 
   <!-- Open Graph -->
   <meta property="og:type" content="website">
@@ -27,90 +24,773 @@
 
   <!-- Favicon -->
   <link rel="icon" href="favicon.ico">
+
+  <!-- Resolve the saved theme before paint to avoid a light/dark flash. -->
+  <script>
+    (function () {
+      try {
+        var t = localStorage.getItem('omg-theme');
+        if (t === 'dark' || t === 'light') {
+          document.documentElement.setAttribute('data-theme', t);
+        } else if (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) {
+          document.documentElement.setAttribute('data-theme', 'dark');
+        }
+      } catch (_) { /* localStorage unavailable — fall through to light. */ }
+    })();
+  </script>
+
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link
+    href="https://fonts.googleapis.com/css2?family=Montserrat:wght@400;500;600;700&family=Playfair+Display:ital,wght@1,500;1,600&family=JetBrains+Mono:wght@400;500&display=swap"
+    rel="stylesheet">
+
   <style>
+    /* ─── Atlas tokens — schematic register ─────────────────── */
+
+    :root {
+      --paper:       #f4ede0;
+      --paper-warm:  #faf5e8;
+      --paper-dark:  #e8e0cf;
+      --bone:        #fdf9ee;
+
+      --ink:         #14241f;
+      --ink-soft:    #2a3a35;
+      --ink-mute:    #6b7570;
+      --ink-faint:   #95a09a;
+
+      --accent:        #2a7159;
+      --accent-soft:   #4a8770;
+      --accent-bright: #1a5840;
+
+      --ink-rgb:    20, 36, 31;
+      --accent-rgb: 42, 113, 89;
+
+      --line-faint:  rgba(var(--ink-rgb), 0.06);
+      --line-soft:   rgba(var(--ink-rgb), 0.10);
+      --line:        rgba(var(--ink-rgb), 0.16);
+      --line-strong: rgba(var(--ink-rgb), 0.28);
+
+      --mustard: #a87a1c;
+
+      --sans:  "Montserrat", -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+      --serif: "Playfair Display", "Times New Roman", serif;
+      --mono:  "JetBrains Mono", "SF Mono", Menlo, Consolas, monospace;
+
+      --r-sm:    6px;
+      --r-md:    12px;
+      --r-pill:  999px;
+
+      --shadow:
+        0 30px 60px -30px rgba(var(--ink-rgb), 0.16),
+        0 0 0 1px rgba(var(--ink-rgb), 0.04);
+    }
+
+    [data-theme="dark"] {
+      --paper:       #091413;
+      --paper-warm:  #0c1816;
+      --paper-dark:  #050b0a;
+      --bone:        #13211e;
+
+      --ink:         #d8ddbe;
+      --ink-soft:    #d8ddbe;
+      --ink-mute:    #abad9d;
+      --ink-faint:   #dfe4c5;
+
+      --accent:        #408a71;
+      --accent-soft:   #285a48;
+      --accent-bright: #b0e4cc;
+
+      --ink-rgb:    176, 228, 204;
+      --accent-rgb: 64, 138, 113;
+
+      --mustard: #d4a857;
+
+      --shadow:
+        0 30px 60px -30px rgba(0, 0, 0, 0.65),
+        0 0 0 1px rgba(var(--ink-rgb), 0.04);
+    }
+
+    /* ─── Page chrome — engineering paper ──────────────────── */
+
+    *, *::before, *::after { box-sizing: border-box; }
+
+    html { scroll-behavior: smooth; }
+
     body {
-      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-      max-width: 1100px;
+      margin: 0;
+      background: var(--paper);
+      color: var(--ink);
+      font-family: var(--sans);
+      font-size: 16px;
+      line-height: 1.55;
+      -webkit-font-smoothing: antialiased;
+      transition: background 240ms ease, color 240ms ease;
+      /* Engineering grid — 40px hairline matrix on the base paper. */
+      background-image:
+        linear-gradient(to right,  rgba(var(--ink-rgb), 0.05) 1px, transparent 1px),
+        linear-gradient(to bottom, rgba(var(--ink-rgb), 0.05) 1px, transparent 1px);
+      background-size: 40px 40px;
+      background-position: 0 0;
+    }
+
+    .sheet {
+      max-width: 1200px;
       margin: 0 auto;
-      padding: 20px;
-      background: #fafafa;
-      color: #222;
+      padding: clamp(2rem, 4vw, 3.4rem) clamp(20px, 5vw, 56px);
+      position: relative;
     }
-    h1 { margin-top: 0; font-weight: 600; }
-    .lede { color: #555; margin-bottom: 24px; line-height: 1.5; }
-    .controls { display: flex; gap: 12px; align-items: center; margin-bottom: 12px; }
-    .controls label { color: #444; }
-    select, button {
-      font: inherit; padding: 6px 12px;
-      border: 1px solid #c0c0c0; border-radius: 4px;
-      background: #fff; cursor: pointer;
+
+    /* Corner ornaments — coordinates + drawing reference */
+    .marginalia {
+      position: absolute;
+      font-family: var(--mono);
+      font-size: 9.5px;
+      letter-spacing: 0.22em;
+      text-transform: uppercase;
+      color: var(--ink-faint);
+      pointer-events: none;
     }
-    button { background: #2563eb; color: #fff; border-color: #2563eb; font-weight: 500; }
-    button:hover { background: #1d4ed8; }
-    .panes { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
-    .pane { display: flex; flex-direction: column; }
-    .pane h2 {
-      font-size: 13px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em;
-      margin: 0 0 6px 0; color: #555;
+
+    .marginalia.tl { top: 1.1rem; left: clamp(20px, 5vw, 56px); }
+    .marginalia.tr { top: 1.1rem; right: clamp(64px, 6vw, 96px); }
+    .marginalia.br {
+      bottom: 1rem; right: clamp(20px, 5vw, 56px);
+      display: inline-flex; gap: 1.1rem;
     }
-    pre, textarea {
-      flex: 1; min-height: 420px;
-      font-family: 'SF Mono', Menlo, Consolas, monospace;
-      font-size: 13px; line-height: 1.45;
-      padding: 12px; margin: 0;
-      border: 1px solid #d0d0d0; border-radius: 4px;
-      background: #fff;
-      white-space: pre-wrap; word-wrap: break-word;
+
+    .marginalia em {
+      font-family: var(--serif);
+      font-style: italic;
+      font-weight: 500;
+      color: var(--accent);
+      letter-spacing: 0;
     }
-    textarea { resize: none; outline: none; }
-    textarea:focus { border-color: #2563eb; }
-    #output { background: #1e1e1e; color: #d4d4d4; }
-    #output.error { color: #f48771; }
-    footer {
-      margin-top: 24px; padding-top: 12px; border-top: 1px solid #e5e5e5;
-      color: #777; font-size: 13px;
+
+    @media (max-width: 720px) {
+      .marginalia { display: none; }
     }
-    footer a { color: #2563eb; }
+
+    /* ─── Title block — architectural legend ───────────────── */
+
+    .titleBlock {
+      border: 1px solid var(--line-strong);
+      border-radius: var(--r-md);
+      background: var(--paper-warm);
+      box-shadow: var(--shadow);
+      display: grid;
+      grid-template-columns: 1fr 140px 140px;
+      grid-auto-rows: auto;
+      margin: 1.4rem 0 1.6rem;
+      overflow: hidden;
+    }
+
+    @media (max-width: 720px) {
+      .titleBlock { grid-template-columns: 1fr 1fr; }
+    }
+
+    .titleBlock > * {
+      padding: 0.5rem 1rem;
+    }
+
+    .titleBlock > *:nth-child(3n),
+    .titleBlock > .tbDescription {
+      border-right: 0;
+    }
+
+    .titleBlock .tbDrawing { grid-column: 1; grid-row: 1; }
+    .titleBlock .tbPlate   { grid-column: 2; grid-row: 1; }
+    .titleBlock .tbEdition { grid-column: 3; grid-row: 1; }
+    .titleBlock .tbDescription {
+      grid-column: 1 / -1;
+      grid-row: 2;
+      border-bottom: 0;
+      border-right: 0;
+      font-size: 0.9rem;
+    }
+
+    @media (max-width: 720px) {
+      .titleBlock .tbDrawing { grid-column: 1 / -1; grid-row: 1; }
+      .titleBlock .tbPlate   { grid-column: 1; grid-row: 2; border-right: 1px solid var(--line); }
+      .titleBlock .tbEdition { grid-column: 2; grid-row: 2; border-right: 0; }
+      .titleBlock .tbDescription { grid-column: 1 / -1; grid-row: 3; }
+    }
+
+    .tbLabel {
+      display: block;
+      font-family: var(--mono);
+      font-size: 9px;
+      font-weight: 500;
+      letter-spacing: 0.32em;
+      text-transform: uppercase;
+      color: var(--ink-faint);
+      margin-bottom: 0.45rem;
+    }
+
+    .tbValue {
+      font-family: var(--sans);
+      font-size: 22px;
+      font-weight: 700;
+      letter-spacing: -0.012em;
+      color: var(--ink);
+    }
+
+    .tbValue em {
+      font-family: var(--serif);
+      font-style: italic;
+      font-weight: 500;
+      color: var(--accent);
+      letter-spacing: 0;
+    }
+
+    .tbValue.numeral {
+      font-family: var(--serif);
+      font-style: italic;
+      font-weight: 500;
+      font-size: 28px;
+      color: var(--accent);
+      letter-spacing: -0.005em;
+    }
+
+    .tbDescription {
+      font-size: 14.5px;
+      line-height: 1.55;
+      color: var(--ink-soft);
+    }
+
+    .tbDescription em {
+      font-family: var(--serif);
+      font-style: italic;
+      font-weight: 500;
+      color: var(--accent);
+    }
+
+    /* ─── Schedule — controls strip as a spec row ──────────── */
+
+    .schedule {
+      display: grid;
+      grid-template-columns: 2fr 1fr 1fr;
+      border: 1px solid var(--line-strong);
+      border-radius: var(--r-md);
+      background: var(--paper-warm);
+      box-shadow: var(--shadow);
+      margin-bottom: 1.6rem;
+      overflow: hidden;
+    }
+
+    @media (max-width: 720px) {
+      .schedule { grid-template-columns: 1fr; }
+    }
+
+    .schedule > * {
+      padding: 0.85rem 1rem;
+      border-right: 1px solid var(--line);
+    }
+
+    .schedule > *:last-child { border-right: 0; }
+
+    @media (max-width: 720px) {
+      .schedule > * {
+        border-right: 0;
+        border-bottom: 1px solid var(--line);
+      }
+      .schedule > *:last-child { border-bottom: 0; }
+    }
+
+    .scCell { display: flex; flex-direction: column; gap: 0.45rem; }
+
+    .scCell .lbl {
+      font-family: var(--mono);
+      font-size: 9px;
+      font-weight: 500;
+      letter-spacing: 0.32em;
+      text-transform: uppercase;
+      color: var(--ink-faint);
+    }
+
+    .scCell .row {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.65rem;
+    }
+
+    select {
+      font: inherit;
+      font-family: var(--mono);
+      font-size: 12px;
+      letter-spacing: 0.04em;
+      padding: 0.4rem 1.8rem 0.4rem 0.65rem;
+      border: 1px solid var(--line-strong);
+      border-radius: var(--r-sm);
+      background: var(--bone);
+      color: var(--ink);
+      cursor: pointer;
+      appearance: none;
+      -webkit-appearance: none;
+      background-image:
+        linear-gradient(45deg, transparent 50%, currentColor 50%),
+        linear-gradient(135deg, currentColor 50%, transparent 50%);
+      background-position:
+        right 0.9rem center,
+        right 0.55rem center;
+      background-size: 5px 5px, 5px 5px;
+      background-repeat: no-repeat;
+      transition: border-color 200ms ease;
+    }
+
+    select:hover, select:focus-visible {
+      border-color: var(--accent);
+      outline: none;
+    }
+
+    /* Run button — schematic plate, not a pill */
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.55rem;
+      padding: 0.42rem 0.95rem;
+      border: 1px solid var(--accent);
+      border-radius: var(--r-sm);
+      background: rgba(var(--accent-rgb), 0.08);
+      color: var(--accent);
+      font-family: var(--mono);
+      font-size: 11px;
+      font-weight: 600;
+      letter-spacing: 0.24em;
+      text-transform: uppercase;
+      cursor: pointer;
+      transition:
+        background 200ms ease,
+        color 200ms ease,
+        border-color 200ms ease;
+    }
+
+    .btn:hover, .btn:focus-visible {
+      background: var(--accent);
+      color: var(--bone);
+      outline: none;
+    }
+
+    [data-theme="dark"] .btn:hover {
+      color: var(--paper);
+    }
+
+    .btn .runMark {
+      font-family: var(--serif);
+      font-style: italic;
+      font-weight: 500;
+      font-size: 14px;
+      letter-spacing: 0;
+      line-height: 1;
+    }
+
+    /* Status — datum reading, mono key + italic Playfair value */
+    .status {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.55rem;
+      font-family: var(--mono);
+      font-size: 10.5px;
+      letter-spacing: 0.18em;
+      text-transform: uppercase;
+      color: var(--ink-faint);
+      min-height: 1.2em;
+    }
+
+    .status .pulse {
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: var(--accent);
+      box-shadow: 0 0 6px rgba(var(--accent-rgb), 0.45);
+      animation: pulseDot 1.6s ease-in-out infinite;
+    }
+
+    .status em {
+      font-family: var(--serif);
+      font-style: italic;
+      font-weight: 500;
+      font-size: 16px;
+      letter-spacing: 0;
+      text-transform: none;
+      color: var(--accent);
+    }
+
+    @keyframes pulseDot {
+      0%, 100% { opacity: 1; }
+      50%      { opacity: 0.35; }
+    }
+
+    /* ─── Plates — figure panes with corner ticks ──────────── */
+
+    .panes {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 1.2rem;
+    }
+
+    @media (max-width: 820px) {
+      .panes { grid-template-columns: 1fr; }
+    }
+
+    .plate {
+      position: relative;
+      display: flex;
+      flex-direction: column;
+      border: 1px solid var(--line-strong);
+      border-radius: var(--r-md);
+      background: var(--paper-warm);
+      box-shadow: var(--shadow);
+      overflow: hidden;
+    }
+
+    .plateHead {
+      display: flex;
+      align-items: center;
+      gap: 0.55rem;
+      padding: 0.65rem 1rem;
+      background: rgba(var(--ink-rgb), 0.04);
+      border-bottom: 1px solid var(--line);
+      font-family: var(--mono);
+      font-size: 9.5px;
+      font-weight: 500;
+      letter-spacing: 0.32em;
+      text-transform: uppercase;
+      color: var(--accent);
+    }
+
+    .plateHead .fig {
+      font-family: var(--serif);
+      font-style: italic;
+      font-weight: 500;
+      font-size: 14px;
+      letter-spacing: 0;
+      text-transform: none;
+      color: var(--accent);
+      line-height: 1;
+    }
+
+    .plateHead .sep {
+      width: 14px;
+      height: 1px;
+      background: var(--accent);
+      opacity: 0.6;
+    }
+
+    .plateHead .name {
+      flex: 1;
+      color: var(--ink-mute);
+    }
+
+    .plateHead .meta {
+      font-family: var(--mono);
+      font-size: 9px;
+      letter-spacing: 0.22em;
+      color: var(--ink-faint);
+    }
+
+    .plateBody {
+      flex: 1;
+      min-height: 460px;
+      padding: 1rem 1.1rem;
+      margin: 0;
+      font-family: var(--mono);
+      font-size: 13px;
+      line-height: 1.55;
+      color: var(--ink);
+      background: var(--bone);
+      white-space: pre-wrap;
+      word-wrap: break-word;
+      border: 0;
+      resize: none;
+      outline: none;
+    }
+
+    textarea.plateBody:focus {
+      box-shadow: inset 0 0 0 2px rgba(var(--accent-rgb), 0.18);
+    }
+
+    pre.plateBody {
+      overflow: auto;
+    }
+
+    pre.plateBody.error {
+      color: var(--mustard);
+    }
+
+    /* ─── Layered editor — transparent textarea over a highlighted
+       <pre> mirror. The textarea handles input/caret/selection;
+       the <pre> renders the same text through the OMG tokenizer
+       (see app.js) so syntax colours appear under the caret. */
+
+    .editor {
+      position: relative;
+      flex: 1;
+      min-height: 460px;
+      background: var(--bone);
+      overflow: hidden;
+    }
+
+    .editor > .plateBody {
+      position: absolute;
+      inset: 0;
+      min-height: 0;
+      margin: 0;
+      background: transparent;
+    }
+
+    .editorHL {
+      z-index: 1;
+      pointer-events: none;
+      color: var(--ink);
+      overflow: hidden;
+    }
+
+    .editor > textarea.plateBody {
+      z-index: 2;
+      color: transparent;
+      caret-color: var(--ink);
+      -webkit-text-fill-color: transparent;
+      background: transparent;
+      overflow: auto;
+    }
+
+    .editor > textarea.plateBody::selection {
+      background: rgba(var(--accent-rgb), 0.22);
+      color: transparent;
+      -webkit-text-fill-color: transparent;
+    }
+
+    /* Token palette — derived from the tmLanguage scopes used by
+       the VS Code extension (vscode/syntaxes/omg.tmLanguage.json).
+       Small palette: keywords + booleans take the deepest accent;
+       builtins take the standard accent; strings + numbers share
+       the mustard warm; comments fall to ink-faint italic;
+       operators sit at ink-mute. */
+    .tok-comment  { color: var(--ink-faint); font-style: italic; }
+    .tok-string   { color: var(--mustard); }
+    .tok-number   { color: var(--mustard); }
+    .tok-keyword  { color: var(--accent-bright); font-weight: 500; }
+    .tok-builtin  { color: var(--accent); font-weight: 500; }
+    .tok-boolean  { color: var(--accent-bright); font-weight: 500; }
+    .tok-langvar  { color: var(--accent); font-style: italic; }
+    .tok-op       { color: var(--ink-mute); }
+    .tok-fn       { color: var(--ink); }
+
+    /* ─── Floating theme toggle — square, schematic ────────── */
+
+    .themeToggle {
+      position: fixed;
+      top: 1.1rem;
+      right: clamp(20px, 5vw, 56px);
+      z-index: 100;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 40px;
+      height: 40px;
+      border: 1px solid var(--line-strong);
+      border-radius: var(--r-pill);
+      background: var(--paper-warm);
+      color: var(--ink-mute);
+      cursor: pointer;
+      box-shadow: var(--shadow);
+      backdrop-filter: blur(8px);
+      -webkit-backdrop-filter: blur(8px);
+      transition:
+        color 220ms ease,
+        border-color 220ms ease,
+        background 220ms ease,
+        transform 220ms cubic-bezier(.2, .8, .2, 1);
+    }
+
+    .themeToggle:hover,
+    .themeToggle:focus-visible {
+      color: var(--accent);
+      border-color: var(--accent);
+      background: rgba(var(--accent-rgb), 0.08);
+      transform: translateY(-1px);
+      outline: none;
+    }
+
+    .themeToggle .iconStack {
+      position: relative;
+      width: 16px;
+      height: 16px;
+    }
+
+    .themeToggle svg {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      transition: opacity 220ms ease;
+    }
+
+    .themeToggle .sun  { opacity: 1; }
+    .themeToggle .moon { opacity: 0; }
+
+    [data-theme="dark"] .themeToggle .sun  { opacity: 0; }
+    [data-theme="dark"] .themeToggle .moon { opacity: 1; }
+
+    /* ─── Colophon — drawing reference footer ──────────────── */
+
+    .colophon {
+      margin-top: 1rem;
+      padding-top: 1rem;
+      border-top: 1px solid var(--line-strong);
+      display: grid;
+      grid-template-columns: auto 1fr auto;
+      gap: 1rem 1.6rem;
+      align-items: baseline;
+      font-family: var(--mono);
+      font-size: 10.5px;
+      letter-spacing: 0.22em;
+      text-transform: uppercase;
+      color: var(--ink-faint);
+    }
+
+    @media (max-width: 720px) {
+      .colophon { grid-template-columns: 1fr; }
+    }
+
+    .colophon strong {
+      display: block;
+      margin-top: 4px;
+      color: var(--ink);
+      font-weight: 600;
+      letter-spacing: 0.06em;
+    }
+
+    .colophon a {
+      color: var(--ink);
+      text-decoration: none;
+      border-bottom: 1px solid var(--accent);
+      transition: color 200ms ease;
+    }
+
+    .colophon a:hover { color: var(--accent); }
+
+    .colophon .num {
+      font-family: var(--serif);
+      font-style: italic;
+      font-weight: 500;
+      font-size: 16px;
+      letter-spacing: 0;
+      text-transform: none;
+      color: var(--accent);
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after {
+        transition: none !important;
+        animation: none !important;
+      }
+    }
   </style>
 </head>
 <body>
 
-<h1>OMG playground</h1>
+<button id="themeToggle" class="themeToggle" type="button" aria-label="Toggle theme">
+  <span class="iconStack" aria-hidden="true">
+    <svg class="sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+      <circle cx="12" cy="12" r="4"/>
+      <path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41"/>
+    </svg>
+    <svg class="moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M21 12.79A9 9 0 1 1 11.21 3a7 7 0 0 0 9.79 9.79z"/>
+    </svg>
+  </span>
+</button>
 
-<p class="lede">
-  Type any OMG program in the left pane and hit <strong>Run</strong>.
-  Everything happens in your browser: a JavaScript bundle of the
-  OMG-in-OMG compiler and VM (built by the same self-hosted toolchain
-  that produces the native binaries) reads your source, compiles it
-  to bytecode, and runs that bytecode — same answer the Rust runtime
-  would give, byte-for-byte. The dropdown picks a starter program;
-  edit freely from there.
-</p>
+<main class="sheet">
 
-<div class="controls">
-  <label for="example">Example:</label>
-  <select id="example"></select>
-  <button id="run">Run</button>
-  <span id="status" style="color:#777"></span>
-</div>
+  <span class="marginalia tl">01001000 · 01101001</span>
+  <span class="marginalia tr">Sheet <em>I</em> / I</span>
 
-<div class="panes">
-  <div class="pane">
-    <h2>OMG source</h2>
-    <textarea id="source" spellcheck="false"></textarea>
+  <!-- Title block — architectural drawing legend -->
+  <div class="titleBlock" role="banner">
+    <div class="tbDrawing">
+      <span class="tbLabel">Concept</span>
+      <div class="tbValue">OMG Playground.</div>
+    </div>
+    <div class="tbDescription">
+      A self-hosted compiler and bytecode VM, compiled to JavaScript by the same
+      toolchain that produces the native binaries. Type any OMG program in
+      <em>Fig. A</em>, hit <strong>Run</strong>, and read the output in
+      <em>Fig. B</em>.
+    </div>
   </div>
-  <div class="pane">
-    <h2>Output</h2>
-    <pre id="output"></pre>
+
+  <!-- Schedule — controls as a three-column spec row -->
+  <div class="schedule">
+    <div class="scCell">
+      <span class="lbl">Example</span>
+      <div class="row">
+        <select id="example" aria-label="Example program"></select>
+      </div>
+    </div>
+    <div class="scCell">
+      <span class="lbl">Action</span>
+      <div class="row">
+        <button id="run" class="btn" type="button">
+          <span class="runMark">▸</span> Run
+        </button>
+      </div>
+    </div>
+    <div class="scCell">
+      <span class="lbl">Time</span>
+      <span id="status" class="status"></span>
+    </div>
   </div>
-</div>
 
-<footer>
-  Pre-built examples are static assets in <code>web/examples/</code>. The
-  full project — compiler, runtime, native toolchain, this JS backend
-  — lives at <a href="https://github.com/sentrychris/omglang">sentrychris/omglang</a>.
-</footer>
+  <!-- Two plates — Fig. A source, Fig. B output -->
+  <div class="panes">
+    <div class="plate">
+      <span class="cornerBL"></span><span class="cornerBR"></span>
+      <div class="plateHead">
+        <span class="fig">Fig. A</span>
+        <span class="sep"></span>
+        <span class="name">Source</span>
+        <span class="meta">.omg</span>
+      </div>
+      <div class="editor">
+        <pre id="source-hl" class="plateBody editorHL" aria-hidden="true"></pre>
+        <textarea id="source" class="plateBody" spellcheck="false" autocomplete="off" autocorrect="off" autocapitalize="off"></textarea>
+      </div>
+    </div>
+    <div class="plate">
+      <span class="cornerBL"></span><span class="cornerBR"></span>
+      <div class="plateHead">
+        <span class="fig">Fig. B</span>
+        <span class="sep"></span>
+        <span class="name">Output</span>
+        <span class="meta">stdout</span>
+      </div>
+      <pre id="output" class="plateBody"></pre>
+    </div>
+  </div>
 
+  <!-- Drawing-reference footer -->
+  <footer class="colophon">
+    <div>Reference<strong><a href="https://github.com/sentrychris/omglang">sentrychris/omglang</a></strong></div>
+  </footer>
+</main>
+
+<script>
+  // Theme toggle — persists choice in localStorage. The pre-paint
+  // resolver in <head> handles initial state to avoid a flash.
+  (function () {
+    var btn = document.getElementById('themeToggle');
+    if (!btn) return;
+    btn.addEventListener('click', function () {
+      var cur = document.documentElement.getAttribute('data-theme');
+      var next = cur === 'dark' ? 'light' : 'dark';
+      document.documentElement.setAttribute('data-theme', next);
+      try { localStorage.setItem('omg-theme', next); } catch (_) {}
+    });
+  })();
+</script>
 <script src="app.js"></script>
 </body>
 </html>
