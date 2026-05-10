@@ -366,17 +366,95 @@ static Value omg_str_concat(Value a, Value b);
 
 /* If either operand is a float, both are promoted to double. */
 static inline int omg_is_float(Value v) { return v.tag == OMG_FLOAT; }
-static inline double omg_as_double(Value v) {
-    return v.tag == OMG_FLOAT ? v.v.f : (double)v.v.i;
+
+/* Coerce `v` to int64. Mirrors `Value::as_int` in runtime/src/value.rs:
+ * accept ints, bools, finite in-range floats (truncated toward zero),
+ * and numeric strings (parsed). Reject lists, dicts, closures, none,
+ * and non-numeric strings with a TypeError so a downstream arithmetic
+ * op doesn't silently treat a heap pointer as an integer. */
+static inline int64_t omg_as_int(Value v) {
+    switch (v.tag) {
+        case OMG_INT: return v.v.i;
+        case OMG_BOOL: return v.v.b ? 1 : 0;
+        case OMG_FLOAT: {
+            double f = v.v.f;
+            if (!isfinite(f)) {
+                omg_panicf("ValueError",
+                           "cannot convert non-finite float to int: %g", f);
+            }
+            if (f < (double)INT64_MIN || f > (double)INT64_MAX) {
+                omg_panicf("ValueError",
+                           "float %g is outside the i64 range", f);
+            }
+            return (int64_t)f;   /* truncation toward zero */
+        }
+        case OMG_STR: {
+            const char *s = v.v.s;
+            char *end = NULL;
+            errno = 0;
+            long long n = strtoll(s, &end, 10);
+            if (s == end || *end != '\0' || errno == ERANGE) {
+                omg_panicf("TypeError", "Invalid literal for int(): '%s'", s);
+            }
+            return (int64_t)n;
+        }
+        case OMG_LIST:
+            omg_panic("TypeError",
+                      "cannot convert list to int (use length() instead)");
+        case OMG_DICT:
+            omg_panic("TypeError", "cannot convert dict to int");
+        case OMG_CLOSURE:
+            omg_panic("TypeError", "cannot convert function to int");
+        case OMG_NONE:
+            omg_panic("TypeError", "cannot convert none to int");
+    }
+    return 0; /* unreachable */
 }
+
+/* Coerce `v` to double. Same shape as omg_as_int but produces a
+ * double; numeric strings (with optional decimal/exponent) parse via
+ * strtod. Used by `+ - * / %` and the math builtins. */
+static inline double omg_as_double(Value v) {
+    switch (v.tag) {
+        case OMG_INT: return (double)v.v.i;
+        case OMG_FLOAT: return v.v.f;
+        case OMG_BOOL: return v.v.b ? 1.0 : 0.0;
+        case OMG_STR: {
+            const char *s = v.v.s;
+            char *end = NULL;
+            errno = 0;
+            double d = strtod(s, &end);
+            if (s == end || *end != '\0' || errno == ERANGE) {
+                omg_panicf("TypeError",
+                           "Invalid literal for float(): '%s'", s);
+            }
+            return d;
+        }
+        case OMG_LIST:
+            omg_panic("TypeError",
+                      "cannot convert list to float (use length() instead)");
+        case OMG_DICT:
+            omg_panic("TypeError", "cannot convert dict to float");
+        case OMG_CLOSURE:
+            omg_panic("TypeError", "cannot convert function to float");
+        case OMG_NONE:
+            omg_panic("TypeError", "cannot convert none to float");
+    }
+    return 0.0; /* unreachable */
+}
+
+/* Arithmetic ops route through omg_as_int / omg_as_double so numeric
+ * strings (`"255" / 16` = 15) and bools coerce the same way they do
+ * in the Rust runtime. Without this, native dereferenced raw .v.i on
+ * non-int operands and silently produced pointer-arithmetic garbage. */
 
 static inline Value omg_sub(Value a, Value b) {
     if (omg_is_float(a) || omg_is_float(b)) return omg_float(omg_as_double(a) - omg_as_double(b));
-    return omg_int(a.v.i - b.v.i);
+    return omg_int(omg_as_int(a) - omg_as_int(b));
 }
 static inline Value omg_mul(Value a, Value b) {
     if (omg_is_float(a) || omg_is_float(b)) return omg_float(omg_as_double(a) * omg_as_double(b));
-    return omg_int(a.v.i * b.v.i);
+    return omg_int(omg_as_int(a) * omg_as_int(b));
 }
 
 /* `/` is promote-on-float: int÷int stays floor division (matches OMG
@@ -388,7 +466,7 @@ static inline Value omg_div(Value a, Value b) {
         if (bd == 0.0) omg_panic("ZeroDivisionError", "integer division or modulo by zero");
         return omg_float(omg_as_double(a) / bd);
     }
-    int64_t x = a.v.i, y = b.v.i;
+    int64_t x = omg_as_int(a), y = omg_as_int(b);
     if (y == 0) omg_panic("ZeroDivisionError", "integer division or modulo by zero");
     int64_t q = x / y;
     if ((x % y != 0) && ((x < 0) != (y < 0))) q -= 1;
@@ -403,7 +481,7 @@ static inline Value omg_floor_div(Value a, Value b) {
         if (bd == 0.0) omg_panic("ZeroDivisionError", "integer division or modulo by zero");
         return omg_float(floor(omg_as_double(a) / bd));
     }
-    int64_t x = a.v.i, y = b.v.i;
+    int64_t x = omg_as_int(a), y = omg_as_int(b);
     if (y == 0) omg_panic("ZeroDivisionError", "integer division or modulo by zero");
     int64_t q = x / y;
     if ((x % y != 0) && ((x < 0) != (y < 0))) q -= 1;
@@ -418,7 +496,7 @@ static inline Value omg_mod(Value a, Value b) {
         /* Python-style floor modulo: result has the sign of the divisor. */
         return omg_float(ad - floor(ad / bd) * bd);
     }
-    int64_t x = a.v.i, y = b.v.i;
+    int64_t x = omg_as_int(a), y = omg_as_int(b);
     if (y == 0) omg_panic("ZeroDivisionError", "integer division or modulo by zero");
     int64_t r = x % y;
     if (r != 0 && ((r < 0) != (y < 0))) r += y;
@@ -427,7 +505,7 @@ static inline Value omg_mod(Value a, Value b) {
 
 static inline Value omg_neg(Value a) {
     if (a.tag == OMG_FLOAT) return omg_float(-a.v.f);
-    return omg_int(-a.v.i);
+    return omg_int(-omg_as_int(a));
 }
 
 /* === Comparisons ==========================================================
@@ -483,25 +561,51 @@ static inline Value omg_le(Value a, Value b) { return omg_bool(omg_compare(a, b)
 static inline Value omg_gt(Value a, Value b) { return omg_bool(omg_compare(a, b) >  0); }
 static inline Value omg_ge(Value a, Value b) { return omg_bool(omg_compare(a, b) >= 0); }
 
-/* === Bitwise / shift / logical =========================================== */
-static inline Value omg_band(Value a, Value b) { return omg_int(a.v.i & b.v.i); }
-static inline Value omg_bor (Value a, Value b) { return omg_int(a.v.i | b.v.i); }
-static inline Value omg_bxor(Value a, Value b) { return omg_int(a.v.i ^ b.v.i); }
+/* === Bitwise / shift / logical ===========================================
+ * Bitwise ops are integer-only: floats are explicitly rejected (silent
+ * truncation would be a footgun, matching Rust). Strings and bools
+ * coerce via omg_as_int the same way arithmetic does. */
+
+static inline void omg_reject_float(Value v, const char *op) {
+    if (omg_is_float(v)) {
+        omg_panicf("TypeError", "operator '%s' is not defined for floats", op);
+    }
+}
+
+static inline Value omg_band(Value a, Value b) {
+    omg_reject_float(a, "&"); omg_reject_float(b, "&");
+    return omg_int(omg_as_int(a) & omg_as_int(b));
+}
+static inline Value omg_bor (Value a, Value b) {
+    omg_reject_float(a, "|"); omg_reject_float(b, "|");
+    return omg_int(omg_as_int(a) | omg_as_int(b));
+}
+static inline Value omg_bxor(Value a, Value b) {
+    omg_reject_float(a, "^"); omg_reject_float(b, "^");
+    return omg_int(omg_as_int(a) ^ omg_as_int(b));
+}
 
 static inline Value omg_shl(Value a, Value b) {
-    if (b.v.i < 0 || b.v.i >= 64) {
-        omg_panicf("ValueError", "shift count out of range: %lld", (long long)b.v.i);
+    omg_reject_float(a, "<<"); omg_reject_float(b, "<<");
+    int64_t ai = omg_as_int(a), bi = omg_as_int(b);
+    if (bi < 0 || bi >= 64) {
+        omg_panicf("ValueError", "shift count out of range: %lld", (long long)bi);
     }
-    return omg_int(a.v.i << b.v.i);
+    return omg_int(ai << bi);
 }
 static inline Value omg_shr(Value a, Value b) {
-    if (b.v.i < 0 || b.v.i >= 64) {
-        omg_panicf("ValueError", "shift count out of range: %lld", (long long)b.v.i);
+    omg_reject_float(a, ">>"); omg_reject_float(b, ">>");
+    int64_t ai = omg_as_int(a), bi = omg_as_int(b);
+    if (bi < 0 || bi >= 64) {
+        omg_panicf("ValueError", "shift count out of range: %lld", (long long)bi);
     }
-    return omg_int(a.v.i >> b.v.i);
+    return omg_int(ai >> bi);
 }
 
-static inline Value omg_bnot(Value a) { return omg_int(~a.v.i); }
+static inline Value omg_bnot(Value a) {
+    omg_reject_float(a, "~");
+    return omg_int(~omg_as_int(a));
+}
 
 /* `and`/`or` are eager at this level — the OMG compiler emits explicit
  * JumpIfFalse for short-circuit semantics; the bytecode AND/OR ops just
