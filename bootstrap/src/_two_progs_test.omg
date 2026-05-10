@@ -1,0 +1,14 @@
+;;;omg
+import "compiler.omg" as cc
+
+# Compile two structurally-identical programs through compile_source.
+# If module state leaks (e.g. cc_code accumulates between calls), the
+# second compile produces longer bytecode than the first. With proper
+# isolation via compile_reset(), the two should match in length.
+cc.compile_reset()
+alloc a := cc.compile_source(";;;omg\nemit \"first\"\n", "<a>")
+cc.compile_reset()
+alloc b := cc.compile_source(";;;omg\nemit \"second\"\n", "<b>")
+
+emit "len_a: " + length(a[0])
+emit "len_b: " + length(b[0])

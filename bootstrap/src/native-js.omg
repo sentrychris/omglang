@@ -196,14 +196,15 @@ proc parse_bytecode(bytes) {
     if ver_pair[0] != BC_VERSION {
         panic("native-js: unsupported bytecode version " + ver_pair[0])
     }
-    # v2: source-file table. Skipped — the JS transpiler doesn't yet
-    # surface source-aware tracebacks (planned next).
+    # v2: source-file table.
     alloc sfc_pair := read_u32_at(bytes, cursor)
     alloc sf_count := sfc_pair[0]
     cursor := sfc_pair[1]
+    alloc src_files := []
     alloc si := 0
     loop si < sf_count {
         alloc sf_pair := read_str_at(bytes, cursor)
+        src_files := src_files + [sf_pair[0]]
         cursor := sf_pair[1]
         si := si + 1
     }
@@ -229,10 +230,9 @@ proc parse_bytecode(bytes) {
         }
         alloc addr_pair := read_u32_at(bytes, cursor)
         cursor := addr_pair[1]
-        # v2: source_file_idx for the function. Skipped for now.
         alloc sfi_pair := read_u32_at(bytes, cursor)
         cursor := sfi_pair[1]
-        funcs[name] := [params, addr_pair[0]]
+        funcs[name] := [params, addr_pair[0], sfi_pair[0]]
         f := f + 1
     }
     alloc cl_pair := read_u32_at(bytes, cursor)
@@ -251,19 +251,21 @@ proc parse_bytecode(bytes) {
         cursor := instr[1]
         k := k + 1
     }
-    # v2: per-instruction source map. Skipped here.
+    # v2: per-instruction source map.
     alloc ml_pair := read_u32_at(bytes, cursor)
     alloc map_len := ml_pair[0]
     cursor := ml_pair[1]
+    alloc src_lines := []
     alloc mi := 0
     loop mi < map_len {
         alloc fi_pair := read_u32_at(bytes, cursor)
         cursor := fi_pair[1]
         alloc ln_pair := read_u32_at(bytes, cursor)
         cursor := ln_pair[1]
+        src_lines := src_lines + [[fi_pair[0], ln_pair[0]]]
         mi := mi + 1
     }
-    return [code, funcs]
+    return [code, funcs, src_files, src_lines]
 }
 
 # === JS string escaping ==================================================
@@ -542,13 +544,30 @@ proc emit_js_for_instr(instr, ctx) {
         alloc fname := arg
         alloc fidx := ctx["func_index"][fname]
         alloc nparams := length(ctx["funcs"][fname][0])
-        return "    { const _argv = _s.splice(_s.length - " + nparams + ", " + nparams + "); _s.push(" + js_fn_name(fidx) + "(null, ..._argv)); }\n"
+        alloc display := strip_mod_prefix(fname)
+        if display == false {
+            display := fname
+        }
+        # Push the frame capturing the caller's current_file_idx /
+        # current_line so any panic inside the call has a complete
+        # traceback. omg_frame_pop runs only when the call returns
+        # cleanly — if it throws, we leave the frame on the stack so
+        # the traceback formatter sees it. SETUP_EXCEPT records the
+        # frame depth at try-entry and the handler restores it; an
+        # uncaught error keeps the frames for the top-level catch.
+        return "    { const _argv = _s.splice(_s.length - " + nparams + ", " + nparams + "); omg_frame_push(\"" + js_escape(display) + "\", omg_current_file_idx, omg_current_line); const _rv = " + js_fn_name(fidx) + "(null, ..._argv); omg_frame_pop(); _s.push(_rv); }\n"
     }
     if op == "TCALL" {
         alloc fname := arg
         alloc fidx := ctx["func_index"][fname]
         alloc nparams := length(ctx["funcs"][fname][0])
-        return "    { const _argv = _s.splice(_s.length - " + nparams + ", " + nparams + "); return " + js_fn_name(fidx) + "(null, ..._argv); }\n"
+        alloc display := strip_mod_prefix(fname)
+        if display == false {
+            display := fname
+        }
+        # No push: the caller's slot is reused. Just rewrite its
+        # display name so the traceback identifies the tail-callee.
+        return "    { const _argv = _s.splice(_s.length - " + nparams + ", " + nparams + "); omg_frame_set_top_name(\"" + js_escape(display) + "\"); return " + js_fn_name(fidx) + "(null, ..._argv); }\n"
     }
     if op == "CALL_VALUE" {
         alloc nparams := arg
@@ -559,7 +578,10 @@ proc emit_js_for_instr(instr, ctx) {
         #     packs function names as string values in the frozen dict);
         #     resolve via omg_func_table and prepend a null _captured
         #     so the function gets its arg list correctly.
-        return "    { const _argv = _s.splice(_s.length - " + nparams + ", " + nparams + "); let _cf = _s.pop(); if (typeof _cf === 'string') { const _fn = omg_lookup_fn(_cf); _s.push(_fn(null, ..._argv)); } else if (typeof _cf === 'function') { _s.push(_cf(..._argv)); } else { omg_panic('TypeError', 'cannot call non-function value'); } }\n"
+        # Either way the frame display name comes from the callee
+        # itself: __omg_name on the closure, or the stripped mangled
+        # string for the function-name case.
+        return "    { const _argv = _s.splice(_s.length - " + nparams + ", " + nparams + "); let _cf = _s.pop(); let _name; let _fn; let _isstr = false; if (typeof _cf === 'string') { _fn = omg_lookup_fn(_cf); _name = omg_strip_mod_prefix(_cf); _isstr = true; } else if (typeof _cf === 'function') { _fn = _cf; _name = _cf.__omg_name || '<closure>'; } else { omg_panic('TypeError', 'cannot call non-function value'); } omg_frame_push(_name, omg_current_file_idx, omg_current_line); const _rv = _isstr ? _fn(null, ..._argv) : _fn(..._argv); omg_frame_pop(); _s.push(_rv); }\n"
     }
     if op == "RET" {
         return "    return _s.pop();\n"
@@ -600,8 +622,17 @@ proc emit_js_for_instr(instr, ctx) {
             i := i + 1
         }
         # The wrapper takes only the user-facing args and forwards
-        # them with _cap as the captured dict.
-        alloc closure_expr := "(...args) => " + js_fn_name(fidx) + "(_cap, ...args)"
+        # them with _cap as the captured dict. We use the runtime
+        # omg_closure helper so the wrapper also carries an
+        # `__omg_name` for traceback rendering. (Pre-traceback the
+        # transpiler emitted a bare arrow function — equivalent
+        # except for the missing name.)
+        alloc bare := strip_mod_prefix(fname)
+        alloc display := bare
+        if display == false {
+            display := fname
+        }
+        alloc closure_expr := "omg_closure(" + js_fn_name(fidx) + ", _cap, \"" + js_escape(display) + "\")"
         if has_key(ctx["current_boxed_set"], fname) {
             out := out + "        " + js_var(fname) + " = [" + closure_expr + "];\n"
         } else {
@@ -609,7 +640,6 @@ proc emit_js_for_instr(instr, ctx) {
         }
 
         # Cross-module alias (mirror of vm.rs / vm.omg / native-c.omg).
-        alloc bare := strip_mod_prefix(fname)
         if bare != false and has_key(ctx["globals"], bare) {
             out := out + "        " + js_var(bare) + " = " + js_var(fname) + ";\n"
         }
@@ -625,7 +655,11 @@ proc emit_js_for_instr(instr, ctx) {
     # every function wraps in one try/catch that respects active
     # SETUP_EXCEPT frames via a runtime stack.
     if op == "SETUP_EXCEPT" {
-        return "    _eh.push(" + arg + ");\n"
+        # Pair the handler PC with the current frame depth so the
+        # catch path can restore frames on entry. Without this, an
+        # uncaught panic later in the program would include frames
+        # pushed inside (and unwound from) this try body.
+        return "    _eh.push([" + arg + ", omg_frame_stack.length]);\n"
     }
     if op == "POP_BLOCK" {
         return "    _eh.pop();\n"
@@ -923,10 +957,16 @@ proc analyze_all_functions(code, funcs, globals) {
 # Emit `from..to` of `code` (the function body, or top-level program)
 # as a flat IP-dispatching loop. We use a giant `switch (_ip)` with
 # fall-through-by-default — the simplest way to handle JUMP/JIF
-# without a real goto.
+# without a real goto. Before each instruction we conditionally emit
+# `omg_current_line = N;` (only when the line changed from the
+# previous instruction) — feeds the traceback formatter without
+# bloating the output.
 proc emit_body(code, body_start, body_end, ctx) {
+    alloc src_lines := ctx["src_lines"]
     alloc out := "    let _ip = " + body_start + ";\n"
     out := out + "    let _eh = [];\n"
+    # _eh entries are [handler_pc, saved_frame_depth] so the catch
+    # handler can also restore the frame stack on entry.
     # Each iteration runs one instruction inside a try/catch so that
     # OmgErrors can be redirected to the most recent SETUP_EXCEPT
     # handler (matching the OMG VM's block-stack semantics: pop one
@@ -934,9 +974,17 @@ proc emit_body(code, body_start, body_end, ctx) {
     out := out + "    while (true) {\n"
     out := out + "        try {\n"
     out := out + "            switch (_ip) {\n"
+    alloc last_line := -1
     alloc i := body_start
     loop i < body_end {
         out := out + "            case " + i + ": {\n"
+        if i < length(src_lines) {
+            alloc line := src_lines[i][1]
+            if line != last_line {
+                out := out + "                omg_current_line = " + line + ";\n"
+                last_line := line
+            }
+        }
         out := out + emit_js_for_instr(code[i], ctx)
         out := out + "            }\n"
         out := out + "            // fall through to " + (i + 1) + "\n"
@@ -947,7 +995,9 @@ proc emit_body(code, body_start, body_end, ctx) {
     out := out + "            _ip += 1;\n"
     out := out + "        } catch (_e) {\n"
     out := out + "            if (_e instanceof OmgError && _eh.length > 0) {\n"
-    out := out + "                _ip = _eh.pop();\n"
+    out := out + "                const _entry = _eh.pop();\n"
+    out := out + "                _ip = _entry[0];\n"
+    out := out + "                while (omg_frame_stack.length > _entry[1]) { omg_frame_pop(); }\n"
     out := out + "                _s.length = 0;\n"
     out := out + "                _s.push(_e.kind + ': ' + _e.omgMessage);\n"
     out := out + "            } else { throw _e; }\n"
@@ -956,7 +1006,7 @@ proc emit_body(code, body_start, body_end, ctx) {
     return out
 }
 
-proc emit_function(name, code, funcs, func_index, func_info, globals) {
+proc emit_function(name, code, funcs, func_index, func_info, globals, src_lines, fn_file_idx) {
     alloc info := func_info[name]
     alloc params := info["params"]
     alloc body_start := info["body_start"]
@@ -1008,20 +1058,24 @@ proc emit_function(name, code, funcs, func_index, func_info, globals) {
     }
 
     out := out + "    const _s = [];\n"
+    # Establish the per-function source file at entry. Mid-function we
+    # only update omg_current_line (per emit_body).
+    out := out + "    omg_current_file_idx = " + fn_file_idx + ";\n"
     alloc ctx := {
         funcs: funcs,
         func_index: func_index,
         func_info: func_info,
         globals: globals,
         current_captured_set: captured_set,
-        current_boxed_set: boxed_set
+        current_boxed_set: boxed_set,
+        src_lines: src_lines
     }
     out := out + emit_body(code, body_start, body_end, ctx)
     out := out + "}\n\n"
     return out
 }
 
-proc generate(code, funcs, runtime_js, source_path) {
+proc generate(code, funcs, src_files, src_lines, runtime_js, source_path) {
     alloc globals := collect_globals(code)
     alloc func_index := build_func_index(funcs)
     alloc func_info := analyze_all_functions(code, funcs, globals)
@@ -1030,6 +1084,19 @@ proc generate(code, funcs, runtime_js, source_path) {
     out := out + "// Do not edit by hand.\n\n"
     out := out + runtime_js
     out := out + "\n// === Program ==============================================================\n\n"
+
+    # Install the source-file table so omg_format_traceback resolves
+    # file indices to paths. Mirrors the omg_program_src_files wiring
+    # in native-c.omg.
+    out := out + "omg_src_files = [\n"
+    alloc sfi := 0
+    alloc sfn := length(src_files)
+    loop sfi < sfn {
+        out := out + "    \"" + js_escape(src_files[sfi]) + "\",\n"
+        sfi := sfi + 1
+    }
+    out := out + "];\n"
+    out := out + "omg_current_file_idx = 0;\n\n"
 
     # Top-level globals. The analysis may have promoted additional
     # names to globals while bucketing each function's references, so
@@ -1049,7 +1116,9 @@ proc generate(code, funcs, runtime_js, source_path) {
     alloc all_func_names := dict_keys(funcs)
     alloc fi := 0
     loop fi < length(all_func_names) {
-        out := out + emit_function(all_func_names[fi], code, funcs, func_index, func_info, globals)
+        alloc fname := all_func_names[fi]
+        alloc fn_file_idx := funcs[fname][2]
+        out := out + emit_function(fname, code, funcs, func_index, func_info, globals, src_lines, fn_file_idx)
         fi := fi + 1
     }
 
@@ -1081,11 +1150,12 @@ proc generate(code, funcs, runtime_js, source_path) {
         func_info: func_info,
         globals: globals,
         current_captured_set: {},
-        current_boxed_set: {}
+        current_boxed_set: {},
+        src_lines: src_lines
     }
     # The IIFE is wrapped in a try/catch so an uncaught OmgError
-    # surfaces like the Rust runtime: a single "Kind: message" line
-    # to stderr, then exit 1 (not a JS stack trace).
+    # surfaces like the Rust runtime: a Python-style traceback followed
+    # by the "Kind: message" line, then exit 1 (not a JS stack trace).
     out := out + "try {\n"
     out := out + "(function _omg_main() {\n"
     out := out + "    const _s = [];\n"
@@ -1093,8 +1163,10 @@ proc generate(code, funcs, runtime_js, source_path) {
     out := out + "})();\n"
     out := out + "} catch (_e) {\n"
     out := out + "    if (_e instanceof OmgError) {\n"
-    out := out + "        if (typeof process !== 'undefined') { process.stderr.write(_e.kind + ': ' + _e.omgMessage + '\\n'); process.exit(1); }\n"
-    out := out + "        else throw _e;\n"
+    out := out + "        const _full = _e.kind + ': ' + _e.omgMessage;\n"
+    out := out + "        const _trace = omg_format_traceback(_full);\n"
+    out := out + "        if (typeof process !== 'undefined') { process.stderr.write(_trace + '\\n'); process.exit(1); }\n"
+    out := out + "        else { _e.message = _trace; throw _e; }\n"
     out := out + "    } else { throw _e; }\n"
     out := out + "}\n"
 
@@ -1170,13 +1242,15 @@ if nj_is_main_invocation() and length(args) >= 3 and nj_path_ends_with(args[1], 
     alloc parsed := parse_bytecode(bc_bytes)
     alloc code := parsed[0]
     alloc funcs := parsed[1]
+    alloc src_files := parsed[2]
+    alloc src_lines := parsed[3]
 
     alloc runtime_js := read_file(rt_path)
     if runtime_js == false {
         panic("native-js: cannot read runtime at " + rt_path)
     }
 
-    alloc js_src := generate(code, funcs, runtime_js, bc_path)
+    alloc js_src := generate(code, funcs, src_files, src_lines, runtime_js, bc_path)
 
     alloc out_h := file_open(out_path, "w")
     file_write(out_h, js_src)

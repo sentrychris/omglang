@@ -106,6 +106,76 @@ function omg_truthy(v) {
     return true;
 }
 
+// === Source map + call-frame stack ========================================
+// Populated by the transpiled program's preamble; used by the
+// traceback formatter when an uncaught OmgError surfaces at the top
+// of the IIFE. Mirrors `omg_src_files` / `omg_frame_stack` in
+// omg_rt.h.
+
+let omg_src_files = [];
+let omg_current_file_idx = 0;
+let omg_current_line = 0;
+
+const omg_frame_stack = [];
+
+function omg_frame_push(name, file_idx, line) {
+    omg_frame_stack.push({ name, file_idx, line });
+}
+function omg_frame_pop() {
+    omg_frame_stack.pop();
+}
+// TCALL reuses the caller's slot — rewrite its display name without
+// touching the call site, matching the Rust VM and the C runtime.
+function omg_frame_set_top_name(name) {
+    if (omg_frame_stack.length > 0) {
+        omg_frame_stack[omg_frame_stack.length - 1].name = name;
+    }
+}
+
+function omg_lookup_file(fi) {
+    if (fi < 0 || fi >= omg_src_files.length) return '<unknown>';
+    return omg_src_files[fi];
+}
+
+// Strip a `__mod_N__` mangling prefix for display, falling back to
+// the input if it doesn't match the pattern.
+function omg_strip_mod_prefix(name) {
+    if (!name || !name.startsWith('__mod_')) return name;
+    let i = 6;
+    const start = i;
+    while (i < name.length && name[i] >= '0' && name[i] <= '9') i++;
+    if (i === start) return name;
+    if (name.substr(i, 2) !== '__') return name;
+    return name.substring(i + 2);
+}
+
+// Python-style traceback. Matches the layout produced by the Rust
+// runtime / AOT path / OMG VM byte-for-byte — a uniform error UX
+// across every implementation.
+function omg_format_traceback(fullmsg) {
+    let out = 'Traceback (most recent call last):\n';
+    if (omg_frame_stack.length > 0) {
+        const first = omg_frame_stack[0];
+        out += '  File "' + omg_lookup_file(first.file_idx)
+            +  '", line ' + first.line
+            +  ', in <top-level>\n';
+    }
+    for (let i = 1; i < omg_frame_stack.length; i++) {
+        const f = omg_frame_stack[i];
+        out += '  File "' + omg_lookup_file(f.file_idx)
+            +  '", line ' + f.line
+            +  ', in ' + omg_frame_stack[i - 1].name + '\n';
+    }
+    const cur_fn = omg_frame_stack.length > 0
+        ? omg_frame_stack[omg_frame_stack.length - 1].name
+        : '<top-level>';
+    out += '  File "' + omg_lookup_file(omg_current_file_idx)
+        +  '", line ' + omg_current_line
+        +  ', in ' + cur_fn + '\n';
+    out += fullmsg;
+    return out;
+}
+
 // === Errors ================================================================
 
 class OmgError extends Error {
@@ -796,9 +866,12 @@ _omg_builtins.call_builtin = omg_call_builtin;
 
 // === Closure helper =======================================================
 
-function omg_closure(fn, captured) {
+function omg_closure(fn, captured, name) {
     const wrapped = (...args) => fn(captured, ...args);
     wrapped.__omg_captured = captured;
+    // Bare source name (no `__mod_N__` mangling) for traceback
+    // rendering when this closure is invoked via CALL_VALUE.
+    wrapped.__omg_name = name || '<closure>';
     return wrapped;
 }
 

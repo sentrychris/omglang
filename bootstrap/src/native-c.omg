@@ -211,15 +211,15 @@ proc parse_bytecode(bytes) {
     if ver_pair[0] != BC_VERSION {
         panic("native-c: unsupported bytecode version " + ver_pair[0])
     }
-    # v2: source-file table. We skip it — the AOT path doesn't yet
-    # surface source-aware tracebacks (planned next), but we must read
-    # past these bytes or the function table reader sees garbage.
+    # v2: source-file table.
     alloc sfc_pair := read_u32_at(bytes, cursor)
     alloc sf_count := sfc_pair[0]
     cursor := sfc_pair[1]
+    alloc src_files := []
     alloc si := 0
     loop si < sf_count {
         alloc sf_pair := read_str_at(bytes, cursor)
+        src_files := src_files + [sf_pair[0]]
         cursor := sf_pair[1]
         si := si + 1
     }
@@ -245,11 +245,9 @@ proc parse_bytecode(bytes) {
         }
         alloc addr_pair := read_u32_at(bytes, cursor)
         cursor := addr_pair[1]
-        # v2: source_file_idx for the function. AOT skips it for now;
-        # a later pass will use it to label traceback frames.
         alloc sfi_pair := read_u32_at(bytes, cursor)
         cursor := sfi_pair[1]
-        funcs[name] := [params, addr_pair[0]]
+        funcs[name] := [params, addr_pair[0], sfi_pair[0]]
         f := f + 1
     }
     alloc cl_pair := read_u32_at(bytes, cursor)
@@ -268,20 +266,21 @@ proc parse_bytecode(bytes) {
         cursor := instr[1]
         k := k + 1
     }
-    # v2: per-instruction source map. Skipped here; the AOT path
-    # doesn't yet thread line info into emitted C.
+    # v2: per-instruction source map.
     alloc ml_pair := read_u32_at(bytes, cursor)
     alloc map_len := ml_pair[0]
     cursor := ml_pair[1]
+    alloc src_lines := []
     alloc mi := 0
     loop mi < map_len {
         alloc fi_pair := read_u32_at(bytes, cursor)
         cursor := fi_pair[1]
         alloc ln_pair := read_u32_at(bytes, cursor)
         cursor := ln_pair[1]
+        src_lines := src_lines + [[fi_pair[0], ln_pair[0]]]
         mi := mi + 1
     }
-    return [code, funcs]
+    return [code, funcs, src_files, src_lines]
 }
 
 # === C string escaping ====================================================
@@ -644,7 +643,13 @@ proc emit_c_for_instr(instr, ctx) {
         alloc fidx := ctx["func_index"][fname]
         alloc finfo := ctx["funcs"][fname]
         alloc nparams := length(finfo[0])
-        return emit_call(c_fn_name(fidx), "NULL", "0", nparams)
+        # Display name for traceback rendering — strip the __mod_N__
+        # mangling, fall back to the mangled name if there isn't one.
+        alloc display := strip_mod_prefix(fname)
+        if display == false {
+            display := fname
+        }
+        return emit_call(c_fn_name(fidx), "NULL", "0", nparams, display)
     }
     if op == "TCALL" {
         # Tail call: replace the current frame instead of pushing a
@@ -658,7 +663,11 @@ proc emit_c_for_instr(instr, ctx) {
         alloc fidx := ctx["func_index"][fname]
         alloc finfo := ctx["funcs"][fname]
         alloc nparams := length(finfo[0])
-        return emit_tail_call(c_fn_name(fidx), nparams, ctx)
+        alloc display := strip_mod_prefix(fname)
+        if display == false {
+            display := fname
+        }
+        return emit_tail_call(c_fn_name(fidx), nparams, ctx, display)
     }
     if op == "CALL_VALUE" {
         # Indirect call through a closure value popped from the stack.
@@ -681,6 +690,7 @@ proc emit_c_for_instr(instr, ctx) {
         out := out + "        OmgBlock *omg_b = (OmgBlock *)malloc(sizeof(OmgBlock));\n"
         out := out + "        if (!omg_b) { fprintf(stderr, \"out of memory\\n\"); exit(1); }\n"
         out := out + "        omg_b->saved_sp = sp;\n"
+        out := out + "        omg_b->saved_frame_top = omg_frame_top;\n"
         out := out + "        omg_block_push(omg_b);\n"
         out := out + "        if (setjmp(omg_b->jb) != 0) {\n"
         out := out + "            sp = omg_b->saved_sp;\n"
@@ -726,8 +736,16 @@ proc emit_c_for_instr(instr, ctx) {
         if bare != false and has_key(ctx["globals"], bare) {
             alias_assign := "    { Value v = " + c_var(fname) + "; omg_inc(v); omg_assign(&" + c_var(bare) + ", v); }\n"
         }
+        # Bare display name for traceback rendering. Strip any
+        # __mod_N__ prefix so a closure invoked via CALL_VALUE shows
+        # `in tick` rather than `in __mod_3__tick`.
+        alloc display_name := bare
+        if display_name == false {
+            display_name := fname
+        }
+        alloc name_lit := "\"" + c_escape(display_name) + "\""
         if nc == 0 {
-            return "    omg_assign(&" + c_var(fname) + ", omg_closure(" + c_fn_name(fidx) + ", NULL, 0));\n" + alias_assign
+            return "    omg_assign(&" + c_var(fname) + ", omg_closure(" + c_fn_name(fidx) + ", " + name_lit + ", NULL, 0));\n" + alias_assign
         }
         alloc out := "    {\n"
         out := out + "        Value *cap = (Value *)malloc(" + nc + " * sizeof(Value));\n"
@@ -736,7 +754,7 @@ proc emit_c_for_instr(instr, ctx) {
             out := out + "        cap[" + i + "] = " + c_var(inner_captured[i]) + "; omg_inc(cap[" + i + "]);\n"
             i := i + 1
         }
-        out := out + "        omg_assign(&" + c_var(fname) + ", omg_closure(" + c_fn_name(fidx) + ", cap, " + nc + "));\n"
+        out := out + "        omg_assign(&" + c_var(fname) + ", omg_closure(" + c_fn_name(fidx) + ", " + name_lit + ", cap, " + nc + "));\n"
         out := out + "    }\n"
         return out + alias_assign
     }
@@ -834,10 +852,19 @@ proc emit_ret(ctx) {
 # Caller's popped args were transferred to the callee; after the call
 # returns we don't dec them (callee owns now). The result has rc=1
 # from the callee's RET, so push without inc.
-proc emit_call(c_fn, captured_expr, cap_count_expr, nparams) {
+#
+# `display` is the function's bare source name; we push a frame
+# capturing the caller's current_file_idx + current_line *before* the
+# call so a panic inside the call (or any deeper call) has the right
+# call site recorded in the traceback. The pop matches the push on
+# clean return; on an unwinding panic, SETUP_EXCEPT's saved_frame_top
+# restores the depth for us.
+proc emit_call(c_fn, captured_expr, cap_count_expr, nparams, display) {
     alloc out := "    {\n"
     out := out + pop_args(nparams)
+    out := out + "        omg_frame_push(\"" + c_escape(display) + "\", omg_current_file_idx, omg_current_line);\n"
     out := out + "        stack[sp++] = " + c_fn + "(" + captured_expr + ", " + cap_count_expr + ", " + nparams + ", " + args_list(nparams) + ");\n"
+    out := out + "        omg_frame_pop();\n"
     out := out + "    }\n"
     return out
 }
@@ -845,10 +872,13 @@ proc emit_call(c_fn, captured_expr, cap_count_expr, nparams) {
 # Tail call — emits a C `return` so cc -O2 sibling-call-optimises.
 # Drain *this* function's owned slots first (we won't return to do it).
 # Args transfer to the callee, which will drain them on its own RET.
-proc emit_tail_call(c_fn, nparams, ctx) {
+# We don't push a new frame: the caller's slot is reused, so we just
+# rewrite its display name to match the tail-callee.
+proc emit_tail_call(c_fn, nparams, ctx, display) {
     alloc out := "    {\n"
     out := out + pop_args(nparams)
     out := out + emit_drain_locals(ctx)
+    out := out + "        omg_frame_set_top_name(\"" + c_escape(display) + "\");\n"
     out := out + "        return " + c_fn + "(NULL, 0, " + nparams + ", " + args_list(nparams) + ");\n"
     out := out + "    }\n"
     return out
@@ -860,6 +890,10 @@ proc emit_tail_call(c_fn, nparams, ctx) {
 # string form is what `import`-style modules produce: a frozen dict of
 # `name -> mangled_name` pairs, where `OP_ATTR` returns the mangled
 # name and `OP_CALL_VALUE` looks it up in the function table.
+#
+# Display name for the frame: closure carries its own bare name;
+# string-callee uses the (already-mangled) string after stripping the
+# __mod_N__ prefix at runtime.
 proc emit_call_value(nparams) {
     alloc out := "    {\n"
     out := out + pop_args(nparams)
@@ -867,17 +901,22 @@ proc emit_call_value(nparams) {
     out := out + "        OmgFn omg_fn = NULL;\n"
     out := out + "        Value *omg_cap = NULL;\n"
     out := out + "        int omg_capn = 0;\n"
+    out := out + "        const char *omg_call_name = \"<closure>\";\n"
     out := out + "        if (omg_callee.tag == OMG_CLOSURE) {\n"
     out := out + "            omg_fn = omg_callee.v.c->fn;\n"
     out := out + "            omg_cap = omg_callee.v.c->captured;\n"
     out := out + "            omg_capn = omg_callee.v.c->cap_count;\n"
+    out := out + "            if (omg_callee.v.c->name) omg_call_name = omg_callee.v.c->name;\n"
     out := out + "        } else if (omg_callee.tag == OMG_STR) {\n"
     out := out + "            omg_fn = omg_lookup_fn(omg_callee.v.s);\n"
     out := out + "            if (!omg_fn) omg_panic(\"UndefinedIdentError\", omg_callee.v.s);\n"
+    out := out + "            omg_call_name = omg_strip_mod_prefix_cstr(omg_callee.v.s);\n"
     out := out + "        } else {\n"
     out := out + "            omg_panic(\"TypeError\", \"cannot call non-function value\");\n"
     out := out + "        }\n"
+    out := out + "        omg_frame_push(omg_call_name, omg_current_file_idx, omg_current_line);\n"
     out := out + "        Value omg_result = omg_fn(omg_cap, omg_capn, " + nparams + ", " + args_list(nparams) + ");\n"
+    out := out + "        omg_frame_pop();\n"
     out := out + "        omg_dec(omg_callee);\n"
     out := out + "        stack[sp++] = omg_result;\n"
     out := out + "    }\n"
@@ -1230,14 +1269,27 @@ proc collect_jump_targets(code, body_start, body_end) {
 }
 
 # Emit the body of one function (or main): walks instructions in
-# [start, end), stopping at HALT (or running off the end).
+# [start, end), stopping at HALT (or running off the end). Before each
+# instruction we conditionally emit `omg_current_line = N;` (only when
+# the line actually differs from the previous instruction's). Most
+# consecutive instructions share a line, so this stays cheap — one
+# write per source line, not per opcode.
 proc emit_body(code, body_start, body_end, ctx) {
     alloc out := ""
     alloc targets := collect_jump_targets(code, body_start, body_end)
+    alloc src_lines := ctx["src_lines"]
+    alloc last_line := -1
     alloc i := body_start
     loop i < body_end {
         if has_key(targets, i) {
             out := out + label_for(i) + ":;\n"
+        }
+        if i < length(src_lines) {
+            alloc line := src_lines[i][1]
+            if line != last_line {
+                out := out + "    omg_current_line = " + line + ";\n"
+                last_line := line
+            }
         }
         out := out + emit_c_for_instr(code[i], ctx)
         if code[i][0] == "HALT" {
@@ -1249,7 +1301,7 @@ proc emit_body(code, body_start, body_end, ctx) {
 }
 
 # Emit one function definition.
-proc emit_function(name, code, funcs, func_index, func_info, globals) {
+proc emit_function(name, code, funcs, func_index, func_info, globals, src_lines, fn_file_idx) {
     alloc info := func_info[name]
     alloc params := info["params"]
     alloc locals := info["locals"]
@@ -1329,7 +1381,10 @@ proc emit_function(name, code, funcs, func_index, func_info, globals) {
         c := c + 1
     }
 
-    # Body.
+    # Body. Establish the per-function source file at entry so any
+    # panic site or call frame sees this proc's origin. Mid-function
+    # we only need to update `omg_current_line` (per emit_body).
+    out := out + "    omg_current_file_idx = " + fn_file_idx + ";\n"
     alloc ctx := {
         funcs: funcs,
         func_index: func_index,
@@ -1338,7 +1393,8 @@ proc emit_function(name, code, funcs, func_index, func_info, globals) {
         in_function: true,
         current_func: name,
         current_captured_set: captured_set,
-        current_boxed_set: boxed_set
+        current_boxed_set: boxed_set,
+        src_lines: src_lines
     }
     out := out + emit_body(code, body_start, body_end, ctx)
     # Implicit return for paths that fall off the end. The OMG
@@ -1354,7 +1410,7 @@ proc emit_function(name, code, funcs, func_index, func_info, globals) {
     return out
 }
 
-proc generate(code, funcs, runtime_header, source_path) {
+proc generate(code, funcs, src_files, src_lines, runtime_header, source_path) {
     alloc globals := collect_globals(code)
     alloc func_index := build_func_index(funcs)
     alloc func_info := analyze_all_functions(code, funcs, globals)
@@ -1362,6 +1418,18 @@ proc generate(code, funcs, runtime_header, source_path) {
     alloc out := "/* Generated by bootstrap/src/native-c.omg from " + source_path + " */\n\n"
     out := out + runtime_header
     out := out + "\n"
+
+    # Source-file table. Wired into omg_rt.h's traceback formatter via
+    # the omg_src_files pointer + omg_src_files_n count set in main().
+    out := out + "static const char *const omg_program_src_files[] = {\n"
+    alloc sfi := 0
+    alloc sfn := length(src_files)
+    loop sfi < sfn {
+        out := out + "    \"" + c_escape(src_files[sfi]) + "\",\n"
+        sfi := sfi + 1
+    }
+    out := out + "};\n"
+    out := out + "static const int omg_program_src_files_n = " + sfn + ";\n\n"
 
     # File-level static globals: every top-level declared name + the
     # runtime-injected ones.
@@ -1396,7 +1464,12 @@ proc generate(code, funcs, runtime_header, source_path) {
     # Function definitions.
     i := 0
     loop i < nf {
-        out := out + emit_function(all_func_names[i], code, funcs, func_index, func_info, globals)
+        alloc fname := all_func_names[i]
+        # funcs entries from parse_bytecode are [params, addr,
+        # source_file_idx]; from compile_program_node the same shape
+        # via install_funcs_list. Either way, idx 2 is the file idx.
+        alloc fn_file_idx := funcs[fname][2]
+        out := out + emit_function(fname, code, funcs, func_index, func_info, globals, src_lines, fn_file_idx)
         i := i + 1
     }
 
@@ -1427,6 +1500,10 @@ proc generate(code, funcs, runtime_header, source_path) {
     out := out + "     * LineWriter even when piped). Matters for error tests where a\n"
     out := out + "     * panic to stderr must come AFTER prior emits, not before. */\n"
     out := out + "    setvbuf(stdout, NULL, _IOLBF, 0);\n"
+    out := out + "    /* Hook the source-file table into omg_rt.h's traceback path. */\n"
+    out := out + "    omg_src_files = omg_program_src_files;\n"
+    out := out + "    omg_src_files_n = omg_program_src_files_n;\n"
+    out := out + "    omg_current_file_idx = 0;\n"
     out := out + "    Value stack[1024];\n"
     out := out + "    int sp = 0;\n"
     out := out + "    (void)stack; (void)sp;\n"
@@ -1464,7 +1541,8 @@ proc generate(code, funcs, runtime_header, source_path) {
         in_function: false,
         current_func: "",
         current_captured_set: {},
-        current_boxed_set: {}
+        current_boxed_set: {},
+        src_lines: src_lines
     }
     # Find the HALT to know where main ends.
     alloc main_end := length(code)
@@ -1575,13 +1653,15 @@ if nc_is_main_invocation() and length(args) >= 3 and nc_path_ends_with(args[1], 
     alloc parsed := parse_bytecode(bc_bytes)
     alloc code := parsed[0]
     alloc funcs := parsed[1]
+    alloc src_files := parsed[2]
+    alloc src_lines := parsed[3]
 
     alloc runtime_header := read_file(rt_path)
     if runtime_header == false {
         panic("native-c: cannot read runtime header at " + rt_path)
     }
 
-    alloc c_src := generate(code, funcs, runtime_header, bc_path)
+    alloc c_src := generate(code, funcs, src_files, src_lines, runtime_header, bc_path)
 
     alloc out_h := file_open(out_path, "w")
     file_write(out_h, c_src)

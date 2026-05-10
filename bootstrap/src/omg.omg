@@ -185,7 +185,9 @@ proc build_aot(in_path, out_path) {
         exit_with_error("ModuleImportError: cannot read runtime header at " + rt_path)
     }
     alloc parsed := ncc.parse_bytecode(bc_bytes)
-    alloc c_src := ncc.generate(parsed[0], parsed[1], runtime_header, in_path)
+    # parsed is [code, funcs, src_files, src_lines]; the source map
+    # is what gives AOT binaries the Python-style traceback path.
+    alloc c_src := ncc.generate(parsed[0], parsed[1], parsed[2], parsed[3], runtime_header, in_path)
 
     alloc out_h := file_open(tmp_c, "w")
     file_write(out_h, c_src)
