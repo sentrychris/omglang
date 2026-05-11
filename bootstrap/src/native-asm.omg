@@ -66,8 +66,10 @@ alloc OP_STORE_LOCAL    := 53
 alloc OP_BUILD_LIST     := 3
 alloc OP_BUILD_DICT     := 4
 alloc OP_INDEX          := 27
+alloc OP_SLICE          := 28
 alloc OP_BUILTIN        := 33
 alloc OP_POP            := 34
+alloc OP_STORE_INDEX    := 39
 
 # === ELF / x86_64 layout ==================================================
 # We map the whole file as a single PT_LOAD segment at virtual address
@@ -271,13 +273,15 @@ proc parse_bytecode(bytes) {
             if op == OP_LT   { code := code + [["LT",   false]] } else {
             if op == OP_LE   { code := code + [["LE",   false]] } else {
             if op == OP_GT   { code := code + [["GT",   false]] } else {
-            if op == OP_GE    { code := code + [["GE",    false]] } else {
-            if op == OP_INDEX { code := code + [["INDEX", false]] } else {
-            if op == OP_POP   { code := code + [["POP",   false]] } else {
-            if op == OP_EMIT  { code := code + [["EMIT",  false]] } else {
-            if op == OP_HALT  { code := code + [["HALT",  false]] } else {
+            if op == OP_GE          { code := code + [["GE",          false]] } else {
+            if op == OP_INDEX       { code := code + [["INDEX",       false]] } else {
+            if op == OP_SLICE       { code := code + [["SLICE",       false]] } else {
+            if op == OP_STORE_INDEX { code := code + [["STORE_INDEX", false]] } else {
+            if op == OP_POP         { code := code + [["POP",         false]] } else {
+            if op == OP_EMIT        { code := code + [["EMIT",        false]] } else {
+            if op == OP_HALT        { code := code + [["HALT",        false]] } else {
                 panic("native-asm: opcode " + op + " not yet supported")
-            }}}}}}}}}}}}}}}}}
+            }}}}}}}}}}}}}}}}}}}
         }}}}}}}}}}}}}}}
         k := k + 1
     }
@@ -719,6 +723,221 @@ proc emit_rt_alloc() {
     return entry
 }
 
+# Slice a container into a new heap-allocated container of the same
+# type. Dispatches by [rax]'s type tag: string → byte-wise rep movsb,
+# list → quadword rep movsq. Phase 5d trusts the bytecode — invalid
+# indices (negative, > length) produce undefined output rather than
+# panicking. Will tighten in phase 8.
+#
+# Input:  rax = container pointer
+#         rbx = tagged start index
+#         rcx = tagged end index (exclusive)
+# Output: rax = new container pointer
+# Clobbers: rcx, rdx, rsi, rdi, r8
+proc emit_rt_slice(alloc_off) {
+    alloc entry := ob_top
+    # Untag start/end.
+    x_sar_rbx_1()
+    # sar rcx, 1 — 48 d1 f9
+    ob_bytes([72, 209, 249])
+    # rdx = end - start (new length); leave rcx unused going forward.
+    # mov rdx, rcx — 48 89 ca
+    ob_bytes([72, 137, 202])
+    # sub rdx, rbx — 48 29 da
+    ob_bytes([72, 41, 218])
+    # Test type at [rax].
+    # mov rcx, [rax] — 48 8b 08
+    ob_bytes([72, 139, 8])
+    # cmp rcx, 1 — 48 83 f9 01
+    ob_bytes([72, 131, 249, 1])
+    # je .list_path (rel32 — easier than rel8 since the string path is big)
+    ob_bytes([15, 132])
+    alloc je_list_site := ob_top
+    ob_u32(0)
+    # === STRING PATH ===
+    # Save src ptr (rax), start (rbx), length (rdx).
+    ob_byte(80)                              # push rax (src)
+    ob_byte(83)                              # push rbx (start)
+    ob_byte(82)                              # push rdx (length)
+    # Allocate 16 + length, padded to 8.
+    # mov rax, rdx — 48 89 d0
+    ob_bytes([72, 137, 208])
+    # add rax, 23 — 48 83 c0 17
+    ob_bytes([72, 131, 192, 23])
+    # and rax, -8 — 48 83 e0 f8
+    ob_bytes([72, 131, 224, 248])
+    alloc s_alloc_s := x_call_rel32_patchable()
+    patch_call_rel32(s_alloc_s, alloc_off)
+    # rax = new ptr. Pop length, start, src.
+    ob_byte(90)                              # pop rdx (length)
+    ob_byte(91)                              # pop rbx (start)
+    ob_byte(89)                              # pop rcx (src)
+    # Write header [type=0, length].
+    # mov qword [rax], 0 — 48 c7 00 00 00 00 00
+    ob_bytes([72, 199, 0, 0, 0, 0, 0])
+    # mov [rax + 8], rdx — 48 89 50 08
+    ob_bytes([72, 137, 80, 8])
+    # rep movsb setup:
+    #   rsi = src + 16 + start
+    #   rdi = new + 16
+    #   rcx = length
+    # mov rsi, rcx — 48 89 ce (src ptr was popped into rcx above)
+    ob_bytes([72, 137, 206])
+    # add rsi, 16 — 48 83 c6 10
+    ob_bytes([72, 131, 198, 16])
+    # add rsi, rbx — 48 01 de
+    ob_bytes([72, 1, 222])
+    # lea rdi, [rax + 16] — 48 8d 78 10
+    ob_bytes([72, 141, 120, 16])
+    # mov rcx, rdx — 48 89 d1
+    ob_bytes([72, 137, 209])
+    # rep movsb — f3 a4
+    ob_bytes([243, 164])
+    x_ret()
+    # === LIST PATH ===
+    alloc list_off := ob_top
+    patch_rel32(je_list_site, list_off)
+    # Save src ptr, start, length on native stack.
+    ob_byte(80)                              # push rax (src)
+    ob_byte(83)                              # push rbx (start)
+    ob_byte(82)                              # push rdx (length)
+    # Allocate 24 + length*8 (list header + elements).
+    # mov rax, rdx — 48 89 d0
+    ob_bytes([72, 137, 208])
+    # shl rax, 3 — 48 c1 e0 03
+    ob_bytes([72, 193, 224, 3])
+    # add rax, 24 — 48 83 c0 18
+    ob_bytes([72, 131, 192, 24])
+    alloc l_alloc_s := x_call_rel32_patchable()
+    patch_call_rel32(l_alloc_s, alloc_off)
+    ob_byte(90)                              # pop rdx (length)
+    ob_byte(91)                              # pop rbx (start)
+    ob_byte(89)                              # pop rcx (src)
+    # Write header [type=1, length, capacity=length].
+    # mov qword [rax], 1 — 48 c7 00 01 00 00 00
+    ob_bytes([72, 199, 0, 1, 0, 0, 0])
+    # mov [rax + 8], rdx — 48 89 50 08
+    ob_bytes([72, 137, 80, 8])
+    # mov [rax + 16], rdx — 48 89 50 10
+    ob_bytes([72, 137, 80, 16])
+    # rep movsq setup:
+    #   rsi = src + 24 + start*8         (use lea with SIB)
+    #   rdi = new + 24
+    #   rcx = length
+    # lea rsi, [rcx + 24] — 48 8d 71 18 (we'll then add start*8 separately)
+    # Easier: lea rsi, [rcx + rbx*8 + 24]
+    # 48 8d 74 d9 18:
+    #   48 REX.W
+    #   8d lea
+    #   ModR/M: mod=01 (disp8), reg=rsi(110), rm=100 (SIB) → 0x74
+    #   SIB: scale=11(8), index=rbx(011), base=rcx(001) → 0xd9
+    #   disp8 = 24
+    ob_bytes([72, 141, 116, 217, 24])
+    # lea rdi, [rax + 24] — 48 8d 78 18
+    ob_bytes([72, 141, 120, 24])
+    # mov rcx, rdx — 48 89 d1
+    ob_bytes([72, 137, 209])
+    # rep movsq — f3 48 a5
+    ob_bytes([243, 72, 165])
+    x_ret()
+    return entry
+}
+
+# Concatenate two heap-typed values of the same shape into a new
+# heap-allocated value. Dispatches by lhs's type tag:
+#   type=0 (string) → byte-wise concat via rep movsb
+#   type=1 (list)   → 8-byte concat via rep movsq
+# Falls through to the string path for any other type (phase 5 trusts
+# the bytecode; phase 8 will tighten with explicit type errors).
+proc emit_rt_concat(string_off, list_off) {
+    alloc entry := ob_top
+    # mov rcx, [rax] — 48 8b 08 (type tag of lhs)
+    ob_bytes([72, 139, 8])
+    # cmp rcx, 1 — 48 83 f9 01
+    ob_bytes([72, 131, 249, 1])
+    # je <list_path> (rel32 placeholder)
+    ob_bytes([15, 132])
+    alloc je_site := ob_top
+    ob_u32(0)
+    # jmp string_concat (tail call — string's ret returns straight to
+    # gen_add's caller).
+    alloc s := x_jmp_rel32_patchable()
+    patch_rel32(s, string_off)
+    # List path entry — patch the je above.
+    patch_rel32(je_site, ob_top)
+    # jmp list_concat (tail call)
+    alloc l := x_jmp_rel32_patchable()
+    patch_rel32(l, list_off)
+    return entry
+}
+
+# Concatenate two lists into a new heap-allocated list. Mirrors
+# rt_string_concat but with 8-byte element copies (rep movsq) and the
+# list header layout [type=1, length, capacity, elements...].
+#
+# Input:  rax = lhs pointer, rbx = rhs pointer (both are heap lists)
+# Output: rax = pointer to new concatenated list
+# Clobbers: rcx, rdx, rsi, rdi, r8
+proc emit_rt_list_concat(alloc_off) {
+    alloc entry := ob_top
+    # mov rcx, [rax + 8] — 48 8b 48 08 (len_a)
+    ob_bytes([72, 139, 72, 8])
+    # mov rdx, [rbx + 8] — 48 8b 53 08 (len_b)
+    ob_bytes([72, 139, 83, 8])
+    # push rax (lhs); push rbx (rhs)
+    ob_bytes([80, 83])
+    # add rcx, rdx — 48 01 d1 (total length)
+    ob_bytes([72, 1, 209])
+    # push rcx (save total length)
+    ob_byte(81)
+    # Compute size: 24 + total*8 (no extra padding — 8-aligned
+    # naturally because each slot is 8 bytes and 24 is 8-aligned).
+    # shl rcx, 3 — 48 c1 e1 03
+    ob_bytes([72, 193, 225, 3])
+    # add rcx, 24 — 48 83 c1 18
+    ob_bytes([72, 131, 193, 24])
+    # mov rax, rcx — 48 89 c8
+    ob_bytes([72, 137, 200])
+    alloc s := x_call_rel32_patchable()
+    patch_call_rel32(s, alloc_off)
+    # mov r8, rax (save new ptr) — 49 89 c0
+    ob_bytes([73, 137, 192])
+    # pop rdi (total length); pop rbx (rhs); pop rsi (lhs)
+    ob_bytes([95, 91, 94])
+    # Header: type=1, length=total, capacity=total
+    # mov qword [r8], 1 — 49 c7 00 01 00 00 00
+    ob_bytes([73, 199, 0, 1, 0, 0, 0])
+    # mov [r8 + 8], rdi — 49 89 78 08
+    ob_bytes([73, 137, 120, 8])
+    # mov [r8 + 16], rdi — 49 89 78 10
+    ob_bytes([73, 137, 120, 16])
+    # Copy lhs elements with rep movsq.
+    # rsi already = lhs; bump it past header. Set rcx = len_a,
+    # rdi = newptr + 24.
+    # mov rcx, [rsi + 8] — 48 8b 4e 08
+    ob_bytes([72, 139, 78, 8])
+    # add rsi, 24 — 48 83 c6 18
+    ob_bytes([72, 131, 198, 24])
+    # lea rdi, [r8 + 24] — 49 8d 78 18
+    ob_bytes([73, 141, 120, 24])
+    # rep movsq — f3 48 a5
+    ob_bytes([243, 72, 165])
+    # Copy rhs elements.
+    # mov rcx, [rbx + 8] — 48 8b 4b 08
+    ob_bytes([72, 139, 75, 8])
+    # mov rsi, rbx — 48 89 de
+    ob_bytes([72, 137, 222])
+    # add rsi, 24 — 48 83 c6 18
+    ob_bytes([72, 131, 198, 24])
+    # rep movsq
+    ob_bytes([243, 72, 165])
+    # Return new ptr.
+    # mov rax, r8 — 4c 89 c0
+    ob_bytes([76, 137, 192])
+    x_ret()
+    return entry
+}
+
 # Concatenate two strings into a new heap-allocated string.
 #
 # Input:  rax = lhs pointer, rbx = rhs pointer (both are heap strings)
@@ -1017,7 +1236,8 @@ proc emit_rt_emit_dispatch_print(off_repr, off_newline) {
 # can patch the rel32s later.
 alloc rt_alloc_off          := 0
 alloc rt_build_list_off     := 0
-alloc rt_string_concat_off  := 0
+alloc rt_concat_off         := 0
+alloc rt_slice_off          := 0
 
 proc emit_runtime_blob() {
     # Static strings — no trailing newlines (those come from the
@@ -1045,9 +1265,12 @@ proc emit_runtime_blob() {
     alloc off_false   := emit_rt_write_static(addr_false, 5)
     alloc off_none    := emit_rt_write_static(addr_none,  4)
     # Allocator + builders.
-    rt_alloc_off         := emit_rt_alloc()
-    rt_build_list_off    := emit_rt_build_list(rt_alloc_off)
-    rt_string_concat_off := emit_rt_string_concat(rt_alloc_off)
+    rt_alloc_off          := emit_rt_alloc()
+    rt_build_list_off     := emit_rt_build_list(rt_alloc_off)
+    alloc str_concat_off  := emit_rt_string_concat(rt_alloc_off)
+    alloc list_concat_off := emit_rt_list_concat(rt_alloc_off)
+    rt_concat_off         := emit_rt_concat(str_concat_off, list_concat_off)
+    rt_slice_off          := emit_rt_slice(rt_alloc_off)
     # Mutually-recursive list emitter ↔ repr dispatcher. We emit the
     # list helper first with a placeholder for its call to the repr
     # dispatcher; the dispatcher is emitted next (and can reference
@@ -1121,9 +1344,10 @@ proc gen_add() {
     # jnz +7  — skip the call + jmp block when both are ints
     # Block size: call rel32 (5) + jmp rel8 (2) = 7
     ob_bytes([117, 7])
-    # call rt_string_concat (rax=lhs, rbx=rhs → rax=new)
+    # call rt_concat (rax=lhs, rbx=rhs → rax=new). The dispatcher
+    # routes string+string vs list+list internally.
     alloc s := x_call_rel32_patchable()
-    patch_call_rel32(s, rt_string_concat_off)
+    patch_call_rel32(s, rt_concat_off)
     # jmp +7  — skip the int fast path (sub+add = 7 bytes)
     ob_bytes([235, 7])
     # int fast path:
@@ -1504,6 +1728,32 @@ proc gen_index() {
     x_push_reg(REG_RAX)
 }
 
+# STORE_INDEX on a list: stack is [..., list, index, value]. Mutates
+# list[index] in place; leaves no result on the stack.
+proc gen_store_index() {
+    x_pop_reg(REG_RDX)                            # value
+    x_pop_reg(REG_RAX)                            # tagged index
+    x_sar_rax_1()                                 # untag
+    x_pop_reg(REG_RCX)                            # list pointer
+    # mov [rcx + 24 + rax*8], rdx — 48 89 54 c1 18
+    # ModR/M: mod=01 (disp8), reg=rdx(010), rm=100 (SIB) → 0x54
+    # SIB:    scale=11 (×8), index=rax(000), base=rcx(001) → 0xc1
+    # disp8 = 24
+    ob_bytes([72, 137, 84, 193, 24])
+}
+
+# SLICE: stack is [..., container, start, end]. Allocates a new
+# container of the same type holding elements [start, end). Calls
+# rt_slice which dispatches by the type tag at [container].
+proc gen_slice() {
+    x_pop_reg(REG_RCX)                            # tagged end
+    x_pop_reg(REG_RBX)                            # tagged start
+    x_pop_reg(REG_RAX)                            # container pointer
+    alloc site := x_call_rel32_patchable()
+    patch_call_rel32(site, rt_slice_off)
+    x_push_reg(REG_RAX)
+}
+
 # POP discards the top of the operand stack. Used after a Call whose
 # return value isn't consumed (statement-context calls).
 proc gen_pop() {
@@ -1641,12 +1891,14 @@ proc gen_one(instr, bytecode_idx, dispatch_off) {
     if op == "RET"      { gen_ret() }              else {
     if op == "BUILD_LIST"{ gen_build_list(instr[1]) } else {
     if op == "INDEX"    { gen_index() }            else {
+    if op == "SLICE"    { gen_slice() }            else {
+    if op == "STORE_INDEX" { gen_store_index() }   else {
     if op == "BUILTIN"  { gen_builtin(instr[1][0], instr[1][1]) } else {
     if op == "POP"      { gen_pop() }              else {
     if op == "EMIT"     { gen_emit(dispatch_off) } else {
     if op == "HALT"     { gen_halt() }             else {
         panic("native-asm: unsupported op " + op)
-    }}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}
+    }}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}
 }
 
 # Emit the top-level code (instructions [0, top_level_end)) plus each

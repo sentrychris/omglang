@@ -16,7 +16,7 @@ if [ ! -x "$OMGNA_NATIVE" ]; then
     exit 2
 fi
 
-section "native-asm (omgna): phases 1-5c"
+section "native-asm (omgna): phases 1-5d"
 
 # Round-trip a .omg through omgc + omgna and compare ./<bin> stdout
 # against the Rust runtime's output for the same source.
@@ -117,6 +117,16 @@ assert_omgna "emit_list_ret"    $';;;omg\nproc make() { return [10, 20, 30] }\ne
 assert_omgna "emit_list_var"    $';;;omg\nalloc xs := [1, 2, 3]\nemit xs'
 assert_omgna "emit_list_many"   $';;;omg\nemit [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]'
 
+# === Phase 5d: store_index, slice, list concat ===
+assert_omgna "store_index_basic" $';;;omg\nalloc xs := [1, 2, 3]\nxs[1] := 99\nemit xs[0]\nemit xs[1]\nemit xs[2]'
+assert_omgna "store_index_loop"  $';;;omg\nalloc xs := [0, 0, 0, 0, 0]\nalloc i := 0\nloop i < 5 {\n    xs[i] := i * 10\n    i := i + 1\n}\nemit xs'
+assert_omgna "list_slice"        $';;;omg\nalloc xs := [10, 20, 30, 40, 50]\nemit xs[1:4]\nemit xs[0:0]\nemit xs[0:5]'
+assert_omgna "string_slice"      $';;;omg\nemit "hello world"[0:5]\nemit "hello world"[6:11]\nemit "abc"[1:2]'
+assert_omgna "slice_in_loop"     $';;;omg\nalloc s := "abcdefghij"\nalloc i := 0\nloop i < 5 {\n    emit s[i:i+2]\n    i := i + 1\n}'
+assert_omgna "list_concat"       $';;;omg\nemit [1, 2] + [3, 4]\nemit [] + [1]\nemit [1] + []'
+assert_omgna "list_concat_chain" $';;;omg\nalloc xs := [1, 2] + [3, 4] + [5, 6]\nemit xs\nemit length(xs)'
+assert_omgna "merge_sort"        $';;;omg\nproc merge(xs, lo, mid, hi) {\n    alloc tmp := []\n    alloc i := lo\n    alloc j := mid\n    loop i < mid {\n        if j >= hi {\n            tmp := tmp + [xs[i]]\n            i := i + 1\n        } else {\n            if xs[i] <= xs[j] {\n                tmp := tmp + [xs[i]]\n                i := i + 1\n            } else {\n                tmp := tmp + [xs[j]]\n                j := j + 1\n            }\n        }\n    }\n    loop j < hi {\n        tmp := tmp + [xs[j]]\n        j := j + 1\n    }\n    alloc k := 0\n    loop k < length(tmp) {\n        xs[lo + k] := tmp[k]\n        k := k + 1\n    }\n}\nproc msort(xs, lo, hi) {\n    if hi - lo <= 1 { return false }\n    alloc mid := (lo + hi) / 2\n    msort(xs, lo, mid)\n    msort(xs, mid, hi)\n    merge(xs, lo, mid, hi)\n}\nalloc data := [5, 2, 8, 1, 9, 3, 7, 4, 6]\nmsort(data, 0, length(data))\nemit data'
+
 # Binary should be a real statically-linked ELF, no libc dependency.
 elf="$TMPDIR_TEST/na-hello_world"
 if file "$elf" 2>/dev/null | grep -q "ELF 64-bit LSB executable, x86-64.*statically linked"; then
@@ -125,10 +135,12 @@ else
     fail "produces a statically-linked x86_64 ELF" "file output: $(file "$elf" 2>&1)"
 fi
 
-# Phase-1 binaries should be tiny — under 1 KB for hello-world.
+# Hello-world ELF size — the runtime blob grows as we add helpers
+# (alloc, list build, concat, slice, list-aware repr dispatcher, etc).
+# Bumped to 2 KB at phase 5d when list_concat + slice landed.
 size=$(wc -c < "$elf")
-if [ "$size" -lt 1024 ]; then
-    pass "hello-world ELF is <1 KB ($size bytes)"
+if [ "$size" -lt 2048 ]; then
+    pass "hello-world ELF is <2 KB ($size bytes)"
 else
-    fail "hello-world ELF is <1 KB" "size: $size bytes"
+    fail "hello-world ELF is <2 KB" "size: $size bytes"
 fi

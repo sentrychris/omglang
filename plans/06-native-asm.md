@@ -1,6 +1,6 @@
 # native-asm — OMG bytecode → x86_64 ELF, no C compiler
 
-Status: Phases 1–5c done — emit-on-list formatting works (nested lists, mixed types, recursive). Dispatcher split into `rt_emit_dispatch_repr` (no newline; mutually recursive with `rt_emit_list`) + `rt_emit_dispatch_print` (= repr + newline; what EMIT compiles to). Remaining 5: dicts, slice, store_index. Phases 6-12 pending.
+Status: Phases 1–5d done — STORE_INDEX, SLICE, list concat all working. **Merge sort now runs natively end-to-end.** `rt_concat` dispatches by type tag between `rt_string_concat` and `rt_list_concat`. `rt_slice` covers strings (rep movsb) and lists (rep movsq). Remaining: dicts. Phases 6-12 pending.
 
 Owner: sentrychris + claude
 
