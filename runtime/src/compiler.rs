@@ -1066,7 +1066,10 @@ impl Compiler {
 /// table. We can't use `fs::canonicalize` here because the OMG side
 /// has no OS-level canonicalisation primitive — matching its weaker
 /// normalisation is what keeps the triple-meta `.omgb` bytes equal.
-fn path_normalize(p: &str) -> String {
+///
+/// Also called from main.rs's `absolute_normalised` helper to make
+/// entry paths absolute before the compiler sees them.
+pub fn path_normalize(p: &str) -> String {
     if p.is_empty() {
         return String::new();
     }

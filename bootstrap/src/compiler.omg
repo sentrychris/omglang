@@ -2256,13 +2256,29 @@ proc do_compile(in_path, out_path) {
     if src == false {
         panic("cannot read '" + in_path + "'")
     }
-    alloc tokens := tokenize(src, in_path)
-    alloc ast := parse_program(in_path, tokens)
-    alloc compiled := compile_program_node(ast, in_path)
+    # Absolute-normalise the entry path so the resulting .omgb's
+    # source-file table stays consistent regardless of which CWD
+    # `omgc` was invoked from. Mirrors `absolute_normalised` in
+    # bootstrap/src/omg.omg + runtime/src/main.rs.
+    alloc abs_path := cc_absolute_normalised(in_path)
+    alloc tokens := tokenize(src, abs_path)
+    alloc ast := parse_program(abs_path, tokens)
+    alloc compiled := compile_program_node(ast, abs_path)
     alloc bytes := write_bytecode(compiled[0], compiled[1], compiled[2], compiled[3])
     alloc h := file_open(out_path, "wb")
     file_write(h, bytes)
     file_close(h)
+}
+
+# Make `path` absolute (join against current_dir when relative) and
+# collapse `./` / `..` segments. Symlinks NOT resolved — keeping
+# parity with how every other implementation produces the same path.
+proc cc_absolute_normalised(path) {
+    alloc combined := path
+    if length(path) == 0 or (path[0] != "/" and path[0] != "\\") {
+        combined := current_dir + "/" + path
+    }
+    return path_normalize(combined)
 }
 
 # Library entry point: compile a source string in-memory and return

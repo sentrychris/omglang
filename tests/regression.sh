@@ -153,12 +153,17 @@ emit "third"
 panic("boom")
 EOF
 
-# When merged with 2>&1, stderr line should come AFTER all the stdout.
+# When merged with 2>&1, the stderr traceback should come AFTER all
+# the stdout emits — i.e. setvbuf(stdout, _IOLBF) is doing its job.
+# The traceback prefix landed in 0x000200 (v2 .omgb format); before
+# that the test compared against a bare `Kind: msg` line.
 "$OMG_NATIVE" --build "$TMPDIR_TEST/buffer_order.omg" "$TMPDIR_TEST/buffer-aot" >/dev/null
 actual=$("$TMPDIR_TEST/buffer-aot" 2>&1)
 expected="first
 second
 third
+Traceback (most recent call last):
+  File \"$TMPDIR_TEST/buffer_order.omg\", line 5, in <top-level>
 RuntimeError: boom"
 assert_eq "AOT stdout flushes before stderr" "$expected" "$actual"
 

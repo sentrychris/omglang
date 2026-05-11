@@ -121,6 +121,20 @@ proc check_unhandled_error() {
     }
 }
 
+# Absolute-normalise the entry path so traceback frames cite the same
+# unambiguous filename regardless of which CWD the user invoked us
+# from. Mirrors `absolute_normalised` in runtime/src/main.rs — both
+# sides go through cwd-join + path_normalize so the source-file table
+# in the resulting .omgb is identical.
+proc absolute_normalised(file) {
+    alloc combined := file
+    if length(file) == 0 or (file[0] != "/" and file[0] != "\\") {
+        # `current_dir` is the runtime-injected cwd global.
+        combined := current_dir + "/" + file
+    }
+    return cc.path_normalize(combined)
+}
+
 # Compile <file.omg> in-process and run it. forward_args becomes the
 # hosted program's args[1..], with file as args[0].
 proc run_omg_source(file, forward_args) {
@@ -128,8 +142,9 @@ proc run_omg_source(file, forward_args) {
     if src == false {
         exit_with_error("ModuleImportError: cannot read '" + file + "'")
     }
+    alloc abs_file := absolute_normalised(file)
     cc.compile_reset()
-    alloc compiled := cc.compile_source(src, file)
+    alloc compiled := cc.compile_source(src, abs_file)
     vm.vm_reset()
     vm.vm_extend_code(compiled[0])
     install_funcs_list(compiled[1])
@@ -137,7 +152,7 @@ proc run_omg_source(file, forward_args) {
     # cites the .omg file and line. compile_source returns
     # [code, funcs, src_files, src_lines] in v2.
     vm.vm_set_src_map(compiled[2], compiled[3])
-    seed_vm_globals([file] + forward_args, file)
+    seed_vm_globals([abs_file] + forward_args, abs_file)
     vm.vm_set_pc(0)
     vm.run()
     check_unhandled_error()
@@ -153,6 +168,10 @@ proc run_omgb(file, forward_args) {
     vm.vm_extend_code(parsed[0])
     install_funcs_dict(parsed[1])
     vm.vm_set_src_map(parsed[2], parsed[3])
+    # The .omgb's source-file table already holds absolute-normalised
+    # paths (the compile step did the work). Pass the .omgb path as
+    # the program's `args[0]` / `module_file` raw — those are about
+    # the running binary, not the original source.
     seed_vm_globals([file] + forward_args, file)
     vm.vm_set_pc(0)
     vm.run()
@@ -163,7 +182,7 @@ proc run_omgb(file, forward_args) {
 
 proc compile_only(in_path, out_path) {
     cc.compile_reset()
-    cc.do_compile(in_path, out_path)
+    cc.do_compile(absolute_normalised(in_path), out_path)
 }
 
 # === --build (AOT to native ELF) =========================================
@@ -173,7 +192,7 @@ proc build_aot(in_path, out_path) {
     alloc tmp_omgb := "/tmp/omg-build-" + pid + ".omgb"
     alloc tmp_c    := "/tmp/omg-build-" + pid + ".c"
     cc.compile_reset()
-    cc.do_compile(in_path, tmp_omgb)
+    cc.do_compile(absolute_normalised(in_path), tmp_omgb)
 
     # Read the bytecode, transpile in-process to C.
     alloc fh := file_open(tmp_omgb, "rb")

@@ -13,8 +13,10 @@ require_native_toolchain
 
 # Strip the REPL banner and prompts (`>>> ` and `... `) so we can
 # compare just the user-visible output. The banner is always two lines.
+# We only strip leading prompts — orphan leading whitespace stays
+# intact so multi-line tracebacks keep their `  File ...` indent.
 strip_repl() {
-    sed -e '1,2d' -e 's/^\(>>> \| *\(>>> \|\.\.\. \)*\)//g' | sed '/^$/d'
+    sed -e '1,2d' -e 's/^\(>>> \|\.\.\. \)*//' | sed '/^$/d'
 }
 
 # Run a session and capture (banner-stripped) stdout + stderr combined.
@@ -107,7 +109,13 @@ quit')"
 section "REPL: error recovery"
 
 # An undefined name triggers an error but the REPL keeps going.
-assert_eq "undefined name doesn't kill REPL" "UndefinedIdentError: nope
+# Each turn compiles to its own chunk anchored at line 2 of <repl> (the
+# synthesized header takes line 1), and the new traceback format prepends
+# the `Traceback (most recent call last):` header + a single
+# `File "<repl>", line 2, in <top-level>` frame above the error.
+assert_eq "undefined name doesn't kill REPL" "Traceback (most recent call last):
+  File \"<repl>\", line 2, in <top-level>
+UndefinedIdentError: nope
 99" \
     "$(run_repl 'alloc keep := 99
 emit nope
@@ -115,7 +123,9 @@ emit keep
 quit')"
 
 # Division by zero is catchable in subsequent turns.
-assert_eq "div0 reported, REPL continues" "ZeroDivisionError: integer division or modulo by zero
+assert_eq "div0 reported, REPL continues" "Traceback (most recent call last):
+  File \"<repl>\", line 2, in <top-level>
+ZeroDivisionError: integer division or modulo by zero
 hello" \
     "$(run_repl 'alloc x := 1 / 0
 emit "hello"
