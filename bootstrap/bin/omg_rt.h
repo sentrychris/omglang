@@ -952,6 +952,33 @@ static Value omg_list_build(Value *items, int n) {
     return v;
 }
 
+/* list_repeat(item, count) — allocate a fresh list of length `count`
+ * with every slot holding the same value. The OMG-side bytecode
+ * writer uses this to pre-allocate its byte buffer in O(n) rather
+ * than appending one byte at a time (which is O(n²)). Each
+ * inc-ref of the item is counted as a separate reference because the
+ * caller's `item` value will be dec'd by the standard transfer
+ * protocol on builtin return. */
+static Value omg_list_repeat(Value item, Value count) {
+    if (count.tag != OMG_INT) {
+        omg_panic("TypeError", "list_repeat() count must be an int");
+    }
+    if (count.v.i < 0) {
+        omg_panicf("ValueError",
+                   "list_repeat() count must be non-negative, got %lld",
+                   (long long)count.v.i);
+    }
+    int n = (int)count.v.i;
+    Value v;
+    v.tag = OMG_LIST;
+    v.v.l = omg_list_alloc(n);
+    for (int i = 0; i < n; i++) {
+        omg_inc(item);
+        omg_list_push(v.v.l, item);
+    }
+    return v;
+}
+
 /* By-reference closure cells. A "cell" is a 1-element OMG_LIST that
  * lets a parent and its closures share the same storage slot for a
  * captured local. Mirrors `Rc<RefCell<Value>>` in the Rust runtime

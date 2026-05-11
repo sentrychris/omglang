@@ -358,6 +358,7 @@ proc emit_builtin(name, argc) {
     if name == "ascii"         and argc == 1 { return emit_builtin1("omg_ascii") }
     if name == "freeze"        and argc == 1 { return emit_builtin1("omg_freeze") }
     if name == "dict_keys"     and argc == 1 { return emit_builtin1("omg_dict_keys") }
+    if name == "list_repeat"   and argc == 2 { return emit_builtin2("omg_list_repeat") }
     if name == "int"           and argc == 1 { return emit_builtin1("omg_int") }
     if name == "float"         and argc == 1 { return emit_builtin1("omg_float") }
     if name == "floor"         and argc == 1 { return emit_builtin1("omg_floor") }

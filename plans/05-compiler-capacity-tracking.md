@@ -1,6 +1,8 @@
 # Compiler capacity-tracking — faster `omgc` and `bash bootstrap/build.sh`
 
-Status: To Do
+Status: **Done — 6.5× speedup delivered via a different route.** See
+"Outcome" at the bottom for the full story (two failed in-OMG
+attempts, then a successful pivot to a new runtime builtin).
 Owner: sentrychris + claude
 
 ## Goal
@@ -263,3 +265,151 @@ order as the VM-side improvement). Anything more is a bonus.
   one slice per function. Probably not worth the API churn — function
   count is small compared to instruction count, and parity-test
   sensitivity to API shape is non-zero.
+
+## Outcome
+
+Both attempts were **reverted** after measurement. Documented here so
+the next person trying the same thing knows the trap.
+
+### Attempt 1: capacity-tracking on `cc_code` / `cc_lines`
+
+- Implemented the full plan: counters, mutation-style `cc_emit`,
+  save/restore pairs in `compile_function_body`, slice-on-extract.
+- All 202 tests passed. Triple-meta byte-identity held across the
+  corpus. Diff was ~80 lines, well-contained.
+- **Measured speedup: ~0%** on `omgc bootstrap/src/compiler.omg`
+  (45–47s before, 45–47s after — within noise).
+
+The plan's hypothesis was wrong. `cc_emit`'s `xs := xs + [v]` is
+O(n) per call, but **the buffer never gets popped** at the top
+level — it grows monotonically. Capacity-tracking only beats list-
+concat when slots get *reused* (write-then-overwrite, like a true
+operand stack). For a write-only buffer, every push falls into the
+"extend" branch and costs exactly what `xs + [v]` did before — just
+with extra bookkeeping per call. The same applies inside
+`compile_function_body`, which resets to `[]` for each function
+body, defeating any reuse.
+
+### Attempt 2: capacity-tracking on `wb_buf` / `write_bytecode`
+
+After phase profiling showed `write_bytecode` was the actual
+dominant cost (~60% of `omgc compiler.omg`, building a ~50 KB byte
+vector one byte at a time), I tried the same pattern there: global
+`wb_buf` + `wb_buf_top`, mutation-style `bytes_append` / `emit_u32`
+/ `emit_str` / `encode_instr`, slice on return.
+
+- All 202 tests passed. Byte-identity held.
+- **Measured: ~15% slower.** 51–54s instead of 45–47s; clean
+  `bash bootstrap/build.sh` went from 3m03s to 3m39s.
+
+Same root cause as Attempt 1: `wb_buf` only grows. Every byte hits
+the "extend" branch. The bookkeeping (the `if wb_buf_top <
+length(wb_buf)` branch + the increment + the global-variable
+access) adds overhead per byte without unlocking any reuse benefit.
+
+### Why this works for `vm_stack` but not for the compiler
+
+The operand stack in `vm.omg` is the textbook case for capacity-
+tracking: push-pop-push-pop, the depth oscillates within a small
+range, the *same slots get rewritten thousands of times*. There the
+optimisation cuts O(n) list-concats to O(1) overwrites and the
+high-water mark stays low. That's where the 10% on `fib(25)` came
+from.
+
+The compiler's emit buffers (and the bytecode writer's byte buffer)
+look superficially similar but are fundamentally different: they're
+**write-only, monotonically growing**. There's nothing to amortise
+because there's no reuse.
+
+### What a real fix would need
+
+OMG has no O(1)-amortised list-append primitive. Every `xs + [v]`
+is O(n); there's no way to pre-allocate `n` zeros in O(n) (no
+`[0] * n` either). The classic Vec<u8>-style doubling-on-grow
+strategy isn't constructible in pure OMG because the "grow the
+backing buffer to 2× current capacity" step itself goes through
+`xs + [0]` n times = O(n²).
+
+The real fix is a new runtime builtin. Two options:
+
+1. **`list_extend_with_zero(xs, n)`** — extend `xs` by `n` zeros
+   in O(n). Then amortised doubling in pure OMG becomes O(1)
+   amortised: grow to capacity 16 → 32 → 64 → … on demand, do the
+   actual element write via existing `xs[i] := v`.
+2. **`list_with_capacity(n)`** — return a list of length `n` filled
+   with zeros (or any sentinel). Similar effect; cleaner API.
+
+Either needs implementation in all four backends:
+- Rust runtime (`vm/builtins.rs`)
+- C runtime (`omg_rt.h`)
+- JS runtime (`omg_rt.js`)
+- Plus telling the compiler about the builtin name.
+
+That's a substantially bigger commitment than the original plan
+called for, and it's a *runtime* change that affects the language
+contract, not a pure-OMG refactor. Out of scope for this attempt.
+
+### Status: reverted to baseline
+
+Both attempted diffs have been reverted via `git checkout`. The
+state of `bootstrap/src/compiler.omg` is what it was at the start
+of this plan. The lesson is documented; the work is not in the
+tree.
+
+If someone picks this up again, the right starting point is adding
+a `list_with_capacity` or `list_extend_with_zero` builtin, not
+another pure-OMG attempt to work around the missing primitive.
+
+### Attempt 3 (success): `list_repeat` runtime builtin + amortised doubling
+
+Pivoted to the runtime-builtin approach. Added `list_repeat(item, count)`
+to all four runtimes (Rust, C, JS, plus the OMG compiler's builtin
+allowlist) — it returns a fresh list of `count` copies of `item`,
+allocated in a single O(n) pass.
+
+Then rewrote `compiler.omg`'s byte-buffer writer:
+
+- `wb_buf` is a global pre-allocated buffer; `wb_buf_top` tracks
+  live byte count.
+- `bytes_append(b)` writes into the slot at `wb_buf_top`. When the
+  buffer is full it doubles capacity via `list_repeat(0, new_cap)`
+  and copies the live prefix.
+- The doubling means total grow-work is O(n) amortised across all
+  appends — the missing primitive made this possible.
+- `emit_u32 / emit_i64 / emit_str / encode_instr` are all mutation-
+  style (no buf passing); `write_bytecode` calls `wb_reset()` at
+  entry and returns `wb_buf[0:wb_buf_top]` at exit.
+
+**Measured results** (median of 3 runs, `omgc bootstrap/src/compiler.omg`):
+
+| Workload | Before | After | Speedup |
+|---|---:|---:|---:|
+| `omgc bootstrap/src/compiler.omg` | ~46s | ~7s | **6.5×** |
+| `bash bootstrap/build.sh` (clean rebuild) | 3m03s | 1m09s | **2.65×** |
+
+Triple-meta byte-identity holds across the corpus. Full 202-test
+suite passes. The lesson stands: **the right fix for an O(n²)
+append-loop in OMG is a runtime builtin that allocates in O(n),
+not a pure-OMG refactor.** Capacity-tracking only wins when slots
+get *reused* (operand stack); for write-once buffers, the real
+constraint is the missing pre-allocation primitive.
+
+### Files touched (Attempt 3)
+
+- `runtime/src/vm/builtins.rs` — added `list_repeat` handler.
+- `runtime/src/compiler.rs` — added `"list_repeat"` to `builtin_names()`.
+- `bootstrap/src/omg_rt.h` — added `omg_list_repeat` C helper.
+- `bootstrap/src/omg_rt.js` — added `omg_list_repeat` JS helper +
+  dispatch table entry.
+- `bootstrap/src/native-c.omg` — wired `emit_builtin2("omg_list_repeat")`.
+- `bootstrap/src/native-js.omg` — wired `emit_builtin2("omg_list_repeat")`.
+- `bootstrap/src/compiler.omg` — added `"list_repeat"` to `cc_builtins`;
+  rewrote the byte-buffer writer with `wb_buf` + `wb_buf_top` +
+  doubling-on-grow; converted `bytes_append` / `emit_u32` /
+  `emit_i64` / `emit_str` / `encode_instr` to mutation-style; replaced
+  `write_bytecode`'s functional `buf := X(buf, ...)` chain with bare
+  calls + final `wb_buf[0:wb_buf_top]` slice.
+
+No bytecode format change. No opcode change. No runtime contract
+change visible to existing OMG programs — just a new builtin
+available to anyone who needs it.

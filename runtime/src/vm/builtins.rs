@@ -869,6 +869,34 @@ pub fn call_builtin(
             )),
         },
 
+        // list_repeat(item, count) -> [item, item, ..., item]. Allocates
+        // a fresh list of length `count` with every slot holding the
+        // same value. Bridges the gap to amortised-doubling buffer
+        // growth in pure OMG — repeated `xs + [v]` is O(n²), but
+        // `list_repeat(0, new_cap)` plus per-slot writes is O(n).
+        // Used by `bootstrap/src/compiler.omg`'s bytecode writer to
+        // build the .omgb byte vector at amortised O(1) per byte
+        // instead of O(n). Negative counts raise ValueError.
+        "list_repeat" => match args {
+            [item, Value::Int(count)] => {
+                if *count < 0 {
+                    return Err(RuntimeError::ValueError(format!(
+                        "list_repeat() count must be non-negative, got {}",
+                        count
+                    )));
+                }
+                let n = *count as usize;
+                let mut items: Vec<Value> = Vec::with_capacity(n);
+                for _ in 0..n {
+                    items.push(item.clone());
+                }
+                Ok(Value::List(Rc::new(RefCell::new(items))))
+            }
+            _ => Err(RuntimeError::TypeError(
+                "list_repeat() expects (any, int)".to_string(),
+            )),
+        },
+
         // dict_keys(d) -> [String]. Returns the keys of a dict (or frozen
         // dict) as a list. Order is *unspecified* (HashMap iteration);
         // callers that need determinism should sort. OMG previously had

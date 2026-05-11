@@ -72,6 +72,11 @@ fn builtin_names() -> &'static [&'static str] {
         // Dict-keys enumeration, used by the OMG-in-OMG VM to iterate a
         // closure's captured environment (and useful generally).
         "dict_keys",
+        // list_repeat(item, count) — pre-allocate a list of `count`
+        // copies of `item`. Lets pure-OMG code build byte vectors at
+        // amortised O(1) per push via doubling; without it
+        // `xs + [v]` is O(n) and `n` appends are O(n²).
+        "list_repeat",
         // Print msg to stderr verbatim and exit 1. Used by `bootstrap/src/vm.omg`
         // to surface a hosted program's uncaught error without re-wrapping
         // it through `panic`'s "RuntimeError:" prefix.

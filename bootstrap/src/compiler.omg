@@ -96,39 +96,81 @@ alloc EK_MODULE_IMPORT  := 5
 # runtime errors can show file/line tracebacks.
 alloc BC_VERSION := 512
 
-# === Tiny utilities =========================================================
+# === Byte-buffer writer =====================================================
+#
+# The .omgb writer uses a globally-tracked byte buffer with amortised-
+# doubling growth instead of `buf := buf + [b]` per byte. The old
+# functional style was O(n²) total: each call allocated a fresh list
+# and copied all existing bytes. The new style is O(1) amortised per
+# byte — the buffer grows by doubling its capacity on demand, and
+# every grow is followed by enough writes to pay for it.
+#
+# `wb_buf` is the backing list (pre-filled with zero sentinels);
+# `wb_buf_top` is the live byte count. `bytes_append` overwrites the
+# slot at the top, growing the buffer when full via `list_repeat`
+# (the runtime builtin that pre-allocates a list in O(n)).
+# `write_bytecode` calls `wb_reset()` at entry and returns
+# `wb_buf[0:wb_buf_top]` to discard the unused tail.
+#
+# Building a ~50 KB .omgb used to dominate `omgc compiler.omg` — it
+# was ~60% of total compile time. The new approach makes it
+# proportional to output size.
 
-proc bytes_append(buf, b) {
-    buf := buf + [b]
-    return buf
+alloc wb_buf := []
+alloc wb_buf_top := 0
+
+proc wb_reset() {
+    # Drop the backing buffer between distinct compiles so a long-
+    # running process (REPL, in-process driver) doesn't permanently
+    # hold onto the largest output ever produced.
+    wb_buf := []
+    wb_buf_top := 0
 }
 
-proc bytes_extend(buf, more) {
-    buf := buf + more
-    return buf
+# Grow wb_buf in place by allocating a fresh, zero-filled list of
+# `new_cap` size and copying the live prefix. Called by bytes_append
+# when the buffer is full. `new_cap` is chosen by the caller —
+# typically max(16, 2 * current capacity) for amortised O(1).
+proc wb_grow(new_cap) {
+    alloc fresh := list_repeat(0, new_cap)
+    alloc i := 0
+    loop i < wb_buf_top {
+        fresh[i] := wb_buf[i]
+        i := i + 1
+    }
+    wb_buf := fresh
+}
+
+proc bytes_append(b) {
+    if wb_buf_top >= length(wb_buf) {
+        alloc cur := length(wb_buf)
+        alloc nc := cur * 2
+        if nc < 16 { nc := 16 }
+        wb_grow(nc)
+    }
+    wb_buf[wb_buf_top] := b
+    wb_buf_top := wb_buf_top + 1
 }
 
 # Write a u32 in little-endian order.
-proc emit_u32(buf, n) {
-    buf := buf + [n & 255]
-    buf := buf + [(n >> 8) & 255]
-    buf := buf + [(n >> 16) & 255]
-    buf := buf + [(n >> 24) & 255]
-    return buf
+proc emit_u32(n) {
+    bytes_append(n & 255)
+    bytes_append((n >> 8) & 255)
+    bytes_append((n >> 16) & 255)
+    bytes_append((n >> 24) & 255)
 }
 
 # Write an i64 in little-endian order. Negative values use two's complement
 # implicitly: `x & 255` and `x >> 8` work uniformly because OMG ints are
 # signed 64-bit and `>>` is arithmetic shift.
-proc emit_i64(buf, n) {
+proc emit_i64(n) {
     alloc x := n
     alloc i := 0
     loop i < 8 {
-        buf := buf + [x & 255]
+        bytes_append(x & 255)
         x := x >> 8
         i := i + 1
     }
-    return buf
 }
 
 # Length-prefixed UTF-8 string.  We delegate the encoding to the runtime
@@ -136,21 +178,15 @@ proc emit_i64(buf, n) {
 # UTF-8 byte sequence the Rust frontend produces — preserves byte-for-byte
 # parity with `omg --compile` even when the source contains glyphs like
 # `└──` or `╳`.
-proc emit_str(buf, s) {
+proc emit_str(s) {
     alloc bytes := string_bytes(s)
-    buf := emit_u32(buf, length(bytes))
-    return buf + bytes
-}
-
-# Emit a list of bytes (already individual ints 0-255) into `buf`.
-proc emit_bytes(buf, bs) {
+    emit_u32(length(bytes))
     alloc i := 0
-    alloc n := length(bs)
+    alloc n := length(bytes)
     loop i < n {
-        buf := buf + [bs[i]]
+        bytes_append(bytes[i])
         i := i + 1
     }
-    return buf
 }
 
 # === Source iteration =======================================================
@@ -1043,6 +1079,7 @@ alloc cc_builtins := [
     "int", "float", "floor", "ceil", "round", "abs",
     "sqrt", "pow", "log", "sin", "cos", "tan",
     "float_bits", "bits_to_float", "bytes_to_string", "dict_keys",
+    "list_repeat",
     "exit_with_error", "exit", "getpid", "subprocess",
     "stdin_readline", "stdin_read", "stdin_read_bytes",
     "print", "executable_path"
@@ -2043,126 +2080,80 @@ proc compile_program_node_seeded(ast, file, known_globals) {
 
 # === Bytecode writer =======================================================
 
-# Encode one compiled instruction tuple ["KIND", payload] into bytes.
-proc encode_instr(buf, instr) {
+# Encode one compiled instruction tuple ["KIND", payload] into the
+# global wb_buf via the mutation-style emit_* helpers.
+proc encode_instr(instr) {
     alloc op := instr[0]
     alloc arg := instr[1]
-    if op == "PUSH_INT"        {
-        buf := bytes_append(buf, OP_PUSH_INT)
-              return emit_i64(buf, arg)
-    }
+    if op == "PUSH_INT"        { bytes_append(OP_PUSH_INT)        emit_i64(arg) return false }
     if op == "PUSH_FLOAT"      {
         # `arg` is already the IEEE-754 bit pattern as an i64.
-        buf := bytes_append(buf, OP_PUSH_FLOAT)
-        return emit_i64(buf, arg)
+        bytes_append(OP_PUSH_FLOAT)
+        emit_i64(arg)
+        return false
     }
-    if op == "PUSH_STR"        {
-        buf := bytes_append(buf, OP_PUSH_STR)
-              return emit_str(buf, arg)
-    }
+    if op == "PUSH_STR"        { bytes_append(OP_PUSH_STR)        emit_str(arg) return false }
     if op == "PUSH_BOOL" {
-        buf := bytes_append(buf, OP_PUSH_BOOL)
-        if arg == true {
-            return bytes_append(buf, 1)
-        }
-        return bytes_append(buf, 0)
+        bytes_append(OP_PUSH_BOOL)
+        if arg == true { bytes_append(1) } else { bytes_append(0) }
+        return false
     }
-    if op == "BUILD_LIST"      {
-        buf := bytes_append(buf, OP_BUILD_LIST)
-            return emit_u32(buf, arg)
-    }
-    if op == "BUILD_DICT"      {
-        buf := bytes_append(buf, OP_BUILD_DICT)
-            return emit_u32(buf, arg)
-    }
-    if op == "LOAD"            {
-        buf := bytes_append(buf, OP_LOAD)
-                  return emit_str(buf, arg)
-    }
-    if op == "STORE"           {
-        buf := bytes_append(buf, OP_STORE)
-                 return emit_str(buf, arg)
-    }
-    if op == "ADD"             { return bytes_append(buf, OP_ADD)             }
-    if op == "SUB"             { return bytes_append(buf, OP_SUB)             }
-    if op == "MUL"             { return bytes_append(buf, OP_MUL)             }
-    if op == "DIV"             { return bytes_append(buf, OP_DIV)             }
-    if op == "FLOOR_DIV"       { return bytes_append(buf, OP_FLOOR_DIV)       }
-    if op == "MOD"             { return bytes_append(buf, OP_MOD)             }
-    if op == "EQ"              { return bytes_append(buf, OP_EQ)              }
-    if op == "NE"              { return bytes_append(buf, OP_NE)              }
-    if op == "LT"              { return bytes_append(buf, OP_LT)              }
-    if op == "LE"              { return bytes_append(buf, OP_LE)              }
-    if op == "GT"              { return bytes_append(buf, OP_GT)              }
-    if op == "GE"              { return bytes_append(buf, OP_GE)              }
-    if op == "BAND"            { return bytes_append(buf, OP_BAND)            }
-    if op == "BOR"             { return bytes_append(buf, OP_BOR)             }
-    if op == "BXOR"            { return bytes_append(buf, OP_BXOR)            }
-    if op == "SHL"             { return bytes_append(buf, OP_SHL)             }
-    if op == "SHR"             { return bytes_append(buf, OP_SHR)             }
-    if op == "AND"             { return bytes_append(buf, OP_AND)             }
-    if op == "OR"              { return bytes_append(buf, OP_OR)              }
-    if op == "NOT"             { return bytes_append(buf, OP_NOT)             }
-    if op == "NEG"             { return bytes_append(buf, OP_NEG)             }
-    if op == "INDEX"           { return bytes_append(buf, OP_INDEX)           }
-    if op == "SLICE"           { return bytes_append(buf, OP_SLICE)           }
-    if op == "JUMP"            {
-        buf := bytes_append(buf, OP_JUMP)
-                  return emit_u32(buf, arg)
-    }
-    if op == "JUMP_IF_FALSE"   {
-        buf := bytes_append(buf, OP_JUMP_IF_FALSE)
-         return emit_u32(buf, arg)
-    }
-    if op == "CALL"            {
-        buf := bytes_append(buf, OP_CALL)
-                  return emit_str(buf, arg)
-    }
-    if op == "TCALL"           {
-        buf := bytes_append(buf, OP_TCALL)
-                 return emit_str(buf, arg)
-    }
+    if op == "BUILD_LIST"      { bytes_append(OP_BUILD_LIST)      emit_u32(arg) return false }
+    if op == "BUILD_DICT"      { bytes_append(OP_BUILD_DICT)      emit_u32(arg) return false }
+    if op == "LOAD"            { bytes_append(OP_LOAD)            emit_str(arg) return false }
+    if op == "STORE"           { bytes_append(OP_STORE)           emit_str(arg) return false }
+    if op == "ADD"             { bytes_append(OP_ADD)             return false }
+    if op == "SUB"             { bytes_append(OP_SUB)             return false }
+    if op == "MUL"             { bytes_append(OP_MUL)             return false }
+    if op == "DIV"             { bytes_append(OP_DIV)             return false }
+    if op == "FLOOR_DIV"       { bytes_append(OP_FLOOR_DIV)       return false }
+    if op == "MOD"             { bytes_append(OP_MOD)             return false }
+    if op == "EQ"              { bytes_append(OP_EQ)              return false }
+    if op == "NE"              { bytes_append(OP_NE)              return false }
+    if op == "LT"              { bytes_append(OP_LT)              return false }
+    if op == "LE"              { bytes_append(OP_LE)              return false }
+    if op == "GT"              { bytes_append(OP_GT)              return false }
+    if op == "GE"              { bytes_append(OP_GE)              return false }
+    if op == "BAND"            { bytes_append(OP_BAND)            return false }
+    if op == "BOR"             { bytes_append(OP_BOR)             return false }
+    if op == "BXOR"            { bytes_append(OP_BXOR)            return false }
+    if op == "SHL"             { bytes_append(OP_SHL)             return false }
+    if op == "SHR"             { bytes_append(OP_SHR)             return false }
+    if op == "AND"             { bytes_append(OP_AND)             return false }
+    if op == "OR"              { bytes_append(OP_OR)              return false }
+    if op == "NOT"             { bytes_append(OP_NOT)             return false }
+    if op == "NEG"             { bytes_append(OP_NEG)             return false }
+    if op == "INDEX"           { bytes_append(OP_INDEX)           return false }
+    if op == "SLICE"           { bytes_append(OP_SLICE)           return false }
+    if op == "JUMP"            { bytes_append(OP_JUMP)            emit_u32(arg) return false }
+    if op == "JUMP_IF_FALSE"   { bytes_append(OP_JUMP_IF_FALSE)   emit_u32(arg) return false }
+    if op == "CALL"            { bytes_append(OP_CALL)            emit_str(arg) return false }
+    if op == "TCALL"           { bytes_append(OP_TCALL)           emit_str(arg) return false }
     if op == "BUILTIN" {
-        buf := bytes_append(buf, OP_BUILTIN)
-        buf := emit_str(buf, arg[0])
-        return emit_u32(buf, arg[1])
+        bytes_append(OP_BUILTIN)
+        emit_str(arg[0])
+        emit_u32(arg[1])
+        return false
     }
-    if op == "POP"             { return bytes_append(buf, OP_POP)             }
-    if op == "PUSH_NONE"       { return bytes_append(buf, OP_PUSH_NONE)       }
-    if op == "RET"             { return bytes_append(buf, OP_RET)             }
-    if op == "EMIT"            { return bytes_append(buf, OP_EMIT)            }
-    if op == "HALT"            { return bytes_append(buf, OP_HALT)            }
-    if op == "STORE_INDEX"     { return bytes_append(buf, OP_STORE_INDEX)     }
-    if op == "ATTR"            {
-        buf := bytes_append(buf, OP_ATTR)
-                  return emit_str(buf, arg)
-    }
-    if op == "STORE_ATTR"      {
-        buf := bytes_append(buf, OP_STORE_ATTR)
-            return emit_str(buf, arg)
-    }
-    if op == "ASSERT"          { return bytes_append(buf, OP_ASSERT)          }
-    if op == "CALL_VALUE"      {
-        buf := bytes_append(buf, OP_CALL_VALUE)
-            return emit_u32(buf, arg)
-    }
-    if op == "SETUP_EXCEPT"    {
-        buf := bytes_append(buf, OP_SETUP_EXCEPT)
-          return emit_u32(buf, arg)
-    }
-    if op == "POP_BLOCK"       { return bytes_append(buf, OP_POP_BLOCK)       }
+    if op == "POP"             { bytes_append(OP_POP)             return false }
+    if op == "PUSH_NONE"       { bytes_append(OP_PUSH_NONE)       return false }
+    if op == "RET"             { bytes_append(OP_RET)             return false }
+    if op == "EMIT"            { bytes_append(OP_EMIT)            return false }
+    if op == "HALT"            { bytes_append(OP_HALT)            return false }
+    if op == "STORE_INDEX"     { bytes_append(OP_STORE_INDEX)     return false }
+    if op == "ATTR"            { bytes_append(OP_ATTR)            emit_str(arg) return false }
+    if op == "STORE_ATTR"      { bytes_append(OP_STORE_ATTR)      emit_str(arg) return false }
+    if op == "ASSERT"          { bytes_append(OP_ASSERT)          return false }
+    if op == "CALL_VALUE"      { bytes_append(OP_CALL_VALUE)      emit_u32(arg) return false }
+    if op == "SETUP_EXCEPT"    { bytes_append(OP_SETUP_EXCEPT)    emit_u32(arg) return false }
+    if op == "POP_BLOCK"       { bytes_append(OP_POP_BLOCK)       return false }
     if op == "RAISE" {
-        buf := bytes_append(buf, OP_RAISE)
-        return bytes_append(buf, arg)
+        bytes_append(OP_RAISE)
+        bytes_append(arg)
+        return false
     }
-    if op == "MAKE_FUNC"       {
-        buf := bytes_append(buf, OP_MAKE_FUNC)
-        return emit_str(buf, arg)
-    }
-    if op == "STORE_LOCAL"     {
-        buf := bytes_append(buf, OP_STORE_LOCAL)
-        return emit_str(buf, arg)
-    }
+    if op == "MAKE_FUNC"       { bytes_append(OP_MAKE_FUNC)       emit_str(arg) return false }
+    if op == "STORE_LOCAL"     { bytes_append(OP_STORE_LOCAL)     emit_str(arg) return false }
     panic("unknown instruction: " + op)
 }
 
@@ -2194,59 +2185,65 @@ proc sort_funcs(funcs) {
 # Layout mirrors `write_bytecode` in runtime/src/bytecode.rs exactly
 # so the triple-meta fixed-point check stays byte-for-byte identical.
 proc write_bytecode(code, funcs, src_files, src_lines) {
-    alloc buf := []
-    buf := bytes_append(buf, ascii("O"))
-    buf := bytes_append(buf, ascii("M"))
-    buf := bytes_append(buf, ascii("G"))
-    buf := bytes_append(buf, ascii("B"))
-    buf := emit_u32(buf, BC_VERSION)
+    # Reset the global write buffer at entry — we may be called
+    # multiple times across a process lifetime (each `--compile`
+    # invocation, REPL turns that AOT-build, etc).
+    wb_reset()
+    bytes_append(ascii("O"))
+    bytes_append(ascii("M"))
+    bytes_append(ascii("G"))
+    bytes_append(ascii("B"))
+    emit_u32(BC_VERSION)
     # Source-file table.
-    buf := emit_u32(buf, length(src_files))
+    emit_u32(length(src_files))
     alloc fi := 0
     alloc fn := length(src_files)
     loop fi < fn {
-        buf := emit_str(buf, src_files[fi])
+        emit_str(src_files[fi])
         fi := fi + 1
     }
     alloc sorted := sort_funcs(funcs)
-    buf := emit_u32(buf, length(sorted))
+    emit_u32(length(sorted))
     alloc i := 0
     alloc n := length(sorted)
     loop i < n {
         alloc f := sorted[i]
-        buf := emit_str(buf, f[0])
+        emit_str(f[0])
         alloc params := f[1]
-        buf := emit_u32(buf, length(params))
+        emit_u32(length(params))
         alloc j := 0
         alloc m := length(params)
         loop j < m {
-            buf := emit_str(buf, params[j])
+            emit_str(params[j])
             j := j + 1
         }
-        buf := emit_u32(buf, f[2])
-        buf := emit_u32(buf, f[3])
+        emit_u32(f[2])
+        emit_u32(f[3])
         i := i + 1
     }
-    buf := emit_u32(buf, length(code))
+    emit_u32(length(code))
     i := 0
     n := length(code)
     loop i < n {
-        buf := encode_instr(buf, code[i])
+        encode_instr(code[i])
         i := i + 1
     }
     # Per-instruction source map, parallel to the code blob. Each
     # entry is [file_idx, line]; we trust the compiler kept it the
     # same length as `code` (debug-asserted in the Rust side via
     # `debug_assert_eq!`).
-    buf := emit_u32(buf, length(src_lines))
+    emit_u32(length(src_lines))
     i := 0
     n := length(src_lines)
     loop i < n {
-        buf := emit_u32(buf, src_lines[i][0])
-        buf := emit_u32(buf, src_lines[i][1])
+        emit_u32(src_lines[i][0])
+        emit_u32(src_lines[i][1])
         i := i + 1
     }
-    return buf
+    # Slice down to the live portion of wb_buf — the backing buffer
+    # is grown to a power of two via doubling and has stale zeros
+    # past wb_buf_top that the caller must not see.
+    return wb_buf[0:wb_buf_top]
 }
 
 # === Entry point ===========================================================
