@@ -8,6 +8,7 @@
 #   omg <file.omgb> [args...]          Run precompiled bytecode
 #   omg --compile <in.omg> <out.omgb>  Compile to bytecode (no run)
 #   omg --build <in.omg> [<out>]       AOT-build to a native ELF
+#   omg --disasm <file>                Disassemble .omg or .omgb
 #
 # Compile / run / REPL all happen IN-PROCESS via imports of the
 # compiler, VM, and (for --build) the OMG-to-C transpiler. No
@@ -220,6 +221,239 @@ proc build_aot(in_path, out_path) {
     emit "built: " + out_path
 }
 
+# === --disasm (textual bytecode dump) ====================================
+# Mirrors `cmd_disasm` in runtime/src/main.rs so the OMG-native driver
+# can be used as a drop-in alternative for inspecting `.omg` / `.omgb`.
+# Output format matches the Rust runtime byte-for-byte — useful for
+# diffing the two side by side when debugging the compiler / VM.
+
+# Map opcode tag to its Rust-Debug PascalCase name. This is the form the
+# Rust `Instr` enum auto-derives, so identical instructions print
+# identical lines.
+proc disasm_op_name(tag) {
+    if tag == "PUSH_INT"        { return "PushInt"        }
+    if tag == "PUSH_FLOAT"      { return "PushFloat"      }
+    if tag == "PUSH_STR"        { return "PushStr"        }
+    if tag == "PUSH_BOOL"       { return "PushBool"       }
+    if tag == "PUSH_NONE"       { return "PushNone"       }
+    if tag == "BUILD_LIST"      { return "BuildList"      }
+    if tag == "BUILD_DICT"      { return "BuildDict"      }
+    if tag == "LOAD"            { return "Load"           }
+    if tag == "STORE"           { return "Store"          }
+    if tag == "STORE_LOCAL"     { return "StoreLocal"     }
+    if tag == "ADD"             { return "Add"            }
+    if tag == "SUB"             { return "Sub"            }
+    if tag == "MUL"             { return "Mul"            }
+    if tag == "DIV"             { return "Div"            }
+    if tag == "FLOOR_DIV"       { return "FloorDiv"       }
+    if tag == "MOD"             { return "Mod"            }
+    if tag == "EQ"              { return "Eq"             }
+    if tag == "NE"              { return "Ne"             }
+    if tag == "LT"              { return "Lt"             }
+    if tag == "LE"              { return "Le"             }
+    if tag == "GT"              { return "Gt"             }
+    if tag == "GE"              { return "Ge"             }
+    if tag == "BAND"            { return "BAnd"           }
+    if tag == "BOR"             { return "BOr"            }
+    if tag == "BXOR"            { return "BXor"           }
+    if tag == "SHL"             { return "Shl"            }
+    if tag == "SHR"             { return "Shr"            }
+    if tag == "AND"             { return "And"            }
+    if tag == "OR"              { return "Or"             }
+    if tag == "NOT"             { return "Not"            }
+    if tag == "NEG"             { return "Neg"            }
+    if tag == "INDEX"           { return "Index"          }
+    if tag == "SLICE"           { return "Slice"          }
+    if tag == "JUMP"            { return "Jump"           }
+    if tag == "JUMP_IF_FALSE"   { return "JumpIfFalse"    }
+    if tag == "CALL"            { return "Call"           }
+    if tag == "TCALL"           { return "TailCall"       }
+    if tag == "BUILTIN"         { return "CallBuiltin"    }
+    if tag == "POP"             { return "Pop"            }
+    if tag == "RET"             { return "Ret"            }
+    if tag == "EMIT"            { return "Emit"           }
+    if tag == "HALT"            { return "Halt"           }
+    if tag == "STORE_INDEX"     { return "StoreIndex"     }
+    if tag == "ATTR"            { return "Attr"           }
+    if tag == "STORE_ATTR"      { return "StoreAttr"      }
+    if tag == "ASSERT"          { return "Assert"         }
+    if tag == "CALL_VALUE"      { return "CallValue"      }
+    if tag == "SETUP_EXCEPT"    { return "SetupExcept"    }
+    if tag == "POP_BLOCK"       { return "PopBlock"       }
+    if tag == "RAISE"           { return "Raise"          }
+    if tag == "MAKE_FUNC"       { return "MakeFunc"       }
+    return tag
+}
+
+# Name for a RAISE payload byte. Same numbering as `ErrorKind` in
+# runtime/src/error.rs.
+proc disasm_kind_name(k) {
+    if k == 0 { return "Generic"        }
+    if k == 1 { return "Syntax"         }
+    if k == 2 { return "Type"           }
+    if k == 3 { return "UndefinedIdent" }
+    if k == 4 { return "Value"          }
+    if k == 5 { return "ModuleImport"   }
+    return "" + k
+}
+
+# JSON-ish escape for string-typed operands so they round-trip nicely
+# when the disasm is re-used as input or compared against Rust output.
+proc disasm_escape(s) {
+    alloc out := ""
+    alloc i := 0
+    alloc n := length(s)
+    loop i < n {
+        alloc c := s[i]
+        if c == "\\" {
+            out := out + "\\\\"
+        } elif c == "\"" {
+            out := out + "\\\""
+        } elif c == "\n" {
+            out := out + "\\n"
+        } elif c == "\r" {
+            out := out + "\\r"
+        } elif c == "\t" {
+            out := out + "\\t"
+        } else {
+            out := out + c
+        }
+        i := i + 1
+    }
+    return out
+}
+
+# Format a single ["TAG", payload] instruction in the same shape Rust's
+# auto-derived Debug for the `Instr` enum produces.
+proc disasm_instr(instr) {
+    alloc tag := instr[0]
+    alloc arg := instr[1]
+    alloc op := disasm_op_name(tag)
+    # Operand-less ops carry a `false` payload (see vm.omg's tagged0).
+    if arg == false {
+        return op
+    }
+    # String-typed payloads need quoting; numeric ones stay bare.
+    alloc is_str_op := false
+    if tag == "PUSH_STR"    { is_str_op := true }
+    if tag == "LOAD"        { is_str_op := true }
+    if tag == "STORE"       { is_str_op := true }
+    if tag == "STORE_LOCAL" { is_str_op := true }
+    if tag == "CALL"        { is_str_op := true }
+    if tag == "TCALL"       { is_str_op := true }
+    if tag == "MAKE_FUNC"   { is_str_op := true }
+    if tag == "ATTR"        { is_str_op := true }
+    if tag == "STORE_ATTR"  { is_str_op := true }
+    if is_str_op {
+        return op + "(\"" + disasm_escape(arg) + "\")"
+    }
+    if tag == "BUILTIN" {
+        # arg is [name, argc]; format as `CallBuiltin("name", argc)`.
+        return op + "(\"" + disasm_escape(arg[0]) + "\", " + arg[1] + ")"
+    }
+    if tag == "RAISE" {
+        return op + "(" + disasm_kind_name(arg) + ")"
+    }
+    # Default: bare integer / float / bool payload.
+    return op + "(" + arg + ")"
+}
+
+# Sort func names alphabetically. Same convention the bytecode writer
+# uses, so the disasm output is stable across runs and matches Rust's
+# alphabetical iteration over the HashMap.
+proc disasm_sort_names(names) {
+    alloc out := []
+    alloc i := 0
+    alloc n := length(names)
+    loop i < n {
+        out := out + [names[i]]
+        i := i + 1
+    }
+    # Insertion sort (small N — function tables are tens, not thousands).
+    alloc j := 1
+    loop j < n {
+        alloc k := j
+        loop k > 0 and out[k] < out[k - 1] {
+            alloc tmp := out[k]
+            out[k] := out[k - 1]
+            out[k - 1] := tmp
+            k := k - 1
+        }
+        j := j + 1
+    }
+    return out
+}
+
+proc disasm(file) {
+    alloc code := false
+    alloc funcs := false
+    if ends_with(file, ".omgb") {
+        alloc fh := file_open(file, "rb")
+        alloc bytes := file_read(fh)
+        file_close(fh)
+        alloc parsed := vm.parse_bytecode(bytes)
+        code := parsed[0]
+        funcs := parsed[1]
+    } elif ends_with(file, ".omg") {
+        alloc src := read_file(file)
+        if src == false {
+            exit_with_error("ModuleImportError: cannot read '" + file + "'")
+        }
+        cc.compile_reset()
+        # compile_source returns [code, funcs_list, src_files, src_lines]
+        # where funcs_list is [[name, params, addr, src_file_idx], ...].
+        # Reshape to a dict so the rest of disasm can iterate uniformly.
+        alloc compiled := cc.compile_source(src, absolute_normalised(file))
+        code := compiled[0]
+        funcs := {}
+        alloc i := 0
+        alloc fl := compiled[1]
+        loop i < length(fl) {
+            alloc f := fl[i]
+            funcs[f[0]] := [f[1], f[2], f[3]]
+            i := i + 1
+        }
+    } else {
+        exit_with_error("--disasm: expected .omg or .omgb, got '" + file + "'")
+    }
+
+    emit "# functions"
+    alloc names := disasm_sort_names(dict_keys(funcs))
+    alloc n := length(names)
+    alloc i := 0
+    loop i < n {
+        alloc name := names[i]
+        alloc info := funcs[name]
+        alloc params := info[0]
+        alloc addr := info[1]
+        # Join params with ", ".
+        alloc plist := ""
+        alloc p := 0
+        loop p < length(params) {
+            if p > 0 {
+                plist := plist + ", "
+            }
+            plist := plist + params[p]
+            p := p + 1
+        }
+        emit "FUNC " + name + " (" + plist + ") @ " + addr
+        i := i + 1
+    }
+
+    emit "# code"
+    alloc cn := length(code)
+    alloc c := 0
+    loop c < cn {
+        # Left-pad PC to 4 digits to match Rust's `{:04}` formatting.
+        alloc pc := "" + c
+        loop length(pc) < 4 {
+            pc := "0" + pc
+        }
+        emit pc + "  " + disasm_instr(code[c])
+        c := c + 1
+    }
+}
+
 # === REPL ================================================================
 # Inline implementation. Mirrors bootstrap/src/repl.omg, but uses our own
 # imports of cc/vm so state is shared with the rest of the driver.
@@ -374,6 +608,7 @@ proc usage() {
     emit "  omg <file.omgb> [args...]           Run precompiled bytecode"
     emit "  omg --compile <in.omg> <out.omgb>   Compile to bytecode (no run)"
     emit "  omg --build <in.omg> [<out>]        AOT-build to a native ELF"
+    emit "  omg --disasm <file>                 Disassemble .omg or .omgb"
     emit "  omg -v | --version                  Show driver version"
     emit "  omg -h | --help                     Show this help"
 }
@@ -412,6 +647,11 @@ if cmd == "-h" or cmd == "--help" {
         out_path := args[3]
     }
     build_aot(in_path, out_path)
+} elif cmd == "--disasm" {
+    if length(args) < 3 {
+        exit_with_error("usage: omg --disasm <file.omg | file.omgb>")
+    }
+    disasm(args[2])
 } elif ends_with(cmd, ".omg") {
     run_omg_source(cmd, args_tail(2))
 } elif ends_with(cmd, ".omgb") {

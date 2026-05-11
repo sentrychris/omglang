@@ -21,7 +21,9 @@ run the transpiler yourself.
 
 ```sh
 omg --compile foo.omg foo.omgb
-runtime/target/release/omg --disasm foo.omgb
+omg --disasm foo.omgb            # `bootstrap/bin/omg`; matches Rust byte-for-byte
+# Or feed a .omg directly — disasm runs the compiler in-process:
+omg --disasm foo.omg
 ```
 
 You'll get the function table at the top, then the linear instruction stream:

@@ -98,8 +98,9 @@ omg --build foo.omg [out_name]
 # Just compile to bytecode (skip execution)
 omg --compile foo.omg foo.omgb
 
-# Disassemble bytecode (uses Rust runtime — useful for debugging)
-runtime/target/release/omg --disasm foo.omgb
+# Disassemble bytecode or .omg source (in-process; matches Rust output)
+omg --disasm foo.omgb
+omg --disasm foo.omg
 
 # Rebuild the native toolchain (after you've changed compiler.omg etc.)
 bootstrap/build.sh
