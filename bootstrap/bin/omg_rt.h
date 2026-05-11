@@ -62,6 +62,11 @@ typedef Value (*OmgFn)(Value *captured, int cap_count, int argc,
 typedef struct OmgClosure {
     int rc;
     OmgFn fn;
+    /* Bare source name (no `__mod_N__` mangling). Used as the frame
+     * label when this closure is invoked indirectly via CALL_VALUE,
+     * so a traceback shows `in tick` rather than `in __mod_2__tick`.
+     * Points at a static string in the emitted C — never freed. */
+    const char *name;
     Value *captured;     /* heap-allocated; freed when rc drops to 0 */
     int cap_count;
 } OmgClosure;
@@ -111,13 +116,15 @@ static inline Value omg_none(void) {
 }
 
 /* Build a closure value. `captured` may be NULL when cap_count == 0
- * (top-level procs that don't capture anything). Refcounted: the
- * caller receives a closure with rc=1; transferring that reference
- * into a slot doesn't bump it, but copying it (LOAD, etc.) does. */
-static inline Value omg_closure(OmgFn fn, Value *captured, int cap_count) {
+ * (top-level procs that don't capture anything). `name` is the bare
+ * source name used by traceback rendering. Refcounted: the caller
+ * receives a closure with rc=1; transferring that reference into a
+ * slot doesn't bump it, but copying it (LOAD, etc.) does. */
+static inline Value omg_closure(OmgFn fn, const char *name, Value *captured, int cap_count) {
     OmgClosure *c = (OmgClosure *)malloc(sizeof(OmgClosure));
     c->rc = 1;
     c->fn = fn;
+    c->name = name;
     c->captured = captured;
     c->cap_count = cap_count;
     Value v;
@@ -133,6 +140,116 @@ static int omg_dict_len(struct OmgDict *d);
 /* Forward declaration so omg_raise can stringify any Value. Defined
  * later, alongside the rest of the string utilities. */
 static const char *omg_value_to_cstr(Value v, char *buf, size_t bufsize);
+
+/* === Source map + call-frame stack ========================================
+ * For Python-style tracebacks. The transpiler emits a `omg_src_files`
+ * table per program and threads `omg_current_file_idx` /
+ * `omg_current_line` through the code so any panic site knows where
+ * it fired. The frame stack is maintained by CALL / CALL_VALUE / RET
+ * around each user-proc dispatch — TCALL replaces the top frame in
+ * place so tail-call optimisation doesn't lose the caller's name.
+ */
+
+/* Populated by the transpiler at the top of the emitted C. NULL when
+ * a program has no source map (e.g. a hand-rolled C harness running
+ * omg_rt.h directly). */
+static const char *const *omg_src_files = NULL;
+static int omg_src_files_n = 0;
+
+static uint32_t omg_current_file_idx = 0;
+static uint32_t omg_current_line = 0;
+
+typedef struct OmgFrame {
+    const char *name;        /* bare function name (no module prefix) */
+    uint32_t call_file_idx;  /* file containing the call instruction */
+    uint32_t call_line;      /* line of the call instruction */
+} OmgFrame;
+
+#define OMG_MAX_FRAMES 1024
+static OmgFrame omg_frame_stack[OMG_MAX_FRAMES];
+static int omg_frame_top = 0;
+
+static inline void omg_frame_push(const char *name, uint32_t fi, uint32_t ln) {
+    if (omg_frame_top >= OMG_MAX_FRAMES) {
+        /* Silently drop — running out of frame slots is an OMG
+         * runaway-recursion scenario; the panic-from-stack-overflow
+         * surfaces some other way. */
+        return;
+    }
+    omg_frame_stack[omg_frame_top].name = name;
+    omg_frame_stack[omg_frame_top].call_file_idx = fi;
+    omg_frame_stack[omg_frame_top].call_line = ln;
+    omg_frame_top++;
+}
+
+static inline void omg_frame_pop(void) {
+    if (omg_frame_top > 0) omg_frame_top--;
+}
+
+/* TCALL replaces the top frame's display name without touching the
+ * call-site — the original caller is still the one we'll eventually
+ * return to. Mirrors the Rust VM's TCO behaviour. */
+static inline void omg_frame_set_top_name(const char *name) {
+    if (omg_frame_top > 0) {
+        omg_frame_stack[omg_frame_top - 1].name = name;
+    }
+}
+
+static inline const char *omg_lookup_file(uint32_t fi) {
+    if (!omg_src_files || fi >= (uint32_t)omg_src_files_n) return "<unknown>";
+    return omg_src_files[fi];
+}
+
+/* If `name` is a `__mod_N__bare` mangled identifier, return a pointer
+ * one past the trailing `__`. Otherwise return the input unchanged.
+ * Used by CALL_VALUE's string-callee path so traceback frames show
+ * `in foo` rather than `in __mod_3__foo`. The returned pointer aliases
+ * `name`; the caller must not free it. */
+static const char *omg_strip_mod_prefix_cstr(const char *name) {
+    if (!name) return name;
+    if (strncmp(name, "__mod_", 6) != 0) return name;
+    const char *p = name + 6;
+    /* Skip digits. */
+    const char *start = p;
+    while (*p >= '0' && *p <= '9') p++;
+    if (p == start) return name;
+    /* Need the closing `__`. */
+    if (p[0] != '_' || p[1] != '_') return name;
+    return p + 2;
+}
+
+/* Print a Python-style traceback to stderr. Identical layout to the
+ * Rust runtime's `format_traceback` (runtime/src/vm.rs) so AOT, native
+ * interp, and Rust all share the same error UX. */
+static void omg_emit_traceback(const char *fullmsg) {
+    fprintf(stderr, "Traceback (most recent call last):\n");
+    /* Top-level entry: where main called the outermost frame from. */
+    if (omg_frame_top > 0) {
+        const OmgFrame *first = &omg_frame_stack[0];
+        fprintf(stderr, "  File \"%s\", line %u, in <top-level>\n",
+                omg_lookup_file(first->call_file_idx),
+                (unsigned)first->call_line);
+    }
+    /* Each intermediate frame's call site sits inside the previous
+     * frame's function; name it accordingly. */
+    for (int i = 1; i < omg_frame_top; i++) {
+        const OmgFrame *f = &omg_frame_stack[i];
+        fprintf(stderr, "  File \"%s\", line %u, in %s\n",
+                omg_lookup_file(f->call_file_idx),
+                (unsigned)f->call_line,
+                omg_frame_stack[i - 1].name);
+    }
+    /* Error site: pc -> omg_current_*, function is whichever frame
+     * we're currently inside (or top-level for zero-frame errors). */
+    const char *cur_fn = (omg_frame_top > 0)
+        ? omg_frame_stack[omg_frame_top - 1].name
+        : "<top-level>";
+    fprintf(stderr, "  File \"%s\", line %u, in %s\n",
+            omg_lookup_file(omg_current_file_idx),
+            (unsigned)omg_current_line,
+            cur_fn);
+    fprintf(stderr, "%s\n", fullmsg);
+}
 
 /* === Exception handling ===================================================
  * try/except is implemented with setjmp/longjmp: each SETUP_EXCEPT
@@ -151,6 +268,7 @@ static const char *omg_value_to_cstr(Value v, char *buf, size_t bufsize);
 
 typedef struct OmgBlock {
     int saved_sp;
+    int saved_frame_top;   /* depth of omg_frame_stack at try-entry */
     jmp_buf jb;
 } OmgBlock;
 
@@ -202,9 +320,22 @@ static void omg_panic(const char *prefix, const char *msg) {
     if (omg_block_top > 0) {
         omg_pending_error = omg_str(full);
         OmgBlock *b = omg_block_stack[--omg_block_top];
+        /* Restore the frame stack to its depth at SETUP_EXCEPT so a
+         * later uncaught panic doesn't include frames pushed inside
+         * the now-unwound try body. */
+        if (omg_frame_top > b->saved_frame_top) {
+            omg_frame_top = b->saved_frame_top;
+        }
         longjmp(b->jb, 1);
     }
-    fprintf(stderr, "%s\n", full);
+    /* Uncaught — emit a traceback if we have any source map info to
+     * work with, otherwise fall back to the bare "Kind: msg" line so
+     * harness/test programs without source data stay readable. */
+    if (omg_src_files != NULL) {
+        omg_emit_traceback(full);
+    } else {
+        fprintf(stderr, "%s\n", full);
+    }
     exit(1);
 }
 

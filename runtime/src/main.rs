@@ -56,6 +56,26 @@ const SELF_HOSTED_COMPILER: &[u8] =
 const SELF_HOSTED_VM: &[u8] =
     include_bytes!("../../bootstrap/src/vm.omgb");
 
+/// Absolute-normalise a path: join against `current_dir` if relative,
+/// then collapse `./` and `..` segments. We deliberately avoid
+/// `fs::canonicalize` (which also resolves symlinks) so the result
+/// matches what the OMG-native driver produces — pure-OMG has no
+/// symlink-resolving primitive, and keeping both sides on the same
+/// algorithm is what makes the source-file table byte-identical
+/// across implementations.
+fn absolute_normalised(path: &PathBuf) -> PathBuf {
+    let p = path.to_string_lossy().to_string();
+    let prefixed = if path.is_absolute() {
+        p
+    } else {
+        let cwd = env::current_dir()
+            .map(|c| c.to_string_lossy().to_string())
+            .unwrap_or_else(|_| ".".to_string());
+        format!("{}/{}", cwd, p)
+    };
+    PathBuf::from(compiler::path_normalize(&prefixed))
+}
+
 fn usage() -> String {
     format!(
         r#"OMG Language Runtime v{0}
@@ -200,8 +220,11 @@ fn run_omg(path: &PathBuf, full_args: &[String]) -> Result<(), RuntimeError> {
         ))
     })?;
     check_header(&source, path)?;
-    let program = compile_source(&source, path)?;
-    run(&program.code, &program.funcs, full_args)
+    // Absolute-normalise the entry path so traceback frames cite the
+    // same unambiguous filename whatever CWD the user invoked us from.
+    let abs_path = absolute_normalised(path);
+    let program = compile_source(&source, &abs_path)?;
+    run(&program.code, &program.funcs, &program.src_map, full_args)
 }
 
 /// Default execution path for a `.omg` file: compile it via the embedded
@@ -209,8 +232,8 @@ fn run_omg(path: &PathBuf, full_args: &[String]) -> Result<(), RuntimeError> {
 /// what bare `omg <script>` invokes when `--rust` isn't passed.
 fn run_omg_self_hosted(path: &PathBuf, full_args: &[String]) -> Result<(), RuntimeError> {
     let bytes = self_hosted_compile(path)?;
-    let (code, funcs) = parse_bytecode(&bytes)?;
-    run(&code, &funcs, full_args)
+    let (code, funcs, src_map) = parse_bytecode(&bytes)?;
+    run(&code, &funcs, &src_map, full_args)
 }
 
 fn run_omgb(path: &PathBuf, full_args: &[String]) -> Result<(), RuntimeError> {
@@ -221,8 +244,8 @@ fn run_omgb(path: &PathBuf, full_args: &[String]) -> Result<(), RuntimeError> {
             e
         ))
     })?;
-    let (code, funcs) = parse_bytecode(&bytes)?;
-    run(&code, &funcs, full_args)
+    let (code, funcs, src_map) = parse_bytecode(&bytes)?;
+    run(&code, &funcs, &src_map, full_args)
 }
 
 fn check_header(source: &str, path: &PathBuf) -> Result<(), RuntimeError> {
@@ -260,14 +283,17 @@ fn cmd_compile(args: &[String]) -> ExitCode {
         eprintln!("{}", e);
         return ExitCode::FAILURE;
     }
-    let program = match compile_source(&source, &in_path) {
+    // Absolute-normalise so the .omgb's source-file table matches
+    // what bootstrap/bin/omgc produces.
+    let abs_path = absolute_normalised(&in_path);
+    let program = match compile_source(&source, &abs_path) {
         Ok(p) => p,
         Err(e) => {
             eprintln!("{}", e);
             return ExitCode::FAILURE;
         }
     };
-    let bytes = write_bytecode(&program.code, &program.funcs);
+    let bytes = write_bytecode(&program.code, &program.funcs, &program.src_map);
     match out {
         Some(p) => {
             if let Err(e) = fs::write(&p, &bytes) {
@@ -334,8 +360,12 @@ fn cmd_verify_self_hosted(args: &[String]) -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
-    let rust_bytes = match compile_source(&source, &in_path) {
-        Ok(p) => write_bytecode(&p.code, &p.funcs),
+    // Both frontends absolute-normalise the entry path the same way
+    // (cwd-join + `path_normalize`, no symlink resolution) so the
+    // embedded source-file table comes out byte-identical.
+    let abs_in = absolute_normalised(&in_path);
+    let rust_bytes = match compile_source(&source, &abs_in) {
+        Ok(p) => write_bytecode(&p.code, &p.funcs, &p.src_map),
         Err(e) => {
             eprintln!("Rust frontend failed: {}", e);
             return ExitCode::FAILURE;
@@ -371,14 +401,14 @@ fn cmd_verify_self_hosted(args: &[String]) -> ExitCode {
 /// into the host process — the embedded compiler is a normal OMG program
 /// that takes [in.omg, out.omgb] as args and writes the bytecode to disk.
 fn self_hosted_compile(in_path: &PathBuf) -> Result<Vec<u8>, RuntimeError> {
-    let (code, funcs) = parse_bytecode(SELF_HOSTED_COMPILER)?;
-    let abs_in = fs::canonicalize(in_path).map_err(|e| {
-        RuntimeError::ModuleImportError(format!(
-            "cannot canonicalise '{}': {}",
-            in_path.display(),
-            e
-        ))
-    })?;
+    let (code, funcs, src_map) = parse_bytecode(SELF_HOSTED_COMPILER)?;
+    // Make the path absolute and normalised (`./` and `..` collapsed)
+    // before passing it to the embedded compiler. Symlinks are NOT
+    // resolved — we deliberately don't use `fs::canonicalize` here so
+    // the source-file table matches what the OMG-native driver
+    // produces (which has no symlink-resolving primitive). This keeps
+    // traceback paths consistent across all four implementations.
+    let abs_in = absolute_normalised(in_path);
     let tmp = std::env::temp_dir().join(format!(
         "omg-stage1-{}-{}.omgb",
         std::process::id(),
@@ -389,7 +419,7 @@ fn self_hosted_compile(in_path: &PathBuf) -> Result<Vec<u8>, RuntimeError> {
         abs_in.to_string_lossy().to_string(),
         tmp.to_string_lossy().to_string(),
     ];
-    run(&code, &funcs, &args)?;
+    run(&code, &funcs, &src_map, &args)?;
     let bytes = fs::read(&tmp).map_err(|e| {
         RuntimeError::ModuleImportError(format!(
             "cannot read self-hosted output '{}': {}",
@@ -407,14 +437,8 @@ fn self_hosted_compile(in_path: &PathBuf) -> Result<Vec<u8>, RuntimeError> {
 /// the embedded `compiler.omgb`, which compiles the user's source. Used
 /// only by `--verify-omg-vm`; ordinary execution doesn't need this layer.
 fn omg_vm_compile(in_path: &PathBuf) -> Result<Vec<u8>, RuntimeError> {
-    let (vm_code, vm_funcs) = parse_bytecode(SELF_HOSTED_VM)?;
-    let abs_in = fs::canonicalize(in_path).map_err(|e| {
-        RuntimeError::ModuleImportError(format!(
-            "cannot canonicalise '{}': {}",
-            in_path.display(),
-            e
-        ))
-    })?;
+    let (vm_code, vm_funcs, vm_src_map) = parse_bytecode(SELF_HOSTED_VM)?;
+    let abs_in = absolute_normalised(in_path);
     // The embedded VM expects to *read* the bytecode it's interpreting
     // from a file, the same way it would with `omg bootstrap/src/vm.omg
     // <prog.omgb>`. Stage the embedded compiler.omgb to a temp file so
@@ -446,7 +470,7 @@ fn omg_vm_compile(in_path: &PathBuf) -> Result<Vec<u8>, RuntimeError> {
         abs_in.to_string_lossy().to_string(),
         tmp_out.to_string_lossy().to_string(),
     ];
-    let run_result = run(&vm_code, &vm_funcs, &args);
+    let run_result = run(&vm_code, &vm_funcs, &vm_src_map, &args);
     let _ = fs::remove_file(&tmp_compiler);
     run_result?;
     let bytes = fs::read(&tmp_out).map_err(|e| {
@@ -478,8 +502,9 @@ fn cmd_verify_omg_vm(args: &[String]) -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
-    let rust_bytes = match compile_source(&source, &in_path) {
-        Ok(p) => write_bytecode(&p.code, &p.funcs),
+    let abs_in = absolute_normalised(&in_path);
+    let rust_bytes = match compile_source(&source, &abs_in) {
+        Ok(p) => write_bytecode(&p.code, &p.funcs, &p.src_map),
         Err(e) => {
             eprintln!("Rust frontend failed: {}", e);
             return ExitCode::FAILURE;
@@ -534,7 +559,7 @@ fn cmd_disasm(args: &[String]) -> ExitCode {
     let (code, funcs): (Vec<Instr>, std::collections::HashMap<String, Function>) =
         if path.extension().map(|e| e == "omgb").unwrap_or(false) {
             match parse_bytecode(&bytes) {
-                Ok(p) => p,
+                Ok((code, funcs, _src_map)) => (code, funcs),
                 Err(e) => {
                     eprintln!("{}", e);
                     return ExitCode::FAILURE;

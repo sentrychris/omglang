@@ -19,7 +19,7 @@ use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
 use crate::ast::{BinOp, Node, UnaryOp};
-use crate::bytecode::{Function, Instr};
+use crate::bytecode::{Function, Instr, SourceMap};
 use crate::error::{ErrorKind, RuntimeError};
 use crate::lexer::tokenize;
 use crate::parser::Parser;
@@ -124,10 +124,22 @@ fn is_builtin(name: &str) -> bool {
     builtin_names().contains(&name)
 }
 
-/// One compiled program: instruction stream + function table.
+/// One compiled program: instruction stream + function table + source map.
 pub struct Program {
     pub code: Vec<Instr>,
     pub funcs: HashMap<String, Function>,
+    pub src_map: SourceMap,
+}
+
+/// One pending function body waiting to be flushed after the main code.
+/// `lines` is parallel to `code`; both get rebased and appended together
+/// in `compile_program`.
+struct PendingFunc {
+    name: String,
+    params: Rc<Vec<String>>,
+    code: Vec<Instr>,
+    lines: Vec<(u32, u32)>,
+    source_file_idx: u32,
 }
 
 /// Compiler context. A single instance compiles the entry-point file plus
@@ -135,7 +147,27 @@ pub struct Program {
 /// function table across them.
 pub struct Compiler {
     code: Vec<Instr>,
-    pending_funcs: Vec<(String, Rc<Vec<String>>, Vec<Instr>)>,
+    /// Parallel to `code`: per-instruction `(file_idx, line)`. Updated
+    /// by every call to `emit` / `placeholder` from `current_file_idx`
+    /// and `current_line`. The compile_stmt/compile_expr entry-points
+    /// refresh `current_line` from the AST node before any emit fires.
+    lines: Vec<(u32, u32)>,
+    /// All source files ever loaded by this compile, in the order they
+    /// were first seen. Entry-point is always index 0.
+    src_files: Vec<String>,
+    /// Path-to-index dedupe for `src_files`. Keys are
+    /// `Path::display().to_string()` so they match what we store in
+    /// `src_files` and what we'd derive from `current_file`.
+    file_idx_of: HashMap<String, u32>,
+    /// Index into `src_files` for the file currently being compiled.
+    /// Swapped when entering / leaving an imported module body.
+    current_file_idx: u32,
+    /// Line of the AST node currently being compiled. The bottom of
+    /// every recursive call into `compile_stmt`/`compile_expr` refreshes
+    /// this so all subsequent `emit`s tag their instruction with the
+    /// originating source line.
+    current_line: u32,
+    pending_funcs: Vec<PendingFunc>,
     funcs: HashMap<String, Function>,
     break_stack: Vec<Vec<usize>>,
     /// How many `SETUP_EXCEPT` blocks are currently open lexically. Used
@@ -188,8 +220,17 @@ enum ExportKind {
 
 impl Compiler {
     pub fn new(entry_file: impl Into<PathBuf>) -> Self {
+        let entry = entry_file.into();
+        let entry_display = entry.display().to_string();
+        let mut file_idx_of = HashMap::new();
+        file_idx_of.insert(entry_display.clone(), 0);
         Self {
             code: Vec::new(),
+            lines: Vec::new(),
+            src_files: vec![entry_display],
+            file_idx_of,
+            current_file_idx: 0,
+            current_line: 0,
             pending_funcs: Vec::new(),
             funcs: HashMap::new(),
             break_stack: Vec::new(),
@@ -199,10 +240,30 @@ impl Compiler {
             loading_stack: HashSet::new(),
             module_counter: 0,
             current_prefix: String::new(),
-            current_file: entry_file.into(),
+            current_file: entry,
             local_scopes: vec![HashSet::new()],
             top_level_declared: HashSet::new(),
         }
+    }
+
+    /// Intern a source-file path into `src_files` and return its index.
+    fn intern_file(&mut self, path: &Path) -> u32 {
+        let key = path.display().to_string();
+        if let Some(&idx) = self.file_idx_of.get(&key) {
+            return idx;
+        }
+        let idx = self.src_files.len() as u32;
+        self.src_files.push(key.clone());
+        self.file_idx_of.insert(key, idx);
+        idx
+    }
+
+    /// Refresh `current_line` from an AST node before its compilation
+    /// emits any bytecode. Compiler-synthesised instructions (e.g. the
+    /// implicit `PushNone+Ret` after a function body) inherit whatever
+    /// the last refresh set, which is the closest enclosing source.
+    fn enter_node(&mut self, node: &Node) {
+        self.current_line = node.line() as u32;
     }
 
     pub fn declare_local(&mut self, name: &str) {
@@ -288,23 +349,35 @@ impl Compiler {
         // Flush pending function bodies after the main code so PC layout is:
         //   [main code...HALT][func1 body][func2 body]...
         let mut final_code = self.code;
+        let mut final_lines = self.lines;
         let pending = std::mem::take(&mut self.pending_funcs);
-        for (name, params, body) in pending {
+        for pf in pending {
             let addr = final_code.len();
             self.funcs.insert(
-                name,
+                pf.name,
                 Function {
-                    params: params.as_ref().clone(),
+                    params: pf.params.as_ref().clone(),
                     address: addr,
+                    source_file_idx: pf.source_file_idx,
                 },
             );
-            for instr in body {
+            for instr in pf.code {
                 final_code.push(rebase_jump(instr, addr));
             }
+            final_lines.extend(pf.lines);
         }
+        debug_assert_eq!(
+            final_code.len(),
+            final_lines.len(),
+            "source map must be parallel to code"
+        );
         Ok(Program {
             code: final_code,
             funcs: self.funcs,
+            src_map: SourceMap {
+                files: self.src_files,
+                lines: final_lines,
+            },
         })
     }
 
@@ -314,6 +387,7 @@ impl Compiler {
 
     fn emit(&mut self, instr: Instr) {
         self.code.push(instr);
+        self.lines.push((self.current_file_idx, self.current_line));
     }
 
     /// Emit `n` `PopBlock` instructions. Used by `return` / `break` /
@@ -329,6 +403,7 @@ impl Compiler {
     fn placeholder(&mut self, instr: Instr) -> usize {
         let idx = self.code.len();
         self.code.push(instr);
+        self.lines.push((self.current_file_idx, self.current_line));
         idx
     }
 
@@ -355,6 +430,7 @@ impl Compiler {
     // ------------------------------------------------------------------
 
     fn compile_stmt(&mut self, stmt: &Node) -> Result<(), RuntimeError> {
+        self.enter_node(stmt);
         match stmt {
             Node::Emit(expr, _) => {
                 self.compile_expr(expr)?;
@@ -500,10 +576,16 @@ impl Compiler {
                 self.patch_jump(end_jump, end_pc);
             }
             Node::FuncDef(name, params, body, _) => {
-                let body_code = self.compile_function_body(params, body)?;
+                let (body_code, body_lines) = self.compile_function_body(params, body)?;
                 let mangled = self.mangle(name);
-                self.pending_funcs
-                    .push((mangled.clone(), params.clone(), body_code));
+                let source_file_idx = self.current_file_idx;
+                self.pending_funcs.push(PendingFunc {
+                    name: mangled.clone(),
+                    params: params.clone(),
+                    code: body_code,
+                    lines: body_lines,
+                    source_file_idx,
+                });
                 // Bind the function as a first-class value at the definition
                 // site. At top level this stores `Closure { mangled, ∅ }` to
                 // globals; inside a function body it captures the current
@@ -593,8 +675,9 @@ impl Compiler {
         &mut self,
         params: &Rc<Vec<String>>,
         body: &Node,
-    ) -> Result<Vec<Instr>, RuntimeError> {
+    ) -> Result<(Vec<Instr>, Vec<(u32, u32)>), RuntimeError> {
         let saved_code = mem::take(&mut self.code);
+        let saved_lines = mem::take(&mut self.lines);
         // Function bodies start with empty break_stack so a stray `break`
         // produces a syntax error, matching the Python compiler.
         let saved_break = mem::take(&mut self.break_stack);
@@ -624,10 +707,11 @@ impl Compiler {
         self.emit(Instr::Ret);
         self.local_scopes.pop();
         let func_code = mem::replace(&mut self.code, saved_code);
+        let func_lines = mem::replace(&mut self.lines, saved_lines);
         self.break_stack = saved_break;
         self.try_depth = saved_try_depth;
         self.loop_try_depth = saved_loop_try_depth;
-        Ok(func_code)
+        Ok((func_code, func_lines))
     }
 
     fn compile_raise_call(
@@ -743,8 +827,14 @@ impl Compiler {
         } else {
             base.join(p)
         };
-        // Canonicalise to use as a stable cache key.
-        fs::canonicalize(&candidate)
+        // Normalise (`./` and `..` collapse) without canonicalising so
+        // the path stored in the source-file table matches what the
+        // OMG-in-OMG compiler stores — required for triple-meta
+        // byte-identical parity. Cycle-detection still works since
+        // imports of the same logical path produce the same normalised
+        // key. (A symlink redirecting two paths to the same file would
+        // load it twice; not a concern in the corpus.)
+        Ok(PathBuf::from(path_normalize(&candidate.to_string_lossy())))
     }
 
     fn compile_module_inline(
@@ -790,13 +880,19 @@ impl Compiler {
         self.loading_stack.insert(resolved.to_path_buf());
         // Swap context: compile imported file's top-level statements inline at
         // the current import site, prefixed with this module's namespace.
+        // The file index swap is what lets traceback frames inside this
+        // module's body show the imported file's path, not the entry's.
         let saved_prefix = std::mem::replace(&mut self.current_prefix, prefix);
         let saved_file = std::mem::replace(&mut self.current_file, resolved.to_path_buf());
+        let new_file_idx = self.intern_file(resolved);
+        let saved_file_idx = self.current_file_idx;
+        self.current_file_idx = new_file_idx;
         for stmt in ast {
             self.compile_stmt(&stmt)?;
         }
         self.current_prefix = saved_prefix;
         self.current_file = saved_file;
+        self.current_file_idx = saved_file_idx;
         self.loading_stack.remove(resolved);
         Ok(info)
     }
@@ -806,6 +902,7 @@ impl Compiler {
     // ------------------------------------------------------------------
 
     fn compile_expr(&mut self, expr: &Node) -> Result<(), RuntimeError> {
+        self.enter_node(expr);
         match expr {
             Node::Number(v, _) => self.emit(Instr::PushInt(*v)),
             Node::Float(v, _) => self.emit(Instr::PushFloat(*v)),
@@ -960,6 +1057,58 @@ impl Compiler {
             }
         }
         Ok(())
+    }
+}
+
+/// Collapse `./` and `..` segments in a path string. Mirrors the OMG
+/// compiler's `path_normalize` (bootstrap/src/compiler.omg) byte-for-
+/// byte so both frontends store the same path in the source-file
+/// table. We can't use `fs::canonicalize` here because the OMG side
+/// has no OS-level canonicalisation primitive — matching its weaker
+/// normalisation is what keeps the triple-meta `.omgb` bytes equal.
+///
+/// Also called from main.rs's `absolute_normalised` helper to make
+/// entry paths absolute before the compiler sees them.
+pub fn path_normalize(p: &str) -> String {
+    if p.is_empty() {
+        return String::new();
+    }
+    let absolute = p.starts_with('/');
+    let mut parts: Vec<&str> = Vec::new();
+    for seg in p.split(|c| c == '/' || c == '\\') {
+        if !seg.is_empty() {
+            parts.push(seg);
+        }
+    }
+    let mut stack: Vec<&str> = Vec::new();
+    for seg in &parts {
+        if *seg == "." {
+            // drop
+        } else if *seg == ".." {
+            if let Some(&top) = stack.last() {
+                if top != ".." {
+                    stack.pop();
+                    continue;
+                }
+            }
+            // Only meaningful on relative paths.
+            if !absolute {
+                stack.push(*seg);
+            }
+        } else {
+            stack.push(*seg);
+        }
+    }
+    let body = stack.join("/");
+    let out = if absolute {
+        format!("/{}", body)
+    } else {
+        body
+    };
+    if out.is_empty() {
+        ".".to_string()
+    } else {
+        out
     }
 }
 
