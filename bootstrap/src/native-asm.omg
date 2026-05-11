@@ -67,6 +67,7 @@ alloc OP_BUILD_LIST     := 3
 alloc OP_BUILD_DICT     := 4
 alloc OP_INDEX          := 27
 alloc OP_BUILTIN        := 33
+alloc OP_POP            := 34
 
 # === ELF / x86_64 layout ==================================================
 # We map the whole file as a single PT_LOAD segment at virtual address
@@ -272,10 +273,11 @@ proc parse_bytecode(bytes) {
             if op == OP_GT   { code := code + [["GT",   false]] } else {
             if op == OP_GE    { code := code + [["GE",    false]] } else {
             if op == OP_INDEX { code := code + [["INDEX", false]] } else {
+            if op == OP_POP   { code := code + [["POP",   false]] } else {
             if op == OP_EMIT  { code := code + [["EMIT",  false]] } else {
             if op == OP_HALT  { code := code + [["HALT",  false]] } else {
                 panic("native-asm: opcode " + op + " not yet supported")
-            }}}}}}}}}}}}}}}}
+            }}}}}}}}}}}}}}}}}
         }}}}}}}}}}}}}}}
         k := k + 1
     }
@@ -489,6 +491,15 @@ proc x_mov_rdx_rax() { ob_bytes([72, 137, 194]) }
 # `mov rax, rdx` — 3 bytes. (Used by MOD to retrieve the remainder
 # out of the idiv result, which leaves the remainder in rdx.)
 proc x_mov_rax_rdx() { ob_bytes([72, 137, 208]) }
+
+# `mov rcx, rax` — 3 bytes.
+proc x_mov_rcx_rax() { ob_bytes([72, 137, 193]) }
+
+# `and rcx, rbx` — 3 bytes.
+proc x_and_rcx_rbx() { ob_bytes([72, 33, 217]) }
+
+# `test cl, 1` — 3 bytes.
+proc x_test_cl_1() { ob_bytes([246, 193, 1]) }
 
 # `cmp rax, rbx` — 3 bytes.
 proc x_cmp_rax_rbx() { ob_bytes([72, 57, 216]) }
@@ -723,6 +734,80 @@ proc emit_rt_alloc() {
     return entry
 }
 
+# Concatenate two strings into a new heap-allocated string.
+#
+# Input:  rax = lhs pointer, rbx = rhs pointer (both are heap strings)
+# Output: rax = pointer to new concatenated string
+# Clobbers: rcx, rdx, rsi, rdi, r8
+#
+# Layout matches the existing heap-string convention:
+# [type=0:u64][length:u64][bytes...]. Bytes are copied with rep movsb,
+# which keeps the helper compact (~80 bytes).
+proc emit_rt_string_concat(alloc_off) {
+    alloc entry := ob_top
+    # Read lengths.
+    # mov rcx, [rax + 8] — 48 8b 48 08 (len_a)
+    ob_bytes([72, 139, 72, 8])
+    # mov rdx, [rbx + 8] — 48 8b 53 08 (len_b)
+    ob_bytes([72, 139, 83, 8])
+    # Save lhs and rhs onto native stack so we can clobber them.
+    ob_byte(80)                       # push rax (lhs)
+    ob_byte(83)                       # push rbx (rhs)
+    # Total length = len_a + len_b → into rcx.
+    # add rcx, rdx — 48 01 d1
+    ob_bytes([72, 1, 209])
+    # push rcx (save total length).
+    ob_byte(81)
+    # Alloc size = total + 16 (header) + 7, rounded down to ×8.
+    # add rcx, 23 — 48 83 c1 17
+    ob_bytes([72, 131, 193, 23])
+    # and rcx, -8 — 48 83 e1 f8
+    ob_bytes([72, 131, 225, 248])
+    # mov rax, rcx — 48 89 c8
+    ob_bytes([72, 137, 200])
+    # call rt_alloc
+    alloc s := x_call_rel32_patchable()
+    patch_call_rel32(s, alloc_off)
+    # Restore: r8 = new ptr (save it before clobbering rax), then pop
+    # rdi = total length, rbx = rhs, rsi = lhs.
+    # mov r8, rax — 49 89 c0
+    ob_bytes([73, 137, 192])
+    ob_byte(95)                       # pop rdi (total length)
+    ob_byte(91)                       # pop rbx (rhs)
+    # pop rsi (lhs into rsi for the upcoming rep movsb)
+    ob_byte(94)
+    # Write header on new string: [type=0, length=total]
+    # mov qword [r8], 0 — 49 c7 00 00 00 00 00
+    ob_bytes([73, 199, 0, 0, 0, 0, 0])
+    # mov [r8 + 8], rdi — 49 89 78 08
+    ob_bytes([73, 137, 120, 8])
+    # First rep movsb: copy lhs bytes. rsi already = lhs; bump it past
+    # the header, point rdi at dest+16, set rcx = len_a.
+    # mov rcx, [rsi + 8] — 48 8b 4e 08
+    ob_bytes([72, 139, 78, 8])
+    # add rsi, 16 — 48 83 c6 10
+    ob_bytes([72, 131, 198, 16])
+    # lea rdi, [r8 + 16] — 49 8d 78 10
+    ob_bytes([73, 141, 120, 16])
+    # rep movsb — f3 a4
+    ob_bytes([243, 164])
+    # Second rep movsb: copy rhs bytes. rdi is already positioned at
+    # dest+16+len_a; set rsi=rhs+16, rcx=len_b.
+    # mov rcx, [rbx + 8] — 48 8b 4b 08
+    ob_bytes([72, 139, 75, 8])
+    # mov rsi, rbx — 48 89 de
+    ob_bytes([72, 137, 222])
+    # add rsi, 16 — 48 83 c6 10
+    ob_bytes([72, 131, 198, 16])
+    # rep movsb
+    ob_bytes([243, 164])
+    # Return r8 in rax.
+    # mov rax, r8 — 4c 89 c0
+    ob_bytes([76, 137, 192])
+    x_ret()
+    return entry
+}
+
 # Build a list from the top N operand-stack values. Layout matches
 # heap-object convention: [type=1, length=N, capacity=N, elem_0..N-1].
 # The LAST pushed value becomes element N-1 (so the source `[1,2,3]`
@@ -833,10 +918,12 @@ proc emit_rt_emit_dispatch(off_int, off_str, off_false, off_true, off_none) {
 # Layout the runtime blob: static strings first (so we know their
 # absolute virtual addresses immediately), then the helpers. Returns
 # the dispatcher's offset — that's what user code's EMIT sites call.
-# Helpers used by other opcodes (rt_alloc, rt_build_list) get their
-# offsets stashed in globals so codegen can patch the rel32s later.
-alloc rt_alloc_off       := 0
-alloc rt_build_list_off  := 0
+# Helpers used by other opcodes (rt_alloc, rt_build_list,
+# rt_string_concat) get their offsets stashed in globals so codegen
+# can patch the rel32s later.
+alloc rt_alloc_off          := 0
+alloc rt_build_list_off     := 0
+alloc rt_string_concat_off  := 0
 
 proc emit_runtime_blob() {
     # Static strings for sentinel values. Each includes a trailing
@@ -855,9 +942,10 @@ proc emit_runtime_blob() {
     alloc off_true    := emit_rt_write_static(addr_true,  5)
     alloc off_false   := emit_rt_write_static(addr_false, 6)
     alloc off_none    := emit_rt_write_static(addr_none,  5)
-    rt_alloc_off      := emit_rt_alloc()
-    rt_build_list_off := emit_rt_build_list(rt_alloc_off)
-    alloc off_disp    := emit_rt_emit_dispatch(off_int, off_str, off_false, off_true, off_none)
+    rt_alloc_off         := emit_rt_alloc()
+    rt_build_list_off    := emit_rt_build_list(rt_alloc_off)
+    rt_string_concat_off := emit_rt_string_concat(rt_alloc_off)
+    alloc off_disp       := emit_rt_emit_dispatch(off_int, off_str, off_false, off_true, off_none)
     return off_disp
 }
 
@@ -899,13 +987,33 @@ proc gen_push_str(s) {
     deferred_strings := deferred_strings + [[s, site]]
 }
 
-# tagged_a + tagged_b = (a<<1|1) + (b<<1|1) = (a+b)<<1 + 2.
-# We want (a+b)<<1 + 1 so subtract 1 from one operand's tag.
+# Polymorphic ADD:
+#   • int + int  → (a<<1|1) + (b<<1|1) - 1 = (a+b)<<1|1     (inline fast path)
+#   • str + str  → rt_string_concat allocates a new heap string
+#
+# We tell the cases apart by ANDing the tag bits: both ints have
+# LSB=1, so the AND has LSB=1; any other combination has LSB=0
+# (heap pointers are 8-aligned). Falling through to rt_string_concat
+# trusts the bytecode source — mixing int/string or pointing at a
+# non-string heap object yields garbage in phase 5b. Will tighten in
+# 5c when we add proper type checks.
 proc gen_add() {
     x_pop_reg(REG_RBX)
-    x_sub_rbx_imm8(1)               # rbx = b<<1 (untagged)
     x_pop_reg(REG_RAX)
-    x_add_rax_rbx()                 # rax = (a+b)<<1 + 1, still tagged
+    x_mov_rcx_rax()                  # rcx = rax (copy lhs)
+    x_and_rcx_rbx()                  # rcx = rax & rbx
+    x_test_cl_1()                    # ZF=0 iff both LSBs are 1
+    # jnz +7  — skip the call + jmp block when both are ints
+    # Block size: call rel32 (5) + jmp rel8 (2) = 7
+    ob_bytes([117, 7])
+    # call rt_string_concat (rax=lhs, rbx=rhs → rax=new)
+    alloc s := x_call_rel32_patchable()
+    patch_call_rel32(s, rt_string_concat_off)
+    # jmp +7  — skip the int fast path (sub+add = 7 bytes)
+    ob_bytes([235, 7])
+    # int fast path:
+    x_sub_rbx_imm8(1)
+    x_add_rax_rbx()
     x_push_reg(REG_RAX)
 }
 
@@ -1281,6 +1389,13 @@ proc gen_index() {
     x_push_reg(REG_RAX)
 }
 
+# POP discards the top of the operand stack. Used after a Call whose
+# return value isn't consumed (statement-context calls).
+proc gen_pop() {
+    # add r15, 8 — drops the top slot without reading it
+    ob_bytes([73, 131, 199, 8])
+}
+
 # BUILTIN(name, argc). Phase 5a only handles `length`, which works for
 # both strings and lists thanks to their shared `length at offset 8`
 # layout. Other builtins panic — we add them in 5b/5c as needed.
@@ -1412,10 +1527,11 @@ proc gen_one(instr, bytecode_idx, dispatch_off) {
     if op == "BUILD_LIST"{ gen_build_list(instr[1]) } else {
     if op == "INDEX"    { gen_index() }            else {
     if op == "BUILTIN"  { gen_builtin(instr[1][0], instr[1][1]) } else {
+    if op == "POP"      { gen_pop() }              else {
     if op == "EMIT"     { gen_emit(dispatch_off) } else {
     if op == "HALT"     { gen_halt() }             else {
         panic("native-asm: unsupported op " + op)
-    }}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}
+    }}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}
 }
 
 # Emit the top-level code (instructions [0, top_level_end)) plus each

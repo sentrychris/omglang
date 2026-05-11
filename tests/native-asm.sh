@@ -16,7 +16,7 @@ if [ ! -x "$OMGNA_NATIVE" ]; then
     exit 2
 fi
 
-section "native-asm (omgna): phases 1-5a"
+section "native-asm (omgna): phases 1-5b"
 
 # Round-trip a .omg through omgc + omgna and compare ./<bin> stdout
 # against the Rust runtime's output for the same source.
@@ -93,6 +93,15 @@ assert_omgna "list_in_loop"  $';;;omg\nalloc xs := [100, 200, 300, 400, 500]\nal
 assert_omgna "len_string"    $';;;omg\nemit length("hello")\nemit length("a")\nemit length("")'
 assert_omgna "fn_list_arg"   $';;;omg\nproc get(xs, i) { return xs[i] }\nalloc xs := [10, 20, 30]\nemit get(xs, 0)\nemit get(xs, 2)'
 assert_omgna "list_mixed"    $';;;omg\nalloc m := [1, "two", 3, "four"]\nemit m[0]\nemit m[1]\nemit m[2]\nemit m[3]'
+
+# === Phase 5b: string concat ===
+assert_omgna "concat_simple" $';;;omg\nemit "hello" + " " + "world"'
+assert_omgna "concat_empty"  $';;;omg\nemit "" + "abc"\nemit "xyz" + ""\nemit "" + ""'
+assert_omgna "concat_chain"  $';;;omg\nemit "a" + "b" + "c" + "d" + "e"'
+assert_omgna "concat_in_fn"  $';;;omg\nproc greet(name) { return "Hello, " + name + "!" }\nemit greet("world")\nemit greet("OMG")'
+assert_omgna "concat_loop"   $';;;omg\nalloc s := ""\nalloc i := 0\nloop i < 5 {\n    s := s + "x"\n    i := i + 1\n}\nemit s'
+assert_omgna "concat_arg"    $';;;omg\nproc show(s) { emit s }\nshow("abc" + "def")\nshow("a" + "b" + "c")'
+assert_omgna "ints_still_ok" $';;;omg\nemit 1 + 2\nemit 5 + 10 + 20'
 
 # Binary should be a real statically-linked ELF, no libc dependency.
 elf="$TMPDIR_TEST/na-hello_world"
