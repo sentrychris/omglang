@@ -14,7 +14,9 @@ This doc covers what's in it and why.
 | Refcounting           | `omg_inc`, `omg_dec`, `omg_assign`        |
 | Operators             | `omg_add`, `omg_mul`, `omg_eq`, `omg_index` |
 | String operations     | `omg_str_concat`, `omg_str_index`, `omg_str_slice` |
+| Closure cells         | `omg_cell_new`, `omg_cell_get`, `omg_cell_set` |
 | Exception handling    | `OmgBlock`, `omg_panic`, `omg_raise`      |
+| Source map + frames   | `omg_src_files`, `omg_frame_stack`, `omg_emit_traceback` |
 | Builtins              | `omg_builtin_int`, `omg_builtin_file_open`, etc. |
 | Process control       | `omg_builtin_subprocess`, `omg_builtin_exit`, `omg_builtin_getpid` |
 | I/O                   | `omg_emit`, file table                    |
@@ -132,10 +134,21 @@ heap copies; values are owning slots.
 typedef struct OmgClosure {
     int rc;
     OmgFn fn;
-    Value *captured;     // heap array
+    const char *name;    // bare source name (no __mod_N__ prefix), for tracebacks
+    Value *captured;     // heap array of 1-element cells (OMG_LIST values)
     int cap_count;
 } OmgClosure;
 ```
+
+Captured slots are **cells** (1-element `OMG_LIST` values), not raw
+`Value`s. The closure shares each cell with the enclosing frame, so a
+parent's `STORE_LOCAL` and the closure's `LOAD` see the same storage
+(Python/JS-style by-reference capture). See `omg_cell_new` /
+`omg_cell_get` / `omg_cell_set` for the cell helpers.
+
+`name` is the bare display name used when this closure is invoked
+indirectly via `CALL_VALUE` — without it, a traceback would show the
+mangled `__mod_2__tick` instead of `tick`.
 
 `OmgFn` is the C function pointer for the OMG proc:
 
@@ -149,14 +162,15 @@ Args are passed inline rather than as an array, so cc -O2 can sibling-call
 optimize tail calls. `OMG_MAX_ARITY = 8`; bump it (everywhere) if you need
 more parameters.
 
-## Exception handling
+## Exception handling and tracebacks
 
 ### The data structures
 
 ```c
 typedef struct OmgBlock {
-    int saved_sp;        // operand stack depth at SETUP_EXCEPT
-    jmp_buf jb;          // setjmp target
+    int saved_sp;          // operand stack depth at SETUP_EXCEPT
+    int saved_frame_top;   // call-frame depth at SETUP_EXCEPT
+    jmp_buf jb;            // setjmp target
 } OmgBlock;
 
 #define OMG_MAX_BLOCKS 256
@@ -164,7 +178,26 @@ static OmgBlock *omg_block_stack[OMG_MAX_BLOCKS];
 static int omg_block_top = 0;
 
 static Value omg_pending_error;   // set by raise/panic, read by handler
+
+// User-visible call-frame stack for traceback rendering. CALL /
+// CALL_VALUE push a frame; RET pops; TCALL rewrites the top frame's
+// name in place. Independent of OmgBlock — exception unwinding
+// truncates it back to the saved depth.
+typedef struct OmgFrame {
+    const char *name;        // bare proc name (no __mod_N__ mangling)
+    uint32_t call_file_idx;  // file containing the CALL/CALL_VALUE
+    uint32_t call_line;      // line of the call instruction
+} OmgFrame;
+#define OMG_MAX_FRAMES 1024
+static OmgFrame omg_frame_stack[OMG_MAX_FRAMES];
+static int omg_frame_top = 0;
 ```
+
+The transpiler also emits a per-program source-file table and threads
+two globals — `omg_current_file_idx` (set once at function entry) and
+`omg_current_line` (rewritten before each instruction whose line
+differs from the previous one) — so any panic site has full
+file/line context.
 
 ### How `try` becomes C
 
@@ -174,9 +207,10 @@ For each `try { body } except err { handler }`, the transpiler emits:
 {
     OmgBlock *omg_b = malloc(sizeof(OmgBlock));
     omg_b->saved_sp = sp;
+    omg_b->saved_frame_top = omg_frame_top;
     omg_block_push(omg_b);
     if (setjmp(omg_b->jb) != 0) {
-        // longjmp landed here
+        // longjmp landed here; omg_panic restored omg_frame_top.
         sp = omg_b->saved_sp;
         free(omg_b);
         stack[sp++] = omg_pending_error;
@@ -198,19 +232,50 @@ static void omg_panic(const char *prefix, const char *msg) {
     if (omg_block_top > 0) {
         omg_pending_error = omg_str(full);
         OmgBlock *b = omg_block_stack[--omg_block_top];
+        // Restore the frame stack to its depth at SETUP_EXCEPT so a
+        // later uncaught panic doesn't include frames unwound by this
+        // catch.
+        if (omg_frame_top > b->saved_frame_top) {
+            omg_frame_top = b->saved_frame_top;
+        }
         longjmp(b->jb, 1);
     }
-    fprintf(stderr, "%s\n", full);
+    // Uncaught: print a Python-style traceback via omg_emit_traceback
+    // when the program has a source map, otherwise fall back to the
+    // bare "Kind: msg" line (handwritten C harnesses with no map).
+    if (omg_src_files != NULL) {
+        omg_emit_traceback(full);
+    } else {
+        fprintf(stderr, "%s\n", full);
+    }
     exit(1);
 }
 ```
 
 If a try block is active, `longjmp` transfers control to the most recent
-`SETUP_EXCEPT`. Otherwise the program prints to stderr and exits 1.
+`SETUP_EXCEPT`. Otherwise the program emits a traceback and exits 1.
 
 Every recoverable error path in the runtime goes through this — division
 by zero, index out of range, type mismatch in arithmetic, etc. So
 `try { ... } except err { ... }` catches all of them.
+
+### The traceback format
+
+`omg_emit_traceback(fullmsg)` walks `omg_frame_stack` and prints a
+Python-style trace identical to what the Rust VM produces:
+
+```
+Traceback (most recent call last):
+  File "main.omg", line 5, in <top-level>
+  File "main.omg", line 12, in outer
+  File "main.omg", line 17, in inner
+IndexError: index 5 out of range for length 0
+```
+
+The first frame's call site is labelled `<top-level>`; subsequent
+frames take their *caller's* display name (i.e. `frames[i-1].name`).
+The site line uses `omg_current_file_idx` / `omg_current_line`, which
+are the globals the transpiler updated at the most recent instruction.
 
 ### Caveats
 

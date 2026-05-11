@@ -72,6 +72,39 @@ sibling-call TCO showing as `jmp omg_pN` rather than `call omg_pN`).
 
 ## Common errors and what they mean
 
+### Reading a traceback
+
+Every uncaught runtime error prints a Python-style traceback to stderr:
+
+```
+Traceback (most recent call last):
+  File "/abs/path/main.omg", line 17, in <top-level>
+  File "/abs/path/main.omg", line 13, in outer
+  File "/abs/path/main.omg", line 8, in middle
+  File "/abs/path/main.omg", line 4, in inner
+IndexError: index 5 out of range for length 0
+```
+
+Frames are listed most-recent-call-*last* (Python convention). The
+final `File ... in <fn>` line is the call site where the error fired;
+the lines above it are the chain that led there. Names show the
+**bare** source name — `__mod_N__` module-mangling is stripped for
+display.
+
+A few quirks:
+- **Tail calls** (`return foo(...)`) reuse the caller's frame slot, so
+  TCO chains collapse to a single frame with the innermost callee's
+  name. Match this against Python's missing trampoline frames if you
+  expected to see all of them.
+- **Caught exceptions** print no traceback — only the final, uncaught
+  one does. The trace itself goes to stderr, so `... 2>/dev/null`
+  hides it while preserving any `emit` output.
+- **REPL chunks** show `File "<repl>", line N` — `<repl>` is a
+  placeholder because the chunk wasn't read from disk.
+- **Empty source map** (synthetic bytecode, e.g. hand-built unit
+  tests in `vm/tests.rs`) falls back to a bare `Kind: message` line
+  with no `File ...` prefix.
+
 ### `UndefinedIdentError: foo`
 
 The name `foo` was referenced but never bound.
@@ -80,6 +113,9 @@ Common causes:
 - Typo in name
 - `foo := value` (assignment) instead of `alloc foo := value` (declaration)
 - Missing `import` for a module function
+
+The traceback's last `File` line tells you exactly which expression
+referenced `foo` — start there.
 
 ### `UndefinedIdentError: foo` *only on native, not on `omg`*
 

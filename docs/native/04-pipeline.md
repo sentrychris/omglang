@@ -115,7 +115,11 @@ You'll see the function table at the top (none here), then the code:
 
 The `.omgb` file format is documented in
 [runtime/src/bytecode.rs](../../runtime/src/bytecode.rs) — header magic
-`OMGB`, version, function table, then the code.
+`OMGB`, version `0x000200`, source-file table, function table (each
+function carries a `source_file_idx`), instruction stream, then a
+per-instruction source map (`(file_idx, line)` parallel to the code).
+The last two sections are what give runtime errors their
+`File "foo.omg", line 12, in <fn>` traceback context.
 
 ## Stage 4 (option A) — Run via VM
 

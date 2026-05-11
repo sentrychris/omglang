@@ -108,9 +108,12 @@ name := "Bob"                # update it (no `alloc` the second time)
 emit name                    # → Bob
 ```
 
-If you forget the `alloc` for a brand-new name, OMG complains:
+If you forget the `alloc` for a brand-new name, OMG complains with a
+Python-style traceback:
 
 ```
+Traceback (most recent call last):
+  File "/path/to/script.omg", line 4, in <top-level>
 UndefinedIdentError: name
 ```
 
@@ -431,7 +434,31 @@ emit add100(7)          # 107
 ```
 
 Each call to `make_adder` produces its own `add` that remembers its
-own `n`.
+own `n`. The capture is **by reference**, not a snapshot — if the
+inner proc mutates the captured name, the next call sees the new
+value:
+
+```omg
+;;;omg
+
+proc make_counter() {
+    alloc n := 0
+    proc tick() {
+        n := n + 1
+        return n
+    }
+    return tick
+}
+
+alloc c := make_counter()
+emit c()        # 1
+emit c()        # 2
+emit c()        # 3
+```
+
+Same semantics as Python and JavaScript — closures share storage with
+their enclosing scope, not just the values that were there at
+definition time.
 
 ### Multi-file programs: `import`
 
@@ -517,8 +544,19 @@ Relative paths in `read_file` and `file_open` are resolved against
 ### Errors and `try` / `except`
 
 Things sometimes go wrong. A bad index or a missing key, dividing by zero... By
-default the program stops with an error message. To recover, wrap the
-risky bit in `try` / `except`:
+default the program prints a Python-style traceback to stderr and exits
+non-zero — for example:
+
+```
+Traceback (most recent call last):
+  File "/path/to/main.omg", line 17, in <top-level>
+  File "/path/to/main.omg", line 13, in outer
+  File "/path/to/main.omg", line 4, in inner
+IndexError: index 5 out of range for length 0
+```
+
+To recover, wrap the risky bit in `try` / `except` — the traceback is
+suppressed when the error is caught:
 
 ```omg
 ;;;omg

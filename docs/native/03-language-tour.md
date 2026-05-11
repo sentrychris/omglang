@@ -178,6 +178,13 @@ The error kinds you'll see: `RuntimeError`, `TypeError`, `ValueError`,
 `IndexError`, `KeyError`, `ZeroDivisionError`, `AssertionError`,
 `UndefinedIdentError`, `ModuleImportError`, `FrozenWriteError`.
 
+**Uncaught** errors print a Python-style traceback to stderr — file,
+line, and the chain of `proc` calls that led to the failure — before
+the program exits non-zero. Catching with `try`/`except` suppresses the
+traceback and binds just the formatted error message to `err`. See
+[07-debugging.md → Reading a traceback](07-debugging.md#reading-a-traceback)
+for examples.
+
 ## Errors
 
 ```omg

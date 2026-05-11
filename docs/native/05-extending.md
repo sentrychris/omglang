@@ -297,9 +297,19 @@ fixed-point check is `--verify-omg-vm` — it runs `compiler.omg` *on*
 
 ### Bytecode versioning
 
-`bootstrap/src/compiler.omg` has `BC_VERSION := 257` (and matching in `bytecode.rs`).
-If you change the bytecode format incompatibly, bump this. Otherwise old
-`.omgb` files will silently break.
+`bootstrap/src/compiler.omg` has `BC_VERSION := 512` (`0x000200` —
+`(MAJOR<<16)|(MINOR<<8)|PATCH`), matching `BC_VERSION` in
+`runtime/src/bytecode.rs` and the same constant in
+`bootstrap/src/{vm,native-c,native-js}.omg`. If you change the
+bytecode format incompatibly, bump this in **all five** places. Old
+`.omgb` files are rejected at load time with a clear "recompile your
+.omgb" SyntaxError — there's no silent breakage, but also no fallback
+to v1.
+
+The current format carries a source-file table and a per-instruction
+source map (parallel to the code blob) that the VMs use to render
+Python-style tracebacks. Both new sections were added at the v1 → v2
+bump.
 
 ### Refcount discipline
 

@@ -139,7 +139,8 @@ in `compiler.omg`, or this check will fail. See [05-extending.md](05-extending.m
 
 - `runtime/src/` — Rust. Production VM, parser, frontend, CLI.
 - `bootstrap/src/omg_rt.h` — C. Value representation, refcounting, builtins,
-  setjmp-based exception handling. ~1700 lines. Linked into every AOT binary.
+  setjmp-based exception handling, call-frame stack + traceback formatter.
+  ~2200 lines. Linked into every AOT binary.
 
 That's the whole non-OMG surface. Everything else is `.omg`.
 

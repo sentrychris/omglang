@@ -111,17 +111,33 @@ no separate runtime module loader.
 ## First-class functions and closures
 
 Every `proc` is a first-class value. Top-level procs become non-capturing
-closures in `globals`. Nested procs capture a snapshot of the enclosing
-function's locals at the point of definition.
+closures in `globals`. Nested procs capture the enclosing function's
+locals **by reference** — each binding is an `Rc<RefCell<Value>>` cell
+shared between the enclosing frame and every closure built over it, so
+mutations on either side are visible to the other (Python/JS-style).
 
 ```omg
 ;;;omg
 proc make_adder(n) {
-    proc inner(x) { return x + n }   # captures n
+    proc inner(x) { return x + n }   # captures n by reference
     return inner
 }
 alloc add5 := make_adder(5)
 emit add5(10)        # 15
+
+# Mutation through the captured cell is visible to the closure:
+proc make_counter() {
+    alloc n := 0
+    proc tick() {
+        n := n + 1
+        return n
+    }
+    return tick
+}
+alloc c := make_counter()
+emit c()        # 1
+emit c()        # 2
+emit c()        # 3
 ```
 
 The compiler chooses the right call form automatically:
@@ -133,16 +149,59 @@ The compiler chooses the right call form automatically:
 ## Bytecode format
 
 Magic `OMGB` + packed version `(MAJOR<<16)|(MINOR<<8)|PATCH` (currently
-`0x000101`). Function table → instruction stream. All multi-byte integers
-are little-endian. Four opcodes were added beyond the v0.1 baseline:
+`0x000200`). All multi-byte integers are little-endian. Sections appear
+in this order:
+
+```
++------------------+------------------------------+
+| Magic            | "OMGB" (4 bytes)             |
++------------------+------------------------------+
+| Version          | u32 = 0x000200               |
++------------------+------------------------------+
+| Source-file cnt  | u32                          |
+| For each file:   |   u32 len + UTF-8 path       |
++------------------+------------------------------+
+| Func count       | u32                          |
+| For each func:   |                              |
+|   Name           |   u32 len + UTF-8 bytes      |
+|   Param count    |   u32                        |
+|   Params[...]    |   (Param count times)        |
+|                  |     u32 len + UTF-8 bytes    |
+|   Address        |   u32                        |
+|   Source file ix |   u32                        |
++------------------+------------------------------+
+| Code length      | u32                          |
+| For each instr:  |   opcode u8 + operands       |
++------------------+------------------------------+
+| Src-map length   | u32  (= code length)         |
+| For each entry:  |                              |
+|   Source file ix |   u32                        |
+|   Line number    |   u32  (1-based; 0 = synth)  |
++------------------+------------------------------+
+```
+
+The source-file table + per-instruction source map are what give
+runtime errors their `File "foo.omg", line 12, in <fn>` traceback
+context. Both the Rust frontend and `bootstrap/src/compiler.omg`
+absolute-normalise paths before storing them so the resulting `.omgb`
+is byte-identical across implementations regardless of CWD.
+
+Bytecode `0x0001xx` (no source map) is rejected with a clear
+"recompile your .omgb" SyntaxError — there's no fallback path.
+
+Four opcodes beyond the v0.1 baseline:
 
 - **52 (`MakeFunc`)** binds a `proc` as a first-class value: at top level
   it stores `Closure { name, captured: ∅ }` into globals; inside a
-  function it captures the current local environment.
+  function it captures the current local environment **by reference**
+  (the captured map shares `Rc<RefCell<Value>>` cells with the enclosing
+  scope, Python/JS-style).
 - **53 (`StoreLocal`)** is the `alloc` form. It always creates a binding
   in the *innermost* scope (locals inside a function, globals at top
   level). It exists so that `alloc args := ...` inside a function can't
-  clobber the runtime-injected `args` global.
+  clobber the runtime-injected `args` global. Each `StoreLocal` installs
+  a **fresh cell**, so a closure captured from one loop iteration doesn't
+  see writes from the next iteration's fresh binding.
 - **54 (`PushFloat`)** pushes an IEEE-754 f64 literal onto the stack
   (8-byte little-endian payload, same layout as `PushInt`).
 - **55 (`FloorDiv`)** implements the `//` operator. `/` between two ints
@@ -152,6 +211,37 @@ are little-endian. Four opcodes were added beyond the v0.1 baseline:
 
 Functions are emitted in **sorted name order** so the writer is
 deterministic — the self-hosted fixed-point check depends on it.
+
+## Errors and tracebacks
+
+Uncaught runtime errors print a Python-style traceback to stderr:
+
+```
+$ omg /tmp/bad.omg
+Traceback (most recent call last):
+  File "/tmp/bad.omg", line 17, in <top-level>
+  File "/tmp/bad.omg", line 13, in outer
+  File "/tmp/bad.omg", line 8, in middle
+  File "/tmp/bad.omg", line 4, in inner
+IndexError: index 5 out of range for length 0
+```
+
+The traceback is assembled from two things tracked through `execute`
+in [`src/vm.rs`](src/vm.rs):
+
+- **A call-frame stack** parallel to `env_stack`/`ret_stack`. `Call` /
+  `CallValue` push a `CallFrame { name, call_pc }`; `Ret` pops; `TCall`
+  rewrites the top frame's name (so tail-call elimination doesn't lose
+  the caller's identity).
+- **The source map** loaded from the `.omgb` (see Bytecode format above).
+  `src_map.lookup(pc)` answers "which file + line is this instruction".
+
+`SetupExcept` records the frame depth so caught exceptions don't leak
+frames pushed inside the try body. The final formatter wraps any
+non-`VmInvariant` error in a `RuntimeError::Traced(String)` carrying
+the rendered traceback. Test code that builds programs in-memory
+without a source map falls through to the raw `Kind: msg` line, so
+synthetic VM tests stay readable.
 
 ## Built-in functions
 
