@@ -58,7 +58,15 @@ alloc OP_JUMP_IF_FALSE  := 30
 alloc OP_PUSH_NONE      := 35
 alloc OP_EMIT           := 37
 alloc OP_HALT           := 38
+alloc OP_CALL           := 31
+alloc OP_TCALL          := 32
+alloc OP_RET            := 36
+alloc OP_MAKE_FUNC      := 52
 alloc OP_STORE_LOCAL    := 53
+alloc OP_BUILD_LIST     := 3
+alloc OP_BUILD_DICT     := 4
+alloc OP_INDEX          := 27
+alloc OP_BUILTIN        := 33
 
 # === ELF / x86_64 layout ==================================================
 # We map the whole file as a single PT_LOAD segment at virtual address
@@ -73,6 +81,30 @@ alloc ELF_BASE        := 4194304    # 0x400000
 alloc ELF_HEADER_SIZE := 64
 alloc PHDR_SIZE       := 56
 alloc HEADERS_SIZE    := 120        # ELF_HEADER_SIZE + PHDR_SIZE
+
+# Operand-stack region: a zero-filled chunk of memory at the high end
+# of the mapped segment, reserved via `p_memsz - p_filesz` so it doesn't
+# bloat the on-disk binary. r15 holds the operand-stack pointer (top
+# of stack, grows downward). Separated from the native call stack so
+# function calls can use native call/ret without colliding with our
+# value discipline. 64 KB is overkill for everything we currently do.
+alloc OPERAND_STACK_SIZE := 65536
+
+# Heap region: a zero-filled chunk before the operand stack, where
+# runtime-allocated objects (lists, dicts, dynamic strings) live. r13
+# holds the bump-allocator pointer; allocation grows it upward. 1 MB
+# is enough for everything in the corpus; phase 10 will add a GC so
+# this can be smaller.
+alloc HEAP_SIZE := 1048576
+
+# Heap object layout. Every heap-allocated object starts with a u64
+# type tag so the EMIT dispatcher (and future operations like INDEX)
+# can route by shape:
+#   HEAP_T_STRING  = 0   →  [type=0, length, bytes...]
+#   HEAP_T_LIST    = 1   →  [type=1, length, capacity, element_0...]
+#   (more in phase 5b)
+alloc HEAP_T_STRING := 0
+alloc HEAP_T_LIST   := 1
 
 # Sentinel tag values for bool / none. All have LSB=0 (so they look
 # like pointers to the dispatcher's first test) and bits 1-2 set in a
@@ -127,11 +159,37 @@ proc parse_bytecode(bytes) {
         cursor := sp[1]
         si := si + 1
     }
-    # Function table — phase 2 still only handles function-less programs.
+    # Function table: each entry maps a mangled name to its parameter
+    # list and bytecode entry index. Phase 4 codegen lowers Call("name")
+    # into a native rel32 jump into the function's machine entry; the
+    # bytecode index is how we slice each function's body out of the
+    # single concatenated code stream below.
     alloc fc_pair := read_u32_at(bytes, cursor)
+    alloc func_count := fc_pair[0]
     cursor := fc_pair[1]
-    if fc_pair[0] != 0 {
-        panic("native-asm: cannot compile programs with functions yet (planned for phase 4)")
+    alloc funcs := []
+    alloc f := 0
+    loop f < func_count {
+        alloc name_pair := read_str_at(bytes, cursor)
+        alloc fname := name_pair[0]
+        cursor := name_pair[1]
+        alloc pc_pair := read_u32_at(bytes, cursor)
+        alloc param_count := pc_pair[0]
+        cursor := pc_pair[1]
+        alloc params := []
+        alloc p := 0
+        loop p < param_count {
+            alloc p_pair := read_str_at(bytes, cursor)
+            params := params + [p_pair[0]]
+            cursor := p_pair[1]
+            p := p + 1
+        }
+        alloc addr_pair := read_u32_at(bytes, cursor)
+        cursor := addr_pair[1]
+        alloc sfi_pair := read_u32_at(bytes, cursor)
+        cursor := sfi_pair[1]
+        funcs := funcs + [[fname, params, addr_pair[0]]]
+        f := f + 1
     }
     # Code stream.
     alloc cl_pair := read_u32_at(bytes, cursor)
@@ -176,6 +234,29 @@ proc parse_bytecode(bytes) {
             alloc rsl := read_str_at(bytes, cursor)
             code := code + [["STORE_LOCAL", rsl[0]]]
             cursor := rsl[1]
+        } else { if op == OP_CALL {
+            alloc rc := read_str_at(bytes, cursor)
+            code := code + [["CALL", rc[0]]]
+            cursor := rc[1]
+        } else { if op == OP_TCALL {
+            alloc rtc := read_str_at(bytes, cursor)
+            code := code + [["TCALL", rtc[0]]]
+            cursor := rtc[1]
+        } else { if op == OP_MAKE_FUNC {
+            alloc rmf := read_str_at(bytes, cursor)
+            code := code + [["MAKE_FUNC", rmf[0]]]
+            cursor := rmf[1]
+        } else { if op == OP_RET {
+            code := code + [["RET", false]]
+        } else { if op == OP_BUILD_LIST {
+            alloc rbl := read_u32_at(bytes, cursor)
+            code := code + [["BUILD_LIST", rbl[0]]]
+            cursor := rbl[1]
+        } else { if op == OP_BUILTIN {
+            alloc nm := read_str_at(bytes, cursor)
+            alloc ac := read_u32_at(bytes, nm[1])
+            code := code + [["BUILTIN", [nm[0], ac[0]]]]
+            cursor := ac[1]
         } else {
             if op == OP_ADD  { code := code + [["ADD",  false]] } else {
             if op == OP_SUB  { code := code + [["SUB",  false]] } else {
@@ -189,15 +270,16 @@ proc parse_bytecode(bytes) {
             if op == OP_LT   { code := code + [["LT",   false]] } else {
             if op == OP_LE   { code := code + [["LE",   false]] } else {
             if op == OP_GT   { code := code + [["GT",   false]] } else {
-            if op == OP_GE   { code := code + [["GE",   false]] } else {
-            if op == OP_EMIT { code := code + [["EMIT", false]] } else {
-            if op == OP_HALT { code := code + [["HALT", false]] } else {
+            if op == OP_GE    { code := code + [["GE",    false]] } else {
+            if op == OP_INDEX { code := code + [["INDEX", false]] } else {
+            if op == OP_EMIT  { code := code + [["EMIT",  false]] } else {
+            if op == OP_HALT  { code := code + [["HALT",  false]] } else {
                 panic("native-asm: opcode " + op + " not yet supported")
-            }}}}}}}}}}}}}}}
-        }}}}}}}}}
+            }}}}}}}}}}}}}}}}
+        }}}}}}}}}}}}}}}
         k := k + 1
     }
-    return code
+    return [code, funcs]
 }
 
 # === Output byte buffer ===================================================
@@ -307,11 +389,50 @@ proc x_mov_imm64(reg, imm) {
     ob_u64(imm)
 }
 
-# `push r64` for low 8 regs. 1 byte.
-proc x_push_reg(reg) { ob_byte(80 + reg) }
+# Operand-stack push for low-8 regs. Two native instructions:
+#   sub r15, 8                # 4 bytes — make room
+#   mov [r15], <reg>          # 3 bytes — store
+# Total 7 bytes. The grow-down convention matches the conventional
+# stack discipline and means the first push lands at the highest
+# valid address in the reserved region.
+proc x_push_reg(reg) {
+    # sub r15, 8 — 49 83 ef 08
+    ob_bytes([73, 131, 239, 8])
+    # mov [r15], reg — 49 89 <ModR/M (mod=00, reg=<reg>, rm=111(r15))>
+    ob_bytes([73, 137, (reg << 3) | 7])
+}
 
-# `pop r64` for low 8 regs. 1 byte.
-proc x_pop_reg(reg) { ob_byte(88 + reg) }
+# Operand-stack pop for low-8 regs. Two native instructions:
+#   mov <reg>, [r15]          # 3 bytes — load
+#   add r15, 8                # 4 bytes — release
+# Total 7 bytes.
+proc x_pop_reg(reg) {
+    # mov reg, [r15] — 49 8b <ModR/M>
+    ob_bytes([73, 139, (reg << 3) | 7])
+    # add r15, 8 — 49 83 c7 08
+    ob_bytes([73, 131, 199, 8])
+}
+
+# Load r15 with a 64-bit immediate. Used by the entry-point prologue
+# to initialise the operand-stack pointer. Returns the patch site for
+# the imm64 (the absolute virtual address of the operand-stack top
+# isn't known until layout is finalised).
+proc x_mov_r15_imm64_patchable() {
+    # REX.W + REX.B + opcode B8+7 (r15) — 49 bf <imm64>
+    ob_bytes([73, 191])
+    alloc site := ob_top
+    ob_u64(0)
+    return site
+}
+
+# Same for r13 (used as the bump-allocator pointer). Encoding:
+# REX.W + REX.B + opcode B8+5 (r13) — 49 bd <imm64>
+proc x_mov_r13_imm64_patchable() {
+    ob_bytes([73, 189])
+    alloc site := ob_top
+    ob_u64(0)
+    return site
+}
 
 # `ret` — 1 byte.
 proc x_ret() { ob_byte(195) }
@@ -552,10 +673,14 @@ proc emit_rt_emit_int() {
 # trailing newline byte (allocated on the native stack briefly).
 proc emit_rt_emit_str() {
     alloc entry := ob_top
-    # mov rdx, [rax] — 48 8b 10 (length is the first 8 bytes of the header)
-    ob_bytes([72, 139, 16])
-    # lea rsi, [rax + 8] — 48 8d 70 08
-    ob_bytes([72, 141, 112, 8])
+    # Heap-object layout for strings: [type=0:u64][length:u64][bytes...].
+    # We trust the type at [rax] is HEAP_T_STRING here — the dispatcher
+    # guards that by checking the tag before jumping to us. (Phase 5b
+    # will add list/dict variants that share the dispatcher entry.)
+    # mov rdx, [rax + 8] — 48 8b 50 08
+    ob_bytes([72, 139, 80, 8])
+    # lea rsi, [rax + 16] — 48 8d 70 10
+    ob_bytes([72, 141, 112, 16])
     x_mov_imm32(REG_RAX, 1)
     x_mov_imm32(REG_RDI, 1)
     x_syscall()
@@ -579,6 +704,84 @@ proc emit_rt_emit_str() {
 # Branch on the LSB of rax and jump to the right helper. Returns its
 # own entry offset; takes the two helper offsets so we can compute
 # proper rel32 displacements at emit time.
+# Bump allocator. Maintains a heap pointer in r13; allocations grow
+# upward. No deallocation — heap fills until OOM (the kernel will SIGV
+# on memory access past p_memsz). Phase 10 replaces this with a GC.
+#
+# Input:  rax = bytes to allocate
+# Output: rax = pointer to the allocation
+# Clobbers: rcx
+proc emit_rt_alloc() {
+    alloc entry := ob_top
+    # mov rcx, rax — 48 89 c1
+    ob_bytes([72, 137, 193])
+    # mov rax, r13 — 4c 89 e8
+    ob_bytes([76, 137, 232])
+    # add r13, rcx — 49 01 cd
+    ob_bytes([73, 1, 205])
+    x_ret()
+    return entry
+}
+
+# Build a list from the top N operand-stack values. Layout matches
+# heap-object convention: [type=1, length=N, capacity=N, elem_0..N-1].
+# The LAST pushed value becomes element N-1 (so the source `[1,2,3]`
+# emits PushInt(1), PushInt(2), PushInt(3), BuildList(3) and ends with
+# list[0]=1, list[1]=2, list[2]=3).
+#
+# Input:  rax = N (number of elements; non-negative, fits in 32 bits)
+# Output: rax = pointer to the new list header
+# Clobbers: rcx, rdx
+proc emit_rt_build_list(alloc_off) {
+    alloc entry := ob_top
+    # push rax — save N onto native stack while we go through rt_alloc
+    ob_byte(80)
+    # shl rax, 3 — 48 c1 e0 03 (rax *= 8)
+    ob_bytes([72, 193, 224, 3])
+    # add rax, 24 — 48 83 c0 18 (header overhead)
+    ob_bytes([72, 131, 192, 24])
+    # call rt_alloc — rax in (size) → rax out (pointer)
+    alloc s := x_call_rel32_patchable()
+    patch_call_rel32(s, alloc_off)
+    # pop rcx — restore N into rcx
+    ob_byte(89)
+    # mov qword [rax], 1                 ; type = HEAP_T_LIST
+    ob_bytes([72, 199, 0, 1, 0, 0, 0])
+    # mov [rax + 8], rcx                 ; length
+    ob_bytes([72, 137, 72, 8])
+    # mov [rax + 16], rcx                ; capacity
+    ob_bytes([72, 137, 72, 16])
+    # Copy N elements from operand stack into the new list array.
+    # The top of operand stack (last pushed) becomes element N-1.
+    # If N is zero, skip the loop entirely.
+    # test rcx, rcx — 48 85 c9
+    ob_bytes([72, 133, 201])
+    # jz +N (to .done; we'll patch this once we know the loop size)
+    ob_byte(116)
+    alloc jz_site := ob_top
+    ob_byte(0)
+    # dec rcx — 48 ff c9 (now rcx = N - 1, the last valid index)
+    ob_bytes([72, 255, 201])
+    alloc loop_start := ob_top
+    # mov rdx, [r15] — 49 8b 17
+    ob_bytes([73, 139, 23])
+    # add r15, 8 — 49 83 c7 08
+    ob_bytes([73, 131, 199, 8])
+    # mov [rax + 24 + rcx*8], rdx — 48 89 54 c8 18
+    ob_bytes([72, 137, 84, 200, 24])
+    # dec rcx — 48 ff c9
+    ob_bytes([72, 255, 201])
+    # jns loop_start — 79 <rel8>
+    ob_byte(121)
+    alloc back := loop_start - (ob_top + 1)
+    ob_byte(back & 255)
+    # Patch the earlier jz to skip the loop entirely on N=0.
+    alloc skip_size := ob_top - (jz_site + 1)
+    ob_patch_u8(jz_site, skip_size)
+    x_ret()
+    return entry
+}
+
 # Emit a small helper that writes a fixed virtual-address string of
 # fixed length to stdout, then ret. Used for the three sentinel value
 # printers (true / false / none). Returns the helper's entry offset.
@@ -630,6 +833,11 @@ proc emit_rt_emit_dispatch(off_int, off_str, off_false, off_true, off_none) {
 # Layout the runtime blob: static strings first (so we know their
 # absolute virtual addresses immediately), then the helpers. Returns
 # the dispatcher's offset — that's what user code's EMIT sites call.
+# Helpers used by other opcodes (rt_alloc, rt_build_list) get their
+# offsets stashed in globals so codegen can patch the rel32s later.
+alloc rt_alloc_off       := 0
+alloc rt_build_list_off  := 0
+
 proc emit_runtime_blob() {
     # Static strings for sentinel values. Each includes a trailing
     # newline so the write-static helper doesn't need a separate
@@ -642,12 +850,14 @@ proc emit_runtime_blob() {
     ob_string_bytes("none\n")
     pad_to_8()
     # Helpers.
-    alloc off_int   := emit_rt_emit_int()
-    alloc off_str   := emit_rt_emit_str()
-    alloc off_true  := emit_rt_write_static(addr_true,  5)
-    alloc off_false := emit_rt_write_static(addr_false, 6)
-    alloc off_none  := emit_rt_write_static(addr_none,  5)
-    alloc off_disp  := emit_rt_emit_dispatch(off_int, off_str, off_false, off_true, off_none)
+    alloc off_int     := emit_rt_emit_int()
+    alloc off_str     := emit_rt_emit_str()
+    alloc off_true    := emit_rt_write_static(addr_true,  5)
+    alloc off_false   := emit_rt_write_static(addr_false, 6)
+    alloc off_none    := emit_rt_write_static(addr_none,  5)
+    rt_alloc_off      := emit_rt_alloc()
+    rt_build_list_off := emit_rt_build_list(rt_alloc_off)
+    alloc off_disp    := emit_rt_emit_dispatch(off_int, off_str, off_false, off_true, off_none)
     return off_disp
 }
 
@@ -856,6 +1066,247 @@ proc gen_jump_if_false(target_idx) {
     jump_patches := jump_patches + [[s3, target_idx]]
 }
 
+# === Functions ==========================================================
+# Phase 4 design: each OMG function compiles to a body that lives at a
+# known machine offset. Direct calls (`Call("name")`) compile to a
+# native `call rel32` patched after every body is emitted.
+#
+# Calling convention (left-to-right pushed, right-to-left consumed):
+#   - Caller pushes args left-to-right onto the operand stack via r15.
+#   - Caller native-CALLs the callee's entry. Native rsp gets the
+#     return address. r15 still points at the rightmost arg.
+#   - Callee prologue:
+#       push r14                # save caller's frame pointer
+#       mov  r14, r15           # establish current frame's anchor
+#       sub  r15, N_locals*8    # reserve local slots
+#   - param[i] (i = 0 is the LEFTMOST arg) is at [r14 + (N_args-1-i)*8]
+#     because pushes grow the stack down; the leftmost push lands at
+#     the highest address, the rightmost (last pushed) at the lowest.
+#   - local[j] is at [r14 - (j+1)*8].
+#   - Each `Ret` site emits the epilogue inline:
+#       mov  rax, [r15]                       # pop the return value
+#       lea  r15, [r14 + (N_args-1)*8]        # one slot below caller's r15
+#       mov  [r15], rax                       # place return value
+#       pop  r14                              # restore caller's frame
+#       ret                                   # native return
+#     Net effect: N_args slots replaced by 1 result slot on the operand
+#     stack, so the caller sees the function call as a "pop N, push 1"
+#     operation.
+
+alloc current_func_params := []        # ordered param names of current fn
+alloc current_func_locals := []        # ordered local names of current fn
+alloc in_function := false             # codegen scope kind
+
+# Function machine-entry offsets, indexed by mangled name. Used to
+# resolve direct-call rel32 patches.
+alloc fn_entry := []                   # list of [name, ob_top_offset]
+
+# Outstanding Call/TCall sites to patch after all bodies have been
+# emitted. Each entry is [patch_site, target_name].
+alloc fn_call_patches := []
+
+proc fn_entry_set(name, offset) {
+    fn_entry := fn_entry + [[name, offset]]
+}
+
+proc fn_entry_get(name) {
+    alloc i := 0
+    alloc n := length(fn_entry)
+    loop i < n {
+        if fn_entry[i][0] == name {
+            return fn_entry[i][1]
+        }
+        i := i + 1
+    }
+    panic("native-asm: no function entry for '" + name + "'")
+}
+
+# Look up `name` in the current function's scope. Returns its byte
+# offset relative to r14 (positive for params, negative for locals),
+# or false if `name` isn't in scope (caller falls back to globals).
+proc scope_offset(name) {
+    if in_function == false { return false }
+    alloc np := length(current_func_params)
+    alloc i := 0
+    loop i < np {
+        if current_func_params[i] == name {
+            return (np - 1 - i) * 8
+        }
+        i := i + 1
+    }
+    alloc nl := length(current_func_locals)
+    alloc j := 0
+    loop j < nl {
+        if current_func_locals[j] == name {
+            return -1 * (j + 1) * 8
+        }
+        j := j + 1
+    }
+    return false
+}
+
+# Pre-scan a function body's instruction range to collect locals (in
+# declaration order). STORE_LOCAL is the marker; STORE on an undeclared
+# name would be a global access, not handled by phase 4 inside fn body.
+proc collect_locals(code, start, end_idx) {
+    alloc locals := []
+    alloc i := start
+    loop i < end_idx {
+        alloc instr := code[i]
+        if instr[0] == "STORE_LOCAL" {
+            alloc nm := instr[1]
+            alloc seen := false
+            alloc k := 0
+            alloc nk := length(locals)
+            loop k < nk {
+                if locals[k] == nm { seen := true }
+                k := k + 1
+            }
+            if seen == false {
+                locals := locals + [nm]
+            }
+        }
+        i := i + 1
+    }
+    return locals
+}
+
+# `mov rax, [r14 + disp32]` — 7 bytes. Used to load params / locals.
+proc x_mov_rax_r14_disp32(disp) {
+    ob_bytes([73, 139, 134])           # 49 8b 86
+    ob_u32(disp & 4294967295)
+}
+
+# `mov [r14 + disp32], rax` — 7 bytes.
+proc x_mov_r14_disp32_rax(disp) {
+    ob_bytes([73, 137, 134])           # 49 89 86
+    ob_u32(disp & 4294967295)
+}
+
+# `lea r15, [r14 + disp32]` — 7 bytes. Used by Ret to release locals
+# and args in one shot.
+proc x_lea_r15_r14_disp32(disp) {
+    ob_bytes([77, 141, 190])           # 4d 8d be
+    ob_u32(disp & 4294967295)
+}
+
+# Native `push r14` — 2 bytes (REX.B + push).
+proc x_native_push_r14() { ob_bytes([65, 86]) }
+
+# Native `pop r14` — 2 bytes.
+proc x_native_pop_r14() { ob_bytes([65, 94]) }
+
+# `mov r14, r15` — 3 bytes.
+proc x_mov_r14_r15() { ob_bytes([77, 137, 254]) }
+
+# Function prologue. n_locals is determined by collect_locals.
+proc gen_func_prologue(n_locals) {
+    x_native_push_r14()
+    x_mov_r14_r15()
+    if n_locals > 0 {
+        # sub r15, imm32 (4 bytes for small imm8, but stick to imm32
+        # for uniformity at this phase) — 49 81 ef <imm32>
+        ob_bytes([73, 129, 239])
+        ob_u32((n_locals * 8) & 4294967295)
+    }
+}
+
+# Function epilogue. n_args is the param count.
+proc gen_func_epilogue(n_args) {
+    # rax = [r15]  (top of operand stack = return value)
+    ob_bytes([73, 139, 7])                                # mov rax, [r15]
+    # lea r15, [r14 + (n_args-1)*8]
+    x_lea_r15_r14_disp32((n_args - 1) * 8)
+    # [r15] = rax  (place the return value at the new operand-stack top)
+    ob_bytes([73, 137, 7])                                # mov [r15], rax
+    x_native_pop_r14()
+    ob_byte(195)                                          # ret
+}
+
+proc gen_call(name) {
+    alloc site := x_call_rel32_patchable()
+    fn_call_patches := fn_call_patches + [[site, name]]
+}
+
+# TCALL = direct tail call. Semantically: the call's return value IS
+# our function's return value. The OMG compiler emits a defensive
+# PushNone + Ret after the TCALL that NEVER executes in the VM (TCALL
+# transfers control to the callee, which returns to OUR caller).
+#
+# Phase 4 implements this as call + ret: the call leaves its result on
+# top of the operand stack, then we immediately run the epilogue which
+# returns that value to our caller. No actual tail-call optimisation
+# yet — the native stack still grows one frame per recursion. Real TCO
+# (deallocate our frame, JMP instead of CALL so callee's RET targets
+# our caller) is a phase-11 concern. The dead bytes for the trailing
+# PushNone + Ret never run since we ret'd above them.
+proc gen_tcall(name) {
+    gen_call(name)
+    gen_ret()
+}
+
+# MAKE_FUNC at the top level binds a closure into a global slot. In
+# phase 4 we only support direct calls (which go through the function
+# table, not closures), so MAKE_FUNC is a no-op.
+proc gen_make_func(name) {
+    # no-op for phase 4
+}
+
+# === Phase 5 — heap values =============================================
+
+# BUILD_LIST(N): rt_build_list pops N elements from the operand stack
+# and returns a tagged list pointer in rax. Push it onto the operand
+# stack to make it available to subsequent ops.
+proc gen_build_list(n) {
+    x_mov_imm32(REG_RAX, n)
+    alloc site := x_call_rel32_patchable()
+    patch_call_rel32(site, rt_build_list_off)
+    x_push_reg(REG_RAX)
+}
+
+# INDEX on a list: pop index (tagged int), pop list pointer, push
+# list[index]. The encoding here ASSUMES the container is a list —
+# string indexing isn't supported in phase 5a (planned for 5b). For
+# a list, the array starts at offset 24 (header = type + length +
+# capacity).
+proc gen_index() {
+    x_pop_reg(REG_RAX)
+    x_sar_rax_1()                                 # untag index
+    x_pop_reg(REG_RCX)                            # rcx = list pointer
+    # mov rax, [rcx + 24 + rax*8] — 48 8b 44 c1 18
+    # ModR/M: mod=01 (disp8), reg=rax(000), rm=100 (SIB) → 0x44
+    # SIB:    scale=11 (×8), index=rax(000), base=rcx(001) → 0xc1
+    # disp8 = 24 (0x18)
+    ob_bytes([72, 139, 68, 193, 24])
+    x_push_reg(REG_RAX)
+}
+
+# BUILTIN(name, argc). Phase 5a only handles `length`, which works for
+# both strings and lists thanks to their shared `length at offset 8`
+# layout. Other builtins panic — we add them in 5b/5c as needed.
+proc gen_builtin(name, argc) {
+    if name == "length" {
+        if argc != 1 { panic("native-asm: length() expects 1 arg, got " + argc) }
+        x_pop_reg(REG_RAX)                          # heap pointer (string or list)
+        # mov rax, [rax + 8] — 48 8b 40 08
+        ob_bytes([72, 139, 64, 8])
+        x_sal_rax_1()
+        x_or_rax_imm8(1)
+        x_push_reg(REG_RAX)
+        return false
+    }
+    panic("native-asm: builtin '" + name + "' not yet implemented")
+}
+
+# RET emits the function epilogue + native ret. Uses the current
+# function's param count for the operand-stack restoration.
+proc gen_ret() {
+    if in_function == false {
+        panic("native-asm: RET emitted at top level (unexpected)")
+    }
+    gen_func_epilogue(length(current_func_params))
+}
+
 # === Globals ============================================================
 # Each unique name referenced by LOAD/STORE/STORE_LOCAL gets a slot in
 # a globals memory area allocated at the end of the ELF. The slot
@@ -887,11 +1338,19 @@ proc globals_slot(name) {
 alloc globals_base_vaddr := 0
 alloc globals_addr_patches := []  # list of [patch_site, slot_index]
 
-# Generic loader: emit `mov rcx, imm64 <slot_addr>; mov rax, [rcx]; push rax`.
-# The imm64 is patchable; we record the patch site + slot index.
+# LOAD/STORE/STORE_LOCAL: resolve `name` in the current scope. Inside a
+# function body, params and locals live at known offsets from r14;
+# fall through to the globals table when no local binding matches.
+
 proc gen_load(name) {
+    alloc off := scope_offset(name)
+    if off != false {
+        # Function-scope reference (param or local).
+        x_mov_rax_r14_disp32(off)
+        x_push_reg(REG_RAX)
+        return false
+    }
     alloc slot := globals_slot(name)
-    # mov rcx, imm64
     ob_byte(72)
     ob_byte(184 + REG_RCX)
     alloc site := ob_top
@@ -901,8 +1360,13 @@ proc gen_load(name) {
     x_push_reg(REG_RAX)
 }
 
-# Generic store: `pop rax; mov rcx, imm64 <slot_addr>; mov [rcx], rax`.
 proc gen_store(name) {
+    alloc off := scope_offset(name)
+    if off != false {
+        x_pop_reg(REG_RAX)
+        x_mov_r14_disp32_rax(off)
+        return false
+    }
     alloc slot := globals_slot(name)
     x_pop_reg(REG_RAX)
     ob_byte(72)
@@ -913,48 +1377,115 @@ proc gen_store(name) {
     x_mov_mem_rcx_rax()
 }
 
-# Walk the parsed code stream, dispatching each opcode to its emitter.
-# Records the machine-code offset of each bytecode instruction in
-# `instr_offsets` so later jump patches can resolve target indices.
-proc gen_code(code, dispatch_off) {
+# Emit one instruction's machine code. Records the instruction's
+# starting ob_buf offset in instr_offsets[bytecode_idx] so later jump
+# patches can translate target indices to machine offsets.
+proc gen_one(instr, bytecode_idx, dispatch_off) {
+    instr_offsets[bytecode_idx] := ob_top
+    alloc op := instr[0]
+    if op == "PUSH_INT" { gen_push_int(instr[1]) } else {
+    if op == "PUSH_STR" { gen_push_str(instr[1]) } else {
+    if op == "PUSH_BOOL"{ gen_push_bool(instr[1]) }else {
+    if op == "PUSH_NONE"{ gen_push_none() }        else {
+    if op == "ADD"      { gen_add() }              else {
+    if op == "SUB"      { gen_sub() }              else {
+    if op == "MUL"      { gen_mul() }              else {
+    if op == "DIV"      { gen_div() }              else {
+    if op == "MOD"      { gen_mod() }              else {
+    if op == "NEG"      { gen_neg() }              else {
+    if op == "NOT"      { gen_not() }              else {
+    if op == "EQ"       { gen_eq() }               else {
+    if op == "NE"       { gen_ne() }               else {
+    if op == "LT"       { gen_lt() }               else {
+    if op == "LE"       { gen_le() }               else {
+    if op == "GT"       { gen_gt() }               else {
+    if op == "GE"       { gen_ge() }               else {
+    if op == "JUMP"     { gen_jump(instr[1]) }     else {
+    if op == "JUMP_IF_FALSE" { gen_jump_if_false(instr[1]) } else {
+    if op == "LOAD"     { gen_load(instr[1]) }     else {
+    if op == "STORE"    { gen_store(instr[1]) }    else {
+    if op == "STORE_LOCAL" { gen_store(instr[1]) } else {
+    if op == "CALL"     { gen_call(instr[1]) }     else {
+    if op == "TCALL"    { gen_tcall(instr[1]) }    else {
+    if op == "MAKE_FUNC"{ gen_make_func(instr[1]) }else {
+    if op == "RET"      { gen_ret() }              else {
+    if op == "BUILD_LIST"{ gen_build_list(instr[1]) } else {
+    if op == "INDEX"    { gen_index() }            else {
+    if op == "BUILTIN"  { gen_builtin(instr[1][0], instr[1][1]) } else {
+    if op == "EMIT"     { gen_emit(dispatch_off) } else {
+    if op == "HALT"     { gen_halt() }             else {
+        panic("native-asm: unsupported op " + op)
+    }}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}
+}
+
+# Emit the top-level code (instructions [0, top_level_end)) plus each
+# function body. Records each function's machine entry in fn_entry,
+# pre-allocates instr_offsets so jump patches inside any region can be
+# resolved.
+proc gen_code(code, funcs, dispatch_off) {
+    # Pre-allocate instr_offsets — one slot per bytecode instruction.
+    alloc total := length(code)
+    instr_offsets := list_repeat(0, total + 1)
+    # Find where the first function's body starts; everything before
+    # that is the top-level instruction stream.
+    alloc top_level_end := total
+    alloc fi := 0
+    alloc fn := length(funcs)
+    loop fi < fn {
+        if funcs[fi][2] < top_level_end {
+            top_level_end := funcs[fi][2]
+        }
+        fi := fi + 1
+    }
+    # === Top-level (scope = globals) ===
+    in_function := false
+    current_func_params := []
+    current_func_locals := []
     alloc i := 0
-    alloc n := length(code)
-    loop i < n {
-        instr_offsets := instr_offsets + [ob_top]
-        alloc instr := code[i]
-        alloc op := instr[0]
-        if op == "PUSH_INT" { gen_push_int(instr[1]) } else {
-        if op == "PUSH_STR" { gen_push_str(instr[1]) } else {
-        if op == "PUSH_BOOL"{ gen_push_bool(instr[1]) }else {
-        if op == "PUSH_NONE"{ gen_push_none() }        else {
-        if op == "ADD"      { gen_add() }              else {
-        if op == "SUB"      { gen_sub() }              else {
-        if op == "MUL"      { gen_mul() }              else {
-        if op == "DIV"      { gen_div() }              else {
-        if op == "MOD"      { gen_mod() }              else {
-        if op == "NEG"      { gen_neg() }              else {
-        if op == "NOT"      { gen_not() }              else {
-        if op == "EQ"       { gen_eq() }               else {
-        if op == "NE"       { gen_ne() }               else {
-        if op == "LT"       { gen_lt() }               else {
-        if op == "LE"       { gen_le() }               else {
-        if op == "GT"       { gen_gt() }               else {
-        if op == "GE"       { gen_ge() }               else {
-        if op == "JUMP"     { gen_jump(instr[1]) }     else {
-        if op == "JUMP_IF_FALSE" { gen_jump_if_false(instr[1]) } else {
-        if op == "LOAD"     { gen_load(instr[1]) }     else {
-        if op == "STORE"    { gen_store(instr[1]) }    else {
-        if op == "STORE_LOCAL" { gen_store(instr[1]) } else {
-        if op == "EMIT"     { gen_emit(dispatch_off) } else {
-        if op == "HALT"     { gen_halt() }             else {
-            panic("native-asm: unsupported op " + op)
-        }}}}}}}}}}}}}}}}}}}}}}}}
+    loop i < top_level_end {
+        gen_one(code[i], i, dispatch_off)
         i := i + 1
     }
-    # Sentinel offset for "one past the last instruction" — used if a
-    # JUMP targets the position right after HALT (rare, but parser
-    # output sometimes does this for fall-through after block tails).
-    instr_offsets := instr_offsets + [ob_top]
+    # === Each function body ===
+    fi := 0
+    loop fi < fn {
+        alloc fdef := funcs[fi]
+        alloc fname := fdef[0]
+        alloc params := fdef[1]
+        alloc start := fdef[2]
+        # Determine this function's body end: the next function's
+        # start, or the end of the code stream if this is the last.
+        alloc end_idx := total
+        alloc j := 0
+        loop j < fn {
+            if funcs[j][2] > start and funcs[j][2] < end_idx {
+                end_idx := funcs[j][2]
+            }
+            j := j + 1
+        }
+        # Pre-scan to determine locals declared in this body.
+        alloc locals := collect_locals(code, start, end_idx)
+        # Record this function's machine entry, enter scope, emit
+        # prologue + body, exit scope.
+        fn_entry_set(fname, ob_top)
+        in_function := true
+        current_func_params := params
+        current_func_locals := locals
+        gen_func_prologue(length(locals))
+        alloc k := start
+        loop k < end_idx {
+            gen_one(code[k], k, dispatch_off)
+            k := k + 1
+        }
+        in_function := false
+        current_func_params := []
+        current_func_locals := []
+        fi := fi + 1
+    }
+    # Sentinel: "one past the last bytecode instr" maps to ob_top so
+    # JUMPs that target the position right after a HALT or RET resolve
+    # cleanly.
+    instr_offsets[total] := ob_top
 }
 
 # === Final assembly =======================================================
@@ -971,7 +1502,7 @@ proc pad_to_8() {
     }
 }
 
-proc finalize_elf(entry_vaddr) {
+proc finalize_elf(entry_vaddr, r15_init_site, r13_init_site) {
     # 1. Resolve jump patches now that every instruction's machine
     # offset is known via instr_offsets.
     alloc j := 0
@@ -993,8 +1524,22 @@ proc finalize_elf(entry_vaddr) {
         patch_call_rel32(cs[0], cs[1])
         c := c + 1
     }
+    # 2b. Direct-call sites (Call("name") / TCall("name")). Each was
+    # emitted as a 5-byte `call rel32 0` placeholder; patch the rel32
+    # to the function's machine entry recorded in fn_entry.
+    alloc fc := 0
+    alloc fcn := length(fn_call_patches)
+    loop fc < fcn {
+        alloc fp := fn_call_patches[fc]
+        patch_call_rel32(fp[0], fn_entry_get(fp[1]))
+        fc := fc + 1
+    }
     # 3. Layout string-header data right after code, recording each
-    # header's absolute virtual address.
+    # header's absolute virtual address. Layout matches the runtime
+    # heap-object shape so the EMIT dispatcher can treat static
+    # strings and heap-allocated strings uniformly: [type=0, length,
+    # bytes...]. The pointer-to-header ends up tagged as 8-aligned
+    # (LSB=0) so it's distinguishable from int / sentinel values.
     pad_to_8()
     alloc i := 0
     alloc n := length(deferred_strings)
@@ -1003,6 +1548,7 @@ proc finalize_elf(entry_vaddr) {
         alloc s := ds[0]
         alloc site := ds[1]
         alloc header_vaddr := ELF_BASE + HEADERS_SIZE + ob_top
+        ob_u64(HEAP_T_STRING)
         ob_u64(length(s))
         ob_string_bytes(s)
         pad_to_8()
@@ -1036,6 +1582,23 @@ proc finalize_elf(entry_vaddr) {
     }
     alloc payload_size := ob_top
     alloc file_size := payload_size + HEADERS_SIZE
+    # 4b. Heap + operand-stack region: live in memory but NOT in the
+    # file. `p_memsz = p_filesz + HEAP_SIZE + OPERAND_STACK_SIZE` tells
+    # the kernel to zero-fill an extra slab at the high end of the
+    # mapped segment.
+    #
+    # Layout (low → high):
+    #   [file contents          ] [heap (1 MB, grow-up)] [operand stack (64 KB, grow-down)]
+    #   ^ ELF_BASE                ^ heap_base            ^ stack_top
+    #
+    # r13 initialises to heap_base (next free byte for bump alloc).
+    # r15 initialises to stack_top (one past the highest valid byte;
+    # first push lands at stack_top - 8).
+    alloc heap_base := ELF_BASE + file_size
+    alloc mem_size  := file_size + HEAP_SIZE + OPERAND_STACK_SIZE
+    alloc stack_top := ELF_BASE + mem_size
+    patch_u64(r15_init_site, stack_top)
+    patch_u64(r13_init_site, heap_base)
     # 5. Build ELF header + program header. Segment is R+W+X so the
     # globals area is writable — splitting into separate R+X / R+W
     # segments is a phase-10 cleanup.
@@ -1062,7 +1625,7 @@ proc finalize_elf(entry_vaddr) {
     write_u64_into(h, p + 16, ELF_BASE)
     write_u64_into(h, p + 24, ELF_BASE)
     write_u64_into(h, p + 32, file_size)
-    write_u64_into(h, p + 40, file_size)
+    write_u64_into(h, p + 40, mem_size)     # p_memsz > p_filesz → zero-filled tail
     h[p + 48] := 0
     h[p + 49] := 16
     return h + ob_buf[0:payload_size]
@@ -1102,21 +1665,31 @@ proc main_compile() {
     if fh == false { panic("cannot read '" + in_path + "'") }
     alloc raw := file_read(fh)
     file_close(fh)
-    alloc code := parse_bytecode(raw)
+    alloc parsed := parse_bytecode(raw)
+    alloc code := parsed[0]
+    alloc funcs := parsed[1]
     ob_reset()
     deferred_strings := []
     emit_call_sites := []
     jump_patches := []
     instr_offsets := []
     globals_table := []
+    globals_addr_patches := []
     # 1. Emit the runtime blob first; record dispatcher offset.
     alloc dispatch_off := emit_runtime_blob()
-    # 2. Record where user code starts; that's the ELF entry point.
+    # 2. Record where user code (and thus the ELF entry point) starts.
     alloc user_entry := ob_top
-    # 3. Emit user code.
-    gen_code(code, dispatch_off)
-    # 4. Finalize layout, resolve all patches, prepend headers.
-    alloc elf_bytes := finalize_elf(ELF_BASE + HEADERS_SIZE + user_entry)
+    # 3. Emit prologue: load r15 with the operand-stack top and r13
+    # with the heap base. Both imm64s get patched in finalize_elf
+    # once we know payload size + heap/stack placement.
+    alloc r15_init_site := x_mov_r15_imm64_patchable()
+    alloc r13_init_site := x_mov_r13_imm64_patchable()
+    # 4. Emit user code (top-level + each function body).
+    fn_entry := []
+    fn_call_patches := []
+    gen_code(code, funcs, dispatch_off)
+    # 5. Finalize layout, resolve all patches, prepend headers.
+    alloc elf_bytes := finalize_elf(ELF_BASE + HEADERS_SIZE + user_entry, r15_init_site, r13_init_site)
     alloc oh := file_open(out_path, "wb")
     file_write(oh, elf_bytes)
     file_close(oh)

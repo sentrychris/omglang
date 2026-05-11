@@ -16,7 +16,7 @@ if [ ! -x "$OMGNA_NATIVE" ]; then
     exit 2
 fi
 
-section "native-asm (omgna): phases 1, 2, 3"
+section "native-asm (omgna): phases 1-5a"
 
 # Round-trip a .omg through omgc + omgna and compare ./<bin> stdout
 # against the Rust runtime's output for the same source.
@@ -71,6 +71,28 @@ assert_omgna "loop_count"    $';;;omg\nalloc i := 0\nloop i < 3 {\n    emit i\n 
 assert_omgna "loop_countdown" $';;;omg\nalloc n := 5\nloop n > 0 {\n    emit n\n    n := n - 1\n}'
 assert_omgna "fibonacci"     $';;;omg\nalloc a := 0\nalloc b := 1\nalloc i := 0\nloop i < 10 {\n    alloc t := a + b\n    a := b\n    b := t\n    i := i + 1\n}\nemit b'
 assert_omgna "nested_if"     $';;;omg\nalloc x := 7\nif x > 5 {\n    if x < 10 {\n        emit "in range"\n    } else {\n        emit "too big"\n    }\n} else {\n    emit "too small"\n}'
+
+# === Phase 4: functions ===
+assert_omgna "fn_simple"     $';;;omg\nproc add(a, b) { return a + b }\nemit add(3, 4)'
+assert_omgna "fn_neg_args"   $';;;omg\nproc add(a, b) { return a + b }\nemit add(100, -50)'
+assert_omgna "fn_nested"     $';;;omg\nproc inc(x) { return x + 1 }\nproc dbl(x) { return x * 2 }\nemit inc(dbl(5))'
+assert_omgna "fn_locals"     $';;;omg\nproc compute(x) {\n    alloc r := x * 2\n    r := r + 5\n    return r\n}\nemit compute(10)'
+assert_omgna "fn_factorial"  $';;;omg\nproc fact(n) {\n    if n <= 1 { return 1 }\n    return n * fact(n - 1)\n}\nemit fact(10)'
+assert_omgna "fn_fibonacci"  $';;;omg\nproc fib(n) {\n    if n < 2 { return n }\n    return fib(n - 1) + fib(n - 2)\n}\nemit fib(15)'
+assert_omgna "fn_mutual"     $';;;omg\nproc is_even(n) {\n    if n == 0 { return true }\n    return is_odd(n - 1)\n}\nproc is_odd(n) {\n    if n == 0 { return false }\n    return is_even(n - 1)\n}\nemit is_even(10)\nemit is_odd(7)\nemit is_even(0)'
+assert_omgna "fn_5_args"     $';;;omg\nproc sum5(a, b, c, d, e) { return a + b + c + d + e }\nemit sum5(1, 2, 3, 4, 5)'
+assert_omgna "fn_global"     $';;;omg\nalloc base := 1000\nproc add_base(x) { return x + base }\nemit add_base(42)'
+assert_omgna "fn_tail_recur" $';;;omg\nproc fact_tail(n, acc) {\n    if n <= 1 { return acc }\n    return fact_tail(n - 1, n * acc)\n}\nemit fact_tail(10, 1)'
+
+# === Phase 5a: lists, indexing, length ===
+assert_omgna "list_basic"    $';;;omg\nalloc xs := [10, 20, 30]\nemit xs[0]\nemit xs[1]\nemit xs[2]'
+assert_omgna "list_empty"    $';;;omg\nalloc xs := []\nemit length(xs)'
+assert_omgna "list_single"   $';;;omg\nalloc xs := [42]\nemit xs[0]\nemit length(xs)'
+assert_omgna "list_strings"  $';;;omg\nalloc fs := ["apple", "banana", "cherry"]\nemit fs[0]\nemit fs[1]\nemit fs[2]'
+assert_omgna "list_in_loop"  $';;;omg\nalloc xs := [100, 200, 300, 400, 500]\nalloc i := 0\nloop i < length(xs) {\n    emit xs[i]\n    i := i + 1\n}'
+assert_omgna "len_string"    $';;;omg\nemit length("hello")\nemit length("a")\nemit length("")'
+assert_omgna "fn_list_arg"   $';;;omg\nproc get(xs, i) { return xs[i] }\nalloc xs := [10, 20, 30]\nemit get(xs, 0)\nemit get(xs, 2)'
+assert_omgna "list_mixed"    $';;;omg\nalloc m := [1, "two", 3, "four"]\nemit m[0]\nemit m[1]\nemit m[2]\nemit m[3]'
 
 # Binary should be a real statically-linked ELF, no libc dependency.
 elf="$TMPDIR_TEST/na-hello_world"

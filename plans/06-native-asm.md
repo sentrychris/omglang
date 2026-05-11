@@ -1,6 +1,6 @@
 # native-asm — OMG bytecode → x86_64 ELF, no C compiler
 
-Status: Phases 1 + 2 + 3 done — full control flow + globals working (loops, if/else, comparisons, fibonacci). Phases 4-12 pending.
+Status: Phases 1–5a done — lists + `length` builtin landed. Bump allocator with r13 + heap reserved via `p_memsz`. Phase 5b/c (dicts, slice, store_index, list-emit-formatting, string concat) pending. Phases 6-12 pending.
 
 Owner: sentrychris + claude
 
