@@ -24,6 +24,7 @@ SUITES=(
     repl
     regression
     db
+    native-asm
     parity
 )
 

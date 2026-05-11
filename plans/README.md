@@ -1,11 +1,11 @@
 # Showcase plans
 
-Four projects that would each, in different ways, demonstrate what OMG
+Projects that would each, in different ways, demonstrate what OMG
 can do now that the native pipeline, self-hosted compiler, OMG-on-OMG
 VM, and stdin builtins are all in place. None of these are scheduled —
 they're sketches detailed enough to pick up and start from.
 
-## The four
+## The plans
 
 | # | Plan | What it shows | Approximate scope |
 |---|---|---|---|
@@ -13,6 +13,7 @@ they're sketches detailed enough to pick up and start from.
 | 2 | [omgdb — SQL-subset embedded database](02-omgdb.md) | Real systems work: B-trees, on-disk format, query parser, executor | ~3000 lines OMG, ~3–5 days |
 | 3 | [omgtetris — TUI app (2048 → vim-clone → Tetris)](03-omgtetris.md) | Interactive, visual; stresses ANSI rendering and (eventually) real-time input | 200 → 600 → 800 lines; needs one new builtin for the Tetris tier |
 | 4 | [omgschem — Scheme/Lisp interpreter in OMG](04-omgschem.md) | Hosting another language; classic showcase; pure OMG, no new builtins | ~1300 lines, ~1–2 days |
+| 6 | [native-asm — OMG bytecode → x86_64 ELF, no C compiler](06-native-asm.md) | Deepest possible language-flex: own the toolchain end-to-end, drop the `cc` dependency entirely | ~3300 lines (encoder + ELF writer + opcode templates + tiny asm runtime), ~3–4 weeks to self-hosting |
 
 ## Suggested ordering
 

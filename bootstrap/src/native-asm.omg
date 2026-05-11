@@ -1,0 +1,770 @@
+;;;omg
+
+# bootstrap/src/native-asm.omg — OMG bytecode → x86_64 Linux ELF.
+#
+# Reads a `.omgb` file and writes a statically-linked x86_64 Linux ELF
+# that, when run, behaves like the bytecode does under the OMG VM — for
+# the supported subset:
+#
+#   Phase 1: PUSH_STR + EMIT + HALT       — hello-world
+#   Phase 2: PUSH_INT + arithmetic + EMIT — integer programs
+#
+# Future phases extend coverage to control flow, functions, lists,
+# dicts, closures, and exceptions. See plans/06-native-asm.md.
+#
+# Usage:
+#     omg bootstrap/src/native-asm.omg <in.omgb> <out>
+#     ./<out>
+#
+# This is the path that lets OMG compile to a runnable binary without
+# `cc` anywhere in the chain. The emitted ELF makes raw `write` and
+# `exit` Linux syscalls — no libc dependency.
+#
+# Value tagging (matches the design sketched in plans/06-native-asm.md
+# but pared down — phase 2 uses the simpler "1 bit tag" form):
+#
+#   LSB = 0  →  pointer to heap object (currently: string header
+#               [u64 length, bytes...]; future phases add list/dict)
+#   LSB = 1  →  small int, value is (n << 1) | 1, sign-extended to 64
+#               bits. Phase 2 doesn't yet handle overflow into bigints;
+#               every int operation assumes the inputs fit in 63 bits.
+
+alloc VERSION    := "0.2.0"
+alloc BC_VERSION := 512    # (major=0, minor=2, patch=0) packed into a u32
+
+# === Opcode constants =====================================================
+# Must match `bootstrap/src/compiler.omg`'s OP_ constants.
+
+alloc OP_PUSH_INT  := 0
+alloc OP_PUSH_STR  := 1
+alloc OP_ADD       := 7
+alloc OP_SUB       := 8
+alloc OP_MUL       := 9
+alloc OP_DIV       := 10
+alloc OP_MOD       := 11
+alloc OP_NEG       := 26
+alloc OP_EMIT      := 37
+alloc OP_HALT      := 38
+
+# === ELF / x86_64 layout ==================================================
+# We map the whole file as a single PT_LOAD segment at virtual address
+# 0x400000 with read+exec permissions. The ELF header itself sits at the
+# start of that segment — conventional for tiny binaries; the kernel
+# reads it then leaves it as part of the executable mapping, never
+# executed (entry points past it). The runtime blob follows the
+# headers, then user code (which is the entry point), then string
+# headers as a small data area.
+
+alloc ELF_BASE        := 4194304    # 0x400000
+alloc ELF_HEADER_SIZE := 64
+alloc PHDR_SIZE       := 56
+alloc HEADERS_SIZE    := 120        # ELF_HEADER_SIZE + PHDR_SIZE
+
+# === Bytecode reading =====================================================
+
+proc read_u32_at(bytes, i) {
+    alloc v := bytes[i] | (bytes[i+1] << 8) | (bytes[i+2] << 16) | (bytes[i+3] << 24)
+    return [v, i + 4]
+}
+
+proc read_i64_at(bytes, i) {
+    alloc lo_pair := read_u32_at(bytes, i)
+    alloc hi_pair := read_u32_at(bytes, i + 4)
+    alloc v := (hi_pair[0] << 32) | lo_pair[0]
+    return [v, i + 8]
+}
+
+proc read_str_at(bytes, i) {
+    alloc len_pair := read_u32_at(bytes, i)
+    alloc len := len_pair[0]
+    alloc start := len_pair[1]
+    alloc s := bytes_to_string(bytes[start:start + len])
+    return [s, start + len]
+}
+
+proc parse_bytecode(bytes) {
+    alloc n := length(bytes)
+    if n < 8 { panic("native-asm: bytecode too short") }
+    alloc bad_magic := bytes[0] != ascii("O") or bytes[1] != ascii("M") or bytes[2] != ascii("G") or bytes[3] != ascii("B")
+    if bad_magic {
+        panic("native-asm: bad magic in header")
+    }
+    alloc cursor := 4
+    alloc ver_pair := read_u32_at(bytes, cursor)
+    cursor := ver_pair[1]
+    if ver_pair[0] != BC_VERSION {
+        panic("native-asm: unsupported bytecode version " + ver_pair[0])
+    }
+    # Source-file table — skip.
+    alloc sfc_pair := read_u32_at(bytes, cursor)
+    cursor := sfc_pair[1]
+    alloc si := 0
+    loop si < sfc_pair[0] {
+        alloc sp := read_str_at(bytes, cursor)
+        cursor := sp[1]
+        si := si + 1
+    }
+    # Function table — phase 2 still only handles function-less programs.
+    alloc fc_pair := read_u32_at(bytes, cursor)
+    cursor := fc_pair[1]
+    if fc_pair[0] != 0 {
+        panic("native-asm: cannot compile programs with functions yet (planned for phase 4)")
+    }
+    # Code stream.
+    alloc cl_pair := read_u32_at(bytes, cursor)
+    alloc code_len := cl_pair[0]
+    cursor := cl_pair[1]
+    alloc code := []
+    alloc k := 0
+    loop k < code_len {
+        alloc op := bytes[cursor]
+        cursor := cursor + 1
+        if op == OP_PUSH_INT {
+            alloc r := read_i64_at(bytes, cursor)
+            code := code + [["PUSH_INT", r[0]]]
+            cursor := r[1]
+        } else {
+            if op == OP_PUSH_STR {
+                alloc rs := read_str_at(bytes, cursor)
+                code := code + [["PUSH_STR", rs[0]]]
+                cursor := rs[1]
+            } else {
+                if op == OP_ADD       { code := code + [["ADD",  false]] } else {
+                if op == OP_SUB       { code := code + [["SUB",  false]] } else {
+                if op == OP_MUL       { code := code + [["MUL",  false]] } else {
+                if op == OP_DIV       { code := code + [["DIV",  false]] } else {
+                if op == OP_MOD       { code := code + [["MOD",  false]] } else {
+                if op == OP_NEG       { code := code + [["NEG",  false]] } else {
+                if op == OP_EMIT      { code := code + [["EMIT", false]] } else {
+                if op == OP_HALT      { code := code + [["HALT", false]] } else {
+                    panic("native-asm: opcode " + op + " not yet supported")
+                }}}}}}}}
+            }
+        }
+        k := k + 1
+    }
+    return code
+}
+
+# === Output byte buffer ===================================================
+# Same shape as compiler.omg's wb_buf; local to this module.
+
+alloc ob_buf := []
+alloc ob_top := 0
+
+proc ob_reset() {
+    ob_buf := list_repeat(0, 4096)
+    ob_top := 0
+}
+
+proc ob_grow_if_needed() {
+    if ob_top < length(ob_buf) { return false }
+    alloc new_cap := length(ob_buf) * 2
+    alloc fresh := list_repeat(0, new_cap)
+    alloc i := 0
+    loop i < ob_top {
+        fresh[i] := ob_buf[i]
+        i := i + 1
+    }
+    ob_buf := fresh
+}
+
+proc ob_byte(b) {
+    ob_grow_if_needed()
+    ob_buf[ob_top] := b & 255
+    ob_top := ob_top + 1
+}
+
+proc ob_u32(n) {
+    ob_byte(n & 255)
+    ob_byte((n >> 8) & 255)
+    ob_byte((n >> 16) & 255)
+    ob_byte((n >> 24) & 255)
+}
+
+proc ob_u64(n) {
+    alloc x := n
+    alloc i := 0
+    loop i < 8 {
+        ob_byte(x & 255)
+        x := x >> 8
+        i := i + 1
+    }
+}
+
+proc ob_string_bytes(s) {
+    alloc i := 0
+    alloc n := length(s)
+    loop i < n {
+        ob_byte(ascii(s[i]))
+        i := i + 1
+    }
+}
+
+# Emit a fixed sequence of bytes from a list. Used by the encoders to
+# spell out each x86_64 instruction in one statement per opcode.
+proc ob_bytes(bs) {
+    alloc i := 0
+    alloc n := length(bs)
+    loop i < n {
+        ob_byte(bs[i])
+        i := i + 1
+    }
+}
+
+proc ob_patch_u32(offset, n) {
+    ob_buf[offset]     := n & 255
+    ob_buf[offset + 1] := (n >> 8) & 255
+    ob_buf[offset + 2] := (n >> 16) & 255
+    ob_buf[offset + 3] := (n >> 24) & 255
+}
+
+proc ob_patch_u8(offset, n) {
+    ob_buf[offset] := n & 255
+}
+
+# === x86_64 instruction encoders ==========================================
+# Register indices match the x86_64 encoding (low 8 only):
+#   0=rax 1=rcx 2=rdx 3=rbx 4=rsp 5=rbp 6=rsi 7=rdi
+
+alloc REG_RAX := 0
+alloc REG_RCX := 1
+alloc REG_RDX := 2
+alloc REG_RBX := 3
+alloc REG_RSP := 4
+alloc REG_RBP := 5
+alloc REG_RSI := 6
+alloc REG_RDI := 7
+
+# `mov r64, imm32` — sign-extended. 7 bytes. For values < 2^31.
+proc x_mov_imm32(reg, imm) {
+    ob_byte(72)
+    ob_byte(199)
+    ob_byte(192 + reg)
+    ob_u32(imm)
+}
+
+# `mov r64, imm64` — full 64-bit immediate. 10 bytes. For tagged values
+# that don't fit in a sign-extended imm32 (i.e. anything outside the
+# 31-bit signed range once shifted).
+proc x_mov_imm64(reg, imm) {
+    ob_byte(72)
+    ob_byte(184 + reg)
+    ob_u64(imm)
+}
+
+# `push r64` for low 8 regs. 1 byte.
+proc x_push_reg(reg) { ob_byte(80 + reg) }
+
+# `pop r64` for low 8 regs. 1 byte.
+proc x_pop_reg(reg) { ob_byte(88 + reg) }
+
+# `ret` — 1 byte.
+proc x_ret() { ob_byte(195) }
+
+# `syscall` — 2 bytes.
+proc x_syscall() {
+    ob_byte(15)
+    ob_byte(5)
+}
+
+# Common simple ops.
+proc x_xor_rdi_rdi() { ob_bytes([72, 49, 255]) }
+proc x_xor_rdx_rdx() { ob_bytes([72, 49, 210]) }
+
+# `add rax, rbx` — 3 bytes.
+proc x_add_rax_rbx() { ob_bytes([72, 1, 216]) }
+
+# `sub rax, rbx` — 3 bytes.
+proc x_sub_rax_rbx() { ob_bytes([72, 41, 216]) }
+
+# `sub rax, imm8` (sign-extended) — 4 bytes.
+proc x_sub_rax_imm8(n) { ob_bytes([72, 131, 232, n & 255]) }
+
+# `sub rbx, imm8` — 4 bytes.
+proc x_sub_rbx_imm8(n) { ob_bytes([72, 131, 235, n & 255]) }
+
+# `or rax, imm8` (sign-extended) — 4 bytes.
+proc x_or_rax_imm8(n) { ob_bytes([72, 131, 200, n & 255]) }
+
+# `neg rax` — 3 bytes.
+proc x_neg_rax() { ob_bytes([72, 247, 216]) }
+
+# `imul rax, rbx` — 4 bytes.
+proc x_imul_rax_rbx() { ob_bytes([72, 15, 175, 195]) }
+
+# `idiv rbx` — 3 bytes. rdx:rax / rbx → rax = quotient, rdx = remainder.
+proc x_idiv_rbx() { ob_bytes([72, 247, 251]) }
+
+# `cqo` — 2 bytes. Sign-extend rax into rdx.
+proc x_cqo() { ob_bytes([72, 153]) }
+
+# `sar rax, 1` (arithmetic right shift) — 3 bytes.
+proc x_sar_rax_1() { ob_bytes([72, 209, 248]) }
+
+# `sar rbx, 1` — 3 bytes.
+proc x_sar_rbx_1() { ob_bytes([72, 209, 251]) }
+
+# `sal rax, 1` (= shl) — 3 bytes.
+proc x_sal_rax_1() { ob_bytes([72, 209, 224]) }
+
+# `mov rdx, rax` — 3 bytes.
+proc x_mov_rdx_rax() { ob_bytes([72, 137, 194]) }
+
+# `mov rax, rdx` — 3 bytes. (Used by MOD to retrieve the remainder
+# out of the idiv result, which leaves the remainder in rdx.)
+proc x_mov_rax_rdx() { ob_bytes([72, 137, 208]) }
+
+# `call rel32` — 5 bytes. Returns the file offset of the rel32 imm so
+# the caller can patch it once the target address is known.
+proc x_call_rel32_patchable() {
+    ob_byte(232)
+    alloc site := ob_top
+    ob_u32(0)
+    return site
+}
+
+# Patch a 5-byte `call rel32` at site so it targets `target_offset` in
+# the file. The displacement is computed relative to the byte after
+# the rel32 (i.e. site + 4).
+proc patch_call_rel32(site, target_offset) {
+    alloc disp := target_offset - (site + 4)
+    # Mask to 32 bits since OMG ints are 64-bit signed and ob_patch_u32
+    # only reads the low 4 bytes.
+    ob_patch_u32(site, disp & 4294967295)
+}
+
+# === Runtime blob =========================================================
+# The runtime blob lives at file offset HEADERS_SIZE (120). It contains
+# three small assembly helpers:
+#
+#   rt_emit_dispatch — entry for the EMIT opcode. Takes a tagged value
+#                      in rax and jumps to either rt_emit_int (LSB=1)
+#                      or rt_emit_str (LSB=0).
+#   rt_emit_int      — converts the int in rax (after untagging) to
+#                      decimal ASCII, then writes it to stdout with a
+#                      trailing newline.
+#   rt_emit_str      — writes a [u64 length, bytes...] structure
+#                      pointed to by rax to stdout, then a newline.
+#
+# Each helper is emitted into ob_buf; this proc returns a record of
+# their entry-point file offsets so user code's CALL sites can be
+# patched to the right targets.
+
+# Set up r9 and r8 to the end of a stack buffer with a trailing
+# newline, ready for digit emission. Used by rt_emit_int.
+# r9 = one past end; r8 = current write pointer; [r9] = 0x0a.
+# Assumes the caller has done `sub rsp, 64`.
+proc emit_rt_emit_int_setup() {
+    # lea r9, [rsp + 63]  — 4c 8d 4c 24 3f
+    ob_bytes([76, 141, 76, 36, 63])
+    # mov byte [r9], 0x0a — 41 c6 01 0a
+    ob_bytes([65, 198, 1, 10])
+    # mov r8, r9          — 4d 89 c8
+    ob_bytes([77, 137, 200])
+}
+
+# Emit one runtime helper and return its offset within the blob.
+proc emit_rt_emit_int() {
+    alloc entry := ob_top
+    # sub rsp, 64 — 48 83 ec 40 (we need 64 bytes of scratch; the rsp
+    # red zone is only 128 bytes and we'd rather not rely on it across
+    # the syscall).
+    ob_bytes([72, 131, 236, 64])
+    # sar rax, 1 — untag (sign-extends)
+    x_sar_rax_1()
+    emit_rt_emit_int_setup()
+    # mov bl, 0 — b3 00 (bl = sign flag)
+    ob_bytes([179, 0])
+    # test rax, rax — 48 85 c0
+    ob_bytes([72, 133, 192])
+    # jns +5 (skip the negate+flag-set) — 79 05
+    ob_bytes([121, 5])
+    # neg rax
+    x_neg_rax()
+    # mov bl, 1 — b3 01
+    ob_bytes([179, 1])
+    # === digit_loop: ===
+    alloc loop_start := ob_top
+    # mov rcx, 10
+    x_mov_imm32(REG_RCX, 10)
+    # xor rdx, rdx
+    x_xor_rdx_rdx()
+    # div rcx — 48 f7 f1 (unsigned division; rax is non-negative here)
+    ob_bytes([72, 247, 241])
+    # add dl, '0' — 80 c2 30
+    ob_bytes([128, 194, 48])
+    # dec r8 — 49 ff c8
+    ob_bytes([73, 255, 200])
+    # mov [r8], dl — 41 88 10
+    ob_bytes([65, 136, 16])
+    # test rax, rax — 48 85 c0
+    ob_bytes([72, 133, 192])
+    # jnz <loop_start> — 75 <rel8 backward>
+    ob_byte(117)
+    alloc back := loop_start - (ob_top + 1)
+    ob_byte(back & 255)
+    # test bl, bl — 84 db
+    ob_bytes([132, 219])
+    # jz +7 (skip the prepend-sign block: dec r8 = 3 bytes + mov byte
+    # [r8], '-' = 4 bytes, total 7) — 74 07
+    ob_bytes([116, 7])
+    # dec r8 — 49 ff c8
+    ob_bytes([73, 255, 200])
+    # mov byte [r8], '-' — 41 c6 00 2d
+    ob_bytes([65, 198, 0, 45])
+    # === write to stdout ===
+    x_mov_imm32(REG_RAX, 1)
+    x_mov_imm32(REG_RDI, 1)
+    # mov rsi, r8 — 4c 89 c6
+    ob_bytes([76, 137, 198])
+    # mov rdx, r9 — 4c 89 ca
+    ob_bytes([76, 137, 202])
+    # sub rdx, r8 — 4c 29 c2
+    ob_bytes([76, 41, 194])
+    # inc rdx — 48 ff c2 (include the trailing newline at r9)
+    ob_bytes([72, 255, 194])
+    x_syscall()
+    # add rsp, 64 — 48 83 c4 40
+    ob_bytes([72, 131, 196, 64])
+    x_ret()
+    return entry
+}
+
+# Write the [u64 length, bytes...] structure pointed to by rax, then a
+# trailing newline byte (allocated on the native stack briefly).
+proc emit_rt_emit_str() {
+    alloc entry := ob_top
+    # mov rdx, [rax] — 48 8b 10 (length is the first 8 bytes of the header)
+    ob_bytes([72, 139, 16])
+    # lea rsi, [rax + 8] — 48 8d 70 08
+    ob_bytes([72, 141, 112, 8])
+    x_mov_imm32(REG_RAX, 1)
+    x_mov_imm32(REG_RDI, 1)
+    x_syscall()
+    # Write a newline. Reserve a stack byte, store '\n', syscall.
+    # sub rsp, 8 — 48 83 ec 08
+    ob_bytes([72, 131, 236, 8])
+    # mov byte [rsp], 0x0a — c6 04 24 0a
+    ob_bytes([198, 4, 36, 10])
+    # mov rsi, rsp — 48 89 e6
+    ob_bytes([72, 137, 230])
+    x_mov_imm32(REG_RDX, 1)
+    x_mov_imm32(REG_RAX, 1)
+    x_mov_imm32(REG_RDI, 1)
+    x_syscall()
+    # add rsp, 8 — 48 83 c4 08
+    ob_bytes([72, 131, 196, 8])
+    x_ret()
+    return entry
+}
+
+# Branch on the LSB of rax and jump to the right helper. Returns its
+# own entry offset; takes the two helper offsets so we can compute
+# proper rel32 displacements at emit time.
+proc emit_rt_emit_dispatch(emit_int_off, emit_str_off) {
+    alloc entry := ob_top
+    # test al, 1 — a8 01
+    ob_bytes([168, 1])
+    # jz +5 (skip the jmp to emit_int, fall through to emit_str jmp)
+    # — 74 05
+    ob_bytes([116, 5])
+    # jmp rel32 → emit_int — e9 <rel32>
+    ob_byte(233)
+    alloc int_disp_site := ob_top
+    ob_u32(0)
+    ob_patch_u32(int_disp_site, (emit_int_off - (int_disp_site + 4)) & 4294967295)
+    # jmp rel32 → emit_str — e9 <rel32>
+    ob_byte(233)
+    alloc str_disp_site := ob_top
+    ob_u32(0)
+    ob_patch_u32(str_disp_site, (emit_str_off - (str_disp_site + 4)) & 4294967295)
+    return entry
+}
+
+# Emit the full runtime blob into ob_buf at its current position.
+# Returns [dispatch_offset, int_offset, str_offset] — the file offsets
+# of each helper's entry point.
+proc emit_runtime_blob() {
+    alloc int_off := emit_rt_emit_int()
+    alloc str_off := emit_rt_emit_str()
+    alloc dispatch_off := emit_rt_emit_dispatch(int_off, str_off)
+    return [dispatch_off, int_off, str_off]
+}
+
+# === Codegen ==============================================================
+
+# Deferred string headers: [text, patch_site_for_addr]. The patch_site
+# is the file offset of the imm64 inside a `mov rax, imm64` that should
+# end up being the absolute virtual address of the string header.
+alloc deferred_strings := []
+
+# Tagged-int construction for a 64-bit OMG int. We always emit the
+# 10-byte `mov rax, imm64` form for simplicity; phase-2-internal code
+# fits comfortably in our binaries.
+proc encode_tagged_int(n) {
+    # (n << 1) | 1, masked to 64 bits. Negative values sign-extend
+    # naturally in two's-complement, which is what we want.
+    return ((n << 1) | 1) & 18446744073709551615
+}
+
+# Patchable 10-byte `mov rax, imm64`. Returns the offset of the imm64
+# field so the caller can fill in the absolute string-header address
+# during the data-layout pass.
+proc x_mov_rax_imm64_patchable() {
+    ob_byte(72)
+    ob_byte(184 + REG_RAX)
+    alloc site := ob_top
+    ob_u64(0)
+    return site
+}
+
+proc gen_push_int(n) {
+    x_mov_imm64(REG_RAX, encode_tagged_int(n))
+    x_push_reg(REG_RAX)
+}
+
+proc gen_push_str(s) {
+    alloc site := x_mov_rax_imm64_patchable()
+    x_push_reg(REG_RAX)
+    deferred_strings := deferred_strings + [[s, site]]
+}
+
+# tagged_a + tagged_b = (a<<1|1) + (b<<1|1) = (a+b)<<1 + 2.
+# We want (a+b)<<1 + 1 so subtract 1 from one operand's tag.
+proc gen_add() {
+    x_pop_reg(REG_RBX)
+    x_sub_rbx_imm8(1)               # rbx = b<<1 (untagged)
+    x_pop_reg(REG_RAX)
+    x_add_rax_rbx()                 # rax = (a+b)<<1 + 1, still tagged
+    x_push_reg(REG_RAX)
+}
+
+# tagged_a - tagged_b = (a-b)<<1. OR in the tag bit.
+proc gen_sub() {
+    x_pop_reg(REG_RBX)
+    x_pop_reg(REG_RAX)
+    x_sub_rax_rbx()                 # rax = (a-b)<<1
+    x_or_rax_imm8(1)
+    x_push_reg(REG_RAX)
+}
+
+# For MUL/DIV/MOD/NEG we untag inputs, operate on raw 63-bit values,
+# then retag the result. Untagging via sar (arithmetic shift right)
+# preserves sign for negative numbers.
+proc gen_mul() {
+    x_pop_reg(REG_RBX)
+    x_sar_rbx_1()
+    x_pop_reg(REG_RAX)
+    x_sar_rax_1()
+    x_imul_rax_rbx()
+    x_sal_rax_1()
+    x_or_rax_imm8(1)
+    x_push_reg(REG_RAX)
+}
+
+proc gen_div() {
+    x_pop_reg(REG_RBX)
+    x_sar_rbx_1()
+    x_pop_reg(REG_RAX)
+    x_sar_rax_1()
+    x_cqo()                          # sign-extend rax into rdx
+    x_idiv_rbx()                     # rax = quotient, rdx = remainder
+    x_sal_rax_1()
+    x_or_rax_imm8(1)
+    x_push_reg(REG_RAX)
+}
+
+proc gen_mod() {
+    x_pop_reg(REG_RBX)
+    x_sar_rbx_1()
+    x_pop_reg(REG_RAX)
+    x_sar_rax_1()
+    x_cqo()
+    x_idiv_rbx()
+    x_mov_rax_rdx()                  # move remainder into rax for retag
+    x_sal_rax_1()
+    x_or_rax_imm8(1)
+    x_push_reg(REG_RAX)
+}
+
+# tagged_n = (n<<1)|1. Untag (subtract 1) → n<<1, negate → (-n)<<1,
+# retag (or 1) → (-n<<1)|1.
+proc gen_neg() {
+    x_pop_reg(REG_RAX)
+    x_sub_rax_imm8(1)
+    x_neg_rax()
+    x_or_rax_imm8(1)
+    x_push_reg(REG_RAX)
+}
+
+# Phase-1 EMIT was an inline write syscall. Phase 2's EMIT pops a
+# tagged value and calls the dispatcher, which routes by tag.
+alloc emit_call_sites := []          # list of [site_offset, target_blob_offset]
+
+proc gen_emit(dispatch_off) {
+    x_pop_reg(REG_RAX)
+    alloc site := x_call_rel32_patchable()
+    emit_call_sites := emit_call_sites + [[site, dispatch_off]]
+}
+
+proc gen_halt() {
+    x_xor_rdi_rdi()                  # exit code 0
+    x_mov_imm32(REG_RAX, 60)         # sys_exit
+    x_syscall()
+}
+
+# Walk the parsed code stream, dispatching each opcode to its emitter.
+proc gen_code(code, dispatch_off) {
+    alloc i := 0
+    alloc n := length(code)
+    loop i < n {
+        alloc instr := code[i]
+        alloc op := instr[0]
+        if op == "PUSH_INT" { gen_push_int(instr[1]) } else {
+        if op == "PUSH_STR" { gen_push_str(instr[1]) } else {
+        if op == "ADD"      { gen_add() }              else {
+        if op == "SUB"      { gen_sub() }              else {
+        if op == "MUL"      { gen_mul() }              else {
+        if op == "DIV"      { gen_div() }              else {
+        if op == "MOD"      { gen_mod() }              else {
+        if op == "NEG"      { gen_neg() }              else {
+        if op == "EMIT"     { gen_emit(dispatch_off) } else {
+        if op == "HALT"     { gen_halt() }             else {
+            panic("native-asm: unsupported op " + op)
+        }}}}}}}}}}
+        i := i + 1
+    }
+}
+
+# === Final assembly =======================================================
+# After all code is emitted, append the string-header data:
+#   header  := [u64 length, bytes..., (padding to 8 bytes)]
+# We pad each header to 8 bytes so the next header's start is also
+# 8-aligned. The first header's address has LSB=0 (which is the tag
+# convention for "this is a pointer"), and our 8-alignment ensures
+# every subsequent header keeps that property.
+
+proc pad_to_8() {
+    loop (ob_top & 7) != 0 {
+        ob_byte(0)
+    }
+}
+
+proc finalize_elf(headers_to_relocate) {
+    # 1. Layout string-header data, recording each header's vaddr.
+    pad_to_8()
+    alloc i := 0
+    alloc n := length(deferred_strings)
+    loop i < n {
+        alloc ds := deferred_strings[i]
+        alloc s := ds[0]
+        alloc site := ds[1]
+        alloc header_vaddr := ELF_BASE + HEADERS_SIZE + ob_top
+        # Write the u64 length followed by the raw bytes.
+        ob_u64(length(s))
+        ob_string_bytes(s)
+        pad_to_8()
+        # Patch the imm64 of `mov rax, imm64` at site with the address.
+        patch_u64(site, header_vaddr)
+        i := i + 1
+    }
+    alloc payload_size := ob_top
+    alloc file_size := payload_size + HEADERS_SIZE
+    # 2. Resolve EMIT call sites. The dispatch_off recorded earlier is
+    # a file offset RELATIVE to the start of the payload (which sits
+    # at HEADERS_SIZE in the file). Each call site is also relative to
+    # the payload. So the displacement is just (target - site - 4) in
+    # payload-relative terms — no need to mention HEADERS_SIZE.
+    alloc c := 0
+    alloc cn := length(emit_call_sites)
+    loop c < cn {
+        alloc cs := emit_call_sites[c]
+        patch_call_rel32(cs[0], cs[1])
+        c := c + 1
+    }
+    # 3. Build the ELF header + program header in a fresh buffer.
+    alloc h := list_repeat(0, HEADERS_SIZE)
+    h[0] := 127
+    h[1] := ascii("E")
+    h[2] := ascii("L")
+    h[3] := ascii("F")
+    h[4] := 2
+    h[5] := 1
+    h[6] := 1
+    h[7] := 0
+    h[16] := 2
+    h[18] := 62
+    h[20] := 1
+    write_u64_into(h, 24, headers_to_relocate)   # e_entry
+    write_u64_into(h, 32, ELF_HEADER_SIZE)        # e_phoff
+    h[52] := 64
+    h[54] := 56
+    h[56] := 1
+    alloc p := ELF_HEADER_SIZE
+    h[p]     := 1
+    h[p + 4] := 5
+    write_u64_into(h, p + 16, ELF_BASE)
+    write_u64_into(h, p + 24, ELF_BASE)
+    write_u64_into(h, p + 32, file_size)
+    write_u64_into(h, p + 40, file_size)
+    h[p + 48] := 0
+    h[p + 49] := 16
+    # 4. Concat headers + payload.
+    return h + ob_buf[0:payload_size]
+}
+
+proc patch_u64(offset, n) {
+    alloc x := n
+    alloc i := 0
+    loop i < 8 {
+        ob_buf[offset + i] := x & 255
+        x := x >> 8
+        i := i + 1
+    }
+}
+
+proc write_u64_into(buf, offset, n) {
+    alloc x := n
+    alloc i := 0
+    loop i < 8 {
+        buf[offset + i] := x & 255
+        x := x >> 8
+        i := i + 1
+    }
+}
+
+# === Entry point ==========================================================
+
+proc main_compile() {
+    if length(args) < 3 {
+        emit "usage: omgna <in.omgb> <out>"
+        emit "  Phase 2: PUSH_INT, PUSH_STR, ADD, SUB, MUL, DIV, MOD, NEG, EMIT, HALT"
+        exit(1)
+    }
+    alloc in_path := args[1]
+    alloc out_path := args[2]
+    alloc fh := file_open(in_path, "rb")
+    if fh == false { panic("cannot read '" + in_path + "'") }
+    alloc raw := file_read(fh)
+    file_close(fh)
+    alloc code := parse_bytecode(raw)
+    ob_reset()
+    deferred_strings := []
+    emit_call_sites := []
+    # 1. Emit the runtime blob first; record helper offsets.
+    alloc rt := emit_runtime_blob()
+    alloc dispatch_off := rt[0]
+    # 2. Record where user code starts; that's the ELF entry point.
+    alloc user_entry := ob_top
+    # 3. Emit user code.
+    gen_code(code, dispatch_off)
+    # 4. Finalize layout, resolve all patches, prepend headers.
+    alloc elf_bytes := finalize_elf(ELF_BASE + HEADERS_SIZE + user_entry)
+    alloc oh := file_open(out_path, "wb")
+    file_write(oh, elf_bytes)
+    file_close(oh)
+    subprocess(["chmod", "755", out_path])
+}
+
+main_compile()

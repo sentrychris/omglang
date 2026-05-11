@@ -2210,6 +2210,7 @@ static Value omg_call_builtin(Value name, Value args) {
         if (strcmp(n, "file_open") == 0)  return omg_builtin_file_open(a[0], a[1]);
         if (strcmp(n, "file_write") == 0) return omg_builtin_file_write(a[0], a[1]);
         if (strcmp(n, "file_seek") == 0)  return omg_builtin_file_seek(a[0], a[1]);
+        if (strcmp(n, "list_repeat") == 0)  return omg_list_repeat(a[0], a[1]);
         if (strcmp(n, "call_builtin") == 0) return omg_call_builtin(a[0], a[1]);
     }
     omg_panicf("TypeError", "unknown builtin: %s", n);

@@ -22,6 +22,7 @@ REPO_ROOT="$(cd "$TESTS_DIR/.." && pwd)"
 OMG_NATIVE="$REPO_ROOT/bootstrap/bin/omg"
 OMGC_NATIVE="$REPO_ROOT/bootstrap/bin/omgc"
 OMGCC_NATIVE="$REPO_ROOT/bootstrap/bin/omgcc"
+OMGNA_NATIVE="$REPO_ROOT/bootstrap/bin/omgna"
 OMGVM_NATIVE="$REPO_ROOT/bootstrap/bin/omgvm"
 OMG_RUST="$REPO_ROOT/runtime/target/release/omg"
 

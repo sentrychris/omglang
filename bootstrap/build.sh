@@ -10,11 +10,16 @@
 #      existing omgc + omgcc to rebuild themselves.
 #
 # Sources compiled (each .omg → .omgb → .c → ELF):
-#   bootstrap/src/compiler.omg → omgc   compiler   (.omg → .omgb)     standalone
-#   bootstrap/src/native-c.omg → omgcc  transpiler (.omgb → .c)       standalone
-#   bootstrap/src/vm.omg       → omgvm  bytecode VM (executes .omgb)  standalone
-#   bootstrap/src/omg.omg      → omg    unified driver (run/compile/  primary
-#                                       build/REPL all in-process)    user-facing
+#   bootstrap/src/compiler.omg   → omgc   compiler    (.omg → .omgb)     standalone
+#   bootstrap/src/native-c.omg   → omgcc  transpiler  (.omgb → .c)       standalone
+#   bootstrap/src/native-asm.omg → omgna  native-asm  (.omgb → ELF)      phase-1 only
+#   bootstrap/src/vm.omg         → omgvm  bytecode VM (executes .omgb)   standalone
+#   bootstrap/src/omg.omg        → omg    unified driver (run/compile/   primary
+#                                         build/REPL all in-process)    user-facing
+#
+# `omgna` is the no-C-compiler-in-the-chain backend. Currently phase 1
+# (hello-world only — see plans/06-native-asm.md). Listed here so it's
+# built alongside the toolchain as it grows phase by phase.
 #
 # `omg` is the "all-in-one" binary, mirroring the Rust runtime: it
 # imports compiler.omg, vm.omg, and native-c.omg directly so compile,
@@ -80,10 +85,11 @@ echo "[2/4] Installing runtime headers"
 cp "$SRC_DIR/omg_rt.h"  "$BIN_DIR/omg_rt.h"
 cp "$SRC_DIR/omg_rt.js" "$BIN_DIR/omg_rt.js"
 
-echo "[3/4] Building toolchain core (omgc, omgcc, omgvm)"
-build_binary "$SRC_DIR/compiler.omg" "$BIN_DIR/omgc"
-build_binary "$SRC_DIR/native-c.omg" "$BIN_DIR/omgcc"
-build_binary "$SRC_DIR/vm.omg"       "$BIN_DIR/omgvm"
+echo "[3/4] Building toolchain core (omgc, omgcc, omgna, omgvm)"
+build_binary "$SRC_DIR/compiler.omg"   "$BIN_DIR/omgc"
+build_binary "$SRC_DIR/native-c.omg"   "$BIN_DIR/omgcc"
+build_binary "$SRC_DIR/native-asm.omg" "$BIN_DIR/omgna"
+build_binary "$SRC_DIR/vm.omg"         "$BIN_DIR/omgvm"
 
 echo "[4/4] Building unified driver (omg)"
 build_binary "$SRC_DIR/omg.omg"      "$BIN_DIR/omg"
