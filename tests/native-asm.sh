@@ -16,7 +16,7 @@ if [ ! -x "$OMGNA_NATIVE" ]; then
     exit 2
 fi
 
-section "native-asm (omgna): phase 1 + phase 2"
+section "native-asm (omgna): phases 1, 2, 3"
 
 # Round-trip a .omg through omgc + omgna and compare ./<bin> stdout
 # against the Rust runtime's output for the same source.
@@ -54,6 +54,23 @@ assert_omgna "mod"           $';;;omg\nemit 100 % 7'
 assert_omgna "neg_expr"      $';;;omg\nemit -1*1000000'
 assert_omgna "precedence"    $';;;omg\nemit 1+2*3'
 assert_omgna "mixed_int_str" $';;;omg\nemit "answer:"\nemit 42'
+
+# === Phase 3: bool/none, comparisons, control flow, globals ===
+assert_omgna "bool_true"     $';;;omg\nemit true'
+assert_omgna "bool_false"    $';;;omg\nemit false'
+assert_omgna "cmp_lt"        $';;;omg\nemit 1 < 2'
+assert_omgna "cmp_eq"        $';;;omg\nemit 5 == 5'
+assert_omgna "cmp_gt"        $';;;omg\nemit 10 > 100'
+assert_omgna "cmp_chain"     $';;;omg\nemit 1 < 2\nemit 2 <= 2\nemit 3 >= 3\nemit 4 != 5'
+assert_omgna "if_yes"        $';;;omg\nif 1 < 2 {\n    emit "yes"\n} else {\n    emit "no"\n}'
+assert_omgna "if_no"         $';;;omg\nif 100 < 2 {\n    emit "yes"\n} else {\n    emit "no"\n}'
+assert_omgna "truthy_zero"   $';;;omg\nif 0 { emit "truthy" } else { emit "falsy" }'
+assert_omgna "global_assign" $';;;omg\nalloc x := 42\nemit x'
+assert_omgna "global_mutate" $';;;omg\nalloc x := 10\nx := x + 5\nemit x'
+assert_omgna "loop_count"    $';;;omg\nalloc i := 0\nloop i < 3 {\n    emit i\n    i := i + 1\n}\nemit "done"'
+assert_omgna "loop_countdown" $';;;omg\nalloc n := 5\nloop n > 0 {\n    emit n\n    n := n - 1\n}'
+assert_omgna "fibonacci"     $';;;omg\nalloc a := 0\nalloc b := 1\nalloc i := 0\nloop i < 10 {\n    alloc t := a + b\n    a := b\n    b := t\n    i := i + 1\n}\nemit b'
+assert_omgna "nested_if"     $';;;omg\nalloc x := 7\nif x > 5 {\n    if x < 10 {\n        emit "in range"\n    } else {\n        emit "too big"\n    }\n} else {\n    emit "too small"\n}'
 
 # Binary should be a real statically-linked ELF, no libc dependency.
 elf="$TMPDIR_TEST/na-hello_world"

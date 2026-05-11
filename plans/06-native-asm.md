@@ -1,6 +1,6 @@
 # native-asm — OMG bytecode → x86_64 ELF, no C compiler
 
-Status: Phases 1 + 2 done — integer programs working (`emit 1+2*3`, `emit -100/7`, etc.). Phases 3-12 pending.
+Status: Phases 1 + 2 + 3 done — full control flow + globals working (loops, if/else, comparisons, fibonacci). Phases 4-12 pending.
 
 Owner: sentrychris + claude
 
