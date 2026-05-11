@@ -1065,6 +1065,14 @@ alloc cc_top_level_declared := []
 # than the number of import sites.
 alloc cc_loaded_modules := []
 
+# Direct-call arity table: list of [mangled_name, param_count] pairs.
+# Populated by a pre-pass over each AST's top-level statements before the
+# bodies are compiled, so forward references (caller above callee in
+# source) can still be checked.  Direct `Call`/`TCALL` emit sites consult
+# this to reject mismatched argument counts at compile time — preventing
+# operand-stack leaks at the cost of catching the bug where it lives.
+alloc cc_proc_arity := []
+
 # Stack of paths currently being inlined.  Used to reject cyclic imports
 # before they recurse infinitely.
 alloc cc_loading := []
@@ -1377,13 +1385,15 @@ proc compile_expr(node) {
                 cc_emit(["CALL_VALUE", n])
                 return false
             }
+            alloc resolved_call_name := cc_mangle(cname)
+            cc_check_direct_call_arity(cname, resolved_call_name, length(args), cc_current_line)
             alloc i := 0
             alloc n := length(args)
             loop i < n {
                 compile_expr(args[i])
                 i := i + 1
             }
-            cc_emit(["CALL", cc_mangle(cname)])
+            cc_emit(["CALL", resolved_call_name])
             return false
         }
         compile_expr(callee)
@@ -1626,6 +1636,49 @@ proc path_normalize(p) {
 
 # Look up a previously-compiled module by its resolved path.  Returns the
 # cached entry [path, prefix, exports] or false.
+# Pre-pass: walk an AST's top-level statements and record every proc's
+# parameter count into cc_proc_arity, mangled with cc_current_prefix.
+# Must run before compile_stmt visits the bodies so direct-call sites
+# can verify forward references.
+proc cc_collect_proc_arity(ast) {
+    alloc i := 0
+    alloc n := length(ast)
+    loop i < n {
+        alloc s := ast[i]
+        if s[0] == "func" {
+            cc_proc_arity := cc_proc_arity + [[cc_mangle(s[1]), length(s[2])]]
+        }
+        i := i + 1
+    }
+}
+
+# Linear-search lookup. Returns the parameter count, or -1 if `mangled`
+# isn't a known top-level proc (e.g. the call is a builtin or value
+# binding, both of which are handled before the direct-Call path).
+proc cc_lookup_proc_arity(mangled) {
+    alloc i := 0
+    alloc n := length(cc_proc_arity)
+    loop i < n {
+        if cc_proc_arity[i][0] == mangled {
+            return cc_proc_arity[i][1]
+        }
+        i := i + 1
+    }
+    return -1
+}
+
+# Reject a direct CALL/TCALL whose argument count doesn't match the
+# callee's declared parameter count. Mirrors the Rust compiler's
+# `check_direct_call_arity` so both frontends produce identical errors.
+proc cc_check_direct_call_arity(bare_name, resolved, got, line) {
+    alloc expected := cc_lookup_proc_arity(resolved)
+    if expected == -1 { return false }
+    if got == expected { return false }
+    alloc plural := "s"
+    if expected == 1 { plural := "" }
+    panic("SyntaxError: function '" + bare_name + "' expects " + expected + " argument" + plural + ", got " + got + " on line " + line + " in " + cc_current_file)
+}
+
 proc cc_find_loaded(resolved) {
     alloc i := 0
     alloc n := length(cc_loaded_modules)
@@ -1707,6 +1760,7 @@ proc compile_import(path, alias, line) {
         cc_current_prefix := prefix
         cc_current_file   := resolved
         cc_current_file_idx := cc_intern_file(resolved)
+        cc_collect_proc_arity(ast)
         i := 0
         loop i < n {
             compile_stmt(ast[i])
@@ -1931,6 +1985,8 @@ proc compile_stmt(stmt) {
             if cc_is_builtin(cname) == false and cc_is_value_binding(cname) == false {
                 # Direct tail call of a top-level proc.
                 alloc args := expr[2]
+                alloc resolved_tcall_name := cc_mangle(cname)
+                cc_check_direct_call_arity(cname, resolved_tcall_name, length(args), cc_current_line)
                 alloc i := 0
                 alloc n := length(args)
                 loop i < n {
@@ -1940,7 +1996,7 @@ proc compile_stmt(stmt) {
                 # Drain any open SETUP_EXCEPT blocks before transferring
                 # control out of this function.
                 cc_emit_pop_blocks(cc_try_depth)
-                cc_emit(["TCALL", cc_mangle(cname)])
+                cc_emit(["TCALL", resolved_tcall_name])
                 return false
             }
         }
@@ -2055,6 +2111,8 @@ proc compile_program_node_seeded(ast, file, known_globals) {
     cc_current_line := 0
     cc_loaded_modules := []
     cc_loading := []
+    cc_proc_arity := []
+    cc_collect_proc_arity(ast)
     alloc i := 0
     alloc n := length(ast)
     loop i < n {

@@ -207,6 +207,16 @@ pub struct Compiler {
     /// because that holds *unmangled* names (so two imported modules
     /// with `alloc i := ...` would falsely collide on the bare name).
     top_level_declared: HashSet<String>,
+    /// Mangled top-level proc name → parameter count. Populated by a
+    /// pre-pass before compiling any body, so direct `Call name` emits
+    /// can verify that the call site's arg count matches the callee's
+    /// declared arity. Without this check, the compiler would emit
+    /// unbalanced bytecode (e.g. 2 pushes for a 0-param callee), the
+    /// runtime's `Call` handler would pop only the declared count, and
+    /// the extra operands would leak onto the stack as "ghost" values
+    /// — silently consumed by later instructions, with weird and
+    /// hard-to-trace consequences.
+    proc_arity: HashMap<String, usize>,
 }
 
 #[derive(Clone)]
@@ -248,7 +258,53 @@ impl Compiler {
             current_file: entry,
             local_scopes: vec![HashSet::new()],
             top_level_declared: HashSet::new(),
+            proc_arity: HashMap::new(),
         }
+    }
+
+    /// Pre-pass: walk an AST's top-level statements and record every
+    /// `proc` name's parameter count into `proc_arity`, mangled with
+    /// `current_prefix`. Run before compiling the bodies so direct-
+    /// `Call` sites can verify their argument count even on forward
+    /// references (the standard case where a caller appears above its
+    /// callee in source order).
+    fn collect_proc_arity(&mut self, ast: &[Node]) {
+        for stmt in ast {
+            if let Node::FuncDef(name, params, _, _) = stmt {
+                let mangled = self.mangle(name);
+                self.proc_arity.insert(mangled, params.len());
+            }
+        }
+    }
+
+    /// Reject a direct `Call`/`TailCall` whose argument count doesn't match
+    /// the callee's declared parameter count. Catches the operand-stack
+    /// leak that arises when the compiler emits N pushes but the runtime
+    /// `Call` handler pops only `func.params.len()` values — leftover
+    /// arguments would sit on the operand stack and silently corrupt
+    /// later instructions. Indirect (`CallValue`) and builtin calls are
+    /// unaffected; their arities are known only at runtime / inside the
+    /// builtin itself.
+    fn check_direct_call_arity(
+        &self,
+        bare_name: &str,
+        resolved: &str,
+        got: usize,
+    ) -> Result<(), RuntimeError> {
+        if let Some(&expected) = self.proc_arity.get(resolved) {
+            if got != expected {
+                return Err(RuntimeError::SyntaxError(format!(
+                    "function '{}' expects {} argument{}, got {} on line {} in {}",
+                    bare_name,
+                    expected,
+                    if expected == 1 { "" } else { "s" },
+                    got,
+                    self.current_line,
+                    self.current_file.display()
+                )));
+            }
+        }
+        Ok(())
     }
 
     /// Intern a source-file path into `src_files` and return its index.
@@ -347,6 +403,7 @@ impl Compiler {
     /// Compile a complete program (entry-point AST already parsed) into a
     /// final [`Program`].
     pub fn compile_program(mut self, ast: Vec<Node>) -> Result<Program, RuntimeError> {
+        self.collect_proc_arity(&ast);
         for stmt in ast {
             self.compile_stmt(&stmt)?;
         }
@@ -618,11 +675,13 @@ impl Compiler {
                         // fall through to the generic `Load + CallValue +
                         // Ret` path below so closures resolve correctly.
                         if !is_builtin(name) && !self.is_value_binding(name) {
+                            let resolved = self.resolve_call_name(name);
+                            self.check_direct_call_arity(name, &resolved, args.len())?;
                             for a in args {
                                 self.compile_expr(a)?;
                             }
                             self.emit_pop_blocks(self.try_depth);
-                            self.emit(Instr::TailCall(self.resolve_call_name(name)));
+                            self.emit(Instr::TailCall(resolved));
                             return Ok(());
                         }
                     }
@@ -892,6 +951,7 @@ impl Compiler {
         let new_file_idx = self.intern_file(resolved);
         let saved_file_idx = self.current_file_idx;
         self.current_file_idx = new_file_idx;
+        self.collect_proc_arity(&ast);
         for stmt in ast {
             self.compile_stmt(&stmt)?;
         }
@@ -973,10 +1033,12 @@ impl Compiler {
                         return Ok(());
                     }
                     // Top-level proc: emit a direct Call for the fast path.
+                    let resolved = self.resolve_call_name(name);
+                    self.check_direct_call_arity(name, &resolved, args.len())?;
                     for a in args {
                         self.compile_expr(a)?;
                     }
-                    self.emit(Instr::Call(self.resolve_call_name(name)));
+                    self.emit(Instr::Call(resolved));
                     return Ok(());
                 }
                 // Generic case: callee is an arbitrary expression (e.g.
