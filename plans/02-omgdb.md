@@ -1,6 +1,7 @@
 # omgdb — SQL-subset embedded database
 
 Status: Complete
+
 Owner: sentrychris + claude
 
 ## Goal

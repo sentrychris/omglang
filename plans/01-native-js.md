@@ -1,6 +1,7 @@
 # native-js — OMG → JavaScript + web playground
 
-Status: To Do
+Status: Complete
+
 Owner: sentrychris + claude
 
 ## Goal
