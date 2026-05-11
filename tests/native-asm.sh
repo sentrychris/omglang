@@ -16,7 +16,7 @@ if [ ! -x "$OMGNA_NATIVE" ]; then
     exit 2
 fi
 
-section "native-asm (omgna): phases 1-5b"
+section "native-asm (omgna): phases 1-5c"
 
 # Round-trip a .omg through omgc + omgna and compare ./<bin> stdout
 # against the Rust runtime's output for the same source.
@@ -102,6 +102,20 @@ assert_omgna "concat_in_fn"  $';;;omg\nproc greet(name) { return "Hello, " + nam
 assert_omgna "concat_loop"   $';;;omg\nalloc s := ""\nalloc i := 0\nloop i < 5 {\n    s := s + "x"\n    i := i + 1\n}\nemit s'
 assert_omgna "concat_arg"    $';;;omg\nproc show(s) { emit s }\nshow("abc" + "def")\nshow("a" + "b" + "c")'
 assert_omgna "ints_still_ok" $';;;omg\nemit 1 + 2\nemit 5 + 10 + 20'
+
+# === Phase 5c: emit-on-list formatting ===
+assert_omgna "emit_list_basic"  $';;;omg\nemit [1, 2, 3]'
+assert_omgna "emit_list_empty"  $';;;omg\nemit []'
+assert_omgna "emit_list_one"    $';;;omg\nemit [42]'
+assert_omgna "emit_list_strs"   $';;;omg\nemit ["a", "b", "c"]'
+assert_omgna "emit_list_mixed"  $';;;omg\nemit [1, "two", 3, "four"]'
+assert_omgna "emit_list_nested" $';;;omg\nemit [[1, 2], [3, 4]]'
+assert_omgna "emit_list_deep"   $';;;omg\nemit [[[1]], [[2, 3], [4]]]'
+assert_omgna "emit_list_bools"  $';;;omg\nemit [true, false, true]'
+assert_omgna "emit_list_mixed2" $';;;omg\nemit [1, [2, 3], "four", [5, [6, 7]]]'
+assert_omgna "emit_list_ret"    $';;;omg\nproc make() { return [10, 20, 30] }\nemit make()'
+assert_omgna "emit_list_var"    $';;;omg\nalloc xs := [1, 2, 3]\nemit xs'
+assert_omgna "emit_list_many"   $';;;omg\nemit [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]'
 
 # Binary should be a real statically-linked ELF, no libc dependency.
 elf="$TMPDIR_TEST/na-hello_world"

@@ -600,15 +600,15 @@ proc patch_call_rel32(site, target_offset) {
 # their entry-point file offsets so user code's CALL sites can be
 # patched to the right targets.
 
-# Set up r9 and r8 to the end of a stack buffer with a trailing
-# newline, ready for digit emission. Used by rt_emit_int.
-# r9 = one past end; r8 = current write pointer; [r9] = 0x0a.
+# Set up r9 and r8 to the end of a stack buffer ready for digit
+# emission. r9 = one past end; r8 = current write pointer. Phase 5c
+# stripped the trailing newline — the dispatcher's print wrapper now
+# writes it once at the end of the whole value, so individual element
+# renders inside lists/dicts don't insert newlines mid-output.
 # Assumes the caller has done `sub rsp, 64`.
 proc emit_rt_emit_int_setup() {
-    # lea r9, [rsp + 63]  — 4c 8d 4c 24 3f
-    ob_bytes([76, 141, 76, 36, 63])
-    # mov byte [r9], 0x0a — 41 c6 01 0a
-    ob_bytes([65, 198, 1, 10])
+    # lea r9, [rsp + 64]  — 4c 8d 4c 24 40 (one past the last byte)
+    ob_bytes([76, 141, 76, 36, 64])
     # mov r8, r9          — 4d 89 c8
     ob_bytes([77, 137, 200])
 }
@@ -669,10 +669,8 @@ proc emit_rt_emit_int() {
     ob_bytes([76, 137, 198])
     # mov rdx, r9 — 4c 89 ca
     ob_bytes([76, 137, 202])
-    # sub rdx, r8 — 4c 29 c2
+    # sub rdx, r8 — 4c 29 c2 (write length = r9 - r8, no newline)
     ob_bytes([76, 41, 194])
-    # inc rdx — 48 ff c2 (include the trailing newline at r9)
-    ob_bytes([72, 255, 194])
     x_syscall()
     # add rsp, 64 — 48 83 c4 40
     ob_bytes([72, 131, 196, 64])
@@ -686,8 +684,8 @@ proc emit_rt_emit_str() {
     alloc entry := ob_top
     # Heap-object layout for strings: [type=0:u64][length:u64][bytes...].
     # We trust the type at [rax] is HEAP_T_STRING here — the dispatcher
-    # guards that by checking the tag before jumping to us. (Phase 5b
-    # will add list/dict variants that share the dispatcher entry.)
+    # guards that by checking the tag before jumping to us. No trailing
+    # newline (phase 5c) — the print wrapper adds it once at the end.
     # mov rdx, [rax + 8] — 48 8b 50 08
     ob_bytes([72, 139, 80, 8])
     # lea rsi, [rax + 16] — 48 8d 70 10
@@ -695,19 +693,6 @@ proc emit_rt_emit_str() {
     x_mov_imm32(REG_RAX, 1)
     x_mov_imm32(REG_RDI, 1)
     x_syscall()
-    # Write a newline. Reserve a stack byte, store '\n', syscall.
-    # sub rsp, 8 — 48 83 ec 08
-    ob_bytes([72, 131, 236, 8])
-    # mov byte [rsp], 0x0a — c6 04 24 0a
-    ob_bytes([198, 4, 36, 10])
-    # mov rsi, rsp — 48 89 e6
-    ob_bytes([72, 137, 230])
-    x_mov_imm32(REG_RDX, 1)
-    x_mov_imm32(REG_RAX, 1)
-    x_mov_imm32(REG_RDI, 1)
-    x_syscall()
-    # add rsp, 8 — 48 83 c4 08
-    ob_bytes([72, 131, 196, 8])
     x_ret()
     return entry
 }
@@ -868,8 +853,10 @@ proc emit_rt_build_list(alloc_off) {
 }
 
 # Emit a small helper that writes a fixed virtual-address string of
-# fixed length to stdout, then ret. Used for the three sentinel value
-# printers (true / false / none). Returns the helper's entry offset.
+# fixed length to stdout, then ret. Used for the sentinel value
+# printers (true / false / none) and for the bracket/comma/newline
+# punctuation that surrounds list output. Returns the helper's entry
+# offset.
 proc emit_rt_write_static(addr, len) {
     alloc entry := ob_top
     x_mov_imm32(REG_RAX, 1)
@@ -881,13 +868,97 @@ proc emit_rt_write_static(addr, len) {
     return entry
 }
 
-# Dispatcher: branch by tag to the right helper.
-#   LSB=1                 → rt_emit_int     (small integer)
-#   == TAG_FALSE (2)      → rt_emit_false
-#   == TAG_TRUE  (4)      → rt_emit_true
-#   == TAG_NONE  (6)      → rt_emit_none
-#   otherwise (8-aligned) → rt_emit_str     (heap pointer)
-proc emit_rt_emit_dispatch(off_int, off_str, off_false, off_true, off_none) {
+# Recursive list formatter: writes `[elem0, elem1, ..., elemN-1]` to
+# stdout using rt_emit_dispatch_repr for each element. The dispatcher
+# offset is forward-referenced (the dispatcher is emitted after this
+# helper because the dispatcher needs *this* helper's offset for its
+# list case — mutual recursion). Returns [entry, patch_site] so the
+# caller can patch the `call rt_emit_dispatch_repr` site once the
+# dispatcher's offset is known.
+#
+# Input:  rax = pointer to a HEAP_T_LIST object
+# Output: nothing (writes to stdout); rax clobbered
+proc emit_rt_emit_list(addr_lbrack, addr_rbrack, addr_comma) {
+    alloc entry := ob_top
+    # push rax (save list ptr while we issue the "[" syscall)
+    ob_byte(80)
+    # mov rax, 1; mov rdi, 1; mov rsi, <addr_lbrack>; mov rdx, 1; syscall
+    x_mov_imm32(REG_RAX, 1)
+    x_mov_imm32(REG_RDI, 1)
+    x_mov_imm64(REG_RSI, addr_lbrack)
+    x_mov_imm32(REG_RDX, 1)
+    x_syscall()
+    # pop rax (restore list ptr)
+    ob_byte(88)
+    # mov rcx, [rax + 8]  — 48 8b 48 08 (length)
+    ob_bytes([72, 139, 72, 8])
+    # test rcx, rcx — 48 85 c9
+    ob_bytes([72, 133, 201])
+    # jz close (forward rel8, patched after we know close's offset)
+    ob_byte(116)
+    alloc jz_close_site := ob_top
+    ob_byte(0)
+    # xor rdx, rdx — 48 31 d2  (i = 0)
+    ob_bytes([72, 49, 210])
+    alloc loop_start := ob_top
+    # push rax, push rcx, push rdx (save iteration state)
+    ob_bytes([80, 81, 82])
+    # mov rax, [rax + 24 + rdx*8] — 48 8b 44 d0 18
+    ob_bytes([72, 139, 68, 208, 24])
+    # call rt_emit_dispatch_repr (rel32, patched by caller)
+    ob_byte(232)
+    alloc dispatch_call_site := ob_top
+    ob_u32(0)
+    # pop rdx, pop rcx, pop rax (restore iteration state)
+    ob_bytes([90, 89, 88])
+    # inc rdx — 48 ff c2
+    ob_bytes([72, 255, 194])
+    # cmp rdx, rcx — 48 39 ca
+    ob_bytes([72, 57, 202])
+    # jge close (forward rel8, patched)
+    ob_byte(125)
+    alloc jge_close_site := ob_top
+    ob_byte(0)
+    # push rax, push rcx, push rdx (save for the ", " syscall)
+    ob_bytes([80, 81, 82])
+    # mov rax, 1; mov rdi, 1; mov rsi, addr_comma; mov rdx, 2; syscall
+    x_mov_imm32(REG_RAX, 1)
+    x_mov_imm32(REG_RDI, 1)
+    x_mov_imm64(REG_RSI, addr_comma)
+    x_mov_imm32(REG_RDX, 2)
+    x_syscall()
+    # pop rdx, pop rcx, pop rax
+    ob_bytes([90, 89, 88])
+    # jmp loop_start (backward rel8)
+    ob_byte(235)
+    alloc back := loop_start - (ob_top + 1)
+    ob_byte(back & 255)
+    # close: write "]" and ret
+    alloc close_off := ob_top
+    # Patch the two forward jz/jge sites
+    ob_patch_u8(jz_close_site, close_off - (jz_close_site + 1))
+    ob_patch_u8(jge_close_site, close_off - (jge_close_site + 1))
+    x_mov_imm32(REG_RAX, 1)
+    x_mov_imm32(REG_RDI, 1)
+    x_mov_imm64(REG_RSI, addr_rbrack)
+    x_mov_imm32(REG_RDX, 1)
+    x_syscall()
+    x_ret()
+    return [entry, dispatch_call_site]
+}
+
+# Repr dispatcher: writes a value's textual representation to stdout
+# WITHOUT a trailing newline. The newline is added once by
+# rt_emit_dispatch_print at the top of every EMIT, so element renders
+# inside a list don't insert newlines mid-output.
+#
+# Branches by tag:
+#   LSB=1                       → rt_emit_int     (small integer)
+#   == TAG_FALSE/TAG_TRUE/TAG_NONE → matching sentinel writer
+#   otherwise (heap pointer)    → check type tag at [rax]:
+#                                  type=HEAP_T_STRING → rt_emit_str
+#                                  type=HEAP_T_LIST   → rt_emit_list
+proc emit_rt_emit_dispatch_repr(off_int, off_str, off_false, off_true, off_none, off_list) {
     alloc entry := ob_top
     # test al, 1 — a8 01
     ob_bytes([168, 1])
@@ -898,7 +969,6 @@ proc emit_rt_emit_dispatch(off_int, off_str, off_false, off_true, off_none) {
     patch_rel32(s_int, off_int)
     # cmp rax, TAG_FALSE
     x_cmp_rax_imm8(TAG_FALSE)
-    # je rel32 → rt_emit_false
     alloc s_false := x_je_rel32_patchable()
     patch_rel32(s_false, off_false)
     # cmp rax, TAG_TRUE
@@ -909,9 +979,33 @@ proc emit_rt_emit_dispatch(off_int, off_str, off_false, off_true, off_none) {
     x_cmp_rax_imm8(TAG_NONE)
     alloc s_none := x_je_rel32_patchable()
     patch_rel32(s_none, off_none)
-    # Default: heap pointer → jmp rt_emit_str
+    # Heap pointer — read type tag at [rax]
+    # mov rcx, [rax] — 48 8b 08
+    ob_bytes([72, 139, 8])
+    # cmp rcx, HEAP_T_LIST (1) — 48 83 f9 01
+    ob_bytes([72, 131, 249, 1])
+    # je rel32 → rt_emit_list
+    alloc s_list := x_je_rel32_patchable()
+    patch_rel32(s_list, off_list)
+    # Default: assume HEAP_T_STRING → jmp rt_emit_str
     alloc s_str := x_jmp_rel32_patchable()
     patch_rel32(s_str, off_str)
+    return entry
+}
+
+# Print dispatcher: writes a value's repr, then a single trailing
+# newline. This is the public EMIT entry; user code's `Emit` opcode
+# compiles to `call rt_emit_dispatch_print`.
+proc emit_rt_emit_dispatch_print(off_repr, off_newline) {
+    alloc entry := ob_top
+    # call rt_emit_dispatch_repr (rax is preserved for free — repr
+    # helpers happen to clobber rax, but we don't need it after).
+    alloc s_repr := x_call_rel32_patchable()
+    patch_call_rel32(s_repr, off_repr)
+    # jmp rt_emit_newline (tail call — newline's ret returns to the
+    # caller of dispatch_print).
+    alloc s_nl := x_jmp_rel32_patchable()
+    patch_rel32(s_nl, off_newline)
     return entry
 }
 
@@ -926,27 +1020,48 @@ alloc rt_build_list_off     := 0
 alloc rt_string_concat_off  := 0
 
 proc emit_runtime_blob() {
-    # Static strings for sentinel values. Each includes a trailing
-    # newline so the write-static helper doesn't need a separate
-    # newline syscall.
-    alloc addr_true  := ELF_BASE + HEADERS_SIZE + ob_top
-    ob_string_bytes("true\n")
-    alloc addr_false := ELF_BASE + HEADERS_SIZE + ob_top
-    ob_string_bytes("false\n")
-    alloc addr_none  := ELF_BASE + HEADERS_SIZE + ob_top
-    ob_string_bytes("none\n")
+    # Static strings — no trailing newlines (those come from the
+    # newline writer at the end of each EMIT). Lengths: true=4,
+    # false=5, none=4; punctuation 1/1/2 for [/]/", "; newline 1.
+    alloc addr_true   := ELF_BASE + HEADERS_SIZE + ob_top
+    ob_string_bytes("true")
+    alloc addr_false  := ELF_BASE + HEADERS_SIZE + ob_top
+    ob_string_bytes("false")
+    alloc addr_none   := ELF_BASE + HEADERS_SIZE + ob_top
+    ob_string_bytes("none")
+    alloc addr_lbrack := ELF_BASE + HEADERS_SIZE + ob_top
+    ob_string_bytes("[")
+    alloc addr_rbrack := ELF_BASE + HEADERS_SIZE + ob_top
+    ob_string_bytes("]")
+    alloc addr_comma  := ELF_BASE + HEADERS_SIZE + ob_top
+    ob_string_bytes(", ")
+    alloc addr_nl     := ELF_BASE + HEADERS_SIZE + ob_top
+    ob_string_bytes("\n")
     pad_to_8()
-    # Helpers.
+    # Leaf repr helpers (no trailing newlines).
     alloc off_int     := emit_rt_emit_int()
     alloc off_str     := emit_rt_emit_str()
-    alloc off_true    := emit_rt_write_static(addr_true,  5)
-    alloc off_false   := emit_rt_write_static(addr_false, 6)
-    alloc off_none    := emit_rt_write_static(addr_none,  5)
+    alloc off_true    := emit_rt_write_static(addr_true,  4)
+    alloc off_false   := emit_rt_write_static(addr_false, 5)
+    alloc off_none    := emit_rt_write_static(addr_none,  4)
+    # Allocator + builders.
     rt_alloc_off         := emit_rt_alloc()
     rt_build_list_off    := emit_rt_build_list(rt_alloc_off)
     rt_string_concat_off := emit_rt_string_concat(rt_alloc_off)
-    alloc off_disp       := emit_rt_emit_dispatch(off_int, off_str, off_false, off_true, off_none)
-    return off_disp
+    # Mutually-recursive list emitter ↔ repr dispatcher. We emit the
+    # list helper first with a placeholder for its call to the repr
+    # dispatcher; the dispatcher is emitted next (and can reference
+    # the list helper directly because list's offset is already
+    # known); finally we patch the list helper's placeholder.
+    alloc list_result    := emit_rt_emit_list(addr_lbrack, addr_rbrack, addr_comma)
+    alloc rt_emit_list_off := list_result[0]
+    alloc list_patch     := list_result[1]
+    alloc off_repr       := emit_rt_emit_dispatch_repr(off_int, off_str, off_false, off_true, off_none, rt_emit_list_off)
+    patch_call_rel32(list_patch, off_repr)
+    # Newline writer and the public print dispatcher.
+    alloc off_newline    := emit_rt_write_static(addr_nl, 1)
+    alloc off_print      := emit_rt_emit_dispatch_print(off_repr, off_newline)
+    return off_print
 }
 
 # === Codegen ==============================================================

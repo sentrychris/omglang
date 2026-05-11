@@ -1,6 +1,6 @@
 # native-asm — OMG bytecode → x86_64 ELF, no C compiler
 
-Status: Phases 1–5b done — lists, `length`, string concat via polymorphic ADD, POP opcode. `rt_string_concat` runtime helper allocates + `rep movsb`-copies. Phase 5c (dicts, slice, store_index, list-emit-formatting) pending. Phases 6-12 pending.
+Status: Phases 1–5c done — emit-on-list formatting works (nested lists, mixed types, recursive). Dispatcher split into `rt_emit_dispatch_repr` (no newline; mutually recursive with `rt_emit_list`) + `rt_emit_dispatch_print` (= repr + newline; what EMIT compiles to). Remaining 5: dicts, slice, store_index. Phases 6-12 pending.
 
 Owner: sentrychris + claude
 
