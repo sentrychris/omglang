@@ -217,6 +217,15 @@ assert_omgna "bitwise_shifts"    $';;;omg\nemit 100 >> 2\nemit 1 << 3'
 assert_omgna "logical_and_or"    $';;;omg\nemit 1 and 0\nemit 0 or 5\nemit true and true'
 assert_omgna "bitwise_not"       $';;;omg\nemit ~5\nemit ~0'
 
+# === Phase 9: self-hosting prereqs (string indexing, ordering, slice
+# NONE, int↔string concat, current_dir, list file_write) ===
+assert_omgna "str_index"         $';;;omg\nalloc s := "hello"\nemit s[0]\nemit s[4]'
+assert_omgna "str_compare"       $';;;omg\nemit "a" < "b"\nemit "abc" < "abd"\nemit "z" >= "a"\nemit "hi" == "hi"'
+assert_omgna "str_slice_none"    $';;;omg\nalloc s := "hello"\nalloc i := 1\nemit s[i + 0:]\nemit s[0 + 0:3]'
+assert_omgna "str_int_concat"    $';;;omg\nemit "n=" + 42\nemit "neg=" + (0 - 7)\nemit 100 + " items"'
+assert_omgna "current_dir_str"   $';;;omg\nemit length(current_dir) > 0'
+assert_omgna "file_write_list"   $';;;omg\nalloc fh := file_open("/tmp/omg_bw.out", "wb")\nfile_write(fh, [79, 75, 10])\nfile_close(fh)\nemit "wrote"'
+
 # Binary should be a real statically-linked ELF, no libc dependency.
 elf="$TMPDIR_TEST/na-hello_world"
 if file "$elf" 2>/dev/null | grep -q "ELF 64-bit LSB executable, x86-64.*statically linked"; then
@@ -227,10 +236,11 @@ fi
 
 # Hello-world ELF size — the runtime blob grows as we add helpers
 # (alloc, list build, concat, slice, list-aware repr dispatcher, etc).
-# Bumped at 5d (2 KB), 8a (3 KB), 8c (4 KB; file I/O + float helpers).
+# Bumped at 5d (2 KB), 8a (3 KB), 8c (4 KB; file I/O + float helpers),
+# 9 (5 KB; int↔string, lex compare, slice NONE, current_dir, list-write).
 size=$(wc -c < "$elf")
-if [ "$size" -lt 4096 ]; then
-    pass "hello-world ELF is <4 KB ($size bytes)"
+if [ "$size" -lt 5120 ]; then
+    pass "hello-world ELF is <5 KB ($size bytes)"
 else
-    fail "hello-world ELF is <4 KB" "size: $size bytes"
+    fail "hello-world ELF is <5 KB" "size: $size bytes"
 fi

@@ -1,6 +1,17 @@
 # native-asm — OMG bytecode → x86_64 ELF, no C compiler
 
-Status: **Phase 8d done, phase 9 attempted.** Bitwise ops (`&` `|` `^` `<<` `>>` `~`), short-circuit logical `and` / `or` (truthiness-coercing), and `argv → args` global init at program start. compiler.omg now compiles cleanly to a 197 KB ELF — every opcode and most builtins it uses are supported. The natively-compiled compiler **runs** but exits early with code 3 on real input (`rt_index`/`rt_store_index` hitting a non-list/dict container somewhere in compiler.omg's logic — needs targeted debugging). Hello-world programs through the natively-built compiler chain work end-to-end. Phase 9 (byte-identical fixed point with omgc) **not yet achieved**. Phases 10-12 pending.
+Status: **Phase 9 done — byte-identical self-host fixed point reached.** The natively-compiled compiler.omg compiles its own source byte-identically against the C-backend reference, and reproduces vm.omg byte-identically as well. Phase 9 closed a stack of latent gaps:
+
+- **String indexing** in `rt_index` (returns a 1-char heap string).
+- **Lexicographic byte compare** in `rt_cmp_full` (was returning 0/1, which made `"e" <= "z"` false and broke `is_alpha` / `is_digit`).
+- **Sentinel guards** in cmp / promote / add so `string == false` and similar mixed comparisons don't deref a TAG_FALSE through `[rax+8]`.
+- **Slice `TAG_NONE` normalisation** so `s[i:]` doesn't run `rep movsb` with a negative count.
+- **Mixed string+int / int+string concat** via a new `rt_int_to_string` helper that `rt_concat` calls when either operand has LSB=1.
+- **List-of-bytes path** in `rt_file_write` (compiler.omg's `wb_buf` is a list of ints — the binary-handle case in the C runtime).
+- **`current_dir` global** initialised from `sys_getcwd` at program start; `cc_absolute_normalised` reads it.
+- **Heap / op-stack sizing**: bumped `HEAP_SIZE` to 2 GB and `OPERAND_STACK_SIZE` to 1 MB. compiler.omg's `cc_code := cc_code + [instr]` idiom is O(n²) in heap usage; without a GC, large input needs a large mapping.
+
+Phases 10-12 pending.
 
 Owner: sentrychris + claude
 

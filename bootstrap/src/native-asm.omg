@@ -103,7 +103,7 @@ alloc HEADERS_SIZE    := 120        # ELF_HEADER_SIZE + PHDR_SIZE
 # of stack, grows downward). Separated from the native call stack so
 # function calls can use native call/ret without colliding with our
 # value discipline. 64 KB is overkill for everything we currently do.
-alloc OPERAND_STACK_SIZE := 65536
+alloc OPERAND_STACK_SIZE := 1048576
 
 # Heap region: a zero-filled chunk before the operand stack, where
 # runtime-allocated objects (lists, dicts, dynamic strings) live. r13
@@ -115,7 +115,7 @@ alloc OPERAND_STACK_SIZE := 65536
 # `except_top` slot — a single 8-byte memory location holding the
 # current top of the exception handler stack. r13 starts at heap_base
 # + 8 so user allocations don't overwrite it.
-alloc HEAP_SIZE := 1048576
+alloc HEAP_SIZE := 2147483648
 
 # Exception-handler stack region: grows upward from a base just past
 # the operand stack. Each handler record is 40 bytes:
@@ -744,6 +744,75 @@ proc emit_rt_emit_int() {
     return entry
 }
 
+# rt_int_to_string(rax = tagged int) → rax = freshly-allocated heap
+# string of the decimal representation. Used by rt_concat to coerce
+# int operands before string concatenation (compiler.omg, vm.omg, and
+# similar code use `"line " + n` patterns that the C runtime handles
+# via omg_value_to_cstr).
+proc emit_rt_int_to_string(alloc_off) {
+    alloc entry := ob_top
+    # sub rsp, 64 — buffer for digit bytes.
+    ob_bytes([72, 131, 236, 64])
+    x_sar_rax_1()                              # untag → raw int
+    # lea r9, [rsp + 64]
+    ob_bytes([76, 141, 76, 36, 64])
+    # mov r8, r9
+    ob_bytes([77, 137, 200])
+    # mov bl, 0 (sign flag)
+    ob_bytes([179, 0])
+    # test rax, rax
+    ob_bytes([72, 133, 192])
+    # jns +5 (skip neg + flag)
+    ob_bytes([121, 5])
+    x_neg_rax()
+    # mov bl, 1
+    ob_bytes([179, 1])
+    # digit loop
+    alloc loop_start := ob_top
+    x_mov_imm32(REG_RCX, 10)
+    x_xor_rdx_rdx()
+    ob_bytes([72, 247, 241])                   # div rcx
+    ob_bytes([128, 194, 48])                   # add dl, '0'
+    ob_bytes([73, 255, 200])                   # dec r8
+    ob_bytes([65, 136, 16])                    # mov [r8], dl
+    ob_bytes([72, 133, 192])                   # test rax, rax
+    ob_byte(117)                                # jnz loop_start
+    alloc back := loop_start - (ob_top + 1)
+    ob_byte(back & 255)
+    # Sign prefix
+    ob_bytes([132, 219])                       # test bl, bl
+    ob_bytes([116, 7])                         # jz +7
+    ob_bytes([73, 255, 200])                   # dec r8
+    ob_bytes([65, 198, 0, 45])                 # mov byte [r8], '-'
+    # Length = r9 - r8.
+    ob_bytes([76, 137, 202])                   # mov rdx, r9
+    ob_bytes([76, 41, 194])                    # sub rdx, r8
+    # Save state across rt_alloc.
+    ob_byte(82)                                 # push rdx (length)
+    ob_bytes([65, 80])                          # push r8 (start)
+    # Compute alloc size: (length + 24) & -8.
+    ob_bytes([72, 137, 208])                   # mov rax, rdx
+    ob_bytes([72, 131, 192, 24])               # add rax, 24
+    ob_bytes([72, 131, 224, 248])              # and rax, -8
+    alloc s_alloc := x_call_rel32_patchable()
+    patch_call_rel32(s_alloc, alloc_off)
+    ob_bytes([65, 88])                         # pop r8 (start)
+    ob_byte(90)                                # pop rdx (length)
+    # Write header [type=0, length].
+    ob_bytes([72, 199, 0, 0, 0, 0, 0])         # mov qword [rax], 0
+    ob_bytes([72, 137, 80, 8])                 # mov [rax + 8], rdx
+    # Copy digits: rsi = src (r8), rdi = rax + 16, rcx = length.
+    ob_bytes([76, 137, 198])                   # mov rsi, r8
+    ob_bytes([72, 141, 120, 16])               # lea rdi, [rax + 16]
+    ob_bytes([72, 137, 209])                   # mov rcx, rdx
+    ob_bytes([243, 164])                       # rep movsb
+    ob_bytes([198, 7, 0])                      # mov byte [rdi], 0 (NUL)
+    # Restore native stack.
+    ob_bytes([72, 131, 196, 64])
+    x_ret()
+    return entry
+}
+
 # Write the [u64 length, bytes...] structure pointed to by rax, then a
 # trailing newline byte (allocated on the native stack briefly).
 proc emit_rt_emit_str() {
@@ -798,6 +867,19 @@ proc emit_rt_alloc() {
 # Clobbers: rcx, rdx, rsi, rdi, r8
 proc emit_rt_slice(alloc_off) {
     alloc entry := ob_top
+    # Normalise TAG_NONE → defaults. Open-ended slices `xs[:]` arrive
+    # here as start=TAG_NONE (=6) / end=TAG_NONE; the runtime treats
+    # start=NONE as 0 and end=NONE as length(container). Without this
+    # fix, sar treats TAG_NONE (6) as `3`, producing a negative length
+    # in rdx and a runaway rep movsb that segfaults.
+    ob_bytes([186, 1, 0, 0, 0])              # mov edx, 1 (tagged 0 for start)
+    ob_bytes([72, 131, 251, 6])              # cmp rbx, 6 (TAG_NONE)
+    ob_bytes([72, 15, 68, 218])              # cmove rbx, rdx
+    ob_bytes([72, 139, 80, 8])               # mov rdx, [rax + 8] (raw length)
+    ob_bytes([72, 209, 226])                 # shl rdx, 1
+    ob_bytes([72, 131, 202, 1])              # or rdx, 1 (tag length as int)
+    ob_bytes([72, 131, 249, 6])              # cmp rcx, 6
+    ob_bytes([72, 15, 68, 202])              # cmove rcx, rdx
     # Untag start/end.
     x_sar_rbx_1()
     # sar rcx, 1 — 48 d1 f9
@@ -909,15 +991,22 @@ proc emit_rt_slice(alloc_off) {
 }
 
 # INDEX dispatcher. Routes by container type:
-#   type=1 (list)  → inline [container + 24 + index*8]
-#   type=2 (dict)  → tail call to rt_dict_get
+#   type=0 (string) → byte-load, return as 1-char heap string
+#   type=1 (list)   → inline [container + 24 + index*8]
+#   type=2 (dict)   → tail call to rt_dict_get
 #
-# Input:  rax = container, rbx = key (tagged int for list, ptr for dict)
+# Input:  rax = container, rbx = key (tagged int for list/str, ptr for dict)
 # Output: rax = value
-proc emit_rt_index(dict_get_off) {
+proc emit_rt_index(dict_get_off, alloc_off) {
     alloc entry := ob_top
     # mov rcx, [rax]
     ob_bytes([72, 139, 8])
+    # cmp rcx, 0 — 48 83 f9 00 (string?)
+    ob_bytes([72, 131, 249, 0])
+    # je .str
+    ob_byte(116)
+    alloc je_str := ob_top
+    ob_byte(0)
     # cmp rcx, 1 — 48 83 f9 01
     ob_bytes([72, 131, 249, 1])
     # je .list (rel8 placeholder)
@@ -930,7 +1019,7 @@ proc emit_rt_index(dict_get_off) {
     ob_byte(116)
     alloc je_dict := ob_top
     ob_byte(0)
-    # panic (exit 3)
+    # panic (exit 3) — non-indexable container.
     x_mov_imm32(REG_RAX, 60)
     x_mov_imm32(REG_RDI, 3)
     x_syscall()
@@ -948,6 +1037,28 @@ proc emit_rt_index(dict_get_off) {
     ob_patch_u8(je_dict, ob_top - (je_dict + 1))
     alloc s := x_jmp_rel32_patchable()
     patch_rel32(s, dict_get_off)
+    # .str — load byte at [rax + 16 + idx], allocate a fresh 1-char string.
+    # Layout matches every other heap string: [type=0][len=8B][bytes...][NUL][pad].
+    # alloc size = (1 + 24) & -8 = 24 bytes (header 16 + 1 byte char + 7 pad).
+    ob_patch_u8(je_str, ob_top - (je_str + 1))
+    # sar rbx, 1 — untag index
+    ob_bytes([72, 209, 251])
+    # movzx edx, byte [rax + 16 + rbx] — 0f b6 54 18 10
+    ob_bytes([15, 182, 84, 24, 16])
+    # mov rax, 24 (size)
+    x_mov_imm32(REG_RAX, 24)
+    # call rt_alloc (rdx preserved across alloc — alloc only clobbers rcx + r13).
+    alloc s2 := x_call_rel32_patchable()
+    patch_call_rel32(s2, alloc_off)
+    # mov qword [rax], 0 — type=0 (string). 48 c7 00 00 00 00 00
+    ob_bytes([72, 199, 0, 0, 0, 0, 0])
+    # mov qword [rax+8], 1 — length=1. 48 c7 40 08 01 00 00 00
+    ob_bytes([72, 199, 64, 8, 1, 0, 0, 0])
+    # mov [rax+16], dl — 88 50 10
+    ob_bytes([136, 80, 16])
+    # mov byte [rax+17], 0 — NUL terminator. c6 40 11 00
+    ob_bytes([198, 64, 17, 0])
+    x_ret()
     return entry
 }
 
@@ -969,7 +1080,7 @@ proc emit_rt_store_index(dict_set_off) {
     ob_byte(116)
     alloc je_dict := ob_top
     ob_byte(0)
-    # panic
+    # panic (exit 3).
     x_mov_imm32(REG_RAX, 60)
     x_mov_imm32(REG_RDI, 3)
     x_syscall()
@@ -1222,17 +1333,63 @@ proc emit_rt_file_read(alloc_off) {
     return entry
 }
 
-# rt_file_write(rax = tagged fd, rbx = data string) → tagged bytes-written.
-proc emit_rt_file_write() {
+# rt_file_write(rax = tagged fd, rbx = data) → tagged bytes-written.
+# Accepts either a string (type=0; existing path) or a list of bytes
+# (type=1) — the latter is how compiler.omg's wb_buf hands serialised
+# bytecode to disk. List path materialises a temp byte buffer in heap
+# (each tagged int → its low byte) then sys_writes it.
+proc emit_rt_file_write(alloc_off) {
     alloc entry := ob_top
+    # Type-dispatch.
+    ob_bytes([72, 139, 11])                  # mov rcx, [rbx]
+    ob_bytes([72, 133, 201])                 # test rcx, rcx
+    ob_byte(117)                              # jne .list_path
+    alloc jne_list := ob_top
+    ob_byte(0)
+    # === STRING PATH ===
     x_sar_rax_1()
-    # mov rdi, rax (fd)
-    ob_bytes([72, 137, 199])
-    # lea rsi, [rbx + 16]
-    ob_bytes([72, 141, 115, 16])
-    # mov rdx, [rbx + 8] (length)
-    ob_bytes([72, 139, 83, 8])
+    ob_bytes([72, 137, 199])                 # mov rdi, rax (fd)
+    ob_bytes([72, 141, 115, 16])             # lea rsi, [rbx + 16]
+    ob_bytes([72, 139, 83, 8])               # mov rdx, [rbx + 8] (length)
     x_mov_imm32(REG_RAX, 1)                  # sys_write
+    x_syscall()
+    x_sal_rax_1()
+    x_or_rax_imm8(1)
+    x_ret()
+    # === LIST PATH ===
+    ob_patch_u8(jne_list, ob_top - (jne_list + 1))
+    ob_bytes([73, 137, 194])                 # mov r10, rax (saved fd)
+    ob_bytes([72, 139, 67, 8])               # mov rax, [rbx + 8] (length)
+    ob_bytes([72, 131, 192, 23])             # add rax, 23
+    ob_bytes([72, 131, 224, 248])            # and rax, -8
+    alloc s_alloc := x_call_rel32_patchable()
+    patch_call_rel32(s_alloc, alloc_off)
+    ob_bytes([73, 137, 195])                 # mov r11, rax (buffer ptr)
+    ob_bytes([72, 139, 75, 8])               # mov rcx, [rbx + 8] (length, count)
+    ob_bytes([72, 133, 201])                 # test rcx, rcx
+    ob_byte(116)                              # je .write
+    alloc je_write := ob_top
+    ob_byte(0)
+    ob_bytes([72, 141, 115, 24])             # lea rsi, [rbx + 24]
+    ob_bytes([72, 137, 199])                 # mov rdi, rax (dst)
+    # .copy loop
+    alloc copy_top := ob_top
+    ob_bytes([72, 139, 22])                  # mov rdx, [rsi]
+    ob_bytes([72, 209, 250])                 # sar rdx, 1
+    ob_bytes([136, 23])                      # mov [rdi], dl
+    ob_bytes([72, 131, 198, 8])              # add rsi, 8
+    ob_bytes([72, 255, 199])                 # inc rdi
+    ob_bytes([72, 255, 201])                 # dec rcx
+    ob_byte(117)                              # jnz copy_top
+    ob_byte((copy_top - (ob_top + 1)) & 255)
+    # .write
+    ob_patch_u8(je_write, ob_top - (je_write + 1))
+    ob_bytes([76, 137, 208])                 # mov rax, r10 (tagged fd)
+    x_sar_rax_1()
+    ob_bytes([72, 137, 199])                 # mov rdi, rax (fd)
+    ob_bytes([76, 137, 222])                 # mov rsi, r11 (buf)
+    ob_bytes([72, 139, 83, 8])               # mov rdx, [rbx + 8] (length)
+    x_mov_imm32(REG_RAX, 1)
     x_syscall()
     x_sal_rax_1()
     x_or_rax_imm8(1)
@@ -1419,29 +1576,59 @@ proc emit_rt_arith_full_numeric(promote_off, box_off, op_byte_a, op_byte_b, op_b
 # non-int-int combinations promote-and-add as floats.
 proc emit_rt_add_full(promote_off, box_off, concat_off) {
     alloc entry := ob_top
-    # If both operands are heap (LSB=0 on both) AND lhs's type isn't
-    # float, defer to rt_concat.
+    # First check: if EITHER operand is a heap string (type=0) or
+    # heap list (type=1), defer to rt_concat. concat dispatches by
+    # lhs type, so we need to make sure lhs is the string/list. If
+    # lhs is int/float and rhs is string/list, swap them via the
+    # mismatch path — but for now, just delegate to concat which
+    # will type-check.
     ob_bytes([168, 1])                       # test al, 1
-    ob_byte(117)
-    alloc jnz_skip := ob_top
+    ob_byte(117)                              # jnz .check_rhs (lhs is int → maybe rhs is string)
+    alloc jnz_check_rhs := ob_top
     ob_byte(0)
-    ob_bytes([246, 195, 1])                  # test bl, 1
-    ob_byte(117)
-    alloc jnz_skip2 := ob_top
+    # lhs is heap. Check type.
+    ob_bytes([72, 131, 248, 7])              # cmp rax, 7 (sentinel guard)
+    ob_byte(118)                              # jbe .float_path (sentinel → not addable; let float path produce error)
+    alloc jbe_float1 := ob_top
     ob_byte(0)
-    # Both heap. Check lhs type.
     ob_bytes([72, 139, 8])                   # mov rcx, [rax]
-    ob_bytes([72, 131, 249, 5])              # cmp rcx, HEAP_T_FLOAT
-    ob_byte(116)
-    alloc je_promote := ob_top
+    ob_bytes([72, 131, 249, 5])              # cmp rcx, 5 (HEAP_T_FLOAT)
+    ob_byte(116)                              # je .float_path
+    alloc je_float1 := ob_top
     ob_byte(0)
-    # lhs is non-float heap (string/list); defer to rt_concat.
-    alloc s_c := x_jmp_rel32_patchable()
-    patch_rel32(s_c, concat_off)
-    # je_promote target: fall through to promote+addsd+box.
-    ob_patch_u8(je_promote, ob_top - (je_promote + 1))
-    ob_patch_u8(jnz_skip,   ob_top - (jnz_skip + 1))
-    ob_patch_u8(jnz_skip2,  ob_top - (jnz_skip2 + 1))
+    # lhs is heap, non-sentinel, non-float → string or list → concat.
+    alloc s_c1 := x_jmp_rel32_patchable()
+    patch_rel32(s_c1, concat_off)
+    # .check_rhs — lhs is int; what about rhs?
+    ob_patch_u8(jnz_check_rhs, ob_top - (jnz_check_rhs + 1))
+    ob_bytes([246, 195, 1])                  # test bl, 1
+    ob_byte(117)                              # jnz .float_path (both ints — shouldn't happen, fast path)
+    alloc jnz_float2 := ob_top
+    ob_byte(0)
+    # lhs int, rhs heap.
+    ob_bytes([72, 131, 251, 7])              # cmp rbx, 7
+    ob_byte(118)                              # jbe .float_path
+    alloc jbe_float2 := ob_top
+    ob_byte(0)
+    ob_bytes([72, 139, 11])                  # mov rcx, [rbx]
+    ob_bytes([72, 131, 249, 5])              # cmp rcx, 5
+    ob_byte(116)                              # je .float_path
+    alloc je_float2 := ob_top
+    ob_byte(0)
+    # int + string/list. rt_concat now coerces tagged-int operands to
+    # strings (via rt_int_to_string), so we can defer directly without
+    # swapping. concat dispatches by [rax] type after the coercion —
+    # rax becomes the coerced string and the order `int + string`
+    # produces `"100" + " items"` = `"100 items"` (vs. swap which
+    # would give `" items100"`).
+    alloc s_c2 := x_jmp_rel32_patchable()
+    patch_rel32(s_c2, concat_off)
+    # .float_path — numeric add via promote+addsd+box.
+    ob_patch_u8(jbe_float1, ob_top - (jbe_float1 + 1))
+    ob_patch_u8(je_float1,  ob_top - (je_float1 + 1))
+    ob_patch_u8(jnz_float2, ob_top - (jnz_float2 + 1))
+    ob_patch_u8(jbe_float2, ob_top - (jbe_float2 + 1))
+    ob_patch_u8(je_float2,  ob_top - (je_float2 + 1))
     alloc s_prom := x_call_rel32_patchable()
     patch_call_rel32(s_prom, promote_off)
     ob_bytes([242, 15, 88, 193])             # addsd xmm0, xmm1
@@ -1503,12 +1690,109 @@ proc emit_rt_to_float() {
 
 # rt_cmp_full(rax = lhs, rbx = rhs) → rax = -1/0/1.
 # Pre: at least one operand is non-int (caller's fast-path filter).
-# Promotes both to f64 via rt_promote_floats then uses ucomisd.
-# Result: -1 if lhs<rhs, 0 if equal, +1 if greater. (NaN semantics
-# defer to phase 11 — for now NaN compares as unordered which jb
-# treats as less.)
+# String fast path first (both heap, both type=0 → byte compare); the
+# float-promotion path handles numeric mixing (float-vs-float, float-
+# vs-int, int-vs-float). For mixed string-vs-other we currently fall
+# through to the float path and return whatever the promotion yields
+# — compiler.omg only compares strings to strings, so this is OK.
 proc emit_rt_cmp_full(promote_off) {
     alloc entry := ob_top
+    # Reject anything that isn't a real heap pointer on either side.
+    # LSB=1 means tagged int; values ≤ 7 are sentinels (TAG_FALSE=2,
+    # TAG_TRUE=4, TAG_NONE=6). Without the sentinel guard we'd deref
+    # `cmp [rbx],rcx` with rbx=TAG_FALSE and segfault.
+    ob_bytes([168, 1])                       # test al, 1
+    ob_byte(117)                              # jnz .floats
+    alloc jnz_floats1 := ob_top
+    ob_byte(0)
+    ob_bytes([72, 131, 248, 7])              # cmp rax, 7
+    ob_byte(118)                              # jbe .floats
+    alloc jbe_floats1 := ob_top
+    ob_byte(0)
+    ob_bytes([246, 195, 1])                  # test bl, 1
+    ob_byte(117)                              # jnz .floats
+    alloc jnz_floats2 := ob_top
+    ob_byte(0)
+    ob_bytes([72, 131, 251, 7])              # cmp rbx, 7
+    ob_byte(118)                              # jbe .floats
+    alloc jbe_floats2 := ob_top
+    ob_byte(0)
+    # Both heap pointers. Check lhs type == 0 (string).
+    ob_bytes([72, 139, 8])                   # mov rcx, [rax]
+    ob_bytes([72, 133, 201])                 # test rcx, rcx
+    ob_byte(117)                              # jnz .floats
+    alloc jnz_floats3 := ob_top
+    ob_byte(0)
+    # Check rhs is also type=0.
+    ob_bytes([72, 59, 11])                   # cmp rcx, [rbx]
+    ob_byte(117)                              # jne .floats
+    alloc jne_floats := ob_top
+    ob_byte(0)
+    # Both strings — lexicographic compare. Walk min(len_a, len_b)
+    # bytes; on mismatch, return signed (lhs_byte - rhs_byte); on
+    # exhaustion, return (len_a - len_b). This gives a signed value
+    # whose sign feeds gen_cmp_common's cmov correctly for <, <=,
+    # ==, >, >=, !=.
+    ob_bytes([72, 139, 80, 8])               # mov rdx, [rax + 8] (len_a)
+    ob_bytes([76, 139, 67, 8])               # mov r8, [rbx + 8] (len_b)
+    ob_bytes([72, 137, 209])                 # mov rcx, rdx
+    ob_bytes([76, 57, 193])                  # cmp rcx, r8
+    ob_bytes([76, 15, 79, 193])              # cmovg rcx, r8 — rcx = min(len_a, len_b)
+    ob_bytes([72, 141, 112, 16])             # lea rsi, [rax + 16]
+    ob_bytes([72, 141, 123, 16])             # lea rdi, [rbx + 16]
+    ob_bytes([243, 166])                     # repe cmpsb
+    ob_byte(116)                              # je .lengths
+    alloc je_lengths := ob_top
+    ob_byte(0)
+    # Byte mismatch — recover bytes and compute signed diff.
+    ob_bytes([72, 15, 182, 70, 255])         # movzx rax, byte [rsi - 1]
+    ob_bytes([72, 15, 182, 79, 255])         # movzx rcx, byte [rdi - 1]
+    ob_bytes([72, 41, 200])                  # sub rax, rcx
+    x_ret()
+    # .lengths — all min bytes equal; compare lengths.
+    ob_patch_u8(je_lengths, ob_top - (je_lengths + 1))
+    ob_bytes([72, 137, 208])                 # mov rax, rdx
+    ob_bytes([76, 41, 192])                  # sub rax, r8
+    x_ret()
+    # .floats — numeric body, with per-operand validation so that
+    # mixed-type comparisons (e.g. string == false) don't crash inside
+    # rt_promote_floats. Each side must be int (LSB=1) OR a heap float
+    # (type tag = 5). Anything else jumps to .mismatch where we compare
+    # by raw bit pattern (works for == / != on sentinels).
+    ob_patch_u8(jnz_floats1, ob_top - (jnz_floats1 + 1))
+    ob_patch_u8(jbe_floats1, ob_top - (jbe_floats1 + 1))
+    ob_patch_u8(jnz_floats2, ob_top - (jnz_floats2 + 1))
+    ob_patch_u8(jbe_floats2, ob_top - (jbe_floats2 + 1))
+    ob_patch_u8(jnz_floats3, ob_top - (jnz_floats3 + 1))
+    ob_patch_u8(jne_floats,  ob_top - (jne_floats + 1))
+    # Validate lhs.
+    ob_bytes([168, 1])                       # test al, 1
+    ob_byte(117)                              # jnz .lhs_ok
+    alloc jnz_lhs_ok := ob_top
+    ob_byte(0)
+    ob_bytes([72, 131, 248, 7])              # cmp rax, 7
+    ob_byte(118)                              # jbe .mismatch
+    alloc jbe_mm1 := ob_top
+    ob_byte(0)
+    ob_bytes([72, 131, 56, 5])               # cmp qword [rax], 5
+    ob_byte(117)                              # jne .mismatch
+    alloc jne_mm1 := ob_top
+    ob_byte(0)
+    ob_patch_u8(jnz_lhs_ok, ob_top - (jnz_lhs_ok + 1))
+    # Validate rhs.
+    ob_bytes([246, 195, 1])                  # test bl, 1
+    ob_byte(117)                              # jnz .rhs_ok
+    alloc jnz_rhs_ok := ob_top
+    ob_byte(0)
+    ob_bytes([72, 131, 251, 7])              # cmp rbx, 7
+    ob_byte(118)                              # jbe .mismatch
+    alloc jbe_mm2 := ob_top
+    ob_byte(0)
+    ob_bytes([72, 131, 59, 5])               # cmp qword [rbx], 5
+    ob_byte(117)                              # jne .mismatch
+    alloc jne_mm2 := ob_top
+    ob_byte(0)
+    ob_patch_u8(jnz_rhs_ok, ob_top - (jnz_rhs_ok + 1))
     alloc s := x_call_rel32_patchable()
     patch_call_rel32(s, promote_off)
     ob_bytes([102, 15, 46, 193])             # ucomisd xmm0, xmm1
@@ -1528,6 +1812,20 @@ proc emit_rt_cmp_full(promote_off) {
     ob_patch_u8(jb_less, ob_top - (jb_less + 1))
     # less: rax = -1 (= 0xffffffffffffffff via mov rax, imm32 sign-extended)
     ob_bytes([72, 199, 192, 255, 255, 255, 255])  # mov rax, -1
+    x_ret()
+    # .mismatch — different types. Bit-pattern equality only.
+    ob_patch_u8(jbe_mm1, ob_top - (jbe_mm1 + 1))
+    ob_patch_u8(jne_mm1, ob_top - (jne_mm1 + 1))
+    ob_patch_u8(jbe_mm2, ob_top - (jbe_mm2 + 1))
+    ob_patch_u8(jne_mm2, ob_top - (jne_mm2 + 1))
+    ob_bytes([72, 57, 216])                  # cmp rax, rbx
+    ob_byte(116)                              # je .mm_eq
+    alloc je_mm_eq := ob_top
+    ob_byte(0)
+    x_mov_imm32(REG_RAX, 1)
+    x_ret()
+    ob_patch_u8(je_mm_eq, ob_top - (je_mm_eq + 1))
+    ob_bytes([72, 49, 192])                  # xor rax, rax
     x_ret()
     return entry
 }
@@ -2457,8 +2755,33 @@ proc emit_rt_dict_set(str_eq_off) {
 #   type=1 (list)   → 8-byte concat via rep movsq
 # Falls through to the string path for any other type (phase 5 trusts
 # the bytecode; phase 8 will tighten with explicit type errors).
-proc emit_rt_concat(string_off, list_off) {
+proc emit_rt_concat(string_off, list_off, int_to_string_off) {
     alloc entry := ob_top
+    # Coerce int operands to string. compiler.omg's `"line " + n`
+    # idiom pushes a tagged int on one side; the C runtime handles
+    # this in omg_str_concat via omg_value_to_cstr.
+    ob_bytes([168, 1])                       # test al, 1
+    ob_byte(116)                              # je .lhs_ok
+    alloc je_lhs_ok := ob_top
+    ob_byte(0)
+    # lhs is tagged int → convert.
+    ob_byte(83)                               # push rbx
+    alloc s_lhs := x_call_rel32_patchable()
+    patch_call_rel32(s_lhs, int_to_string_off)
+    ob_byte(91)                               # pop rbx
+    ob_patch_u8(je_lhs_ok, ob_top - (je_lhs_ok + 1))
+    ob_bytes([246, 195, 1])                  # test bl, 1
+    ob_byte(116)                              # je .rhs_ok
+    alloc je_rhs_ok := ob_top
+    ob_byte(0)
+    # rhs is tagged int → convert (preserve rax across call).
+    ob_byte(80)                               # push rax
+    ob_bytes([72, 137, 216])                 # mov rax, rbx
+    alloc s_rhs := x_call_rel32_patchable()
+    patch_call_rel32(s_rhs, int_to_string_off)
+    ob_bytes([72, 137, 195])                 # mov rbx, rax
+    ob_byte(88)                               # pop rax
+    ob_patch_u8(je_rhs_ok, ob_top - (je_rhs_ok + 1))
     # mov rcx, [rax] — 48 8b 08 (type tag of lhs)
     ob_bytes([72, 139, 8])
     # cmp rcx, 1 — 48 83 f9 01
@@ -2840,6 +3163,7 @@ proc emit_rt_emit_dispatch_print(off_repr, off_newline) {
 # rt_string_concat) get their offsets stashed in globals so codegen
 # can patch the rel32s later.
 alloc rt_alloc_off          := 0
+alloc rt_int_to_string_off  := 0
 alloc rt_build_list_off     := 0
 alloc rt_concat_off         := 0
 alloc rt_slice_off          := 0
@@ -2874,9 +3198,11 @@ alloc rt_abs_off             := 0
 alloc rt_and_off             := 0
 alloc rt_or_off              := 0
 alloc rt_init_args_off       := 0
+alloc rt_init_current_dir_off := 0
 # Patch site for the imm64 that loads the `args` global slot vaddr in
 # the prologue. Resolved in finalize_elf.
 alloc args_init_slot_site    := 0
+alloc current_dir_init_slot_site := 0
 alloc rt_file_open_off       := 0
 alloc rt_file_close_off      := 0
 alloc rt_file_read_off       := 0
@@ -2927,17 +3253,18 @@ proc emit_runtime_blob() {
     alloc off_none    := emit_rt_write_static(addr_none,  4)
     # Allocator + builders.
     rt_alloc_off          := emit_rt_alloc()
+    rt_int_to_string_off  := emit_rt_int_to_string(rt_alloc_off)
     rt_build_list_off     := emit_rt_build_list(rt_alloc_off)
     alloc str_concat_off  := emit_rt_string_concat(rt_alloc_off)
     alloc list_concat_off := emit_rt_list_concat(rt_alloc_off)
-    rt_concat_off         := emit_rt_concat(str_concat_off, list_concat_off)
+    rt_concat_off         := emit_rt_concat(str_concat_off, list_concat_off, rt_int_to_string_off)
     rt_slice_off          := emit_rt_slice(rt_alloc_off)
     rt_build_dict_off     := emit_rt_build_dict(rt_alloc_off)
     # Dict get/set need string equality.
     alloc str_eq_off      := emit_rt_str_eq()
     rt_dict_get_off       := emit_rt_dict_get(str_eq_off)
     rt_dict_set_off       := emit_rt_dict_set(str_eq_off)
-    rt_index_off          := emit_rt_index(rt_dict_get_off)
+    rt_index_off          := emit_rt_index(rt_dict_get_off, rt_alloc_off)
     rt_store_index_off    := emit_rt_store_index(rt_dict_set_off)
     # Exception helpers (phase 7).
     rt_setup_except_off   := emit_rt_setup_except()
@@ -2968,11 +3295,12 @@ proc emit_runtime_blob() {
     rt_and_off            := emit_rt_and()
     rt_or_off             := emit_rt_or()
     rt_init_args_off      := emit_rt_init_args(rt_alloc_off)
+    rt_init_current_dir_off := emit_rt_init_current_dir(rt_alloc_off)
     # File I/O helpers (phase 8c).
     rt_file_open_off      := emit_rt_file_open()
     rt_file_close_off     := emit_rt_file_close()
     rt_file_read_off      := emit_rt_file_read(rt_alloc_off)
-    rt_file_write_off     := emit_rt_file_write()
+    rt_file_write_off     := emit_rt_file_write(rt_alloc_off)
     rt_file_exists_off    := emit_rt_file_exists()
     rt_read_file_off      := emit_rt_read_file(rt_alloc_off)
     # Mutually-recursive list/dict emitters ↔ repr dispatcher.
@@ -3645,6 +3973,42 @@ proc emit_rt_init_args(alloc_off) {
     ob_byte(124)                              # jl loop_start
     ob_byte((loop_start - (ob_top + 1)) & 255)
     ob_patch_u8(jz_done, ob_top - (jz_done + 1))
+    x_ret()
+    return entry
+}
+
+# rt_init_current_dir(rdi = slot vaddr) — call sys_getcwd, build a heap
+# string from the result, store the string ptr in the slot. compiler.omg
+# uses `current_dir` to resolve relative paths into absolute paths so
+# `.omgb` source-file tables stay deterministic across CWD changes.
+proc emit_rt_init_current_dir(alloc_off) {
+    alloc entry := ob_top
+    # Save slot vaddr.
+    ob_byte(87)                              # push rdi
+    # Allocate buffer of (4096 + 24) = 4120 bytes (already %8). The
+    # string contents go at offset 16.
+    x_mov_imm32(REG_RAX, 4120)
+    alloc s_alloc := x_call_rel32_patchable()
+    patch_call_rel32(s_alloc, alloc_off)
+    ob_byte(95)                              # pop rdi (slot)
+    # Save heap ptr + slot across syscall.
+    ob_byte(80)                              # push rax (heap ptr)
+    ob_byte(87)                              # push rdi (slot)
+    # sys_getcwd(buf+16, 4096): rdi = rax+16, rsi = 4096, rax = 79.
+    ob_bytes([72, 141, 120, 16])             # lea rdi, [rax + 16]
+    x_mov_imm32(REG_RSI, 4096)
+    x_mov_imm32(REG_RAX, 79)
+    x_syscall()
+    # rax = length+1 (including NUL). Subtract 1 for char count.
+    ob_bytes([72, 255, 200])                 # dec rax
+    ob_bytes([72, 137, 194])                 # mov rdx, rax (length)
+    ob_byte(95)                              # pop rdi (slot)
+    ob_byte(88)                              # pop rax (heap ptr)
+    # Write header [type=0, length].
+    ob_bytes([72, 199, 0, 0, 0, 0, 0])       # mov qword [rax], 0
+    ob_bytes([72, 137, 80, 8])               # mov [rax + 8], rdx
+    # Store string ptr in slot.
+    ob_bytes([72, 137, 7])                   # mov [rdi], rax
     x_ret()
     return entry
 }
@@ -4693,6 +5057,8 @@ proc finalize_elf(entry_vaddr, r15_init_site, r13_init_site) {
     # where slot_index is whatever globals_slot("args") returned.
     alloc args_slot_idx := globals_slot("args")
     patch_u64(args_init_slot_site, globals_base_vaddr + args_slot_idx * 8)
+    alloc cd_slot_idx := globals_slot("current_dir")
+    patch_u64(current_dir_init_slot_site, globals_base_vaddr + cd_slot_idx * 8)
     # Patch every except helper's `mov rcx, imm64 (slot_addr)` site.
     alloc esi := 0
     alloc esn := length(except_slot_patch_sites)
@@ -4807,6 +5173,14 @@ proc main_compile() {
     ob_u64(0)
     alloc s_init := x_call_rel32_patchable()
     patch_call_rel32(s_init, rt_init_args_off)
+    # Initialise the `current_dir` global similarly. compiler.omg and
+    # vm.omg use this to canonicalise relative paths.
+    globals_slot("current_dir")
+    ob_bytes([72, 191])
+    current_dir_init_slot_site := ob_top
+    ob_u64(0)
+    alloc s_cd := x_call_rel32_patchable()
+    patch_call_rel32(s_cd, rt_init_current_dir_off)
     # 4. Emit user code (top-level + each function body).
     fn_entry := []
     fn_call_patches := []
