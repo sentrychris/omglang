@@ -16,7 +16,7 @@ if [ ! -x "$OMGNA_NATIVE" ]; then
     exit 2
 fi
 
-section "native-asm (omgna): phases 1-8 (subset)"
+section "native-asm (omgna): phases 1-8 (incl. floats)"
 
 # Round-trip a .omg through omgc + omgna and compare ./<bin> stdout
 # against the Rust runtime's output for the same source.
@@ -177,6 +177,16 @@ assert_omgna "bi_string_bytes"   $';;;omg\nemit string_bytes("ABC")'
 assert_omgna "bi_bytes_to_str"   $';;;omg\nemit bytes_to_string([72, 105])'
 assert_omgna "bi_int_parse"      $';;;omg\nemit int("42")\nemit int("-7")\nemit int("0")'
 assert_omgna "bi_freeze"         $';;;omg\nalloc d := {"k": 42}\nalloc f := freeze(d)\nemit f["k"]'
+
+# === Phase 8b: floats ===
+assert_omgna "float_push"        $';;;omg\nemit 1.0\nemit 1.5\nemit -0.5'
+assert_omgna "float_add"         $';;;omg\nemit 1.0 + 2.5\nemit 0.5 + 0.5'
+assert_omgna "float_sub"         $';;;omg\nemit 5.0 - 3.0\nemit 1.5 - 0.5'
+assert_omgna "float_mul"         $';;;omg\nemit 2.0 * 3.5\nemit 1.5 * 4.0'
+assert_omgna "float_div"         $';;;omg\nemit 10.0 / 4.0\nemit 1.0 / 2.0'
+assert_omgna "float_mixed"       $';;;omg\nemit 1.0 + 2\nemit 5 - 0.5\nemit 2 * 1.5'
+assert_omgna "float_neg"         $';;;omg\nemit 0.0 - 1.5\nemit 0.0 - -1.5'
+assert_omgna "ints_still_work"   $';;;omg\nemit 1 + 2\nemit 6 * 7\nemit 100 / 7'
 
 # Binary should be a real statically-linked ELF, no libc dependency.
 elf="$TMPDIR_TEST/na-hello_world"
