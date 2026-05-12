@@ -16,7 +16,7 @@ if [ ! -x "$OMGNA_NATIVE" ]; then
     exit 2
 fi
 
-section "native-asm (omgna): phases 1-7"
+section "native-asm (omgna): phases 1-8 (subset)"
 
 # Round-trip a .omg through omgc + omgna and compare ./<bin> stdout
 # against the Rust runtime's output for the same source.
@@ -168,6 +168,16 @@ assert_omgna "nested_try"        $';;;omg\ntry {\n    try { panic("inner") } exc
 assert_omgna "try_in_loop"       $';;;omg\nalloc i := 0\nloop i < 5 {\n    try {\n        if i == 2 { panic("two") }\n        emit i\n    } except {\n        emit "skipped two"\n    }\n    i := i + 1\n}'
 assert_omgna "raise_msg"         $';;;omg\ntry {\n    raise("explicit")\n} except {\n    emit "caught explicit"\n}'
 
+# === Phase 8: builtins ===
+assert_omgna "bi_ascii"          $';;;omg\nemit ascii("A")\nemit ascii("a")\nemit ascii("0")'
+assert_omgna "bi_chr"            $';;;omg\nemit chr(65)\nemit chr(97)\nemit chr(48)'
+assert_omgna "bi_print"          $';;;omg\nprint("hello ")\nprint("world")\nemit ""'
+assert_omgna "bi_list_repeat"    $';;;omg\nemit list_repeat(0, 5)\nemit list_repeat("x", 3)'
+assert_omgna "bi_string_bytes"   $';;;omg\nemit string_bytes("ABC")'
+assert_omgna "bi_bytes_to_str"   $';;;omg\nemit bytes_to_string([72, 105])'
+assert_omgna "bi_int_parse"      $';;;omg\nemit int("42")\nemit int("-7")\nemit int("0")'
+assert_omgna "bi_freeze"         $';;;omg\nalloc d := {"k": 42}\nalloc f := freeze(d)\nemit f["k"]'
+
 # Binary should be a real statically-linked ELF, no libc dependency.
 elf="$TMPDIR_TEST/na-hello_world"
 if file "$elf" 2>/dev/null | grep -q "ELF 64-bit LSB executable, x86-64.*statically linked"; then
@@ -178,10 +188,11 @@ fi
 
 # Hello-world ELF size — the runtime blob grows as we add helpers
 # (alloc, list build, concat, slice, list-aware repr dispatcher, etc).
-# Bumped to 2 KB at phase 5d when list_concat + slice landed.
+# Bumped to 2 KB at phase 5d, 3 KB at phase 8 when the builtin
+# helpers (chr / list_repeat / dict_keys / etc) landed.
 size=$(wc -c < "$elf")
-if [ "$size" -lt 2048 ]; then
-    pass "hello-world ELF is <2 KB ($size bytes)"
+if [ "$size" -lt 3072 ]; then
+    pass "hello-world ELF is <3 KB ($size bytes)"
 else
-    fail "hello-world ELF is <2 KB" "size: $size bytes"
+    fail "hello-world ELF is <3 KB" "size: $size bytes"
 fi

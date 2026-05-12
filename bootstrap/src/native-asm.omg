@@ -974,6 +974,289 @@ proc emit_rt_store_index(dict_set_off) {
 # whose imm64 is recorded in except_slot_patch_sites and resolved by
 # finalize_elf once heap_base is known.
 
+# === Phase 8 — builtins =================================================
+# A grab-bag of small helpers, one per non-trivial builtin. Each takes
+# its argument(s) from registers (the gen_builtin caller pops the
+# operand stack into the expected registers and pushes the result).
+
+# rt_chr(rax = tagged int) → rax = heap string of length 1 containing
+# that byte. Allocates 17 bytes (16 header + 1 data), then a small
+# round-up pad happens in rt_alloc-aware sites elsewhere.
+proc emit_rt_chr(alloc_off) {
+    alloc entry := ob_top
+    # sar rax, 1  (untag)
+    x_sar_rax_1()
+    # push rax  (save byte value)
+    ob_byte(80)
+    # mov rax, 24  (16 hdr + 1 byte rounded up to 8 for cleanliness)
+    x_mov_imm32(REG_RAX, 24)
+    alloc s := x_call_rel32_patchable()
+    patch_call_rel32(s, alloc_off)
+    # pop rcx  (byte value)
+    ob_byte(89)
+    # mov qword [rax], 0  (type = string)
+    ob_bytes([72, 199, 0, 0, 0, 0, 0])
+    # mov qword [rax + 8], 1  (length = 1) — 48 c7 40 08 01 00 00 00
+    ob_bytes([72, 199, 64, 8, 1, 0, 0, 0])
+    # mov [rax + 16], cl  — 88 48 10
+    ob_bytes([136, 72, 16])
+    x_ret()
+    return entry
+}
+
+# rt_list_repeat(rax = item, rcx = count untagged) → rax = list ptr
+# of N items all set to the same value.
+proc emit_rt_list_repeat(alloc_off) {
+    alloc entry := ob_top
+    # Save item and count on native stack.
+    ob_byte(80)                          # push rax (item)
+    ob_byte(81)                          # push rcx (count)
+    # Compute size = 24 + count*8
+    # mov rax, rcx — 48 89 c8
+    ob_bytes([72, 137, 200])
+    # shl rax, 3 — 48 c1 e0 03
+    ob_bytes([72, 193, 224, 3])
+    # add rax, 24 — 48 83 c0 18
+    ob_bytes([72, 131, 192, 24])
+    alloc s := x_call_rel32_patchable()
+    patch_call_rel32(s, alloc_off)
+    # pop rcx (count); pop rdx (item)
+    ob_byte(89)
+    ob_byte(90)
+    # Write header [type=1, length, capacity]
+    ob_bytes([72, 199, 0, 1, 0, 0, 0])
+    # mov [rax + 8], rcx
+    ob_bytes([72, 137, 72, 8])
+    # mov [rax + 16], rcx
+    ob_bytes([72, 137, 72, 16])
+    # If count == 0 we're done.
+    ob_bytes([72, 133, 201])              # test rcx, rcx
+    ob_byte(116)                          # jz forward
+    alloc jz_site := ob_top
+    ob_byte(0)
+    # Loop: i = 0; while i < count: [rax + 24 + i*8] = rdx; i++
+    ob_bytes([72, 49, 246])               # xor rsi, rsi (i = 0)
+    alloc loop_start := ob_top
+    # mov [rax + 24 + rsi*8], rdx
+    # ModR/M: mod=01, reg=010(rdx), rm=100(SIB) → 0x54
+    # SIB:    scale=11 (×8), index=110(rsi), base=000(rax) → 0xf0
+    # disp8 = 24
+    ob_bytes([72, 137, 84, 240, 24])
+    # inc rsi — 48 ff c6
+    ob_bytes([72, 255, 198])
+    # cmp rsi, rcx — 48 39 ce
+    ob_bytes([72, 57, 206])
+    # jl loop_start (rel8 backward)
+    ob_byte(124)
+    ob_byte((loop_start - (ob_top + 1)) & 255)
+    ob_patch_u8(jz_site, ob_top - (jz_site + 1))
+    x_ret()
+    return entry
+}
+
+# rt_dict_keys(rax = dict ptr) → rax = list of keys.
+proc emit_rt_dict_keys(alloc_off) {
+    alloc entry := ob_top
+    # mov rcx, [rax + 8]  (length)
+    ob_bytes([72, 139, 72, 8])
+    # mov r8, rax  (save dict)
+    ob_bytes([73, 137, 192])
+    ob_byte(81)                           # push rcx
+    # alloc size = 24 + length*8
+    # mov rax, rcx; shl rax, 3; add rax, 24
+    ob_bytes([72, 137, 200])
+    ob_bytes([72, 193, 224, 3])
+    ob_bytes([72, 131, 192, 24])
+    alloc s := x_call_rel32_patchable()
+    patch_call_rel32(s, alloc_off)
+    ob_byte(89)                           # pop rcx
+    # Header
+    ob_bytes([72, 199, 0, 1, 0, 0, 0])
+    ob_bytes([72, 137, 72, 8])
+    ob_bytes([72, 137, 72, 16])
+    # Copy keys: for i in [0, length): list[i] = dict.entry[i].key
+    ob_bytes([72, 133, 201])              # test rcx, rcx
+    ob_byte(116)
+    alloc jz_site := ob_top
+    ob_byte(0)
+    ob_bytes([72, 49, 246])               # xor rsi, rsi (i = 0)
+    alloc loop_start := ob_top
+    # entry i at [r8 + 24 + i*16]. i*16 = i<<4 (scale 8 max, so do
+    # *8 SIB and then add another i*8 explicitly via lea/shl).
+    # Simpler: rdi = i*16; rdi = i<<4.
+    # mov rdi, rsi; shl rdi, 4
+    ob_bytes([72, 137, 247])              # mov rdi, rsi
+    ob_bytes([72, 193, 231, 4])           # shl rdi, 4
+    # rdx = [r8 + rdi + 24]  (key field)
+    # ModR/M: mod=01, reg=010(rdx), rm=100(SIB) → 0x54
+    # SIB:    scale=00, index=111(rdi), base=000(r8 with REX.B) → 0x38
+    # REX: W + B = 49 (no X needed since rdi is low-8)
+    ob_bytes([73, 139, 84, 56, 24])
+    # mov [rax + rsi*8 + 24], rdx
+    # SIB: scale=11, index=110(rsi), base=000(rax) → 0xf0
+    ob_bytes([72, 137, 84, 240, 24])
+    ob_bytes([72, 255, 198])              # inc rsi
+    ob_bytes([72, 57, 206])               # cmp rsi, rcx
+    ob_byte(124)
+    ob_byte((loop_start - (ob_top + 1)) & 255)
+    ob_patch_u8(jz_site, ob_top - (jz_site + 1))
+    x_ret()
+    return entry
+}
+
+# rt_bytes_to_string(rax = list of tagged ints) → rax = string ptr.
+# Each list element's low 8 bits become a byte in the new string.
+proc emit_rt_bytes_to_string(alloc_off) {
+    alloc entry := ob_top
+    ob_bytes([72, 139, 72, 8])            # mov rcx, [rax + 8]
+    ob_bytes([73, 137, 192])              # mov r8, rax
+    ob_byte(81)                           # push rcx
+    # size = 16 + length, rounded to 8
+    ob_bytes([72, 137, 200])              # mov rax, rcx
+    ob_bytes([72, 131, 192, 23])          # add rax, 23
+    ob_bytes([72, 131, 224, 248])         # and rax, -8
+    alloc s := x_call_rel32_patchable()
+    patch_call_rel32(s, alloc_off)
+    ob_byte(89)                           # pop rcx
+    ob_bytes([72, 199, 0, 0, 0, 0, 0])    # type = 0
+    ob_bytes([72, 137, 72, 8])            # length
+    # Loop over list elements
+    ob_bytes([72, 133, 201])              # test rcx, rcx
+    ob_byte(116)
+    alloc jz_site := ob_top
+    ob_byte(0)
+    ob_bytes([72, 49, 246])               # xor rsi, rsi
+    alloc loop_start := ob_top
+    # rdi = [r8 + 24 + rsi*8] (tagged int)
+    # ModR/M: mod=01, reg=111(rdi), rm=100(SIB) → 0x7c
+    # SIB:    scale=11 (×8), index=110(rsi), base=000(r8+REX.B) → 0xf0
+    ob_bytes([73, 139, 124, 240, 24])
+    # sar rdi, 1 — 48 d1 ff
+    ob_bytes([72, 209, 255])
+    # mov [rax + rsi + 16], dil
+    # REX: 40 (need REX so dil is dil and not bh)
+    # 88 = mov r/m8, r8
+    # ModR/M: mod=01, reg=111(dil), rm=100(SIB) → 0x7c
+    # SIB:    scale=00, index=110(rsi), base=000(rax) → 0x30
+    # disp8 = 16
+    ob_bytes([64, 136, 124, 48, 16])
+    ob_bytes([72, 255, 198])              # inc rsi
+    ob_bytes([72, 57, 206])               # cmp rsi, rcx
+    ob_byte(124)
+    ob_byte((loop_start - (ob_top + 1)) & 255)
+    ob_patch_u8(jz_site, ob_top - (jz_site + 1))
+    x_ret()
+    return entry
+}
+
+# rt_string_bytes(rax = string ptr) → rax = list of tagged ints.
+# Each byte of the string becomes a tagged int element.
+proc emit_rt_string_bytes(alloc_off) {
+    alloc entry := ob_top
+    ob_bytes([72, 139, 72, 8])            # mov rcx, [rax + 8] (length)
+    ob_bytes([73, 137, 192])              # mov r8, rax
+    ob_byte(81)                           # push rcx
+    ob_bytes([72, 137, 200])              # mov rax, rcx
+    ob_bytes([72, 193, 224, 3])           # shl rax, 3
+    ob_bytes([72, 131, 192, 24])          # add rax, 24
+    alloc s := x_call_rel32_patchable()
+    patch_call_rel32(s, alloc_off)
+    ob_byte(89)                           # pop rcx
+    ob_bytes([72, 199, 0, 1, 0, 0, 0])    # type=1
+    ob_bytes([72, 137, 72, 8])
+    ob_bytes([72, 137, 72, 16])
+    ob_bytes([72, 133, 201])              # test rcx, rcx
+    ob_byte(116)
+    alloc jz_site := ob_top
+    ob_byte(0)
+    ob_bytes([72, 49, 246])               # xor rsi, rsi
+    alloc loop_start := ob_top
+    # movzx rdi, byte [r8 + rsi + 16]
+    # 49 0f b6 7c 30 10:
+    # 49 REX.W + REX.B
+    # 0f b6 movzx
+    # ModR/M: mod=01, reg=111(rdi), rm=100(SIB) → 0x7c
+    # SIB:    scale=00, index=110(rsi), base=000(r8+B) → 0x30
+    ob_bytes([73, 15, 182, 124, 48, 16])
+    # shl rdi, 1; or rdi, 1
+    ob_bytes([72, 209, 231])              # shl rdi, 1
+    ob_bytes([72, 131, 207, 1])           # or rdi, 1
+    # mov [rax + rsi*8 + 24], rdi
+    # ModR/M: mod=01, reg=111(rdi), rm=100(SIB) → 0x7c
+    # SIB:    scale=11, index=110(rsi), base=000(rax) → 0xf0
+    ob_bytes([72, 137, 124, 240, 24])
+    ob_bytes([72, 255, 198])
+    ob_bytes([72, 57, 206])
+    ob_byte(124)
+    ob_byte((loop_start - (ob_top + 1)) & 255)
+    ob_patch_u8(jz_site, ob_top - (jz_site + 1))
+    x_ret()
+    return entry
+}
+
+# rt_str_to_int(rax = string ptr) → rax = tagged int.
+# Parses a base-10 signed integer. Handles optional leading '-'.
+# No whitespace handling, no error checking beyond what the bytecode
+# would catch — trusts the input format.
+proc emit_rt_str_to_int() {
+    alloc entry := ob_top
+    ob_bytes([72, 139, 72, 8])            # mov rcx, [rax + 8] (length)
+    ob_bytes([72, 141, 112, 16])          # lea rsi, [rax + 16] (bytes)
+    ob_bytes([72, 49, 210])               # xor rdx, rdx (accumulator)
+    ob_bytes([72, 49, 255])               # xor rdi, rdi (sign flag)
+    # if length == 0: result = 0 → tagged 1
+    ob_bytes([72, 133, 201])              # test rcx, rcx
+    ob_byte(116)
+    alloc jz_done := ob_top
+    ob_byte(0)
+    # Check sign: cmp byte [rsi], '-' (45)
+    ob_bytes([128, 62, 45])               # cmp byte [rsi], 0x2d
+    ob_byte(117)                          # jne forward (skip sign-flag set)
+    alloc jne_no_sign := ob_top
+    ob_byte(0)
+    # rdi = 1, rsi += 1, rcx -= 1
+    ob_bytes([72, 199, 199, 1, 0, 0, 0])  # mov rdi, 1
+    ob_bytes([72, 255, 198])              # inc rsi
+    ob_bytes([72, 255, 201])              # dec rcx
+    ob_patch_u8(jne_no_sign, ob_top - (jne_no_sign + 1))
+    # Loop: while rcx > 0: digit = [rsi] - '0'; rdx = rdx*10 + digit
+    alloc loop_start := ob_top
+    ob_bytes([72, 133, 201])              # test rcx, rcx
+    ob_byte(116)
+    alloc jz_apply := ob_top
+    ob_byte(0)
+    # movzx r8, byte [rsi]
+    ob_bytes([76, 15, 182, 6])            # 4c 0f b6 06
+    # sub r8, 48
+    ob_bytes([73, 131, 232, 48])          # 49 83 e8 30
+    # imul rdx, rdx, 10
+    ob_bytes([72, 107, 210, 10])          # 48 6b d2 0a
+    # add rdx, r8
+    ob_bytes([76, 1, 194])                # 4c 01 c2
+    ob_bytes([72, 255, 198])              # inc rsi
+    ob_bytes([72, 255, 201])              # dec rcx
+    ob_byte(235)                          # jmp loop_start (rel8 back)
+    ob_byte((loop_start - (ob_top + 1)) & 255)
+    ob_patch_u8(jz_apply, ob_top - (jz_apply + 1))
+    # Apply sign
+    ob_bytes([72, 133, 255])              # test rdi, rdi
+    ob_byte(116)
+    alloc jz_pos := ob_top
+    ob_byte(0)
+    ob_bytes([72, 247, 218])              # neg rdx
+    ob_patch_u8(jz_pos, ob_top - (jz_pos + 1))
+    # Tag rdx and put in rax
+    ob_bytes([72, 209, 226])              # shl rdx, 1
+    ob_bytes([72, 131, 202, 1])           # or rdx, 1
+    ob_bytes([72, 137, 208])              # mov rax, rdx
+    x_ret()
+    ob_patch_u8(jz_done, ob_top - (jz_done + 1))
+    # length=0 path: return tagged 0 = 1
+    x_mov_imm32(REG_RAX, 1)
+    x_ret()
+    return entry
+}
+
 # Push a new handler record. Caller puts the handler's absolute
 # virtual address into rax, then `call rt_setup_except`.
 proc emit_rt_setup_except() {
@@ -1836,6 +2119,13 @@ alloc rt_store_index_off    := 0
 alloc rt_setup_except_off   := 0
 alloc rt_pop_block_off      := 0
 alloc rt_raise_off          := 0
+alloc rt_chr_off            := 0
+alloc rt_list_repeat_off    := 0
+alloc rt_dict_keys_off      := 0
+alloc rt_bytes_to_string_off := 0
+alloc rt_string_bytes_off   := 0
+alloc rt_str_to_int_off     := 0
+alloc rt_emit_dispatch_repr_off := 0   # used by print() to emit without newline
 
 # Patch sites for the imm64 of `mov rcx, imm64 (except_top_slot_addr)`
 # that's emitted inside each except helper. Resolved in finalize_elf
@@ -1896,6 +2186,13 @@ proc emit_runtime_blob() {
     rt_setup_except_off   := emit_rt_setup_except()
     rt_pop_block_off      := emit_rt_pop_block()
     rt_raise_off          := emit_rt_raise()
+    # Builtin helpers (phase 8).
+    rt_chr_off            := emit_rt_chr(rt_alloc_off)
+    rt_list_repeat_off    := emit_rt_list_repeat(rt_alloc_off)
+    rt_dict_keys_off      := emit_rt_dict_keys(rt_alloc_off)
+    rt_bytes_to_string_off := emit_rt_bytes_to_string(rt_alloc_off)
+    rt_string_bytes_off   := emit_rt_string_bytes(rt_alloc_off)
+    rt_str_to_int_off     := emit_rt_str_to_int()
     # Mutually-recursive list/dict emitters ↔ repr dispatcher.
     # Emit list/dict first with placeholder call sites for repr
     # dispatch, then emit the dispatcher (which can reference list +
@@ -1908,6 +2205,7 @@ proc emit_runtime_blob() {
     alloc dict_patch_key := dict_result[1]
     alloc dict_patch_val := dict_result[2]
     alloc off_repr       := emit_rt_emit_dispatch_repr(off_int, off_str, off_false, off_true, off_none, rt_emit_list_off, rt_emit_dict_off)
+    rt_emit_dispatch_repr_off := off_repr
     patch_call_rel32(list_patch, off_repr)
     patch_call_rel32(dict_patch_key, off_repr)
     patch_call_rel32(dict_patch_val, off_repr)
@@ -2681,9 +2979,107 @@ proc gen_raise(kind) {
 proc gen_builtin(name, argc) {
     if name == "length" {
         if argc != 1 { panic("native-asm: length() expects 1 arg, got " + argc) }
-        x_pop_reg(REG_RAX)                          # heap pointer (string or list)
-        # mov rax, [rax + 8] — 48 8b 40 08
-        ob_bytes([72, 139, 64, 8])
+        x_pop_reg(REG_RAX)
+        ob_bytes([72, 139, 64, 8])                  # mov rax, [rax + 8]
+        x_sal_rax_1()
+        x_or_rax_imm8(1)
+        x_push_reg(REG_RAX)
+        return false
+    }
+    if name == "ascii" {
+        # Pop a 1-char string, push its byte tagged as int.
+        x_pop_reg(REG_RAX)
+        # movzx rax, byte [rax + 16] — 48 0f b6 40 10
+        ob_bytes([72, 15, 182, 64, 16])
+        x_sal_rax_1()
+        x_or_rax_imm8(1)
+        x_push_reg(REG_RAX)
+        return false
+    }
+    if name == "chr" {
+        x_pop_reg(REG_RAX)
+        alloc s := x_call_rel32_patchable()
+        patch_call_rel32(s, rt_chr_off)
+        x_push_reg(REG_RAX)
+        return false
+    }
+    if name == "exit" {
+        # Pop a tagged int, call sys_exit. Never returns.
+        x_pop_reg(REG_RAX)
+        x_sar_rax_1()
+        # mov rdi, rax — 48 89 c7
+        ob_bytes([72, 137, 199])
+        x_mov_imm32(REG_RAX, 60)
+        x_syscall()
+        # Unreachable, but the bytecode treats CallBuiltin as an
+        # expression and expects something on the stack. Emit a
+        # placeholder push to keep the operand stack balanced for
+        # any code that comes after (it'll never run, but the
+        # codegen invariants stay clean).
+        x_mov_imm32(REG_RAX, TAG_NONE)
+        x_push_reg(REG_RAX)
+        return false
+    }
+    if name == "freeze" {
+        # No-op: pass through the dict pointer unchanged.
+        return false
+    }
+    if name == "print" {
+        # Same as EMIT but no trailing newline. Pop value, call the
+        # repr dispatcher (which writes the textual representation
+        # without a newline), push TAG_NONE as the expression value.
+        x_pop_reg(REG_RAX)
+        alloc s := x_call_rel32_patchable()
+        patch_call_rel32(s, rt_emit_dispatch_repr_off)
+        x_mov_imm32(REG_RAX, TAG_NONE)
+        x_push_reg(REG_RAX)
+        return false
+    }
+    if name == "list_repeat" {
+        # Stack has [item, count] with count on top.
+        x_pop_reg(REG_RCX)                          # tagged count
+        # sar rcx, 1 — 48 d1 f9
+        ob_bytes([72, 209, 249])
+        x_pop_reg(REG_RAX)                          # item (kept tagged)
+        alloc s := x_call_rel32_patchable()
+        patch_call_rel32(s, rt_list_repeat_off)
+        x_push_reg(REG_RAX)
+        return false
+    }
+    if name == "dict_keys" {
+        x_pop_reg(REG_RAX)
+        alloc s := x_call_rel32_patchable()
+        patch_call_rel32(s, rt_dict_keys_off)
+        x_push_reg(REG_RAX)
+        return false
+    }
+    if name == "bytes_to_string" {
+        x_pop_reg(REG_RAX)
+        alloc s := x_call_rel32_patchable()
+        patch_call_rel32(s, rt_bytes_to_string_off)
+        x_push_reg(REG_RAX)
+        return false
+    }
+    if name == "string_bytes" {
+        x_pop_reg(REG_RAX)
+        alloc s := x_call_rel32_patchable()
+        patch_call_rel32(s, rt_string_bytes_off)
+        x_push_reg(REG_RAX)
+        return false
+    }
+    if name == "int" {
+        # OMG's int(s) parses a string. Phase 8 only handles strings;
+        # int(int) and int(float) panic.
+        x_pop_reg(REG_RAX)
+        alloc s := x_call_rel32_patchable()
+        patch_call_rel32(s, rt_str_to_int_off)
+        x_push_reg(REG_RAX)
+        return false
+    }
+    if name == "getpid" {
+        # syscall 39 — getpid. Returns pid in rax.
+        x_mov_imm32(REG_RAX, 39)
+        x_syscall()
         x_sal_rax_1()
         x_or_rax_imm8(1)
         x_push_reg(REG_RAX)

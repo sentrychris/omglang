@@ -1,6 +1,6 @@
 # native-asm — OMG bytecode → x86_64 ELF, no C compiler
 
-Status: **Phase 7 done.** try / except / raise / panic working via a dedicated exception-handler stack at the high end of memory. `except_top` slot at heap_base[0..8) tracks the top; each `SETUP_EXCEPT` pushes a 40-byte record `[handler_addr, r15, r14, r12, rsp]`; `RAISE` pops it, restores all four registers (including rsp, which longjmps over intermediate native call frames), and `jmp`s to the handler with the exception value pushed onto the restored operand stack. Phases 8-12 pending.
+Status: **Phase 8 (subset) shipped.** First-tier builtins wired up: `ascii`, `chr`, `exit`, `freeze`, `print`, `list_repeat`, `dict_keys`, `bytes_to_string`, `string_bytes`, `int`, `getpid`. File I/O, subprocess, stdin, math (sqrt/pow/log/etc) still pending — those need OS plumbing or float math. Phases 9-12 pending.
 
 Owner: sentrychris + claude
 
