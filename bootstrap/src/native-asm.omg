@@ -1148,6 +1148,127 @@ proc emit_rt_neg_full(box_off) {
     return entry
 }
 
+# rt_to_float(rax = tagged int OR heap float) → xmm0 = f64 value.
+# For ints: untag and cvtsi2sd. For heap pointers: assume float and
+# movsd-load. (Phase 8b trusts the input — non-numeric values will
+# produce garbage in xmm0.)
+proc emit_rt_to_float() {
+    alloc entry := ob_top
+    # test al, 1 — int has LSB=1
+    ob_bytes([168, 1])
+    ob_byte(116)                             # jz heap_path (rel8)
+    alloc jz_heap := ob_top
+    ob_byte(0)
+    # int path: sar rax, 1; cvtsi2sd xmm0, rax; ret
+    x_sar_rax_1()
+    ob_bytes([242, 72, 15, 42, 192])         # cvtsi2sd xmm0, rax
+    x_ret()
+    ob_patch_u8(jz_heap, ob_top - (jz_heap + 1))
+    # heap path: movsd xmm0, [rax + 8]; ret
+    ob_bytes([242, 15, 16, 64, 8])
+    x_ret()
+    return entry
+}
+
+# rt_cmp_full(rax = lhs, rbx = rhs) → rax = -1/0/1.
+# Pre: at least one operand is non-int (caller's fast-path filter).
+# Promotes both to f64 via rt_promote_floats then uses ucomisd.
+# Result: -1 if lhs<rhs, 0 if equal, +1 if greater. (NaN semantics
+# defer to phase 11 — for now NaN compares as unordered which jb
+# treats as less.)
+proc emit_rt_cmp_full(promote_off) {
+    alloc entry := ob_top
+    alloc s := x_call_rel32_patchable()
+    patch_call_rel32(s, promote_off)
+    ob_bytes([102, 15, 46, 193])             # ucomisd xmm0, xmm1
+    ob_byte(116)                              # je rel8 → equal
+    alloc je_eq := ob_top
+    ob_byte(0)
+    ob_byte(114)                              # jb rel8 → less
+    alloc jb_less := ob_top
+    ob_byte(0)
+    # greater
+    x_mov_imm32(REG_RAX, 1)
+    x_ret()
+    ob_patch_u8(je_eq, ob_top - (je_eq + 1))
+    # equal
+    ob_bytes([72, 49, 192])                  # xor rax, rax
+    x_ret()
+    ob_patch_u8(jb_less, ob_top - (jb_less + 1))
+    # less: rax = -1 (= 0xffffffffffffffff via mov rax, imm32 sign-extended)
+    ob_bytes([72, 199, 192, 255, 255, 255, 255])  # mov rax, -1
+    x_ret()
+    return entry
+}
+
+# rt_sqrt(rax = tagged int or heap float) → rax = boxed float.
+proc emit_rt_sqrt(to_float_off, box_off) {
+    alloc entry := ob_top
+    alloc s_tf := x_call_rel32_patchable()
+    patch_call_rel32(s_tf, to_float_off)
+    ob_bytes([242, 15, 81, 192])             # sqrtsd xmm0, xmm0
+    alloc s_box := x_jmp_rel32_patchable()
+    patch_rel32(s_box, box_off)
+    return entry
+}
+
+# rt_floor / rt_ceil — same shape as sqrt with different roundsd mode.
+# Mode 1 = floor (toward -inf), mode 2 = ceil (toward +inf). Returns
+# a TAGGED INT, not a float, matching OMG's `floor` / `ceil` semantics
+# (the Rust runtime's omg_builtin_floor casts to int64 too).
+#
+# Encoding note: the opcode is `0b` for double-precision (ROUNDSD).
+# The `0a` opcode would be single-precision (ROUNDSS) and silently
+# operate on the low f32 only, giving wrong results.
+proc emit_rt_round(to_float_off, mode) {
+    alloc entry := ob_top
+    alloc s_tf := x_call_rel32_patchable()
+    patch_call_rel32(s_tf, to_float_off)
+    # roundsd xmm0, xmm0, mode — 66 0f 3a 0b c0 <imm8>
+    ob_bytes([102, 15, 58, 11, 192, mode & 255])
+    # cvttsd2si rax, xmm0 — convert rounded double back to int64
+    ob_bytes([242, 72, 15, 44, 192])
+    # Tag as small int.
+    x_sal_rax_1()
+    x_or_rax_imm8(1)
+    x_ret()
+    return entry
+}
+
+# rt_abs(rax) → tagged int OR boxed float, preserving type:
+#   int → int abs (untag, conditional neg, retag)
+#   float → float abs (clear sign bit via btr on the 64-bit pattern)
+proc emit_rt_abs(box_off) {
+    alloc entry := ob_top
+    # test al, 1 — int has LSB=1
+    ob_bytes([168, 1])
+    ob_byte(116)                              # jz float_path
+    alloc jz_float := ob_top
+    ob_byte(0)
+    # int path
+    x_sar_rax_1()                            # untag
+    ob_bytes([72, 133, 192])                 # test rax, rax
+    ob_byte(121)                              # jns positive (rel8)
+    alloc jns_pos := ob_top
+    ob_byte(0)
+    x_neg_rax()
+    ob_patch_u8(jns_pos, ob_top - (jns_pos + 1))
+    x_sal_rax_1()
+    x_or_rax_imm8(1)
+    x_ret()
+    ob_patch_u8(jz_float, ob_top - (jz_float + 1))
+    # float path: load bits via mov, clear sign bit, re-box
+    # mov rcx, [rax + 8]  — 48 8b 48 08
+    ob_bytes([72, 139, 72, 8])
+    # btr rcx, 63 — 48 0f ba f1 3f
+    ob_bytes([72, 15, 186, 241, 63])
+    # movq xmm0, rcx — 66 48 0f 6e c1
+    ob_bytes([102, 72, 15, 110, 193])
+    alloc s_box := x_jmp_rel32_patchable()
+    patch_rel32(s_box, box_off)
+    return entry
+}
+
 # rt_emit_float: format a double to stdout (no trailing newline).
 # Output format: `<integer>.<6-digit-fraction>` with trailing zeros
 # trimmed (keeping at least one digit). Won't match Rust's Ryu-like
@@ -2410,6 +2531,12 @@ alloc rt_mul_full_off        := 0
 alloc rt_div_full_off        := 0
 alloc rt_neg_full_off        := 0
 alloc rt_emit_float_off      := 0
+alloc rt_to_float_off        := 0
+alloc rt_cmp_full_off        := 0
+alloc rt_sqrt_off            := 0
+alloc rt_floor_off           := 0
+alloc rt_ceil_off            := 0
+alloc rt_abs_off             := 0
 
 # Patch sites for the imm64 of `mov rcx, imm64 (except_top_slot_addr)`
 # that's emitted inside each except helper. Resolved in finalize_elf
@@ -2485,6 +2612,12 @@ proc emit_runtime_blob() {
     rt_mul_full_off       := emit_rt_arith_full_numeric(rt_promote_off, rt_box_float_off, 242, 15, 89, 193)
     rt_div_full_off       := emit_rt_arith_full_numeric(rt_promote_off, rt_box_float_off, 242, 15, 94, 193)
     rt_neg_full_off       := emit_rt_neg_full(rt_box_float_off)
+    rt_to_float_off       := emit_rt_to_float()
+    rt_cmp_full_off       := emit_rt_cmp_full(rt_promote_off)
+    rt_sqrt_off           := emit_rt_sqrt(rt_to_float_off, rt_box_float_off)
+    rt_floor_off          := emit_rt_round(rt_to_float_off, 1)
+    rt_ceil_off           := emit_rt_round(rt_to_float_off, 2)
+    rt_abs_off            := emit_rt_abs(rt_box_float_off)
     # Mutually-recursive list/dict emitters ↔ repr dispatcher.
     # Emit list/dict first with placeholder call sites for repr
     # dispatch, then emit the dispatcher (which can reference list +
@@ -2714,9 +2847,31 @@ proc gen_push_none() {
 # to untag first.
 
 proc gen_cmp_common() {
+    # Pop operands, check if both ints. If yes: `cmp rax, rbx` directly
+    # leaves correct flags. If no: call rt_cmp_full → rax = -1/0/1,
+    # then `test rax, rax` sets the same flag pattern (sign + zero).
+    # Materialise TAG_TRUE/FALSE in rax/rcx; caller appends the
+    # appropriate cmov + push.
     x_pop_reg(REG_RBX)
     x_pop_reg(REG_RAX)
-    x_cmp_rax_rbx()
+    x_mov_rcx_rax()
+    x_and_rcx_rbx()
+    x_test_cl_1()
+    ob_byte(116)                              # jz slow_path (rel8)
+    alloc jz_slow := ob_top
+    ob_byte(0)
+    # Fast int path
+    x_cmp_rax_rbx()                          # 3 bytes
+    ob_byte(235)                              # jmp materialize (rel8)
+    alloc jmp_mat := ob_top
+    ob_byte(0)
+    # Slow path
+    ob_patch_u8(jz_slow, ob_top - (jz_slow + 1))
+    alloc s := x_call_rel32_patchable()
+    patch_call_rel32(s, rt_cmp_full_off)
+    ob_bytes([72, 133, 192])                 # test rax, rax
+    # Materialise
+    ob_patch_u8(jmp_mat, ob_top - (jmp_mat + 1))
     x_mov_imm32(REG_RAX, TAG_TRUE)
     x_mov_imm32(REG_RCX, TAG_FALSE)
 }
@@ -3411,6 +3566,34 @@ proc gen_builtin(name, argc) {
         x_syscall()
         x_sal_rax_1()
         x_or_rax_imm8(1)
+        x_push_reg(REG_RAX)
+        return false
+    }
+    if name == "sqrt" {
+        x_pop_reg(REG_RAX)
+        alloc s := x_call_rel32_patchable()
+        patch_call_rel32(s, rt_sqrt_off)
+        x_push_reg(REG_RAX)
+        return false
+    }
+    if name == "floor" {
+        x_pop_reg(REG_RAX)
+        alloc s := x_call_rel32_patchable()
+        patch_call_rel32(s, rt_floor_off)
+        x_push_reg(REG_RAX)
+        return false
+    }
+    if name == "ceil" {
+        x_pop_reg(REG_RAX)
+        alloc s := x_call_rel32_patchable()
+        patch_call_rel32(s, rt_ceil_off)
+        x_push_reg(REG_RAX)
+        return false
+    }
+    if name == "abs" {
+        x_pop_reg(REG_RAX)
+        alloc s := x_call_rel32_patchable()
+        patch_call_rel32(s, rt_abs_off)
         x_push_reg(REG_RAX)
         return false
     }

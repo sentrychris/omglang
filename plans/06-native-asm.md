@@ -1,6 +1,6 @@
 # native-asm — OMG bytecode → x86_64 ELF, no C compiler
 
-Status: **Phase 8b foundation shipped.** Floats work — boxed `[type=5, f64_bits]` heap objects. Polymorphic ADD/SUB/MUL/DIV/NEG: int+int stays inline, anything-else routes through `rt_<op>_full` which promotes ints to f64 via `cvtsi2sd` and uses SSE2 `addsd/subsd/mulsd/divsd`. ADD additionally falls through to `rt_concat` for non-float heap pairs. Basic `emit_float` formats as `<int>.<6digit>` trimmed. Builtin set so far (plus all of 8a): `ascii`, `chr`, `exit`, `freeze`, `print`, `list_repeat`, `dict_keys`, `bytes_to_string`, `string_bytes`, `int`, `getpid`. Float math builtins (sqrt/floor/ceil/abs/pow), comparisons on floats, and `file_open`/`file_read`/`file_write`/`subprocess`/stdin still pending. Phases 9-12 pending.
+Status: **Phase 8b done.** Full float support — boxed values, polymorphic arithmetic, polymorphic comparisons (via `rt_cmp_full` returning -1/0/1), and math builtins `sqrt`/`floor`/`ceil`/`abs`. Comparisons all go through the same `gen_cmp_common` pattern that emits an int fast-path then routes through `rt_cmp_full` for mixed/float operands; the same cmov suffix works for both because `test rax, rax` on -1/0/1 sets the same flags as `cmp` would. Still pending: file I/O, subprocess, stdin, hex, `float()` / `int(float)` conversions, `pow`/`log`/`sin`/`cos`/`tan` (libm-style). Phases 9-12 pending.
 
 Owner: sentrychris + claude
 

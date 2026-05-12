@@ -188,6 +188,17 @@ assert_omgna "float_mixed"       $';;;omg\nemit 1.0 + 2\nemit 5 - 0.5\nemit 2 * 
 assert_omgna "float_neg"         $';;;omg\nemit 0.0 - 1.5\nemit 0.0 - -1.5'
 assert_omgna "ints_still_work"   $';;;omg\nemit 1 + 2\nemit 6 * 7\nemit 100 / 7'
 
+# === Phase 8b: float comparisons + math builtins ===
+assert_omgna "cmp_float_lt"      $';;;omg\nemit 1.0 < 2.0\nemit 2.0 < 1.0\nemit 1.5 < 1.5'
+assert_omgna "cmp_float_eq"      $';;;omg\nemit 1.0 == 1.0\nemit 1.0 == 2.0\nemit 0.5 == 0.5'
+assert_omgna "cmp_mixed"         $';;;omg\nemit 1 < 2.0\nemit 1.5 > 1\nemit 3.0 >= 3'
+assert_omgna "if_float_cond"     $';;;omg\nif 1.5 < 2.0 { emit "yes" } else { emit "no" }\nif 1.0 == 2.0 { emit "yes" } else { emit "no" }'
+assert_omgna "math_sqrt"         $';;;omg\nemit sqrt(4.0)\nemit sqrt(16.0)\nemit sqrt(0.25)'
+assert_omgna "math_floor"        $';;;omg\nemit floor(3.7)\nemit floor(3.2)\nemit floor(-0.5)\nemit floor(5.0)'
+assert_omgna "math_ceil"         $';;;omg\nemit ceil(3.2)\nemit ceil(3.7)\nemit ceil(-0.5)\nemit ceil(5.0)'
+assert_omgna "math_abs_int"      $';;;omg\nemit abs(-5)\nemit abs(0)\nemit abs(7)'
+assert_omgna "math_abs_float"    $';;;omg\nemit abs(-1.5)\nemit abs(2.5)\nemit abs(0.0)'
+
 # Binary should be a real statically-linked ELF, no libc dependency.
 elf="$TMPDIR_TEST/na-hello_world"
 if file "$elf" 2>/dev/null | grep -q "ELF 64-bit LSB executable, x86-64.*statically linked"; then
