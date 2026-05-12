@@ -16,7 +16,7 @@ if [ ! -x "$OMGNA_NATIVE" ]; then
     exit 2
 fi
 
-section "native-asm (omgna): phases 1-6c"
+section "native-asm (omgna): phases 1-7"
 
 # Round-trip a .omg through omgc + omgna and compare ./<bin> stdout
 # against the Rust runtime's output for the same source.
@@ -158,6 +158,15 @@ assert_omgna "closure_3_level"   $';;;omg\nproc outer() {\n    alloc x := 10\n  
 assert_omgna "closure_4_level"   $';;;omg\nproc l1() {\n    alloc a := 1\n    proc l2() {\n        alloc b := 2\n        proc l3() {\n            alloc c := 3\n            proc l4() { return a + b + c }\n            return l4\n        }\n        return l3\n    }\n    return l2\n}\nemit l1()()()()'
 assert_omgna "closure_skip_level" $';;;omg\nproc outer(x) {\n    proc middle() {\n        proc inner() { return x * 2 }\n        return inner\n    }\n    return middle\n}\nemit outer(21)()()\nemit outer(50)()()'
 assert_omgna "closure_call_fn"    $';;;omg\nproc make_runner(f) {\n    proc run(x) { return f(x) }\n    return run\n}\nproc dbl(n) { return n * 2 }\nalloc r := make_runner(dbl)\nemit r(7)\nemit r(50)'
+
+# === Phase 7: try / except / raise ===
+assert_omgna "try_caught"        $';;;omg\ntry {\n    emit "before"\n    panic("oops")\n    emit "never"\n} except {\n    emit "caught"\n}\nemit "after"'
+assert_omgna "try_uncaught"      $';;;omg\ntry { emit "no panic" } except { emit "never" }\nemit "fall through"'
+assert_omgna "panic_in_fn"       $';;;omg\nproc f() { panic("boom") }\ntry { f() } except { emit "caught" }\nemit "done"'
+assert_omgna "deep_panic"        $';;;omg\nproc inner() { panic("deep") }\nproc middle() { inner() }\nproc outer() { middle() }\ntry { outer() } except { emit "caught" }\nemit "done"'
+assert_omgna "nested_try"        $';;;omg\ntry {\n    try { panic("inner") } except { emit "inner caught" }\n    emit "between"\n    panic("outer")\n} except { emit "outer caught" }\nemit "done"'
+assert_omgna "try_in_loop"       $';;;omg\nalloc i := 0\nloop i < 5 {\n    try {\n        if i == 2 { panic("two") }\n        emit i\n    } except {\n        emit "skipped two"\n    }\n    i := i + 1\n}'
+assert_omgna "raise_msg"         $';;;omg\ntry {\n    raise("explicit")\n} except {\n    emit "caught explicit"\n}'
 
 # Binary should be a real statically-linked ELF, no libc dependency.
 elf="$TMPDIR_TEST/na-hello_world"

@@ -71,6 +71,9 @@ alloc OP_BUILTIN        := 33
 alloc OP_POP            := 34
 alloc OP_STORE_INDEX    := 39
 alloc OP_CALL_VALUE     := 43
+alloc OP_SETUP_EXCEPT   := 44
+alloc OP_POP_BLOCK      := 45
+alloc OP_RAISE          := 46
 
 # === ELF / x86_64 layout ==================================================
 # We map the whole file as a single PT_LOAD segment at virtual address
@@ -99,7 +102,24 @@ alloc OPERAND_STACK_SIZE := 65536
 # holds the bump-allocator pointer; allocation grows it upward. 1 MB
 # is enough for everything in the corpus; phase 10 will add a GC so
 # this can be smaller.
+#
+# The first 8 bytes of the heap region are reserved for the
+# `except_top` slot — a single 8-byte memory location holding the
+# current top of the exception handler stack. r13 starts at heap_base
+# + 8 so user allocations don't overwrite it.
 alloc HEAP_SIZE := 1048576
+
+# Exception-handler stack region: grows upward from a base just past
+# the operand stack. Each handler record is 40 bytes:
+#   [0]:  handler_addr (absolute virtual address of the except block)
+#   [8]:  saved r15
+#   [16]: saved r14
+#   [24]: saved r12
+#   [32]: saved rsp
+# At RAISE, we walk back the top record and restore (r15, r14, r12,
+# rsp), then jump to handler_addr. 8 KB = 200+ nested try blocks.
+alloc EXCEPT_STACK_SIZE   := 8192
+alloc HANDLER_RECORD_SIZE := 40
 
 # Heap object layout. Every heap-allocated object starts with a u64
 # type tag so the EMIT dispatcher (and future operations like INDEX)
@@ -266,6 +286,14 @@ proc parse_bytecode(bytes) {
             alloc rcv := read_u32_at(bytes, cursor)
             code := code + [["CALL_VALUE", rcv[0]]]
             cursor := rcv[1]
+        } else { if op == OP_SETUP_EXCEPT {
+            alloc rse := read_u32_at(bytes, cursor)
+            code := code + [["SETUP_EXCEPT", rse[0]]]
+            cursor := rse[1]
+        } else { if op == OP_RAISE {
+            alloc rrk := bytes[cursor]
+            code := code + [["RAISE", rrk]]
+            cursor := cursor + 1
         } else { if op == OP_BUILTIN {
             alloc nm := read_str_at(bytes, cursor)
             alloc ac := read_u32_at(bytes, nm[1])
@@ -289,11 +317,12 @@ proc parse_bytecode(bytes) {
             if op == OP_SLICE       { code := code + [["SLICE",       false]] } else {
             if op == OP_STORE_INDEX { code := code + [["STORE_INDEX", false]] } else {
             if op == OP_POP         { code := code + [["POP",         false]] } else {
+            if op == OP_POP_BLOCK   { code := code + [["POP_BLOCK",   false]] } else {
             if op == OP_EMIT        { code := code + [["EMIT",        false]] } else {
             if op == OP_HALT        { code := code + [["HALT",        false]] } else {
                 panic("native-asm: opcode " + op + " not yet supported")
-            }}}}}}}}}}}}}}}}}}}
-        }}}}}}}}}}}}}}}}}
+            }}}}}}}}}}}}}}}}}}}}
+        }}}}}}}}}}}}}}}}}}}
         k := k + 1
     }
     return [code, funcs]
@@ -931,6 +960,105 @@ proc emit_rt_store_index(dict_set_off) {
     ob_patch_u8(je_dict, ob_top - (je_dict + 1))
     alloc s := x_jmp_rel32_patchable()
     patch_rel32(s, dict_set_off)
+    return entry
+}
+
+# === Phase 7 — exception helpers ========================================
+# Three runtime helpers cooperate through a single `except_top` slot
+# at heap_base (the first 8 bytes of the heap region). The slot holds
+# a pointer to the next free byte of the exception handler stack — a
+# separate zero-filled region at the high end of memory. Each handler
+# record is 40 bytes: [handler_addr, r15, r14, r12, rsp].
+#
+# Every helper starts with `mov rcx, imm64 (except_top_slot_vaddr)`
+# whose imm64 is recorded in except_slot_patch_sites and resolved by
+# finalize_elf once heap_base is known.
+
+# Push a new handler record. Caller puts the handler's absolute
+# virtual address into rax, then `call rt_setup_except`.
+proc emit_rt_setup_except() {
+    alloc entry := ob_top
+    # push rax — preserve handler_addr through the slot load
+    ob_byte(80)
+    # mov rcx, imm64 (slot_addr) — patched at finalize
+    ob_bytes([72, 185])
+    alloc slot_site := ob_top
+    ob_u64(0)
+    except_slot_patch_sites := except_slot_patch_sites + [slot_site]
+    # mov rdx, [rcx] — rdx = current except_top
+    ob_bytes([72, 139, 17])
+    # pop rax (restore handler_addr)
+    ob_byte(88)
+    # mov [rdx], rax — handler_addr
+    ob_bytes([72, 137, 2])
+    # mov [rdx + 8], r15 — 4c 89 7a 08
+    ob_bytes([76, 137, 122, 8])
+    # mov [rdx + 16], r14 — 4c 89 72 10
+    ob_bytes([76, 137, 114, 16])
+    # mov [rdx + 24], r12 — 4c 89 62 18
+    ob_bytes([76, 137, 98, 24])
+    # mov [rdx + 32], rsp — 48 89 62 20
+    ob_bytes([72, 137, 98, 32])
+    # add rdx, 40 — 48 83 c2 28
+    ob_bytes([72, 131, 194, 40])
+    # mov [rcx], rdx
+    ob_bytes([72, 137, 17])
+    x_ret()
+    return entry
+}
+
+# Pop the top handler record (decrement except_top by 40 bytes).
+# Used by POP_BLOCK opcode and by RET / BREAK unwind paths.
+proc emit_rt_pop_block() {
+    alloc entry := ob_top
+    ob_bytes([72, 185])
+    alloc slot_site := ob_top
+    ob_u64(0)
+    except_slot_patch_sites := except_slot_patch_sites + [slot_site]
+    # mov rdx, [rcx]
+    ob_bytes([72, 139, 17])
+    # sub rdx, 40
+    ob_bytes([72, 131, 234, 40])
+    # mov [rcx], rdx
+    ob_bytes([72, 137, 17])
+    x_ret()
+    return entry
+}
+
+# Unwind via the top handler. Input: rax = exception value (caller
+# popped it off the operand stack). Decrements except_top, restores
+# (r15, r14, r12, rsp) from the popped record, pushes rax onto the
+# restored operand stack, then `jmp <handler_addr>`. Does not return.
+proc emit_rt_raise() {
+    alloc entry := ob_top
+    ob_bytes([72, 185])
+    alloc slot_site := ob_top
+    ob_u64(0)
+    except_slot_patch_sites := except_slot_patch_sites + [slot_site]
+    # mov rdx, [rcx]
+    ob_bytes([72, 139, 17])
+    # sub rdx, 40
+    ob_bytes([72, 131, 234, 40])
+    # mov [rcx], rdx — write the new (decremented) top back
+    ob_bytes([72, 137, 17])
+    # mov rbx, [rdx] — rbx = handler_addr
+    ob_bytes([72, 139, 26])
+    # mov r15, [rdx + 8] — 4c 8b 7a 08
+    ob_bytes([76, 139, 122, 8])
+    # mov r14, [rdx + 16] — 4c 8b 72 10
+    ob_bytes([76, 139, 114, 16])
+    # mov r12, [rdx + 24] — 4c 8b 62 18
+    ob_bytes([76, 139, 98, 24])
+    # mov rsp, [rdx + 32] — 48 8b 62 20 (NOTE: rsp is restored last —
+    # this throws away the native frame of rt_raise itself, which is
+    # fine since we're about to jmp, not ret)
+    ob_bytes([72, 139, 98, 32])
+    # sub r15, 8 — 49 83 ef 08
+    ob_bytes([73, 131, 239, 8])
+    # mov [r15], rax — 49 89 07
+    ob_bytes([73, 137, 7])
+    # jmp rbx — ff e3
+    ob_bytes([255, 227])
     return entry
 }
 
@@ -1705,6 +1833,19 @@ alloc rt_dict_get_off       := 0
 alloc rt_dict_set_off       := 0
 alloc rt_index_off          := 0
 alloc rt_store_index_off    := 0
+alloc rt_setup_except_off   := 0
+alloc rt_pop_block_off      := 0
+alloc rt_raise_off          := 0
+
+# Patch sites for the imm64 of `mov rcx, imm64 (except_top_slot_addr)`
+# that's emitted inside each except helper. Resolved in finalize_elf
+# once the slot's absolute virtual address is known (= heap_base).
+alloc except_slot_patch_sites := []
+# Patch sites for the imm64 in the entry-point prologue's
+# `mov rcx, imm64 (slot); mov rax, imm64 (except_base); mov [rcx], rax`
+# init sequence.
+alloc except_init_slot_site    := 0
+alloc except_init_base_site    := 0
 
 proc emit_runtime_blob() {
     # Static strings — no trailing newlines (those come from the
@@ -1751,6 +1892,10 @@ proc emit_runtime_blob() {
     rt_dict_set_off       := emit_rt_dict_set(str_eq_off)
     rt_index_off          := emit_rt_index(rt_dict_get_off)
     rt_store_index_off    := emit_rt_store_index(rt_dict_set_off)
+    # Exception helpers (phase 7).
+    rt_setup_except_off   := emit_rt_setup_except()
+    rt_pop_block_off      := emit_rt_pop_block()
+    rt_raise_off          := emit_rt_raise()
     # Mutually-recursive list/dict emitters ↔ repr dispatcher.
     # Emit list/dict first with placeholder call sites for repr
     # dispatch, then emit the dispatcher (which can reference list +
@@ -2492,6 +2637,44 @@ proc gen_pop() {
     ob_bytes([73, 131, 199, 8])
 }
 
+# === Phase 7 — exception codegen ========================================
+
+# SETUP_EXCEPT(target_idx): push a handler record onto the exception
+# stack. Records (handler_machine_addr, r15, r14, r12, rsp) so RAISE
+# can unwind to here. The handler address is patched after all bodies
+# are emitted via setup_except_patches.
+alloc setup_except_patches := []     # list of [imm64_site, target_bytecode_idx]
+
+proc gen_setup_except(target_idx) {
+    # mov rax, imm64 (handler_addr placeholder) — 48 b8 <imm64>
+    ob_bytes([72, 184])
+    alloc imm_site := ob_top
+    ob_u64(0)
+    setup_except_patches := setup_except_patches + [[imm_site, target_idx]]
+    # call rt_setup_except — rax in, no result
+    alloc s := x_call_rel32_patchable()
+    patch_call_rel32(s, rt_setup_except_off)
+}
+
+# POP_BLOCK: discard the top handler record (the try block completed
+# without raising). The compiler also emits POP_BLOCK before any
+# control transfer that crosses out of a try (RET, BREAK, JUMP out of
+# a loop containing a try), so this is the universal unwind primitive.
+proc gen_pop_block() {
+    alloc s := x_call_rel32_patchable()
+    patch_call_rel32(s, rt_pop_block_off)
+}
+
+# RAISE(kind): pop the exception value off the operand stack, then
+# unwind via the top handler. The kind argument (TypeError, ValueError,
+# etc.) is ignored in phase 7 — handlers don't dispatch by kind yet;
+# they just catch whatever's raised. Phase 8 may add typed except.
+proc gen_raise(kind) {
+    x_pop_reg(REG_RAX)
+    alloc s := x_call_rel32_patchable()
+    patch_call_rel32(s, rt_raise_off)
+}
+
 # BUILTIN(name, argc). Phase 5a only handles `length`, which works for
 # both strings and lists thanks to their shared `length at offset 8`
 # layout. Other builtins panic — we add them in 5b/5c as needed.
@@ -2652,10 +2835,13 @@ proc gen_one(instr, bytecode_idx, dispatch_off) {
     if op == "STORE_INDEX" { gen_store_index() }   else {
     if op == "BUILTIN"  { gen_builtin(instr[1][0], instr[1][1]) } else {
     if op == "POP"      { gen_pop() }              else {
+    if op == "POP_BLOCK"   { gen_pop_block() }     else {
+    if op == "SETUP_EXCEPT"{ gen_setup_except(instr[1]) } else {
+    if op == "RAISE"    { gen_raise(instr[1]) }    else {
     if op == "EMIT"     { gen_emit(dispatch_off) } else {
     if op == "HALT"     { gen_halt() }             else {
         panic("native-asm: unsupported op " + op)
-    }}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}
+    }}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}
 }
 
 # Pre-pass: build func_scope_info (params + locals per function) and
@@ -2840,6 +3026,19 @@ proc finalize_elf(entry_vaddr, r15_init_site, r13_init_site) {
         patch_call_rel32(fp[0], fn_entry_get(fp[1]))
         fc := fc + 1
     }
+    # 2bb. SETUP_EXCEPT handler-address patches: each setup site
+    # carries an imm64 placeholder for the handler's machine address,
+    # which is the bytecode-index-to-machine-offset translation we
+    # already have via instr_offsets.
+    alloc sep := 0
+    alloc sepn := length(setup_except_patches)
+    loop sep < sepn {
+        alloc spat := setup_except_patches[sep]
+        alloc target_idx := spat[1]
+        alloc handler_vaddr := ELF_BASE + HEADERS_SIZE + instr_offsets[target_idx]
+        patch_u64(spat[0], handler_vaddr)
+        sep := sep + 1
+    }
     # 2c. MAKE_FUNC closure patches: each closure carries the absolute
     # virtual address of the function's machine entry. The address is
     # ELF_BASE + HEADERS_SIZE + fn_entry_offset_in_payload.
@@ -2904,23 +3103,38 @@ proc finalize_elf(entry_vaddr, r15_init_site, r13_init_site) {
     }
     alloc payload_size := ob_top
     alloc file_size := payload_size + HEADERS_SIZE
-    # 4b. Heap + operand-stack region: live in memory but NOT in the
-    # file. `p_memsz = p_filesz + HEAP_SIZE + OPERAND_STACK_SIZE` tells
-    # the kernel to zero-fill an extra slab at the high end of the
-    # mapped segment.
+    # 4b. Heap + operand-stack + except-stack regions: live in memory
+    # but NOT in the file. `p_memsz = p_filesz + HEAP_SIZE +
+    # OPERAND_STACK_SIZE + EXCEPT_STACK_SIZE` tells the kernel to
+    # zero-fill those slabs at the high end of the mapped segment.
     #
     # Layout (low → high):
-    #   [file contents          ] [heap (1 MB, grow-up)] [operand stack (64 KB, grow-down)]
-    #   ^ ELF_BASE                ^ heap_base            ^ stack_top
+    #   [file contents] [heap (1MB, grow-up)] [op stack (64KB, grow-down)] [except stack (8KB, grow-up)]
+    #   ^ ELF_BASE     ^ heap_base            ^ op_base ─→ stack_top      ^ except_base
     #
-    # r13 initialises to heap_base (next free byte for bump alloc).
-    # r15 initialises to stack_top (one past the highest valid byte;
-    # first push lands at stack_top - 8).
-    alloc heap_base := ELF_BASE + file_size
-    alloc mem_size  := file_size + HEAP_SIZE + OPERAND_STACK_SIZE
-    alloc stack_top := ELF_BASE + mem_size
+    # The first 8 bytes of the heap region are RESERVED for the
+    # except_top slot — a single u64 holding the address of the next
+    # free byte of the exception-handler stack. r13 initialises to
+    # heap_base + 8 so user allocations don't overwrite it. r15
+    # initialises to stack_top.
+    alloc heap_base   := ELF_BASE + file_size
+    alloc except_top_slot_vaddr := heap_base
+    alloc bump_base   := heap_base + 8
+    alloc op_base     := heap_base + HEAP_SIZE
+    alloc stack_top   := op_base + OPERAND_STACK_SIZE
+    alloc except_base := stack_top
+    alloc mem_size    := file_size + HEAP_SIZE + OPERAND_STACK_SIZE + EXCEPT_STACK_SIZE
     patch_u64(r15_init_site, stack_top)
-    patch_u64(r13_init_site, heap_base)
+    patch_u64(r13_init_site, bump_base)
+    patch_u64(except_init_slot_site, except_top_slot_vaddr)
+    patch_u64(except_init_base_site, except_base)
+    # Patch every except helper's `mov rcx, imm64 (slot_addr)` site.
+    alloc esi := 0
+    alloc esn := length(except_slot_patch_sites)
+    loop esi < esn {
+        patch_u64(except_slot_patch_sites[esi], except_top_slot_vaddr)
+        esi := esi + 1
+    }
     # 5. Build ELF header + program header. Segment is R+W+X so the
     # globals area is writable — splitting into separate R+X / R+W
     # segments is a phase-10 cleanup.
@@ -3001,15 +3215,27 @@ proc main_compile() {
     alloc dispatch_off := emit_runtime_blob()
     # 2. Record where user code (and thus the ELF entry point) starts.
     alloc user_entry := ob_top
-    # 3. Emit prologue: load r15 with the operand-stack top and r13
-    # with the heap base. Both imm64s get patched in finalize_elf
-    # once we know payload size + heap/stack placement.
+    # 3. Emit prologue: load r15 with the operand-stack top, r13 with
+    # the heap bump pointer, and seed the `except_top` slot with the
+    # base of the exception-handler stack. All four imm64s get patched
+    # in finalize_elf once heap/stack/except layout is finalised.
     alloc r15_init_site := x_mov_r15_imm64_patchable()
     alloc r13_init_site := x_mov_r13_imm64_patchable()
+    # mov rcx, imm64 (except_top_slot_vaddr) — 48 b9 <imm64>
+    ob_bytes([72, 185])
+    except_init_slot_site := ob_top
+    ob_u64(0)
+    # mov rax, imm64 (except_base) — 48 b8 <imm64>
+    ob_bytes([72, 184])
+    except_init_base_site := ob_top
+    ob_u64(0)
+    # mov [rcx], rax — 48 89 01
+    ob_bytes([72, 137, 1])
     # 4. Emit user code (top-level + each function body).
     fn_entry := []
     fn_call_patches := []
     fn_closure_patches := []
+    setup_except_patches := []
     gen_code(code, funcs, dispatch_off)
     # 5. Finalize layout, resolve all patches, prepend headers.
     alloc elf_bytes := finalize_elf(ELF_BASE + HEADERS_SIZE + user_entry, r15_init_site, r13_init_site)

@@ -1,6 +1,6 @@
 # native-asm — OMG bytecode → x86_64 ELF, no C compiler
 
-Status: **Phase 6 complete (a + b + c).** Closures with arbitrarily deep capture: each function's env carries a flattened ancestor chain via `func_env_layouts`. `gen_make_func` copies parent's env entries (via r12) followed by parent's scope entries (via r14), so a 4-level nested function sees its grandparent's, grandparent's-grandparent's variables etc. with O(1) lookup. Phases 7-12 pending.
+Status: **Phase 7 done.** try / except / raise / panic working via a dedicated exception-handler stack at the high end of memory. `except_top` slot at heap_base[0..8) tracks the top; each `SETUP_EXCEPT` pushes a 40-byte record `[handler_addr, r15, r14, r12, rsp]`; `RAISE` pops it, restores all four registers (including rsp, which longjmps over intermediate native call frames), and `jmp`s to the handler with the exception value pushed onto the restored operand stack. Phases 8-12 pending.
 
 Owner: sentrychris + claude
 
