@@ -199,6 +199,17 @@ assert_omgna "math_ceil"         $';;;omg\nemit ceil(3.2)\nemit ceil(3.7)\nemit 
 assert_omgna "math_abs_int"      $';;;omg\nemit abs(-5)\nemit abs(0)\nemit abs(7)'
 assert_omgna "math_abs_float"    $';;;omg\nemit abs(-1.5)\nemit abs(2.5)\nemit abs(0.0)'
 
+# === Phase 8c: file I/O ===
+# Paths are hardcoded since bash's $'...' ANSI quoting doesn't expand
+# variables. Tests clean up after themselves.
+echo "hello from shell" > /tmp/omgna_iofixture.txt
+assert_omgna "io_read_file"      $';;;omg\nemit read_file("/tmp/omgna_iofixture.txt")'
+assert_omgna "io_exists_true"    $';;;omg\nemit file_exists("/tmp/omgna_iofixture.txt")'
+assert_omgna "io_exists_false"   $';;;omg\nemit file_exists("/tmp/omgna_definitely_not_present_xyz")'
+assert_omgna "io_open_read"      $';;;omg\nalloc fh := file_open("/tmp/omgna_iofixture.txt", "r")\nalloc data := file_read(fh)\nfile_close(fh)\nemit data'
+assert_omgna "io_write_roundtrip" $';;;omg\nalloc fh := file_open("/tmp/omgna_iowrite.out", "w")\nfile_write(fh, "hello from omg\\n")\nfile_close(fh)\nemit read_file("/tmp/omgna_iowrite.out")'
+rm -f /tmp/omgna_iofixture.txt /tmp/omgna_iowrite.out
+
 # Binary should be a real statically-linked ELF, no libc dependency.
 elf="$TMPDIR_TEST/na-hello_world"
 if file "$elf" 2>/dev/null | grep -q "ELF 64-bit LSB executable, x86-64.*statically linked"; then
@@ -209,11 +220,10 @@ fi
 
 # Hello-world ELF size — the runtime blob grows as we add helpers
 # (alloc, list build, concat, slice, list-aware repr dispatcher, etc).
-# Bumped to 2 KB at phase 5d, 3 KB at phase 8 when the builtin
-# helpers (chr / list_repeat / dict_keys / etc) landed.
+# Bumped at 5d (2 KB), 8a (3 KB), 8c (4 KB; file I/O + float helpers).
 size=$(wc -c < "$elf")
-if [ "$size" -lt 3072 ]; then
-    pass "hello-world ELF is <3 KB ($size bytes)"
+if [ "$size" -lt 4096 ]; then
+    pass "hello-world ELF is <4 KB ($size bytes)"
 else
-    fail "hello-world ELF is <3 KB" "size: $size bytes"
+    fail "hello-world ELF is <4 KB" "size: $size bytes"
 fi

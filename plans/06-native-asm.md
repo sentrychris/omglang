@@ -1,6 +1,6 @@
 # native-asm — OMG bytecode → x86_64 ELF, no C compiler
 
-Status: **Phase 8b done.** Full float support — boxed values, polymorphic arithmetic, polymorphic comparisons (via `rt_cmp_full` returning -1/0/1), and math builtins `sqrt`/`floor`/`ceil`/`abs`. Comparisons all go through the same `gen_cmp_common` pattern that emits an int fast-path then routes through `rt_cmp_full` for mixed/float operands; the same cmov suffix works for both because `test rax, rax` on -1/0/1 sets the same flags as `cmp` would. Still pending: file I/O, subprocess, stdin, hex, `float()` / `int(float)` conversions, `pow`/`log`/`sin`/`cos`/`tan` (libm-style). Phases 9-12 pending.
+Status: **Phase 8c done.** File I/O working — `file_open`/`file_close`/`file_read`/`file_write`/`file_exists`/`read_file` via direct Linux syscalls (open/read/write/close/access/lseek), no libc. Sized reads via `lseek(fd, 0, SEEK_END)` for size, alloc string, `lseek(0, SEEK_SET)`, single `read`. Fixed a subtle string-padding bug uncovered by this work — for L-char strings with L a multiple of 8, the byte after the content used to be the next heap object's type field (non-zero for lists/dicts), corrupting paths passed to syscalls. Strings now always carry an explicit trailing NUL byte (alloc formula `(L + 24) & -8`). Still pending: subprocess, stdin_*, hex/binary formatters, math (`pow`/`log`/`sin`/etc), float/int conversion. Phases 9-12 pending.
 
 Owner: sentrychris + claude
 

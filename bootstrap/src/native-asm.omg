@@ -811,7 +811,10 @@ proc emit_rt_slice(alloc_off) {
     # mov rax, rdx — 48 89 d0
     ob_bytes([72, 137, 208])
     # add rax, 23 — 48 83 c0 17
-    ob_bytes([72, 131, 192, 23])
+    # Reserve 1 extra byte for a NUL terminator (strings are passed to
+    # open(2)/etc without copying, so the next byte after the content
+    # must be 0). Round 16 + length + 1 up to 8 → (length + 24) & -8.
+    ob_bytes([72, 131, 192, 24])
     # and rax, -8 — 48 83 e0 f8
     ob_bytes([72, 131, 224, 248])
     alloc s_alloc_s := x_call_rel32_patchable()
@@ -981,6 +984,225 @@ proc emit_rt_store_index(dict_set_off) {
 # Every helper starts with `mov rcx, imm64 (except_top_slot_vaddr)`
 # whose imm64 is recorded in except_slot_patch_sites and resolved by
 # finalize_elf once heap_base is known.
+
+# === Phase 8c — file I/O ================================================
+# Direct Linux syscalls (no libc). OMG strings carry their length at
+# offset 8 and bytes at offset 16; because the heap is zero-filled,
+# the byte at [str+16+length] is implicitly NUL — perfect for passing
+# to open(2) without copying. File descriptors are stored as tagged
+# ints; programs that need a distinct "file handle" type can wrap
+# their own.
+#
+# Syscall numbers (Linux x86_64):
+#   sys_read   = 0
+#   sys_write  = 1
+#   sys_open   = 2
+#   sys_close  = 3
+#   sys_lseek  = 8
+#   sys_access = 21
+
+# rt_file_open(rax = path string, rbx = mode string) → tagged fd.
+# Mode reads the FIRST character only — 'w' / 'a' / anything else.
+# 'b' / '+' modifiers are ignored (we always pass binary semantics).
+proc emit_rt_file_open() {
+    alloc entry := ob_top
+    # movzx rcx, byte [rbx + 16]
+    ob_bytes([72, 15, 182, 75, 16])
+    # cmp cl, 119 ('w') — 80 f9 77
+    ob_bytes([128, 249, 119])
+    ob_byte(116)                              # je mode_w
+    alloc je_w := ob_top
+    ob_byte(0)
+    # cmp cl, 97 ('a') — 80 f9 61
+    ob_bytes([128, 249, 97])
+    ob_byte(116)                              # je mode_a
+    alloc je_a := ob_top
+    ob_byte(0)
+    # Default 'r': flags = O_RDONLY = 0
+    ob_bytes([72, 49, 246])                  # xor rsi, rsi
+    ob_byte(235)                              # jmp do_open
+    alloc jmp_open_r := ob_top
+    ob_byte(0)
+    # mode_w: flags = O_WRONLY | O_CREAT | O_TRUNC = 1 | 64 | 512 = 577
+    ob_patch_u8(je_w, ob_top - (je_w + 1))
+    x_mov_imm32(REG_RSI, 577)
+    ob_byte(235)                              # jmp do_open
+    alloc jmp_open_w := ob_top
+    ob_byte(0)
+    # mode_a: flags = O_WRONLY | O_CREAT | O_APPEND = 1 | 64 | 1024 = 1089
+    ob_patch_u8(je_a, ob_top - (je_a + 1))
+    x_mov_imm32(REG_RSI, 1089)
+    # do_open
+    ob_patch_u8(jmp_open_r, ob_top - (jmp_open_r + 1))
+    ob_patch_u8(jmp_open_w, ob_top - (jmp_open_w + 1))
+    # lea rdi, [rax + 16]
+    ob_bytes([72, 141, 120, 16])
+    # mov rdx, 420 (0644 file mode)
+    x_mov_imm32(REG_RDX, 420)
+    x_mov_imm32(REG_RAX, 2)                  # sys_open
+    x_syscall()
+    # Tag fd as small int
+    x_sal_rax_1()
+    x_or_rax_imm8(1)
+    x_ret()
+    return entry
+}
+
+# rt_file_close(rax = tagged fd) → TAG_NONE.
+proc emit_rt_file_close() {
+    alloc entry := ob_top
+    x_sar_rax_1()
+    # mov rdi, rax
+    ob_bytes([72, 137, 199])
+    x_mov_imm32(REG_RAX, 3)                  # sys_close
+    x_syscall()
+    x_mov_imm32(REG_RAX, TAG_NONE)
+    x_ret()
+    return entry
+}
+
+# rt_file_read(rax = tagged fd) → string with full file contents.
+# Determines size via lseek(fd, 0, SEEK_END), seeks back, allocates,
+# reads. Doesn't loop on partial reads — fine for regular files.
+proc emit_rt_file_read(alloc_off) {
+    alloc entry := ob_top
+    x_sar_rax_1()
+    # mov r8, rax (preserve fd)
+    ob_bytes([73, 137, 192])
+    # lseek(fd, 0, SEEK_END=2): rax = file size
+    # mov rdi, r8 — 4c 89 c7
+    ob_bytes([76, 137, 199])
+    ob_bytes([72, 49, 246])                  # xor rsi, rsi
+    x_mov_imm32(REG_RDX, 2)
+    x_mov_imm32(REG_RAX, 8)                  # sys_lseek
+    x_syscall()
+    # mov r9, rax (preserve size)
+    ob_bytes([73, 137, 193])
+    # lseek(fd, 0, SEEK_SET=0)
+    ob_bytes([76, 137, 199])                 # mov rdi, r8
+    ob_bytes([72, 49, 246])                  # xor rsi, rsi
+    ob_bytes([72, 49, 210])                  # xor rdx, rdx
+    x_mov_imm32(REG_RAX, 8)
+    x_syscall()
+    # alloc size = 16 + r9 + 7, rounded to 8
+    # mov rax, r9 — 4c 89 c8
+    ob_bytes([76, 137, 200])
+    # add rax, 23
+    # Reserve 1 extra byte for a NUL terminator (strings are passed to
+    # open(2)/etc without copying, so the next byte after the content
+    # must be 0). Round 16 + length + 1 up to 8 → (length + 24) & -8.
+    ob_bytes([72, 131, 192, 24])
+    # and rax, -8
+    ob_bytes([72, 131, 224, 248])
+    alloc s := x_call_rel32_patchable()
+    patch_call_rel32(s, alloc_off)
+    # Write header [type=0, length=r9]
+    ob_bytes([72, 199, 0, 0, 0, 0, 0])
+    # mov [rax + 8], r9 — 4c 89 48 08
+    ob_bytes([76, 137, 72, 8])
+    # read(fd, [rax+16], r9). Save the string ptr across the syscall.
+    ob_byte(80)                              # push rax
+    ob_bytes([76, 137, 199])                 # mov rdi, r8 (fd)
+    # lea rsi, [rax + 16]
+    ob_bytes([72, 141, 112, 16])
+    ob_bytes([76, 137, 202])                 # mov rdx, r9
+    ob_bytes([72, 49, 192])                  # xor rax, rax (sys_read = 0)
+    x_syscall()
+    ob_byte(88)                              # pop rax (string ptr)
+    x_ret()
+    return entry
+}
+
+# rt_file_write(rax = tagged fd, rbx = data string) → tagged bytes-written.
+proc emit_rt_file_write() {
+    alloc entry := ob_top
+    x_sar_rax_1()
+    # mov rdi, rax (fd)
+    ob_bytes([72, 137, 199])
+    # lea rsi, [rbx + 16]
+    ob_bytes([72, 141, 115, 16])
+    # mov rdx, [rbx + 8] (length)
+    ob_bytes([72, 139, 83, 8])
+    x_mov_imm32(REG_RAX, 1)                  # sys_write
+    x_syscall()
+    x_sal_rax_1()
+    x_or_rax_imm8(1)
+    x_ret()
+    return entry
+}
+
+# rt_file_exists(rax = path string) → bool.
+proc emit_rt_file_exists() {
+    alloc entry := ob_top
+    # access(path, F_OK = 0). Returns 0 if exists, -1 if not.
+    # lea rdi, [rax + 16]
+    ob_bytes([72, 141, 120, 16])
+    ob_bytes([72, 49, 246])                  # xor rsi, rsi
+    x_mov_imm32(REG_RAX, 21)                 # sys_access
+    x_syscall()
+    # rax = 0 → exists → TAG_TRUE; else → TAG_FALSE
+    ob_bytes([72, 133, 192])                 # test rax, rax
+    x_mov_imm32(REG_RAX, TAG_TRUE)
+    x_mov_imm32(REG_RCX, TAG_FALSE)
+    x_cmovne_rax_rcx()
+    x_ret()
+    return entry
+}
+
+# rt_read_file(rax = path string) → string with full file contents.
+# Combines open + size-via-lseek + read + close. Returns the string
+# pointer in rax. Doesn't check for errors (a missing file currently
+# yields an empty/garbage string; programs that need error detection
+# should call file_exists first).
+proc emit_rt_read_file(alloc_off) {
+    alloc entry := ob_top
+    # open(path, O_RDONLY, 0)
+    ob_bytes([72, 141, 120, 16])             # lea rdi, [rax + 16]
+    ob_bytes([72, 49, 246])                  # xor rsi, rsi
+    ob_bytes([72, 49, 210])                  # xor rdx, rdx
+    x_mov_imm32(REG_RAX, 2)
+    x_syscall()
+    # mov r8, rax (fd)
+    ob_bytes([73, 137, 192])
+    # lseek end → size
+    ob_bytes([76, 137, 199])                 # mov rdi, r8
+    ob_bytes([72, 49, 246])                  # xor rsi, rsi
+    x_mov_imm32(REG_RDX, 2)
+    x_mov_imm32(REG_RAX, 8)
+    x_syscall()
+    ob_bytes([73, 137, 193])                 # mov r9, rax (size)
+    # lseek start
+    ob_bytes([76, 137, 199])
+    ob_bytes([72, 49, 246])
+    ob_bytes([72, 49, 210])
+    x_mov_imm32(REG_RAX, 8)
+    x_syscall()
+    # alloc string
+    ob_bytes([76, 137, 200])                 # mov rax, r9
+    # Reserve 1 extra byte for a NUL terminator (strings are passed to
+    # open(2)/etc without copying, so the next byte after the content
+    # must be 0). Round 16 + length + 1 up to 8 → (length + 24) & -8.
+    ob_bytes([72, 131, 192, 24])
+    ob_bytes([72, 131, 224, 248])
+    alloc s := x_call_rel32_patchable()
+    patch_call_rel32(s, alloc_off)
+    ob_bytes([72, 199, 0, 0, 0, 0, 0])       # type = 0
+    ob_bytes([76, 137, 72, 8])               # length = r9
+    # read
+    ob_byte(80)                              # push rax (save str ptr)
+    ob_bytes([76, 137, 199])                 # mov rdi, r8 (fd)
+    ob_bytes([72, 141, 112, 16])             # lea rsi, [rax + 16]
+    ob_bytes([76, 137, 202])                 # mov rdx, r9
+    ob_bytes([72, 49, 192])                  # xor rax, rax
+    x_syscall()
+    # close
+    ob_bytes([76, 137, 199])                 # mov rdi, r8
+    x_mov_imm32(REG_RAX, 3)
+    x_syscall()
+    ob_byte(88)                              # pop rax (str ptr)
+    x_ret()
+    return entry
+}
 
 # === Phase 8b — floats ==================================================
 # Float values are heap-allocated boxes: [type=5, f64_bits] (16 bytes).
@@ -1517,7 +1739,10 @@ proc emit_rt_bytes_to_string(alloc_off) {
     ob_byte(81)                           # push rcx
     # size = 16 + length, rounded to 8
     ob_bytes([72, 137, 200])              # mov rax, rcx
-    ob_bytes([72, 131, 192, 23])          # add rax, 23
+    # Reserve 1 extra byte for a NUL terminator (strings are passed to
+    # open(2)/etc without copying, so the next byte after the content
+    # must be 0). Round 16 + length + 1 up to 8 → (length + 24) & -8.
+    ob_bytes([72, 131, 192, 24])          # add rax, 23
     ob_bytes([72, 131, 224, 248])         # and rax, -8
     alloc s := x_call_rel32_patchable()
     patch_call_rel32(s, alloc_off)
@@ -2537,6 +2762,12 @@ alloc rt_sqrt_off            := 0
 alloc rt_floor_off           := 0
 alloc rt_ceil_off            := 0
 alloc rt_abs_off             := 0
+alloc rt_file_open_off       := 0
+alloc rt_file_close_off      := 0
+alloc rt_file_read_off       := 0
+alloc rt_file_write_off      := 0
+alloc rt_file_exists_off     := 0
+alloc rt_read_file_off       := 0
 
 # Patch sites for the imm64 of `mov rcx, imm64 (except_top_slot_addr)`
 # that's emitted inside each except helper. Resolved in finalize_elf
@@ -2618,6 +2849,13 @@ proc emit_runtime_blob() {
     rt_floor_off          := emit_rt_round(rt_to_float_off, 1)
     rt_ceil_off           := emit_rt_round(rt_to_float_off, 2)
     rt_abs_off            := emit_rt_abs(rt_box_float_off)
+    # File I/O helpers (phase 8c).
+    rt_file_open_off      := emit_rt_file_open()
+    rt_file_close_off     := emit_rt_file_close()
+    rt_file_read_off      := emit_rt_file_read(rt_alloc_off)
+    rt_file_write_off     := emit_rt_file_write()
+    rt_file_exists_off    := emit_rt_file_exists()
+    rt_read_file_off      := emit_rt_read_file(rt_alloc_off)
     # Mutually-recursive list/dict emitters ↔ repr dispatcher.
     # Emit list/dict first with placeholder call sites for repr
     # dispatch, then emit the dispatcher (which can reference list +
@@ -3597,6 +3835,51 @@ proc gen_builtin(name, argc) {
         x_push_reg(REG_RAX)
         return false
     }
+    if name == "file_open" {
+        # 2 args: pop in reverse (mode pushed last)
+        x_pop_reg(REG_RBX)                          # mode
+        x_pop_reg(REG_RAX)                          # path
+        alloc s := x_call_rel32_patchable()
+        patch_call_rel32(s, rt_file_open_off)
+        x_push_reg(REG_RAX)
+        return false
+    }
+    if name == "file_close" {
+        x_pop_reg(REG_RAX)
+        alloc s := x_call_rel32_patchable()
+        patch_call_rel32(s, rt_file_close_off)
+        x_push_reg(REG_RAX)
+        return false
+    }
+    if name == "file_read" {
+        x_pop_reg(REG_RAX)
+        alloc s := x_call_rel32_patchable()
+        patch_call_rel32(s, rt_file_read_off)
+        x_push_reg(REG_RAX)
+        return false
+    }
+    if name == "file_write" {
+        x_pop_reg(REG_RBX)                          # data string
+        x_pop_reg(REG_RAX)                          # fd
+        alloc s := x_call_rel32_patchable()
+        patch_call_rel32(s, rt_file_write_off)
+        x_push_reg(REG_RAX)
+        return false
+    }
+    if name == "file_exists" {
+        x_pop_reg(REG_RAX)
+        alloc s := x_call_rel32_patchable()
+        patch_call_rel32(s, rt_file_exists_off)
+        x_push_reg(REG_RAX)
+        return false
+    }
+    if name == "read_file" {
+        x_pop_reg(REG_RAX)
+        alloc s := x_call_rel32_patchable()
+        patch_call_rel32(s, rt_read_file_off)
+        x_push_reg(REG_RAX)
+        return false
+    }
     panic("native-asm: builtin '" + name + "' not yet implemented")
 }
 
@@ -3966,10 +4249,15 @@ proc finalize_elf(entry_vaddr, r15_init_site, r13_init_site) {
     }
     # 3. Layout string-header data right after code, recording each
     # header's absolute virtual address. Layout matches the runtime
-    # heap-object shape so the EMIT dispatcher can treat static
-    # strings and heap-allocated strings uniformly: [type=0, length,
-    # bytes...]. The pointer-to-header ends up tagged as 8-aligned
-    # (LSB=0) so it's distinguishable from int / sentinel values.
+    # heap-object shape so the EMIT dispatcher can treat static and
+    # heap-allocated strings uniformly: [type=0, length, bytes...].
+    #
+    # The explicit trailing NUL byte is critical: OMG strings get
+    # passed directly to open(2)/etc as C strings. Padding to 8
+    # alignment alone isn't enough — for an L-char string with L
+    # being a multiple of 8, the bytes section ends at an 8-aligned
+    # boundary and the byte right after is the next heap object's
+    # type field (non-zero for lists/dicts), corrupting the path.
     pad_to_8()
     alloc i := 0
     alloc n := length(deferred_strings)
@@ -3981,6 +4269,7 @@ proc finalize_elf(entry_vaddr, r15_init_site, r13_init_site) {
         ob_u64(HEAP_T_STRING)
         ob_u64(length(s))
         ob_string_bytes(s)
+        ob_byte(0)                                # explicit NUL terminator
         pad_to_8()
         patch_u64(site, header_vaddr)
         i := i + 1
