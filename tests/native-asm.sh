@@ -16,7 +16,7 @@ if [ ! -x "$OMGNA_NATIVE" ]; then
     exit 2
 fi
 
-section "native-asm (omgna): phases 1-6b"
+section "native-asm (omgna): phases 1-6c"
 
 # Round-trip a .omg through omgc + omgna and compare ./<bin> stdout
 # against the Rust runtime's output for the same source.
@@ -152,6 +152,12 @@ assert_omgna "closure_factory"   $';;;omg\nproc outer(x) {\n    proc inner(y) { 
 assert_omgna "closure_arith"     $';;;omg\nproc make_pow(exp) {\n    proc raise(base) {\n        alloc result := 1\n        alloc i := 0\n        loop i < exp {\n            result := result * base\n            i := i + 1\n        }\n        return result\n    }\n    return raise\n}\nemit make_pow(3)(2)\nemit make_pow(5)(2)\nemit make_pow(0)(10)'
 assert_omgna "closure_pred"      $';;;omg\nproc make_pred(lo, hi) {\n    proc check(x) {\n        if x < lo { return false }\n        if x > hi { return false }\n        return true\n    }\n    return check\n}\nalloc in_range := make_pred(10, 20)\nemit in_range(5)\nemit in_range(15)\nemit in_range(25)'
 assert_omgna "closure_counter"   $';;;omg\nproc make_seq() {\n    alloc n := 0\n    proc next() {\n        n := n + 1\n        return n\n    }\n    return next\n}\nalloc s := make_seq()\nemit s()\nemit s()\nemit s()'
+
+# === Phase 6c: multi-level closure capture ===
+assert_omgna "closure_3_level"   $';;;omg\nproc outer() {\n    alloc x := 10\n    proc middle() {\n        alloc y := 20\n        proc inner() { return x + y }\n        return inner\n    }\n    return middle\n}\nemit outer()()()'
+assert_omgna "closure_4_level"   $';;;omg\nproc l1() {\n    alloc a := 1\n    proc l2() {\n        alloc b := 2\n        proc l3() {\n            alloc c := 3\n            proc l4() { return a + b + c }\n            return l4\n        }\n        return l3\n    }\n    return l2\n}\nemit l1()()()()'
+assert_omgna "closure_skip_level" $';;;omg\nproc outer(x) {\n    proc middle() {\n        proc inner() { return x * 2 }\n        return inner\n    }\n    return middle\n}\nemit outer(21)()()\nemit outer(50)()()'
+assert_omgna "closure_call_fn"    $';;;omg\nproc make_runner(f) {\n    proc run(x) { return f(x) }\n    return run\n}\nproc dbl(n) { return n * 2 }\nalloc r := make_runner(dbl)\nemit r(7)\nemit r(50)'
 
 # Binary should be a real statically-linked ELF, no libc dependency.
 elf="$TMPDIR_TEST/na-hello_world"

@@ -1,6 +1,6 @@
 # native-asm — OMG bytecode → x86_64 ELF, no C compiler
 
-Status: **Phase 6b done.** Closures with single-level capture: nested procs see their immediate enclosing function's params + locals via a snapshot env carried in the closure's `env_ptr`. r12 holds env_ptr inside nested function bodies (pushed/popped around the body). Counters, accumulator factories, parameterised predicates all work. Multi-level nesting (>2 deep) needs phase 6c — inner functions only see ONE scope outward right now. Phases 7-12 pending.
+Status: **Phase 6 complete (a + b + c).** Closures with arbitrarily deep capture: each function's env carries a flattened ancestor chain via `func_env_layouts`. `gen_make_func` copies parent's env entries (via r12) followed by parent's scope entries (via r14), so a 4-level nested function sees its grandparent's, grandparent's-grandparent's variables etc. with O(1) lookup. Phases 7-12 pending.
 
 Owner: sentrychris + claude
 

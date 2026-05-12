@@ -2042,6 +2042,20 @@ alloc current_parent_name := ""        # parent fn's name (or "" if top-level pr
 alloc func_parents    := []
 alloc func_scope_info := []
 
+# Flat env layout per function. env_layout(f) is the list of names
+# visible in f's closure's env, in the order they appear in env slots
+# starting at [env+16]. The list is the concatenation of every
+# ancestor's [params + locals], outermost-first. A function with no
+# parent (top-level proc) has env_layout = []. With this table:
+#
+#   • `gen_make_func` knows how many slots to allocate in the child's
+#     env and where each one's source value lives (the first
+#     N=len(env_layout(parent)) slots come from r12+16 onwards; the
+#     remaining slots come from r14 frame addresses).
+#   • `scope_offset` resolves free variables by searching this flat
+#     list — slot index = list position.
+alloc func_env_layouts := []
+
 # Function machine-entry offsets, indexed by mangled name. Used to
 # resolve direct-call rel32 patches.
 alloc fn_entry := []                   # list of [name, ob_top_offset]
@@ -2098,27 +2112,18 @@ proc scope_offset(name) {
         }
         j := j + 1
     }
-    # Not in own scope — check parent scope (single-level capture in 6b).
-    if current_parent_name == "" { return ["global", 0] }
-    alloc psi := scope_info_of(current_parent_name)
-    if psi == false { return ["global", 0] }
-    alloc pparams := psi[0]
-    alloc plocals := psi[1]
-    alloc pnp := length(pparams)
-    alloc pi := 0
-    loop pi < pnp {
-        if pparams[pi] == name {
-            return ["free", pi]
+    # Not in own scope — check the flat env layout (full ancestor
+    # chain). Phase 6c: a function sees variables from EVERY enclosing
+    # scope, not just the immediate parent. Slot index in the env is
+    # the position in the flattened list.
+    alloc el := env_layout_of(current_func_name)
+    alloc ei := 0
+    alloc en := length(el)
+    loop ei < en {
+        if el[ei] == name {
+            return ["free", ei]
         }
-        pi := pi + 1
-    }
-    alloc pnl := length(plocals)
-    alloc pj := 0
-    loop pj < pnl {
-        if plocals[pj] == name {
-            return ["free", pnp + pj]
-        }
-        pj := pj + 1
+        ei := ei + 1
     }
     return ["global", 0]
 }
@@ -2147,6 +2152,30 @@ proc scope_info_of(name) {
         i := i + 1
     }
     return false
+}
+
+# Compute env_layout for `name` from scratch: flatten ancestor chain
+# of [params + locals] in outermost-first order. Used by the pre-pass.
+proc env_layout_compute(name) {
+    alloc parent := parent_of(name)
+    if parent == "" { return [] }
+    alloc psi := scope_info_of(parent)
+    if psi == false { return [] }
+    alloc grand := env_layout_compute(parent)
+    return grand + psi[0] + psi[1]
+}
+
+# Helper: look up the precomputed env_layout for `name`.
+proc env_layout_of(name) {
+    alloc i := 0
+    alloc n := length(func_env_layouts)
+    loop i < n {
+        if func_env_layouts[i][0] == name {
+            return func_env_layouts[i][1]
+        }
+        i := i + 1
+    }
+    return []
 }
 
 # Pre-scan a function body's instruction range to collect locals (in
@@ -2294,46 +2323,62 @@ proc gen_make_func(name) {
     # the closure alloc that follows by saving on the native stack).
     alloc has_env := in_function
     if has_env {
-        alloc nslots := length(current_func_params) + length(current_func_locals)
+        # Inner's env layout = (current's env layout) + (current's
+        # params) + (current's locals). The first `parent_env_size`
+        # slots are copied verbatim from r12 (current's env). The
+        # next slots are copied from r14-relative frame positions.
+        alloc parent_env := env_layout_of(current_func_name)
+        alloc parent_env_size := length(parent_env)
+        alloc np := length(current_func_params)
+        alloc nl := length(current_func_locals)
+        alloc nslots := parent_env_size + np + nl
         # rt_alloc(16 + nslots*8)
         x_mov_imm32(REG_RAX, 16 + nslots * 8)
         alloc se_alloc := x_call_rel32_patchable()
         patch_call_rel32(se_alloc, rt_alloc_off)
-        # mov qword [rax], 4 — env type tag (HEAP_T_ENV; reserved 4)
+        # mov qword [rax], 4 — env type tag
         ob_bytes([72, 199, 0, 4, 0, 0, 0])
-        # mov qword [rax + 8], nslots — write length field
-        # 48 c7 40 08 <imm32>
+        # mov qword [rax + 8], nslots
         ob_bytes([72, 199, 64, 8])
         ob_u32(nslots & 4294967295)
-        # Copy each param into env slot. Param i is at [r14 + (np-1-i)*8],
-        # destined for env slot i (offset 16 + i*8).
-        alloc np := length(current_func_params)
+        # Copy `parent_env_size` slots from r12 (current env) into the
+        # new env's first slots. Phase 6c: this is what carries the
+        # grandparent (and further-up) variables into the child's env.
+        alloc pi := 0
+        loop pi < parent_env_size {
+            # rcx = [r12 + 16 + pi*8]  — 49 8b 8c 24 <disp32>
+            # ModR/M: mod=10, reg=001(rcx), rm=100 (SIB) → 0x8c
+            # SIB:    scale=00, index=100 (no index), base=100 (r12+B) → 0x24
+            ob_bytes([73, 139, 140, 36])
+            ob_u32((16 + pi * 8) & 4294967295)
+            # [rax + 16 + pi*8] = rcx
+            ob_bytes([72, 137, 136])
+            ob_u32((16 + pi * 8) & 4294967295)
+            pi := pi + 1
+        }
+        # Copy current function's params into env slots
+        # [parent_env_size, parent_env_size+np).
         alloc i := 0
         loop i < np {
-            # rcx = [r14 + (np-1-i)*8]  — 49 8b 8e <disp32>
-            # ModR/M: mod=10, reg=001(rcx), rm=110(r14+B) → 0x8e
+            # rcx = [r14 + (np-1-i)*8]
             ob_bytes([73, 139, 142])
             ob_u32(((np - 1 - i) * 8) & 4294967295)
-            # [rax + 16 + i*8] = rcx  — 48 89 88 <disp32>
-            # ModR/M: mod=10, reg=001(rcx), rm=000(rax) → 0x88
+            # [rax + 16 + (parent_env_size + i)*8] = rcx
             ob_bytes([72, 137, 136])
-            ob_u32((16 + i * 8) & 4294967295)
+            ob_u32((16 + (parent_env_size + i) * 8) & 4294967295)
             i := i + 1
         }
-        # Copy each local. Local j is at [r14 - (j+1)*8], destined for
-        # env slot (np + j).
-        alloc nl := length(current_func_locals)
+        # Copy current function's locals into the remaining slots.
         alloc j := 0
         loop j < nl {
             ob_bytes([73, 139, 142])
             ob_u32(((-1 * (j + 1) * 8)) & 4294967295)
             ob_bytes([72, 137, 136])
-            ob_u32((16 + (np + j) * 8) & 4294967295)
+            ob_u32((16 + (parent_env_size + np + j) * 8) & 4294967295)
             j := j + 1
         }
-        # Save env ptr to native stack while we allocate the closure.
-        # push rax — 50
-        ob_byte(80)
+        # Save env ptr while we allocate the closure object.
+        ob_byte(80)                          # push rax
     }
     # Allocate the closure (24 bytes).
     x_mov_imm32(REG_RAX, 24)
@@ -2667,6 +2712,15 @@ proc compute_func_scopes(code, funcs, top_level_end) {
             }
             k := k + 1
         }
+        fi := fi + 1
+    }
+    # Pass 3: precompute the flat env_layout for each function.
+    # Needs parent + scope_info to be already populated.
+    func_env_layouts := []
+    fi := 0
+    loop fi < length(func_scope_info) {
+        alloc fname := func_scope_info[fi][0]
+        func_env_layouts := func_env_layouts + [[fname, env_layout_compute(fname)]]
         fi := fi + 1
     }
 }
