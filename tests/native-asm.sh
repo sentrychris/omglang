@@ -210,6 +210,13 @@ assert_omgna "io_open_read"      $';;;omg\nalloc fh := file_open("/tmp/omgna_iof
 assert_omgna "io_write_roundtrip" $';;;omg\nalloc fh := file_open("/tmp/omgna_iowrite.out", "w")\nfile_write(fh, "hello from omg\\n")\nfile_close(fh)\nemit read_file("/tmp/omgna_iowrite.out")'
 rm -f /tmp/omgna_iofixture.txt /tmp/omgna_iowrite.out
 
+# === Phase 8d: bitwise + logical + args ===
+assert_omgna "bitwise_and"       $';;;omg\nemit 1 & 6\nemit 255 & 15'
+assert_omgna "bitwise_or_xor"    $';;;omg\nemit 5 | 2\nemit 7 ^ 3'
+assert_omgna "bitwise_shifts"    $';;;omg\nemit 100 >> 2\nemit 1 << 3'
+assert_omgna "logical_and_or"    $';;;omg\nemit 1 and 0\nemit 0 or 5\nemit true and true'
+assert_omgna "bitwise_not"       $';;;omg\nemit ~5\nemit ~0'
+
 # Binary should be a real statically-linked ELF, no libc dependency.
 elf="$TMPDIR_TEST/na-hello_world"
 if file "$elf" 2>/dev/null | grep -q "ELF 64-bit LSB executable, x86-64.*statically linked"; then

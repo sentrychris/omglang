@@ -51,6 +51,13 @@ alloc OP_LT             := 14
 alloc OP_LE             := 15
 alloc OP_GT             := 16
 alloc OP_GE             := 17
+alloc OP_BAND           := 18
+alloc OP_BOR            := 19
+alloc OP_BXOR           := 20
+alloc OP_SHL            := 21
+alloc OP_SHR            := 22
+alloc OP_AND            := 23
+alloc OP_OR             := 24
 alloc OP_NOT            := 25
 alloc OP_NEG            := 26
 alloc OP_JUMP           := 29
@@ -315,6 +322,13 @@ proc parse_bytecode(bytes) {
             if op == OP_MOD  { code := code + [["MOD",  false]] } else {
             if op == OP_NEG  { code := code + [["NEG",  false]] } else {
             if op == OP_NOT  { code := code + [["NOT",  false]] } else {
+            if op == OP_BAND { code := code + [["BAND", false]] } else {
+            if op == OP_BOR  { code := code + [["BOR",  false]] } else {
+            if op == OP_BXOR { code := code + [["BXOR", false]] } else {
+            if op == OP_SHL  { code := code + [["SHL",  false]] } else {
+            if op == OP_SHR  { code := code + [["SHR",  false]] } else {
+            if op == OP_AND  { code := code + [["AND",  false]] } else {
+            if op == OP_OR   { code := code + [["OR",   false]] } else {
             if op == OP_EQ   { code := code + [["EQ",   false]] } else {
             if op == OP_NE   { code := code + [["NE",   false]] } else {
             if op == OP_LT   { code := code + [["LT",   false]] } else {
@@ -329,7 +343,7 @@ proc parse_bytecode(bytes) {
             if op == OP_EMIT        { code := code + [["EMIT",        false]] } else {
             if op == OP_HALT        { code := code + [["HALT",        false]] } else {
                 panic("native-asm: opcode " + op + " not yet supported")
-            }}}}}}}}}}}}}}}}}}}}
+            }}}}}}}}}}}}}}}}}}}}}}}}}}}
         }}}}}}}}}}}}}}}}}}}}
         k := k + 1
     }
@@ -984,6 +998,101 @@ proc emit_rt_store_index(dict_set_off) {
 # Every helper starts with `mov rcx, imm64 (except_top_slot_vaddr)`
 # whose imm64 is recorded in except_slot_patch_sites and resolved by
 # finalize_elf once heap_base is known.
+
+# === Phase 8d — logical / bitwise ========================================
+# `and` and `or` are TRUTHINESS-coercing — they always return a tagged
+# bool (TAG_TRUE / TAG_FALSE), not the operand value (unlike Python's
+# short-circuit returns). The OMG bytecode wraps the RHS in a chained
+# JUMP_IF_FALSE + PushBool guard, but the actual `And` / `Or` opcodes
+# both pop two values and return a bool. We reuse the truthy-value
+# set from JUMP_IF_FALSE: {1 (tagged 0), 2 (TAG_FALSE), 6 (TAG_NONE)}
+# are falsy; everything else (other ints, sentinels, heap ptrs) is
+# truthy.
+
+proc emit_rt_and() {
+    alloc entry := ob_top
+    # Falsy check on rax (lhs)
+    x_cmp_rax_imm8(1)
+    ob_byte(116)
+    alloc je_af1 := ob_top
+    ob_byte(0)
+    x_cmp_rax_imm8(2)
+    ob_byte(116)
+    alloc je_af2 := ob_top
+    ob_byte(0)
+    x_cmp_rax_imm8(6)
+    ob_byte(116)
+    alloc je_af3 := ob_top
+    ob_byte(0)
+    # rax truthy — check rbx
+    # cmp rbx, 1 — 48 83 fb 01
+    ob_bytes([72, 131, 251, 1])
+    ob_byte(116)
+    alloc je_bf1 := ob_top
+    ob_byte(0)
+    ob_bytes([72, 131, 251, 2])
+    ob_byte(116)
+    alloc je_bf2 := ob_top
+    ob_byte(0)
+    ob_bytes([72, 131, 251, 6])
+    ob_byte(116)
+    alloc je_bf3 := ob_top
+    ob_byte(0)
+    x_mov_imm32(REG_RAX, TAG_TRUE)
+    x_ret()
+    ob_patch_u8(je_af1, ob_top - (je_af1 + 1))
+    ob_patch_u8(je_af2, ob_top - (je_af2 + 1))
+    ob_patch_u8(je_af3, ob_top - (je_af3 + 1))
+    ob_patch_u8(je_bf1, ob_top - (je_bf1 + 1))
+    ob_patch_u8(je_bf2, ob_top - (je_bf2 + 1))
+    ob_patch_u8(je_bf3, ob_top - (je_bf3 + 1))
+    x_mov_imm32(REG_RAX, TAG_FALSE)
+    x_ret()
+    return entry
+}
+
+proc emit_rt_or() {
+    alloc entry := ob_top
+    # If rax is truthy, return TRUE
+    x_cmp_rax_imm8(1)
+    ob_byte(116)
+    alloc je_af1 := ob_top
+    ob_byte(0)
+    x_cmp_rax_imm8(2)
+    ob_byte(116)
+    alloc je_af2 := ob_top
+    ob_byte(0)
+    x_cmp_rax_imm8(6)
+    ob_byte(116)
+    alloc je_af3 := ob_top
+    ob_byte(0)
+    x_mov_imm32(REG_RAX, TAG_TRUE)
+    x_ret()
+    # rax falsy — check rbx
+    ob_patch_u8(je_af1, ob_top - (je_af1 + 1))
+    ob_patch_u8(je_af2, ob_top - (je_af2 + 1))
+    ob_patch_u8(je_af3, ob_top - (je_af3 + 1))
+    ob_bytes([72, 131, 251, 1])
+    ob_byte(116)
+    alloc je_bf1 := ob_top
+    ob_byte(0)
+    ob_bytes([72, 131, 251, 2])
+    ob_byte(116)
+    alloc je_bf2 := ob_top
+    ob_byte(0)
+    ob_bytes([72, 131, 251, 6])
+    ob_byte(116)
+    alloc je_bf3 := ob_top
+    ob_byte(0)
+    x_mov_imm32(REG_RAX, TAG_TRUE)
+    x_ret()
+    ob_patch_u8(je_bf1, ob_top - (je_bf1 + 1))
+    ob_patch_u8(je_bf2, ob_top - (je_bf2 + 1))
+    ob_patch_u8(je_bf3, ob_top - (je_bf3 + 1))
+    x_mov_imm32(REG_RAX, TAG_FALSE)
+    x_ret()
+    return entry
+}
 
 # === Phase 8c — file I/O ================================================
 # Direct Linux syscalls (no libc). OMG strings carry their length at
@@ -2762,6 +2871,12 @@ alloc rt_sqrt_off            := 0
 alloc rt_floor_off           := 0
 alloc rt_ceil_off            := 0
 alloc rt_abs_off             := 0
+alloc rt_and_off             := 0
+alloc rt_or_off              := 0
+alloc rt_init_args_off       := 0
+# Patch site for the imm64 that loads the `args` global slot vaddr in
+# the prologue. Resolved in finalize_elf.
+alloc args_init_slot_site    := 0
 alloc rt_file_open_off       := 0
 alloc rt_file_close_off      := 0
 alloc rt_file_read_off       := 0
@@ -2849,6 +2964,10 @@ proc emit_runtime_blob() {
     rt_floor_off          := emit_rt_round(rt_to_float_off, 1)
     rt_ceil_off           := emit_rt_round(rt_to_float_off, 2)
     rt_abs_off            := emit_rt_abs(rt_box_float_off)
+    # Logical and/or helpers (phase 8d).
+    rt_and_off            := emit_rt_and()
+    rt_or_off             := emit_rt_or()
+    rt_init_args_off      := emit_rt_init_args(rt_alloc_off)
     # File I/O helpers (phase 8c).
     rt_file_open_off      := emit_rt_file_open()
     rt_file_close_off     := emit_rt_file_close()
@@ -3114,6 +3233,84 @@ proc gen_cmp_common() {
     x_mov_imm32(REG_RCX, TAG_FALSE)
 }
 
+# === Bitwise / logical codegen ============================================
+# BAnd: tagged_a AND tagged_b = ((n<<1)|1) & ((m<<1)|1) = ((n&m)<<1)|1.
+# The shared LSB stays set, so `and rax, rbx` produces a correctly
+# tagged result.
+proc gen_band() {
+    x_pop_reg(REG_RBX)
+    x_pop_reg(REG_RAX)
+    # and rax, rbx — 48 21 d8
+    ob_bytes([72, 33, 216])
+    x_push_reg(REG_RAX)
+}
+
+# BOr: same trick as BAnd — LSB | LSB = 1, rest is (n<<1) | (m<<1).
+proc gen_bor() {
+    x_pop_reg(REG_RBX)
+    x_pop_reg(REG_RAX)
+    # or rax, rbx — 48 09 d8
+    ob_bytes([72, 9, 216])
+    x_push_reg(REG_RAX)
+}
+
+# BXor: XOR strips both LSBs (1^1=0); we OR the tag back in.
+proc gen_bxor() {
+    x_pop_reg(REG_RBX)
+    x_pop_reg(REG_RAX)
+    # xor rax, rbx — 48 31 d8
+    ob_bytes([72, 49, 216])
+    x_or_rax_imm8(1)
+    x_push_reg(REG_RAX)
+}
+
+# Shift left: untag both, shift, re-tag. Variable shift uses CL.
+proc gen_shl() {
+    x_pop_reg(REG_RBX)
+    x_sar_rbx_1()                            # untag count
+    # mov rcx, rbx — 48 89 d9
+    ob_bytes([72, 137, 217])
+    x_pop_reg(REG_RAX)
+    x_sar_rax_1()                            # untag value
+    # shl rax, cl — 48 d3 e0
+    ob_bytes([72, 211, 224])
+    x_sal_rax_1()
+    x_or_rax_imm8(1)
+    x_push_reg(REG_RAX)
+}
+
+# Shift right (arithmetic — preserves sign).
+proc gen_shr() {
+    x_pop_reg(REG_RBX)
+    x_sar_rbx_1()
+    ob_bytes([72, 137, 217])                 # mov rcx, rbx
+    x_pop_reg(REG_RAX)
+    x_sar_rax_1()
+    # sar rax, cl — 48 d3 f8
+    ob_bytes([72, 211, 248])
+    x_sal_rax_1()
+    x_or_rax_imm8(1)
+    x_push_reg(REG_RAX)
+}
+
+# Logical AND / OR — truthiness-coercing, return tagged bool. Delegates
+# to rt_and / rt_or which examine the falsy-value set ({1, 2, 6}).
+proc gen_logical_and() {
+    x_pop_reg(REG_RBX)
+    x_pop_reg(REG_RAX)
+    alloc s := x_call_rel32_patchable()
+    patch_call_rel32(s, rt_and_off)
+    x_push_reg(REG_RAX)
+}
+
+proc gen_logical_or() {
+    x_pop_reg(REG_RBX)
+    x_pop_reg(REG_RAX)
+    alloc s := x_call_rel32_patchable()
+    patch_call_rel32(s, rt_or_off)
+    x_push_reg(REG_RAX)
+}
+
 proc gen_eq() { gen_cmp_common() x_cmovne_rax_rcx() x_push_reg(REG_RAX) }
 proc gen_ne() { gen_cmp_common() x_cmove_rax_rcx()  x_push_reg(REG_RAX) }
 proc gen_lt() { gen_cmp_common() x_cmovge_rax_rcx() x_push_reg(REG_RAX) }
@@ -3121,13 +3318,22 @@ proc gen_le() { gen_cmp_common() x_cmovg_rax_rcx()  x_push_reg(REG_RAX) }
 proc gen_gt() { gen_cmp_common() x_cmovle_rax_rcx() x_push_reg(REG_RAX) }
 proc gen_ge() { gen_cmp_common() x_cmovl_rax_rcx()  x_push_reg(REG_RAX) }
 
-# NOT swaps TAG_TRUE <-> TAG_FALSE. Trick: 6 - rax. 6 - 4 = 2,
-# 6 - 2 = 4. (Phase 3 doesn't handle truthiness of non-bool values.)
+# Phase 3 originally wired `gen_not` to a TAG_TRUE/TAG_FALSE swap
+# expecting `not x` to be logical. It turns out OP_NOT in OMG's
+# bytecode is BITWISE NOT (the `~x` operator); logical not is handled
+# at the bytecode level by other means. The phase-8d implementation
+# below (untag → not → re-tag) matches OMG's actual semantics. The
+# old logical-not body lived here through phase 6; no programs in the
+# corpus exercised it because `not` isn't a recognised OMG token, so
+# the bug was silent until OP_NOT showed up in a real bytecode.
 proc gen_not() {
     x_pop_reg(REG_RAX)
-    x_mov_imm32(REG_RCX, 6)
-    x_sub_rcx_rax()
-    x_push_reg(REG_RCX)
+    x_sar_rax_1()
+    # not rax — 48 f7 d0
+    ob_bytes([72, 247, 208])
+    x_sal_rax_1()
+    x_or_rax_imm8(1)
+    x_push_reg(REG_RAX)
 }
 
 # === Jumps ==============================================================
@@ -3317,6 +3523,130 @@ proc scope_info_of(name) {
         i := i + 1
     }
     return false
+}
+
+# rt_init_args(rdi = args_slot_vaddr): populate the `args` global with
+# an OMG list of strings built from argv. At our entry point rsp
+# points to argc, then argv. We CALL rt_init_args from the prologue,
+# which means there's an extra 8-byte return address on the stack, so
+# we read argc from [rsp + 8] and argv from [rsp + 16].
+#
+# For each argv[i]:
+#   - scan for NUL to determine length
+#   - allocate an OMG string of that length (header + bytes + NUL pad)
+#   - copy bytes via rep movsb
+#   - store the string pointer in list[i]
+proc emit_rt_init_args(alloc_off) {
+    alloc entry := ob_top
+    # mov rsi, [rsp + 8]  (argc) — 48 8b 74 24 08
+    ob_bytes([72, 139, 116, 36, 8])
+    # lea r8, [rsp + 16]  (argv ptr) — 4c 8d 44 24 10
+    ob_bytes([76, 141, 68, 36, 16])
+    # Save rdi (slot), rsi (argc), r8 (argv) for after alloc.
+    ob_byte(87)                              # push rdi
+    ob_byte(86)                              # push rsi
+    ob_bytes([65, 80])                       # push r8
+    # Allocate the list: 24 + argc * 8 bytes.
+    # mov rax, rsi
+    ob_bytes([72, 137, 240])
+    # shl rax, 3
+    ob_bytes([72, 193, 224, 3])
+    # add rax, 24
+    ob_bytes([72, 131, 192, 24])
+    alloc s_alloc := x_call_rel32_patchable()
+    patch_call_rel32(s_alloc, alloc_off)
+    # rax = list ptr.
+    ob_bytes([65, 88])                       # pop r8
+    ob_byte(94)                              # pop rsi (argc)
+    ob_byte(95)                              # pop rdi (slot vaddr)
+    # Write header [type=1, length=argc, capacity=argc].
+    ob_bytes([72, 199, 0, 1, 0, 0, 0])
+    ob_bytes([72, 137, 112, 8])              # [rax+8] = rsi
+    ob_bytes([72, 137, 112, 16])             # [rax+16] = rsi
+    # Store list pointer in the args global slot.
+    ob_bytes([72, 137, 7])                   # mov [rdi], rax
+    # Iterate i = 0..argc.  We preserve: r8 (argv), rsi (argc), and
+    # the list ptr (kept in r10 since rax gets clobbered by alloc).
+    # mov r10, rax — 49 89 c2
+    ob_bytes([73, 137, 194])
+    ob_bytes([72, 49, 201])                  # xor rcx, rcx (i = 0)
+    # if argc == 0, skip
+    ob_bytes([72, 133, 246])                 # test rsi, rsi
+    ob_byte(116)
+    alloc jz_done := ob_top
+    ob_byte(0)
+    alloc loop_start := ob_top
+    # Load cstring pointer: rdx = [r8 + rcx*8]
+    # 49 8b 14 c8 (REX.WB, 8b, ModR/M(mod=00, reg=010(rdx), rm=100 SIB) → 0x14; SIB(scale=11, index=001(rcx), base=000(r8+B)) → 0xc8)
+    ob_bytes([73, 139, 20, 200])
+    # strlen on rdx: scan for byte 0
+    # mov r9, rdx — 49 89 d1
+    ob_bytes([73, 137, 209])
+    alloc sl_loop := ob_top
+    # cmp byte [rdx], 0 — 80 3a 00
+    ob_bytes([128, 58, 0])
+    ob_byte(116)
+    alloc je_sl_done := ob_top
+    ob_byte(0)
+    # inc rdx
+    ob_bytes([72, 255, 194])
+    ob_byte(235)                              # jmp sl_loop
+    ob_byte((sl_loop - (ob_top + 1)) & 255)
+    ob_patch_u8(je_sl_done, ob_top - (je_sl_done + 1))
+    # rdx now points to the NUL. rdx - r9 = length.
+    # sub rdx, r9 — 4c 29 ca
+    ob_bytes([76, 41, 202])
+    # Allocate OMG string: size = 16 + len + 1, padded to 8.
+    # Save i, argc, argv ptr, list ptr, str start (r9), length (rdx).
+    ob_byte(81)                              # push rcx (i)
+    ob_byte(86)                              # push rsi (argc)
+    ob_bytes([65, 80])                       # push r8 (argv)
+    ob_bytes([65, 82])                       # push r10 (list ptr)
+    ob_bytes([65, 81])                       # push r9 (str start)
+    ob_byte(82)                              # push rdx (length)
+    # rax = (length + 24) & -8
+    ob_bytes([72, 137, 208])                 # mov rax, rdx
+    ob_bytes([72, 131, 192, 24])             # add rax, 24
+    ob_bytes([72, 131, 224, 248])            # and rax, -8
+    alloc s_alloc2 := x_call_rel32_patchable()
+    patch_call_rel32(s_alloc2, alloc_off)
+    # rax = string ptr.
+    ob_byte(90)                              # pop rdx (length)
+    ob_bytes([65, 89])                       # pop r9 (str start)
+    ob_bytes([65, 90])                       # pop r10 (list ptr)
+    ob_bytes([65, 88])                       # pop r8 (argv)
+    ob_byte(94)                              # pop rsi (argc)
+    ob_byte(89)                              # pop rcx (i)
+    # Write string header.
+    ob_bytes([72, 199, 0, 0, 0, 0, 0])       # type = 0
+    ob_bytes([72, 137, 80, 8])               # length
+    # Copy bytes: rep movsb. rdi = rax + 16, rsi = r9, rcx = rdx.
+    # rsi (argc) and rcx (i) get clobbered by the copy — save both
+    # on the native stack and restore afterwards.
+    ob_byte(81)                              # push rcx (i)
+    ob_byte(86)                              # push rsi (argc)
+    # mov rdi, rax; add rdi, 16
+    ob_bytes([72, 137, 199])
+    ob_bytes([72, 131, 199, 16])
+    # mov rsi, r9
+    ob_bytes([76, 137, 206])
+    # mov rcx, rdx
+    ob_bytes([72, 137, 209])
+    ob_bytes([243, 164])                     # rep movsb
+    ob_byte(94)                              # pop rsi (argc)
+    ob_byte(89)                              # pop rcx (i)
+    # Store string pointer in list[i]: [r10 + 24 + rcx*8] = rax
+    # 49 89 44 ca 18 — REX.WB, 89, ModR/M(mod=01, reg=000(rax), rm=100 SIB) → 0x44; SIB(scale=11, index=001(rcx), base=010(r10+B)) → 0xca; disp8=24
+    ob_bytes([73, 137, 68, 202, 24])
+    # inc rcx
+    ob_bytes([72, 255, 193])
+    # cmp rcx, rsi
+    ob_bytes([72, 57, 241])
+    ob_byte(124)                              # jl loop_start
+    ob_byte((loop_start - (ob_top + 1)) & 255)
+    ob_patch_u8(jz_done, ob_top - (jz_done + 1))
+    x_ret()
+    return entry
 }
 
 # Compute env_layout for `name` from scratch: flatten ancestor chain
@@ -3835,6 +4165,32 @@ proc gen_builtin(name, argc) {
         x_push_reg(REG_RAX)
         return false
     }
+    if name == "float_bits" {
+        # Read the 64-bit IEEE-754 pattern out of a heap float, return
+        # as a tagged int. The compiler uses this to serialise floats
+        # into .omgb bytecode. NOTE: bit 63 is lost in the LSB-tag
+        # shift, which is fine for the corpus (only non-negative
+        # floats reach this path) but breaks for negative / NaN
+        # values; phase 11's NaN-boxing rework will fix this.
+        x_pop_reg(REG_RAX)
+        # mov rax, [rax + 8]
+        ob_bytes([72, 139, 64, 8])
+        x_sal_rax_1()
+        x_or_rax_imm8(1)
+        x_push_reg(REG_RAX)
+        return false
+    }
+    if name == "bits_to_float" {
+        # Inverse of float_bits. Untag, stash in xmm0, box.
+        x_pop_reg(REG_RAX)
+        x_sar_rax_1()
+        # movq xmm0, rax — 66 48 0f 6e c0
+        ob_bytes([102, 72, 15, 110, 192])
+        alloc s := x_call_rel32_patchable()
+        patch_call_rel32(s, rt_box_float_off)
+        x_push_reg(REG_RAX)
+        return false
+    }
     if name == "file_open" {
         # 2 args: pop in reverse (mode pushed last)
         x_pop_reg(REG_RBX)                          # mode
@@ -4004,6 +4360,13 @@ proc gen_one(instr, bytecode_idx, dispatch_off) {
     if op == "MOD"      { gen_mod() }              else {
     if op == "NEG"      { gen_neg() }              else {
     if op == "NOT"      { gen_not() }              else {
+    if op == "BAND"     { gen_band() }             else {
+    if op == "BOR"      { gen_bor() }              else {
+    if op == "BXOR"     { gen_bxor() }             else {
+    if op == "SHL"      { gen_shl() }              else {
+    if op == "SHR"      { gen_shr() }              else {
+    if op == "AND"      { gen_logical_and() }      else {
+    if op == "OR"       { gen_logical_or() }       else {
     if op == "EQ"       { gen_eq() }               else {
     if op == "NE"       { gen_ne() }               else {
     if op == "LT"       { gen_lt() }               else {
@@ -4033,7 +4396,7 @@ proc gen_one(instr, bytecode_idx, dispatch_off) {
     if op == "EMIT"     { gen_emit(dispatch_off) } else {
     if op == "HALT"     { gen_halt() }             else {
         panic("native-asm: unsupported op " + op)
-    }}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}
+    }}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}
 }
 
 # Pre-pass: build func_scope_info (params + locals per function) and
@@ -4326,6 +4689,10 @@ proc finalize_elf(entry_vaddr, r15_init_site, r13_init_site) {
     patch_u64(r13_init_site, bump_base)
     patch_u64(except_init_slot_site, except_top_slot_vaddr)
     patch_u64(except_init_base_site, except_base)
+    # The `args` slot lives at `globals_base_vaddr + slot_index * 8`,
+    # where slot_index is whatever globals_slot("args") returned.
+    alloc args_slot_idx := globals_slot("args")
+    patch_u64(args_init_slot_site, globals_base_vaddr + args_slot_idx * 8)
     # Patch every except helper's `mov rcx, imm64 (slot_addr)` site.
     alloc esi := 0
     alloc esn := length(except_slot_patch_sites)
@@ -4414,9 +4781,9 @@ proc main_compile() {
     # 2. Record where user code (and thus the ELF entry point) starts.
     alloc user_entry := ob_top
     # 3. Emit prologue: load r15 with the operand-stack top, r13 with
-    # the heap bump pointer, and seed the `except_top` slot with the
-    # base of the exception-handler stack. All four imm64s get patched
-    # in finalize_elf once heap/stack/except layout is finalised.
+    # the heap bump pointer, seed the `except_top` slot, and build the
+    # `args` global from argv. All four imm64s get patched in
+    # finalize_elf once heap/stack/except layout is finalised.
     alloc r15_init_site := x_mov_r15_imm64_patchable()
     alloc r13_init_site := x_mov_r13_imm64_patchable()
     # mov rcx, imm64 (except_top_slot_vaddr) — 48 b9 <imm64>
@@ -4429,6 +4796,17 @@ proc main_compile() {
     ob_u64(0)
     # mov [rcx], rax — 48 89 01
     ob_bytes([72, 137, 1])
+    # Build args list from argv. Reserve the `args` global slot up
+    # front so codegen can refer to it and so we know its address
+    # to pass to rt_init_args. Slot vaddr is an imm64 patched in
+    # finalize_elf.
+    globals_slot("args")
+    # mov rdi, imm64 (args_slot_vaddr) — 48 bf <imm64>
+    ob_bytes([72, 191])
+    args_init_slot_site := ob_top
+    ob_u64(0)
+    alloc s_init := x_call_rel32_patchable()
+    patch_call_rel32(s_init, rt_init_args_off)
     # 4. Emit user code (top-level + each function body).
     fn_entry := []
     fn_call_patches := []
