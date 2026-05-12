@@ -1,6 +1,6 @@
 # native-asm — OMG bytecode → x86_64 ELF, no C compiler
 
-Status: Phases 1–5d done — STORE_INDEX, SLICE, list concat all working. **Merge sort now runs natively end-to-end.** `rt_concat` dispatches by type tag between `rt_string_concat` and `rt_list_concat`. `rt_slice` covers strings (rep movsb) and lists (rep movsq). Remaining: dicts. Phases 6-12 pending.
+Status: **Phase 6b done.** Closures with single-level capture: nested procs see their immediate enclosing function's params + locals via a snapshot env carried in the closure's `env_ptr`. r12 holds env_ptr inside nested function bodies (pushed/popped around the body). Counters, accumulator factories, parameterised predicates all work. Multi-level nesting (>2 deep) needs phase 6c — inner functions only see ONE scope outward right now. Phases 7-12 pending.
 
 Owner: sentrychris + claude
 

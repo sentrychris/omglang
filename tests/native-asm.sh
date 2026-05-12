@@ -16,7 +16,7 @@ if [ ! -x "$OMGNA_NATIVE" ]; then
     exit 2
 fi
 
-section "native-asm (omgna): phases 1-5d"
+section "native-asm (omgna): phases 1-6b"
 
 # Round-trip a .omg through omgc + omgna and compare ./<bin> stdout
 # against the Rust runtime's output for the same source.
@@ -126,6 +126,32 @@ assert_omgna "slice_in_loop"     $';;;omg\nalloc s := "abcdefghij"\nalloc i := 0
 assert_omgna "list_concat"       $';;;omg\nemit [1, 2] + [3, 4]\nemit [] + [1]\nemit [1] + []'
 assert_omgna "list_concat_chain" $';;;omg\nalloc xs := [1, 2] + [3, 4] + [5, 6]\nemit xs\nemit length(xs)'
 assert_omgna "merge_sort"        $';;;omg\nproc merge(xs, lo, mid, hi) {\n    alloc tmp := []\n    alloc i := lo\n    alloc j := mid\n    loop i < mid {\n        if j >= hi {\n            tmp := tmp + [xs[i]]\n            i := i + 1\n        } else {\n            if xs[i] <= xs[j] {\n                tmp := tmp + [xs[i]]\n                i := i + 1\n            } else {\n                tmp := tmp + [xs[j]]\n                j := j + 1\n            }\n        }\n    }\n    loop j < hi {\n        tmp := tmp + [xs[j]]\n        j := j + 1\n    }\n    alloc k := 0\n    loop k < length(tmp) {\n        xs[lo + k] := tmp[k]\n        k := k + 1\n    }\n}\nproc msort(xs, lo, hi) {\n    if hi - lo <= 1 { return false }\n    alloc mid := (lo + hi) / 2\n    msort(xs, lo, mid)\n    msort(xs, mid, hi)\n    merge(xs, lo, mid, hi)\n}\nalloc data := [5, 2, 8, 1, 9, 3, 7, 4, 6]\nmsort(data, 0, length(data))\nemit data'
+
+# === Phase 5e: dicts ===
+# Note: tests read keys individually rather than `emit dict` directly,
+# since Rust's hash-table iteration order isn't stable across runs.
+assert_omgna "dict_get"          $';;;omg\nalloc d := {"a": 1, "b": 2}\nemit d["a"]\nemit d["b"]'
+assert_omgna "dict_str_values"   $';;;omg\nalloc d := {"name": "Alice", "city": "NYC"}\nemit d["name"]\nemit d["city"]'
+assert_omgna "dict_update"       $';;;omg\nalloc d := {"x": 1, "y": 2}\nd["x"] := 99\nemit d["x"]\nemit d["y"]'
+assert_omgna "dict_add_new"      $';;;omg\nalloc d := {"a": 1}\nd["b"] := 2\nd["c"] := 3\nemit d["a"]\nemit d["b"]\nemit d["c"]'
+assert_omgna "dict_in_fn"        $';;;omg\nproc get_x(d) { return d["x"] }\nemit get_x({"x": 42, "y": 99})'
+assert_omgna "dict_modified"     $';;;omg\nproc set_x(d, v) { d["x"] := v }\nalloc d := {"x": 0}\nset_x(d, 100)\nemit d["x"]'
+assert_omgna "dict_computed_key" $';;;omg\nalloc d := {"hello": 1}\nalloc k := "hel" + "lo"\nemit d[k]'
+
+# === Phase 6a: first-class functions (no closure capture yet) ===
+assert_omgna "fn_value"          $';;;omg\nproc add(a, b) { return a + b }\nalloc f := add\nemit f(3, 4)'
+assert_omgna "fn_callback"       $';;;omg\nproc apply(f, x) { return f(x) }\nproc dbl(n) { return n * 2 }\nemit apply(dbl, 21)'
+assert_omgna "fn_select"         $';;;omg\nproc inc(x) { return x + 1 }\nproc dec(x) { return x - 1 }\nproc pick(positive) {\n    if positive { return inc }\n    return dec\n}\nemit pick(true)(10)\nemit pick(false)(10)'
+assert_omgna "fn_in_list"        $';;;omg\nproc sq(x) { return x * x }\nproc cube(x) { return x * x * x }\nalloc fns := [sq, cube]\nemit fns[0](4)\nemit fns[1](3)'
+assert_omgna "fn_map_like"       $';;;omg\nproc sq(x) { return x * x }\nproc map_one(f, xs, i) { return f(xs[i]) }\nalloc xs := [1, 2, 3, 4]\nalloc i := 0\nloop i < length(xs) {\n    emit map_one(sq, xs, i)\n    i := i + 1\n}'
+
+# === Phase 6b: closures with single-level capture ===
+assert_omgna "make_adder"        $';;;omg\nproc make_adder(n) {\n    proc adder(x) { return x + n }\n    return adder\n}\nemit make_adder(5)(10)\nemit make_adder(100)(7)'
+assert_omgna "closure_multi_free" $';;;omg\nproc make_combiner(a, b) {\n    proc combine(x) { return x * a + b }\n    return combine\n}\nalloc c := make_combiner(3, 5)\nemit c(0)\nemit c(10)\nemit c(100)'
+assert_omgna "closure_factory"   $';;;omg\nproc outer(x) {\n    proc inner(y) { return x + y }\n    return inner\n}\nalloc add1 := outer(1)\nalloc add100 := outer(100)\nemit add1(5)\nemit add100(5)'
+assert_omgna "closure_arith"     $';;;omg\nproc make_pow(exp) {\n    proc raise(base) {\n        alloc result := 1\n        alloc i := 0\n        loop i < exp {\n            result := result * base\n            i := i + 1\n        }\n        return result\n    }\n    return raise\n}\nemit make_pow(3)(2)\nemit make_pow(5)(2)\nemit make_pow(0)(10)'
+assert_omgna "closure_pred"      $';;;omg\nproc make_pred(lo, hi) {\n    proc check(x) {\n        if x < lo { return false }\n        if x > hi { return false }\n        return true\n    }\n    return check\n}\nalloc in_range := make_pred(10, 20)\nemit in_range(5)\nemit in_range(15)\nemit in_range(25)'
+assert_omgna "closure_counter"   $';;;omg\nproc make_seq() {\n    alloc n := 0\n    proc next() {\n        n := n + 1\n        return n\n    }\n    return next\n}\nalloc s := make_seq()\nemit s()\nemit s()\nemit s()'
 
 # Binary should be a real statically-linked ELF, no libc dependency.
 elf="$TMPDIR_TEST/na-hello_world"

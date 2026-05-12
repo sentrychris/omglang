@@ -3,6 +3,7 @@
 Status: **Done — 6.5× speedup delivered via a different route.** See
 "Outcome" at the bottom for the full story (two failed in-OMG
 attempts, then a successful pivot to a new runtime builtin).
+
 Owner: sentrychris + claude
 
 ## Goal
