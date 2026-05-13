@@ -1,5 +1,10 @@
 ;;;omg
 
+# Ensure the output directory exists. file_open won't create parent
+# directories for you — without this, the example would fail on a
+# fresh clone where ./examples/output/ isn't checked in.
+make_dir("./examples/output")
+
 alloc handle := file_open("./examples/output/test.txt", "w")
 
 file_write(handle, "hello")
