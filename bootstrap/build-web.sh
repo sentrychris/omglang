@@ -30,6 +30,17 @@ echo "Building web/omg-web.js (compiler + VM + driver) ..."
 "$OMGJS_NATIVE" "$WORK/omg-web.omgb" web/omg-web.js
 echo "  $(wc -c < web/omg-web.js | tr -d ' ') bytes"
 
+# === Compiler Explorer bundle =============================================
+# Same shape as omg-web.js but the driver also imports native-c.omg and
+# native-js.omg, so the bundle exposes every transpiler stage to the
+# browser (web/explorer.html). Bigger bundle (~3.5 MB) — only loaded on
+# the explorer page.
+
+echo "Building web/omg-explorer.js (compiler + VM + transpilers + driver) ..."
+"$OMG" --compile bootstrap/src/omg-explorer.omg "$WORK/omg-explorer.omgb"
+"$OMGJS_NATIVE" "$WORK/omg-explorer.omgb" web/omg-explorer.js
+echo "  $(wc -c < web/omg-explorer.js | tr -d ' ') bytes"
+
 # === Reference example pairs ==============================================
 
 EXAMPLES=(

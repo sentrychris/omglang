@@ -1,0 +1,485 @@
+;;;omg
+
+# omg-explorer.omg  →  web/omg-explorer.js (via bootstrap/build-web.sh)
+#
+# Driver for the in-browser Compiler Explorer. Reads OMG source from
+# args[2] and walks it through every stage of the toolchain — lex,
+# parse, compile, native-C transpile, native-JS transpile, execute —
+# emitting each stage's result framed by a one-line marker. The
+# frontend at web/explorer.app.js splits stdout on those markers to
+# fill the per-stage panes.
+#
+# args layout (set by web/explorer.app.js before re-evaluating the
+# bundle):
+#   args[0]  "<omg-explorer>"   keeps native-{c,js} from auto-firing
+#                               their main dispatches
+#   args[1]  "<source>"         dummy; native-js's version branch checks
+#                               args[1] against "-v"/"--version" at top
+#                               level (outside is_main_invocation), so
+#                               anything other than those two is safe
+#   args[2]  user OMG source    the actual program text to explore
+
+import "compiler.omg" as cc
+import "vm.omg" as vm
+import "native-c.omg" as ncc
+import "native-js.omg" as njs
+
+# === Stage delimiters =====================================================
+# Each stage's output is preceded by a single line containing only this
+# marker. The frontend splits the captured buffer on the marker regex.
+
+alloc MARKER := "___OMG_EXPLORER_STAGE___"
+
+proc stage(name) {
+    emit MARKER + name + MARKER
+}
+
+# === Type probes ==========================================================
+# OMG has no isinstance/type_of builtin, but the runtime's behaviour
+# under `+` and `dict_keys` lets us infer:
+#   - dict_keys panics on non-dicts.
+#   - `v + []` concatenates when v is a list (same length), but when v
+#     is a string the runtime first stringifies the [] side, giving a
+#     longer string. Numbers/bools panic.
+
+proc is_list(v) {
+    try {
+        return length(v + []) == length(v)
+    } except err {
+        return false
+    }
+}
+
+proc is_dict(v) {
+    try {
+        dict_keys(v)
+        return true
+    } except err {
+        return false
+    }
+}
+
+proc is_string(v) {
+    try {
+        return length(v + []) > length(v)
+    } except err {
+        return false
+    }
+}
+
+# === Generic value pretty-printer ========================================
+
+proc spaces(n) {
+    alloc s := ""
+    alloc i := 0
+    loop i < n {
+        s := s + "  "
+        i := i + 1
+    }
+    return s
+}
+
+proc escape_string(s) {
+    alloc out := ""
+    alloc i := 0
+    alloc n := length(s)
+    loop i < n {
+        alloc c := s[i]
+        if c == "\\" {
+            out := out + "\\\\"
+        } elif c == "\"" {
+            out := out + "\\\""
+        } elif c == "\n" {
+            out := out + "\\n"
+        } elif c == "\r" {
+            out := out + "\\r"
+        } elif c == "\t" {
+            out := out + "\\t"
+        } else {
+            out := out + c
+        }
+        i := i + 1
+    }
+    return out
+}
+
+proc list_is_flat(xs) {
+    alloc i := 0
+    alloc n := length(xs)
+    loop i < n {
+        alloc v := xs[i]
+        if is_list(v) { return false }
+        if is_dict(v) { return false }
+        i := i + 1
+    }
+    return true
+}
+
+proc render_primitive(v) {
+    if is_string(v) {
+        return "\"" + escape_string(v) + "\""
+    }
+    return "" + v
+}
+
+proc render_value(v, depth) {
+    if is_list(v) {
+        alloc n := length(v)
+        if n == 0 {
+            return "[]"
+        }
+        if list_is_flat(v) {
+            alloc parts := "["
+            alloc i := 0
+            loop i < n {
+                if i > 0 { parts := parts + ", " }
+                parts := parts + render_primitive(v[i])
+                i := i + 1
+            }
+            return parts + "]"
+        }
+        alloc out := "["
+        alloc pad := spaces(depth + 1)
+        alloc close_pad := spaces(depth)
+        alloc i2 := 0
+        loop i2 < n {
+            out := out + "\n" + pad + render_value(v[i2], depth + 1)
+            if i2 < n - 1 { out := out + "," }
+            i2 := i2 + 1
+        }
+        return out + "\n" + close_pad + "]"
+    }
+    if is_dict(v) {
+        alloc keys := dict_keys(v)
+        alloc kn := length(keys)
+        if kn == 0 {
+            return "{}"
+        }
+        alloc out2 := "{"
+        alloc pad2 := spaces(depth + 1)
+        alloc close_pad2 := spaces(depth)
+        alloc j := 0
+        loop j < kn {
+            alloc k := keys[j]
+            out2 := out2 + "\n" + pad2 + "\"" + escape_string(k) + "\": " + render_value(v[k], depth + 1)
+            if j < kn - 1 { out2 := out2 + "," }
+            j := j + 1
+        }
+        return out2 + "\n" + close_pad2 + "}"
+    }
+    return render_primitive(v)
+}
+
+# === Stage 1: Tokens =====================================================
+
+proc emit_tokens(tokens) {
+    alloc i := 0
+    alloc n := length(tokens)
+    emit "  line  kind          value"
+    emit "  ----  ----          -----"
+    loop i < n {
+        alloc tok := tokens[i]
+        alloc kind := tok[0]
+        alloc value := tok[1]
+        alloc line := tok[2]
+        alloc lstr := "" + line
+        loop length(lstr) < 4 { lstr := " " + lstr }
+        alloc kstr := kind
+        loop length(kstr) < 12 { kstr := kstr + " " }
+        alloc vstr := ""
+        if is_string(value) {
+            if value == "" {
+                vstr := ""
+            } else {
+                vstr := "\"" + escape_string(value) + "\""
+            }
+        } else {
+            vstr := "" + value
+        }
+        emit "  " + lstr + "  " + kstr + "  " + vstr
+        i := i + 1
+    }
+    emit ""
+    emit "  total: " + n + " tokens"
+}
+
+# === Stage 2: AST =========================================================
+
+proc emit_ast(stmts) {
+    emit render_value(stmts, 0)
+    emit ""
+    emit "# " + length(stmts) + " top-level statement(s)"
+}
+
+# === Stage 3: Bytecode disassembly ======================================
+
+proc disasm_op_name(tag) {
+    if tag == "PUSH_INT"        { return "PushInt"        }
+    if tag == "PUSH_FLOAT"      { return "PushFloat"      }
+    if tag == "PUSH_STR"        { return "PushStr"        }
+    if tag == "PUSH_BOOL"       { return "PushBool"       }
+    if tag == "PUSH_NONE"       { return "PushNone"       }
+    if tag == "BUILD_LIST"      { return "BuildList"      }
+    if tag == "BUILD_DICT"      { return "BuildDict"      }
+    if tag == "LOAD"            { return "Load"           }
+    if tag == "STORE"           { return "Store"          }
+    if tag == "STORE_LOCAL"     { return "StoreLocal"     }
+    if tag == "ADD"             { return "Add"            }
+    if tag == "SUB"             { return "Sub"            }
+    if tag == "MUL"             { return "Mul"            }
+    if tag == "DIV"             { return "Div"            }
+    if tag == "FLOOR_DIV"       { return "FloorDiv"       }
+    if tag == "MOD"             { return "Mod"            }
+    if tag == "EQ"              { return "Eq"             }
+    if tag == "NE"              { return "Ne"             }
+    if tag == "LT"              { return "Lt"             }
+    if tag == "LE"              { return "Le"             }
+    if tag == "GT"              { return "Gt"             }
+    if tag == "GE"              { return "Ge"             }
+    if tag == "BAND"            { return "BAnd"           }
+    if tag == "BOR"             { return "BOr"            }
+    if tag == "BXOR"            { return "BXor"           }
+    if tag == "SHL"             { return "Shl"            }
+    if tag == "SHR"             { return "Shr"            }
+    if tag == "AND"             { return "And"            }
+    if tag == "OR"              { return "Or"             }
+    if tag == "NOT"             { return "Not"            }
+    if tag == "NEG"             { return "Neg"            }
+    if tag == "INDEX"           { return "Index"          }
+    if tag == "SLICE"           { return "Slice"          }
+    if tag == "JUMP"            { return "Jump"           }
+    if tag == "JUMP_IF_FALSE"   { return "JumpIfFalse"    }
+    if tag == "CALL"            { return "Call"           }
+    if tag == "TCALL"           { return "TailCall"       }
+    if tag == "BUILTIN"         { return "CallBuiltin"    }
+    if tag == "POP"             { return "Pop"            }
+    if tag == "RET"             { return "Ret"            }
+    if tag == "EMIT"            { return "Emit"           }
+    if tag == "HALT"            { return "Halt"           }
+    if tag == "STORE_INDEX"     { return "StoreIndex"     }
+    if tag == "ATTR"            { return "Attr"           }
+    if tag == "STORE_ATTR"      { return "StoreAttr"      }
+    if tag == "ASSERT"          { return "Assert"         }
+    if tag == "CALL_VALUE"      { return "CallValue"      }
+    if tag == "SETUP_EXCEPT"    { return "SetupExcept"    }
+    if tag == "POP_BLOCK"       { return "PopBlock"       }
+    if tag == "RAISE"           { return "Raise"          }
+    if tag == "MAKE_FUNC"       { return "MakeFunc"       }
+    return tag
+}
+
+proc disasm_kind_name(k) {
+    if k == 0 { return "Generic"        }
+    if k == 1 { return "Syntax"         }
+    if k == 2 { return "Type"           }
+    if k == 3 { return "UndefinedIdent" }
+    if k == 4 { return "Value"          }
+    if k == 5 { return "ModuleImport"   }
+    return "" + k
+}
+
+proc disasm_instr(instr) {
+    alloc tag := instr[0]
+    alloc arg := instr[1]
+    alloc op := disasm_op_name(tag)
+    if arg == false {
+        return op
+    }
+    alloc is_str_op := false
+    if tag == "PUSH_STR"    { is_str_op := true }
+    if tag == "LOAD"        { is_str_op := true }
+    if tag == "STORE"       { is_str_op := true }
+    if tag == "STORE_LOCAL" { is_str_op := true }
+    if tag == "CALL"        { is_str_op := true }
+    if tag == "TCALL"       { is_str_op := true }
+    if tag == "MAKE_FUNC"   { is_str_op := true }
+    if tag == "ATTR"        { is_str_op := true }
+    if tag == "STORE_ATTR"  { is_str_op := true }
+    if is_str_op {
+        return op + "(\"" + escape_string(arg) + "\")"
+    }
+    if tag == "BUILTIN" {
+        return op + "(\"" + escape_string(arg[0]) + "\", " + arg[1] + ")"
+    }
+    if tag == "RAISE" {
+        return op + "(" + disasm_kind_name(arg) + ")"
+    }
+    return op + "(" + arg + ")"
+}
+
+proc emit_bytecode(code, funcs) {
+    emit "# functions"
+    alloc n := length(funcs)
+    alloc sorted := []
+    alloc i := 0
+    loop i < n {
+        sorted := sorted + [funcs[i]]
+        i := i + 1
+    }
+    alloc j := 1
+    loop j < n {
+        alloc k := j
+        loop k > 0 and sorted[k][0] < sorted[k - 1][0] {
+            alloc tmp := sorted[k]
+            sorted[k] := sorted[k - 1]
+            sorted[k - 1] := tmp
+            k := k - 1
+        }
+        j := j + 1
+    }
+    alloc fi := 0
+    loop fi < n {
+        alloc f := sorted[fi]
+        alloc fname := f[0]
+        alloc params := f[1]
+        alloc addr := f[2]
+        alloc plist := ""
+        alloc p := 0
+        loop p < length(params) {
+            if p > 0 { plist := plist + ", " }
+            plist := plist + params[p]
+            p := p + 1
+        }
+        emit "FUNC " + fname + " (" + plist + ") @ " + addr
+        fi := fi + 1
+    }
+    if n == 0 {
+        emit "  (none — entire program is top-level code)"
+    }
+    emit ""
+    emit "# code"
+    alloc cn := length(code)
+    alloc c := 0
+    loop c < cn {
+        alloc pc := "" + c
+        loop length(pc) < 4 { pc := "0" + pc }
+        emit pc + "  " + disasm_instr(code[c])
+        c := c + 1
+    }
+    emit ""
+    emit "# " + cn + " instruction(s), " + n + " function(s)"
+}
+
+# === Stage 6: Execution helpers ==========================================
+
+proc install_funcs_list(funcs_list) {
+    alloc i := 0
+    loop i < length(funcs_list) {
+        alloc f := funcs_list[i]
+        vm.vm_set_funcs_entry(f[0], f[1], f[2], f[3])
+        i := i + 1
+    }
+}
+
+proc seed_vm_globals(hosted_args, hosted_module_file) {
+    vm.vm_seed_global("args", hosted_args)
+    vm.vm_seed_global("module_file", hosted_module_file)
+    vm.vm_seed_global("current_dir", current_dir)
+}
+
+# native-c/native-js's generate() expect funcs in the dict shape that
+# parse_bytecode produces (name → [params, addr, source_file_idx]),
+# whereas compile_source returns a list of [name, params, addr,
+# source_file_idx]. Same reshape omg.omg's disasm() does.
+proc funcs_list_to_dict(funcs_list) {
+    alloc d := {}
+    alloc i := 0
+    loop i < length(funcs_list) {
+        alloc f := funcs_list[i]
+        d[f[0]] := [f[1], f[2], f[3]]
+        i := i + 1
+    }
+    return d
+}
+
+# === Main =================================================================
+
+if length(args) < 3 {
+    emit "omg-explorer: expected user source in args[2] (got " + length(args) + " args)"
+    exit(1)
+}
+
+alloc user_src := args[2]
+
+alloc tokens := false
+stage("tokens")
+try {
+    tokens := cc.tokenize(user_src, "<explorer>")
+    emit_tokens(tokens)
+} except err {
+    emit "lex error: " + err
+}
+
+alloc ast := false
+stage("ast")
+if tokens == false {
+    emit "(skipped — lexer failed)"
+} else {
+    try {
+        ast := cc.parse_program("<explorer>", tokens)
+        emit_ast(ast)
+    } except err {
+        emit "parse error: " + err
+    }
+}
+
+alloc compiled := false
+stage("bytecode")
+try {
+    cc.compile_reset()
+    compiled := cc.compile_source(user_src, "<explorer>")
+    emit_bytecode(compiled[0], compiled[1])
+} except err {
+    emit "compile error: " + err
+}
+
+alloc funcs_dict := false
+if compiled != false {
+    funcs_dict := funcs_list_to_dict(compiled[1])
+}
+
+stage("c")
+if compiled == false {
+    emit "(skipped — compile failed)"
+} else {
+    try {
+        alloc c_header := "/* omg_rt.h would be inlined here in the native AOT build.\n   Omitted in the browser explorer for brevity. */\n"
+        alloc c_src := ncc.generate(compiled[0], funcs_dict, compiled[2], compiled[3], c_header, "<explorer>")
+        emit c_src
+    } except err {
+        emit "C-gen error: " + err
+    }
+}
+
+stage("js")
+if compiled == false {
+    emit "(skipped — compile failed)"
+} else {
+    try {
+        alloc js_header := "// omg_rt.js would be inlined here in the native build.\n// Omitted in the browser explorer for brevity.\n"
+        alloc js_src := njs.generate(compiled[0], funcs_dict, compiled[2], compiled[3], js_header, "<explorer>")
+        emit js_src
+    } except err {
+        emit "JS-gen error: " + err
+    }
+}
+
+stage("run")
+if compiled == false {
+    emit "(skipped — compile failed)"
+} else {
+    vm.vm_reset()
+    vm.vm_extend_code(compiled[0])
+    install_funcs_list(compiled[1])
+    vm.vm_set_src_map(compiled[2], compiled[3])
+    seed_vm_globals(["<explorer>"], "<explorer>")
+    vm.vm_set_pc(0)
+    vm.run()
+    alloc verr := vm.vm_get_pending_error()
+    if length(verr) > 0 {
+        emit ""
+        emit verr
+    }
+}
+
+stage("end")

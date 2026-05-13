@@ -2,20 +2,19 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <title>OMG · playground</title>
+  <title>OMG · compiler explorer</title>
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="description" content="Interactive playground for the OMG programming language. Compile and run OMG code directly in your browser using the self-hosted OMG compiler and VM.">
-  <meta name="keywords" content="OMG language, programming language, compiler, virtual machine, bytecode, self-hosting, playground, interpreter">
+  <meta name="description" content="Inspect every stage of the self-hosted OMG compiler: lexer, parser, bytecode, native-C, native-JS, and live execution — all running client-side, with the compiler itself transpiled from OMG.">
+  <meta name="keywords" content="OMG language, compiler explorer, godbolt, lexer, parser, bytecode, transpiler, self-hosting, native C, native JS">
   <meta name="author" content="Chris Rowles">
   <meta name="theme-color" content="#1e1e2e">
 
   <meta property="og:type" content="website">
-  <meta property="og:title" content="OMG playground">
-  <meta property="og:description" content="Compile and run OMG programs entirely in your browser using the self-hosted OMG compiler and VM.">
+  <meta property="og:title" content="OMG compiler explorer">
+  <meta property="og:description" content="Watch your OMG program flow through every compiler stage in the browser.">
 
   <link rel="icon" href="favicon.ico">
 
-  <!-- Resolve theme before paint to avoid a flash. Dark is the default. -->
   <script>
     (function () {
       try {
@@ -52,22 +51,22 @@
       <span class="brand-name">OMG</span>
     </a>
     <span class="brand-sep" aria-hidden="true"></span>
-    <span class="brand-tag"><em>self-hosted</em> · in your browser</span>
+    <span class="brand-tag"><em>compiler</em> · explorer</span>
 
     <nav class="navtabs" aria-label="Site sections">
-      <a class="navtab is-active" href="index.html">Playground</a>
-      <a class="navtab" href="explorer.html">Explorer</a>
+      <a class="navtab" href="index.html">Playground</a>
+      <a class="navtab is-active" href="explorer.html">Explorer</a>
     </nav>
 
     <span class="topbar-spacer"></span>
 
     <div class="topbar-actions">
       <select id="example" class="select" aria-label="Example program"></select>
-      <button id="run" class="btn btn-primary" type="button" title="Run (Ctrl+Enter)">
+      <button id="run" class="btn btn-primary" type="button" title="Explore (Ctrl+Enter)">
         <svg class="ico" viewBox="0 0 12 12" aria-hidden="true">
           <path d="M3 1.8 L10.2 6 L3 10.2 Z" fill="currentColor"/>
         </svg>
-        Run
+        Explore
         <span class="kbd">⌘↵</span>
       </button>
       <button id="themeToggle" class="theme-toggle" type="button" aria-label="Toggle theme">
@@ -113,20 +112,40 @@
       </div>
     </section>
 
-    <!-- Output -->
-    <section class="pane output-pane">
-      <div class="pane-head">
-        <span class="pane-title">
-          <svg class="file-icon" viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true">
-            <path d="M2 4 L5 7 L2 10"/>
-            <path d="M8 11 L13 11"/>
-          </svg>
-          stdout
-        </span>
-        <span class="pane-head-spacer"></span>
-        <span class="pane-head-meta" id="outputMeta">—</span>
+    <!-- Stage explorer -->
+    <section class="pane">
+      <div class="tabbar" id="tabBar" role="tablist">
+        <button class="tab is-active" data-stage="tokens" role="tab">
+          <span class="tab-num">i</span> tokens
+          <span class="tab-size" data-size></span>
+        </button>
+        <button class="tab" data-stage="ast" role="tab">
+          <span class="tab-num">ii</span> ast
+          <span class="tab-size" data-size></span>
+        </button>
+        <button class="tab" data-stage="bytecode" role="tab">
+          <span class="tab-num">iii</span> bytecode
+          <span class="tab-size" data-size></span>
+        </button>
+        <button class="tab" data-stage="c" role="tab">
+          <span class="tab-num">iv</span> c
+          <span class="tab-size" data-size></span>
+        </button>
+        <button class="tab" data-stage="js" role="tab">
+          <span class="tab-num">v</span> js
+          <span class="tab-size" data-size></span>
+        </button>
+        <button class="tab" data-stage="run" role="tab">
+          <span class="tab-num">vi</span> run
+          <span class="tab-size" data-size></span>
+        </button>
       </div>
-      <pre id="output" class="pane-body is-empty">Loading the meta-circular OMG compiler…</pre>
+      <pre class="pane-body stage-pane is-active is-empty" data-stage="tokens" id="pane-tokens">Loading the meta-circular OMG compiler…</pre>
+      <pre class="pane-body stage-pane is-empty"          data-stage="ast"      id="pane-ast"></pre>
+      <pre class="pane-body stage-pane is-empty"          data-stage="bytecode" id="pane-bytecode"></pre>
+      <pre class="pane-body stage-pane is-empty"          data-stage="c"        id="pane-c"></pre>
+      <pre class="pane-body stage-pane is-empty"          data-stage="js"       id="pane-js"></pre>
+      <pre class="pane-body stage-pane is-empty"          data-stage="run"      id="pane-run"></pre>
     </section>
   </main>
 
@@ -138,6 +157,19 @@
     </span>
     <span class="sb-sep"></span>
     <span class="sb-item" id="statusDetail"></span>
+    <span class="sb-sep"></span>
+    <span class="pipeline" id="pipeline" aria-label="Compiler pipeline">
+      <span class="pstep" data-stage="tokens">tokens</span>
+      <span class="arrow">→</span>
+      <span class="pstep" data-stage="ast">ast</span>
+      <span class="arrow">→</span>
+      <span class="pstep" data-stage="bytecode">bc</span>
+      <span class="arrow">→</span>
+      <span class="pstep" data-stage="c">c</span>
+      <span class="pstep" data-stage="js">js</span>
+      <span class="arrow">→</span>
+      <span class="pstep" data-stage="run">run</span>
+    </span>
     <span class="sb-spacer"></span>
     <span class="sb-item" title="Bundle size">
       <svg viewBox="0 0 12 12" width="10" height="10" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1">
@@ -146,8 +178,6 @@
       </svg>
       <span id="bundleSize">—</span>
     </span>
-    <span class="sb-sep"></span>
-    <span class="sb-item">UTF-8 · OMG 0.2.0</span>
     <span class="sb-sep"></span>
     <a class="sb-item sb-link" href="https://github.com/sentrychris/omglang" target="_blank" rel="noopener">
       <svg viewBox="0 0 16 16" width="11" height="11" aria-hidden="true" fill="currentColor">
@@ -159,7 +189,6 @@
 </div>
 
 <script>
-  // Theme toggle.
   (function () {
     var btn = document.getElementById('themeToggle');
     if (!btn) return;
@@ -171,6 +200,6 @@
     });
   })();
 </script>
-<script src="app.js"></script>
+<script src="explorer.app.js"></script>
 </body>
 </html>

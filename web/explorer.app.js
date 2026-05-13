@@ -1,13 +1,31 @@
-// Browser playground for OMG.
+// Compiler Explorer frontend for OMG.
 //
-// Hosts the meta-circular compiler + VM + driver in a single
-// ~1.8 MB JavaScript bundle (web/omg-web.js, built by
-// bootstrap/build-web.sh via the native-js backend). Each Run click:
+// What loads here:
+//   web/omg-explorer.js — the OMG-side driver (bootstrap/src/omg-explorer
+//   .omg) transpiled to JS. The bundle is an IIFE that reads args from
+//   `let args = ...`, runs the user source through every compiler stage,
+//   and emits each result framed by a `___OMG_EXPLORER_STAGE___<name>___
+//   OMG_EXPLORER_STAGE___` marker via omg_emit → _omg_write.
 //
-//   1. Sets globalThis.args = ["<playground>", <user source>]
-//   2. Reroutes omg_emit / omg_print to write into the output pane
-//   3. new Function(bundleSource)() — fresh evaluation per click so
-//      the OMG-side globals are cleanly reset between runs.
+// What this file does:
+//   - Loads the bundle text once, re-evals it on each Explore click so
+//     the OMG-side globals are cleanly reset.
+//   - Before eval, find-replaces the args declaration to inject
+//     ["<omg-explorer>", "<source>", userSourceText] and rewires
+//     _omg_write to accumulate into window.__omg_buf instead of
+//     console.log.
+//   - Splits the captured buffer on the stage markers and pours each
+//     section into its tab pane.
+//   - Marks tabs in error (lex/parse/compile failures) so the user can
+//     see at a glance which stage failed.
+
+// === Stage metadata =====================================================
+
+const STAGES = ['tokens', 'ast', 'bytecode', 'c', 'js', 'run'];
+
+const MARKER_RE = /___OMG_EXPLORER_STAGE___([a-z_]+)___OMG_EXPLORER_STAGE___\n?/g;
+
+// === Starter examples ====================================================
 
 const STARTERS = [
     {
@@ -19,11 +37,22 @@ emit "Hello, world!"
 `
     },
     {
+        name: 'arithmetic',
+        src:
+`;;;omg
+
+# Watch the binary op lower from (bin add ...) in the AST
+# to a single Add opcode in the bytecode.
+emit 1 + 2 * 3
+`
+    },
+    {
         name: 'closures',
         src:
 `;;;omg
 
-# Each call to make_adder produces an "add" that remembers its own n.
+# Closures show up as MakeFunc + StoreLocal in the bytecode;
+# inspect the C tab to see how captures are boxed.
 proc make_adder(n) {
     proc add(x) {
         return x + n
@@ -32,11 +61,8 @@ proc make_adder(n) {
 }
 
 alloc add5 := make_adder(5)
-alloc add100 := make_adder(100)
-
-emit add5(10)         # 15
-emit add100(7)        # 107
-emit add5(add100(0))  # 105
+emit add5(10)
+emit add5(100)
 `
     },
     {
@@ -57,13 +83,26 @@ loop i < 10 {
 `
     },
     {
+        name: 'try_except',
+        src:
+`;;;omg
+
+# SETUP_EXCEPT + POP_BLOCK + RAISE are the bytecode primitives
+# that implement try/except. See them on stage iii.
+try {
+    alloc xs := [1, 2, 3]
+    emit xs[99]
+} except err {
+    emit "caught: " + err
+}
+`
+    },
+    {
         name: 'prime_sieve',
         src:
 `;;;omg
 
-# Sieve of Eratosthenes up to 100.
-
-alloc N := 100
+alloc N := 30
 alloc sieve := []
 alloc i := 0
 loop i <= N {
@@ -92,36 +131,6 @@ loop k <= N {
 emit primes
 `
     },
-    {
-        name: 'classify',
-        src:
-`;;;omg
-
-proc digit_sum(n) {
-    alloc s := 0
-    loop n > 0 {
-        s := s + n % 10
-        n := n / 10
-    }
-    return s
-}
-
-proc is_prime(n) {
-    if n <= 1 { return false }
-    alloc i := 2
-    loop i * i <= n {
-        if n % i == 0 { return false }
-        i := i + 1
-    }
-    return true
-}
-
-alloc n := 13
-emit "n = " + n
-emit "digit_sum = " + digit_sum(n)
-emit "prime = " + is_prime(n)
-`
-    },
 ];
 
 // === DOM handles =========================================================
@@ -130,19 +139,30 @@ const $select   = document.getElementById('example');
 const $source   = document.getElementById('source');
 const $sourceHL = document.getElementById('source-hl');
 const $gutter   = document.getElementById('source-gutter');
-const $output   = document.getElementById('output');
 const $run      = document.getElementById('run');
+const $sourceMeta = document.getElementById('sourceMeta');
+const $sourcePane = document.getElementById('sourcePane');
 
-const $sourceMeta   = document.getElementById('sourceMeta');
-const $outputMeta   = document.getElementById('outputMeta');
 const $statusLabel  = document.getElementById('statusLabel');
 const $statusDot    = document.getElementById('statusDot');
 const $statusDetail = document.getElementById('statusDetail');
 const $bundleSize   = document.getElementById('bundleSize');
-const $sourcePane   = document.getElementById('sourcePane');
 
-// === OMG syntax highlighting =============================================
-// Mirrors the scopes in vscode/syntaxes/omg.tmLanguage.json.
+const $tabBar   = document.getElementById('tabBar');
+const $pipeline = document.getElementById('pipeline');
+
+const $panes = {};
+const $tabs  = {};
+const $tabSizes = {};
+const $psteps = {};
+for (const s of STAGES) {
+    $panes[s] = document.getElementById('pane-' + s);
+    $tabs[s]  = $tabBar.querySelector(`.tab[data-stage="${s}"]`);
+    $tabSizes[s] = $tabs[s].querySelector('[data-size]');
+    $psteps[s] = $pipeline.querySelector(`.pstep[data-stage="${s}"]`);
+}
+
+// === Syntax highlighting (mirrors app.js) ================================
 
 const OMG_KEYWORDS = new Set([
     'if', 'elif', 'else', 'loop', 'break', 'return',
@@ -166,14 +186,12 @@ function omgTokenize(src) {
     let i = 0;
     while (i < n) {
         const ch = src[i];
-
         if (ch === ' ' || ch === '\t' || ch === '\n' || ch === '\r') {
             let j = i;
             while (j < n && (src[j] === ' ' || src[j] === '\t' || src[j] === '\n' || src[j] === '\r')) j++;
             tokens.push({ text: src.slice(i, j) });
             i = j; continue;
         }
-
         if (ch === ';') {
             const lineStart = i === 0 || src[i - 1] === '\n';
             if (lineStart && src.slice(i, i + 6) === ';;;omg') {
@@ -183,14 +201,12 @@ function omgTokenize(src) {
                 i = j; continue;
             }
         }
-
         if (ch === '#') {
             let j = i;
             while (j < n && src[j] !== '\n') j++;
             tokens.push({ type: 'comment', text: src.slice(i, j) });
             i = j; continue;
         }
-
         if (ch === '/' && src[i + 1] === '*') {
             let j = i + 2;
             while (j < n - 1 && !(src[j] === '*' && src[j + 1] === '/')) j++;
@@ -198,7 +214,6 @@ function omgTokenize(src) {
             tokens.push({ type: 'comment', text: src.slice(i, j) });
             i = j; continue;
         }
-
         if (ch === '"') {
             let j = i + 1;
             while (j < n) {
@@ -210,7 +225,6 @@ function omgTokenize(src) {
             tokens.push({ type: 'string', text: src.slice(i, j) });
             i = j; continue;
         }
-
         if (ch >= '0' && ch <= '9') {
             let j = i;
             if (ch === '0' && (src[i + 1] === 'b' || src[i + 1] === 'B')) {
@@ -222,7 +236,6 @@ function omgTokenize(src) {
             tokens.push({ type: 'number', text: src.slice(i, j) });
             i = j; continue;
         }
-
         if ((ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') || ch === '_') {
             let j = i;
             while (j < n && /[A-Za-z0-9_]/.test(src[j])) j++;
@@ -240,7 +253,6 @@ function omgTokenize(src) {
             tokens.push({ type, text: word });
             i = j; continue;
         }
-
         const two = src.slice(i, i + 2);
         if (two === ':=' || two === '==' || two === '!=' ||
             two === '<=' || two === '>=' || two === '<<' || two === '>>') {
@@ -251,7 +263,6 @@ function omgTokenize(src) {
             tokens.push({ type: 'op', text: ch });
             i++; continue;
         }
-
         tokens.push({ text: ch });
         i++;
     }
@@ -313,21 +324,43 @@ STARTERS.forEach((s, i) => {
 $select.addEventListener('change', () => {
     $source.value = STARTERS[$select.value].src;
     renderHighlight();
-    runUserSource($source.value);
+    runExplorer();
 });
 $source.value = STARTERS[0].src;
 renderHighlight();
+
+// === Tab management ======================================================
+
+let currentStage = 'tokens';
+function selectStage(name) {
+    if (!STAGES.includes(name)) return;
+    currentStage = name;
+    for (const s of STAGES) {
+        $tabs[s].classList.toggle('is-active', s === name);
+        $panes[s].classList.toggle('is-active', s === name);
+        $psteps[s].classList.toggle('is-current', s === name);
+    }
+}
+
+$tabBar.addEventListener('click', (e) => {
+    const t = e.target.closest('.tab');
+    if (!t) return;
+    selectStage(t.getAttribute('data-stage'));
+});
+$pipeline.addEventListener('click', (e) => {
+    const p = e.target.closest('.pstep');
+    if (!p) return;
+    selectStage(p.getAttribute('data-stage'));
+});
 
 // === Status helpers ======================================================
 
 function setStatus(state, label, detail) {
     $statusLabel.textContent = label;
     $statusDetail.textContent = detail || '';
-
     $statusDot.classList.remove('is-busy', 'is-ok', 'is-error');
     const $row = $statusLabel.parentElement;
     $row.classList.remove('sb-accent', 'sb-warn', 'sb-error', 'sb-ok');
-
     if (state === 'busy') { $statusDot.classList.add('is-busy'); $row.classList.add('sb-accent'); }
     if (state === 'ok')   { $statusDot.classList.add('is-ok');   $row.classList.add('sb-ok'); }
     if (state === 'warn') { $row.classList.add('sb-warn'); }
@@ -344,10 +377,10 @@ function fmtBytes(n) {
 
 let bundleSource = null;
 async function loadBundle() {
-    setStatus('busy', 'fetching', 'omg-web.js');
+    setStatus('busy', 'fetching', 'omg-explorer.js');
     try {
         const t0 = performance.now();
-        const r = await fetch('omg-web.js');
+        const r = await fetch('omg-explorer.js');
         bundleSource = await r.text();
         const ms = (performance.now() - t0).toFixed(0);
         $bundleSize.textContent = fmtBytes(bundleSource.length);
@@ -358,18 +391,77 @@ async function loadBundle() {
 }
 loadBundle();
 
-// === Run =================================================================
+// === Stage parsing =======================================================
 
-function runUserSource(src) {
+function parseStageBuffer(buf) {
+    const out = {};
+    MARKER_RE.lastIndex = 0;
+    const matches = [];
+    let m;
+    while ((m = MARKER_RE.exec(buf)) !== null) {
+        matches.push({ name: m[1], start: m.index, end: MARKER_RE.lastIndex });
+    }
+    for (let i = 0; i < matches.length; i++) {
+        const cur = matches[i];
+        const next = matches[i + 1];
+        const sliceEnd = next ? next.start : buf.length;
+        const content = buf.slice(cur.end, sliceEnd);
+        out[cur.name] = content.replace(/\n$/, '');
+    }
+    return out;
+}
+
+function isStageError(s) {
+    const t = s.trim();
+    return (
+        t.startsWith('lex error:') ||
+        t.startsWith('parse error:') ||
+        t.startsWith('compile error:') ||
+        t.startsWith('C-gen error:') ||
+        t.startsWith('JS-gen error:') ||
+        t.startsWith('(skipped — ')
+    );
+}
+
+function renderStage(name, content) {
+    const $pane = $panes[name];
+    const $tab  = $tabs[name];
+    const $pstep = $psteps[name];
+    const $size = $tabSizes[name];
+    if (!$pane) return;
+
+    $pane.classList.remove('is-error', 'is-empty');
+    $tab.classList.remove('is-error', 'is-empty');
+    $pstep.classList.remove('is-error', 'is-empty');
+    $size.textContent = '';
+
+    if (content === undefined || content === '') {
+        $pane.textContent = '(no output)';
+        $pane.classList.add('is-empty');
+        $tab.classList.add('is-empty');
+        $pstep.classList.add('is-empty');
+        return;
+    }
+    if (isStageError(content)) {
+        $pane.classList.add('is-error');
+        $tab.classList.add('is-error');
+        $pstep.classList.add('is-error');
+    }
+    $size.textContent = fmtBytes(content.length);
+    $pane.textContent = content;
+}
+
+// === Run the explorer ===================================================
+
+function runExplorer() {
     if (!bundleSource) { setStatus('warn', 'pending', 'bundle still loading'); return; }
-    $output.classList.remove('is-error', 'is-empty');
-    $output.textContent = '';
+    const src = $source.value;
 
     const wrapped =
         bundleSource
             .replace(
                 /let args = \(typeof process !== 'undefined'\) \? process\.argv\.slice\(1\) : \[\];/,
-                'let args = ["<playground>", ' + JSON.stringify(src) + '];'
+                'let args = ["<omg-explorer>", "<source>", ' + JSON.stringify(src) + '];'
             )
             .replace(
                 "let _omg_write = (s) => { console.log(s); };",
@@ -386,59 +478,65 @@ function runUserSource(src) {
 
     window.__omg_buf = '';
     window.__omg_exit_code = 0;
-    setStatus('busy', 'running', '');
+    setStatus('busy', 'exploring', '');
     const t0 = performance.now();
-    let failed = false;
+    let fatalError = null;
     try {
         // eslint-disable-next-line no-new-func
         new Function(wrapped)();
     } catch (e) {
         if (e && e.kind && e.omgMessage !== undefined) {
             if (e.kind !== 'Exit') {
-                window.__omg_buf += '\n' + e.kind + ': ' + e.omgMessage + '\n';
-                failed = true;
+                fatalError = e.kind + ': ' + e.omgMessage;
             }
         } else {
-            window.__omg_buf += '\n[playground error] ' + e.message + '\n';
-            failed = true;
+            fatalError = '[explorer] ' + (e && e.message ? e.message : String(e));
         }
     }
     const ms = (performance.now() - t0).toFixed(0);
-    const out = window.__omg_buf;
 
-    if (failed) {
-        $output.classList.add('is-error');
-        $output.textContent = out;
-        setStatus('err', 'failed', ms + ' ms');
-    } else if (!out) {
-        $output.classList.add('is-empty');
-        $output.textContent = '(no output)';
-        setStatus('ok', 'done', ms + ' ms · no output');
-        $outputMeta.textContent = '—';
+    const sections = parseStageBuffer(window.__omg_buf || '');
+    for (const s of STAGES) {
+        renderStage(s, sections[s]);
+    }
+    const finishedCleanly = sections.end !== undefined;
+
+    if (fatalError) {
+        setStatus('err', 'aborted', fatalError.slice(0, 80));
+    } else if (!finishedCleanly) {
+        setStatus('err', 'incomplete', 'driver exited early');
     } else {
-        $output.textContent = out;
-        const lines = out.split('\n').length - (out.endsWith('\n') ? 1 : 0);
         setStatus('ok', 'done', ms + ' ms');
-        $outputMeta.textContent = lines + ' line' + (lines === 1 ? '' : 's') + ' · ' + out.length + ' chars';
+    }
+
+    // If the active stage is empty, jump to the first errored stage so
+    // failures aren't hidden behind a happy default tab.
+    const activeIsEmpty = $panes[currentStage].classList.contains('is-empty');
+    if (activeIsEmpty) {
+        const firstError = STAGES.find(s => $tabs[s].classList.contains('is-error'));
+        if (firstError) selectStage(firstError);
     }
 }
 
-$run.addEventListener('click', () => runUserSource($source.value));
+$run.addEventListener('click', runExplorer);
 
-// === Keyboard ============================================================
+// Run on load.
+window.addEventListener('DOMContentLoaded', () => {
+    selectStage('tokens');
+    setTimeout(() => {
+        if (bundleSource) runExplorer();
+        else loadBundle().then(() => runExplorer());
+    }, 80);
+});
 
+// Keyboard: Ctrl/Cmd+Enter to Explore, 1-6 (when not editing) for tabs.
 document.addEventListener('keydown', (e) => {
     if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
         e.preventDefault();
-        runUserSource($source.value);
+        runExplorer();
+        return;
     }
-});
-
-// === First run ===========================================================
-
-window.addEventListener('DOMContentLoaded', () => {
-    setTimeout(() => {
-        if (bundleSource) runUserSource($source.value);
-        else loadBundle().then(() => runUserSource($source.value));
-    }, 80);
+    if (document.activeElement === $source) return;
+    const idx = '123456'.indexOf(e.key);
+    if (idx >= 0) selectStage(STAGES[idx]);
 });
