@@ -769,19 +769,24 @@ omglang/
 ├── runtime/         the Rust implementation: lexer, parser, compiler, VM, REPL
 ├── bootstrap/
 │   ├── src/         OMG sources for the self-hosted toolchain + C runtime header
-│   │   ├── compiler.omg   the OMG compiler, written in OMG
-│   │   ├── compiler.omgb  its compiled bytecode (re-built on `cargo build`)
-│   │   ├── vm.omg         the OMG-in-OMG VM (used for fixed-point verification)
-│   │   ├── native-c.omg   OMG-to-C transpiler (used by the native build path)
-│   │   ├── native-js.omg  OMG-to-JS transpiler (alternative backend)
-│   │   ├── omg.omg        user-facing driver (run / compile / build / REPL), in OMG
-│   │   ├── omg_rt.h       C runtime header inlined into native binaries
-│   │   └── omg_rt.js      JS runtime inlined into transpiled JavaScript
-│   ├── bin/         Rust-free toolchain (5 native ELFs + omg_rt.h + omg_rt.js)
+│   │   ├── compiler.omg     the OMG compiler, written in OMG
+│   │   ├── compiler.omgb    its compiled bytecode (re-built on `cargo build`)
+│   │   ├── vm.omg           the OMG-in-OMG VM (used for fixed-point verification)
+│   │   ├── native-c.omg     OMG-to-C transpiler (used by the native build path)
+│   │   ├── native-js.omg    OMG-to-JS transpiler (alternative backend)
+│   │   ├── omg.omg          user-facing driver (run / compile / build / REPL), in OMG
+│   │   ├── omg-web.omg      driver bundled into the browser playground
+│   │   ├── omg-explorer.omg driver for the in-browser compiler explorer
+│   │   ├── omg_rt.h         C runtime header inlined into native binaries
+│   │   └── omg_rt.js        JS runtime inlined into transpiled JavaScript
+│   ├── bin/         Rust-free toolchain (4 native ELFs + omg_rt.h + omg_rt.js)
 │   ├── build.sh     builds bootstrap/bin/ from bootstrap/src/
+│   ├── build-web.sh builds the web/ bundle from bootstrap/src/omg-web.omg
 │   └── package.sh   spins out a slim native-only distribution into dist/
 ├── examples/        small standalone programs
+├── tests/           shell-driven test suite (parity, regression, REPL, builtins)
 ├── tools/           command-line utilities written in OMG (wc, grep, sort, etc.)
+├── web/             browser playground + compiler explorer (static site)
 ├── docs/            documentation; see docs/native/ for the native compilation path
 └── vscode/          VS Code extension (syntax highlighting + LSP completion)
 ```
@@ -852,6 +857,7 @@ bottom.
   VM-on-VM dance, what `--rust` does, and the fixed-point check.
 - [`runtime/README.md`](runtime/README.md): runtime architecture and CLI flags.
 - [`tools/README.md`](tools/README.md): the OMG-in-OMG tools.
+- [`web/README.md`](web/README.md): the browser playground and compiler explorer.
 - [`vscode/README.md`](vscode/README.md): VS Code extension.
 
 ---
