@@ -1,7 +1,5 @@
 #!/bin/bash
-# Build the OMG native toolchain into bootstrap/bin/. Produces four
-# native ELF binaries plus the C runtime header. After this completes,
-# the Rust runtime is no longer required to compile or run OMG programs.
+# Build the OMG native toolchain into bootstrap/bin/.
 #
 # Two modes:
 #   1. Bootstrap: native toolchain doesn't yet exist — uses the Rust
@@ -27,6 +25,28 @@
 # omgcc) are kept around for direct use, but day-to-day usage goes
 # through `omg`.
 set -e
+
+# Flags:
+#   --via-asm   Build the unified `omg` driver via omgna (no cc in the
+#               final link). Other binaries still use the C backend —
+#               omgna itself can't bootstrap, and the auxiliary tools
+#               (omgc/omgcc/omgvm) don't need the C-free path for
+#               anything user-facing.
+VIA_ASM=0
+for arg in "$@"; do
+    case "$arg" in
+        --via-asm) VIA_ASM=1 ;;
+        -h|--help)
+            grep '^# ' "$0" | sed 's/^# //'
+            echo "Usage: $0 [--via-asm]"
+            exit 0
+            ;;
+        *)
+            echo "Unknown flag: $arg" >&2
+            exit 2
+            ;;
+    esac
+done
 
 cd "$(dirname "$0")/.."
 
@@ -76,6 +96,17 @@ build_binary() {
     cc -O2 -w "$WORK/$base.c" -o "$out" -lm
 }
 
+# Build a binary end-to-end via omgna: source .omg -> .omgb -> ELF.
+# Skips the C transpile + cc step entirely. Requires bin/omgna to
+# already exist (which the toolchain-core stage above guarantees).
+build_binary_via_asm() {
+    local src="$1" out="$2" base
+    base=$(basename "$src" .omg)
+    omg_compile "$src" "$WORK/$base.omgb"
+    "$BIN_DIR/omgna" "$WORK/$base.omgb" "$out"
+    chmod +x "$out"
+}
+
 # Install the runtime headers FIRST. omgcc reads omg_rt.h via
 # bin_dir/omg_rt.h to splice into transpiled C output, and native-js
 # reads bin_dir/omg_rt.js the same way for transpiled JS output, so
@@ -91,8 +122,13 @@ build_binary "$SRC_DIR/native-c.omg"   "$BIN_DIR/omgcc"
 build_binary "$SRC_DIR/native-asm.omg" "$BIN_DIR/omgna"
 build_binary "$SRC_DIR/vm.omg"         "$BIN_DIR/omgvm"
 
-echo "[4/4] Building unified driver (omg)"
-build_binary "$SRC_DIR/omg.omg"      "$BIN_DIR/omg"
+if [ "$VIA_ASM" = 1 ]; then
+    echo "[4/4] Building unified driver (omg) via omgna (no cc)"
+    build_binary_via_asm "$SRC_DIR/omg.omg" "$BIN_DIR/omg"
+else
+    echo "[4/4] Building unified driver (omg)"
+    build_binary "$SRC_DIR/omg.omg"      "$BIN_DIR/omg"
+fi
 
 # Remove obsolete dispatcher-era binaries if a previous build left them
 # behind. The unified `omg` does what they did, all in-process.
