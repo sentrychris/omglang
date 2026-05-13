@@ -378,3 +378,65 @@ fn neg_on_non_int_string_errors() {
         )),
     );
 }
+
+// --- Integer division & modulo: floor semantics --------------------------
+//
+// Locks in the documented behaviour: `/` and `//` round toward minus
+// infinity on int/int, and `%` produces a result with the sign of the
+// divisor (Python `%`). Floor and Euclidean only diverge when the
+// divisor is negative, so those are the cases that matter.
+
+fn run_int_binop_int(
+    op: fn(&mut Vec<Value>) -> Result<(), RuntimeError>,
+    a: i64,
+    b: i64,
+) -> i64 {
+    let mut stack = vec![Value::Int(a), Value::Int(b)];
+    op(&mut stack).expect("binop ok");
+    match stack.pop().expect("binop pushed a result") {
+        Value::Int(i) => i,
+        _ => panic!("expected Int result"),
+    }
+}
+
+fn run_int_binop_float(
+    op: fn(&mut Vec<Value>) -> Result<(), RuntimeError>,
+    a: i64,
+    b: i64,
+) -> f64 {
+    let mut stack = vec![Value::Int(a), Value::Int(b)];
+    op(&mut stack).expect("binop ok");
+    match stack.pop().expect("binop pushed a result") {
+        Value::Float(f) => f,
+        _ => panic!("expected Float result"),
+    }
+}
+
+#[test]
+fn int_div_is_true_division() {
+    use super::ops_arith::handle_div;
+    // Python 3 semantics: int / int always returns a float.
+    assert_eq!(run_int_binop_float(handle_div, 7, 2), 3.5);
+    assert_eq!(run_int_binop_float(handle_div, -7, 2), -3.5);
+    assert_eq!(run_int_binop_float(handle_div, 7, -2), -3.5);
+    assert_eq!(run_int_binop_float(handle_div, -7, -2), 3.5);
+    assert_eq!(run_int_binop_float(handle_div, 10, 5), 2.0);
+}
+
+#[test]
+fn int_floor_div_floors_toward_negative_infinity() {
+    use super::ops_arith::handle_floor_div;
+    assert_eq!(run_int_binop_int(handle_floor_div, 7, 2), 3);
+    assert_eq!(run_int_binop_int(handle_floor_div, -7, 2), -4);
+    assert_eq!(run_int_binop_int(handle_floor_div, 7, -2), -4);
+    assert_eq!(run_int_binop_int(handle_floor_div, -7, -2), 3);
+}
+
+#[test]
+fn int_mod_takes_sign_of_divisor() {
+    use super::ops_arith::handle_mod;
+    assert_eq!(run_int_binop_int(handle_mod, 7, 2), 1);
+    assert_eq!(run_int_binop_int(handle_mod, -7, 2), 1);
+    assert_eq!(run_int_binop_int(handle_mod, 7, -2), -1);
+    assert_eq!(run_int_binop_int(handle_mod, -7, -2), -1);
+}

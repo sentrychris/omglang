@@ -30,7 +30,7 @@ proc merge_sort(xs) {
     if length(xs) <= 1 {
         return xs
     }
-    alloc mid := length(xs) / 2
+    alloc mid := length(xs) // 2
     alloc left := xs[0:mid]
     alloc right := xs[mid:length(xs)]
     alloc sorted_left := merge_sort(left)

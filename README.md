@@ -155,7 +155,9 @@ typos and accidental shadowing:
 ### Numbers and math
 
 OMG has two kinds of numbers: integers (whole numbers) and floats
-(decimals). Plain integer math returns integers:
+(decimals). Most integer math returns integers, but `/` is **true
+division** and always returns a float — use `//` when you want integer
+(floor) division:
 
 ```omg
 ;;;omg
@@ -163,9 +165,11 @@ OMG has two kinds of numbers: integers (whole numbers) and floats
 emit 1 + 2          # 3
 emit 10 - 3         # 7
 emit 4 * 5          # 20
-emit 10 / 3         # 3      ← integer division when both sides are ints
-emit 10 % 3         # 1      ← remainder ("modulo")
-emit -7 / 2         # -4     ← rounds toward minus infinity
+emit 10 / 3         # 3.3333…  ← `/` is true division, always a float
+emit 10 // 3        # 3        ← `//` is integer (floor) division
+emit 10 % 3         # 1        ← remainder ("modulo")
+emit -7 // 2        # -4       ← floor rounds toward minus infinity
+emit 7 // -2        # -4       ← still floors when the divisor is negative
 ```
 
 Bitwise operators exist (integers only):
@@ -195,17 +199,18 @@ emit 1.0e3          # 1000.0  (scientific notation)
 emit 6.022e23       # 6.022e23
 ```
 
-`/` returns a float as soon as either operand is a float (true division);
-between two integers it stays as integer floor division. Use `//` when
-you want explicit floor division regardless of type:
+`/` is always true division and always returns a float, matching
+Python 3. `//` is floor division — it keeps the integer type when both
+operands are integers, and rounds toward minus infinity for floats:
 
 ```omg
 ;;;omg
 
-emit 10 / 3         # 3        ← int / int → int
-emit 10 / 3.0       # 3.3333…  ← any float → true division
-emit 10 // 3        # 3        ← explicit floor division
+emit 10 / 3         # 3.3333…  ← `/` always returns a float
+emit 10 / 3.0       # 3.3333…
+emit 10 // 3        # 3        ← `//` keeps the integer type
 emit 10.5 // 3      # 3.0      ← floor div on float still rounds toward -∞
+emit 7 % -2         # -1       ← `%` carries the sign of the divisor
 ```
 
 Other things to know:

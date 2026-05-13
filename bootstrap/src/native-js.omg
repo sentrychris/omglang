@@ -319,7 +319,7 @@ proc label_for(i) {
         loop n > 0 {
             alloc d := n % 10
             digits := chr(d + ascii("0")) + digits
-            n := n / 10
+            n := n // 10
         }
         loop length(digits) < 4 {
             digits := "0" + digits

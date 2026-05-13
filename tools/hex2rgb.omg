@@ -37,7 +37,7 @@ proc nibble_to_hex(n) {
 
 # Convert a byte (0–255) to two hex characters
 proc byte_to_hex(n) {
-    alloc hi := n / 16
+    alloc hi := n // 16
     alloc lo := n % 16
     return nibble_to_hex(hi) + nibble_to_hex(lo)
 }

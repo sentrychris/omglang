@@ -32,8 +32,8 @@ proc to_rwx(bits) {
 
 # Convert full numeric mode (e.g. 755) to rwxrwxrwx
 proc permissions(mode) {
-    alloc u := mode / 100
-    alloc g := (mode / 10) % 10
+    alloc u := mode // 100
+    alloc g := (mode // 10) % 10
     alloc o := mode % 10
 
     return to_rwx(u) + to_rwx(g) + to_rwx(o)

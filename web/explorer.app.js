@@ -140,6 +140,7 @@ const $source   = document.getElementById('source');
 const $sourceHL = document.getElementById('source-hl');
 const $gutter   = document.getElementById('source-gutter');
 const $run      = document.getElementById('run');
+const $share    = document.getElementById('share');
 const $sourceMeta = document.getElementById('sourceMeta');
 const $sourcePane = document.getElementById('sourcePane');
 
@@ -328,6 +329,18 @@ $select.addEventListener('change', () => {
 });
 $source.value = STARTERS[0].src;
 renderHighlight();
+
+// If `#code=...` is in the URL, replace the default source with it before
+// the first auto-explore.
+const sharedSourcePromise = (typeof OMGShare !== 'undefined' && OMGShare.readSharedSource)
+    ? OMGShare.readSharedSource().then((shared) => {
+        if (shared !== null && shared !== undefined) {
+            $source.value = shared;
+            renderHighlight();
+            $select.selectedIndex = -1;
+        }
+      })
+    : Promise.resolve();
 
 // === Tab management ======================================================
 
@@ -520,10 +533,20 @@ function runExplorer() {
 
 $run.addEventListener('click', runExplorer);
 
+$share.addEventListener('click', async () => {
+    try {
+        await OMGShare.copyShareLink($source.value);
+        OMGShare.showToast('Link copied to clipboard');
+    } catch (e) {
+        OMGShare.showToast('Could not copy link: ' + e.message, 'error');
+    }
+});
+
 // Run on load.
 window.addEventListener('DOMContentLoaded', () => {
     selectStage('tokens');
-    setTimeout(() => {
+    setTimeout(async () => {
+        await sharedSourcePromise;
         if (bundleSource) runExplorer();
         else loadBundle().then(() => runExplorer());
     }, 80);

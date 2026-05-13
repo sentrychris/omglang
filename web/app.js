@@ -132,6 +132,7 @@ const $sourceHL = document.getElementById('source-hl');
 const $gutter   = document.getElementById('source-gutter');
 const $output   = document.getElementById('output');
 const $run      = document.getElementById('run');
+const $share    = document.getElementById('share');
 
 const $sourceMeta   = document.getElementById('sourceMeta');
 const $outputMeta   = document.getElementById('outputMeta');
@@ -318,6 +319,18 @@ $select.addEventListener('change', () => {
 $source.value = STARTERS[0].src;
 renderHighlight();
 
+// If the URL carries a `#code=...` fragment, replace the default source
+// with the shared program before the first auto-run.
+const sharedSourcePromise = (typeof OMGShare !== 'undefined' && OMGShare.readSharedSource)
+    ? OMGShare.readSharedSource().then((shared) => {
+        if (shared !== null && shared !== undefined) {
+            $source.value = shared;
+            renderHighlight();
+            $select.selectedIndex = -1;
+        }
+      })
+    : Promise.resolve();
+
 // === Status helpers ======================================================
 
 function setStatus(state, label, detail) {
@@ -425,6 +438,17 @@ function runUserSource(src) {
 
 $run.addEventListener('click', () => runUserSource($source.value));
 
+// === Share ===============================================================
+
+$share.addEventListener('click', async () => {
+    try {
+        await OMGShare.copyShareLink($source.value);
+        OMGShare.showToast('Link copied to clipboard');
+    } catch (e) {
+        OMGShare.showToast('Could not copy link: ' + e.message, 'error');
+    }
+});
+
 // === Keyboard ============================================================
 
 document.addEventListener('keydown', (e) => {
@@ -437,7 +461,8 @@ document.addEventListener('keydown', (e) => {
 // === First run ===========================================================
 
 window.addEventListener('DOMContentLoaded', () => {
-    setTimeout(() => {
+    setTimeout(async () => {
+        await sharedSourcePromise;
         if (bundleSource) runUserSource($source.value);
         else loadBundle().then(() => runUserSource($source.value));
     }, 80);

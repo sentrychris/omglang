@@ -15,7 +15,7 @@
 
   <link rel="icon" href="favicon.ico">
 
-  <!-- Resolve theme before paint to avoid a flash. Dark is the default. -->
+  <!-- Resolve theme + sidebar state before paint to avoid a flash. -->
   <script>
     (function () {
       try {
@@ -29,6 +29,15 @@
         }
       } catch (_) {
         document.documentElement.setAttribute('data-theme', 'dark');
+      }
+      try {
+        var sb = localStorage.getItem('omg-sidebar');
+        if (sb !== 'open' && sb !== 'closed') {
+          sb = (window.innerWidth >= 980) ? 'open' : 'closed';
+        }
+        document.documentElement.setAttribute('data-sidebar', sb);
+      } catch (_) {
+        document.documentElement.setAttribute('data-sidebar', 'open');
       }
     })();
   </script>
@@ -63,12 +72,28 @@
 
     <div class="topbar-actions">
       <select id="example" class="select" aria-label="Example program"></select>
+      <button id="share" class="btn" type="button" title="Copy a shareable link">
+        <svg class="ico" viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+          <circle cx="4" cy="8" r="2"/>
+          <circle cx="12" cy="3.5" r="2"/>
+          <circle cx="12" cy="12.5" r="2"/>
+          <path d="M5.7 7 L10.3 4.5"/>
+          <path d="M5.7 9 L10.3 11.5"/>
+        </svg>
+        Share
+      </button>
       <button id="run" class="btn btn-primary" type="button" title="Run (Ctrl+Enter)">
         <svg class="ico" viewBox="0 0 12 12" aria-hidden="true">
           <path d="M3 1.8 L10.2 6 L3 10.2 Z" fill="currentColor"/>
         </svg>
         Run
         <span class="kbd">⌘↵</span>
+      </button>
+      <button id="sidebarToggle" class="theme-toggle" type="button" aria-label="Toggle reference" title="Toggle reference">
+        <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M2.5 2.5h5a2 2 0 0 1 2 2v9a1.5 1.5 0 0 0-1.5-1.5h-5.5z"/>
+          <path d="M13.5 2.5h-5a2 2 0 0 0-2 2v9a1.5 1.5 0 0 1 1.5-1.5h5.5z"/>
+        </svg>
       </button>
       <button id="themeToggle" class="theme-toggle" type="button" aria-label="Toggle theme">
         <span class="iconStack" aria-hidden="true">
@@ -86,6 +111,26 @@
 
   <!-- ========================= Workspace ========================= -->
   <main class="workspace">
+
+    <!-- Reference sidebar -->
+    <aside class="pane sidebar" id="sidebar" aria-label="Language reference">
+      <div class="pane-head">
+        <span class="pane-title">
+          <svg class="file-icon" viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M2.5 2.5h5a2 2 0 0 1 2 2v9a1.5 1.5 0 0 0-1.5-1.5h-5.5z"/>
+            <path d="M13.5 2.5h-5a2 2 0 0 0-2 2v9a1.5 1.5 0 0 1 1.5-1.5h5.5z"/>
+          </svg>
+          reference
+        </span>
+        <span class="pane-head-spacer"></span>
+        <button id="sidebarClose" class="sb-close" type="button" aria-label="Hide reference" title="Hide">
+          <svg viewBox="0 0 12 12" width="10" height="10" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round">
+            <path d="M2 2 L10 10 M10 2 L2 10"/>
+          </svg>
+        </button>
+      </div>
+      <div class="sidebar-body" id="sidebarBody"></div>
+    </aside>
 
     <!-- Source editor -->
     <section class="pane source-pane" id="sourcePane">
@@ -171,6 +216,8 @@
     });
   })();
 </script>
+<script src="share.js"></script>
+<script src="reference.js"></script>
 <script src="app.js"></script>
 </body>
 </html>

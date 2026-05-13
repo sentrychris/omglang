@@ -18,12 +18,35 @@
 //!   false). Strings, ints, bools, lists, dicts compare structurally.
 //! - Ordered comparisons accept `Str` vs `Str` lexicographically; otherwise
 //!   coerce to int.
-//! - Division and modulo use Python-style **floor** semantics
-//!   (`(-7) / 2 = -4`, `(-7) % 2 = 1`).
+//! - `/` is **true division**: always returns a float, matching Python 3
+//!   (`7 / 2 = 3.5`, `7 / -2 = -3.5`).
+//! - `//` is **floor division**: rounds the quotient toward minus infinity,
+//!   keeping the integer type when both operands are integers
+//!   (`-7 // 2 = -4`, `7 // -2 = -4`).
+//! - `%` is **floor modulo**: the result carries the sign of the divisor
+//!   (`-7 % 2 = 1`, `7 % -2 = -1`).
 
 use super::pop;
 use crate::error::RuntimeError;
 use crate::value::Value;
+
+/// Floor division on i64: rounds the quotient toward minus infinity.
+/// Matches Python's `//`. `i64::div_floor` is still unstable on stable
+/// Rust (rust-lang/rust#88581), so we hand-roll it. Caller must already
+/// have rejected `b == 0` and the `i64::MIN / -1` overflow case.
+fn idiv_floor(a: i64, b: i64) -> i64 {
+    let q = a / b;
+    let r = a % b;
+    if r != 0 && ((r < 0) != (b < 0)) { q - 1 } else { q }
+}
+
+/// Floor modulo on i64: result carries the sign of the divisor.
+/// Matches Python's `%`. Same overflow / zero-divisor preconditions as
+/// [`idiv_floor`].
+fn imod_floor(a: i64, b: i64) -> i64 {
+    let r = a % b;
+    if r != 0 && ((r < 0) != (b < 0)) { r + b } else { r }
+}
 
 /// Either operand is a float? Used to dispatch arithmetic between the
 /// pure-int and promoted-to-float code paths.
@@ -94,31 +117,17 @@ pub(super) fn handle_mul(stack: &mut Vec<Value>) -> Result<(), RuntimeError> {
     Ok(())
 }
 
-/// Division. Promote-on-float: int/int floor-divides (current behaviour);
-/// any float operand promotes both to f64 and returns a float (true division).
-/// Use `//` for explicit floor division regardless of operand types.
+/// True division (`/`). Always returns a float, matching Python 3.
+/// Both operands are coerced to f64; integer operands are widened. Use
+/// `//` when you want integer (floor) division.
 pub(super) fn handle_div(stack: &mut Vec<Value>) -> Result<(), RuntimeError> {
     let b = pop(stack)?;
     let a = pop(stack)?;
-    if is_float(&a) || is_float(&b) {
-        let bf = b.as_float()?;
-        if bf == 0.0 {
-            return Err(RuntimeError::ZeroDivisionError);
-        }
-        stack.push(Value::Float(a.as_float()? / bf));
-        return Ok(());
-    }
-    let bi = b.as_int()?;
-    if bi == 0 {
+    let bf = b.as_float()?;
+    if bf == 0.0 {
         return Err(RuntimeError::ZeroDivisionError);
     }
-    let ai = a.as_int()?;
-    if ai == i64::MIN && bi == -1 {
-        return Err(RuntimeError::ValueError(
-            "integer overflow on division".to_string(),
-        ));
-    }
-    stack.push(Value::Int(ai.div_euclid(bi)));
+    stack.push(Value::Float(a.as_float()? / bf));
     Ok(())
 }
 
@@ -146,11 +155,12 @@ pub(super) fn handle_floor_div(stack: &mut Vec<Value>) -> Result<(), RuntimeErro
             "integer overflow on division".to_string(),
         ));
     }
-    stack.push(Value::Int(ai.div_euclid(bi)));
+    stack.push(Value::Int(idiv_floor(ai, bi)));
     Ok(())
 }
 
-/// Floor modulus (Python `%`). `-7 % 2 == 1`. Promotes on float.
+/// Floor modulus (Python `%`). Result carries the sign of the divisor:
+/// `-7 % 2 == 1`, `7 % -2 == -1`. Promotes on float.
 pub(super) fn handle_mod(stack: &mut Vec<Value>) -> Result<(), RuntimeError> {
     let b = pop(stack)?;
     let a = pop(stack)?;
@@ -175,7 +185,7 @@ pub(super) fn handle_mod(stack: &mut Vec<Value>) -> Result<(), RuntimeError> {
             "integer overflow on modulo".to_string(),
         ));
     }
-    stack.push(Value::Int(ai.rem_euclid(bi)));
+    stack.push(Value::Int(imod_floor(ai, bi)));
     Ok(())
 }
 

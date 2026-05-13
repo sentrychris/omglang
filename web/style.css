@@ -290,8 +290,135 @@ a:hover { color: var(--ctp-lavender); }
     background: var(--border);
 }
 
+[data-sidebar="open"] .workspace {
+    grid-template-columns: 260px minmax(0, 1fr) minmax(0, 1.05fr);
+}
+
+[data-sidebar="closed"] .sidebar { display: none; }
+
 @media (max-width: 880px) {
     .workspace { grid-template-columns: 1fr; grid-auto-rows: minmax(280px, 1fr); }
+    [data-sidebar="open"] .workspace { grid-template-columns: 1fr; }
+    .sidebar { display: none; }
+    #sidebarToggle { display: none; }
+}
+
+/* --- Reference sidebar -------------------------------------------------- */
+
+.sidebar {
+    background: var(--bg-1);
+}
+
+.sidebar-body {
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+    overflow-x: hidden;
+    padding: 14px 14px 18px 14px;
+    font-family: var(--ui);
+    font-size: 12px;
+    line-height: 1.55;
+    color: var(--fg-1);
+}
+
+.ref-section {
+    margin: 14px 2px 8px 2px;
+    font-family: var(--mono);
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--fg-3);
+    border-bottom: 1px solid var(--border);
+    padding-bottom: 4px;
+}
+
+.ref-section:first-child { margin-top: 0; }
+
+.ref-entry {
+    margin: 8px 0 12px 0;
+}
+
+.ref-title {
+    margin: 0 0 4px 2px;
+    font-size: 11.5px;
+    font-weight: 600;
+    color: var(--fg-0);
+}
+
+.ref-code {
+    margin: 0;
+    padding: 8px 10px;
+    background: var(--bg-0);
+    border: 1px solid var(--border);
+    border-radius: var(--r-md);
+    font-family: var(--mono);
+    font-size: 11.5px;
+    line-height: 1.55;
+    color: var(--fg-0);
+    overflow-x: auto;
+    white-space: pre;
+}
+
+.ref-code code { font: inherit; color: inherit; }
+
+.sb-close {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 20px;
+    height: 20px;
+    color: var(--fg-3);
+    background: transparent;
+    border: 1px solid transparent;
+    border-radius: 4px;
+    transition: color 120ms ease, background 120ms ease, border-color 120ms ease;
+}
+
+.sb-close:hover {
+    color: var(--fg-0);
+    background: var(--panel);
+    border-color: var(--border-strong);
+}
+
+/* --- Themed scrollbars (sidebar + reference code) ----------------------- */
+
+.sidebar-body,
+.ref-code {
+    scrollbar-width: thin;
+    scrollbar-color: var(--ctp-surface2) transparent;
+}
+
+.sidebar-body::-webkit-scrollbar,
+.ref-code::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+}
+
+.sidebar-body::-webkit-scrollbar-track,
+.ref-code::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+.sidebar-body::-webkit-scrollbar-thumb,
+.ref-code::-webkit-scrollbar-thumb {
+    background: var(--ctp-surface1);
+    border: 2px solid var(--bg-1);
+    border-radius: 6px;
+}
+
+.ref-code::-webkit-scrollbar-thumb {
+    border-color: var(--bg-0);
+}
+
+.sidebar-body::-webkit-scrollbar-thumb:hover,
+.ref-code::-webkit-scrollbar-thumb:hover {
+    background: var(--accent);
+}
+
+.sidebar-body::-webkit-scrollbar-corner,
+.ref-code::-webkit-scrollbar-corner {
+    background: transparent;
 }
 
 .pane {
@@ -530,7 +657,7 @@ a:hover { color: var(--ctp-lavender); }
 
 .theme-toggle .iconStack { position: relative; width: 14px; height: 14px; }
 
-.theme-toggle svg {
+.theme-toggle .iconStack svg {
     position: absolute;
     inset: 0;
     width: 100%;
@@ -543,6 +670,38 @@ a:hover { color: var(--ctp-lavender); }
 
 [data-theme="light"] .theme-toggle .sun  { opacity: 1; transform: rotate(0deg) scale(1); }
 [data-theme="light"] .theme-toggle .moon { opacity: 0; transform: rotate(90deg) scale(0.8); }
+
+/* === Toast ============================================================= */
+
+.toast {
+    position: fixed;
+    left: 50%;
+    bottom: 48px;
+    transform: translate(-50%, 12px);
+    padding: 8px 14px;
+    font-family: var(--ui);
+    font-size: 12px;
+    font-weight: 500;
+    color: var(--fg-0);
+    background: var(--panel);
+    border: 1px solid var(--border-strong);
+    border-radius: var(--r-md);
+    box-shadow: var(--shadow-pop);
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 160ms ease, transform 160ms ease;
+    z-index: 1000;
+}
+
+.toast.is-visible {
+    opacity: 1;
+    transform: translate(-50%, 0);
+}
+
+.toast.is-error {
+    border-color: color-mix(in srgb, var(--ctp-red) 60%, var(--border-strong));
+    color: var(--ctp-red);
+}
 
 /* === Editor ============================================================ */
 

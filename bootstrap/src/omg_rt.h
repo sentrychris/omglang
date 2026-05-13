@@ -598,20 +598,13 @@ static inline Value omg_mul(Value a, Value b) {
     return omg_int(omg_as_int(a) * omg_as_int(b));
 }
 
-/* `/` is promote-on-float: int÷int stays floor division (matches OMG
- * VM); any-float promotes both to double and does true division. Use
- * `//` for explicit floor division. */
+/* `/` is true division: always returns a float, matching Python 3 and
+ * the Rust VM. Integer operands are widened to double. Use `//` when
+ * you want integer (floor) division. */
 static inline Value omg_div(Value a, Value b) {
-    if (omg_is_float(a) || omg_is_float(b)) {
-        double bd = omg_as_double(b);
-        if (bd == 0.0) omg_panic("ZeroDivisionError", "integer division or modulo by zero");
-        return omg_float(omg_as_double(a) / bd);
-    }
-    int64_t x = omg_as_int(a), y = omg_as_int(b);
-    if (y == 0) omg_panic("ZeroDivisionError", "integer division or modulo by zero");
-    int64_t q = x / y;
-    if ((x % y != 0) && ((x < 0) != (y < 0))) q -= 1;
-    return omg_int(q);
+    double bd = omg_as_double(b);
+    if (bd == 0.0) omg_panic("ZeroDivisionError", "integer division or modulo by zero");
+    return omg_float(omg_as_double(a) / bd);
 }
 
 /* Explicit floor division. int÷int stays int; any-float returns the
