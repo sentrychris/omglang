@@ -32,15 +32,17 @@ bootstrap/build.sh
 
 ## What's in `bootstrap/bin/`
 
-| Binary    | Role                                          |
-| --------- | --------------------------------------------- |
-| `omg`     | Unified driver: run / compile / build / REPL  |
-| `omgc`    | Compiler: `.omg` → `.omgb` bytecode           |
-| `omgcc`   | Transpiler: `.omgb` → `.c`                    |
-| `omgvm`   | Bytecode interpreter (executes `.omgb`)       |
-| `omg_rt.h`| C runtime header (inlined into AOT output)    |
+| Binary     | Role                                              |
+| ---------- | ------------------------------------------------- |
+| `omg`      | Unified driver: run / compile / build / REPL      |
+| `omgc`     | Compiler: `.omg` → `.omgb` bytecode               |
+| `omgcc`    | C transpiler: `.omgb` → `.c`                      |
+| `omgjs`    | JS transpiler: `.omgb` → `.js`                    |
+| `omgvm`    | Bytecode interpreter (executes `.omgb`)           |
+| `omg_rt.h` | C runtime header (inlined into every `.c` omgcc emits)   |
+| `omg_rt.js`| JS runtime (inlined into every `.js` omgjs emits) |
 
-All four binaries are native ELFs compiled from OMG source. `omg`
+All five binaries are native ELFs compiled from OMG source. `omg`
 imports `compiler.omg`, `vm.omg`, and `native-c.omg` directly so
 compile, run, and REPL happen in-process — the only external command
 invoked is `cc` for the final ELF link in `--build`.
