@@ -1,5 +1,0 @@
-;;;omg
-
-proc greeting(name) {
-    return "Hello " + name
-}
