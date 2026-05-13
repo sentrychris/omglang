@@ -17,39 +17,13 @@ proc key(p) {
     return p[0] + "," + p[1]
 }
 
-proc contains(xs, x) {
-    alloc i := 0
-    loop i < length(xs) {
-        if xs[i] == x {
-            return true
-        }
-        i := i + 1
+proc has_key(d, k) {
+    try {
+        alloc probe := d[k]
+        return true
+    } except err {
+        return false
     }
-    return false
-}
-
-proc set_prev(prev, k, v) {
-    alloc i := 0
-    loop i < length(prev) {
-        if prev[i][0] == k {
-            prev := prev[0:i] + [[k, v]] + prev[i + 1:length(prev)]
-            return prev
-        }
-        i := i + 1
-    }
-    prev := prev + [[k, v]]
-    return prev
-}
-
-proc get_prev(prev, k) {
-    alloc i := 0
-    loop i < length(prev) {
-        if prev[i][0] == k {
-            return prev[i][1]
-        }
-        i := i + 1
-    }
-    return []
 }
 
 proc neighbors(p) {
@@ -69,20 +43,19 @@ proc neighbors(p) {
 
 proc bfs(start, goal) {
     alloc queue := [start]
-    alloc visited := [key(start)]
-    alloc prev := []
-    alloc current := []
+    alloc visited := {}
+    visited[key(start)] := true
+    alloc prev := {}
     loop length(queue) > 0 {
-        current := queue[0]
+        alloc current := queue[0]
         queue := queue[1:length(queue)]
         if current[0] == goal[0] and current[1] == goal[1] {
             alloc path := [current]
             alloc k := key(current)
-            alloc p := get_prev(prev, k)
-            loop length(p) > 0 {
+            loop has_key(prev, k) {
+                alloc p := prev[k]
                 path := [p] + path
                 k := key(p)
-                p := get_prev(prev, k)
             }
             return path
         }
@@ -90,10 +63,10 @@ proc bfs(start, goal) {
         alloc i := 0
         loop i < length(neigh) {
             alloc n := neigh[i]
-            alloc k := key(n)
-            if contains(visited, k) == false {
-                visited := visited + [k]
-                prev := set_prev(prev, k, current)
+            alloc nk := key(n)
+            if has_key(visited, nk) == false {
+                visited[nk] := true
+                prev[nk] := current
                 queue := queue + [n]
             }
             i := i + 1

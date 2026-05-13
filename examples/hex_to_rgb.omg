@@ -27,7 +27,7 @@ proc hex_to_rgb(hexstr) {
     alloc r := hex_to_byte(hexstr[0:2])
     alloc g := hex_to_byte(hexstr[2:4])
     alloc b := hex_to_byte(hexstr[4:6])
-    return "R: " + r + " G: " + g + " B: " + b
+    return r + ", " + g + ", " + b
 }
 
 # Convert decimal 0–15 to a hex digit
@@ -47,12 +47,5 @@ proc rgb_to_hex(r, g, b) {
     return byte_to_hex(r) + byte_to_hex(g) + byte_to_hex(b)
 }
 
-# DEMO
-
-emit "RGB:"
-emit hex_to_rgb("FF8800")   # Outputs: R: 255 G: 136 B: 0
-
-emit ""
-
-emit "HEX:"
-emit rgb_to_hex(255, 136, 0)   # Outputs: FF8800
+emit "RGB: " + hex_to_rgb("FF8800")      # Outputs: R: 255 G: 136 B: 0
+emit "HEX: " + rgb_to_hex(255, 136, 0)   # Outputs: FF8800

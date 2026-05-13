@@ -28,7 +28,7 @@ alloc xs := [
     3
 ]
 
-alloc sxs := "sliced xs (Start: inc. End: exc.): " + xs[1:2]
+emit "sliced xs (Start: inc. End: exc.): " + xs[1:2]
 
 # Create a loop
 emit "Beginning loop:"
