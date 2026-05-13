@@ -86,15 +86,19 @@ versions: `omgc` is #1 + #3's compiler fused into a binary, `omgvm` is #2.
 
 ```
 bootstrap/bin/
-├── omg         user-facing driver: dispatches to the right tool by file ext
-├── omgc        compiler.omg compiled to native
-├── omgcc       native-c.omg compiled to native (transpiler)
-├── omgvm       vm.omg compiled to native (interpreter)
-└── omg_rt.h    C runtime header (linked into AOT outputs)
+├── omg         user-facing driver: run / compile / build / REPL all in-process
+├── omgc        compiler.omg compiled to native     (.omg → .omgb)
+├── omgcc       native-c.omg compiled to native     (.omgb → .c)
+├── omgjs       native-js.omg compiled to native    (.omgb → .js)
+├── omgvm       vm.omg compiled to native           (executes .omgb)
+├── omg_rt.h    C runtime header  (inlined into every .c omgcc emits)
+└── omg_rt.js   JS runtime        (inlined into every .js omgjs emits)
 ```
 
-All four tools are native ELFs compiled from OMG source. `omg` is written in OMG (see [`bootstrap/src/omg.omg`](../../bootstrap/src/omg.omg)) and
-dispatches to the lower-level tools via the `subprocess()` builtin.
+All five tools are native ELFs compiled from OMG source. `omg` is written
+in OMG (see [`bootstrap/src/omg.omg`](../../bootstrap/src/omg.omg)) and
+runs its imports in-process — `subprocess()` is only invoked for the
+final `cc` call during `--build`.
 
 These are produced by `bootstrap/build.sh`, which:
 

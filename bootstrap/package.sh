@@ -14,7 +14,7 @@
 #   bootstrap/package.sh --clean      # wipe dist/omglang-native/ first
 #   bootstrap/package.sh --tarball    # also produce dist/omglang-native.tar.gz
 #
-# Prerequisites: bootstrap/bin/ must already contain the four ELFs
+# Prerequisites: bootstrap/bin/ must already contain the five ELFs
 # (run bootstrap/build.sh first).
 
 set -eu
@@ -528,15 +528,17 @@ Drop `bin/` on your `$PATH` if you'd like to call it as just `omg`.
 
 Pre-built binaries that ship with this distribution:
 
-| Binary    | Role                                          |
-| --------- | --------------------------------------------- |
-| `omg`     | unified driver: run / compile / build / REPL  |
-| `omgc`    | compiler: `.omg` → `.omgb` bytecode           |
-| `omgcc`   | transpiler: `.omgb` → `.c`                    |
-| `omgvm`   | bytecode VM: executes `.omgb` directly        |
-| `omg_rt.h`| C runtime header (linked into AOT outputs)    |
+| Binary     | Role                                              |
+| ---------- | ------------------------------------------------- |
+| `omg`      | unified driver: run / compile / build / REPL      |
+| `omgc`     | compiler: `.omg` → `.omgb` bytecode               |
+| `omgcc`    | C transpiler: `.omgb` → `.c`                      |
+| `omgjs`    | JS transpiler: `.omgb` → `.js`                    |
+| `omgvm`    | bytecode VM: executes `.omgb` directly            |
+| `omg_rt.h` | C runtime header (inlined into every `.c` omgcc emits)   |
+| `omg_rt.js`| JS runtime (inlined into every `.js` omgjs emits) |
 
-All four ELFs are compiled from the OMG sources in [`src/`](src/).
+All five ELFs are compiled from the OMG sources in [`src/`](src/).
 
 ## Rebuild the toolchain
 
