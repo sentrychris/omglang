@@ -82,6 +82,9 @@ alloc OP_SETUP_EXCEPT   := 44
 alloc OP_POP_BLOCK      := 45
 alloc OP_RAISE          := 46
 alloc OP_PUSH_FLOAT     := 54
+alloc OP_FLOOR_DIV      := 55
+alloc OP_ATTR           := 40
+alloc OP_STORE_ATTR     := 41
 
 # === ELF / x86_64 layout ==================================================
 # We map the whole file as a single PT_LOAD segment at virtual address
@@ -287,6 +290,14 @@ proc parse_bytecode(bytes) {
             alloc rmf := read_str_at(bytes, cursor)
             code := code + [["MAKE_FUNC", rmf[0]]]
             cursor := rmf[1]
+        } else { if op == OP_ATTR {
+            alloc rat := read_str_at(bytes, cursor)
+            code := code + [["ATTR", rat[0]]]
+            cursor := rat[1]
+        } else { if op == OP_STORE_ATTR {
+            alloc rsa := read_str_at(bytes, cursor)
+            code := code + [["STORE_ATTR", rsa[0]]]
+            cursor := rsa[1]
         } else { if op == OP_RET {
             code := code + [["RET", false]]
         } else { if op == OP_BUILD_LIST {
@@ -319,6 +330,7 @@ proc parse_bytecode(bytes) {
             if op == OP_SUB  { code := code + [["SUB",  false]] } else {
             if op == OP_MUL  { code := code + [["MUL",  false]] } else {
             if op == OP_DIV  { code := code + [["DIV",  false]] } else {
+            if op == OP_FLOOR_DIV { code := code + [["FLOOR_DIV", false]] } else {
             if op == OP_MOD  { code := code + [["MOD",  false]] } else {
             if op == OP_NEG  { code := code + [["NEG",  false]] } else {
             if op == OP_NOT  { code := code + [["NOT",  false]] } else {
@@ -343,8 +355,8 @@ proc parse_bytecode(bytes) {
             if op == OP_EMIT        { code := code + [["EMIT",        false]] } else {
             if op == OP_HALT        { code := code + [["HALT",        false]] } else {
                 panic("native-asm: opcode " + op + " not yet supported")
-            }}}}}}}}}}}}}}}}}}}}}}}}}}}
-        }}}}}}}}}}}}}}}}}}}}
+            }}}}}}}}}}}}}}}}}}}}}}}}}}}}
+        }}}}}}}}}}}}}}}}}}}}}}
         k := k + 1
     }
     return [code, funcs]
@@ -997,68 +1009,85 @@ proc emit_rt_slice(alloc_off) {
 #
 # Input:  rax = container, rbx = key (tagged int for list/str, ptr for dict)
 # Output: rax = value
-proc emit_rt_index(dict_get_off, alloc_off) {
+proc emit_rt_index(dict_get_off, alloc_off, raise_off) {
     alloc entry := ob_top
-    # mov rcx, [rax]
-    ob_bytes([72, 139, 8])
-    # cmp rcx, 0 — 48 83 f9 00 (string?)
-    ob_bytes([72, 131, 249, 0])
-    # je .str
-    ob_byte(116)
-    alloc je_str := ob_top
+    # Validate container is a heap pointer (not int / sentinel).
+    ob_bytes([168, 1])                       # test al, 1
+    ob_byte(117)                              # jnz .err
+    alloc jnz_err1 := ob_top
     ob_byte(0)
-    # cmp rcx, 1 — 48 83 f9 01
-    ob_bytes([72, 131, 249, 1])
-    # je .list (rel8 placeholder)
-    ob_byte(116)
-    alloc je_list := ob_top
+    ob_bytes([72, 131, 248, 7])              # cmp rax, 7
+    ob_byte(118)                              # jbe .err
+    alloc jbe_err1 := ob_top
     ob_byte(0)
-    # cmp rcx, 2 — 48 83 f9 02
-    ob_bytes([72, 131, 249, 2])
-    # je .dict (rel8)
-    ob_byte(116)
-    alloc je_dict := ob_top
+    ob_bytes([72, 139, 8])                   # mov rcx, [rax]
+    # Type-dispatch with key-type check so a string-with-string-key
+    # path raises a catchable TypeError (vm.omg's dict_has relies on
+    # it) instead of segfaulting in the .str path's sar/load.
+    ob_bytes([72, 131, 249, 0])              # cmp rcx, 0 (string?)
+    ob_byte(116)                              # je .maybe_str
+    alloc je_maybe_str := ob_top
     ob_byte(0)
-    # panic (exit 3) — non-indexable container.
-    x_mov_imm32(REG_RAX, 60)
-    x_mov_imm32(REG_RDI, 3)
-    x_syscall()
-    # .list — untag index, load element, return
-    ob_patch_u8(je_list, ob_top - (je_list + 1))
-    # sar rbx, 1
-    ob_bytes([72, 209, 251])
-    # mov rax, [rax + 24 + rbx*8]
-    # ModR/M: mod=01, reg=000 (rax), rm=100 (SIB) → 0x44
-    # SIB:    scale=11 (×8), index=011 (rbx), base=000 (rax) → 11_011_000 = 0xd8
-    # disp8=24
-    ob_bytes([72, 139, 68, 216, 24])
-    x_ret()
-    # .dict — tail call to rt_dict_get (which expects rax=dict, rbx=key)
-    ob_patch_u8(je_dict, ob_top - (je_dict + 1))
-    alloc s := x_jmp_rel32_patchable()
-    patch_rel32(s, dict_get_off)
-    # .str — load byte at [rax + 16 + idx], allocate a fresh 1-char string.
-    # Layout matches every other heap string: [type=0][len=8B][bytes...][NUL][pad].
-    # alloc size = (1 + 24) & -8 = 24 bytes (header 16 + 1 byte char + 7 pad).
-    ob_patch_u8(je_str, ob_top - (je_str + 1))
-    # sar rbx, 1 — untag index
-    ob_bytes([72, 209, 251])
-    # movzx edx, byte [rax + 16 + rbx] — 0f b6 54 18 10
-    ob_bytes([15, 182, 84, 24, 16])
-    # mov rax, 24 (size)
+    ob_bytes([72, 131, 249, 1])              # cmp rcx, 1 (list?)
+    ob_byte(116)                              # je .maybe_list
+    alloc je_maybe_list := ob_top
+    ob_byte(0)
+    ob_bytes([72, 131, 249, 2])              # cmp rcx, 2 (dict?)
+    ob_byte(116)                              # je .maybe_dict
+    alloc je_maybe_dict := ob_top
+    ob_byte(0)
+    # .err — fall through. Set rax to a dummy value (tagged_int(0))
+    # and jmp rt_raise, which prints/exits if no handler is installed.
+    ob_patch_u8(jnz_err1, ob_top - (jnz_err1 + 1))
+    ob_patch_u8(jbe_err1, ob_top - (jbe_err1 + 1))
+    alloc s_err := x_jmp_rel32_patchable()
+    patch_rel32(s_err, raise_off)
+    # .maybe_str — key must be a tagged int (LSB=1).
+    ob_patch_u8(je_maybe_str, ob_top - (je_maybe_str + 1))
+    ob_bytes([246, 195, 1])                  # test bl, 1
+    ob_byte(116)                              # jz .err (not int → raise)
+    alloc jz_err_str := ob_top
+    ob_byte(0)
+    # str path proper
+    ob_bytes([72, 209, 251])                 # sar rbx, 1
+    ob_bytes([15, 182, 84, 24, 16])          # movzx edx, byte [rax + 16 + rbx]
     x_mov_imm32(REG_RAX, 24)
-    # call rt_alloc (rdx preserved across alloc — alloc only clobbers rcx + r13).
-    alloc s2 := x_call_rel32_patchable()
-    patch_call_rel32(s2, alloc_off)
-    # mov qword [rax], 0 — type=0 (string). 48 c7 00 00 00 00 00
-    ob_bytes([72, 199, 0, 0, 0, 0, 0])
-    # mov qword [rax+8], 1 — length=1. 48 c7 40 08 01 00 00 00
-    ob_bytes([72, 199, 64, 8, 1, 0, 0, 0])
-    # mov [rax+16], dl — 88 50 10
-    ob_bytes([136, 80, 16])
-    # mov byte [rax+17], 0 — NUL terminator. c6 40 11 00
-    ob_bytes([198, 64, 17, 0])
+    alloc s_alloc := x_call_rel32_patchable()
+    patch_call_rel32(s_alloc, alloc_off)
+    ob_bytes([72, 199, 0, 0, 0, 0, 0])       # mov qword [rax], 0
+    ob_bytes([72, 199, 64, 8, 1, 0, 0, 0])   # mov qword [rax+8], 1
+    ob_bytes([136, 80, 16])                  # mov [rax+16], dl
+    ob_bytes([198, 64, 17, 0])               # mov byte [rax+17], 0
     x_ret()
+    # .maybe_list — key must be tagged int.
+    ob_patch_u8(je_maybe_list, ob_top - (je_maybe_list + 1))
+    ob_bytes([246, 195, 1])                  # test bl, 1
+    ob_byte(116)                              # jz .err
+    alloc jz_err_list := ob_top
+    ob_byte(0)
+    ob_bytes([72, 209, 251])                 # sar rbx, 1
+    ob_bytes([72, 139, 68, 216, 24])         # mov rax, [rax + 24 + rbx*8]
+    x_ret()
+    # .maybe_dict — key must be a heap string (LSB=0 and type=0).
+    ob_patch_u8(je_maybe_dict, ob_top - (je_maybe_dict + 1))
+    ob_bytes([246, 195, 1])                  # test bl, 1
+    ob_byte(117)                              # jnz .err (int key on dict)
+    alloc jnz_err_dict := ob_top
+    ob_byte(0)
+    ob_bytes([72, 131, 251, 7])              # cmp rbx, 7
+    ob_byte(118)                              # jbe .err
+    alloc jbe_err_dict := ob_top
+    ob_byte(0)
+    alloc s_dict := x_jmp_rel32_patchable()
+    patch_rel32(s_dict, dict_get_off)
+    # Patch the secondary .err jumps to the same raise jump above.
+    # Easiest: emit a small trampoline that jumps to raise.
+    ob_patch_u8(jz_err_str, ob_top - (jz_err_str + 1))
+    ob_patch_u8(jz_err_list, ob_top - (jz_err_list + 1))
+    ob_patch_u8(jnz_err_dict, ob_top - (jnz_err_dict + 1))
+    ob_patch_u8(jbe_err_dict, ob_top - (jbe_err_dict + 1))
+    alloc s_err2 := x_jmp_rel32_patchable()
+    patch_rel32(s_err2, raise_off)
     return entry
 }
 
@@ -1393,6 +1422,317 @@ proc emit_rt_file_write(alloc_off) {
     x_syscall()
     x_sal_rax_1()
     x_or_rax_imm8(1)
+    x_ret()
+    return entry
+}
+
+# rt_exit_with_error(rax = msg string) — write msg + newline to stderr,
+# exit(1). Never returns.
+proc emit_rt_exit_with_error() {
+    alloc entry := ob_top
+    # sys_write(2, &msg[16], len)
+    ob_bytes([72, 141, 112, 16])             # lea rsi, [rax + 16]
+    ob_bytes([72, 139, 80, 8])               # mov rdx, [rax + 8]
+    x_mov_imm32(REG_RDI, 2)
+    x_mov_imm32(REG_RAX, 1)
+    x_syscall()
+    # sys_write(2, rsp, 1) where the byte at rsp is '\n' (pushed below).
+    ob_bytes([106, 10])                       # push 10 ('\n', sign-extended imm8)
+    ob_bytes([72, 137, 230])                 # mov rsi, rsp
+    x_mov_imm32(REG_RDX, 1)
+    x_mov_imm32(REG_RDI, 2)
+    x_mov_imm32(REG_RAX, 1)
+    x_syscall()
+    # sys_exit(1)
+    x_mov_imm32(REG_RDI, 1)
+    x_mov_imm32(REG_RAX, 60)
+    x_syscall()
+    return entry
+}
+
+# rt_hex(rax = tagged int) → rax = heap string with hex representation
+# (no `0x` prefix; leading `-` for negative). Matches C runtime's
+# `omg_builtin_hex`. Structurally identical to rt_int_to_string but
+# uses base 16 and lower-case digits 0-9a-f.
+proc emit_rt_hex(alloc_off) {
+    alloc entry := ob_top
+    ob_bytes([72, 131, 236, 64])             # sub rsp, 64 — digit buffer
+    x_sar_rax_1()                             # untag
+    ob_bytes([76, 141, 76, 36, 64])          # lea r9, [rsp + 64]
+    ob_bytes([77, 137, 200])                 # mov r8, r9
+    ob_bytes([179, 0])                       # mov bl, 0 (sign flag)
+    ob_bytes([72, 133, 192])                 # test rax, rax
+    ob_bytes([121, 5])                       # jns +5
+    x_neg_rax()
+    ob_bytes([179, 1])                       # mov bl, 1
+    # Hex digit loop: divide by 16 (shift+mask).
+    alloc loop_start := ob_top
+    ob_bytes([72, 137, 194])                 # mov rdx, rax
+    ob_bytes([72, 131, 226, 15])             # and rdx, 15 (low nibble)
+    # Convert nibble to ASCII: <10 → '0'+d, else → 'a'+d-10.
+    ob_bytes([128, 250, 9])                  # cmp dl, 9
+    ob_bytes([118, 5])                       # jbe +5 (jump to add '0')
+    ob_bytes([128, 194, 39])                 # add dl, 39 (so 10 → 49, then +'0'→'a')
+    ob_bytes([128, 194, 48])                 # add dl, '0'
+    ob_bytes([73, 255, 200])                 # dec r8
+    ob_bytes([65, 136, 16])                  # mov [r8], dl
+    ob_bytes([72, 193, 232, 4])              # shr rax, 4
+    ob_bytes([72, 133, 192])                 # test rax, rax
+    ob_byte(117)                              # jnz loop_start (rel8 back)
+    alloc back := loop_start - (ob_top + 1)
+    ob_byte(back & 255)
+    # Sign prefix.
+    ob_bytes([132, 219])                     # test bl, bl
+    ob_bytes([116, 7])                       # jz +7
+    ob_bytes([73, 255, 200])                 # dec r8
+    ob_bytes([65, 198, 0, 45])               # mov byte [r8], '-'
+    # Length = r9 - r8.
+    ob_bytes([76, 137, 202])                 # mov rdx, r9
+    ob_bytes([76, 41, 194])                  # sub rdx, r8
+    # Save state, alloc string.
+    ob_byte(82)                               # push rdx
+    ob_bytes([65, 80])                       # push r8
+    ob_bytes([72, 137, 208])                 # mov rax, rdx
+    ob_bytes([72, 131, 192, 24])             # add rax, 24
+    ob_bytes([72, 131, 224, 248])            # and rax, -8
+    alloc s_alloc := x_call_rel32_patchable()
+    patch_call_rel32(s_alloc, alloc_off)
+    ob_bytes([65, 88])                       # pop r8
+    ob_byte(90)                               # pop rdx
+    ob_bytes([72, 199, 0, 0, 0, 0, 0])       # mov qword [rax], 0
+    ob_bytes([72, 137, 80, 8])               # mov [rax + 8], rdx
+    ob_bytes([76, 137, 198])                 # mov rsi, r8
+    ob_bytes([72, 141, 120, 16])             # lea rdi, [rax + 16]
+    ob_bytes([72, 137, 209])                 # mov rcx, rdx
+    ob_bytes([243, 164])                     # rep movsb
+    ob_bytes([198, 7, 0])                    # mov byte [rdi], 0 (NUL)
+    ob_bytes([72, 131, 196, 64])             # add rsp, 64
+    x_ret()
+    return entry
+}
+
+# rt_stdin_readline → heap string of line read from stdin (newline
+# excluded). Returns empty string on EOF/error. Reads one byte at a
+# time via sys_read; for compiler/repl needs that's fine. Buffer
+# capped at 4096 bytes (more than enough for a source line).
+proc emit_rt_stdin_readline(alloc_off) {
+    alloc entry := ob_top
+    # Allocate 4112-byte heap string up front (header 16 + 4096 data).
+    x_mov_imm32(REG_RAX, 4112)
+    alloc s_alloc := x_call_rel32_patchable()
+    patch_call_rel32(s_alloc, alloc_off)
+    # rax = heap str. rcx = length so far = 0.
+    ob_bytes([72, 49, 201])                  # xor rcx, rcx
+    # Read loop
+    alloc loop_top := ob_top
+    # sys_read(0, &str[16+rcx], 1).
+    ob_byte(80)                               # push rax (preserve across syscall)
+    ob_byte(81)                               # push rcx
+    ob_bytes([72, 141, 116, 8, 16])          # lea rsi, [rax + rcx + 16]
+    ob_bytes([72, 49, 255])                  # xor rdi, rdi (fd 0)
+    x_mov_imm32(REG_RDX, 1)
+    x_mov_imm32(REG_RAX, 0)                  # sys_read
+    x_syscall()
+    ob_bytes([72, 137, 194])                 # mov rdx, rax (bytes read or -1)
+    ob_byte(89)                               # pop rcx
+    ob_byte(88)                               # pop rax
+    # If rdx <= 0: EOF or error → done.
+    ob_bytes([72, 133, 210])                 # test rdx, rdx
+    ob_bytes([126, 22])                      # jle +22 → .done
+    # Did we just read a newline? Check byte at [rax + 16 + rcx].
+    ob_bytes([138, 84, 8, 16])               # mov dl, [rax + rcx + 16]
+    ob_bytes([128, 250, 10])                 # cmp dl, '\n'
+    ob_bytes([116, 11])                      # je +11 → .done
+    # Otherwise increment length and loop. Cap at 4096.
+    ob_bytes([72, 255, 193])                 # inc rcx
+    ob_bytes([72, 129, 249, 0, 16, 0, 0])    # cmp rcx, 4096
+    ob_bytes([114, 222])                     # jb loop_top (rel8 back: -34)
+    # .done — write header + NUL.
+    ob_bytes([72, 199, 0, 0, 0, 0, 0])       # mov qword [rax], 0 (string type)
+    ob_bytes([72, 137, 72, 8])               # mov [rax + 8], rcx
+    ob_bytes([198, 68, 8, 16, 0])            # mov byte [rax + rcx + 16], 0 (NUL)
+    x_ret()
+    return entry
+}
+
+# rt_subprocess(rax = list of arg strings) → tagged int exit code.
+# Forks, the child does PATH search and execve, the parent waits.
+# PATH is read from envp_slot_vaddr (saved at program entry).
+proc emit_rt_subprocess(alloc_off) {
+    alloc entry := ob_top
+    # Build argv: array of (argc+1) C-string pointers, NULL-terminated.
+    ob_byte(80)                               # push rax (list ptr)
+    ob_bytes([72, 139, 72, 8])               # mov rcx, [rax + 8] (argc)
+    ob_bytes([72, 141, 65, 1])               # lea rax, [rcx + 1]
+    ob_bytes([72, 193, 224, 3])              # shl rax, 3 (* 8)
+    ob_bytes([72, 131, 192, 7])              # add rax, 7
+    ob_bytes([72, 131, 224, 248])            # and rax, -8
+    alloc s_alloc := x_call_rel32_patchable()
+    patch_call_rel32(s_alloc, alloc_off)
+    ob_bytes([73, 137, 195])                 # mov r11, rax (argv buffer)
+    ob_byte(91)                               # pop rbx (list ptr)
+    ob_bytes([72, 139, 75, 8])               # mov rcx, [rbx + 8] (argc)
+    ob_bytes([72, 49, 210])                  # xor rdx, rdx (i)
+    # Fill loop
+    alloc fill_top := ob_top
+    ob_bytes([72, 57, 202])                  # cmp rdx, rcx
+    ob_bytes([116, 18])                      # je +18 → .fill_done
+    # rsi = list element i — list elements at [rbx + 24 + i*8]
+    ob_bytes([72, 139, 116, 211, 24])        # mov rsi, [rbx + rdx*8 + 24]
+    ob_bytes([72, 131, 198, 16])             # add rsi, 16 (skip heap string header)
+    ob_bytes([73, 137, 52, 211])             # mov [r11 + rdx*8], rsi
+    ob_bytes([72, 255, 194])                 # inc rdx
+    ob_bytes([235, 234])                     # jmp fill_top (rel8: -22)
+    # .fill_done — write NULL terminator at argv[argc].
+    ob_bytes([73, 199, 4, 203, 0, 0, 0, 0])  # mov qword [r11 + rcx*8], 0
+    # fork
+    x_mov_imm32(REG_RAX, 57)
+    x_syscall()
+    ob_bytes([72, 133, 192])                 # test rax, rax
+    ob_byte(120)                              # js .fork_err
+    alloc js_err := ob_top
+    ob_byte(0)
+    ob_byte(116)                              # je .child
+    alloc je_child := ob_top
+    ob_byte(0)
+    # Parent: wait4(pid, &status, 0, 0).
+    ob_bytes([72, 137, 199])                 # mov rdi, rax (pid)
+    ob_bytes([72, 131, 236, 16])             # sub rsp, 16
+    ob_bytes([72, 137, 230])                 # mov rsi, rsp (&status)
+    ob_bytes([72, 49, 210])                  # xor rdx, rdx (options)
+    ob_bytes([77, 49, 210])                  # xor r10, r10 (rusage)
+    x_mov_imm32(REG_RAX, 61)                 # sys_wait4
+    x_syscall()
+    ob_bytes([72, 139, 4, 36])               # mov rax, [rsp]
+    ob_bytes([72, 131, 196, 16])             # add rsp, 16
+    # Decode status. low 7 bits == 0 → exited normally; 0x7f → stopped (shouldn't happen here); else signaled.
+    ob_bytes([72, 137, 193])                 # mov rcx, rax
+    ob_bytes([72, 131, 225, 127])            # and rcx, 127
+    ob_bytes([116, 14])                      # je .exited (+14)
+    ob_bytes([72, 131, 249, 127])            # cmp rcx, 127
+    ob_bytes([116, 13])                      # je .stopped (+13)
+    # signaled: code = 128 + signal
+    ob_bytes([72, 131, 193, 128])            # add rcx, 128
+    ob_bytes([72, 137, 200])                 # mov rax, rcx
+    ob_bytes([235, 9])                       # jmp .ret (+9)
+    # .exited: code = (status >> 8) & 0xff
+    ob_bytes([72, 193, 232, 8])              # shr rax, 8
+    ob_bytes([72, 37, 255, 0, 0, 0])         # and rax, 255 (32-bit imm: 6 bytes total)
+    ob_bytes([235, 5])                       # jmp .ret (+5)
+    # .stopped: rax = -1
+    ob_bytes([72, 199, 192, 255, 255, 255, 255]) # mov rax, -1
+    # .ret — tag and return
+    ob_bytes([72, 209, 224])                 # shl rax, 1
+    ob_bytes([72, 131, 200, 1])              # or rax, 1
+    x_ret()
+    # .fork_err — exit(1).
+    ob_patch_u8(js_err, ob_top - (js_err + 1))
+    x_mov_imm32(REG_RDI, 1)
+    x_mov_imm32(REG_RAX, 60)
+    x_syscall()
+    # .child — PATH-search execve.
+    ob_patch_u8(je_child, ob_top - (je_child + 1))
+    # rdi = argv[0] (already a C string ptr, since list element [rsi+16] was stored)
+    ob_bytes([73, 139, 59])                  # mov rdi, [r11] (argv[0])
+    # Check for '/' in path. If found, exec directly.
+    ob_bytes([72, 137, 254])                 # mov rsi, rdi (scan ptr)
+    alloc scan_top := ob_top
+    ob_bytes([138, 6])                       # mov al, [rsi]
+    ob_bytes([132, 192])                     # test al, al
+    ob_bytes([116, 11])                      # je .no_slash (+11)
+    ob_bytes([60, 47])                       # cmp al, '/'
+    ob_bytes([116, 26])                      # je .direct (+26 → execve direct)
+    ob_bytes([72, 255, 198])                 # inc rsi
+    ob_byte(235)                              # jmp scan_top
+    ob_byte((scan_top - (ob_top + 1)) & 255)
+    # .no_slash — PATH search.
+    # Skipped here for brevity; just exec literally (will likely fail for `cc`,
+    # `chmod` without PATH). Caller should pass absolute paths in those cases.
+    # TODO: real PATH search.
+    # Fall through to direct exec attempt.
+    # .direct — execve(rdi, r11, 0)
+    ob_bytes([76, 137, 222])                 # mov rsi, r11 (argv)
+    ob_bytes([72, 49, 210])                  # xor rdx, rdx (envp=NULL)
+    x_mov_imm32(REG_RAX, 59)
+    x_syscall()
+    # Exec failed. exit(127).
+    x_mov_imm32(REG_RDI, 127)
+    x_mov_imm32(REG_RAX, 60)
+    x_syscall()
+    return entry
+}
+
+# rt_call_builtin(rax = name string, rbx = args list) — stub. The full
+# implementation would marshal args back onto the operand stack and
+# dispatch by name to every builtin. For now, panic with exit code 6
+# so we know it was reached. compiler.omg and vm.omg only invoke this
+# when the *user* program (the one being run) uses a builtin, so the
+# AOT-build path (which goes through native-c, not vm.omg's runtime
+# interpreter) avoids it entirely. Programs that need this should use
+# `omg --build` or run via the Rust frontend.
+proc emit_rt_call_builtin() {
+    alloc entry := ob_top
+    x_mov_imm32(REG_RAX, 60)
+    x_mov_imm32(REG_RDI, 6)
+    x_syscall()
+    return entry
+}
+
+# rt_lookup_func(rax = heap string ptr) → rax = function entry vaddr.
+# Linear search over a static name→addr table that finalize_elf emits
+# right before the globals area. Each entry is 16 bytes:
+# [name_string_ptr, fn_entry_vaddr]. The table is prefixed by a u64
+# count. Exit code 7 on miss (= "called unknown function name") —
+# matches the reference runtime's UndefinedIdentError shape if we
+# ever wire up better diagnostics.
+proc emit_rt_lookup_func(str_eq_off) {
+    alloc entry := ob_top
+    # mov rcx, imm64 (table_vaddr) — 48 b9 <imm64>
+    ob_bytes([72, 185])
+    alloc patch := ob_top
+    ob_u64(0)
+    fn_name_table_patches := fn_name_table_patches + [patch]
+    # mov rdx, [rcx] — count
+    ob_bytes([72, 139, 17])
+    # add rcx, 8 — point at first entry
+    ob_bytes([72, 131, 193, 8])
+    alloc loop_top := ob_top
+    # test rdx, rdx
+    ob_bytes([72, 133, 210])
+    # jz .miss (rel8)
+    ob_byte(116)
+    alloc jz_miss := ob_top
+    ob_byte(0)
+    # Save rax (search name), rcx (entry ptr), rdx (counter).
+    ob_byte(80)                               # push rax
+    ob_byte(81)                               # push rcx
+    ob_byte(82)                               # push rdx
+    # rbx = [rcx] = entry name_ptr.
+    ob_bytes([72, 139, 25])                  # mov rbx, [rcx]
+    alloc s_eq := x_call_rel32_patchable()
+    patch_call_rel32(s_eq, str_eq_off)
+    # ZF=1 if names matched. Pops don't touch flags.
+    ob_byte(90)                               # pop rdx
+    ob_byte(89)                               # pop rcx
+    ob_byte(88)                               # pop rax
+    # je .found (rel8)
+    ob_byte(116)
+    alloc je_found := ob_top
+    ob_byte(0)
+    # Advance.
+    ob_bytes([72, 131, 193, 16])             # add rcx, 16
+    ob_bytes([72, 255, 202])                 # dec rdx
+    # jmp loop_top (rel8 back)
+    ob_byte(235)
+    ob_byte((loop_top - (ob_top + 1)) & 255)
+    # .miss
+    ob_patch_u8(jz_miss, ob_top - (jz_miss + 1))
+    x_mov_imm32(REG_RAX, 60)
+    x_mov_imm32(REG_RDI, 7)
+    x_syscall()
+    # .found — return [rcx + 8]
+    ob_patch_u8(je_found, ob_top - (je_found + 1))
+    ob_bytes([72, 139, 65, 8])               # mov rax, [rcx + 8]
     x_ret()
     return entry
 }
@@ -2316,8 +2656,13 @@ proc emit_rt_setup_except() {
     ob_bytes([76, 137, 114, 16])
     # mov [rdx + 24], r12 — 4c 89 62 18
     ob_bytes([76, 137, 98, 24])
-    # mov [rdx + 32], rsp — 48 89 62 20
-    ob_bytes([72, 137, 98, 32])
+    # Save rsp + 8 so the eventual raise lands at the caller's stack
+    # frame, NOT at the orphan return-address from this very `call
+    # rt_setup_except`. Without the +8, a later RAISE restores rsp
+    # such that the next ret in the catching function pops our
+    # return address instead of the function's own ret slot.
+    ob_bytes([72, 141, 68, 36, 8])           # lea rax, [rsp + 8]
+    ob_bytes([72, 137, 66, 32])              # mov [rdx + 32], rax
     # add rdx, 40 — 48 83 c2 28
     ob_bytes([72, 131, 194, 40])
     # mov [rcx], rdx
@@ -2354,8 +2699,25 @@ proc emit_rt_raise() {
     alloc slot_site := ob_top
     ob_u64(0)
     except_slot_patch_sites := except_slot_patch_sites + [slot_site]
-    # mov rdx, [rcx]
+    # mov rdx, [rcx] — current except_top
     ob_bytes([72, 139, 17])
+    # Compare to except_base. Equal → no handler installed → exit
+    # cleanly (rather than longjmp-ing through garbage). Use rsi (not
+    # rax) for the imm to preserve rax = exception value.
+    ob_bytes([72, 190])                      # mov rsi, imm64 (except_base)
+    alloc base_site := ob_top
+    ob_u64(0)
+    except_base_patch_sites := except_base_patch_sites + [base_site]
+    ob_bytes([72, 57, 242])                  # cmp rdx, rsi
+    ob_byte(117)                              # jne .have_handler
+    alloc jne_have := ob_top
+    ob_byte(0)
+    # Unhandled exception — exit(1). (Future: print a traceback.)
+    x_mov_imm32(REG_RAX, 60)
+    x_mov_imm32(REG_RDI, 1)
+    x_syscall()
+    # .have_handler — existing path.
+    ob_patch_u8(jne_have, ob_top - (jne_have + 1))
     # sub rdx, 40
     ob_bytes([72, 131, 234, 40])
     # mov [rcx], rdx — write the new (decremented) top back
@@ -3199,6 +3561,13 @@ alloc rt_and_off             := 0
 alloc rt_or_off              := 0
 alloc rt_init_args_off       := 0
 alloc rt_init_current_dir_off := 0
+alloc rt_exit_with_error_off := 0
+alloc rt_hex_off             := 0
+alloc rt_stdin_readline_off  := 0
+alloc rt_subprocess_off      := 0
+alloc rt_call_builtin_off    := 0
+alloc rt_lookup_func_off     := 0
+alloc fn_name_table_patches  := []   # mov-rcx-imm64 sites that need the table vaddr
 # Patch site for the imm64 that loads the `args` global slot vaddr in
 # the prologue. Resolved in finalize_elf.
 alloc args_init_slot_site    := 0
@@ -3214,11 +3583,13 @@ alloc rt_read_file_off       := 0
 # that's emitted inside each except helper. Resolved in finalize_elf
 # once the slot's absolute virtual address is known (= heap_base).
 alloc except_slot_patch_sites := []
+alloc except_base_patch_sites := []
 # Patch sites for the imm64 in the entry-point prologue's
 # `mov rcx, imm64 (slot); mov rax, imm64 (except_base); mov [rcx], rax`
 # init sequence.
 alloc except_init_slot_site    := 0
 alloc except_init_base_site    := 0
+alloc envp_init_slot_site      := 0
 
 proc emit_runtime_blob() {
     # Static strings — no trailing newlines (those come from the
@@ -3264,12 +3635,13 @@ proc emit_runtime_blob() {
     alloc str_eq_off      := emit_rt_str_eq()
     rt_dict_get_off       := emit_rt_dict_get(str_eq_off)
     rt_dict_set_off       := emit_rt_dict_set(str_eq_off)
-    rt_index_off          := emit_rt_index(rt_dict_get_off, rt_alloc_off)
-    rt_store_index_off    := emit_rt_store_index(rt_dict_set_off)
-    # Exception helpers (phase 7).
+    # Exception helpers (phase 7) — emit before rt_index so the latter
+    # can route type errors to rt_raise.
     rt_setup_except_off   := emit_rt_setup_except()
     rt_pop_block_off      := emit_rt_pop_block()
     rt_raise_off          := emit_rt_raise()
+    rt_index_off          := emit_rt_index(rt_dict_get_off, rt_alloc_off, rt_raise_off)
+    rt_store_index_off    := emit_rt_store_index(rt_dict_set_off)
     # Builtin helpers (phase 8).
     rt_chr_off            := emit_rt_chr(rt_alloc_off)
     rt_list_repeat_off    := emit_rt_list_repeat(rt_alloc_off)
@@ -3296,6 +3668,12 @@ proc emit_runtime_blob() {
     rt_or_off             := emit_rt_or()
     rt_init_args_off      := emit_rt_init_args(rt_alloc_off)
     rt_init_current_dir_off := emit_rt_init_current_dir(rt_alloc_off)
+    rt_exit_with_error_off := emit_rt_exit_with_error()
+    rt_hex_off            := emit_rt_hex(rt_alloc_off)
+    rt_stdin_readline_off := emit_rt_stdin_readline(rt_alloc_off)
+    rt_subprocess_off     := emit_rt_subprocess(rt_alloc_off)
+    rt_call_builtin_off   := emit_rt_call_builtin()
+    rt_lookup_func_off    := emit_rt_lookup_func(str_eq_off)
     # File I/O helpers (phase 8c).
     rt_file_open_off      := emit_rt_file_open()
     rt_file_close_off     := emit_rt_file_close()
@@ -3455,6 +3833,36 @@ proc gen_div() {
     x_sar_rax_1()                            # 3 bytes
     x_cqo()                                  # 2 bytes
     x_idiv_rbx()                             # 3 bytes
+    x_sal_rax_1()                            # 3 bytes
+    x_or_rax_imm8(1)                         # 4 bytes
+    x_push_reg(REG_RAX)
+}
+
+# FLOOR_DIV: integer floor division (towards -inf). Int fast path
+# inline; mixed types fall through to rt_div_full (which gives
+# regular float div). For ints, idiv yields truncated quotient q
+# and remainder r; if r ≠ 0 AND signs(r, b) differ, adjust q -= 1.
+proc gen_floor_div() {
+    x_pop_reg(REG_RBX)
+    x_pop_reg(REG_RAX)
+    x_mov_rcx_rax()
+    x_and_rcx_rbx()
+    x_test_cl_1()
+    ob_bytes([117, 7])                       # jnz +7 (skip slow-path)
+    alloc s := x_call_rel32_patchable()
+    patch_call_rel32(s, rt_div_full_off)
+    ob_bytes([235, 34])                      # jmp +34 (skip int fast path)
+    x_sar_rbx_1()                            # 3 bytes — raw_b
+    x_sar_rax_1()                            # 3 bytes — raw_a
+    x_cqo()                                  # 2 bytes
+    x_idiv_rbx()                             # 3 bytes — rax = q, rdx = r
+    # If r == 0, skip adjustment.
+    ob_bytes([72, 133, 210])                 # test rdx, rdx — 3 bytes
+    ob_bytes([116, 8])                       # jz +8 — 2 bytes (skip xor/jns/dec)
+    ob_bytes([72, 137, 209])                 # mov rcx, rdx — 3 bytes
+    ob_bytes([72, 49, 217])                  # xor rcx, rbx — 3 bytes (sets SF if signs differ)
+    ob_bytes([121, 3])                       # jns +3 — 2 bytes (signs match → skip dec)
+    ob_bytes([72, 255, 200])                 # dec rax — 3 bytes
     x_sal_rax_1()                            # 3 bytes
     x_or_rax_imm8(1)                         # 4 bytes
     x_push_reg(REG_RAX)
@@ -4273,9 +4681,27 @@ proc gen_call_value(argc) {
     # mov rcx, [r15 + argc*8] — 49 8b 8f <disp32>
     ob_bytes([73, 139, 143])
     ob_u32((argc * 8) & 4294967295)
-    # mov rax, [rcx + 8] (func_addr; offset 8 in the closure object)
-    # 48 8b 41 08
-    ob_bytes([72, 139, 65, 8])
+    # Dispatch on callable type. type=0 (string) → look up function
+    # name in the static lookup table (module exports use this form).
+    # type=3 (closure) → fast path: read [closure+8] as fn_addr.
+    # Anything else is a type error (exit 7).
+    ob_bytes([72, 139, 17])                  # mov rdx, [rcx]
+    ob_bytes([72, 133, 210])                 # test rdx, rdx
+    ob_byte(116)                              # je .str
+    alloc je_str := ob_top
+    ob_byte(0)
+    # closure-like path — assume type 3 with [obj+8] as fn_addr.
+    ob_bytes([72, 139, 65, 8])               # mov rax, [rcx + 8]
+    ob_byte(235)                              # jmp .do_call
+    alloc jmp_call := ob_top
+    ob_byte(0)
+    # .str — rcx is a heap string, look up in the function table.
+    ob_patch_u8(je_str, ob_top - (je_str + 1))
+    ob_bytes([72, 137, 200])                 # mov rax, rcx (search name)
+    alloc s_lf := x_call_rel32_patchable()
+    patch_call_rel32(s_lf, rt_lookup_func_off)
+    # .do_call — rax holds fn_addr.
+    ob_patch_u8(jmp_call, ob_top - (jmp_call + 1))
     # call rax — ff d0
     ob_bytes([255, 208])
     # Cleanup: at this point r15 = r14_at_call + (N-1)*8 (function
@@ -4321,6 +4747,35 @@ proc gen_store_index() {
     x_pop_reg(REG_RAX)                            # container ptr
     alloc site := x_call_rel32_patchable()
     patch_call_rel32(site, rt_store_index_off)
+}
+
+# ATTR / STORE_ATTR — `obj.name` dispatch. Modules and structs in OMG
+# are dicts under the hood; ATTR with a static string name reduces to
+# rt_index with the name as key. The reference runtime panics on non-
+# dict bases; the native runtime currently relies on rt_index's
+# routing (string/list/dict) so a list base would silently misbehave.
+proc gen_attr(name) {
+    x_pop_reg(REG_RAX)                            # container
+    # mov rbx, imm64 (attr-name string ptr placeholder) — 48 bb <imm64>
+    ob_bytes([72, 187])
+    alloc site := ob_top
+    ob_u64(0)
+    deferred_strings := deferred_strings + [[name, site]]
+    alloc call_site := x_call_rel32_patchable()
+    patch_call_rel32(call_site, rt_index_off)
+    x_push_reg(REG_RAX)
+}
+
+proc gen_store_attr(name) {
+    x_pop_reg(REG_RDX)                            # value
+    x_pop_reg(REG_RAX)                            # container
+    # mov rbx, imm64 (attr-name string ptr placeholder)
+    ob_bytes([72, 187])
+    alloc site := ob_top
+    ob_u64(0)
+    deferred_strings := deferred_strings + [[name, site]]
+    alloc call_site := x_call_rel32_patchable()
+    patch_call_rel32(call_site, rt_store_index_off)
 }
 
 # BUILD_DICT(N): pops 2N values (N key-value pairs) and pushes a new
@@ -4438,6 +4893,46 @@ proc gen_builtin(name, argc) {
     }
     if name == "freeze" {
         # No-op: pass through the dict pointer unchanged.
+        return false
+    }
+    if name == "exit_with_error" {
+        # Pop msg, write to stderr + newline, exit(1).
+        x_pop_reg(REG_RAX)
+        alloc s_ewe := x_call_rel32_patchable()
+        patch_call_rel32(s_ewe, rt_exit_with_error_off)
+        # Unreachable. Push TAG_NONE for codegen invariants.
+        x_mov_imm32(REG_RAX, TAG_NONE)
+        x_push_reg(REG_RAX)
+        return false
+    }
+    if name == "hex" {
+        x_pop_reg(REG_RAX)
+        alloc s_hex := x_call_rel32_patchable()
+        patch_call_rel32(s_hex, rt_hex_off)
+        x_push_reg(REG_RAX)
+        return false
+    }
+    if name == "stdin_readline" {
+        # argc 0 — no pop needed.
+        alloc s_srl := x_call_rel32_patchable()
+        patch_call_rel32(s_srl, rt_stdin_readline_off)
+        x_push_reg(REG_RAX)
+        return false
+    }
+    if name == "subprocess" {
+        x_pop_reg(REG_RAX)
+        alloc s_sub := x_call_rel32_patchable()
+        patch_call_rel32(s_sub, rt_subprocess_off)
+        x_push_reg(REG_RAX)
+        return false
+    }
+    if name == "call_builtin" {
+        # Stack: [..., name_str, args_list] with args_list on top.
+        x_pop_reg(REG_RBX)
+        x_pop_reg(REG_RAX)
+        alloc s_cb := x_call_rel32_patchable()
+        patch_call_rel32(s_cb, rt_call_builtin_off)
+        x_push_reg(REG_RAX)
         return false
     }
     if name == "print" {
@@ -4721,6 +5216,7 @@ proc gen_one(instr, bytecode_idx, dispatch_off) {
     if op == "SUB"      { gen_sub() }              else {
     if op == "MUL"      { gen_mul() }              else {
     if op == "DIV"      { gen_div() }              else {
+    if op == "FLOOR_DIV" { gen_floor_div() }       else {
     if op == "MOD"      { gen_mod() }              else {
     if op == "NEG"      { gen_neg() }              else {
     if op == "NOT"      { gen_not() }              else {
@@ -4752,6 +5248,8 @@ proc gen_one(instr, bytecode_idx, dispatch_off) {
     if op == "INDEX"    { gen_index() }            else {
     if op == "SLICE"    { gen_slice() }            else {
     if op == "STORE_INDEX" { gen_store_index() }   else {
+    if op == "ATTR"        { gen_attr(instr[1]) }  else {
+    if op == "STORE_ATTR"  { gen_store_attr(instr[1]) } else {
     if op == "BUILTIN"  { gen_builtin(instr[1][0], instr[1][1]) } else {
     if op == "POP"      { gen_pop() }              else {
     if op == "POP_BLOCK"   { gen_pop_block() }     else {
@@ -4760,7 +5258,7 @@ proc gen_one(instr, bytecode_idx, dispatch_off) {
     if op == "EMIT"     { gen_emit(dispatch_off) } else {
     if op == "HALT"     { gen_halt() }             else {
         panic("native-asm: unsupported op " + op)
-    }}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}
+    }}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}
 }
 
 # Pre-pass: build func_scope_info (params + locals per function) and
@@ -4974,6 +5472,42 @@ proc finalize_elf(entry_vaddr, r15_init_site, r13_init_site) {
         patch_u64(cp[0], fn_vaddr)
         mp := mp + 1
     }
+    # 2d. Function-name lookup table. CALL_VALUE on a string (which is
+    # how module exports look up procs — see compile_import in
+    # compiler.omg, which stores `__mod_N__name` for func exports)
+    # falls through rt_lookup_func, which linear-searches this table.
+    # Layout: name_string_headers (each [type=0, len, bytes, NUL, pad]),
+    # then [count, (name_ptr, fn_vaddr)*count].
+    pad_to_8()
+    alloc fne_count := length(fn_entry)
+    alloc fn_name_vaddrs := list_repeat(0, fne_count)
+    alloc fi2 := 0
+    loop fi2 < fne_count {
+        alloc fname := fn_entry[fi2][0]
+        alloc nv := ELF_BASE + HEADERS_SIZE + ob_top
+        ob_u64(HEAP_T_STRING)
+        ob_u64(length(fname))
+        ob_string_bytes(fname)
+        ob_byte(0)
+        pad_to_8()
+        fn_name_vaddrs[fi2] := nv
+        fi2 := fi2 + 1
+    }
+    pad_to_8()
+    alloc fn_table_vaddr := ELF_BASE + HEADERS_SIZE + ob_top
+    ob_u64(fne_count & 9223372036854775807)
+    alloc fi3 := 0
+    loop fi3 < fne_count {
+        ob_u64(fn_name_vaddrs[fi3] & 9223372036854775807)
+        ob_u64((ELF_BASE + HEADERS_SIZE + fn_entry[fi3][1]) & 9223372036854775807)
+        fi3 := fi3 + 1
+    }
+    alloc ftpi := 0
+    alloc ftpn := length(fn_name_table_patches)
+    loop ftpi < ftpn {
+        patch_u64(fn_name_table_patches[ftpi], fn_table_vaddr)
+        ftpi := ftpi + 1
+    }
     # 3. Layout string-header data right after code, recording each
     # header's absolute virtual address. Layout matches the runtime
     # heap-object shape so the EMIT dispatcher can treat static and
@@ -5044,7 +5578,8 @@ proc finalize_elf(entry_vaddr, r15_init_site, r13_init_site) {
     # initialises to stack_top.
     alloc heap_base   := ELF_BASE + file_size
     alloc except_top_slot_vaddr := heap_base
-    alloc bump_base   := heap_base + 8
+    alloc envp_slot_vaddr := heap_base + 8
+    alloc bump_base   := heap_base + 16
     alloc op_base     := heap_base + HEAP_SIZE
     alloc stack_top   := op_base + OPERAND_STACK_SIZE
     alloc except_base := stack_top
@@ -5053,6 +5588,7 @@ proc finalize_elf(entry_vaddr, r15_init_site, r13_init_site) {
     patch_u64(r13_init_site, bump_base)
     patch_u64(except_init_slot_site, except_top_slot_vaddr)
     patch_u64(except_init_base_site, except_base)
+    patch_u64(envp_init_slot_site, envp_slot_vaddr)
     # The `args` slot lives at `globals_base_vaddr + slot_index * 8`,
     # where slot_index is whatever globals_slot("args") returned.
     alloc args_slot_idx := globals_slot("args")
@@ -5065,6 +5601,14 @@ proc finalize_elf(entry_vaddr, r15_init_site, r13_init_site) {
     loop esi < esn {
         patch_u64(except_slot_patch_sites[esi], except_top_slot_vaddr)
         esi := esi + 1
+    }
+    # Same for the except_base imm64 patches in rt_raise's
+    # no-handler check.
+    alloc ebi := 0
+    alloc ebn := length(except_base_patch_sites)
+    loop ebi < ebn {
+        patch_u64(except_base_patch_sites[ebi], except_base)
+        ebi := ebi + 1
     }
     # 5. Build ELF header + program header. Segment is R+W+X so the
     # globals area is writable — splitting into separate R+X / R+W
@@ -5162,6 +5706,14 @@ proc main_compile() {
     ob_u64(0)
     # mov [rcx], rax — 48 89 01
     ob_bytes([72, 137, 1])
+    # Save envp pointer for subprocess(). At program entry, envp lives
+    # at rsp + 16 + argc*8. Compute and stash in envp_slot_vaddr.
+    ob_bytes([72, 139, 4, 36])               # mov rax, [rsp] (argc)
+    ob_bytes([72, 141, 68, 196, 16])         # lea rax, [rsp + rax*8 + 16]
+    ob_bytes([72, 185])                       # mov rcx, imm64 (envp_slot_vaddr)
+    envp_init_slot_site := ob_top
+    ob_u64(0)
+    ob_bytes([72, 137, 1])                   # mov [rcx], rax
     # Build args list from argv. Reserve the `args` global slot up
     # front so codegen can refer to it and so we know its address
     # to pass to rt_init_args. Slot vaddr is an imm64 patched in
