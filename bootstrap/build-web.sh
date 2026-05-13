@@ -17,7 +17,7 @@ set -e
 cd "$(dirname "$0")/.."
 
 OMG=bootstrap/bin/omg
-OMGJS=bootstrap/bin/omgjs
+OMGJS_NATIVE=bootstrap/bin/omgjs
 WEB_OUT=web/examples
 mkdir -p "$WEB_OUT"
 WORK=$(mktemp -d)
@@ -27,7 +27,7 @@ trap "rm -rf $WORK" EXIT
 
 echo "Building web/omg-web.js (compiler + VM + driver) ..."
 "$OMG" --compile bootstrap/src/omg-web.omg "$WORK/omg-web.omgb"
-"$OMGJS" "$WORK/omg-web.omgb" web/omg-web.js
+"$OMGJS_NATIVE" "$WORK/omg-web.omgb" web/omg-web.js
 echo "  $(wc -c < web/omg-web.js | tr -d ' ') bytes"
 
 # === Reference example pairs ==============================================
@@ -47,7 +47,7 @@ for name in "${EXAMPLES[@]}"; do
     fi
     cp "$src" "$WEB_OUT/$name.omg"
     "$OMG" --compile "$src" "$WORK/$name.omgb" >/dev/null
-    "$OMGJS" "$WORK/$name.omgb" "$WEB_OUT/$name.js" >/dev/null
+    "$OMGJS_NATIVE" "$WORK/$name.omgb" "$WEB_OUT/$name.js" >/dev/null
     count=$((count + 1))
 done
 echo "Built $count reference example pairs in $WEB_OUT/"

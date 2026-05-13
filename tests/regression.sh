@@ -355,9 +355,9 @@ assert_eq "Rust runtime: closures by reference" "$EXPECTED" "$actual"
 actual=$("$OMG_NATIVE" "$TMPDIR_TEST/closure_byref.omg" 2>&1)
 assert_eq "Native interp: closures by reference" "$EXPECTED" "$actual"
 
-# OMG VM (omgvm executes a .omgb produced by omgc).
+# OMG VM (bin/omg runs a .omgb produced by omgc, importing vm.omg in-process).
 "$OMGC_NATIVE" "$TMPDIR_TEST/closure_byref.omg" "$TMPDIR_TEST/closure_byref.omgb" >/dev/null
-actual=$("$OMGVM_NATIVE" "$TMPDIR_TEST/closure_byref.omgb" 2>&1)
+actual=$("$OMG_NATIVE" "$TMPDIR_TEST/closure_byref.omgb" 2>&1)
 assert_eq "OMG VM: closures by reference" "$EXPECTED" "$actual"
 
 "$OMG_NATIVE" --build "$TMPDIR_TEST/closure_byref.omg" "$TMPDIR_TEST/closure_byref_aot" >/dev/null

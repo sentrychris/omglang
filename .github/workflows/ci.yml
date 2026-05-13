@@ -80,16 +80,16 @@ jobs:
       - name: Build Rust runtime (bootstrap seed)
         run: cargo build --release --manifest-path runtime/Cargo.toml
 
-      # Compiles bootstrap/src/*.omg → bootstrap/bin/{omg,omgc,omgcc,
-      # omgvm} via the existing native toolchain (self-rebuild). This
-      # validates that the four ELFs in-repo can rebuild themselves from
+      # Compiles bootstrap/src/*.omg → bootstrap/bin/{omg,omgc,omgcc}
+      # via the existing native toolchain (self-rebuild). This
+      # validates that the ELFs in-repo can rebuild themselves from
       # the current OMG sources, the load-bearing self-hosting
       # invariant for the native pipeline.
       - name: Self-rebuild native toolchain
         run: bootstrap/build.sh
 
       # tests/run.sh is the comprehensive end-to-end suite. It exercises
-      # the four omg / omgc / omgcc / omgvm binaries directly:
+      # the omg / omgc / omgcc binaries directly:
       #   * builtins   — process & I/O builtins via Rust + native AOT
       #   * driver     — every omg invocation form (interpret / --build
       #                  / --compile / REPL) and the standalone tools

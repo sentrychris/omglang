@@ -1,8 +1,12 @@
 ;;;omg
 
-# vm.omg  →  bootstrap/bin/omgvm
+# vm.omg  →  library: embedded in runtime/target/release/omg (as vm.omgb)
+#                     and imported in-process by bootstrap/bin/omg
 #
 # Execute `.omgb` bytecode files using a VM written in OMG.
+#
+# Not compiled to its own standalone ELF — `bin/omg` imports this
+# module so `omg foo.omgb` already handles the bytecode-runner case.
 #
 # This is the third leg of the self-hosting story:
 #
@@ -1255,21 +1259,20 @@ proc vm_argv0_basename() {
 }
 
 # Script-main dispatch — runs only when this file is the top-level
-# program. We detect that via args[0] basename: when omgvm is invoked
-# directly (`./omgvm` or `omg bootstrap/src/vm.omg`), args[0] ends in one
-# of the names below. When this file is imported by another program
-# (e.g. the unified `omg` driver), args[0] is the importer's binary
-# and main is a no-op.
+# program. We detect that via args[0] basename: when invoked directly
+# (`omg bootstrap/src/vm.omg foo.omgb`), args[0] ends in `vm.omg` or
+# `vm.omgb`. When imported by another program (e.g. the unified `omg`
+# driver), args[0] is the importer's binary and main is a no-op.
 proc vm_is_main_invocation() {
     alloc bn := vm_argv0_basename()
     # `<embedded-vm>` is the args[0] runtime/src/main.rs sets when it
     # invokes the embedded vm.omgb for `--verify-omg-vm`'s triple-meta
     # path; recognise it here so the gate doesn't reject that mode.
-    return bn == "omgvm" or bn == "vm.omg" or bn == "vm.omgb" or bn == "<embedded-vm>"
+    return bn == "vm.omg" or bn == "vm.omgb" or bn == "<embedded-vm>"
 }
 
 if vm_is_main_invocation() and length(args) >= 2 and (args[1] == "-v" or args[1] == "--version") {
-    emit "omgvm-native-build: v" + VERSION
+    emit "vm.omg: v" + VERSION
     exit(0)
 }
 if vm_is_main_invocation() and length(args) >= 2 and vm_path_ends_with(args[1], ".omgb") {

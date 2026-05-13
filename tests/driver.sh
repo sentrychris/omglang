@@ -131,7 +131,7 @@ assert_contains "unknown extension reports type"  "unknown file type" "$unknown_
 [ "$unknown_rc" != 0 ] && pass "unknown extension exits non-zero" || \
     fail "unknown extension should exit non-zero"
 
-# === Standalone tools (omgc / omgvm / omgcc) ==========================
+# === Standalone tools (omgc / omgcc) ==========================
 section "Driver: standalone components"
 
 # omgc takes .omg → .omgb.
@@ -139,12 +139,12 @@ section "Driver: standalone components"
 [ -f "$TMPDIR_TEST/fixture-direct.omgb" ] && pass "omgc produces .omgb" || \
     fail "omgc didn't produce output"
 
-# omgvm runs .omgb directly.
+# `omg foo.omgb` runs the bytecode directly (bin/omg imports vm.omg in-process).
 expected_vm="args: [$TMPDIR_TEST/fixture-direct.omgb, hi]
 len: 2
 square(7) = 49"
-assert_stdout "omgvm runs .omgb" "$expected_vm" \
-    "$OMGVM_NATIVE" "$TMPDIR_TEST/fixture-direct.omgb" hi
+assert_stdout "omg runs .omgb in-process" "$expected_vm" \
+    "$OMG_NATIVE" "$TMPDIR_TEST/fixture-direct.omgb" hi
 
 # omgcc transpiles .omgb → .c.
 "$OMGCC_NATIVE" "$TMPDIR_TEST/fixture-direct.omgb" "$TMPDIR_TEST/fixture-direct.c" >/dev/null

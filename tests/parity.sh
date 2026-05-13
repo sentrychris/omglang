@@ -157,7 +157,7 @@ else
 fi
 
 # After self-rebuild every binary is still callable.
-for bin in "$OMG_NATIVE" "$OMGC_NATIVE" "$OMGCC_NATIVE" "$OMGVM_NATIVE"; do
+for bin in "$OMG_NATIVE" "$OMGC_NATIVE" "$OMGCC_NATIVE" "$OMGJS_NATIVE"; do
     if "$bin" --help >/dev/null 2>&1 || \
        "$bin" -h >/dev/null 2>&1 || \
        echo 'quit' | "$bin" >/dev/null 2>&1; then

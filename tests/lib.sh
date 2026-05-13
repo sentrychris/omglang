@@ -22,7 +22,7 @@ REPO_ROOT="$(cd "$TESTS_DIR/.." && pwd)"
 OMG_NATIVE="$REPO_ROOT/bootstrap/bin/omg"
 OMGC_NATIVE="$REPO_ROOT/bootstrap/bin/omgc"
 OMGCC_NATIVE="$REPO_ROOT/bootstrap/bin/omgcc"
-OMGVM_NATIVE="$REPO_ROOT/bootstrap/bin/omgvm"
+OMGJS_NATIVE="$REPO_ROOT/bootstrap/bin/omgjs"
 OMG_RUST="$REPO_ROOT/runtime/target/release/omg"
 
 # Per-suite tempdir. Cleaned up by the runner; tests just write into it.
@@ -111,7 +111,7 @@ assert_combined() {
 # `require_native_toolchain` — bail out early if the native binaries
 # aren't present. Saves time and produces a useful error.
 require_native_toolchain() {
-    for bin in "$OMG_NATIVE" "$OMGC_NATIVE" "$OMGCC_NATIVE" "$OMGVM_NATIVE"; do
+    for bin in "$OMG_NATIVE" "$OMGC_NATIVE" "$OMGCC_NATIVE" "$OMGJS_NATIVE"; do
         if [ ! -x "$bin" ]; then
             echo -e "${RED}Native toolchain missing.${NC} Run:"
             echo "  bootstrap/build.sh"

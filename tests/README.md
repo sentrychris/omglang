@@ -28,7 +28,7 @@ prerequisites aren't built.
 | `tests/run.sh`         | Top-level runner; sources each suite in turn         |
 | `tests/lib.sh`         | Shared assertions (`assert_eq`, `assert_stdout`, …)  |
 | `tests/builtins.sh`    | New process & I/O builtins: `subprocess`, `exit`, `getpid`, `stdin_readline`, `print` |
-| `tests/driver.sh`      | The five `omg` modes (run `.omg` / run `.omgb` / `--compile` / `--build` / `--help`) plus the standalone tools (`omgc`, `omgvm`, `omgcc`) |
+| `tests/driver.sh`      | The five `omg` modes (run `.omg` / run `.omgb` / `--compile` / `--build` / `--help`) plus the standalone tools (`omgc`, `omgcc`) |
 | `tests/repl.sh`        | REPL behaviour: state persistence, multi-line input, error recovery, exit/quit/EOF, closures |
 | `tests/parity.sh`      | Triple-meta fixed-point, byte-identical bytecode (Rust frontend vs `omgc`), AOT/native-interpreted corpus parity, self-rebuild |
 | `tests/regression.sh`  | Specific bugs we've fixed: control-flow inside `try`, float-bits decoding in `compile_source`, `args[0]` semantics, doubled `RuntimeError:` prefix, `;;;omg` header is optional, stdout/stderr ordering |

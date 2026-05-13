@@ -1814,7 +1814,7 @@ static Value omg_builtin_print(Value v) {
  * stdin/stdout/stderr are inherited. Returns the child's exit code.
  *
  * Mirrors std::process::Command::status() in the Rust runtime so the
- * OMG-native `omg` driver can dispatch to omgc/omgvm/cc the same way
+ * OMG-native `omg` driver can dispatch to omgc/cc the same way
  * the bash wrapper used to. */
 static Value omg_builtin_subprocess(Value v) {
     if (v.tag != OMG_LIST) omg_panic("TypeError", "subprocess() expects a list of strings");

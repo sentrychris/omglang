@@ -31,10 +31,9 @@ cargo build --release --manifest-path runtime/Cargo.toml
 bootstrap/build.sh
 ```
 
-After that, `bootstrap/bin/` contains the five native ELFs (omg, omgc,
-omgcc, omgjs, omgvm) plus the inlined runtime headers (omg_rt.h,
-omg_rt.js). You can package them at any time without touching Rust
-again.
+After that, `bootstrap/bin/` contains the four native ELFs (omg, omgc,
+omgcc, omgjs) plus the inlined runtime headers (omg_rt.h, omg_rt.js).
+You can package them at any time without touching Rust again.
 
 ## Running it
 

@@ -38,14 +38,14 @@ bootstrap/build.sh
 | `omgc`     | Compiler: `.omg` → `.omgb` bytecode               |
 | `omgcc`    | C transpiler: `.omgb` → `.c`                      |
 | `omgjs`    | JS transpiler: `.omgb` → `.js`                    |
-| `omgvm`    | Bytecode interpreter (executes `.omgb`)           |
 | `omg_rt.h` | C runtime header (inlined into every `.c` omgcc emits)   |
 | `omg_rt.js`| JS runtime (inlined into every `.js` omgjs emits) |
 
-All five binaries are native ELFs compiled from OMG source. `omg`
+All four binaries are native ELFs compiled from OMG source. `omg`
 imports `compiler.omg`, `vm.omg`, and `native-c.omg` directly so
-compile, run, and REPL happen in-process — the only external command
-invoked is `cc` for the final ELF link in `--build`.
+compile, run, REPL, and `omg foo.omgb` (running precompiled bytecode)
+all happen in-process — the only external command invoked is `cc` for
+the final ELF link in `--build`.
 
 ## Conventions in these docs
 

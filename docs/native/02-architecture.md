@@ -79,8 +79,10 @@ byte-identical no matter which historical iteration you started from.
    so the very first run can compile and execute `.omg` sources without the
    user already having either.
 
-The native toolchain (`bootstrap/bin/`) replaces #1 and #2 with C-compiled
-versions: `omgc` is #1 + #3's compiler fused into a binary, `omgvm` is #2.
+The native toolchain (`bootstrap/bin/`) replaces #1 with a C-compiled
+version: `omgc` is the OMG compiler fused into a binary. #2 (the VM)
+isn't compiled to its own ELF — `bin/omg` imports `vm.omg` in-process,
+so `omg foo.omgb` already covers the bytecode-runner case.
 
 ## Native toolchain inventory
 
@@ -90,23 +92,24 @@ bootstrap/bin/
 ├── omgc        compiler.omg compiled to native     (.omg → .omgb)
 ├── omgcc       native-c.omg compiled to native     (.omgb → .c)
 ├── omgjs       native-js.omg compiled to native    (.omgb → .js)
-├── omgvm       vm.omg compiled to native           (executes .omgb)
 ├── omg_rt.h    C runtime header  (inlined into every .c omgcc emits)
 └── omg_rt.js   JS runtime        (inlined into every .js omgjs emits)
 ```
 
-All five tools are native ELFs compiled from OMG source. `omg` is written
+All four tools are native ELFs compiled from OMG source. `omg` is written
 in OMG (see [`bootstrap/src/omg.omg`](../../bootstrap/src/omg.omg)) and
-runs its imports in-process — `subprocess()` is only invoked for the
-final `cc` call during `--build`.
+runs its imports in-process — including `vm.omg`, which is why running a
+precompiled `.omgb` doesn't need a separate ELF. `subprocess()` is only
+invoked for the final `cc` call during `--build`.
 
 These are produced by `bootstrap/build.sh`, which:
 
 1. Uses the Rust binary (or itself, if already present) to compile each
-   of the five `.omg` sources to bytecode.
+   of the four `.omg` sources (compiler, native-c, native-js, omg) to
+   bytecode.
 2. Runs `native-c.omg` on each bytecode file to emit C.
-3. Runs `cc -O2` to produce the five native binaries.
-4. Copies `omg_rt.h` next to them so AOT builds find it.
+3. Runs `cc -O2` to produce the four native binaries.
+4. Copies `omg_rt.h` and `omg_rt.js` next to them so AOT builds find them.
 
 **The script is idempotent.** Run it again and the native binaries rebuild
 themselves with no Rust involvement (as long as `omgc`/`omgcc` are already

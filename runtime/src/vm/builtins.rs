@@ -393,7 +393,9 @@ pub fn call_builtin(
         // subprocess(["cmd", "arg1", ...]) -> int (exit code).
         // Forks, execs the command (PATH-resolved), waits for it.
         // stdin/stdout/stderr are inherited. Used by the OMG-native
-        // `omg` driver to dispatch to omgc/omgvm/cc.
+        // `omg` driver to shell out to `cc` during `--build`; the
+        // rest of the toolchain (compiler, transpiler, VM) all run
+        // in-process via imports, no subprocess hop needed.
         //
         // Returns the child's exit code (or 128+signal if killed).
         // Raises ValueError if exec itself fails (e.g. binary not

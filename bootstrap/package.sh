@@ -14,7 +14,7 @@
 #   bootstrap/package.sh --clean      # wipe dist/omglang-native/ first
 #   bootstrap/package.sh --tarball    # also produce dist/omglang-native.tar.gz
 #
-# Prerequisites: bootstrap/bin/ must already contain the five ELFs
+# Prerequisites: bootstrap/bin/ must already contain the four ELFs
 # (run bootstrap/build.sh first).
 
 set -eu
@@ -48,7 +48,7 @@ for f in compiler.omg vm.omg native-c.omg omg.omg omg_rt.h; do
     fi
 done
 
-for b in omg omgc omgcc omgvm; do
+for b in omg omgc omgcc omgjs; do
     if [ ! -x "$BIN_IN/$b" ]; then
         echo "ERROR: missing or non-executable $BIN_IN/$b" >&2
         echo "       Run bootstrap/build.sh first." >&2
@@ -68,19 +68,20 @@ mkdir -p "$DIST_DIR"/{src,bin,examples,tools,tests,docs}
 # === src/ — OMG sources + C runtime header ==================================
 # Mirrors bootstrap/src/
 
-echo "[1/7] src/  — OMG sources + omg_rt.h"
-for f in compiler.omg vm.omg native-c.omg omg.omg omg_rt.h; do
+echo "[1/7] src/  — OMG sources + runtime headers"
+for f in compiler.omg vm.omg native-c.omg native-js.omg omg.omg omg_rt.h omg_rt.js; do
     cp "$SRC_IN/$f" "$DIST_DIR/src/$f"
 done
 
 # === bin/ — pre-built native toolchain ======================================
 
 echo "[2/7] bin/  — pre-built native ELFs"
-for b in omg omgc omgcc omgvm; do
+for b in omg omgc omgcc omgjs; do
     cp "$BIN_IN/$b" "$DIST_DIR/bin/$b"
     chmod +x "$DIST_DIR/bin/$b"
 done
-cp "$BIN_IN/omg_rt.h" "$DIST_DIR/bin/omg_rt.h"
+cp "$BIN_IN/omg_rt.h"  "$DIST_DIR/bin/omg_rt.h"
+cp "$BIN_IN/omg_rt.js" "$DIST_DIR/bin/omg_rt.js"
 
 # === examples/ ==============================================================
 
@@ -429,10 +430,13 @@ cat > "$DIST_DIR/build.sh" <<'EOF'
 # so this only needs to run after editing anything in src/.
 #
 # Sources compiled (each .omg → .omgb → .c → ELF):
-#   src/compiler.omg  → omgc   compiler   (.omg → .omgb)
-#   src/native-c.omg  → omgcc  transpiler (.omgb → .c)
-#   src/vm.omg        → omgvm  bytecode VM (executes .omgb)
+#   src/compiler.omg  → omgc   compiler      (.omg  → .omgb)
+#   src/native-c.omg  → omgcc  C transpiler  (.omgb → .c)
+#   src/native-js.omg → omgjs  JS transpiler (.omgb → .js)
 #   src/omg.omg       → omg    unified driver (run/compile/build/REPL)
+#
+# vm.omg is NOT compiled standalone — bin/omg imports it in-process so
+# `omg foo.omgb` already covers the bytecode-runner case.
 set -e
 
 cd "$(dirname "$0")"
@@ -466,15 +470,16 @@ build_binary() {
     cc -O2 -w "$WORK/$base.c" -o "$out" -lm
 }
 
-# Install runtime header FIRST so omgcc picks up the latest copy on the
-# very first rebuild after a src/omg_rt.h change.
-echo "[2/4] Installing runtime header"
-cp "$SRC_DIR/omg_rt.h" "$BIN_DIR/omg_rt.h"
+# Install runtime headers FIRST so omgcc/omgjs pick up the latest copy
+# on the very first rebuild after a src/omg_rt.{h,js} change.
+echo "[2/4] Installing runtime headers"
+cp "$SRC_DIR/omg_rt.h"  "$BIN_DIR/omg_rt.h"
+cp "$SRC_DIR/omg_rt.js" "$BIN_DIR/omg_rt.js"
 
-echo "[3/4] Building toolchain core (omgc, omgcc, omgvm)"
+echo "[3/4] Building toolchain core (omgc, omgcc, omgjs)"
 build_binary "$SRC_DIR/compiler.omg"  "$BIN_DIR/omgc"
 build_binary "$SRC_DIR/native-c.omg"  "$BIN_DIR/omgcc"
-build_binary "$SRC_DIR/vm.omg"        "$BIN_DIR/omgvm"
+build_binary "$SRC_DIR/native-js.omg" "$BIN_DIR/omgjs"
 
 echo "[4/4] Building unified driver (omg)"
 build_binary "$SRC_DIR/omg.omg"       "$BIN_DIR/omg"
@@ -534,11 +539,12 @@ Pre-built binaries that ship with this distribution:
 | `omgc`     | compiler: `.omg` → `.omgb` bytecode               |
 | `omgcc`    | C transpiler: `.omgb` → `.c`                      |
 | `omgjs`    | JS transpiler: `.omgb` → `.js`                    |
-| `omgvm`    | bytecode VM: executes `.omgb` directly            |
 | `omg_rt.h` | C runtime header (inlined into every `.c` omgcc emits)   |
 | `omg_rt.js`| JS runtime (inlined into every `.js` omgjs emits) |
 
-All five ELFs are compiled from the OMG sources in [`src/`](src/).
+All four ELFs are compiled from the OMG sources in [`src/`](src/).
+`bin/omg` runs `.omgb` files directly (no separate bytecode VM needed —
+`omg` imports `vm.omg` in-process).
 
 ## Rebuild the toolchain
 

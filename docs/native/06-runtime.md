@@ -347,7 +347,7 @@ $ wc -l bootstrap/src/omg_rt.h
 | Calculator (~25 lines)   | 1 KB        | 35 KB      |
 | `compiler.omg` (omgc)    | 65 KB       | 432 KB     |
 | `native-c.omg` (omgcc)   | 54 KB       | 290 KB     |
-| `vm.omg` (omgvm)         | 30 KB       | 197 KB     |
+| `native-js.omg` (omgjs)  | 53 KB       | 330 KB     |
 
 The constant overhead is small (~16 KB for trivial programs, mostly libc);
 the rest scales with how much OMG you've got. For `omgc` (the largest of the

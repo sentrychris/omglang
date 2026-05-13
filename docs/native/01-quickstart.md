@@ -13,7 +13,7 @@ You'll be running and compiling OMG programs in five minutes.
 # Build the Rust runtime (used once to seed the native toolchain)
 cd runtime && cargo build --release && cd ..
 
-# Build the OMG-native toolchain (omgc, omgcc, omgvm) into bootstrap/bin/
+# Build the OMG-native toolchain (omg, omgc, omgcc) into bootstrap/bin/
 bootstrap/build.sh
 ```
 
@@ -48,7 +48,7 @@ omg --build foo.omg foo   # AOT-compile to a standalone ELF binary
 
 | Mode      | What happens                              | Output         | When to use            |
 | --------- | ----------------------------------------- | -------------- | ---------------------- |
-| `omg foo.omg`  | Compile to a tempfile, interpret with `omgvm` | runs   | dev loop               |
+| `omg foo.omg`  | Compile + run in-process (no temp files)      | runs   | dev loop               |
 | `omg --compile foo.omg foo.omgb` | Save bytecode             | `.omgb` file   | distribute portable bc |
 | `omg --build foo.omg foo`        | Full AOT                  | native ELF     | ship a binary          |
 
