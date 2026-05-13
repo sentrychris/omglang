@@ -1,5 +1,7 @@
 ;;;omg
 
+# omg.omg  →  bootstrap/bin/omg
+#
 # OMG driver — single self-contained binary that does everything the
 # Rust runtime's `omg` does:
 #
@@ -455,8 +457,10 @@ proc disasm(file) {
 }
 
 # === REPL ================================================================
-# Inline implementation. Mirrors bootstrap/src/repl.omg, but uses our own
-# imports of cc/vm so state is shared with the rest of the driver.
+# The REPL is implemented inline (not in a separate module) so it shares
+# the cc/vm imports the rest of the driver already uses — each OMG import
+# is its own frozen namespace, so factoring this out would give the REPL
+# its own copy of compiler/VM state and break state sharing across turns.
 
 alloc repl_brace_depth   := 0
 alloc repl_paren_depth   := 0

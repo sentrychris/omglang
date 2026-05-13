@@ -1,6 +1,8 @@
 ;;;omg
 
-# bootstrap/src/vm.omg — execute `.omgb` bytecode files using a VM written in OMG.
+# vm.omg  →  bootstrap/bin/omgvm
+#
+# Execute `.omgb` bytecode files using a VM written in OMG.
 #
 # This is the third leg of the self-hosting story:
 #

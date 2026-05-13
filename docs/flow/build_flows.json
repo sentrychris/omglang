@@ -1,0 +1,377 @@
+{
+  "concepts": [
+    {
+      "term": "Frontend",
+      "explanation": "Turns OMG source text into bytecode. Two exist: the Rust frontend lives in runtime/src/ and is compiled into runtime/target/release/omg; the OMG frontend lives in bootstrap/src/compiler.omg, which is itself written in OMG and compiles its own source."
+    },
+    {
+      "term": "Backend",
+      "explanation": "Turns bytecode into something executable. The Rust VM (runtime/src/vm.rs) runs bytecode directly. native-c.omg transpiles bytecode to C; cc compiles that to a native ELF. native-js.omg does the same shape to JavaScript so node or a browser can run it."
+    },
+    {
+      "term": ".omgb (bytecode)",
+      "explanation": "A compact stack-machine instruction stream — the common currency between every frontend and every backend. Frontends produce it; VMs and transpilers consume it."
+    },
+    {
+      "term": "Self-hosted",
+      "explanation": "OMG's compiler is written in OMG (bootstrap/src/compiler.omg). Compiling its own source twice — once via the Rust frontend, once via the OMG frontend running on the Rust VM — produces byte-identical bytecode. The 'verify' flows check this."
+    },
+    {
+      "term": "omg_rt.h",
+      "explanation": "The C runtime that every transpiled program needs: value types, refcounting, list/dict/string helpers, error handling, the file and TCP builtins. native-c.omg pastes the whole header at the top of each generated .c file, so the resulting binary has no external dependency except libc. (omg_rt.js is the JS analogue — no refcounting since JS has GC.)"
+    }
+  ],
+
+  "categories": [
+    { "id": "core",       "label": "Core",         "default": true,  "hint": "Bootstrap, self-rebuild, run, AOT to ELF" },
+    { "id": "backend-js", "label": "JS backend",   "default": false, "hint": "AOT to JavaScript via native-js.omg" },
+    { "id": "verify",     "label": "Verification", "default": false, "hint": "Fixed-point checks across frontends and VMs" },
+    { "id": "package",    "label": "Packaging",    "default": false, "hint": "Slim Rust-free distribution" }
+  ],
+
+  "nodes": [
+    { "id": "runtime_rs",    "label": "runtime/src/*.rs",            "sublabel": "Rust runtime sources",     "kind": "source",   "categories": [] },
+    { "id": "compiler_omg",  "label": "bootstrap/src/compiler.omg",  "sublabel": "OMG frontend (in OMG)",    "kind": "source",   "categories": [] },
+    { "id": "vm_omg",        "label": "bootstrap/src/vm.omg",        "sublabel": "OMG VM (in OMG)",          "kind": "source",   "categories": [] },
+    { "id": "nativec_omg",   "label": "bootstrap/src/native-c.omg",  "sublabel": "OMG → C backend",      "kind": "source",   "categories": [] },
+    { "id": "nativejs_omg",  "label": "bootstrap/src/native-js.omg", "sublabel": "OMG → JS backend",     "kind": "source",   "categories": ["backend-js"] },
+    { "id": "omg_omg",       "label": "bootstrap/src/omg.omg",       "sublabel": "Unified driver (in OMG)",  "kind": "source",   "categories": [] },
+    { "id": "omg_rt_h",      "label": "bootstrap/src/omg_rt.h",      "sublabel": "C runtime header",         "kind": "source",   "categories": [] },
+    { "id": "omg_rt_js",     "label": "bootstrap/src/omg_rt.js",     "sublabel": "JS runtime",               "kind": "source",   "categories": ["backend-js"] },
+    { "id": "foo_omg",       "label": "foo.omg",                     "sublabel": "Your program",             "kind": "source",   "categories": [] },
+
+    { "id": "cargo",         "label": "cargo build",                 "sublabel": "Rust build system",        "kind": "script",   "categories": [] },
+    { "id": "build_sh",      "label": "bootstrap/build.sh",          "sublabel": "Toolchain orchestrator",   "kind": "script",   "categories": [] },
+    { "id": "cc",            "label": "cc -O2",                      "sublabel": "System C compiler",        "kind": "script",   "categories": [] },
+    { "id": "node",          "label": "node",                        "sublabel": "JavaScript runtime",       "kind": "script",   "categories": ["backend-js"] },
+    { "id": "package_sh",    "label": "bootstrap/package.sh",        "sublabel": "Slim packager",            "kind": "script",   "categories": ["package"] },
+
+    { "id": "rust_omg",      "label": "runtime/target/release/omg",  "sublabel": "Rust binary: frontend + VM + embedded compiler.omgb", "kind": "binary", "categories": [] },
+    { "id": "bin_omgc",      "label": "bootstrap/bin/omgc",          "sublabel": "Native OMG frontend",      "kind": "binary",   "categories": [] },
+    { "id": "bin_omgcc",     "label": "bootstrap/bin/omgcc",         "sublabel": "Native OMG → C",       "kind": "binary",   "categories": [] },
+    { "id": "bin_omgjs",     "label": "bootstrap/bin/omgjs",         "sublabel": "Native OMG → JS",      "kind": "binary",   "categories": ["backend-js"] },
+    { "id": "bin_omgvm",     "label": "bootstrap/bin/omgvm",         "sublabel": "Native OMG VM",            "kind": "binary",   "categories": [] },
+    { "id": "bin_omg",       "label": "bootstrap/bin/omg",           "sublabel": "Unified native driver",    "kind": "binary",   "categories": [] },
+    { "id": "bin_rt_h",      "label": "bootstrap/bin/omg_rt.h",      "sublabel": "Installed C runtime header", "kind": "binary", "categories": [] },
+    { "id": "bin_rt_js",     "label": "bootstrap/bin/omg_rt.js",     "sublabel": "Installed JS runtime",     "kind": "binary",   "categories": ["backend-js"] },
+    { "id": "dist",          "label": "dist/omglang-native/",        "sublabel": "Rust-free distribution",   "kind": "binary",   "categories": ["package"] },
+    { "id": "foo_elf",       "label": "foo (ELF)",                   "sublabel": "Native binary",            "kind": "binary",   "categories": [] },
+
+    { "id": "compiler_omgb", "label": "compiler.omgb",               "sublabel": "Compiler bytecode",        "kind": "artifact", "categories": [] },
+    { "id": "vm_omgb",       "label": "vm.omgb",                     "sublabel": "VM bytecode",              "kind": "artifact", "categories": [] },
+    { "id": "foo_omgb",      "label": "foo.omgb",                    "sublabel": "Your program's bytecode",  "kind": "artifact", "categories": [] },
+    { "id": "foo_c",         "label": "foo.c",                       "sublabel": "Transpiled C (includes omg_rt.h)",   "kind": "artifact", "categories": [] },
+    { "id": "compiler_c",    "label": "compiler.c",                  "sublabel": "Transpiled OMG compiler in C (includes omg_rt.h)",  "kind": "artifact", "categories": [] },
+    { "id": "foo_js",        "label": "foo.js",                      "sublabel": "Transpiled JS (includes omg_rt.js)", "kind": "artifact", "categories": ["backend-js"] },
+
+    { "id": "stdout",        "label": "program output",              "sublabel": "stdout",                   "kind": "output",   "categories": [] },
+    { "id": "verdict",       "label": "byte-identical ✓",            "sublabel": "Fixed-point assertion",    "kind": "output",   "categories": ["verify"] }
+  ],
+
+  "flows": [
+    {
+      "id": "bootstrap-rust",
+      "label": "Initial bootstrap",
+      "tagline": "Rust → native toolchain",
+      "category": "core",
+      "summary": "Nothing in bootstrap/bin/ yet. build.sh uses the Rust runtime to turn each .omg in bootstrap/src/ into a standalone ELF. Five ELFs land in bootstrap/bin/ (omgc, omgcc, omgjs, omgvm, omg). After this finishes, the Rust toolchain is no longer needed.",
+      "steps": [
+        {
+          "title": "Build the Rust runtime",
+          "command": "cargo build --release --manifest-path runtime/Cargo.toml",
+          "inputs": ["runtime_rs", "compiler_omg", "vm_omg"],
+          "tool": "cargo",
+          "outputs": ["rust_omg"],
+          "annotation": "cargo runs rustc on runtime/src/*.rs. As part of this build, build.rs also re-compiles compiler.omg and vm.omg into bytecode (compiler.omgb / vm.omgb) and embeds those bytes directly inside the resulting binary — so rust_omg can do self-hosted compilation without reading any external file."
+        },
+        {
+          "title": "Compile compiler.omg → compiler.omgb",
+          "command": "runtime/target/release/omg --compile bootstrap/src/compiler.omg /tmp/compiler.omgb",
+          "inputs": ["compiler_omg"],
+          "tool": "rust_omg",
+          "outputs": ["compiler_omgb"],
+          "annotation": "build.sh sees rust_omg exists and picks the Rust driver. It invokes the Rust frontend with --compile to lex, parse, and emit bytecode for compiler.omg."
+        },
+        {
+          "title": "Transpile compiler.omgb → compiler.c",
+          "command": "runtime/target/release/omg bootstrap/src/native-c.omg /tmp/compiler.omgb /tmp/compiler.c",
+          "inputs": ["compiler_omgb", "nativec_omg", "omg_rt_h"],
+          "tool": "rust_omg",
+          "outputs": ["compiler_c"],
+          "annotation": "Now rust_omg runs native-c.omg ON the just-built compiler.omgb. native-c.omg is itself an OMG program; rust_omg compiles it on the fly and runs it in the VM. That program reads compiler.omgb byte-by-byte and writes the equivalent C. omg_rt.h gets pasted at the top so the result has no external dependency except libc."
+        },
+        {
+          "title": "cc → bootstrap/bin/omgc",
+          "command": "cc -O2 /tmp/compiler.c -o bootstrap/bin/omgc -lm",
+          "inputs": ["compiler_c"],
+          "tool": "cc",
+          "outputs": ["bin_omgc"],
+          "annotation": "The system C compiler turns the transpiled C into a real ELF — the OMG compiler now exists as native code, no interpreter layer."
+        },
+        {
+          "title": "Repeat for native-c.omg, native-js.omg, vm.omg, omg.omg",
+          "inputs": ["nativec_omg", "nativejs_omg", "vm_omg", "omg_omg"],
+          "tool": "build_sh",
+          "outputs": ["bin_omgcc", "bin_omgjs", "bin_omgvm", "bin_omg"],
+          "annotation": "The same three-step pattern (compile → transpile → cc) runs for each of native-c.omg, native-js.omg, vm.omg, and omg.omg. End result: five ELFs in bootstrap/bin/ — omgc (frontend), omgcc (C backend), omgjs (JS backend), omgvm (standalone VM), omg (unified driver that does run / compile / build / REPL all in one process)."
+        },
+        {
+          "title": "Install runtime headers",
+          "command": "cp bootstrap/src/omg_rt.h  bootstrap/bin/\ncp bootstrap/src/omg_rt.js bootstrap/bin/",
+          "inputs": ["omg_rt_h", "omg_rt_js"],
+          "tool": "build_sh",
+          "outputs": ["bin_rt_h", "bin_rt_js"],
+          "annotation": "Final step: copy the C and JS runtime headers into bootstrap/bin/. omgcc reads bin/omg_rt.h when transpiling a user program later — that's how it knows what to splice into every generated .c file."
+        }
+      ]
+    },
+
+    {
+      "id": "self-rebuild",
+      "label": "Toolchain self-rebuild",
+      "tagline": "build.sh uses bin/ to rebuild bin/",
+      "category": "core",
+      "summary": "Once bootstrap/bin/ has the four ELFs, running build.sh again uses THEM instead of the Rust runtime. The toolchain rebuilds itself; Rust is never invoked.",
+      "steps": [
+        {
+          "title": "build.sh picks the native driver",
+          "command": "bash bootstrap/build.sh",
+          "inputs": ["bin_omgc", "bin_omgcc"],
+          "tool": "build_sh",
+          "outputs": [],
+          "annotation": "build.sh checks for bin/omgc and bin/omgcc. Both present → picks 'native' driver. No cargo, no rust_omg involved."
+        },
+        {
+          "title": "Compile compiler.omg → compiler.omgb",
+          "command": "bootstrap/bin/omgc bootstrap/src/compiler.omg /tmp/compiler.omgb",
+          "inputs": ["compiler_omg"],
+          "tool": "bin_omgc",
+          "outputs": ["compiler_omgb"],
+          "annotation": "bin/omgc is the native-compiled OMG frontend. It compiles its own source. The same call is made for vm.omg, native-c.omg, and omg.omg."
+        },
+        {
+          "title": "Transpile → C (using bin/omg_rt.h)",
+          "command": "bootstrap/bin/omgcc /tmp/compiler.omgb /tmp/compiler.c",
+          "inputs": ["compiler_omgb", "bin_rt_h"],
+          "tool": "bin_omgcc",
+          "outputs": ["compiler_c"],
+          "annotation": "bin/omgcc reads the .omgb and writes a self-contained .c file. It splices bin/omg_rt.h at the top — no interpretation step anywhere; this is one native ELF reading another."
+        },
+        {
+          "title": "cc → fresh ELFs",
+          "command": "cc -O2 /tmp/compiler.c -o bootstrap/bin/omgc -lm",
+          "inputs": ["compiler_c"],
+          "tool": "cc",
+          "outputs": ["bin_omgc"],
+          "annotation": "cc produces the new ELF, overwriting the one we used three steps ago. Repeat for each source. The toolchain has reproduced itself."
+        }
+      ]
+    },
+
+    {
+      "id": "run-self-hosted",
+      "label": "Run a program",
+      "tagline": "Default, self-hosted",
+      "category": "core",
+      "summary": "`omg foo.omg` from the Rust runtime. It uses its embedded copy of the OMG-written compiler to turn your source into bytecode, then runs that bytecode in the Rust VM. The Rust frontend is never touched in this path.",
+      "steps": [
+        {
+          "title": "Decode embedded compiler.omgb",
+          "inputs": ["rust_omg"],
+          "tool": "rust_omg",
+          "outputs": ["compiler_omgb"],
+          "annotation": "rust_omg was built with compiler.omgb baked into the binary at cargo-build time. On startup it decodes those bytes — that's the OMG-written compiler, ready to run."
+        },
+        {
+          "title": "Run the OMG compiler on foo.omg",
+          "command": "omg foo.omg",
+          "inputs": ["foo_omg", "compiler_omgb"],
+          "tool": "rust_omg",
+          "outputs": ["foo_omgb"],
+          "annotation": "The Rust VM interprets compiler.omgb. That OMG compiler reads foo.omg as a string and produces foo.omgb in memory. So this step is: Rust VM running OMG-compiler-as-bytecode compiling your source. No disk writes."
+        },
+        {
+          "title": "Run foo.omgb in the Rust VM",
+          "inputs": ["foo_omgb"],
+          "tool": "rust_omg",
+          "outputs": ["stdout"],
+          "annotation": "Same process now executes foo.omgb directly. `emit` prints to stdout, file/tcp builtins do their thing. When the program exits, everything's gone — nothing was written to disk."
+        }
+      ]
+    },
+
+    {
+      "id": "run-rust-frontend",
+      "label": "Run a program",
+      "tagline": "Rust frontend (--rust)",
+      "category": "core",
+      "summary": "`omg --rust foo.omg`. Skip the OMG-written compiler entirely. The Rust runtime parses your source with its own lexer + parser + compiler — all native Rust code — and runs the bytecode in the VM. A second or two faster on big programs because there's no interpreter-on-interpreter layer.",
+      "steps": [
+        {
+          "title": "Rust frontend compiles foo.omg",
+          "command": "omg --rust foo.omg",
+          "inputs": ["foo_omg"],
+          "tool": "rust_omg",
+          "outputs": ["foo_omgb"],
+          "annotation": "rust_omg uses the lex/parse/compile path inside runtime/src/{lexer,parser,compiler}.rs. compiler.omg is never decoded. Bytecode lives in memory."
+        },
+        {
+          "title": "Same Rust VM runs the bytecode",
+          "inputs": ["foo_omgb"],
+          "tool": "rust_omg",
+          "outputs": ["stdout"],
+          "annotation": "Identical to the default path's last step. The only difference between --rust and the default is which frontend produced the bytecode; that's exactly why the verify-self-hosted flow exists."
+        }
+      ]
+    },
+
+    {
+      "id": "aot-elf",
+      "label": "Compile to a native ELF",
+      "tagline": "omg --build foo.omg out",
+      "category": "core",
+      "summary": "Turn a .omg into a standalone executable. Compile to bytecode, transpile to C (splicing in omg_rt.h), then let cc produce an ELF. No Rust at runtime; no OMG runtime either — the resulting binary depends only on libc.",
+      "steps": [
+        {
+          "title": "Compile foo.omg → foo.omgb",
+          "command": "bootstrap/bin/omg --build foo.omg foo",
+          "inputs": ["foo_omg", "compiler_omg"],
+          "tool": "bin_omg",
+          "outputs": ["foo_omgb"],
+          "annotation": "bin/omg imports compiler.omg in-process and runs it on your source. Bytecode is written to a temp file (/tmp/omg-build-PID.omgb)."
+        },
+        {
+          "title": "Transpile foo.omgb → foo.c",
+          "inputs": ["foo_omgb", "nativec_omg", "bin_rt_h"],
+          "tool": "bin_omg",
+          "outputs": ["foo_c"],
+          "annotation": "The same process now imports native-c.omg and runs it on foo.omgb. native-c.omg emits one C function per OMG proc plus a main() that runs the top-level code. bin/omg_rt.h is concatenated at the top of the .c file — that's where all the value-type, refcount, builtin code lives, so the result has no external dependency except libc."
+        },
+        {
+          "title": "cc → standalone ELF",
+          "command": "cc -O2 /tmp/foo.c -o foo -lm",
+          "inputs": ["foo_c"],
+          "tool": "cc",
+          "outputs": ["foo_elf"],
+          "annotation": "cc compiles the .c into a real binary. Typical size: 50–100 KB. You can scp it to another Linux box with no OMG installed and it'll run."
+        }
+      ]
+    },
+
+    {
+      "id": "aot-js",
+      "label": "Compile to JavaScript",
+      "tagline": "via bin/omgjs",
+      "category": "backend-js",
+      "summary": "Same shape as the ELF path but with omgjs + omg_rt.js as the backend. Output runs in node, a browser, Deno, Bun — anywhere JS runs.",
+      "steps": [
+        {
+          "title": "Compile foo.omg → foo.omgb",
+          "command": "bootstrap/bin/omgc foo.omg /tmp/foo.omgb",
+          "inputs": ["foo_omg"],
+          "tool": "bin_omgc",
+          "outputs": ["foo_omgb"],
+          "annotation": "The native OMG frontend produces bytecode — same as the first step of any AOT path."
+        },
+        {
+          "title": "Transpile foo.omgb → foo.js",
+          "command": "bootstrap/bin/omgjs /tmp/foo.omgb foo.js",
+          "inputs": ["foo_omgb", "bin_rt_js"],
+          "tool": "bin_omgjs",
+          "outputs": ["foo_js"],
+          "annotation": "bin/omgjs is the native JS transpiler — the same shape as bin/omgcc, just emitting JavaScript instead of C. It reads bin/omg_rt.js from the same directory and splices it at the top of the output, then emits one JS function per OMG proc. Refcount calls disappear because JS has GC; cap[] arrays disappear because JS has real closures. No interpretation layer at all — one native ELF reading bytecode and writing text."
+        },
+        {
+          "title": "Run with node",
+          "command": "node foo.js",
+          "inputs": ["foo_js"],
+          "tool": "node",
+          "outputs": ["stdout"],
+          "annotation": "node executes the result like any other JS file. The output is self-contained — no external runtime dependency, since omg_rt.js was inlined at the top."
+        }
+      ]
+    },
+
+    {
+      "id": "verify-self-hosted",
+      "label": "Verify self-hosted (fixed point)",
+      "tagline": "Rust frontend == OMG frontend?",
+      "category": "verify",
+      "summary": "Compile compiler.omg two ways — through the Rust frontend, and through the OMG-written compiler (running in the Rust VM) — and assert the byte streams are identical. If true, the OMG compiler is a real fixed point of the Rust frontend; you could throw the Rust frontend away forever and the resulting compiler would keep producing the same bytecode.",
+      "steps": [
+        {
+          "title": "Path A — Rust frontend compiles compiler.omg",
+          "command": "omg --verify-self-hosted bootstrap/src/compiler.omg",
+          "inputs": ["compiler_omg"],
+          "tool": "rust_omg",
+          "outputs": ["foo_omgb"],
+          "annotation": "rust_omg uses its native Rust lex/parse/compile pipeline directly on compiler.omg. Bytecode A held in memory."
+        },
+        {
+          "title": "Path B — OMG compiler on Rust VM compiles compiler.omg",
+          "inputs": ["compiler_omg"],
+          "tool": "rust_omg",
+          "outputs": ["foo_omgb"],
+          "annotation": "Same rust_omg decodes its embedded compiler.omgb and runs THAT (in the Rust VM) on compiler.omg. The OMG-written compiler compiling its own source. Bytecode B held in memory."
+        },
+        {
+          "title": "Compare A and B byte-for-byte",
+          "inputs": ["foo_omgb"],
+          "tool": "rust_omg",
+          "outputs": ["verdict"],
+          "annotation": "If A == B, the two frontends agree exactly on what bytecode compiler.omg should produce. The OMG compiler is genuinely consistent with the Rust one."
+        }
+      ]
+    },
+
+    {
+      "id": "verify-omg-vm",
+      "label": "Verify OMG-VM (triple-meta)",
+      "tagline": "Add the OMG-written VM",
+      "category": "verify",
+      "summary": "Same as the previous verify, but the third path runs the OMG compiler ON TOP of the OMG-written VM (vm.omg). Three layers of meta — Rust VM running OMG VM running OMG compiler — yet the bytecode still matches.",
+      "steps": [
+        {
+          "title": "Path A — Rust frontend",
+          "command": "omg --verify-omg-vm bootstrap/src/compiler.omg",
+          "inputs": ["compiler_omg"],
+          "tool": "rust_omg",
+          "outputs": ["foo_omgb"],
+          "annotation": "Rust frontend compiles compiler.omg. Bytecode A."
+        },
+        {
+          "title": "Path C — OMG VM on Rust VM compiles compiler.omg",
+          "inputs": ["compiler_omg", "vm_omg"],
+          "tool": "rust_omg",
+          "outputs": ["foo_omgb"],
+          "annotation": "Load vm.omgb (the OMG-written VM as bytecode) and have the Rust VM interpret it. That OMG VM then loads compiler.omgb and interprets THAT. The OMG compiler running on the OMG VM running on the Rust VM — three levels — compiles compiler.omg. Bytecode C."
+        },
+        {
+          "title": "Compare A and C",
+          "inputs": ["foo_omgb"],
+          "tool": "rust_omg",
+          "outputs": ["verdict"],
+          "annotation": "If A == C, every act of language-level interpretation in the chain happened inside OMG; the Rust runtime is just the substrate at the bottom."
+        }
+      ]
+    },
+
+    {
+      "id": "package",
+      "label": "Package a Rust-free distribution",
+      "tagline": "bootstrap/package.sh",
+      "category": "package",
+      "summary": "Copy bootstrap/bin/ + the runtime headers + source files + tests into dist/omglang-native/. Everything needed to compile and run OMG without ever installing Rust.",
+      "steps": [
+        {
+          "title": "Copy ELFs, headers, sources, tests",
+          "command": "bash bootstrap/package.sh",
+          "inputs": ["bin_omg", "bin_omgc", "bin_omgcc", "bin_omgvm", "bin_rt_h", "bin_rt_js"],
+          "tool": "package_sh",
+          "outputs": ["dist"],
+          "annotation": "package.sh mirrors bootstrap/bin/, the OMG sources, omg_rt.{h,js}, examples/, tools/, tests/, and docs/ into dist/omglang-native/. The output is self-contained — it ships its own build.sh that self-rebuilds bin/ from src/ using the bundled ELFs, so users on the receiving end never need Rust."
+        }
+      ]
+    }
+  ]
+}

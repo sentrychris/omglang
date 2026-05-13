@@ -16,7 +16,8 @@
 set -e
 cd "$(dirname "$0")/.."
 
-NATIVE=bootstrap/bin/omg
+OMG=bootstrap/bin/omg
+OMGJS=bootstrap/bin/omgjs
 WEB_OUT=web/examples
 mkdir -p "$WEB_OUT"
 WORK=$(mktemp -d)
@@ -25,8 +26,8 @@ trap "rm -rf $WORK" EXIT
 # === Primary: the meta-circular bundle ====================================
 
 echo "Building web/omg-web.js (compiler + VM + driver) ..."
-"$NATIVE" --compile bootstrap/src/omg-web.omg "$WORK/omg-web.omgb"
-"$NATIVE" bootstrap/src/native-js.omg "$WORK/omg-web.omgb" web/omg-web.js
+"$OMG" --compile bootstrap/src/omg-web.omg "$WORK/omg-web.omgb"
+"$OMGJS" "$WORK/omg-web.omgb" web/omg-web.js
 echo "  $(wc -c < web/omg-web.js | tr -d ' ') bytes"
 
 # === Reference example pairs ==============================================
@@ -45,8 +46,8 @@ for name in "${EXAMPLES[@]}"; do
         continue
     fi
     cp "$src" "$WEB_OUT/$name.omg"
-    "$NATIVE" --compile "$src" "$WORK/$name.omgb" >/dev/null
-    "$NATIVE" bootstrap/src/native-js.omg "$WORK/$name.omgb" "$WEB_OUT/$name.js" >/dev/null
+    "$OMG" --compile "$src" "$WORK/$name.omgb" >/dev/null
+    "$OMGJS" "$WORK/$name.omgb" "$WEB_OUT/$name.js" >/dev/null
     count=$((count + 1))
 done
 echo "Built $count reference example pairs in $WEB_OUT/"

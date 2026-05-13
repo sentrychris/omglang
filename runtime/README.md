@@ -258,7 +258,7 @@ synthetic VM tests stay readable.
 | `dict_keys(d)` | List the keys of a dict (insertion order) |
 | `panic(msg)` / `raise(msg)` | Raise a catchable runtime error |
 | `exit_with_error(msg)` | Print to stderr verbatim and exit 1 (uncatchable) |
-| `subprocess(argv)` / `exit(code)` / `getpid()` | Process control (used by the OMG-native `omg`/`omg-build` drivers) |
+| `subprocess(argv)` / `exit(code)` / `getpid()` | Process control (used by the OMG-native `omg` driver) |
 | `read_file(path)` / `file_exists(path)` | Read text file / existence check |
 | `is_dir(path)` / `read_dir(path)` / `make_dir(path)` | Directory ops (`mkdir -p`) |
 | `file_open / file_read / file_write / file_close` | Streaming I/O |

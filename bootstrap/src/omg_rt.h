@@ -1,6 +1,11 @@
 /*
- * omg_rt.h — the OMG C runtime, prepended to every program emitted by
- * `bootstrap/native-c.omg`.
+ * omg_rt.h  →  inlined at the top of every .c emitted by
+ *              bootstrap/src/native-c.omg (and bootstrap/bin/omgcc).
+ *
+ * The OMG C runtime: value types, refcounting, list/dict/string
+ * helpers, error handling, file + TCP builtins. Every transpiled
+ * program has this header pasted in, so the resulting ELF depends
+ * only on libc.
  */
 #include <stdio.h>
 #include <stdint.h>
@@ -1684,7 +1689,7 @@ static Value omg_builtin_exit_with_error(Value v) {
 }
 
 /* exit(code): exit the current process with the given status code.
- * Used by the OMG-native `omg`/`omg-build` drivers to propagate child
+ * Used by the OMG-native `omg` driver to propagate child
  * exit codes from subprocess() back up to the shell. */
 static Value omg_builtin_exit(Value v) {
     if (v.tag != OMG_INT) omg_panic("TypeError", "exit() expects an integer");
@@ -1694,7 +1699,7 @@ static Value omg_builtin_exit(Value v) {
     return omg_none(); /* unreachable */
 }
 
-/* getpid(): return the process ID. Used by the OMG-native drivers to
+/* getpid(): return the process ID. Used by the OMG-native driver to
  * generate unique tempfile paths (e.g. /tmp/omg-<pid>.omgb) without
  * needing a mktemp builtin. */
 static Value omg_builtin_getpid(void) {

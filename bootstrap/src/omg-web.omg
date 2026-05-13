@@ -1,6 +1,8 @@
 ;;;omg
 
-# omg-web.omg — driver for the browser playground.
+# omg-web.omg  →  web/omg-web.js (via bootstrap/build-web.sh)
+#
+# Driver for the browser playground.
 #
 # Same shape as omg.omg's run_omg_source path, but takes the OMG
 # source as a STRING in args[1] instead of reading it from disk.

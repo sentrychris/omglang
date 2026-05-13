@@ -87,17 +87,14 @@ versions: `omgc` is #1 + #3's compiler fused into a binary, `omgvm` is #2.
 ```
 bootstrap/bin/
 ├── omg         user-facing driver: dispatches to the right tool by file ext
-├── omg-build   one-shot AOT: orchestrates omgc + omgcc + cc
 ├── omgc        compiler.omg compiled to native
 ├── omgcc       native-c.omg compiled to native (transpiler)
 ├── omgvm       vm.omg compiled to native (interpreter)
 └── omg_rt.h    C runtime header (linked into AOT outputs)
 ```
 
-All five tools are native ELFs compiled from OMG source. `omg` and
-`omg-build` are written in OMG (see [`bootstrap/src/omg.omg`](../../bootstrap/src/omg.omg)
-and [`bootstrap/src/omg-build.omg`](../../bootstrap/src/omg-build.omg)) and
-dispatch to the lower-level tools via the `subprocess()` builtin.
+All four tools are native ELFs compiled from OMG source. `omg` is written in OMG (see [`bootstrap/src/omg.omg`](../../bootstrap/src/omg.omg)) and
+dispatches to the lower-level tools via the `subprocess()` builtin.
 
 These are produced by `bootstrap/build.sh`, which:
 

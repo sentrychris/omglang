@@ -1,6 +1,8 @@
 ;;;omg
 
-# bootstrap/src/native-c.omg — OMG bytecode → C transpiler.
+# native-c.omg  →  bootstrap/bin/omgcc
+#
+# OMG bytecode → C transpiler.
 #
 # Reads a `.omgb` file and writes a `.c` file that, when compiled with
 # any C99 compiler, produces a native binary functionally equivalent to
@@ -434,7 +436,7 @@ proc emit_builtin(name, argc) {
     # exit_with_error: print to stderr verbatim (no kind prefix) + exit 1.
     if name == "exit_with_error" and argc == 1 { return emit_builtin1("omg_builtin_exit_with_error") }
 
-    # Process control (used by the OMG-native `omg`/`omg-build` drivers).
+    # Process control (used by the OMG-native `omg` driver).
     if name == "exit"       and argc == 1 { return emit_builtin1("omg_builtin_exit") }
     if name == "getpid"     and argc == 0 { return emit_builtin0("omg_builtin_getpid") }
     if name == "executable_path" and argc == 0 { return emit_builtin0("omg_builtin_executable_path") }

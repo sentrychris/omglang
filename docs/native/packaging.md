@@ -84,9 +84,6 @@ project.
 
 ## What's deliberately left out
 
-- `bootstrap/src/omg-build.omg` — the legacy standalone AOT driver,
-  superseded by `omg --build` baked into `omg.omg`. Keeping it in the
-  parent repo for historical reference, but the dist doesn't ship it.
 - `examples/self_hosted.omg` — references the parent repo's
   `bootstrap/src/compiler.omg` path, so it wouldn't run as-is in the
   dist.

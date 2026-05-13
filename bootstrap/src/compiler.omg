@@ -1,5 +1,7 @@
 ;;;omg
 
+# compiler.omg  →  bootstrap/bin/omgc
+#
 # OMG compiler written in OMG.
 #
 # This program reads an OMG source file, compiles it to .omgb bytecode, and

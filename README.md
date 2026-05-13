@@ -768,11 +768,11 @@ omglang/
 │   │   ├── compiler.omgb  its compiled bytecode (re-built on `cargo build`)
 │   │   ├── vm.omg         the OMG-in-OMG VM (used for fixed-point verification)
 │   │   ├── native-c.omg   OMG-to-C transpiler (used by the native build path)
-│   │   ├── omg.omg        user-facing driver (run / compile / build), in OMG
-│   │   ├── omg-build.omg  legacy one-shot AOT driver, superseded by `omg --build`
-│   │   ├── repl.omg       standalone REPL implementation
-│   │   └── omg_rt.h       C runtime header inlined into native binaries
-│   ├── bin/         Rust-free toolchain (4 native ELFs + omg_rt.h)
+│   │   ├── native-js.omg  OMG-to-JS transpiler (alternative backend)
+│   │   ├── omg.omg        user-facing driver (run / compile / build / REPL), in OMG
+│   │   ├── omg_rt.h       C runtime header inlined into native binaries
+│   │   └── omg_rt.js      JS runtime inlined into transpiled JavaScript
+│   ├── bin/         Rust-free toolchain (5 native ELFs + omg_rt.h + omg_rt.js)
 │   ├── build.sh     builds bootstrap/bin/ from bootstrap/src/
 │   └── package.sh   spins out a slim native-only distribution into dist/
 ├── examples/        small standalone programs

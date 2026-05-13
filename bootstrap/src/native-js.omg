@@ -1,6 +1,8 @@
 ;;;omg
 
-# bootstrap/src/native-js.omg — OMG bytecode → JavaScript transpiler.
+# native-js.omg  →  bootstrap/bin/omgjs
+#
+# OMG bytecode → JavaScript transpiler.
 #
 # Sister of bootstrap/src/native-c.omg, but emits JavaScript instead
 # of C. The output `.js` file is self-contained: every program inlines

@@ -41,7 +41,7 @@ done
 
 # === Sanity checks ===========================================================
 
-for f in compiler.omg vm.omg native-c.omg omg.omg repl.omg omg_rt.h; do
+for f in compiler.omg vm.omg native-c.omg omg.omg omg_rt.h; do
     if [ ! -f "$SRC_IN/$f" ]; then
         echo "ERROR: missing $SRC_IN/$f" >&2
         exit 1
@@ -66,11 +66,10 @@ fi
 mkdir -p "$DIST_DIR"/{src,bin,examples,tools,tests,docs}
 
 # === src/ — OMG sources + C runtime header ==================================
-# Mirrors bootstrap/src/, minus omg-build.omg (the legacy standalone
-# AOT driver, superseded by `omg --build` baked into omg.omg).
+# Mirrors bootstrap/src/
 
 echo "[1/7] src/  — OMG sources + omg_rt.h"
-for f in compiler.omg vm.omg native-c.omg omg.omg repl.omg omg_rt.h; do
+for f in compiler.omg vm.omg native-c.omg omg.omg omg_rt.h; do
     cp "$SRC_IN/$f" "$DIST_DIR/src/$f"
 done
 
@@ -572,7 +571,6 @@ omglang-native/
 │   ├── vm.omg           OMG-in-OMG bytecode VM
 │   ├── native-c.omg     OMG-to-C transpiler
 │   ├── omg.omg          unified driver
-│   ├── repl.omg         standalone REPL
 │   └── omg_rt.h         C runtime header
 ├── bin/              pre-built ELFs + omg_rt.h
 ├── examples/         small standalone OMG programs

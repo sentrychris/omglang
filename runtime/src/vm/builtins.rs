@@ -278,7 +278,7 @@ pub fn call_builtin(
         },
 
         // exit(code) -> std::process::exit(code). Used by the OMG-native
-        // `omg`/`omg-build` drivers to propagate child-process exit codes.
+        // `omg` driver to propagate child-process exit codes.
         "exit" => match args {
             [Value::Int(code)] => {
                 std::process::exit(*code as i32);

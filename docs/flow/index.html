@@ -1,0 +1,1030 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>OMG build flows</title>
+  <style>
+    :root {
+      /* Dark surfaces */
+      --bg:           #0b0f15;
+      --bg-elevated:  #11161f;
+      --bg-card:      #161d28;
+      --bg-card-hi:   #1d2532;
+      --bg-pill:      #1a2230;
+      --border:       #2a3140;
+      --border-soft:  #1f2632;
+      --border-strong:#3c4555;
+
+      /* Text */
+      --text:         #e4e9f1;
+      --text-soft:    #a8b3c5;
+      --text-muted:   #6f7d92;
+      --text-dim:     #4f5868;
+
+      /* Accent — warm pink, readable on dark */
+      --accent:       #ff7eb6;
+      --accent-mute:  #c45a8a;
+      --accent-glow:  rgba(255, 126, 182, 0.32);
+
+      /* Kinds */
+      --k-source:    #6cb6ff;   /* blue */
+      --k-script:    #f5c977;   /* amber */
+      --k-binary:    #6ed784;   /* green */
+      --k-artifact:  #c8a8ff;   /* purple */
+      --k-output:    var(--accent);
+
+      --mono: ui-monospace, "SF Mono", "Cascadia Mono", Menlo, Consolas, monospace;
+    }
+
+    * { box-sizing: border-box; }
+    html, body { margin: 0; padding: 0; }
+    html { scroll-behavior: smooth; }
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font: 15.5px/1.6 -apple-system, "Segoe UI", system-ui, sans-serif;
+      min-height: 100vh;
+    }
+    body::before {
+      /* subtle ambient gradient so the bg doesn't feel flat */
+      content: "";
+      position: fixed;
+      inset: 0;
+      pointer-events: none;
+      background:
+        radial-gradient(1200px 600px at 80% -10%, rgba(255, 126, 182, 0.06), transparent 60%),
+        radial-gradient(900px 500px at -10% 30%, rgba(108, 182, 255, 0.05), transparent 60%);
+      z-index: 0;
+    }
+    body > * { position: relative; z-index: 1; }
+
+    /* ---- Header ---- */
+    header.top {
+      max-width: 1320px;
+      margin: 0 auto;
+      padding: 2rem 1.5rem 0.5rem;
+    }
+    h1 {
+      margin: 0 0 0.35rem;
+      font-size: 1.7rem;
+      font-weight: 700;
+      letter-spacing: -0.01em;
+    }
+    h1 .dot {
+      display: inline-block;
+      width: 10px; height: 10px;
+      background: var(--accent);
+      border-radius: 999px;
+      margin-right: 0.5rem;
+      vertical-align: middle;
+      box-shadow: 0 0 12px var(--accent-glow);
+    }
+    .lead {
+      margin: 0;
+      color: var(--text-soft);
+      max-width: 720px;
+    }
+
+    /* ---- Glossary ---- */
+    .glossary {
+      max-width: 1320px;
+      margin: 1rem auto 0;
+      padding: 0 1.5rem;
+    }
+    .glossary summary {
+      cursor: pointer;
+      color: var(--accent);
+      font-weight: 600;
+      user-select: none;
+      padding: 0.4rem 0;
+      width: max-content;
+    }
+    .glossary summary:hover { color: #fff; }
+    .glossary-body {
+      margin-top: 0.5rem;
+      background: var(--bg-elevated);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 1rem 1.25rem;
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+      gap: 1rem 1.5rem;
+    }
+    .glossary-body dl { margin: 0; }
+    .glossary-body dt {
+      font-family: var(--mono);
+      color: var(--accent);
+      font-size: 0.9em;
+      font-weight: 600;
+      margin-bottom: 0.2rem;
+    }
+    .glossary-body dd {
+      margin: 0;
+      color: var(--text-soft);
+      font-size: 0.93em;
+    }
+
+    /* ---- Toggle chips ---- */
+    .toggles {
+      max-width: 1320px;
+      margin: 1.5rem auto 0;
+      padding: 0 1.5rem;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.5rem;
+      align-items: center;
+    }
+    .toggles strong {
+      color: var(--text-muted);
+      font-weight: 600;
+      font-size: 0.9em;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      margin-right: 0.4rem;
+    }
+    .toggle {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.4rem;
+      padding: 0.35rem 0.8rem;
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      background: var(--bg-elevated);
+      color: var(--text-soft);
+      cursor: pointer;
+      font-size: 0.9em;
+      user-select: none;
+      transition: background 0.15s, border-color 0.15s, color 0.15s, box-shadow 0.15s;
+    }
+    .toggle:hover { color: var(--text); border-color: var(--border-strong); }
+    .toggle input { display: none; }
+    .toggle.on {
+      background: linear-gradient(180deg, rgba(255, 126, 182, 0.18), rgba(255, 126, 182, 0.08));
+      border-color: var(--accent-mute);
+      color: var(--accent);
+      box-shadow: 0 0 0 1px var(--accent-mute) inset;
+    }
+    .toggle .dot {
+      width: 8px; height: 8px;
+      border-radius: 999px;
+      background: var(--text-muted);
+    }
+    .toggle.on .dot { background: var(--accent); box-shadow: 0 0 8px var(--accent-glow); }
+    .toggle .hint { color: var(--text-muted); font-size: 0.92em; font-weight: 400; }
+    .toggle.on .hint { color: var(--accent-mute); }
+
+    /* ---- Layout ---- */
+    .layout {
+      max-width: 1320px;
+      margin: 1.5rem auto 4rem;
+      padding: 0 1.5rem;
+      display: grid;
+      grid-template-columns: 280px minmax(0, 1fr);
+      gap: 1.75rem;
+      align-items: start;
+    }
+    @media (max-width: 880px) {
+      .layout { grid-template-columns: 1fr; }
+      aside.sidebar { position: static !important; }
+    }
+
+    /* ---- Sidebar ---- */
+    aside.sidebar {
+      position: sticky;
+      top: 1.5rem;
+      max-height: calc(100vh - 3rem);
+      overflow-y: auto;
+      padding-right: 0.25rem;
+    }
+    aside.sidebar h2 {
+      font-size: 0.78em;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      color: var(--text-muted);
+      margin: 0.5rem 0 0.5rem;
+      font-weight: 700;
+    }
+    aside.sidebar h2:first-child { margin-top: 0; }
+
+    .flow-list { list-style: none; margin: 0 0 1.25rem; padding: 0; }
+    .flow-list li {
+      background: var(--bg-card);
+      border: 1px solid var(--border-soft);
+      border-left: 3px solid transparent;
+      border-radius: 8px;
+      padding: 0.7rem 0.85rem;
+      margin-bottom: 0.45rem;
+      cursor: pointer;
+      transition: border-color 0.15s, background 0.15s, transform 0.1s;
+    }
+    .flow-list li:hover {
+      background: var(--bg-card-hi);
+      border-color: var(--border-strong);
+    }
+    .flow-list li.active {
+      background: linear-gradient(90deg, rgba(255, 126, 182, 0.12), transparent 80%);
+      border-color: var(--border-strong);
+      border-left-color: var(--accent);
+    }
+    .flow-list li.hidden { display: none; }
+    .flow-list .label { font-weight: 600; color: var(--text); font-size: 0.95em; line-height: 1.3; }
+    .flow-list .tag {
+      color: var(--text-muted);
+      font-size: 0.82em;
+      margin-top: 0.15rem;
+      font-family: var(--mono);
+    }
+    .flow-list li.active .tag { color: var(--accent-mute); }
+
+    .node-list { list-style: none; margin: 0; padding: 0; }
+    .node-list li {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      padding: 0.35rem 0.5rem;
+      margin-bottom: 0.15rem;
+      border-radius: 6px;
+      cursor: pointer;
+      color: var(--text-soft);
+      font-size: 0.88em;
+      font-family: var(--mono);
+      transition: background 0.12s, color 0.12s;
+    }
+    .node-list li:hover { background: var(--bg-card); color: var(--text); }
+    .node-list li.hidden { display: none; }
+    .node-list li .swatch {
+      flex: 0 0 8px;
+      width: 8px; height: 8px;
+      border-radius: 2px;
+    }
+    .node-list li.kind-source    .swatch { background: var(--k-source); }
+    .node-list li.kind-script    .swatch { background: var(--k-script); }
+    .node-list li.kind-binary    .swatch { background: var(--k-binary); }
+    .node-list li.kind-artifact  .swatch { background: var(--k-artifact); }
+    .node-list li.kind-output    .swatch { background: var(--k-output); }
+    .node-list li.related { background: rgba(255, 126, 182, 0.08); color: var(--text); }
+    .node-list li.pinned  {
+      background: rgba(255, 126, 182, 0.18);
+      color: var(--accent);
+      box-shadow: 0 0 0 1px var(--accent-mute) inset;
+    }
+    .node-section { margin-bottom: 1rem; }
+    .node-section-title {
+      font-size: 0.72em;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: var(--text-dim);
+      padding: 0 0.5rem 0.25rem;
+      font-weight: 600;
+    }
+
+    /* ---- Main content ---- */
+    .content { min-width: 0; }
+
+    .flow-header {
+      background: var(--bg-elevated);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 1.25rem 1.5rem;
+      margin-bottom: 1.25rem;
+    }
+    .flow-header.empty { border-color: var(--border-soft); }
+    .flow-header h2 {
+      margin: 0 0 0.25rem;
+      font-size: 1.35rem;
+      font-weight: 700;
+    }
+    .flow-header .tag {
+      font-family: var(--mono);
+      color: var(--accent);
+      font-size: 0.92em;
+      margin-bottom: 0.6rem;
+    }
+    .flow-header p {
+      margin: 0;
+      color: var(--text-soft);
+      max-width: 76ch;
+    }
+    .flow-header .progress {
+      display: flex;
+      gap: 0.3rem;
+      margin-top: 1rem;
+    }
+    .flow-header .progress .dot {
+      flex: 1;
+      height: 4px;
+      border-radius: 999px;
+      background: var(--border);
+      transition: background 0.2s;
+    }
+    .flow-header .progress .dot.seen { background: var(--accent); }
+
+    /* ---- Step cards ---- */
+    ol.steps { list-style: none; padding: 0; margin: 0; counter-reset: step; }
+    .step {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 1.1rem 1.25rem 1.25rem;
+      margin-bottom: 1rem;
+      counter-increment: step;
+      transition: border-color 0.2s, box-shadow 0.2s, transform 0.15s, opacity 0.2s;
+      animation: step-in 0.35s ease;
+    }
+    @keyframes step-in {
+      from { opacity: 0; transform: translateY(8px); }
+      to   { opacity: 1; transform: translateY(0); }
+    }
+    .step.has-related {
+      border-color: var(--accent-mute);
+      box-shadow: 0 0 0 1px var(--accent-mute), 0 6px 24px -8px var(--accent-glow);
+    }
+    .step.in-view {
+      border-color: var(--border-strong);
+    }
+    .step-head {
+      display: flex;
+      align-items: baseline;
+      gap: 0.75rem;
+      margin-bottom: 0.75rem;
+    }
+    .step-num {
+      flex: 0 0 auto;
+      width: 1.85rem;
+      height: 1.85rem;
+      border-radius: 999px;
+      background: linear-gradient(135deg, var(--accent), var(--accent-mute));
+      color: #1a0f15;
+      font-weight: 700;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 0.92em;
+      box-shadow: 0 0 12px var(--accent-glow);
+    }
+    .step-title {
+      margin: 0;
+      font-size: 1.05rem;
+      font-weight: 600;
+      line-height: 1.3;
+    }
+    .step-cmd {
+      background: var(--bg-pill);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 0.6rem 0.85rem;
+      font-family: var(--mono);
+      font-size: 0.88em;
+      color: #d8e3f1;
+      overflow-x: auto;
+      margin: 0 0 0.85rem;
+      white-space: pre;
+      line-height: 1.5;
+    }
+    .step-cmd::before {
+      content: "$ ";
+      color: var(--accent);
+      font-weight: 700;
+    }
+    .step-cmd.multi::before { content: ""; }
+
+    .pipe {
+      display: grid;
+      grid-template-columns: 1fr auto 1fr auto 1fr;
+      gap: 0.6rem;
+      align-items: stretch;
+      margin-bottom: 0.85rem;
+    }
+    .bay {
+      background: var(--bg-elevated);
+      border: 1px solid var(--border-soft);
+      border-radius: 8px;
+      padding: 0.6rem 0.7rem;
+      min-width: 0;
+    }
+    .bay.empty { opacity: 0.45; }
+    .bay-label {
+      font-size: 0.7em;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: var(--text-muted);
+      font-weight: 700;
+      display: block;
+      margin-bottom: 0.4rem;
+    }
+    .bay-items {
+      display: flex;
+      flex-direction: column;
+      gap: 0.35rem;
+    }
+    .chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.35rem;
+      padding: 0.3rem 0.55rem;
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-left: 3px solid var(--border-strong);
+      border-radius: 6px;
+      font-family: var(--mono);
+      font-size: 0.83em;
+      color: var(--text);
+      cursor: pointer;
+      transition: background 0.15s, border-color 0.15s, transform 0.1s, box-shadow 0.15s;
+      line-height: 1.2;
+      word-break: break-word;
+    }
+    .chip:hover { background: var(--bg-card-hi); transform: translateY(-1px); }
+    .chip.kind-source    { border-left-color: var(--k-source); }
+    .chip.kind-script    { border-left-color: var(--k-script); }
+    .chip.kind-binary    { border-left-color: var(--k-binary); }
+    .chip.kind-artifact  { border-left-color: var(--k-artifact); }
+    .chip.kind-output    { border-left-color: var(--k-output); }
+    .chip.related {
+      background: rgba(255, 126, 182, 0.1);
+      border-color: var(--accent-mute);
+      box-shadow: 0 0 0 1px var(--accent-mute), 0 0 14px -4px var(--accent-glow);
+    }
+    .chip.pinned {
+      background: rgba(255, 126, 182, 0.22);
+      border-color: var(--accent);
+      color: #fff;
+    }
+
+    .pipe-arrow {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: var(--text-muted);
+      transition: color 0.15s;
+    }
+    .step.has-related .pipe-arrow { color: var(--accent); }
+    .pipe-arrow svg { width: 28px; height: 28px; }
+
+    .annot {
+      color: var(--text-soft);
+      margin: 0;
+      font-size: 0.95em;
+    }
+    .annot strong, .annot em { color: var(--text); }
+
+    /* ---- Footer note ---- */
+    .footer {
+      max-width: 1320px;
+      margin: 2rem auto 1.5rem;
+      padding: 0 1.5rem;
+      color: var(--text-dim);
+      font-size: 0.85em;
+    }
+
+    /* ---- Stack pipe on narrow screens ---- */
+    @media (max-width: 720px) {
+      .pipe { grid-template-columns: 1fr; }
+      .pipe-arrow {
+        transform: rotate(90deg);
+        height: 20px;
+      }
+    }
+
+    /* ---- Tooltip / floating info ---- */
+    .floater {
+      position: fixed;
+      pointer-events: none;
+      background: #0e131c;
+      border: 1px solid var(--accent-mute);
+      color: var(--text);
+      padding: 0.55rem 0.75rem;
+      border-radius: 8px;
+      font-size: 0.86em;
+      max-width: 280px;
+      box-shadow: 0 8px 24px rgba(0,0,0,0.5);
+      opacity: 0;
+      transition: opacity 0.12s;
+      z-index: 100;
+    }
+    .floater.show { opacity: 1; }
+    .floater .label { font-family: var(--mono); color: var(--accent); font-weight: 600; }
+    .floater .desc { color: var(--text-soft); margin-top: 0.2rem; }
+    .floater .uses { color: var(--text-muted); margin-top: 0.4rem; font-size: 0.92em; }
+
+    /* ---- Error banner ---- */
+    .error-banner {
+      max-width: 1320px;
+      margin: 1rem auto;
+      padding: 0.9rem 1rem;
+      background: #2a1219;
+      border: 1px solid #6e2a3a;
+      border-radius: 8px;
+      color: #ffc8d7;
+    }
+    .error-banner code {
+      background: rgba(255, 126, 182, 0.15);
+      padding: 1px 5px;
+      border-radius: 3px;
+      font-family: var(--mono);
+    }
+
+    /* Scrollbar styling for sidebar */
+    aside.sidebar::-webkit-scrollbar { width: 8px; }
+    aside.sidebar::-webkit-scrollbar-track { background: transparent; }
+    aside.sidebar::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
+    aside.sidebar::-webkit-scrollbar-thumb:hover { background: var(--border-strong); }
+  </style>
+</head>
+<body>
+
+<header class="top">
+  <h1><span class="dot"></span>OMG build flows</h1>
+  <p class="lead">Pick a flow on the left. Each step is a self-contained card — its inputs, the tool that runs, the outputs it produces, and what's actually happening. Hover any chip or any file in the sidebar to light up everywhere it appears.</p>
+</header>
+
+<details class="glossary" open>
+  <summary>What's what? — frontend, backend, .omgb, self-hosted, omg_rt.h</summary>
+  <div class="glossary-body" id="glossary-body"></div>
+</details>
+
+<div class="toggles">
+  <strong>Show:</strong>
+  <span id="toggle-list"></span>
+</div>
+
+<div id="error" class="error-banner" hidden></div>
+
+<div class="layout">
+  <aside class="sidebar">
+    <h2>Flows</h2>
+    <ul class="flow-list" id="flow-list"></ul>
+
+    <h2>Files &amp; tools</h2>
+    <div id="node-index"></div>
+  </aside>
+
+  <main class="content">
+    <div class="flow-header empty" id="flow-header">
+      <h2>Pick a flow</h2>
+      <p>Click any entry on the left. The steps appear here as cards you can scroll through.</p>
+    </div>
+    <ol class="steps" id="steps"></ol>
+  </main>
+</div>
+
+<div class="floater" id="floater" role="tooltip"></div>
+
+<div class="footer">
+  Reload after edits — the page is driven by <code>build_flows.json</code> in this directory. Keyboard: <code>↑ / ↓</code> jumps between steps.
+</div>
+
+<script>
+let data = null;
+const activeCats = new Set();
+let activeFlow = null;
+let pinnedNodeId = null;
+
+const KIND_ORDER = ["source", "script", "binary", "artifact", "output"];
+const KIND_LABEL = {
+  source: "Sources", script: "Tools", binary: "Binaries",
+  artifact: "Intermediates", output: "Outputs"
+};
+
+/* ----- bootstrap ----- */
+
+async function loadData() {
+  try {
+    const res = await fetch("./build_flows.json", { cache: "no-store" });
+    if (!res.ok) throw new Error("HTTP " + res.status);
+    return await res.json();
+  } catch (err) {
+    const banner = document.getElementById("error");
+    banner.hidden = false;
+    banner.innerHTML =
+      "<strong>Couldn't load build_flows.json.</strong> Browsers block " +
+      "<code>fetch()</code> from <code>file://</code>. Serve this directory " +
+      "over HTTP — for example: <code>omg tools/web/http_server.omg docs/flow</code> " +
+      "and open <code>http://127.0.0.1:9876/</code>.";
+    throw err;
+  }
+}
+
+function escapeHtml(s) {
+  return String(s)
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;");
+}
+
+/* ----- node visibility ----- */
+
+function nodeIsVisible(node) {
+  if (!node.categories || node.categories.length === 0) return true;
+  return node.categories.some(c => activeCats.has(c));
+}
+
+function nodeById(id) { return data.nodes.find(n => n.id === id); }
+
+function nodeLabel(id) { const n = nodeById(id); return n ? n.label : id; }
+
+function flowsTouching(nodeId) {
+  return data.flows
+    .filter(f => activeCats.has(f.category))
+    .filter(f => f.steps.some(s =>
+      (s.inputs || []).includes(nodeId) ||
+      s.tool === nodeId ||
+      (s.outputs || []).includes(nodeId)));
+}
+
+/* ----- glossary ----- */
+
+function renderGlossary() {
+  const el = document.getElementById("glossary-body");
+  el.innerHTML = data.concepts.map(c => `
+    <dl>
+      <dt>${escapeHtml(c.term)}</dt>
+      <dd>${escapeHtml(c.explanation)}</dd>
+    </dl>
+  `).join("");
+}
+
+/* ----- toggles ----- */
+
+function renderToggles() {
+  const wrap = document.getElementById("toggle-list");
+  wrap.innerHTML = "";
+  for (const cat of data.categories) {
+    if (cat.default) activeCats.add(cat.id);
+    const label = document.createElement("label");
+    label.className = "toggle" + (activeCats.has(cat.id) ? " on" : "");
+    label.innerHTML = `
+      <span class="dot"></span>
+      <input type="checkbox" ${activeCats.has(cat.id) ? "checked" : ""}>
+      <span class="cat-label">${escapeHtml(cat.label)}</span>
+      <span class="hint">— ${escapeHtml(cat.hint)}</span>
+    `;
+    const cb = label.querySelector("input");
+    cb.addEventListener("change", () => {
+      if (cb.checked) activeCats.add(cat.id); else activeCats.delete(cat.id);
+      label.classList.toggle("on", cb.checked);
+      onTogglesChanged();
+    });
+    wrap.appendChild(label);
+  }
+}
+
+/* ----- flow list ----- */
+
+function renderFlowList() {
+  const ul = document.getElementById("flow-list");
+  ul.innerHTML = "";
+  for (const flow of data.flows) {
+    const li = document.createElement("li");
+    li.dataset.flowId = flow.id;
+    li.dataset.category = flow.category;
+    li.innerHTML = `
+      <div class="label">${escapeHtml(flow.label)}</div>
+      <div class="tag">${escapeHtml(flow.tagline || "")}</div>
+    `;
+    li.addEventListener("click", () => selectFlow(flow.id));
+    ul.appendChild(li);
+  }
+  updateFlowVisibility();
+}
+
+function updateFlowVisibility() {
+  document.querySelectorAll("#flow-list li").forEach(li => {
+    li.classList.toggle("hidden", !activeCats.has(li.dataset.category));
+  });
+}
+
+/* ----- node index in sidebar ----- */
+
+function renderNodeIndex() {
+  const wrap = document.getElementById("node-index");
+  wrap.innerHTML = "";
+  for (const kind of KIND_ORDER) {
+    const inKind = data.nodes.filter(n => n.kind === kind);
+    if (inKind.length === 0) continue;
+    const section = document.createElement("div");
+    section.className = "node-section";
+    section.dataset.kind = kind;
+    section.innerHTML = `<div class="node-section-title">${KIND_LABEL[kind]}</div>`;
+    const ul = document.createElement("ul");
+    ul.className = "node-list";
+    for (const node of inKind) {
+      const li = document.createElement("li");
+      li.dataset.nodeId = node.id;
+      li.className = `kind-${node.kind}`;
+      li.innerHTML = `<span class="swatch"></span><span>${escapeHtml(node.label)}</span>`;
+      li.addEventListener("mouseenter", e => onNodeHover(node, e));
+      li.addEventListener("mousemove",  e => moveFloater(e));
+      li.addEventListener("mouseleave", () => onNodeUnhover(node));
+      li.addEventListener("click",      e => onNodeClick(node, e));
+      ul.appendChild(li);
+    }
+    section.appendChild(ul);
+    wrap.appendChild(section);
+  }
+  updateNodeIndexVisibility();
+}
+
+function updateNodeIndexVisibility() {
+  for (const node of data.nodes) {
+    const li = document.querySelector(`#node-index li[data-node-id="${cssEscape(node.id)}"]`);
+    if (li) li.classList.toggle("hidden", !nodeIsVisible(node));
+  }
+  // Hide an entire section if all its items are hidden.
+  document.querySelectorAll(".node-section").forEach(section => {
+    const visibleCount = [...section.querySelectorAll("li")].filter(li => !li.classList.contains("hidden")).length;
+    section.style.display = visibleCount === 0 ? "none" : "";
+  });
+}
+
+function cssEscape(s) { return s.replace(/[^a-zA-Z0-9_-]/g, c => "\\" + c); }
+
+/* ----- main flow render ----- */
+
+function selectFlow(id) {
+  const flow = data.flows.find(f => f.id === id);
+  if (!flow) return;
+  activeFlow = flow;
+  unpin();   // a new flow drops the previous pin
+
+  document.querySelectorAll("#flow-list li").forEach(li => {
+    li.classList.toggle("active", li.dataset.flowId === id);
+  });
+
+  // Header
+  const hdr = document.getElementById("flow-header");
+  hdr.classList.remove("empty");
+  hdr.innerHTML = `
+    <h2>${escapeHtml(flow.label)}</h2>
+    <div class="tag">${escapeHtml(flow.tagline || "")}</div>
+    <p>${escapeHtml(flow.summary)}</p>
+    <div class="progress" id="progress">
+      ${flow.steps.map((_, i) => `<span class="dot" data-step-idx="${i + 1}"></span>`).join("")}
+    </div>
+  `;
+
+  // Steps
+  const ol = document.getElementById("steps");
+  ol.innerHTML = flow.steps.map((step, idx) => renderStep(step, idx + 1)).join("");
+  attachStepInteractions();
+  installScrollSpy();
+}
+
+function renderStep(step, idx) {
+  const inputs = step.inputs || [];
+  const outputs = step.outputs || [];
+  const inputsHtml = inputs.length
+    ? inputs.map(id => chipHtml(id)).join("")
+    : `<span class="bay-label" style="opacity:0.5">(none)</span>`;
+  const outputsHtml = outputs.length
+    ? outputs.map(id => chipHtml(id)).join("")
+    : `<span class="bay-label" style="opacity:0.5">(none)</span>`;
+
+  const cmd = step.command
+    ? `<pre class="step-cmd${step.command.includes('\n') ? ' multi' : ''}">${escapeHtml(step.command)}</pre>`
+    : "";
+
+  return `
+    <li class="step" data-step-idx="${idx}" data-nodes="${[...inputs, step.tool, ...outputs].join(' ')}">
+      <div class="step-head">
+        <span class="step-num">${idx}</span>
+        <h3 class="step-title">${escapeHtml(step.title || ("Step " + idx))}</h3>
+      </div>
+      ${cmd}
+      <div class="pipe">
+        <div class="bay ${inputs.length ? "" : "empty"}">
+          <span class="bay-label">Inputs</span>
+          <div class="bay-items">${inputsHtml}</div>
+        </div>
+        <div class="pipe-arrow">${arrowSvg()}</div>
+        <div class="bay tool">
+          <span class="bay-label">Tool</span>
+          <div class="bay-items">${chipHtml(step.tool)}</div>
+        </div>
+        <div class="pipe-arrow">${arrowSvg()}</div>
+        <div class="bay ${outputs.length ? "" : "empty"}">
+          <span class="bay-label">Outputs</span>
+          <div class="bay-items">${outputsHtml}</div>
+        </div>
+      </div>
+      <p class="annot">${escapeHtml(step.annotation)}</p>
+    </li>
+  `;
+}
+
+function chipHtml(id) {
+  const node = nodeById(id);
+  if (!node) return `<span class="chip" data-node-id="${escapeHtml(id)}">${escapeHtml(id)}</span>`;
+  return `<span class="chip kind-${escapeHtml(node.kind)}" data-node-id="${escapeHtml(node.id)}">${escapeHtml(node.label)}</span>`;
+}
+
+function arrowSvg() {
+  return `<svg viewBox="0 0 28 28" aria-hidden="true">
+    <defs>
+      <linearGradient id="ag" x1="0" x2="1" y1="0" y2="0">
+        <stop offset="0" stop-color="currentColor" stop-opacity="0.2"/>
+        <stop offset="1" stop-color="currentColor" stop-opacity="1"/>
+      </linearGradient>
+    </defs>
+    <path d="M2 14 C 10 14, 14 14, 22 14" stroke="url(#ag)" stroke-width="2" fill="none" stroke-linecap="round"/>
+    <path d="M16 8 L24 14 L16 20" stroke="currentColor" stroke-width="2" fill="none" stroke-linejoin="round" stroke-linecap="round"/>
+  </svg>`;
+}
+
+/* ----- step interactivity ----- */
+
+function attachStepInteractions() {
+  document.querySelectorAll(".step .chip").forEach(chip => {
+    chip.addEventListener("mouseenter", e => {
+      const node = nodeById(chip.dataset.nodeId);
+      if (node) onNodeHover(node, e);
+    });
+    chip.addEventListener("mousemove", e => moveFloater(e));
+    chip.addEventListener("mouseleave", () => {
+      const node = nodeById(chip.dataset.nodeId);
+      if (node) onNodeUnhover(node);
+    });
+    chip.addEventListener("click", e => {
+      e.stopPropagation();
+      const node = nodeById(chip.dataset.nodeId);
+      if (node) onNodeClick(node, e);
+    });
+  });
+}
+
+/* ----- node hover / pin ----- */
+
+function onNodeHover(node, ev) {
+  if (pinnedNodeId === node.id) return;
+  showFloater(node, ev);
+  applyNodeHighlight(node.id);
+}
+function onNodeUnhover(node) {
+  if (pinnedNodeId === node.id) return;
+  hideFloater();
+  clearHighlights();
+}
+function onNodeClick(node, ev) {
+  ev.stopPropagation();
+  if (pinnedNodeId === node.id) {
+    unpin();
+  } else {
+    pinNode(node.id);
+  }
+}
+
+function pinNode(id) {
+  unpin();
+  pinnedNodeId = id;
+  const node = nodeById(id);
+  applyNodeHighlight(id, true);
+  if (node) showFloater(node, null, true);
+}
+function unpin() {
+  pinnedNodeId = null;
+  hideFloater();
+  clearHighlights();
+}
+
+function applyNodeHighlight(id, pinned) {
+  // Chips that match
+  document.querySelectorAll(".chip").forEach(c => {
+    const match = c.dataset.nodeId === id;
+    c.classList.toggle(pinned ? "pinned" : "related", match);
+    if (!pinned) c.classList.remove("pinned");
+  });
+  // Step cards that contain the chip
+  document.querySelectorAll(".step").forEach(s => {
+    const nodes = (s.dataset.nodes || "").split(" ");
+    s.classList.toggle("has-related", nodes.includes(id));
+  });
+  // Sidebar entry
+  document.querySelectorAll("#node-index li").forEach(li => {
+    const match = li.dataset.nodeId === id;
+    li.classList.toggle(pinned ? "pinned" : "related", match);
+    if (!pinned) li.classList.remove("pinned");
+  });
+}
+function clearHighlights() {
+  document.querySelectorAll(".chip.related, .chip.pinned").forEach(c => c.classList.remove("related", "pinned"));
+  document.querySelectorAll(".step.has-related").forEach(s => s.classList.remove("has-related"));
+  document.querySelectorAll("#node-index li.related, #node-index li.pinned").forEach(li => li.classList.remove("related", "pinned"));
+}
+
+/* ----- floater (tooltip) ----- */
+
+function showFloater(node, ev, sticky) {
+  const tip = document.getElementById("floater");
+  const flows = flowsTouching(node.id);
+  const uses = flows.length
+    ? `Appears in: ${flows.map(f => escapeHtml(f.label)).join(" · ")}`
+    : "Not used by any visible flow.";
+  tip.innerHTML = `
+    <div class="label">${escapeHtml(node.label)}</div>
+    <div class="desc">${escapeHtml(node.sublabel || "")}</div>
+    <div class="uses">${uses}${sticky ? "<br><em>Pinned — click again to unpin.</em>" : ""}</div>
+  `;
+  tip.classList.add("show");
+  if (ev) moveFloater(ev);
+}
+function moveFloater(ev) {
+  const tip = document.getElementById("floater");
+  const r = tip.getBoundingClientRect();
+  const pad = 14;
+  let x = ev.clientX + pad;
+  let y = ev.clientY + pad;
+  if (x + r.width > window.innerWidth)  x = ev.clientX - r.width - pad;
+  if (y + r.height > window.innerHeight) y = ev.clientY - r.height - pad;
+  tip.style.left = x + "px";
+  tip.style.top  = y + "px";
+}
+function hideFloater() {
+  document.getElementById("floater").classList.remove("show");
+}
+
+/* ----- scroll spy: lights up the progress dots as steps scroll past ----- */
+
+let spyObserver = null;
+function installScrollSpy() {
+  if (spyObserver) spyObserver.disconnect();
+  const dots = document.querySelectorAll("#progress .dot");
+  if (dots.length === 0) return;
+  spyObserver = new IntersectionObserver((entries) => {
+    entries.forEach(e => {
+      const idx = Number(e.target.dataset.stepIdx);
+      e.target.classList.toggle("in-view", e.isIntersecting && e.intersectionRatio > 0.3);
+      const dot = document.querySelector(`#progress .dot[data-step-idx="${idx}"]`);
+      if (dot) dot.classList.toggle("seen", e.isIntersecting);
+    });
+  }, { threshold: [0, 0.3, 1] });
+  document.querySelectorAll(".step").forEach(s => spyObserver.observe(s));
+}
+
+/* ----- toggles changed ----- */
+
+function onTogglesChanged() {
+  updateFlowVisibility();
+  updateNodeIndexVisibility();
+  if (activeFlow && !activeCats.has(activeFlow.category)) {
+    activeFlow = null;
+    pinnedNodeId = null;
+    const hdr = document.getElementById("flow-header");
+    hdr.classList.add("empty");
+    hdr.innerHTML = `
+      <h2>Pick a flow</h2>
+      <p>Click any entry on the left. The steps appear here as cards you can scroll through.</p>
+    `;
+    document.getElementById("steps").innerHTML = "";
+    document.querySelectorAll("#flow-list li").forEach(li => li.classList.remove("active"));
+  }
+}
+
+/* ----- global click un-pin ----- */
+
+document.addEventListener("click", e => {
+  if (!e.target.closest(".chip") && !e.target.closest("#node-index li") && pinnedNodeId) {
+    unpin();
+  }
+});
+
+/* ----- keyboard nav: arrow keys to jump between steps ----- */
+
+document.addEventListener("keydown", e => {
+  if (!activeFlow) return;
+  if (e.target.tagName === "INPUT") return;
+  const steps = [...document.querySelectorAll(".step")];
+  if (steps.length === 0) return;
+  const here = steps.findIndex(s => {
+    const r = s.getBoundingClientRect();
+    return r.top > -50 && r.top < window.innerHeight * 0.4;
+  });
+  if (e.key === "ArrowDown" || e.key === "j") {
+    const next = steps[Math.min(steps.length - 1, (here < 0 ? 0 : here + 1))];
+    if (next) next.scrollIntoView({ behavior: "smooth", block: "start" });
+    e.preventDefault();
+  } else if (e.key === "ArrowUp" || e.key === "k") {
+    const prev = steps[Math.max(0, (here < 0 ? 0 : here - 1))];
+    if (prev) prev.scrollIntoView({ behavior: "smooth", block: "start" });
+    e.preventDefault();
+  }
+});
+
+/* ----- main ----- */
+
+(async () => {
+  try {
+    data = await loadData();
+    renderGlossary();
+    renderToggles();
+    renderFlowList();
+    renderNodeIndex();
+    // Auto-select the first visible flow so you land on something.
+    const first = data.flows.find(f => activeCats.has(f.category));
+    if (first) selectFlow(first.id);
+  } catch (e) { console.error(e); }
+})();
+</script>
+</body>
+</html>
