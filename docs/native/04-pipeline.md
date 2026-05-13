@@ -97,8 +97,8 @@ Halt
 This is what gets written to `.omgb`. Inspect any compiled program:
 
 ```sh
-runtime/target/release/omg --compile /tmp/trace.omg /tmp/trace.omgb
-runtime/target/release/omg --disasm /tmp/trace.omgb
+omg --compile /tmp/trace.omg /tmp/trace.omgb
+omg --disasm /tmp/trace.omgb
 ```
 
 You'll see the function table at the top (none here), then the code:

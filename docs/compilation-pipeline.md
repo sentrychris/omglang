@@ -207,7 +207,7 @@ omg --self-hosted-compile bootstrap/src/compiler.omg /tmp/recompiled.omgb
 cmp bootstrap/src/compiler.omgb /tmp/recompiled.omgb && echo byte-identical
 ```
 
-The two files are byte-for-byte equal (53 376 bytes at time of writing).
+The two files are byte-for-byte equal (around 130 KB at time of writing).
 The first one was produced at `cargo build` time by the Rust frontend;
 the second was produced just now by the OMG-in-OMG compiler running on
 the VM. Both took the same source as input. They agree.
@@ -287,7 +287,7 @@ byte-identical equality:
 omg --verify-omg-vm bootstrap/src/compiler.omg
 ```
 
-That command, when it passes (which it does, in ~45 s), is the
+That command, when it passes (which it does, in ~60 s), is the
 strongest claim the project makes about itself: the OMG compiler and
 the OMG VM, both running on a Rust *substrate* but otherwise expressed
 entirely in OMG, produce the same artifact for the same input as the
@@ -339,10 +339,10 @@ mis-execution.
 
 **It doesn't make `omg <script>` fast.** Compiling 200 lines of OMG via
 the OMG-on-VM compiler takes hundreds of milliseconds; compiling all of
-`tools/test-all.omg` (with its 14 imported tools) takes ~11 seconds.
-The Rust frontend does the same work in single-digit milliseconds.
-That's the cost you pay for dogfooding by default, and the reason
-`--rust` exists.
+`tools/test-all.omg` (with its 14 imported tools) takes ~1 second;
+the 2.4k-line `compiler.omg` itself takes ~9 seconds. The Rust frontend
+does the same work in single-digit milliseconds. That's the cost you
+pay for dogfooding by default, and the reason `--rust` exists.
 
 > **Note**: the *bytecode-VM* path described above is one of two ways
 > OMG can run. There's also a **native-compilation path** —

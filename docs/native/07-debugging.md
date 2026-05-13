@@ -9,11 +9,10 @@ problems second.
 | ------------- | ---------------------------------------------------- |
 | Source        | `cat foo.omg`                                        |
 | Tokens / AST  | (no dump tool yet — read the parser if needed)       |
-| Bytecode      | `runtime/target/release/omg --disasm foo.omgb`       |
+| Bytecode      | `omg --disasm foo.omgb` (or `foo.omg`)               |
 | C source      | run `omgcc` manually to produce a `.c` you can keep  |
 | Native binary | gdb, strace, valgrind                                |
 
-`--disasm` is Rust-only (the native `omg` driver doesn't implement it).
 `omg --build` cleans up its tempdir, so to keep the intermediate `.c`,
 run the transpiler yourself.
 
@@ -21,7 +20,7 @@ run the transpiler yourself.
 
 ```sh
 omg --compile foo.omg foo.omgb
-omg --disasm foo.omgb            # `bootstrap/bin/omg`; matches Rust byte-for-byte
+omg --disasm foo.omgb            # native driver; matches the Rust frontend byte-for-byte
 # Or feed a .omg directly — disasm runs the compiler in-process:
 omg --disasm foo.omg
 ```

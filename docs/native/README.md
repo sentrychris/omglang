@@ -54,6 +54,7 @@ the final ELF link in `--build`.
 | `omg <file>`                       | `bootstrap/bin/omg <file>` (native driver) |
 | `runtime/target/release/omg <…>`   | the Rust runtime, spelled out in full         |
 
-Some commands (notably `--disasm` and `--verify-omg-vm`) only exist on the
-Rust runtime, so they're always written out in full. Drop `bootstrap/bin/`
-on your `$PATH` if you'd like to use the bare `omg` form yourself.
+Some commands (notably `--verify-omg-vm`, `--verify-self-hosted`, and
+`--self-hosted-compile`) only exist on the Rust runtime, so they're always
+written out in full. Drop `bootstrap/bin/` on your `$PATH` if you'd like to
+use the bare `omg` form yourself.

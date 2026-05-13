@@ -13,7 +13,7 @@ You'll be running and compiling OMG programs in five minutes.
 # Build the Rust runtime (used once to seed the native toolchain)
 cd runtime && cargo build --release && cd ..
 
-# Build the OMG-native toolchain (omg, omgc, omgcc) into bootstrap/bin/
+# Build the OMG-native toolchain (omg, omgc, omgcc, omgjs) into bootstrap/bin/
 bootstrap/build.sh
 ```
 
