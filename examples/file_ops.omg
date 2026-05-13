@@ -1,6 +1,6 @@
 ;;;omg
 
-alloc handle := file_open("./examples/files/test.txt", "w")
+alloc handle := file_open("./examples/output/test.txt", "w")
 
 file_write(handle, "hello")
 file_close(handle)
