@@ -3,7 +3,7 @@
 [![CodeQL](https://github.com/sentrychris/omglang/actions/workflows/codeql.yml/badge.svg)](https://github.com/sentrychris/omglang/actions/workflows/codeql.yml)
 [![CI](https://github.com/sentrychris/omglang/actions/workflows/ci.yml/badge.svg)](https://github.com/sentrychris/omglang/actions/workflows/ci.yml)
 
-OMG (Omg Much Grammar) is a small programming language made for fun and for learning how
+OMG is a small programming language made for fun and for learning how
 languages get put together end-to-end.
 
 OMG has the usual stuff every language has: variables, math, strings, lists,
@@ -785,7 +785,7 @@ omglang/
 │   └── package.sh   spins out a slim native-only distribution into dist/
 ├── examples/        small standalone programs
 ├── tests/           shell-driven test suite (parity, regression, REPL, builtins)
-├── tools/           command-line utilities written in OMG (wc, grep, sort, etc.)
+├── tools/           command-line utilities written in OMG (wc, grep, sort, omgdb, etc.)
 ├── web/             browser playground + compiler explorer (static site)
 ├── docs/            documentation; see docs/native/ for the native compilation path
 └── vscode/          VS Code extension (syntax highlighting + LSP completion)
@@ -800,6 +800,9 @@ Some interesting starting points:
   [`tools/json.omg`](tools/json.omg): Unix-style utilities,
   written in OMG. See [`tools/README.md`](tools/README.md) for the
   full list.
+- [`tools/db/`](tools/db/): **omgdb**, a small SQL database written in OMG —
+  a paged on-disk format, a recursive-descent SQL parser, and a SQLite-style
+  REPL. See [`tools/db/README.md`](tools/db/README.md).
 
 ---
 
