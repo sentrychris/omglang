@@ -51,6 +51,7 @@ EXAMPLES=(
 )
 
 count=0
+manifest_entries=()
 for name in "${EXAMPLES[@]}"; do
     src="examples/$name.omg"
     if [ ! -f "$src" ]; then
@@ -59,9 +60,17 @@ for name in "${EXAMPLES[@]}"; do
     cp "$src" "$WEB_OUT/$name.omg"
     "$OMG" --compile "$src" "$WORK/$name.omgb" >/dev/null
     "$OMGJS_NATIVE" "$WORK/$name.omgb" "$WEB_OUT/$name.js" >/dev/null
+    manifest_entries+=("\"$name\"")
     count=$((count + 1))
 done
-echo "Built $count reference example pairs in $WEB_OUT/"
+
+# Manifest consumed by web/app.js and web/explorer.app.js to populate the
+# "Examples" dropdown. Single source of truth — names come from the
+# EXAMPLES array above, filtered to what actually exists on disk.
+manifest_csv=$(IFS=,; echo "${manifest_entries[*]}")
+printf '[%s]\n' "$manifest_csv" > "$WEB_OUT/manifest.json"
+
+echo "Built $count reference example pairs in $WEB_OUT/ (+ manifest.json)"
 
 echo
 echo "Serve the playground:"

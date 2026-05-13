@@ -16,10 +16,10 @@ proc my_sqrt(x) {
 emit my_sqrt(2.0)
 emit my_sqrt(50.0)
 
-# `/` between two ints stays floor division; promote on float for true div.
-emit 10 / 3                 # 3
+# `/` is true division and always returns a float; `//` floors and keeps int when both operands are int.
+emit 10 / 3                 # 3.3333333333333335
 emit 10 / 3.0               # 3.3333333333333335
-emit 10 // 3                # 3 (explicit floor)
+emit 10 // 3                # 3 (integer floor)
 emit 10.5 // 3              # 3.0
 
 # Cross-type comparison: 5 == 5.0 is true.

@@ -69,7 +69,7 @@ proc rot13(input) {
             rot := table[13]
             result := result + rot[k]
         } else {
-            result := result + c
+            result := result + char
         }
 
         i := i + 1

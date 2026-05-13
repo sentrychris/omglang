@@ -315,17 +315,61 @@ $source.addEventListener('focus', () => $sourcePane.classList.add('is-focused'))
 $source.addEventListener('blur',  () => $sourcePane.classList.remove('is-focused'));
 
 // === Example dropdown ====================================================
+// Two groups:
+//   - "Starters": the inlined STARTERS above (zero fetch — always works
+//     even if examples/ wasn't built).
+//   - "Examples": the full set under examples/*.omg, listed in
+//     examples/manifest.json and fetched lazily on selection.
 
+const $starterGroup = document.createElement('optgroup');
+$starterGroup.label = 'Starters';
 STARTERS.forEach((s, i) => {
     const o = document.createElement('option');
-    o.value = i;
+    o.value = 'starter:' + i;
     o.textContent = s.name;
-    $select.appendChild(o);
+    $starterGroup.appendChild(o);
 });
-$select.addEventListener('change', () => {
-    $source.value = STARTERS[$select.value].src;
-    renderHighlight();
-    runExplorer();
+$select.appendChild($starterGroup);
+
+const $exampleGroup = document.createElement('optgroup');
+$exampleGroup.label = 'Examples';
+$select.appendChild($exampleGroup);
+
+async function loadExampleSource(name) {
+    const res = await fetch('examples/' + encodeURIComponent(name) + '.omg');
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    return await res.text();
+}
+
+const exampleManifestPromise = fetch('examples/manifest.json')
+    .then((r) => r.ok ? r.json() : [])
+    .catch(() => [])
+    .then((names) => {
+        for (const name of names) {
+            const o = document.createElement('option');
+            o.value = 'example:' + name;
+            o.textContent = name;
+            $exampleGroup.appendChild(o);
+        }
+    });
+
+$select.addEventListener('change', async () => {
+    const v = $select.value;
+    if (v.startsWith('starter:')) {
+        const i = parseInt(v.slice('starter:'.length), 10);
+        $source.value = STARTERS[i].src;
+        renderHighlight();
+        runExplorer();
+    } else if (v.startsWith('example:')) {
+        const name = v.slice('example:'.length);
+        try {
+            $source.value = await loadExampleSource(name);
+        } catch (err) {
+            $source.value = '# Failed to load examples/' + name + '.omg: ' + err.message + '\n';
+        }
+        renderHighlight();
+        runExplorer();
+    }
 });
 $source.value = STARTERS[0].src;
 renderHighlight();

@@ -41,9 +41,12 @@ web/
 ├── index.html          page shell + styling
 ├── app.js              loads the bundle, redirects emit/print into <pre>
 ├── omg-web.js          compiler + VM + driver bundled to JavaScript
-└── examples/           pre-built reference pairs (.omg + transpiled .js)
-                        kept around so visitors can inspect what
-                        native-js.omg's output looks like
+└── examples/           pre-built example pairs (.omg + transpiled .js)
+                        plus manifest.json. The playground and explorer
+                        populate their "Examples" dropdown from the
+                        manifest and lazy-fetch the .omg on selection;
+                        the .js files are also there so visitors can
+                        inspect what native-js.omg's output looks like
 ```
 
 ## What's not here
