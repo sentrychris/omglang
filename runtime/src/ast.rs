@@ -1,9 +1,9 @@
 //! # OMG Abstract Syntax Tree
 //!
 //! Tagged-tree representation used by the parser, the compiler, and (for
-//! debugging) the disassembler. Mirrors the AST shapes produced by
-//! `omglang/parser/*.py` so that the language semantics are unchanged from
-//! the Python reference implementation.
+//! debugging) the disassembler. The same shapes are produced by the
+//! OMG-written compiler at `bootstrap/src/compiler.omg`, which is how
+//! the two frontends stay byte-identical at the bytecode layer.
 
 use std::rc::Rc;
 

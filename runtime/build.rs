@@ -10,9 +10,9 @@
 //!   VM (used by `--verify-omg-vm` for the triple-meta fixed-point check).
 //!
 //! Both are compiled by the runtime's own lexer/parser/compiler — no
-//! Python, no external tools. The Rust frontend is the "stage-0" that
-//! bootstraps the "stage-1" OMG-in-OMG implementations. Subsequent
-//! self-hosted runs (and the `verify-*` flags) confirm fixed points:
+//! external tools. The Rust frontend is the "stage-0" that bootstraps
+//! the "stage-1" OMG-in-OMG implementations. Subsequent self-hosted
+//! runs (and the `verify-*` flags) confirm fixed points:
 //! stage-1 compiling its own source produces the same `.omgb` bytes as
 //! stage-0 did, and the OMG VM running stage-1 produces the same
 //! bytes as either.

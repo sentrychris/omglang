@@ -87,8 +87,6 @@ cp "$BIN_IN/omg_rt.js" "$DIST_DIR/bin/omg_rt.js"
 
 echo "[3/7] examples/"
 cp -r "$REPO_ROOT/examples/." "$DIST_DIR/examples/"
-# self_hosted.omg references the parent repo's bootstrap path, drop it.
-rm -f "$DIST_DIR/examples/self_hosted.omg"
 
 # === tools/ =================================================================
 

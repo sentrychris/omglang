@@ -777,7 +777,6 @@ omglang/
 │   └── package.sh   spins out a slim native-only distribution into dist/
 ├── examples/        small standalone programs
 ├── tools/           command-line utilities written in OMG (wc, grep, sort, etc.)
-├── reference/       the legacy Python implementation + a tree-walk OMG-in-OMG interpreter
 ├── docs/            documentation; see docs/native/ for the native compilation path
 └── vscode/          VS Code extension (syntax highlighting + LSP completion)
 ```

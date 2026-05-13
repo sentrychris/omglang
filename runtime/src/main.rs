@@ -1,8 +1,8 @@
 //! OMG Language Runtime entry point.
 //!
 //! The runtime is fully self-hosted in Rust: it owns the lexer, parser,
-//! compiler, bytecode reader/writer, and VM. There is no longer any
-//! dependency on Python or on the embedded self-hosted `interpreter.omg`.
+//! compiler, bytecode reader/writer, and VM. No external dependencies
+//! beyond the standard Rust toolchain.
 //!
 //! ## Modes
 //! - **No args** → interactive REPL.

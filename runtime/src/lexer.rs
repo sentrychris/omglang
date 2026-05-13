@@ -3,7 +3,7 @@
 //! Single-pass scanner for OMG source code. Produces a flat `Vec<Token>`
 //! consumed by [`crate::parser::Parser`].
 //!
-//! Behaviour mirrors `omglang/lexer.py` from the original Python reference:
+//! Behaviour:
 //! - Strips the required `;;;omg` header off the first non-empty line.
 //! - Skips `#`-line comments and `/** ... */` doc blocks.
 //! - Emits a `Newline` token (used by the parser to swallow blank lines

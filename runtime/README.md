@@ -9,8 +9,9 @@ bootstrap/src/compiler.omg`). The Rust crate is the substrate: it hosts the VM,
 the built-ins, and a stage-0 frontend used to bootstrap the OMG-in-OMG
 compiler at `cargo build` time.
 
-There is **no Python dependency** at build time or run time. The legacy
-Python toolchain in `reference/` is retained for reference only.
+There is **no Python dependency** at build time or run time. The Rust
+runtime + the OMG-in-OMG toolchain in `bootstrap/src/` are the only
+implementations.
 
 ```text
 .omg source ──► lexer ──► parser ──► AST ──► compiler ──► bytecode ──► stack VM

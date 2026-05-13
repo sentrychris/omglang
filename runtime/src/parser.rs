@@ -3,9 +3,10 @@
 //! Hand-written predictive parser that consumes a token stream from
 //! [`crate::lexer`] and produces a tree of [`crate::ast::Node`]s.
 //!
-//! Grammar mirrors `omglang/parser/expressions.py` and `statements.py` —
-//! the same precedence levels, the same statement forms, the same AST tags
-//! (just typed instead of stringly-tagged tuples).
+//! Grammar matches `bootstrap/src/compiler.omg` — same precedence levels,
+//! same statement forms, same AST tags (just typed instead of stringly-
+//! tagged tuples). The two parsers agree byte-for-byte at the bytecode
+//! layer; that's what `--verify-self-hosted` checks.
 //!
 //! Error messages always include the source file and line number so users
 //! can navigate from a syntax error directly to the offending token.

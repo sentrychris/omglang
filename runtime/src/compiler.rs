@@ -1,16 +1,14 @@
 //! # OMGlang Bytecode Compiler
 //!
 //! Lowers an [`crate::ast::Node`] tree into a flat instruction stream + a
-//! function table compatible with the existing VM.
+//! function table compatible with the existing VM. Sibling of the
+//! OMG-written compiler at `bootstrap/src/compiler.omg` — both produce
+//! byte-identical bytecode for the same source.
 //!
-//! Equivalent to `omglang/compiler.py` from the reference implementation,
-//! plus first-class **native import** support: instead of refusing files
+//! First-class **native import** support: instead of refusing files
 //! with `import`, this compiler recursively compiles imported modules,
 //! mangles their function names so they don't collide, and emits inline
 //! initialisation that builds a frozen-namespace dict for each module.
-//!
-//! There is no longer a need for the OMG-implemented `bootstrap/src/interpreter.omg`
-//! — running a `.omg` file goes straight through this compiler in-process.
 
 use std::collections::{HashMap, HashSet};
 use std::fs;
@@ -110,9 +108,9 @@ fn builtin_names() -> &'static [&'static str] {
     ]
 }
 
-/// Names that lower to a `Raise(kind)` instruction. These mirror the helper
-/// names used by the original bootstrap interpreter and the Python
-/// reference compiler.
+/// Names that lower to a `Raise(kind)` instruction. These match the
+/// helper names used by `bootstrap/src/compiler.omg` so both frontends
+/// emit identical bytecode.
 fn raise_helpers() -> &'static [(&'static str, ErrorKind)] {
     &[
         ("panic", ErrorKind::Generic),
@@ -756,7 +754,7 @@ impl Compiler {
         let saved_code = mem::take(&mut self.code);
         let saved_lines = mem::take(&mut self.lines);
         // Function bodies start with empty break_stack so a stray `break`
-        // produces a syntax error, matching the Python compiler.
+        // produces a syntax error rather than leaking to an enclosing loop.
         let saved_break = mem::take(&mut self.break_stack);
         // Each function tracks its own try-block depth, independent of
         // the enclosing scope's. (Outer try/except blocks don't carry
@@ -1072,8 +1070,9 @@ impl Compiler {
             }
             Node::Binary(BinOp::And, lhs, rhs, _) => {
                 // Short-circuit: if lhs is falsy, the whole expression is
-                // false; otherwise the result is bool(rhs). This matches the
-                // Python reference interpreter (which also returns a bool).
+                // false; otherwise the result is bool(rhs). Always returns
+                // a bool (not the lhs/rhs value) — same as the OMG-written
+                // compiler in bootstrap/src/compiler.omg.
                 self.compile_expr(lhs)?;
                 let jf = self.placeholder(Instr::JumpIfFalse(0));
                 self.compile_expr(rhs)?;

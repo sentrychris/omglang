@@ -85,11 +85,8 @@ project.
 
 ## What's deliberately left out
 
-- `examples/self_hosted.omg` — references the parent repo's
-  `bootstrap/src/compiler.omg` path, so it wouldn't run as-is in the
-  dist.
-- `runtime/`, `reference/`, `vscode/` — Rust, Python, and VS Code
-  extension respectively. Not part of the native pipeline.
+- `runtime/` and `vscode/` — the Rust runtime and VS Code extension.
+  Neither is part of the native pipeline.
 
 ## Verifying the output
 

@@ -65,7 +65,6 @@ that's a *compile-time* path concern, not a runtime one.)
 | `omg/omg-fmt.omg`    | Minimal formatter: re-indents every line using 4-space units sized by accumulated `{ } ( ) [ ]` depth, strips trailing whitespace, preserves blank lines and the contents of strings/docblocks. Idempotent. |
 | `omg/omg-bundle.omg` | Inlines `import` statements into a single self-contained `.omg` file. Top-level names from each imported module are mangled to `__alias__name` and exposed via a `freeze({ ... })` namespace dict; calls like `math.is_prime(97)` continue to work because the dict holds first-class closures. |
 | `omg/omg-deps.omg`   | Prints the import graph of an OMG program as an indented tree. Detects cycles, marks unreadable files. |
-| `omg/omg-test.omg`   | Runs each test file through the OMG-in-OMG tree-walk interpreter at `reference/interpreter.omg` and reports pass/fail. A test passes if it executes to completion without raising; `facts`/`panic`/runtime errors count as failures. Exits non-zero on any failure. |
 
 ### Advanced
 
@@ -151,12 +150,6 @@ character at a time is `O(n²)`:
 - `omg-fmt.omg` and `omg-bundle.omg` keep their output in a single growing
   string (same caveat as above) and process source files line-by-line, so
   performance scales linearly with line count for typical programs.
-- `omg-test.omg` runs each test through the **tree-walk** interpreter at
-  `reference/interpreter.omg`, which is dramatically slower than the
-  bytecode VM (the entire point of the Rust runtime is to avoid it). A
-  test that compiles and runs in 5 ms via `omg <file>` may take several
-  seconds via `omg-test`. Use it for small unit-style tests; for anything
-  with a real workload, use `omg <file>` directly and check the exit code.
 
 If/when the runtime grows mutable string builders or persistent
 collections, these tools should pick up the speedup automatically — the

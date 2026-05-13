@@ -9,10 +9,7 @@ set -u
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 require_native_toolchain
 
-# Examples expected to match across all paths. self_hosted has a known
-# divergence on the native interpreted path (meta-interpreter mutates
-# `current_dir` from inside its hosted scope, which the native runtime
-# can't observe — orthogonal to the test surface).
+# Examples expected to match across all paths.
 EXAMPLES=(
     "examples/assignment.omg"
     "examples/bitwise.omg"
@@ -33,9 +30,6 @@ EXAMPLES=(
     "examples/stack_vm_and_asm.omg"
     "examples/tabula_recta.omg"
 )
-
-# Examples we deliberately skip on certain paths.
-INTERPRETED_SKIP=("examples/self_hosted.omg")
 
 cd "$REPO_ROOT"
 
@@ -93,13 +87,6 @@ section "Parity: native interpreted (omg <file.omg>) vs Rust runtime"
 
 for src in "${EXAMPLES[@]}"; do
     name=$(basename "$src" .omg)
-    skip=0
-    for s in "${INTERPRETED_SKIP[@]}"; do
-        [ "$s" = "$src" ] && skip=1
-    done
-    if [ "$skip" = 1 ]; then
-        continue
-    fi
     rust_out=$("$OMG_RUST" "$src" 2>&1)
     nat_out=$("$OMG_NATIVE" "$src" 2>&1)
     if [ "$rust_out" = "$nat_out" ]; then
@@ -116,13 +103,6 @@ if command -v node >/dev/null 2>&1; then
     section "Parity: native-js (node) vs Rust runtime"
     for src in "${EXAMPLES[@]}"; do
         name=$(basename "$src" .omg)
-        skip=0
-        for s in "${INTERPRETED_SKIP[@]}"; do
-            [ "$s" = "$src" ] && skip=1
-        done
-        if [ "$skip" = 1 ]; then
-            continue
-        fi
         omgb="$TMPDIR_TEST/$name.js.omgb"
         jsfile="$TMPDIR_TEST/$name.js"
         if ! "$OMG_NATIVE" --compile "$src" "$omgb" >/dev/null 2>&1; then
