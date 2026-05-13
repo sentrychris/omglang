@@ -117,6 +117,46 @@ export const BUILTINS: readonly BuiltinDoc[] = [
         detail: 'Close an opened file handle.'
     },
     {
+        name: 'tcp_listen',
+        signature: 'tcp_listen(host, port)',
+        detail:
+            'Bind + listen on `host:port` (e.g. `"127.0.0.1"`, `8080`). ' +
+            'Returns a listener handle.'
+    },
+    {
+        name: 'tcp_accept',
+        signature: 'tcp_accept(handle)',
+        detail:
+            'Block until a peer connects to a listener. Returns a new ' +
+            'stream handle for that connection.'
+    },
+    {
+        name: 'tcp_connect',
+        signature: 'tcp_connect(host, port)',
+        detail:
+            'Open an outbound TCP connection to `host:port`. Returns a ' +
+            'stream handle.'
+    },
+    {
+        name: 'tcp_read',
+        signature: 'tcp_read(handle, max_bytes)',
+        detail:
+            'Read up to `max_bytes` from a stream handle. Returns a list ' +
+            'of byte ints (0–255); empty list means EOF.'
+    },
+    {
+        name: 'tcp_write',
+        signature: 'tcp_write(handle, data)',
+        detail:
+            'Write to a stream handle. `data` is a string or a list of ' +
+            'byte ints (0–255). Returns bytes written.'
+    },
+    {
+        name: 'tcp_close',
+        signature: 'tcp_close(handle)',
+        detail: 'Close a listener or stream handle.'
+    },
+    {
         name: 'call_builtin',
         signature: 'call_builtin(name, args)',
         detail: 'Reflectively dispatch to another built-in by name.'

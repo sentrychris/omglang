@@ -37,6 +37,7 @@
 use std::collections::HashMap;
 use std::fs::{self, OpenOptions};
 use std::io::{Read, Write};
+use std::net::{TcpListener, TcpStream};
 use std::path::PathBuf;
 use std::rc::Rc;
 use std::cell::RefCell;
@@ -63,6 +64,23 @@ static FILE_HANDLES: Lazy<Mutex<HashMap<i32, FileEntry>>> =
 
 /// Monotonic counter to allocate new integer file descriptors.
 static NEXT_FD: AtomicI32 = AtomicI32::new(0);
+
+/// Entry in the in-process TCP handle table. `Listener` is a passive
+/// socket awaiting `tcp_accept`; `Stream` is a connected peer (either
+/// the result of `accept` or `tcp_connect`).
+enum TcpEntry {
+    Listener(TcpListener),
+    Stream(TcpStream),
+}
+
+/// Global TCP handle table. Kept separate from `FILE_HANDLES` so the
+/// type-check at dispatch is cheap (no enum unwrap on every file op).
+static TCP_HANDLES: Lazy<Mutex<HashMap<i32, TcpEntry>>> =
+    Lazy::new(|| Mutex::new(HashMap::new()));
+
+/// Monotonic counter for TCP handles. Starts at 1 so a 0 handle is
+/// always invalid (mirrors the C runtime's convention).
+static NEXT_TCP_FD: AtomicI32 = AtomicI32::new(1);
 
 /// `floor()`/`ceil()`/`round()` return ints. After the float operation the
 /// result is still an f64; convert it to i64 with the same finite/range
@@ -735,6 +753,273 @@ pub fn call_builtin(
             }
             _ => Err(RuntimeError::TypeError(
                 "make_dir() expects a path".to_string(),
+            )),
+        },
+
+        // --- TCP networking --------------------------------------------------
+        //
+        // Six builtins; handle ints come from `NEXT_TCP_FD` and live in
+        // `TCP_HANDLES`. Listener handles only accept `tcp_accept`/`tcp_close`;
+        // stream handles only accept `tcp_read`/`tcp_write`/`tcp_close`.
+        // Cross-use is a ValueError rather than a panic so OMG `try` can
+        // recover.
+
+        // tcp_listen(host, port) -> handle. Binds + listens on host:port.
+        // Use "0.0.0.0" to listen on all interfaces, "127.0.0.1" for
+        // loopback only. Port 0 picks an ephemeral port (call tcp_addr
+        // afterwards if you need to know which — not yet exposed).
+        "tcp_listen" => match args {
+            [Value::Str(host), Value::Int(port)] => {
+                if *port < 0 || *port > 65535 {
+                    return Err(RuntimeError::ValueError(format!(
+                        "tcp_listen: port {} out of range 0..65535",
+                        port
+                    )));
+                }
+                let addr = format!("{}:{}", host, port);
+                match TcpListener::bind(&addr) {
+                    Ok(listener) => {
+                        let handle = NEXT_TCP_FD.fetch_add(1, Ordering::SeqCst);
+                        TCP_HANDLES
+                            .lock()
+                            .unwrap()
+                            .insert(handle, TcpEntry::Listener(listener));
+                        Ok(Value::Int(handle as i64))
+                    }
+                    Err(e) => Err(RuntimeError::ValueError(format!(
+                        "tcp_listen: cannot bind '{}': {}",
+                        addr, e
+                    ))),
+                }
+            }
+            _ => Err(RuntimeError::TypeError(
+                "tcp_listen() expects (host: str, port: int)".to_string(),
+            )),
+        },
+
+        // tcp_accept(handle) -> client_handle. Blocks until a peer
+        // connects. The returned handle is a *stream*; close it with
+        // tcp_close once you're done with that request.
+        "tcp_accept" => match args {
+            [Value::Int(handle)] => {
+                // Hold the lock only long enough to pull the listener
+                // out by reference; .accept() blocks and we don't want
+                // to keep the global table locked while it does.
+                let listener_clone = {
+                    let table = TCP_HANDLES.lock().unwrap();
+                    match table.get(&(*handle as i32)) {
+                        Some(TcpEntry::Listener(l)) => {
+                            l.try_clone().map_err(|e| {
+                                RuntimeError::ValueError(format!(
+                                    "tcp_accept: cannot clone listener: {}", e
+                                ))
+                            })?
+                        }
+                        Some(TcpEntry::Stream(_)) => {
+                            return Err(RuntimeError::ValueError(
+                                "tcp_accept: handle is a stream, not a listener".to_string(),
+                            ));
+                        }
+                        None => {
+                            return Err(RuntimeError::ValueError(
+                                "tcp_accept: invalid tcp handle".to_string(),
+                            ));
+                        }
+                    }
+                };
+                match listener_clone.accept() {
+                    Ok((stream, _peer)) => {
+                        let new_handle = NEXT_TCP_FD.fetch_add(1, Ordering::SeqCst);
+                        TCP_HANDLES
+                            .lock()
+                            .unwrap()
+                            .insert(new_handle, TcpEntry::Stream(stream));
+                        Ok(Value::Int(new_handle as i64))
+                    }
+                    Err(e) => Err(RuntimeError::ValueError(format!(
+                        "tcp_accept: {}", e
+                    ))),
+                }
+            }
+            _ => Err(RuntimeError::TypeError(
+                "tcp_accept() expects a listener handle".to_string(),
+            )),
+        },
+
+        // tcp_connect(host, port) -> handle. Outbound client connection.
+        "tcp_connect" => match args {
+            [Value::Str(host), Value::Int(port)] => {
+                if *port < 0 || *port > 65535 {
+                    return Err(RuntimeError::ValueError(format!(
+                        "tcp_connect: port {} out of range 0..65535",
+                        port
+                    )));
+                }
+                let addr = format!("{}:{}", host, port);
+                match TcpStream::connect(&addr) {
+                    Ok(stream) => {
+                        let handle = NEXT_TCP_FD.fetch_add(1, Ordering::SeqCst);
+                        TCP_HANDLES
+                            .lock()
+                            .unwrap()
+                            .insert(handle, TcpEntry::Stream(stream));
+                        Ok(Value::Int(handle as i64))
+                    }
+                    Err(e) => Err(RuntimeError::ValueError(format!(
+                        "tcp_connect: cannot connect to '{}': {}",
+                        addr, e
+                    ))),
+                }
+            }
+            _ => Err(RuntimeError::TypeError(
+                "tcp_connect() expects (host: str, port: int)".to_string(),
+            )),
+        },
+
+        // tcp_read(handle, max_bytes) -> [int, ...]. Reads up to
+        // `max_bytes` bytes from the stream and returns them as a list
+        // of byte values (0-255). An empty list means EOF (peer closed
+        // the write end). A short read does NOT mean EOF — the peer
+        // may simply not have sent all `max_bytes` yet. Callers that
+        // need a delimiter-framed message (like an HTTP request) must
+        // loop until they see the delimiter.
+        "tcp_read" => match args {
+            [Value::Int(handle), Value::Int(max_bytes)] => {
+                if *max_bytes < 0 {
+                    return Err(RuntimeError::ValueError(
+                        "tcp_read: max_bytes must be non-negative".to_string(),
+                    ));
+                }
+                let mut stream_clone = {
+                    let table = TCP_HANDLES.lock().unwrap();
+                    match table.get(&(*handle as i32)) {
+                        Some(TcpEntry::Stream(s)) => {
+                            s.try_clone().map_err(|e| {
+                                RuntimeError::ValueError(format!(
+                                    "tcp_read: cannot clone stream: {}", e
+                                ))
+                            })?
+                        }
+                        Some(TcpEntry::Listener(_)) => {
+                            return Err(RuntimeError::ValueError(
+                                "tcp_read: handle is a listener, not a stream".to_string(),
+                            ));
+                        }
+                        None => {
+                            return Err(RuntimeError::ValueError(
+                                "tcp_read: invalid tcp handle".to_string(),
+                            ));
+                        }
+                    }
+                };
+                let mut buf = vec![0u8; *max_bytes as usize];
+                match stream_clone.read(&mut buf) {
+                    Ok(n) => {
+                        buf.truncate(n);
+                        let list: Vec<Value> =
+                            buf.into_iter().map(|b| Value::Int(b as i64)).collect();
+                        Ok(Value::List(Rc::new(RefCell::new(list))))
+                    }
+                    Err(e) => Err(RuntimeError::ValueError(format!(
+                        "tcp_read: {}", e
+                    ))),
+                }
+            }
+            _ => Err(RuntimeError::TypeError(
+                "tcp_read() expects (handle: int, max_bytes: int)".to_string(),
+            )),
+        },
+
+        // tcp_write(handle, data) -> int bytes written. Accepts either
+        // a string (UTF-8 encoded) or a list of byte values 0-255.
+        // Writes the whole buffer (loops internally on partial writes).
+        "tcp_write" => match args {
+            [Value::Int(handle), Value::Str(data)] => {
+                let mut stream_clone = {
+                    let table = TCP_HANDLES.lock().unwrap();
+                    match table.get(&(*handle as i32)) {
+                        Some(TcpEntry::Stream(s)) => {
+                            s.try_clone().map_err(|e| {
+                                RuntimeError::ValueError(format!(
+                                    "tcp_write: cannot clone stream: {}", e
+                                ))
+                            })?
+                        }
+                        Some(TcpEntry::Listener(_)) => {
+                            return Err(RuntimeError::ValueError(
+                                "tcp_write: handle is a listener, not a stream".to_string(),
+                            ));
+                        }
+                        None => {
+                            return Err(RuntimeError::ValueError(
+                                "tcp_write: invalid tcp handle".to_string(),
+                            ));
+                        }
+                    }
+                };
+                let bytes = data.as_bytes();
+                stream_clone.write_all(bytes).map_err(|e| {
+                    RuntimeError::ValueError(format!("tcp_write: {}", e))
+                })?;
+                Ok(Value::Int(bytes.len() as i64))
+            }
+            [Value::Int(handle), Value::List(list)] => {
+                let mut stream_clone = {
+                    let table = TCP_HANDLES.lock().unwrap();
+                    match table.get(&(*handle as i32)) {
+                        Some(TcpEntry::Stream(s)) => {
+                            s.try_clone().map_err(|e| {
+                                RuntimeError::ValueError(format!(
+                                    "tcp_write: cannot clone stream: {}", e
+                                ))
+                            })?
+                        }
+                        Some(TcpEntry::Listener(_)) => {
+                            return Err(RuntimeError::ValueError(
+                                "tcp_write: handle is a listener, not a stream".to_string(),
+                            ));
+                        }
+                        None => {
+                            return Err(RuntimeError::ValueError(
+                                "tcp_write: invalid tcp handle".to_string(),
+                            ));
+                        }
+                    }
+                };
+                let bytes = list
+                    .borrow()
+                    .iter()
+                    .map(|v| match v {
+                        Value::Int(i) if *i >= 0 && *i <= 255 => Ok(*i as u8),
+                        _ => Err(RuntimeError::TypeError(
+                            "tcp_write() expects bytes 0-255".to_string(),
+                        )),
+                    })
+                    .collect::<Result<Vec<u8>, RuntimeError>>()?;
+                stream_clone.write_all(&bytes).map_err(|e| {
+                    RuntimeError::ValueError(format!("tcp_write: {}", e))
+                })?;
+                Ok(Value::Int(bytes.len() as i64))
+            }
+            _ => Err(RuntimeError::TypeError(
+                "tcp_write() expects (handle: int, data: str | [int])".to_string(),
+            )),
+        },
+
+        // tcp_close(handle) -> None. Drops the listener or stream,
+        // releasing the OS resource. Closing an already-closed handle
+        // raises ValueError (mirrors file_close).
+        "tcp_close" => match args {
+            [Value::Int(handle)] => {
+                let mut table = TCP_HANDLES.lock().unwrap();
+                if table.remove(&(*handle as i32)).is_some() {
+                    Ok(Value::None)
+                } else {
+                    Err(RuntimeError::ValueError("invalid tcp handle".to_string()))
+                }
+            }
+            _ => Err(RuntimeError::TypeError(
+                "tcp_close() expects a handle".to_string(),
             )),
         },
 

@@ -94,6 +94,15 @@ fn builtin_names() -> &'static [&'static str] {
         "stdin_read",
         "stdin_read_bytes",
         "print",
+        // TCP networking. Six builtins mirror the file_* shape (open,
+        // accept→stream, read, write, close). Bytes-in / bytes-out;
+        // use bytes_to_string / string_bytes at the OMG layer for text.
+        "tcp_listen",
+        "tcp_accept",
+        "tcp_connect",
+        "tcp_read",
+        "tcp_write",
+        "tcp_close",
     ]
 }
 

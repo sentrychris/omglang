@@ -450,6 +450,15 @@ proc emit_builtin(name, argc) {
     # Reflective dispatch (used by the OMG-in-OMG interpreter).
     if name == "call_builtin" and argc == 2 { return emit_builtin2("omg_call_builtin") }
 
+    # TCP networking. Listener/stream handles share one table; the C
+    # runtime tag-checks per call.
+    if name == "tcp_listen"  and argc == 2 { return emit_builtin2("omg_builtin_tcp_listen") }
+    if name == "tcp_accept"  and argc == 1 { return emit_builtin1("omg_builtin_tcp_accept") }
+    if name == "tcp_connect" and argc == 2 { return emit_builtin2("omg_builtin_tcp_connect") }
+    if name == "tcp_read"    and argc == 2 { return emit_builtin2("omg_builtin_tcp_read") }
+    if name == "tcp_write"   and argc == 2 { return emit_builtin2("omg_builtin_tcp_write") }
+    if name == "tcp_close"   and argc == 1 { return emit_builtin1("omg_builtin_tcp_close") }
+
     panic("native-c: builtin '" + name + "' (argc=" + argc + ") not implemented yet")
 }
 

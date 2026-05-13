@@ -15,6 +15,10 @@
 #include <sys/wait.h>
 #include <dirent.h>
 #include <unistd.h>
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <arpa/inet.h>
+#include <netdb.h>
 
 typedef enum {
     OMG_INT,
@@ -2143,6 +2147,214 @@ static Value omg_builtin_make_dir(Value path) {
     return omg_bool(1);
 }
 
+/* === TCP networking ====================================================== */
+
+/* Two kinds of handle behind one table: a passive listener (the result
+ * of tcp_listen) and a connected stream (the result of accept/connect).
+ * The kind decides which calls are valid on the handle. */
+typedef struct {
+    int fd;        /* OS socket file descriptor, or -1 if unused */
+    int is_listener;
+} OmgTcpEntry;
+
+#define OMG_MAX_TCP 64
+static OmgTcpEntry omg_tcp_table[OMG_MAX_TCP];
+
+/* Allocate a slot. Returns a 1-based handle so 0 is always invalid. */
+static int omg_tcp_alloc(int fd, int is_listener) {
+    for (int i = 0; i < OMG_MAX_TCP; i++) {
+        if (omg_tcp_table[i].fd == 0 && omg_tcp_table[i].is_listener == 0) {
+            omg_tcp_table[i].fd = fd;
+            omg_tcp_table[i].is_listener = is_listener;
+            return i + 1;
+        }
+    }
+    omg_panic("ValueError", "too many open tcp handles");
+    return -1;
+}
+
+static OmgTcpEntry *omg_tcp_get(int handle) {
+    int idx = handle - 1;
+    if (idx < 0 || idx >= OMG_MAX_TCP) return NULL;
+    if (omg_tcp_table[idx].fd <= 0) return NULL;
+    return &omg_tcp_table[idx];
+}
+
+/* Resolve "host:port" via getaddrinfo, suitable for either AI_PASSIVE
+ * (listen/bind) or active (connect). Caller owns the returned addrinfo
+ * and must freeaddrinfo it. Returns NULL on lookup failure (callers
+ * panic with the gai_strerror string). */
+static struct addrinfo *omg_resolve_addr(const char *host, int port, int passive) {
+    struct addrinfo hints, *res = NULL;
+    memset(&hints, 0, sizeof(hints));
+    hints.ai_family = AF_UNSPEC;
+    hints.ai_socktype = SOCK_STREAM;
+    hints.ai_flags = passive ? AI_PASSIVE : 0;
+    char port_str[8];
+    snprintf(port_str, sizeof(port_str), "%d", port);
+    int rc = getaddrinfo(host, port_str, &hints, &res);
+    if (rc != 0) return NULL;
+    return res;
+}
+
+static Value omg_builtin_tcp_listen(Value host, Value port) {
+    if (host.tag != OMG_STR || port.tag != OMG_INT) {
+        omg_panic("TypeError", "tcp_listen() expects (host: str, port: int)");
+    }
+    if (port.v.i < 0 || port.v.i > 65535) {
+        omg_panicf("ValueError", "tcp_listen: port %lld out of range 0..65535",
+                   (long long)port.v.i);
+    }
+    struct addrinfo *res = omg_resolve_addr(host.v.s, (int)port.v.i, 1);
+    if (!res) {
+        omg_panicf("ValueError", "tcp_listen: cannot resolve '%s'", host.v.s);
+    }
+    int fd = socket(res->ai_family, res->ai_socktype, res->ai_protocol);
+    if (fd < 0) {
+        freeaddrinfo(res);
+        omg_panicf("ValueError", "tcp_listen: socket: %s", strerror(errno));
+    }
+    int one = 1;
+    setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &one, sizeof(one));
+    if (bind(fd, res->ai_addr, res->ai_addrlen) != 0) {
+        int saved = errno;
+        close(fd);
+        freeaddrinfo(res);
+        omg_panicf("ValueError", "tcp_listen: bind: %s", strerror(saved));
+    }
+    freeaddrinfo(res);
+    if (listen(fd, 16) != 0) {
+        int saved = errno;
+        close(fd);
+        omg_panicf("ValueError", "tcp_listen: listen: %s", strerror(saved));
+    }
+    return omg_int((int64_t)omg_tcp_alloc(fd, 1));
+}
+
+static Value omg_builtin_tcp_accept(Value h) {
+    if (h.tag != OMG_INT) omg_panic("TypeError", "tcp_accept() expects a handle");
+    OmgTcpEntry *e = omg_tcp_get((int)h.v.i);
+    if (!e) omg_panic("ValueError", "tcp_accept: invalid tcp handle");
+    if (!e->is_listener) omg_panic("ValueError", "tcp_accept: handle is a stream, not a listener");
+    struct sockaddr_storage peer;
+    socklen_t peer_len = sizeof(peer);
+    int client_fd = accept(e->fd, (struct sockaddr *)&peer, &peer_len);
+    if (client_fd < 0) {
+        omg_panicf("ValueError", "tcp_accept: %s", strerror(errno));
+    }
+    return omg_int((int64_t)omg_tcp_alloc(client_fd, 0));
+}
+
+static Value omg_builtin_tcp_connect(Value host, Value port) {
+    if (host.tag != OMG_STR || port.tag != OMG_INT) {
+        omg_panic("TypeError", "tcp_connect() expects (host: str, port: int)");
+    }
+    if (port.v.i < 0 || port.v.i > 65535) {
+        omg_panicf("ValueError", "tcp_connect: port %lld out of range 0..65535",
+                   (long long)port.v.i);
+    }
+    struct addrinfo *res = omg_resolve_addr(host.v.s, (int)port.v.i, 0);
+    if (!res) {
+        omg_panicf("ValueError", "tcp_connect: cannot resolve '%s'", host.v.s);
+    }
+    int fd = -1;
+    for (struct addrinfo *p = res; p != NULL; p = p->ai_next) {
+        fd = socket(p->ai_family, p->ai_socktype, p->ai_protocol);
+        if (fd < 0) continue;
+        if (connect(fd, p->ai_addr, p->ai_addrlen) == 0) break;
+        close(fd);
+        fd = -1;
+    }
+    freeaddrinfo(res);
+    if (fd < 0) {
+        omg_panicf("ValueError", "tcp_connect: cannot connect to '%s': %s",
+                   host.v.s, strerror(errno));
+    }
+    return omg_int((int64_t)omg_tcp_alloc(fd, 0));
+}
+
+static Value omg_builtin_tcp_read(Value h, Value maxbytes) {
+    if (h.tag != OMG_INT) omg_panic("TypeError", "tcp_read() expects a handle");
+    if (maxbytes.tag != OMG_INT) omg_panic("TypeError", "tcp_read() expects an integer max_bytes");
+    if (maxbytes.v.i < 0) omg_panic("ValueError", "tcp_read: max_bytes must be non-negative");
+    OmgTcpEntry *e = omg_tcp_get((int)h.v.i);
+    if (!e) omg_panic("ValueError", "tcp_read: invalid tcp handle");
+    if (e->is_listener) omg_panic("ValueError", "tcp_read: handle is a listener, not a stream");
+    size_t cap = (size_t)maxbytes.v.i;
+    Value out;
+    out.tag = OMG_LIST;
+    out.v.l = omg_list_alloc(cap > 0 ? (int)cap : 1);
+    if (cap == 0) return out;
+    unsigned char *buf = (unsigned char *)malloc(cap);
+    if (!buf) { fprintf(stderr, "out of memory\n"); exit(1); }
+    ssize_t n = read(e->fd, buf, cap);
+    if (n < 0) {
+        free(buf);
+        omg_panicf("ValueError", "tcp_read: %s", strerror(errno));
+    }
+    for (ssize_t i = 0; i < n; i++) {
+        omg_list_push(out.v.l, omg_int((int64_t)buf[i]));
+    }
+    free(buf);
+    return out;
+}
+
+static Value omg_builtin_tcp_write(Value h, Value data) {
+    if (h.tag != OMG_INT) omg_panic("TypeError", "tcp_write() expects a handle");
+    OmgTcpEntry *e = omg_tcp_get((int)h.v.i);
+    if (!e) omg_panic("ValueError", "tcp_write: invalid tcp handle");
+    if (e->is_listener) omg_panic("ValueError", "tcp_write: handle is a listener, not a stream");
+
+    const unsigned char *buf = NULL;
+    size_t len = 0;
+    unsigned char *owned = NULL;
+    if (data.tag == OMG_STR) {
+        buf = (const unsigned char *)data.v.s;
+        len = strlen(data.v.s);
+    } else if (data.tag == OMG_LIST) {
+        OmgList *l = data.v.l;
+        len = (size_t)l->len;
+        if (len > 0) {
+            owned = (unsigned char *)malloc(len);
+            if (!owned) { fprintf(stderr, "out of memory\n"); exit(1); }
+            for (int i = 0; i < l->len; i++) {
+                if (l->items[i].tag != OMG_INT || l->items[i].v.i < 0 || l->items[i].v.i > 255) {
+                    free(owned);
+                    omg_panic("TypeError", "tcp_write() expects bytes 0-255");
+                }
+                owned[i] = (unsigned char)l->items[i].v.i;
+            }
+            buf = owned;
+        }
+    } else {
+        omg_panic("TypeError", "tcp_write() expects (handle: int, data: str | [int])");
+    }
+    /* Loop on partial writes — write(2) on a stream socket can return
+     * fewer bytes than requested under load. */
+    size_t total = 0;
+    while (total < len) {
+        ssize_t w = write(e->fd, buf + total, len - total);
+        if (w < 0) {
+            if (errno == EINTR) continue;
+            if (owned) free(owned);
+            omg_panicf("ValueError", "tcp_write: %s", strerror(errno));
+        }
+        total += (size_t)w;
+    }
+    if (owned) free(owned);
+    return omg_int((int64_t)total);
+}
+
+static Value omg_builtin_tcp_close(Value h) {
+    if (h.tag != OMG_INT) omg_panic("TypeError", "tcp_close() expects a handle");
+    OmgTcpEntry *e = omg_tcp_get((int)h.v.i);
+    if (!e) omg_panic("ValueError", "invalid tcp handle");
+    close(e->fd);
+    e->fd = 0;
+    e->is_listener = 0;
+    return omg_none();
+}
+
 /* === Reflective dispatch ================================================== */
 
 /* call_builtin(name, args_list) — dispatch to another builtin by name.
@@ -2193,6 +2405,8 @@ static Value omg_call_builtin(Value name, Value args) {
         if (strcmp(n, "exit_with_error") == 0) return omg_builtin_exit_with_error(a[0]);
         if (strcmp(n, "exit") == 0)            return omg_builtin_exit(a[0]);
         if (strcmp(n, "subprocess") == 0)      return omg_builtin_subprocess(a[0]);
+        if (strcmp(n, "tcp_accept") == 0)      return omg_builtin_tcp_accept(a[0]);
+        if (strcmp(n, "tcp_close") == 0)       return omg_builtin_tcp_close(a[0]);
     }
     if (argc == 0) {
         if (strcmp(n, "getpid") == 0)            return omg_builtin_getpid();
@@ -2211,6 +2425,10 @@ static Value omg_call_builtin(Value name, Value args) {
         if (strcmp(n, "file_write") == 0) return omg_builtin_file_write(a[0], a[1]);
         if (strcmp(n, "file_seek") == 0)  return omg_builtin_file_seek(a[0], a[1]);
         if (strcmp(n, "call_builtin") == 0) return omg_call_builtin(a[0], a[1]);
+        if (strcmp(n, "tcp_listen") == 0)  return omg_builtin_tcp_listen(a[0], a[1]);
+        if (strcmp(n, "tcp_connect") == 0) return omg_builtin_tcp_connect(a[0], a[1]);
+        if (strcmp(n, "tcp_read") == 0)    return omg_builtin_tcp_read(a[0], a[1]);
+        if (strcmp(n, "tcp_write") == 0)   return omg_builtin_tcp_write(a[0], a[1]);
     }
     omg_panicf("TypeError", "unknown builtin: %s", n);
     return omg_none(); /* unreachable */

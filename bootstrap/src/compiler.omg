@@ -1090,7 +1090,9 @@ alloc cc_builtins := [
     "list_repeat",
     "exit_with_error", "exit", "getpid", "subprocess",
     "stdin_readline", "stdin_read", "stdin_read_bytes",
-    "print", "executable_path"
+    "print", "executable_path",
+    "tcp_listen", "tcp_accept", "tcp_connect",
+    "tcp_read", "tcp_write", "tcp_close"
 ]
 
 proc cc_is_builtin(name) {
