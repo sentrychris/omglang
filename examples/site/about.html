@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>About this server</title>
+  <link rel="stylesheet" href="/style.css">
+  <link rel="icon" href="/logo.svg" type="image/svg+xml">
+</head>
+<body>
+  <header>
+    <img src="/logo.svg" alt="OMG" width="64" height="64">
+    <h1>About</h1>
+  </header>
+  <main>
+    <p>
+      The server lives in <code>tools/web/http_server.omg</code>. It uses six
+      TCP builtins (<code>tcp_listen</code>, <code>tcp_accept</code>,
+      <code>tcp_connect</code>, <code>tcp_read</code>, <code>tcp_write</code>,
+      <code>tcp_close</code>) plus a POSIX <code>fork()</code> for
+      concurrency.
+    </p>
+    <p>
+      Everything works in both the Rust runtime
+      (<code>omg tools/web/http_server.omg</code>) and as a native-compiled
+      ELF binary (<code>bootstrap/bin/omg --build
+      tools/http_server.omg out</code>).
+    </p>
+    <p><a href="/">← back home</a></p>
+  </main>
+</body>
+</html>

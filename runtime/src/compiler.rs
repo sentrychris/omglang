@@ -103,6 +103,10 @@ fn builtin_names() -> &'static [&'static str] {
         "tcp_read",
         "tcp_write",
         "tcp_close",
+        // POSIX fork() for process-per-request concurrency. Returns 0
+        // in child, child pid in parent. SIGCHLD is set to SIG_IGN so
+        // children auto-reap.
+        "fork",
     ]
 }
 

@@ -157,6 +157,14 @@ export const BUILTINS: readonly BuiltinDoc[] = [
         detail: 'Close a listener or stream handle.'
     },
     {
+        name: 'fork',
+        signature: 'fork()',
+        detail:
+            'POSIX fork. Returns 0 in the child process and the new ' +
+            'child PID in the parent. Children auto-reap (SIGCHLD set ' +
+            'to SIG_IGN), so no wait() is required.'
+    },
+    {
         name: 'call_builtin',
         signature: 'call_builtin(name, args)',
         detail: 'Reflectively dispatch to another built-in by name.'

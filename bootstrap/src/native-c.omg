@@ -459,6 +459,9 @@ proc emit_builtin(name, argc) {
     if name == "tcp_write"   and argc == 2 { return emit_builtin2("omg_builtin_tcp_write") }
     if name == "tcp_close"   and argc == 1 { return emit_builtin1("omg_builtin_tcp_close") }
 
+    # POSIX fork for process-per-request concurrency in the HTTP server.
+    if name == "fork" and argc == 0 { return emit_builtin0("omg_builtin_fork") }
+
     panic("native-c: builtin '" + name + "' (argc=" + argc + ") not implemented yet")
 }
 

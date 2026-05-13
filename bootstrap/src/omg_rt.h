@@ -19,6 +19,7 @@
 #include <netinet/in.h>
 #include <arpa/inet.h>
 #include <netdb.h>
+#include <signal.h>
 
 typedef enum {
     OMG_INT,
@@ -2355,6 +2356,21 @@ static Value omg_builtin_tcp_close(Value h) {
     return omg_none();
 }
 
+/* === Process control: fork() ============================================= */
+
+/* fork() — POSIX fork. Returns 0 in the child and the child's PID in
+ * the parent (or panics on failure). Setting SIGCHLD to SIG_IGN tells
+ * the kernel to auto-reap exiting children, so naive callers don't
+ * accumulate zombies. */
+static Value omg_builtin_fork(void) {
+    signal(SIGCHLD, SIG_IGN);
+    pid_t pid = fork();
+    if (pid < 0) {
+        omg_panicf("ValueError", "fork: %s", strerror(errno));
+    }
+    return omg_int((int64_t)pid);
+}
+
 /* === Reflective dispatch ================================================== */
 
 /* call_builtin(name, args_list) — dispatch to another builtin by name.
@@ -2414,6 +2430,7 @@ static Value omg_call_builtin(Value name, Value args) {
         if (strcmp(n, "stdin_read") == 0)        return omg_builtin_stdin_read();
         if (strcmp(n, "stdin_read_bytes") == 0)  return omg_builtin_stdin_read_bytes();
         if (strcmp(n, "executable_path") == 0)   return omg_builtin_executable_path();
+        if (strcmp(n, "fork") == 0)              return omg_builtin_fork();
     }
     if (argc == 1) {
         if (strcmp(n, "print") == 0)           return omg_builtin_print(a[0]);

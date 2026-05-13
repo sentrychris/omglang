@@ -1,0 +1,224 @@
+;;;omg
+
+alloc host := "127.0.0.1"
+alloc webroot := "/var/www/html"
+alloc port := 9876
+if length(args) > 1 { webroot := args[1] }
+if length(args) > 2 { port := int(args[2]) }
+
+# ---- request parsing ---------------------------------------------------
+
+# Find the index of the first occurrence of `needle` (a string) in
+# `bytes` (a list of byte ints), or -1 if not present. Lets us spot the
+# end-of-headers marker (CRLF CRLF) in a request buffer.
+proc find_in_bytes(bytes, needle) {
+    alloc nlen := length(needle)
+    alloc blen := length(bytes)
+    if nlen == 0 { return 0 }
+    alloc i := 0
+    loop i + nlen <= blen {
+        alloc j := 0
+        alloc match := true
+        loop j < nlen {
+            if bytes[i + j] != ascii(needle[j]) {
+                match := false
+                break
+            }
+            j := j + 1
+        }
+        if match { return i }
+        i := i + 1
+    }
+    return -1
+}
+
+# Read from `client` until we've seen "\r\n\r\n" or hit EOF. Returns the
+# request bytes decoded as a UTF-8 string. HTTP headers are ASCII so
+# decoding the byte buffer is safe.
+proc read_request(client) {
+    alloc buf := []
+    alloc end := -1
+    loop end < 0 {
+        alloc chunk := tcp_read(client, 4096)
+        if length(chunk) == 0 { break }
+        buf := buf + chunk
+        end := find_in_bytes(buf, "\r\n\r\n")
+        if length(buf) > 65536 { break }
+    }
+    return bytes_to_string(buf)
+}
+
+# Pull the request line ("GET /path HTTP/1.1") out of the raw text.
+# Returns [method, path]. The version is discarded.
+proc parse_request_line(text) {
+    alloc i := 0
+    alloc n := length(text)
+    loop i < n and text[i] != " " { i := i + 1 }
+    alloc method := text[0:i]
+    i := i + 1
+    alloc start := i
+    loop i < n and text[i] != " " and text[i] != "\r" { i := i + 1 }
+    alloc path := text[start:i]
+    return [method, path]
+}
+
+# ---- path handling -----------------------------------------------------
+
+# Cheap directory-traversal guard: reject any path containing "..".
+# We don't try to canonicalize; we just refuse the dangerous pattern.
+proc is_safe_path(p) {
+    alloc i := 0
+    alloc n := length(p)
+    loop i < n - 1 {
+        if p[i] == "." and p[i + 1] == "." {
+            return false
+        }
+        i := i + 1
+    }
+    return true
+}
+
+# Strip a query string ("?foo=bar") off the URL path. We don't use it,
+# but tolerating it lets links with query params still resolve.
+proc strip_query(p) {
+    alloc i := 0
+    alloc n := length(p)
+    loop i < n and p[i] != "?" { i := i + 1 }
+    return p[0:i]
+}
+
+# Map URL path -> filesystem path under webroot. "/" -> "<root>/index.html".
+proc resolve_fs_path(root, url_path) {
+    alloc clean := strip_query(url_path)
+    if clean == "/" or clean == "" {
+        clean := "/index.html"
+    }
+    # Strip the leading "/" so we can re-join with the root cleanly.
+    if length(clean) > 0 and clean[0] == "/" {
+        clean := clean[1:length(clean)]
+    }
+    return root + "/" + clean
+}
+
+# True iff `s` ends with `suffix`. Used by the content-type table.
+proc ends_with(s, suffix) {
+    alloc sl := length(s)
+    alloc el := length(suffix)
+    if el > sl { return false }
+    return s[sl - el:sl] == suffix
+}
+
+# Content-Type by file extension. Anything not in the table is sent as
+# application/octet-stream so the browser will download rather than
+# guess.
+proc content_type_for(path) {
+    if ends_with(path, ".html") { return "text/html; charset=utf-8" }
+    if ends_with(path, ".htm")  { return "text/html; charset=utf-8" }
+    if ends_with(path, ".css")  { return "text/css; charset=utf-8" }
+    if ends_with(path, ".js")   { return "application/javascript; charset=utf-8" }
+    if ends_with(path, ".json") { return "application/json; charset=utf-8" }
+    if ends_with(path, ".txt")  { return "text/plain; charset=utf-8" }
+    if ends_with(path, ".svg")  { return "image/svg+xml" }
+    if ends_with(path, ".png")  { return "image/png" }
+    if ends_with(path, ".jpg")  { return "image/jpeg" }
+    if ends_with(path, ".jpeg") { return "image/jpeg" }
+    if ends_with(path, ".gif")  { return "image/gif" }
+    if ends_with(path, ".ico")  { return "image/x-icon" }
+    if ends_with(path, ".woff") { return "font/woff" }
+    if ends_with(path, ".woff2") { return "font/woff2" }
+    return "application/octet-stream"
+}
+
+# ---- response writers --------------------------------------------------
+
+# Send headers + an inline string body. Used for status pages (400/404/etc).
+proc respond_html(client, status, body) {
+    alloc hdr := "HTTP/1.0 " + status + "\r\n"
+    hdr := hdr + "Content-Type: text/html; charset=utf-8\r\n"
+    hdr := hdr + "Content-Length: " + length(body) + "\r\n"
+    hdr := hdr + "Connection: close\r\n\r\n"
+    tcp_write(client, hdr)
+    tcp_write(client, body)
+}
+
+# Open the file in binary mode, read the whole thing, send headers +
+# body. tcp_write accepts a byte list so binary assets (PNG, SVG, etc.)
+# go out untouched.
+proc serve_file(client, fs_path) {
+    alloc h := file_open(fs_path, "rb")
+    alloc body := file_read(h)
+    file_close(h)
+    alloc hdr := "HTTP/1.0 200 OK\r\n"
+    hdr := hdr + "Content-Type: " + content_type_for(fs_path) + "\r\n"
+    hdr := hdr + "Content-Length: " + length(body) + "\r\n"
+    hdr := hdr + "Connection: close\r\n\r\n"
+    tcp_write(client, hdr)
+    tcp_write(client, body)
+}
+
+# ---- routing -----------------------------------------------------------
+
+proc handle(client, root, method, path) {
+    if method != "GET" and method != "HEAD" {
+        respond_html(client, "405 Method Not Allowed",
+            "<!doctype html><title>405</title><h1>405 Method Not Allowed</h1>")
+        return false
+    }
+    if is_safe_path(path) == false {
+        respond_html(client, "400 Bad Request",
+            "<!doctype html><title>400</title><h1>400 Bad Request</h1>")
+        return false
+    }
+    # /slow keeps the concurrency demo from the previous example —
+    # busy-loop a few million iterations so this request takes a
+    # visible amount of wall time. Hit /slow + /about.html in two
+    # tabs and the second one returns immediately.
+    alloc clean := strip_query(path)
+    if clean == "/slow" {
+        alloc n := 0
+        loop n < 5000000 { n := n + 1 }
+        respond_html(client, "200 OK",
+            "<!doctype html><title>slow</title><h1>finished after " + n + " iterations</h1><p><a href=\"/\">back</a></p>")
+        return true
+    }
+    alloc fs_path := resolve_fs_path(root, path)
+    if file_exists(fs_path) == false or is_dir(fs_path) {
+        respond_html(client, "404 Not Found",
+            "<!doctype html><title>404</title><h1>404 Not Found</h1><p>No file at " + path + "</p>")
+        return false
+    }
+    serve_file(client, fs_path)
+    return true
+}
+
+# ---- accept loop -------------------------------------------------------
+
+alloc server := tcp_listen(host, port)
+emit "listening on http://" + host + ":" + port
+emit "serving files from " + webroot
+
+# Per-request concurrency: fork() after each accept. The child handles
+# the request and exits; the parent immediately returns to tcp_accept.
+# SIGCHLD is set to SIG_IGN inside fork() so children auto-reap.
+loop true {
+    alloc client := tcp_accept(server)
+    alloc pid := fork()
+    if pid == 0 {
+        # Child: doesn't need to accept again.
+        tcp_close(server)
+        try {
+            alloc text := read_request(client)
+            alloc parts := parse_request_line(text)
+            alloc method := parts[0]
+            alloc path := parts[1]
+            emit method + " " + path
+            handle(client, webroot, method, path)
+        } except err {
+            emit "request error: " + err
+        }
+        tcp_close(client)
+        exit(0)
+    }
+    # Parent: child owns this connection now.
+    tcp_close(client)
+}

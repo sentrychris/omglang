@@ -1006,6 +1006,42 @@ pub fn call_builtin(
             )),
         },
 
+        // fork() -> int. POSIX fork: returns 0 in the child and the
+        // child's PID in the parent. Used for per-request concurrency
+        // in the HTTP server example — each accept forks a worker so
+        // the parent loop can immediately accept the next connection.
+        //
+        // We set SIGCHLD to SIG_IGN on the first call so the kernel
+        // auto-reaps exiting children; without it, naive servers
+        // accumulate zombies indefinitely. Setting it idempotently
+        // means there's no separate `wait()` builtin to remember.
+        //
+        // Refcounted heap state isn't thread-safe in either runtime,
+        // so we deliberately chose processes over threads — each
+        // child gets its own copy-on-write address space, no shared-
+        // mutability hazards. Unix-only.
+        "fork" => {
+            if !args.is_empty() {
+                return Err(RuntimeError::TypeError(
+                    "fork() takes no arguments".to_string(),
+                ));
+            }
+            // SAFETY: signal/fork are standard libc functions; calling
+            // them is fine from a single-threaded VM. Setting SIGCHLD
+            // to SIG_IGN is the POSIX-blessed way to disable zombies
+            // without a SIGCHLD handler.
+            unsafe {
+                libc::signal(libc::SIGCHLD, libc::SIG_IGN);
+                let pid = libc::fork();
+                if pid < 0 {
+                    let err = std::io::Error::last_os_error();
+                    Err(RuntimeError::ValueError(format!("fork: {}", err)))
+                } else {
+                    Ok(Value::Int(pid as i64))
+                }
+            }
+        }
+
         // tcp_close(handle) -> None. Drops the listener or stream,
         // releasing the OS resource. Closing an already-closed handle
         // raises ValueError (mirrors file_close).
