@@ -737,16 +737,22 @@ proc emit_c_for_instr(instr, ctx) {
         alloc inner_info := ctx["func_info"][fname]
         alloc inner_captured := inner_info["captured_list"]
         alloc nc := length(inner_captured)
-        # Cross-module alias. The compiler mangles top-level names with
-        # `__mod_N__` for module isolation, but source-level Load uses
-        # the bare name. If the bare suffix is a known global (i.e. the
-        # analysis already promoted it because something Load'd it),
-        # also assign the closure to that global so subsequent
-        # Load(bare) finds it. Mirrors the strip_mod_prefix path in
-        # vm.rs / vm.omg.
-        alloc alias_assign := ""
         alloc bare := strip_mod_prefix(fname)
-        if bare != false and has_key(ctx["globals"], bare) {
+        # Pick the C variable that receives the closure. Inside a
+        # function, a `proc` definition's MAKE_FUNC carries the
+        # mangled `__mod_N__<bare>` name (function-table key), but
+        # subsequent LOADs in the same body reference the *bare*
+        # name. Assign to the bare local so LOAD finds it.
+        #
+        # At module top level, fname is the global; cross-module
+        # callers may Load it via the bare name though, so we also
+        # alias to the bare global when the analysis flagged it.
+        # Mirrors the dual-bind in vm.rs (`MakeFunc` arm) and vm.omg.
+        alloc target := fname
+        alloc alias_assign := ""
+        if ctx["in_function"] and bare != false {
+            target := bare
+        } elif bare != false and has_key(ctx["globals"], bare) {
             alias_assign := "    { Value v = " + c_var(fname) + "; omg_inc(v); omg_assign(&" + c_var(bare) + ", v); }\n"
         }
         # Bare display name for traceback rendering. Strip any
@@ -758,7 +764,7 @@ proc emit_c_for_instr(instr, ctx) {
         }
         alloc name_lit := "\"" + c_escape(display_name) + "\""
         if nc == 0 {
-            return "    omg_assign(&" + c_var(fname) + ", omg_closure(" + c_fn_name(fidx) + ", " + name_lit + ", NULL, 0));\n" + alias_assign
+            return "    omg_assign(&" + c_var(target) + ", omg_closure(" + c_fn_name(fidx) + ", " + name_lit + ", NULL, 0));\n" + alias_assign
         }
         alloc out := "    {\n"
         out := out + "        Value *cap = (Value *)malloc(" + nc + " * sizeof(Value));\n"
@@ -767,7 +773,7 @@ proc emit_c_for_instr(instr, ctx) {
             out := out + "        cap[" + i + "] = " + c_var(inner_captured[i]) + "; omg_inc(cap[" + i + "]);\n"
             i := i + 1
         }
-        out := out + "        omg_assign(&" + c_var(fname) + ", omg_closure(" + c_fn_name(fidx) + ", " + name_lit + ", cap, " + nc + "));\n"
+        out := out + "        omg_assign(&" + c_var(target) + ", omg_closure(" + c_fn_name(fidx) + ", " + name_lit + ", cap, " + nc + "));\n"
         out := out + "    }\n"
         return out + alias_assign
     }
@@ -1099,7 +1105,19 @@ proc collect_all_local_names(code, funcs) {
             alloc instr := code[j]
             alloc op := instr[0]
             if op == "STORE_LOCAL" or op == "MAKE_FUNC" {
-                all[instr[1]] := true
+                alloc local_name := instr[1]
+                # Nested `proc` definitions emit MAKE_FUNC with the
+                # mangled `__mod_N__<bare>` function-table key, but
+                # subsequent LOADs inside the same function reference
+                # the bare name (cc_resolve_load returns bare for
+                # names in function scope). Record the bare name so
+                # the C local-var allocation matches the LOAD site.
+                # Mirrors strip_mod_prefix in vm.rs / vm.omg.
+                if op == "MAKE_FUNC" {
+                    alloc bare := strip_mod_prefix(local_name)
+                    if bare != false { local_name := bare }
+                }
+                all[local_name] := true
             }
             j := j + 1
         }
@@ -1129,8 +1147,19 @@ proc analyze_function(fname, params, body_start, body_end, code, globals, all_lo
             # Both bind a name in the innermost scope. STORE_LOCAL stores
             # an explicit value; MAKE_FUNC binds a closure for a nested
             # proc. Either way the name belongs to the local env.
-            locals[instr[1]] := true
-            referenced[instr[1]] := true
+            #
+            # Nested MAKE_FUNC's bytecode arg is the mangled function-
+            # table key (`__mod_N__<bare>`); the bare suffix is what
+            # the same function's LOAD sites use, so record the bare
+            # name as the local. Matches the dual-bind that vm.rs /
+            # vm.omg do at runtime.
+            alloc local_name := instr[1]
+            if op == "MAKE_FUNC" {
+                alloc bare := strip_mod_prefix(local_name)
+                if bare != false { local_name := bare }
+            }
+            locals[local_name] := true
+            referenced[local_name] := true
         } elif op == "LOAD" or op == "STORE" {
             referenced[instr[1]] := true
         }

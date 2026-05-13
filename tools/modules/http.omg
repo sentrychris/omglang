@@ -1,0 +1,252 @@
+;;;omg
+
+# tools/modules/http.omg — a tiny HTTP/1.0 server library for OMG.
+#
+# Wraps the TCP + file + fork builtins into a fork-per-accept loop so
+# callers never have to write socket boilerplate. Two layers:
+#
+#   serve_static(host, port, webroot)
+#       The shortest path to a working static-file server.
+#
+#   serve(host, port, handler)
+#       The general form. `handler` is any proc with the signature
+#       handler(client, method, path); call the http.respond_* /
+#       http.serve_file helpers from inside it. Compose your own routes
+#       and call http.handle_static at the end to fall through to
+#       static-file serving.
+#
+# Example:
+#
+#     import "../modules/http.omg" as http
+#
+#     proc handle(client, method, path) {
+#         if path == "/api/time" {
+#             http.respond(client, "200 OK", "text/plain", "now\n")
+#             return false
+#         }
+#         http.handle_static(client, method, path, "/var/www/html")
+#     }
+#     http.serve("127.0.0.1", 9876, handle)
+#
+# Concurrency: serve() forks after each accept. The child handles the
+# request and exits; SIGCHLD is set to SIG_IGN inside fork() so children
+# auto-reap. Each request runs in its own address space — there is no
+# shared in-process state between requests.
+
+# === request parsing ===================================================
+
+# Find the first occurrence of `needle` (a string) in `bytes` (a list of
+# byte ints), or -1 if absent. Used to spot the end-of-headers marker.
+proc find_in_bytes(bytes, needle) {
+    alloc nlen := length(needle)
+    alloc blen := length(bytes)
+    if nlen == 0 { return 0 }
+    alloc i := 0
+    loop i + nlen <= blen {
+        alloc j := 0
+        alloc match := true
+        loop j < nlen {
+            if bytes[i + j] != ascii(needle[j]) {
+                match := false
+                break
+            }
+            j := j + 1
+        }
+        if match { return i }
+        i := i + 1
+    }
+    return -1
+}
+
+# Read from `client` until we see "\r\n\r\n" (end of headers) or hit EOF.
+# Returns the request as a UTF-8 string; HTTP headers are ASCII so the
+# decode is safe. Caps the buffer at 64 KiB to defeat naive OOM peers.
+proc read_request(client) {
+    alloc buf := []
+    alloc end := -1
+    loop end < 0 {
+        alloc chunk := tcp_read(client, 4096)
+        if length(chunk) == 0 { break }
+        buf := buf + chunk
+        end := find_in_bytes(buf, "\r\n\r\n")
+        if length(buf) > 65536 { break }
+    }
+    return bytes_to_string(buf)
+}
+
+# Pull the request line ("GET /path HTTP/1.1") out of the raw text and
+# return [method, path]. The version is discarded.
+proc parse_request_line(text) {
+    alloc i := 0
+    alloc n := length(text)
+    loop i < n and text[i] != " " { i := i + 1 }
+    alloc method := text[0:i]
+    i := i + 1
+    alloc start := i
+    loop i < n and text[i] != " " and text[i] != "\r" { i := i + 1 }
+    alloc path := text[start:i]
+    return [method, path]
+}
+
+# === path helpers ======================================================
+
+# Reject any URL path containing the literal substring "..". Crude but
+# effective — keeps escapes like /../etc/passwd from reaching disk.
+proc is_safe_path(p) {
+    alloc i := 0
+    alloc n := length(p)
+    loop i < n - 1 {
+        if p[i] == "." and p[i + 1] == "." {
+            return false
+        }
+        i := i + 1
+    }
+    return true
+}
+
+# Strip a query string off the URL path. We don't expose query params
+# anywhere, but tolerating them means links like /style.css?v=2 still
+# resolve to /style.css.
+proc strip_query(p) {
+    alloc i := 0
+    alloc n := length(p)
+    loop i < n and p[i] != "?" { i := i + 1 }
+    return p[0:i]
+}
+
+# Map a URL path to a filesystem path under `root`. "/" → "<root>/index.html".
+proc resolve_fs_path(root, url_path) {
+    alloc clean := strip_query(url_path)
+    if clean == "/" or clean == "" {
+        clean := "/index.html"
+    }
+    if length(clean) > 0 and clean[0] == "/" {
+        clean := clean[1:length(clean)]
+    }
+    return root + "/" + clean
+}
+
+# True iff `s` ends with `suffix`.
+proc ends_with(s, suffix) {
+    alloc sl := length(s)
+    alloc el := length(suffix)
+    if el > sl { return false }
+    return s[sl - el:sl] == suffix
+}
+
+# Content-Type by file extension. Anything not in the table is sent as
+# application/octet-stream so the browser will download rather than guess.
+proc content_type_for(path) {
+    if ends_with(path, ".html")  { return "text/html; charset=utf-8" }
+    if ends_with(path, ".htm")   { return "text/html; charset=utf-8" }
+    if ends_with(path, ".css")   { return "text/css; charset=utf-8" }
+    if ends_with(path, ".js")    { return "application/javascript; charset=utf-8" }
+    if ends_with(path, ".json")  { return "application/json; charset=utf-8" }
+    if ends_with(path, ".txt")   { return "text/plain; charset=utf-8" }
+    if ends_with(path, ".svg")   { return "image/svg+xml" }
+    if ends_with(path, ".png")   { return "image/png" }
+    if ends_with(path, ".jpg")   { return "image/jpeg" }
+    if ends_with(path, ".jpeg")  { return "image/jpeg" }
+    if ends_with(path, ".gif")   { return "image/gif" }
+    if ends_with(path, ".ico")   { return "image/x-icon" }
+    if ends_with(path, ".woff")  { return "font/woff" }
+    if ends_with(path, ".woff2") { return "font/woff2" }
+    return "application/octet-stream"
+}
+
+# === response writers ==================================================
+
+# Generic responder: emit status line, content-type, content-length, then
+# the body. `body` is a string or a byte list — tcp_write handles both.
+proc respond(client, status, content_type, body) {
+    alloc hdr := "HTTP/1.0 " + status + "\r\n"
+    hdr := hdr + "Content-Type: " + content_type + "\r\n"
+    hdr := hdr + "Content-Length: " + length(body) + "\r\n"
+    hdr := hdr + "Connection: close\r\n\r\n"
+    tcp_write(client, hdr)
+    tcp_write(client, body)
+}
+
+# Shorthand for an HTML response.
+proc respond_html(client, status, body) {
+    respond(client, status, "text/html; charset=utf-8", body)
+}
+
+# Read the file at `fs_path` in binary mode and send it with the
+# extension-derived Content-Type. Caller must have verified the file
+# exists; this raises if it doesn't.
+proc serve_file(client, fs_path) {
+    alloc h := file_open(fs_path, "rb")
+    alloc body := file_read(h)
+    file_close(h)
+    respond(client, "200 OK", content_type_for(fs_path), body)
+}
+
+# === built-in handlers =================================================
+
+# Static-file handler. Refuses non-GET/HEAD with 405, traversal attempts
+# with 400, missing files with 404; otherwise serves the file under
+# `webroot`. Composable: call this from your own handler as a fallthrough.
+proc handle_static(client, method, path, webroot) {
+    if method != "GET" and method != "HEAD" {
+        respond_html(client, "405 Method Not Allowed",
+            "<!doctype html><title>405</title><h1>405 Method Not Allowed</h1>")
+        return false
+    }
+    if is_safe_path(path) == false {
+        respond_html(client, "400 Bad Request",
+            "<!doctype html><title>400</title><h1>400 Bad Request</h1>")
+        return false
+    }
+    alloc fs_path := resolve_fs_path(webroot, path)
+    if file_exists(fs_path) == false or is_dir(fs_path) {
+        respond_html(client, "404 Not Found",
+            "<!doctype html><title>404</title><h1>404 Not Found</h1><p>No file at " + path + "</p>")
+        return false
+    }
+    serve_file(client, fs_path)
+    return true
+}
+
+# === accept loop =======================================================
+
+# Generic serve loop. Listens on host:port; for each accepted connection,
+# forks a child that parses the request line and invokes handler(client,
+# method, path). The handler is responsible for writing a response (use
+# the respond_* / serve_file helpers). After the handler returns, the
+# child closes the socket and exits; the parent immediately returns to
+# tcp_accept. Children auto-reap (SIGCHLD = SIG_IGN inside fork()).
+proc serve(host, port, handler) {
+    alloc server := tcp_listen(host, port)
+    emit "listening on http://" + host + ":" + port
+    loop true {
+        alloc client := tcp_accept(server)
+        alloc pid := fork()
+        if pid == 0 {
+            tcp_close(server)
+            try {
+                alloc text := read_request(client)
+                alloc parts := parse_request_line(text)
+                alloc method := parts[0]
+                alloc path := parts[1]
+                emit method + " " + path
+                handler(client, method, path)
+            } except err {
+                emit "request error: " + err
+            }
+            tcp_close(client)
+            exit(0)
+        }
+        tcp_close(client)
+    }
+}
+
+# Convenience: a pure static-file server in one call. Equivalent to
+# defining a one-line closure that delegates to handle_static and
+# passing it to serve().
+proc serve_static(host, port, webroot) {
+    proc handler(client, method, path) {
+        handle_static(client, method, path, webroot)
+    }
+    serve(host, port, handler)
+}
