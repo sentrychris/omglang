@@ -111,6 +111,7 @@
     // the user last had open.
 
     const STORAGE_KEY = 'omg-source-v1';
+    const SELECTION_KEY = 'omg-selection-v1';
 
     function loadStoredSource() {
         try { return localStorage.getItem(STORAGE_KEY); } catch (_) { return null; }
@@ -120,6 +121,20 @@
     }
     function clearStoredSource() {
         try { localStorage.removeItem(STORAGE_KEY); } catch (_) {}
+    }
+
+    // The dropdown value last picked by the user (e.g. "starter:0" or
+    // "example:maze_solver"). Cleared on the next free-text edit so the
+    // dropdown doesn't keep claiming the source matches an example
+    // after the user has tweaked it.
+    function loadStoredSelection() {
+        try { return localStorage.getItem(SELECTION_KEY); } catch (_) { return null; }
+    }
+    function storeSelection(value) {
+        try { localStorage.setItem(SELECTION_KEY, value); } catch (_) {}
+    }
+    function clearStoredSelection() {
+        try { localStorage.removeItem(SELECTION_KEY); } catch (_) {}
     }
 
     window.OMGShare = {
@@ -132,5 +147,8 @@
         loadStoredSource,
         storeSource,
         clearStoredSource,
+        loadStoredSelection,
+        storeSelection,
+        clearStoredSelection,
     };
 })();

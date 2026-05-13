@@ -303,6 +303,13 @@ $source.addEventListener('input', () => {
     if (typeof OMGShare !== 'undefined' && OMGShare.storeSource) {
         OMGShare.storeSource($source.value);
     }
+    // Free-text edit — the dropdown no longer reflects the source.
+    if ($select.selectedIndex !== -1) {
+        $select.selectedIndex = -1;
+        if (typeof OMGShare !== 'undefined' && OMGShare.clearStoredSelection) {
+            OMGShare.clearStoredSelection();
+        }
+    }
 });
 $source.addEventListener('scroll', syncEditorScroll);
 $source.addEventListener('focus', () => $sourcePane.classList.add('is-focused'));
@@ -352,6 +359,11 @@ function persistCurrent() {
         OMGShare.storeSource($source.value);
     }
 }
+function persistSelection() {
+    if (typeof OMGShare !== 'undefined' && OMGShare.storeSelection) {
+        OMGShare.storeSelection($select.value);
+    }
+}
 
 $select.addEventListener('change', async () => {
     const v = $select.value;
@@ -360,6 +372,7 @@ $select.addEventListener('change', async () => {
         $source.value = STARTERS[i].src;
         renderHighlight();
         persistCurrent();
+        persistSelection();
         runUserSource($source.value);
     } else if (v.startsWith('example:')) {
         const name = v.slice('example:'.length);
@@ -370,6 +383,7 @@ $select.addEventListener('change', async () => {
         }
         renderHighlight();
         persistCurrent();
+        persistSelection();
         runUserSource($source.value);
     }
 });
@@ -386,6 +400,22 @@ if (storedSource !== null) {
 }
 renderHighlight();
 
+// Restore the saved dropdown choice. Starter options exist synchronously;
+// example options only appear after the manifest fetch — wait on that
+// before applying an "example:..." restore. Silently ignored if the
+// saved value no longer matches any option (e.g. the example was
+// renamed or removed).
+function applyStoredSelection() {
+    if (!(typeof OMGShare !== 'undefined' && OMGShare.loadStoredSelection)) return;
+    const sel = OMGShare.loadStoredSelection();
+    if (!sel) return;
+    if ($select.querySelector(`option[value="${CSS.escape(sel)}"]`)) {
+        $select.value = sel;
+    }
+}
+applyStoredSelection();
+exampleManifestPromise.then(applyStoredSelection);
+
 // If the URL carries a `#code=...` fragment, replace the default source
 // with the shared program before the first auto-run.
 const sharedSourcePromise = (typeof OMGShare !== 'undefined' && OMGShare.readSharedSource)
@@ -395,6 +425,7 @@ const sharedSourcePromise = (typeof OMGShare !== 'undefined' && OMGShare.readSha
             renderHighlight();
             $select.selectedIndex = -1;
             persistCurrent();
+            if (OMGShare.clearStoredSelection) OMGShare.clearStoredSelection();
         }
       })
     : Promise.resolve();
