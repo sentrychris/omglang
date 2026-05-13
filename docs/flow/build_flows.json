@@ -238,7 +238,7 @@
           "inputs": ["foo_omg", "compiler_omg"],
           "tool": "bin_omg",
           "outputs": ["foo_omgb"],
-          "annotation": "bin/omg imports compiler.omg in-process and runs it on your source. Bytecode is written to a temp file (/tmp/omg-build-PID.omgb)."
+          "annotation": "bin/omg imports compiler.omg in-process and runs it on your source. Bytecode is written to a temp file (/tmp/omg-aot-PID.omgb)."
         },
         {
           "title": "Transpile foo.omgb → foo.c",

@@ -192,8 +192,8 @@ proc compile_only(in_path, out_path) {
 
 proc build_aot(in_path, out_path) {
     alloc pid := getpid()
-    alloc tmp_omgb := "/tmp/omg-build-" + pid + ".omgb"
-    alloc tmp_c    := "/tmp/omg-build-" + pid + ".c"
+    alloc tmp_omgb := "/tmp/omg-aot-" + pid + ".omgb"
+    alloc tmp_c    := "/tmp/omg-aot-" + pid + ".c"
     cc.compile_reset()
     cc.do_compile(absolute_normalised(in_path), tmp_omgb)
 
