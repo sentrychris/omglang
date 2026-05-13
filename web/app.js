@@ -298,7 +298,12 @@ function syncEditorScroll() {
     $gutter.scrollTop = $source.scrollTop;
 }
 
-$source.addEventListener('input', renderHighlight);
+$source.addEventListener('input', () => {
+    renderHighlight();
+    if (typeof OMGShare !== 'undefined' && OMGShare.storeSource) {
+        OMGShare.storeSource($source.value);
+    }
+});
 $source.addEventListener('scroll', syncEditorScroll);
 $source.addEventListener('focus', () => $sourcePane.classList.add('is-focused'));
 $source.addEventListener('blur',  () => $sourcePane.classList.remove('is-focused'));
@@ -342,12 +347,19 @@ const exampleManifestPromise = fetch('examples/manifest.json')
         }
     });
 
+function persistCurrent() {
+    if (typeof OMGShare !== 'undefined' && OMGShare.storeSource) {
+        OMGShare.storeSource($source.value);
+    }
+}
+
 $select.addEventListener('change', async () => {
     const v = $select.value;
     if (v.startsWith('starter:')) {
         const i = parseInt(v.slice('starter:'.length), 10);
         $source.value = STARTERS[i].src;
         renderHighlight();
+        persistCurrent();
         runUserSource($source.value);
     } else if (v.startsWith('example:')) {
         const name = v.slice('example:'.length);
@@ -357,10 +369,21 @@ $select.addEventListener('change', async () => {
             $source.value = '# Failed to load examples/' + name + '.omg: ' + err.message + '\n';
         }
         renderHighlight();
+        persistCurrent();
         runUserSource($source.value);
     }
 });
-$source.value = STARTERS[0].src;
+
+// Initial source priority: localStorage > STARTERS[0]. URL `#code=...`
+// resolves asynchronously below and wins if present.
+const storedSource = (typeof OMGShare !== 'undefined' && OMGShare.loadStoredSource)
+    ? OMGShare.loadStoredSource() : null;
+if (storedSource !== null) {
+    $source.value = storedSource;
+    $select.selectedIndex = -1;
+} else {
+    $source.value = STARTERS[0].src;
+}
 renderHighlight();
 
 // If the URL carries a `#code=...` fragment, replace the default source
@@ -371,6 +394,7 @@ const sharedSourcePromise = (typeof OMGShare !== 'undefined' && OMGShare.readSha
             $source.value = shared;
             renderHighlight();
             $select.selectedIndex = -1;
+            persistCurrent();
         }
       })
     : Promise.resolve();

@@ -44,8 +44,8 @@ echo "  $(wc -c < web/omg-explorer.js | tr -d ' ') bytes"
 # === Reference example pairs ==============================================
 
 EXAMPLES=(
-    assignment bitwise dictionaries floats hello_world hex_to_rgb
-    higher_order import_modules matrix_ops maze_solver merge_sort
+    assignment bitwise dictionaries floats hex_to_rgb
+    higher_order matrix_ops maze_solver merge_sort
     permissions prime_sieve rot_13 stack_vm stack_vm_and_asm
     tabula_recta
 )

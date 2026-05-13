@@ -104,6 +104,24 @@
         showToast._t = setTimeout(() => host.classList.remove('is-visible'), 2200);
     }
 
+    // === Local persistence ================================================
+    // Lets the editor source survive a page reload and crossover between
+    // the playground (index.html) and the explorer (explorer.html). Both
+    // pages read/write the same key, so switching tabs preserves whatever
+    // the user last had open.
+
+    const STORAGE_KEY = 'omg-source-v1';
+
+    function loadStoredSource() {
+        try { return localStorage.getItem(STORAGE_KEY); } catch (_) { return null; }
+    }
+    function storeSource(src) {
+        try { localStorage.setItem(STORAGE_KEY, src); } catch (_) { /* quota / private mode */ }
+    }
+    function clearStoredSource() {
+        try { localStorage.removeItem(STORAGE_KEY); } catch (_) {}
+    }
+
     window.OMGShare = {
         encodeShare,
         decodeShare,
@@ -111,5 +129,8 @@
         buildShareURL,
         copyShareLink,
         showToast,
+        loadStoredSource,
+        storeSource,
+        clearStoredSource,
     };
 })();
