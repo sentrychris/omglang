@@ -1,0 +1,452 @@
+;;;omg
+
+# Terminal Tetris in OMG. Same real-time-I/O primitives as Snake:
+# time_ms for elapsed-tick pacing, sleep_ms between draws,
+# stdin_set_raw + stdin_read_key for non-blocking keyboard input.
+#
+# Controls:
+#   h / a / left   shift left
+#   l / d / right  shift right
+#   k / w / up     rotate clockwise
+#   j / s / down   soft drop (one row)
+#   space          hard drop (lock in place)
+#   p              pause
+#   q              quit
+#
+# Standard 10 x 20 well. Pieces are stored as 4 rotation states each,
+# every state being four [dx, dy] offsets from a pivot — easier to
+# work with than 4x4 grids and avoids fiddly empty-row trimming.
+#
+# AOT-compile for snappier input:
+#     omg --build games/tetris.omg tetris && ./tetris
+
+alloc W := 10
+alloc H := 20
+alloc CELLS := W * H
+
+alloc CLEAR := chr(27) + "[2J"
+alloc HOME  := chr(27) + "[H"
+alloc HIDE  := chr(27) + "[?25l"
+alloc SHOW  := chr(27) + "[?25h"
+
+# ---- LCG random ------------------------------------------------------
+
+alloc rng_state := 0
+proc rng_next() {
+    rng_state := (rng_state * 1103515245 + 12345) % 2147483648
+    return rng_state
+}
+proc rand_range(n) { return rng_next() % n }
+
+# ---- Pieces ----------------------------------------------------------
+#
+# Each piece is a 4-element list of rotations; each rotation is a list
+# of four [dx, dy] offsets relative to the piece's pivot cell. The
+# pivot is chosen so rotations land cleanly inside the bounding box
+# (no kicks needed for this version — pure 90° rotation around the
+# piece's centre).
+#
+# Glyph picks come from a parallel list, indexed by piece-type id.
+
+alloc PIECES := [
+    # I — long straight bar
+    [
+        [[-1, 0], [0, 0], [1, 0], [2, 0]],
+        [[1, -1], [1, 0], [1, 1], [1, 2]],
+        [[-1, 1], [0, 1], [1, 1], [2, 1]],
+        [[0, -1], [0, 0], [0, 1], [0, 2]]
+    ],
+    # O — square (all four rotations are identical)
+    [
+        [[0, 0], [1, 0], [0, 1], [1, 1]],
+        [[0, 0], [1, 0], [0, 1], [1, 1]],
+        [[0, 0], [1, 0], [0, 1], [1, 1]],
+        [[0, 0], [1, 0], [0, 1], [1, 1]]
+    ],
+    # T — T-shape
+    [
+        [[-1, 0], [0, 0], [1, 0], [0, 1]],
+        [[0, -1], [0, 0], [1, 0], [0, 1]],
+        [[-1, 0], [0, 0], [1, 0], [0, -1]],
+        [[0, -1], [0, 0], [-1, 0], [0, 1]]
+    ],
+    # S — S-shape
+    [
+        [[0, 0], [1, 0], [-1, 1], [0, 1]],
+        [[0, -1], [0, 0], [1, 0], [1, 1]],
+        [[0, 0], [1, 0], [-1, 1], [0, 1]],
+        [[0, -1], [0, 0], [1, 0], [1, 1]]
+    ],
+    # Z — Z-shape
+    [
+        [[-1, 0], [0, 0], [0, 1], [1, 1]],
+        [[1, -1], [0, 0], [1, 0], [0, 1]],
+        [[-1, 0], [0, 0], [0, 1], [1, 1]],
+        [[1, -1], [0, 0], [1, 0], [0, 1]]
+    ],
+    # L — L-shape
+    [
+        [[-1, 0], [0, 0], [1, 0], [-1, 1]],
+        [[0, -1], [0, 0], [0, 1], [1, 1]],
+        [[-1, 0], [0, 0], [1, 0], [1, -1]],
+        [[0, -1], [0, 0], [0, 1], [-1, -1]]
+    ],
+    # J — mirror of L
+    [
+        [[-1, 0], [0, 0], [1, 0], [1, 1]],
+        [[0, -1], [0, 0], [0, 1], [1, -1]],
+        [[-1, 0], [0, 0], [1, 0], [-1, -1]],
+        [[0, -1], [0, 0], [0, 1], [-1, 1]]
+    ]
+]
+
+alloc PIECE_GLYPHS := ["I", "O", "T", "S", "Z", "L", "J"]
+alloc EMPTY := "."
+
+# ---- Board helpers ---------------------------------------------------
+#
+# board is a flat list of length CELLS. EMPTY in unoccupied cells,
+# else the piece-type glyph.
+
+proc make_board() {
+    alloc b := []
+    alloc i := 0
+    loop i < CELLS {
+        b := b + [EMPTY]
+        i := i + 1
+    }
+    return b
+}
+
+proc cell_at(board, x, y) {
+    return board[y * W + x]
+}
+
+proc set_cell(board, x, y, v) {
+    board[y * W + x] := v
+}
+
+# Can a piece (PIECES[ptype][rot] offsets) sit at (px, py) without
+# overlapping the board or going off the floor / side walls? Cells
+# above the top (negative y) are tolerated so newly-spawned pieces
+# can start partially above the visible well.
+proc piece_fits(board, ptype, rot, px, py) {
+    alloc shape := PIECES[ptype][rot]
+    alloc i := 0
+    loop i < 4 {
+        alloc dx := shape[i][0]
+        alloc dy := shape[i][1]
+        alloc x := px + dx
+        alloc y := py + dy
+        if x < 0 or x >= W or y >= H {
+            return false
+        }
+        if y >= 0 and cell_at(board, x, y) != EMPTY {
+            return false
+        }
+        i := i + 1
+    }
+    return true
+}
+
+# Stamp the piece onto the board (caller is responsible for the
+# "fits" check). Used at lock-down.
+proc lock_piece(board, ptype, rot, px, py) {
+    alloc shape := PIECES[ptype][rot]
+    alloc glyph := PIECE_GLYPHS[ptype]
+    alloc i := 0
+    loop i < 4 {
+        alloc x := px + shape[i][0]
+        alloc y := py + shape[i][1]
+        if y >= 0 and y < H and x >= 0 and x < W {
+            set_cell(board, x, y, glyph)
+        }
+        i := i + 1
+    }
+}
+
+# Scan from top to bottom, copying non-full rows into a fresh board
+# bottom-up. Returns [new_board, lines_cleared].
+proc clear_lines(board) {
+    alloc out := make_board()
+    alloc dst := H - 1
+    alloc src := H - 1
+    alloc cleared := 0
+    loop src >= 0 {
+        # Is row `src` full?
+        alloc full := true
+        alloc x := 0
+        loop x < W {
+            if cell_at(board, x, src) == EMPTY {
+                full := false
+                x := W
+            }
+            x := x + 1
+        }
+        if full {
+            cleared := cleared + 1
+        } else {
+            # Copy src -> dst, then advance dst upward.
+            alloc cx := 0
+            loop cx < W {
+                set_cell(out, cx, dst, cell_at(board, cx, src))
+                cx := cx + 1
+            }
+            dst := dst - 1
+        }
+        src := src - 1
+    }
+    return [out, cleared]
+}
+
+# ---- Drawing ---------------------------------------------------------
+
+# Build the next frame as one big string, then print it in one go.
+# Single print keeps the draw atomic — no flicker even if the
+# terminal is slow. `piece` is [ptype, rot, px, py]; `hud` is
+# [score, lines, level, paused] — packed into two tuples just so
+# the call sites stay readable.
+proc render(board, piece, hud) {
+    alloc ptype := piece[0]
+    alloc rot := piece[1]
+    alloc px := piece[2]
+    alloc py := piece[3]
+    alloc score := hud[0]
+    alloc lines := hud[1]
+    alloc level := hud[2]
+    alloc paused := hud[3]
+    alloc out := HOME
+    # Top frame
+    out := out + "+"
+    alloc i := 0
+    loop i < W * 2 {
+        out := out + "-"
+        i := i + 1
+    }
+    out := out + "+\n"
+
+    # Compose a fresh view = board + active piece overlay, so we draw
+    # without mutating board state.
+    alloc view := []
+    alloc copy_i := 0
+    loop copy_i < CELLS {
+        view := view + [board[copy_i]]
+        copy_i := copy_i + 1
+    }
+    alloc shape := PIECES[ptype][rot]
+    alloc glyph := PIECE_GLYPHS[ptype]
+    alloc si := 0
+    loop si < 4 {
+        alloc x := px + shape[si][0]
+        alloc y := py + shape[si][1]
+        if y >= 0 and y < H and x >= 0 and x < W {
+            view[y * W + x] := glyph
+        }
+        si := si + 1
+    }
+
+    alloc y := 0
+    loop y < H {
+        out := out + "|"
+        alloc x := 0
+        loop x < W {
+            alloc c := view[y * W + x]
+            if c == EMPTY {
+                out := out + "  "
+            } else {
+                out := out + "[]"
+            }
+            x := x + 1
+        }
+        out := out + "|\n"
+        y := y + 1
+    }
+
+    out := out + "+"
+    alloc j := 0
+    loop j < W * 2 {
+        out := out + "-"
+        j := j + 1
+    }
+    out := out + "+\n"
+    out := out + " score: " + score + "   lines: " + lines + "   level: " + level + "\n"
+    if paused {
+        out := out + " ** PAUSED ** (p to resume, q to quit)\n"
+    } else {
+        out := out + " hjkl/wasd move/rotate/drop, space = hard drop, p pause, q quit\n"
+    }
+    print(out)
+}
+
+# ---- Input -----------------------------------------------------------
+
+# Drain pending keys this frame; return a small "intent" dict that
+# play() consumes. Keeping the intent flat (no per-key state) makes
+# it easy to handle multiple keys queued during a slow tick.
+proc poll_input() {
+    alloc intent := {dx: 0, rotate: 0, soft: false, hard: false, pause: false, quit: false}
+    loop true {
+        alloc k := stdin_read_key()
+        if k == false { break }
+        if k == "q" or k == "Q" {
+            intent.quit := true
+        } elif k == "h" or k == "a" {
+            intent.dx := intent.dx - 1
+        } elif k == "l" or k == "d" {
+            intent.dx := intent.dx + 1
+        } elif k == "k" or k == "w" {
+            intent.rotate := intent.rotate + 1
+        } elif k == "j" or k == "s" {
+            intent.soft := true
+        } elif k == " " {
+            intent.hard := true
+        } elif k == "p" or k == "P" {
+            intent.pause := true
+        }
+    }
+    return intent
+}
+
+# ---- Scoring ---------------------------------------------------------
+
+# Classic NES-style values; doubling for higher counts rewards
+# stacking up before clearing.
+proc line_score(n, level) {
+    if n == 1 { return 40 * (level + 1) }
+    if n == 2 { return 100 * (level + 1) }
+    if n == 3 { return 300 * (level + 1) }
+    if n == 4 { return 1200 * (level + 1) }
+    return 0
+}
+
+# Tick interval shrinks with level. The 50 ms floor keeps the game
+# physically playable even at very high levels.
+proc tick_for_level(level) {
+    alloc t := 500 - level * 40
+    if t < 50 { t := 50 }
+    return t
+}
+
+# ---- Game loop -------------------------------------------------------
+
+proc play() {
+    rng_state := time_ms() % 2147483648
+
+    alloc board := make_board()
+    alloc ptype := rand_range(7)
+    alloc rot := 0
+    alloc px := W // 2
+    alloc py := 0
+    alloc score := 0
+    alloc lines := 0
+    alloc level := 0
+    alloc paused := false
+    alloc last_drop := time_ms()
+
+    emit CLEAR
+    print(HIDE)
+    render(board, [ptype, rot, px, py], [score, lines, level, paused])
+
+    loop true {
+        alloc intent := poll_input()
+        if intent.quit { break }
+        if intent.pause {
+            paused := paused == false
+        }
+
+        if paused {
+            render(board, [ptype, rot, px, py], [score, lines, level, paused])
+            sleep_ms(80)
+            last_drop := time_ms()    # don't pile up gravity ticks while paused
+        } else {
+            # Horizontal shift — only commit if the new spot fits.
+            if intent.dx != 0 {
+                alloc nx := px + intent.dx
+                if piece_fits(board, ptype, rot, nx, py) {
+                    px := nx
+                }
+            }
+
+            # Rotation. Same rule: skip if it'd overlap something.
+            if intent.rotate != 0 {
+                alloc nrot := (rot + intent.rotate) % 4
+                if piece_fits(board, ptype, nrot, px, py) {
+                    rot := nrot
+                }
+            }
+
+            # Hard drop: slam straight down. Iterate one row at a time
+            # rather than computing the landing y, so the score bonus
+            # matches the cells travelled.
+            if intent.hard {
+                loop piece_fits(board, ptype, rot, px, py + 1) {
+                    py := py + 1
+                    score := score + 1
+                }
+                last_drop := 0   # force lock on the gravity check below
+            }
+
+            # Soft drop: one row, small bonus.
+            if intent.soft {
+                if piece_fits(board, ptype, rot, px, py + 1) {
+                    py := py + 1
+                    score := score + 1
+                    last_drop := time_ms()
+                }
+            }
+
+            # Gravity tick.
+            alloc now := time_ms()
+            if now - last_drop >= tick_for_level(level) {
+                if piece_fits(board, ptype, rot, px, py + 1) {
+                    py := py + 1
+                } else {
+                    # Lock the piece, clear filled lines, spawn next.
+                    lock_piece(board, ptype, rot, px, py)
+                    alloc cleared := clear_lines(board)
+                    board := cleared[0]
+                    alloc nlines := cleared[1]
+                    if nlines > 0 {
+                        lines := lines + nlines
+                        score := score + line_score(nlines, level)
+                        level := lines // 10
+                    }
+                    ptype := rand_range(7)
+                    rot := 0
+                    px := W // 2
+                    py := 0
+                    # Game over if the freshly-spawned piece collides.
+                    if piece_fits(board, ptype, rot, px, py) == false {
+                        break
+                    }
+                }
+                last_drop := now
+            }
+
+            render(board, [ptype, rot, px, py], [score, lines, level, paused])
+            sleep_ms(20)
+        }
+    }
+
+    print(SHOW)
+    emit ""
+    emit "Game over. Final score: " + score + " (" + lines + " lines, level " + level + ")"
+}
+
+# Wrap raw-mode entry so stdin_set_raw failing on a non-TTY exits with
+# a clear message instead of a traceback. Inner try restores cooked
+# mode on crash so the user's shell prompt isn't left mangled.
+try {
+    stdin_set_raw(true)
+    try {
+        play()
+    } except err {
+        stdin_set_raw(false)
+        print(SHOW)
+        emit err
+    }
+    stdin_set_raw(false)
+} except outer_err {
+    print(SHOW)
+    emit "tetris: " + outer_err
+}

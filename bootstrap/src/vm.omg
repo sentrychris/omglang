@@ -483,8 +483,9 @@ proc vm_pop() {
 }
 
 # Pop n values; return them in source-order (the order they were pushed).
-# argc is bounded by OMG_MAX_ARITY (8) in practice, so the inner
-# concat-based build stays cheap.
+# argc is bounded by OMG_MAX_ARITY (= 32) in the C-AOT path; the VM
+# itself accepts any arity, but typical OMG procs have ≤9 params so
+# the inner concat-based build stays cheap.
 proc vm_pop_n(n) {
     alloc out := []
     alloc base := vm_stack_top - n

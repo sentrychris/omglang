@@ -22,6 +22,8 @@
 #include <unistd.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
+#include <time.h>
+#include <termios.h>
 #include <arpa/inet.h>
 #include <netdb.h>
 #include <signal.h>
@@ -61,13 +63,24 @@ typedef struct {
  * pointers escaping. `argc` is the actual number of meaningful args
  * (0..MAX_ARITY); higher slots are passed as omg_none() and ignored.
  *
- * If a proc ever needs more than MAX_ARITY parameters, raise the cap
- * here and at the call sites — but in practice OMG procs use ≤4. */
-#define OMG_MAX_ARITY 8
+ * The cap is generously sized — OMG procs in this repo use ≤9 params,
+ * and 32 lets a future user write a struct-init-style helper without
+ * hitting it. The cost is a handful of stack slots per call on x86_64
+ * (args beyond 6 spill); sibling-CO still works because the args are
+ * passed inline. If you raise it further, mirror the change in
+ * native-c.omg (args_list + emit_function), compiler.omg's allowlist,
+ * and the docs in docs/native/06-runtime.md. */
+#define OMG_MAX_ARITY 32
 
 typedef Value (*OmgFn)(Value *captured, int cap_count, int argc,
-                       Value a0, Value a1, Value a2, Value a3,
-                       Value a4, Value a5, Value a6, Value a7);
+                       Value a0,  Value a1,  Value a2,  Value a3,
+                       Value a4,  Value a5,  Value a6,  Value a7,
+                       Value a8,  Value a9,  Value a10, Value a11,
+                       Value a12, Value a13, Value a14, Value a15,
+                       Value a16, Value a17, Value a18, Value a19,
+                       Value a20, Value a21, Value a22, Value a23,
+                       Value a24, Value a25, Value a26, Value a27,
+                       Value a28, Value a29, Value a30, Value a31);
 
 typedef struct OmgClosure {
     int rc;
@@ -1853,6 +1866,69 @@ static Value omg_builtin_print(Value v) {
     return omg_none();
 }
 
+/* === Real-time terminal I/O ============================================
+ * time_ms / sleep_ms / stdin_set_raw / stdin_read_key form the platform
+ * primitives needed by interactive terminal programs (see
+ * games/snake.omg). They mirror the Rust runtime's builtins of the
+ * same names.
+ */
+
+/* time_ms(): milliseconds since the UNIX epoch. Suitable for elapsed
+ * time / frame pacing; not a real monotonic clock — system time changes
+ * are visible. */
+static Value omg_builtin_time_ms(void) {
+    struct timespec ts;
+    if (clock_gettime(CLOCK_REALTIME, &ts) != 0) return omg_int(0);
+    int64_t ms = (int64_t)ts.tv_sec * 1000 + (int64_t)(ts.tv_nsec / 1000000);
+    return omg_int(ms);
+}
+
+/* sleep_ms(n): pause this process for n ms. Negative / zero is a no-op. */
+static Value omg_builtin_sleep_ms(Value v) {
+    if (v.tag != OMG_INT) omg_panic("TypeError", "sleep_ms() expects an int");
+    int64_t n = v.v.i;
+    if (n <= 0) return omg_none();
+    struct timespec ts;
+    ts.tv_sec = (time_t)(n / 1000);
+    ts.tv_nsec = (long)((n % 1000) * 1000000);
+    nanosleep(&ts, NULL);
+    return omg_none();
+}
+
+/* stdin_set_raw(on): toggle cbreak / no-echo on the controlling TTY.
+ * In raw mode reads return immediately (VMIN=VTIME=0) so they pair with
+ * stdin_read_key(). Caller is responsible for restoring cooked mode
+ * before exit, otherwise the user's shell prompt looks weird. */
+static Value omg_builtin_stdin_set_raw(Value v) {
+    if (v.tag != OMG_BOOL) omg_panic("TypeError", "stdin_set_raw() expects a bool");
+    struct termios t;
+    if (tcgetattr(0, &t) != 0) omg_panic("ValueError", "stdin_set_raw: tcgetattr failed");
+    if (v.v.b) {
+        t.c_lflag &= ~(ICANON | ECHO);
+        t.c_cc[VMIN] = 0;
+        t.c_cc[VTIME] = 0;
+    } else {
+        t.c_lflag |= ICANON | ECHO;
+    }
+    if (tcsetattr(0, TCSANOW, &t) != 0) omg_panic("ValueError", "stdin_set_raw: tcsetattr failed");
+    return omg_none();
+}
+
+/* stdin_read_key(): non-blocking single-byte read. Returns a one-char
+ * OMG_STR if a key is available, else OMG_BOOL false. Requires
+ * stdin_set_raw(true) — in cooked mode the kernel buffers until newline
+ * and read() still blocks. */
+static Value omg_builtin_stdin_read_key(void) {
+    unsigned char buf;
+    ssize_t n = read(0, &buf, 1);
+    if (n != 1) return omg_bool(0);
+    char *out = (char *)malloc(2);
+    if (!out) { fprintf(stderr, "out of memory\n"); exit(1); }
+    out[0] = (char)buf;
+    out[1] = 0;
+    return omg_str(out);
+}
+
 /* subprocess(argv): fork + execvp + waitpid. argv is a list of strings;
  * argv[0] is the program (PATH-resolved via execvp), the rest are args.
  * stdin/stdout/stderr are inherited. Returns the child's exit code.
@@ -2478,11 +2554,15 @@ static Value omg_call_builtin(Value name, Value args) {
         if (strcmp(n, "stdin_readline") == 0)    return omg_builtin_stdin_readline();
         if (strcmp(n, "stdin_read") == 0)        return omg_builtin_stdin_read();
         if (strcmp(n, "stdin_read_bytes") == 0)  return omg_builtin_stdin_read_bytes();
+        if (strcmp(n, "stdin_read_key") == 0)    return omg_builtin_stdin_read_key();
+        if (strcmp(n, "time_ms") == 0)           return omg_builtin_time_ms();
         if (strcmp(n, "executable_path") == 0)   return omg_builtin_executable_path();
         if (strcmp(n, "fork") == 0)              return omg_builtin_fork();
     }
     if (argc == 1) {
         if (strcmp(n, "print") == 0)           return omg_builtin_print(a[0]);
+        if (strcmp(n, "sleep_ms") == 0)        return omg_builtin_sleep_ms(a[0]);
+        if (strcmp(n, "stdin_set_raw") == 0)   return omg_builtin_stdin_set_raw(a[0]);
     }
     if (argc == 2) {
         if (strcmp(n, "pow") == 0)        return omg_builtin_pow(a[0], a[1]);

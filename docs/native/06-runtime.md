@@ -159,13 +159,16 @@ mangled `__mod_2__tick` instead of `tick`.
 
 ```c
 typedef Value (*OmgFn)(Value *captured, int cap_count, int argc,
-                       Value a0, Value a1, Value a2, Value a3,
-                       Value a4, Value a5, Value a6, Value a7);
+                       Value a0,  Value a1,  ...,  Value a30, Value a31);
 ```
 
-Args are passed inline rather than as an array, so cc -O2 can sibling-call
-optimize tail calls. `OMG_MAX_ARITY = 8`; bump it (everywhere) if you need
-more parameters.
+Args are passed inline rather than as an array, so cc -O3 can sibling-call
+optimize tail calls. `OMG_MAX_ARITY = 32`; bump it (everywhere) if you need
+more parameters. The cap *only* applies to the C-AOT path
+(`omg --build foo.omg`); the Rust runtime, the OMG-on-OMG VM, and the
+transpiled-JS path all take args via variadic structures and have no
+limit. Most OMG procs use ≤9 — the headroom is just so the constraint
+stays invisible.
 
 ## Exception handling and tracebacks
 

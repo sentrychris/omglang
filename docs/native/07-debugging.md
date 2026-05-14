@@ -262,7 +262,7 @@ objdump -d foo | grep -A2 'omg_p1>:'
 ```
 
 If it's a `call` not a `jmp`, the args may not match `OMG_MAX_ARITY`.
-Check that all your tail-call args are passed inline (a0..a7 slots).
+Check that all your tail-call args are passed inline (a0..a31 slots).
 
 ### Fixed-point check broke
 

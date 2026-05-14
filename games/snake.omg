@@ -1,0 +1,250 @@
+;;;omg
+
+# Terminal Snake in OMG. Uses the runtime's four real-time I/O
+# primitives (time_ms, sleep_ms, stdin_set_raw, stdin_read_key) plus
+# the ANSI escapes we already use in donut.omg.
+#
+# Controls:
+#   h / a / left   move left
+#   l / d / right  move right
+#   k / w / up     move up
+#   j / s / down   move down
+#   q              quit
+#
+# AOT-compile it for snappier input:
+#     omg --build games/snake.omg snake && ./snake
+# The interpreter path works too — it's just CPU-cheap so the tick
+# rate is fine either way.
+
+alloc W := 40
+alloc H := 20
+
+alloc CLEAR := chr(27) + "[2J"
+alloc HOME  := chr(27) + "[H"
+alloc HIDE  := chr(27) + "[?25l"
+alloc SHOW  := chr(27) + "[?25h"
+
+# --- Pseudorandom: linear-congruential generator. Cheap and reproducible
+# enough for "spawn a fruit somewhere new" — not for anything else.
+
+alloc rng_state := 0
+
+proc rng_next() {
+    rng_state := (rng_state * 1103515245 + 12345) % 2147483648
+    return rng_state
+}
+
+proc rand_range(n) {
+    return rng_next() % n
+}
+
+# --- Geometry helpers --------------------------------------------------
+
+proc cell_key(x, y) {
+    return x + "," + y
+}
+
+# Is (x,y) the head of the snake?
+proc snake_contains(body, x, y) {
+    alloc i := 0
+    loop i < length(body) {
+        if body[i][0] == x and body[i][1] == y {
+            return true
+        }
+        i := i + 1
+    }
+    return false
+}
+
+# --- Rendering ---------------------------------------------------------
+
+proc draw(body, fruit_x, fruit_y, score) {
+    alloc out := HOME
+    # Top border
+    alloc i := 0
+    loop i < W + 2 {
+        out := out + "#"
+        i := i + 1
+    }
+    out := out + "\n"
+
+    # Build a dict of occupied cells for O(1) lookup. Body keys are
+    # "x,y" strings; fruit is its own cell.
+    alloc occ := {}
+    alloc bi := 0
+    loop bi < length(body) {
+        occ[cell_key(body[bi][0], body[bi][1])] := "o"
+        bi := bi + 1
+    }
+    occ[cell_key(body[0][0], body[0][1])] := "@"   # head
+    occ[cell_key(fruit_x, fruit_y)] := "*"
+
+    alloc y := 0
+    loop y < H {
+        out := out + "#"
+        alloc x := 0
+        loop x < W {
+            alloc k := cell_key(x, y)
+            if has_key(occ, k) {
+                out := out + occ[k]
+            } else {
+                out := out + " "
+            }
+            x := x + 1
+        }
+        out := out + "#\n"
+        y := y + 1
+    }
+
+    # Bottom border + HUD.
+    alloc j := 0
+    loop j < W + 2 {
+        out := out + "#"
+        j := j + 1
+    }
+    out := out + "\n"
+    out := out + " score: " + score + "    (q to quit)\n"
+    print(out)
+}
+
+# --- Input -------------------------------------------------------------
+
+# Drain pending keys, returning the most recent direction request (or
+# false if nothing was pressed this tick). Reading everything queued
+# means a held-down key never lags behind the snake.
+proc poll_direction(current_dx, current_dy) {
+    alloc want_dx := current_dx
+    alloc want_dy := current_dy
+    alloc want_quit := false
+    loop true {
+        alloc k := stdin_read_key()
+        if k == false { break }
+        if k == "q" or k == "Q" {
+            want_quit := true
+        } elif k == "h" or k == "a" {
+            want_dx := -1   want_dy := 0
+        } elif k == "l" or k == "d" {
+            want_dx := 1    want_dy := 0
+        } elif k == "k" or k == "w" {
+            want_dx := 0    want_dy := -1
+        } elif k == "j" or k == "s" {
+            want_dx := 0    want_dy := 1
+        }
+    }
+    return [want_dx, want_dy, want_quit]
+}
+
+# --- Game --------------------------------------------------------------
+
+proc spawn_fruit(body) {
+    # Find an empty cell. With small boards and a tiny snake, rejection
+    # sampling is cheap; bail out after 200 attempts on the off-chance
+    # the snake fills the board (you've won, really).
+    alloc tries := 0
+    loop tries < 200 {
+        alloc fx := rand_range(W)
+        alloc fy := rand_range(H)
+        if snake_contains(body, fx, fy) == false {
+            return [fx, fy]
+        }
+        tries := tries + 1
+    }
+    return [0, 0]
+}
+
+proc play() {
+    rng_state := time_ms() % 2147483648
+
+    # Initial state: a 3-segment snake moving right from the centre.
+    alloc cx := W // 2
+    alloc cy := H // 2
+    alloc body := [[cx, cy], [cx - 1, cy], [cx - 2, cy]]
+    alloc dx := 1
+    alloc dy := 0
+    alloc fruit := spawn_fruit(body)
+    alloc fx := fruit[0]
+    alloc fy := fruit[1]
+    alloc score := 0
+    alloc tick_ms := 100
+
+    emit CLEAR
+    print(HIDE)
+
+    loop true {
+        alloc dir := poll_direction(dx, dy)
+        alloc new_dx := dir[0]
+        alloc new_dy := dir[1]
+        if dir[2] { break }
+        # Don't let the snake reverse onto itself.
+        if new_dx != 0 - dx or new_dy != 0 - dy {
+            dx := new_dx
+            dy := new_dy
+        }
+
+        alloc head := body[0]
+        alloc nx := head[0] + dx
+        alloc ny := head[1] + dy
+
+        # Wall collision.
+        if nx < 0 or nx >= W or ny < 0 or ny >= H {
+            break
+        }
+        # Self collision: against any segment except the tail, since the
+        # tail moves out of the way this tick. (Skip checking [0] too —
+        # that's the current head.)
+        alloc si := 1
+        alloc tail_idx := length(body) - 1
+        alloc hit_self := false
+        loop si < tail_idx {
+            if body[si][0] == nx and body[si][1] == ny {
+                hit_self := true
+                si := tail_idx
+            }
+            si := si + 1
+        }
+        if hit_self {
+            break
+        }
+
+        # Advance: prepend new head, drop tail unless we ate the fruit.
+        body := [[nx, ny]] + body
+        if nx == fx and ny == fy {
+            score := score + 1
+            alloc nf := spawn_fruit(body)
+            fx := nf[0]
+            fy := nf[1]
+            # Speed up slightly each apple; cap so it stays playable.
+            if tick_ms > 50 {
+                tick_ms := tick_ms - 4
+            }
+        } else {
+            body := body[0:length(body) - 1]
+        }
+
+        draw(body, fx, fy, score)
+        sleep_ms(tick_ms)
+    }
+
+    print(SHOW)
+    emit ""
+    emit "Game over. Final score: " + score
+}
+
+# Wrap raw-mode entry too — stdin_set_raw fails with a ValueError when
+# stdin isn't a TTY (CI smoke tests pipe input in), and we want a clean
+# message instead of a traceback. Either way the inner try restores
+# cooked mode on crash so the user's shell prompt isn't left mangled.
+try {
+    stdin_set_raw(true)
+    try {
+        play()
+    } except err {
+        stdin_set_raw(false)
+        print(SHOW)
+        emit err
+    }
+    stdin_set_raw(false)
+} except outer_err {
+    print(SHOW)
+    emit "snake: " + outer_err
+}

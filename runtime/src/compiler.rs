@@ -95,6 +95,13 @@ fn builtin_names() -> &'static [&'static str] {
         "stdin_readline",
         "stdin_read",
         "stdin_read_bytes",
+        // Real-time terminal I/O: monotonic clock, sleep, raw-mode
+        // toggle, and non-blocking single-keypress read. Lets pure-OMG
+        // code do interactive animation (see games/snake.omg).
+        "time_ms",
+        "sleep_ms",
+        "stdin_set_raw",
+        "stdin_read_key",
         "print",
         // TCP networking. Six builtins mirror the file_* shape (open,
         // accept→stream, read, write, close). Bytes-in / bytes-out;

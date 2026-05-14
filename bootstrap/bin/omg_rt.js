@@ -894,10 +894,58 @@ const _omg_builtins = {
     stdin_readline: omg_stdin_readline,
     stdin_read: omg_stdin_read,
     stdin_read_bytes: omg_stdin_read_bytes,
+    stdin_read_key: omg_stdin_read_key,
+    stdin_set_raw: omg_stdin_set_raw,
+    time_ms: omg_time_ms,
+    sleep_ms: omg_sleep_ms,
     subprocess: omg_subprocess,
     getpid: omg_getpid,
     executable_path: omg_executable_path,
 };
+
+// === Real-time terminal I/O (Node) =======================================
+// time_ms is portable. The stdin/raw and sleep_ms primitives only make
+// sense in a terminal — browser usage panics instead of silently doing
+// nothing. Synchronous sleep in Node is faked with a busy wait on
+// Date.now(); fine for short pauses (50-100 ms frame ticks) and avoids
+// needing Atomics + SharedArrayBuffer.
+
+function omg_time_ms() {
+    return BigInt(Date.now());
+}
+
+function omg_sleep_ms(n) {
+    if (typeof n !== 'bigint') omg_panic('TypeError', 'sleep_ms() expects an int');
+    const ms = Number(n);
+    if (ms <= 0) return null;
+    const end = Date.now() + ms;
+    while (Date.now() < end) { /* busy wait */ }
+    return null;
+}
+
+function omg_stdin_set_raw(on) {
+    if (typeof require === 'undefined') {
+        omg_panic('RuntimeError', 'stdin_set_raw is only available under Node');
+    }
+    if (typeof on !== 'boolean') omg_panic('TypeError', 'stdin_set_raw() expects a bool');
+    if (process.stdin.setRawMode) process.stdin.setRawMode(on);
+    return null;
+}
+
+function omg_stdin_read_key() {
+    if (typeof require === 'undefined') {
+        omg_panic('RuntimeError', 'stdin_read_key is only available under Node');
+    }
+    // Synchronous one-byte read via fs.readSync — readSync returns 0
+    // on EOF or no data (when fd is in non-blocking-ish mode after
+    // setRawMode); we map that to false.
+    const buf = Buffer.alloc(1);
+    let n;
+    try { n = _omg_fs.readSync(0, buf, 0, 1, null); }
+    catch (_e) { return false; }
+    if (n !== 1) return false;
+    return String.fromCharCode(buf[0]);
+}
 
 function omg_call_builtin(name, args) {
     const fn = _omg_builtins[name];

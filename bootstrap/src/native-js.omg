@@ -405,9 +405,16 @@ proc emit_builtin(name, argc) {
     if name == "stdin_readline"   and argc == 0 { return emit_builtin0("omg_stdin_readline") }
     if name == "stdin_read"       and argc == 0 { return emit_builtin0("omg_stdin_read") }
     if name == "stdin_read_bytes" and argc == 0 { return emit_builtin0("omg_stdin_read_bytes") }
+    if name == "stdin_read_key"   and argc == 0 { return emit_builtin0("omg_stdin_read_key") }
     if name == "subprocess"       and argc == 1 { return emit_builtin1("omg_subprocess") }
     if name == "getpid"           and argc == 0 { return emit_builtin0("omg_getpid") }
     if name == "executable_path"  and argc == 0 { return emit_builtin0("omg_executable_path") }
+
+    # Real-time terminal I/O. JS-side stubs panic for stdin_set_raw /
+    # stdin_read_key in the browser; sleep_ms is a busy-wait there.
+    if name == "time_ms"          and argc == 0 { return emit_builtin0("omg_time_ms") }
+    if name == "sleep_ms"         and argc == 1 { return emit_builtin1("omg_sleep_ms") }
+    if name == "stdin_set_raw"    and argc == 1 { return emit_builtin1("omg_stdin_set_raw") }
 
     panic("native-js: builtin '" + name + "' (argc=" + argc + ") not implemented yet")
 }

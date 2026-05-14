@@ -352,6 +352,111 @@ pub fn call_builtin(
             }
         }
 
+        // === Real-time terminal I/O ==================================
+        //
+        // Pairs of (time_ms, sleep_ms) for frame pacing and
+        // (stdin_set_raw, stdin_read_key) for non-blocking keyboard
+        // input. Together they unlock interactive terminal programs —
+        // see games/snake.omg.
+
+        // time_ms() -> int. Monotonic-ish millisecond clock based on
+        // SystemTime. Suitable for elapsed-time measurements; not for
+        // wall-clock display (system time can be adjusted backwards).
+        "time_ms" => {
+            if !args.is_empty() {
+                return Err(RuntimeError::TypeError(
+                    "time_ms() takes no arguments".to_string(),
+                ));
+            }
+            use std::time::{SystemTime, UNIX_EPOCH};
+            let ms = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .map(|d| d.as_millis() as i64)
+                .unwrap_or(0);
+            Ok(Value::Int(ms))
+        }
+
+        // sleep_ms(n) -> none. Pauses the current process for n
+        // milliseconds. Negative or zero n is a no-op.
+        "sleep_ms" => match args {
+            [Value::Int(n)] => {
+                if *n > 0 {
+                    std::thread::sleep(std::time::Duration::from_millis(*n as u64));
+                }
+                Ok(Value::None)
+            }
+            _ => Err(RuntimeError::TypeError(
+                "sleep_ms() expects an int".to_string(),
+            )),
+        },
+
+        // stdin_set_raw(on) -> none. Toggles cbreak / no-echo mode on
+        // the controlling terminal so reads return immediately and the
+        // tty doesn't line-buffer or echo input. Must be called twice
+        // around an interactive section (`true` to enter raw mode,
+        // `false` to restore). Linux-only — Windows would need
+        // SetConsoleMode; not implemented.
+        "stdin_set_raw" => match args {
+            [Value::Bool(on)] => {
+                unsafe {
+                    use std::os::fd::AsRawFd;
+                    let fd = std::io::stdin().as_raw_fd();
+                    let mut t: libc::termios = std::mem::zeroed();
+                    if libc::tcgetattr(fd, &mut t) != 0 {
+                        return Err(RuntimeError::ValueError(
+                            "stdin_set_raw: tcgetattr failed".to_string(),
+                        ));
+                    }
+                    if *on {
+                        // Disable canonical mode + echo. VMIN/VTIME = 0
+                        // makes read() return 0 with no input rather
+                        // than blocking — pairs with stdin_read_key().
+                        t.c_lflag &= !(libc::ICANON | libc::ECHO);
+                        t.c_cc[libc::VMIN] = 0;
+                        t.c_cc[libc::VTIME] = 0;
+                    } else {
+                        t.c_lflag |= libc::ICANON | libc::ECHO;
+                    }
+                    if libc::tcsetattr(fd, libc::TCSANOW, &t) != 0 {
+                        return Err(RuntimeError::ValueError(
+                            "stdin_set_raw: tcsetattr failed".to_string(),
+                        ));
+                    }
+                }
+                Ok(Value::None)
+            }
+            _ => Err(RuntimeError::TypeError(
+                "stdin_set_raw() expects a bool".to_string(),
+            )),
+        },
+
+        // stdin_read_key() -> str | bool. Non-blocking single-byte
+        // read. Returns a 1-character string if a key is available, or
+        // false otherwise. Requires stdin_set_raw(true) first; in
+        // cooked mode the kernel buffers input until newline so reads
+        // would still block at the read syscall.
+        "stdin_read_key" => {
+            if !args.is_empty() {
+                return Err(RuntimeError::TypeError(
+                    "stdin_read_key() takes no arguments".to_string(),
+                ));
+            }
+            unsafe {
+                use std::os::fd::AsRawFd;
+                let fd = std::io::stdin().as_raw_fd();
+                let mut buf: [u8; 1] = [0];
+                let n = libc::read(fd, buf.as_mut_ptr() as *mut _, 1);
+                if n == 1 {
+                    Ok(Value::Str((buf[0] as char).to_string()))
+                } else {
+                    // n == 0 with VMIN=VTIME=0 means "no input ready"
+                    // when raw mode is on; n < 0 is an error (EAGAIN
+                    // when nonblocking — we treat the same).
+                    Ok(Value::Bool(false))
+                }
+            }
+        }
+
         // stdin_read_bytes() -> [int, ...]. Like stdin_read but for
         // binary pipes — returns a list of byte values (0-255). The
         // pipe-friendly counterpart to file_open(path, "rb") +

@@ -448,7 +448,13 @@ proc emit_builtin(name, argc) {
     if name == "stdin_readline"   and argc == 0 { return emit_builtin0("omg_builtin_stdin_readline") }
     if name == "stdin_read"       and argc == 0 { return emit_builtin0("omg_builtin_stdin_read") }
     if name == "stdin_read_bytes" and argc == 0 { return emit_builtin0("omg_builtin_stdin_read_bytes") }
+    if name == "stdin_read_key"   and argc == 0 { return emit_builtin0("omg_builtin_stdin_read_key") }
     if name == "print"            and argc == 1 { return emit_builtin1("omg_builtin_print") }
+
+    # Real-time terminal I/O (frame timing + non-blocking keyboard).
+    if name == "time_ms"          and argc == 0 { return emit_builtin0("omg_builtin_time_ms") }
+    if name == "sleep_ms"         and argc == 1 { return emit_builtin1("omg_builtin_sleep_ms") }
+    if name == "stdin_set_raw"    and argc == 1 { return emit_builtin1("omg_builtin_stdin_set_raw") }
 
     # Reflective dispatch (used by the OMG-in-OMG interpreter).
     if name == "call_builtin" and argc == 2 { return emit_builtin2("omg_call_builtin") }
@@ -786,7 +792,7 @@ proc emit_c_for_instr(instr, ctx) {
 
 # Build the comma-separated arg list for a call, using local variables
 # omg_a0..omg_a<N-1> for the actual args and omg_none() for the padding
-# slots up to OMG_MAX_ARITY (= 8). Inline-arg passing lets cc optimise
+# slots up to OMG_MAX_ARITY (= 32). Inline-arg passing lets cc optimise
 # tail calls without worrying about local-array pointer escape.
 proc args_list(nparams) {
     alloc parts := []
@@ -795,7 +801,7 @@ proc args_list(nparams) {
         parts := parts + ["omg_a" + i]
         i := i + 1
     }
-    loop i < 8 {
+    loop i < 32 {
         parts := parts + ["omg_none()"]
         i := i + 1
     }
@@ -1365,9 +1371,19 @@ proc emit_function(name, code, funcs, func_index, func_info, globals, src_lines,
         ci := ci + 1
     }
 
+    # The proc signature has to match OmgFn in omg_rt.h — 32 inline
+    # Value params (a0..a31). Bumping that cap means updating both this
+    # emitter and the typedef in lockstep. See the OmgFn comment for
+    # the rationale.
     alloc out := "static Value " + c_fn_name(fidx) + "(Value *captured, int cap_count, int argc,\n"
-    out := out + "                            Value omg_a0, Value omg_a1, Value omg_a2, Value omg_a3,\n"
-    out := out + "                            Value omg_a4, Value omg_a5, Value omg_a6, Value omg_a7) {\n"
+    out := out + "                            Value omg_a0,  Value omg_a1,  Value omg_a2,  Value omg_a3,\n"
+    out := out + "                            Value omg_a4,  Value omg_a5,  Value omg_a6,  Value omg_a7,\n"
+    out := out + "                            Value omg_a8,  Value omg_a9,  Value omg_a10, Value omg_a11,\n"
+    out := out + "                            Value omg_a12, Value omg_a13, Value omg_a14, Value omg_a15,\n"
+    out := out + "                            Value omg_a16, Value omg_a17, Value omg_a18, Value omg_a19,\n"
+    out := out + "                            Value omg_a20, Value omg_a21, Value omg_a22, Value omg_a23,\n"
+    out := out + "                            Value omg_a24, Value omg_a25, Value omg_a26, Value omg_a27,\n"
+    out := out + "                            Value omg_a28, Value omg_a29, Value omg_a30, Value omg_a31) {\n"
     out := out + "    (void)cap_count; (void)argc;\n"
     out := out + "    Value stack[256];\n"
     out := out + "    int sp = 0;\n"
@@ -1489,12 +1505,15 @@ proc generate(code, funcs, src_files, src_lines, runtime_header, source_path) {
         out := out + "\n"
     }
 
-    # Forward declarations for every proc.
+    # Forward declarations for every proc. The signature here must
+    # match OmgFn in omg_rt.h and the body emitter above — 32 inline
+    # Value params (a0..a31).
+    alloc proto_args := ", Value, Value, Value, Value, Value, Value, Value, Value, Value, Value, Value, Value, Value, Value, Value, Value, Value, Value, Value, Value, Value, Value, Value, Value, Value, Value, Value, Value, Value, Value, Value, Value"
     alloc all_func_names := dict_keys(funcs)
     alloc nf := length(all_func_names)
     i := 0
     loop i < nf {
-        out := out + "static Value " + c_fn_name(func_index[all_func_names[i]]) + "(Value *, int, int, Value, Value, Value, Value, Value, Value, Value, Value);\n"
+        out := out + "static Value " + c_fn_name(func_index[all_func_names[i]]) + "(Value *, int, int" + proto_args + ");\n"
         i := i + 1
     }
     if nf > 0 {

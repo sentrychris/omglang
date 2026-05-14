@@ -1093,6 +1093,7 @@ alloc cc_builtins := [
     "list_repeat",
     "exit_with_error", "exit", "getpid", "subprocess",
     "stdin_readline", "stdin_read", "stdin_read_bytes",
+    "time_ms", "sleep_ms", "stdin_set_raw", "stdin_read_key",
     "print", "executable_path",
     "tcp_listen", "tcp_accept", "tcp_connect",
     "tcp_read", "tcp_write", "tcp_close",

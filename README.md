@@ -651,6 +651,11 @@ Always available, no import needed.
 | `stdin_readline()`             | read one line from stdin, or `false` on EOF           |
 | `stdin_read()`                 | slurp all of stdin to EOF as a string (empty on no input) |
 | `stdin_read_bytes()`           | slurp all of stdin to EOF as a list of bytes (0–255)  |
+| **Real-time terminal I/O**     |                                                       |
+| `time_ms()`                    | current time in ms (epoch-based; suitable for elapsed-time) |
+| `sleep_ms(n)`                  | pause the process for `n` milliseconds                |
+| `stdin_set_raw(on)`            | toggle cbreak / no-echo mode (Linux TTY only)         |
+| `stdin_read_key()`             | non-blocking one-byte read; returns char or `false`   |
 | **Errors**                     |                                                       |
 | `panic(msg)` / `raise(msg)`    | raise a runtime error (catchable with `try`/`except`) |
 | `exit_with_error(msg)`         | print `msg` to stderr verbatim and exit 1 (uncatchable) |
@@ -784,7 +789,8 @@ omglang/
 │   ├── build.sh     builds bootstrap/bin/ from bootstrap/src/
 │   ├── build-web.sh builds the web/ bundle from bootstrap/src/omg-web.omg
 │   └── package.sh   spins out a slim native-only distribution into dist/
-├── examples/        small standalone programs
+├── examples/        small standalone programs (one language feature each)
+├── games/           larger interactive terminal games (snake, tetris)
 ├── tests/           shell-driven test suite (parity, regression, REPL, builtins)
 ├── tools/           command-line utilities written in OMG (wc, grep, sort, omgdb, etc.)
 ├── web/             browser playground + compiler explorer (static site)
@@ -800,6 +806,9 @@ Some interesting starting points:
 - [`examples/donut.omg`](examples/donut.omg): Andy Sloane's spinning 3D
   ASCII donut, ported to OMG. Exercises the float kit and ANSI-escape
   animation — AOT-compile it for a smooth ~90 FPS spin.
+- [`games/`](games/): interactive terminal games (Snake, Tetris)
+  driven by `time_ms` / `sleep_ms` / `stdin_set_raw` /
+  `stdin_read_key`. See [`games/README.md`](games/README.md).
 - [`tools/unix/wc.omg`](tools/unix/wc.omg), [`tools/unix/grep.omg`](tools/unix/grep.omg),
   [`tools/json.omg`](tools/json.omg): Unix-style utilities,
   written in OMG. See [`tools/README.md`](tools/README.md) for the
