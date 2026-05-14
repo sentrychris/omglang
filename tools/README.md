@@ -74,6 +74,7 @@ Larger, demo-quality programs that compose the smaller tools.
 |-----------------------|--------------|
 | `web/ssg.omg`    | Static site generator. Walks `<site>/content/`, parses front-matter, converts each markdown file via `md2html.omg`, applies `<site>/templates/*.html`, and writes a parallel directory tree to `<site>/out/`. See [`examples/omg-ssg-site/README.md`](../examples/omg-ssg-site/README.md) for the layout, template variables, and an example site. |
 | `db/omgdb.omg`   | A small SQL database written in OMG — a 4-KB paged on-disk format, a recursive-descent SQL parser (`CREATE` / `INSERT` / `SELECT` / `DELETE` / `DROP` with `WHERE` and `ORDER BY`), and a SQLite-style REPL with one-shot `-e` and stdin pipeline modes. See [`db/README.md`](db/README.md). |
+| `edit.omg`       | **OMG edit** — a nano-shaped terminal editor with a sidebar file browser. Open a file directly or hand it a directory and it drops you into the sidebar to pick one. Editor side: scrollable buffer, save / quit, cut / paste lines (kill-chain semantics), forward search, go-to-line, syntax highlighting for `.omg`. Sidebar side: arrow / vi-style navigation, Enter to descend or open, Backspace for parent dir. `^B` toggles sidebar visibility, `^T` swaps focus between panes. Terminal size detected via `stty size`. AOT-compile for crispest input. |
 
 ### Shared helpers
 

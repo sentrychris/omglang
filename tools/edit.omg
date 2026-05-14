@@ -1,0 +1,1488 @@
+;;;omg
+
+# OMG edit — a terminal editor with a sidebar file browser, written
+# in OMG. Started life as a nano clone (keybindings are still
+# nano-shaped) and grew into its own thing: open a directory and you
+# get a navigable sidebar; pick a file and the editor swaps to it;
+# ^B toggles the sidebar, ^T swaps focus between panes.
+#
+# Usage:
+#   omg tools/edit.omg                    # new buffer + sidebar on cwd
+#   omg tools/edit.omg path/to/file       # open file (sidebar hidden)
+#   omg tools/edit.omg path/to/dir/       # open dir in sidebar
+#
+# Editor controls (nano-shaped):
+#   ^X       exit (prompts if buffer is modified)
+#   ^O       save (prompts for filename on a new buffer)
+#   ^K       cut current line (consecutive ^K accumulate into kill buffer)
+#   ^U       paste the kill buffer
+#   ^W       search forward
+#   ^_       go to line
+#   ^G       show help in the status line
+#   ^L       redraw screen
+#   arrows   move (also Ctrl-B/F/N/P, plus PgUp/PgDn, Home/End)
+#   Bksp     delete char before cursor
+#   Del      delete char under cursor
+#   Tab      insert four spaces
+#
+# Sidebar / navigation:
+#   ^B       toggle sidebar visibility
+#   ^T       swap focus between sidebar and editor
+#   In the sidebar:
+#     ↑ ↓        move selection (j / k too)
+#     Enter      open file, or descend into folder
+#     Bksp / ←   go to parent directory
+#
+# AOT-compile for crisper editing:
+#   omg --build tools/edit.omg edit && ./edit path/to/dir
+#
+# Notes / limitations:
+#   * Assumes ASCII content — UTF-8 chars take multiple bytes in OMG
+#     strings, which the cursor logic doesn't account for.
+#   * Long lines scroll horizontally rather than soft-wrapping.
+#   * Ctrl-C is not intercepted; if you accidentally hit it, run
+#     `reset` to restore your shell's terminal mode.
+
+# ============================================================
+# Constants
+# ============================================================
+
+alloc VERSION := "0.2"
+alloc DEFAULT_ROWS := 24
+alloc DEFAULT_COLS := 100
+
+alloc ESC := chr(27)
+alloc CLEAR := ESC + "[2J"
+alloc HOME  := ESC + "[H"
+alloc INVERSE := ESC + "[7m"
+alloc RESET := ESC + "[0m"
+alloc HIDE_CURSOR := ESC + "[?25l"
+alloc SHOW_CURSOR := ESC + "[?25h"
+alloc CLR_EOL := ESC + "[K"
+
+proc cursor_to(row, col) {
+    return ESC + "[" + row + ";" + col + "H"
+}
+
+proc fg(code) {
+    return ESC + "[" + code + "m"
+}
+
+alloc COL_GRAY   := fg("90")
+alloc COL_RED    := fg("31")
+alloc COL_GREEN  := fg("32")
+alloc COL_YELLOW := fg("33")
+alloc COL_BLUE   := fg("34")
+alloc COL_CYAN   := fg("36")
+
+# ============================================================
+# String / list helpers
+# ============================================================
+
+# Repeat `ch` n times. Used for padding status bars.
+proc repeat_char(ch, n) {
+    alloc s := ""
+    alloc i := 0
+    loop i < n {
+        s := s + ch
+        i := i + 1
+    }
+    return s
+}
+
+# Split a string on \n. The trailing segment after the final \n is
+# kept; callers that want POSIX-style "trailing newline = no extra
+# line" can strip an empty last entry themselves.
+proc split_lines(s) {
+    alloc out := []
+    alloc start := 0
+    alloc i := 0
+    alloc n := length(s)
+    loop i < n {
+        if s[i] == "\n" {
+            out := out + [s[start:i]]
+            start := i + 1
+        }
+        i := i + 1
+    }
+    out := out + [s[start:n]]
+    return out
+}
+
+proc is_word_start(c) {
+    return (c >= "a" and c <= "z") or (c >= "A" and c <= "Z") or c == "_"
+}
+
+proc is_word_cont(c) {
+    return is_word_start(c) or (c >= "0" and c <= "9")
+}
+
+proc is_digit_char(c) {
+    return c >= "0" and c <= "9"
+}
+
+# ============================================================
+# File I/O
+# ============================================================
+
+# Load a file into a list of lines. Missing files yield a single
+# empty line (so the editor opens in "new file" mode). Returns
+# [lines, err_or_false].
+proc load_file(path) {
+    if file_exists(path) == false {
+        return [[""], false]
+    }
+    alloc content := read_file(path)
+    if content == false {
+        return [[""], "could not read file"]
+    }
+    alloc lines := split_lines(content)
+    # If the file ended with \n, split_lines leaves a phantom empty
+    # last segment. Strip it so the buffer matches the file.
+    if length(lines) > 0 and lines[length(lines) - 1] == "" {
+        lines := lines[0:length(lines) - 1]
+    }
+    if length(lines) == 0 {
+        lines := [""]
+    }
+    return [lines, false]
+}
+
+# Write the buffer back to `path`. Always appends \n after each line,
+# matching the POSIX convention nano writes by default.
+# Returns false on success, or an error string.
+proc save_file(path, lines) {
+    alloc h := file_open(path, "w")
+    if h == false {
+        return "could not open for writing"
+    }
+    alloc i := 0
+    loop i < length(lines) {
+        file_write(h, lines[i] + "\n")
+        i := i + 1
+    }
+    file_close(h)
+    return false
+}
+
+# ============================================================
+# Path + directory helpers
+# ============================================================
+
+# Strip a trailing slash from a path (except for the bare root "/").
+proc path_trim(p) {
+    if length(p) > 1 and p[length(p) - 1] == "/" {
+        return p[0:length(p) - 1]
+    }
+    return p
+}
+
+# Join two path components with a single "/".
+proc path_join(a, b) {
+    if length(a) == 0 { return b }
+    if a == "/" { return "/" + b }
+    return path_trim(a) + "/" + b
+}
+
+# Parent of `p`. Returns "/" for things at root, "." for relative
+# paths with no leading directory.
+proc path_parent(p) {
+    alloc t := path_trim(p)
+    alloc i := length(t) - 1
+    loop i >= 0 {
+        if t[i] == "/" {
+            if i == 0 { return "/" }
+            return t[0:i]
+        }
+        i := i - 1
+    }
+    return "."
+}
+
+# Last component of a path. "/foo/bar" → "bar", "/" → "/".
+proc path_base(p) {
+    alloc t := path_trim(p)
+    alloc i := length(t) - 1
+    loop i >= 0 {
+        if t[i] == "/" {
+            return t[i + 1:length(t)]
+        }
+        i := i - 1
+    }
+    return t
+}
+
+# Each sidebar entry is a dict with these fields:
+#   name        the basename ("foo.omg", "subdir", "..")
+#   is_dir      bool
+#   depth       0 = root listing, deeper = nested under expanded folders
+#   expanded    only meaningful for directories
+#   full_path   absolute (or cwd-relative) path to the entry
+proc make_entry(name, is_dir, depth, full_path) {
+    return {name: name, is_dir: is_dir, depth: depth, expanded: false, full_path: full_path}
+}
+
+# List the contents of `path` as tree nodes at the given depth. At
+# depth 0 (the root of the sidebar tree) we prepend a `..` entry so
+# the user can climb out of the current cwd; deeper nodes don't get
+# one — they expand in place rather than re-rooting the tree.
+proc load_dir_at_depth(path, depth) {
+    alloc out := []
+    if depth == 0 and path != "/" {
+        out := out + [make_entry("..", true, 0, path_parent(path))]
+    }
+    alloc names := read_dir(path)
+    alloc dirs := []
+    alloc files := []
+    alloc i := 0
+    loop i < length(names) {
+        alloc full := path_join(path, names[i])
+        if is_dir(full) {
+            dirs := dirs + [make_entry(names[i], true, depth, full)]
+        } else {
+            files := files + [make_entry(names[i], false, depth, full)]
+        }
+        i := i + 1
+    }
+    alloc di := 0
+    loop di < length(dirs) {
+        out := out + [dirs[di]]
+        di := di + 1
+    }
+    alloc fi := 0
+    loop fi < length(files) {
+        out := out + [files[fi]]
+        fi := fi + 1
+    }
+    return out
+}
+
+# Reset the sidebar tree to a fresh root listing of `path`.
+proc open_directory(path) {
+    alloc cleaned := path_trim(path)
+    if cleaned == "" { cleaned := "." }
+    ed.cwd := cleaned
+    ed.entries := load_dir_at_depth(cleaned, 0)
+    if ed.sidebar_cy >= length(ed.entries) {
+        ed.sidebar_cy := length(ed.entries) - 1
+    }
+    if ed.sidebar_cy < 0 { ed.sidebar_cy := 0 }
+    ed.sidebar_scroll := 0
+}
+
+# Expand a directory entry in place: load its children and splice
+# them into ed.entries directly after `idx` at depth+1.
+proc expand_at(idx) {
+    alloc e := ed.entries[idx]
+    if e.is_dir == false { return false }
+    if e.expanded         { return false }
+    if e.name == ".."     { return false }
+    alloc children := load_dir_at_depth(e.full_path, e.depth + 1)
+    e.expanded := true
+    ed.entries := ed.entries[0:idx + 1] + children + ed.entries[idx + 1:length(ed.entries)]
+}
+
+# Collapse a directory: drop every consecutive entry below `idx`
+# whose depth is greater than the folder's. Nested folders fold up
+# correctly because their children also exceed the parent's depth.
+proc collapse_at(idx) {
+    alloc e := ed.entries[idx]
+    if e.is_dir == false { return false }
+    if e.expanded == false { return false }
+    alloc end_idx := idx + 1
+    loop end_idx < length(ed.entries) and ed.entries[end_idx].depth > e.depth {
+        end_idx := end_idx + 1
+    }
+    # Mark every descendant collapsed so reopening the parent later
+    # doesn't surface previously-expanded grandchildren.
+    alloc j := idx + 1
+    loop j < end_idx {
+        if ed.entries[j].is_dir {
+            ed.entries[j].expanded := false
+        }
+        j := j + 1
+    }
+    e.expanded := false
+    ed.entries := ed.entries[0:idx + 1] + ed.entries[end_idx:length(ed.entries)]
+}
+
+proc toggle_at(idx) {
+    alloc e := ed.entries[idx]
+    if e.is_dir == false { return false }
+    if e.expanded {
+        collapse_at(idx)
+    } else {
+        expand_at(idx)
+    }
+}
+
+# ============================================================
+# Terminal size detection
+# ============================================================
+
+# Shell out to `stty size` to learn the controlling tty's geometry.
+# Falls back to a sensible default if anything goes wrong — non-tty
+# input, missing /bin/sh, parse failure, etc.
+proc detect_size() {
+    alloc tmp := "/tmp/omg-edit-size-" + getpid()
+    try {
+        alloc rc := subprocess(["sh", "-c", "stty size > " + tmp + " 2>/dev/null"])
+        if rc != 0 {
+            return [DEFAULT_ROWS, DEFAULT_COLS]
+        }
+        alloc s := read_file(tmp)
+        if s == false {
+            return [DEFAULT_ROWS, DEFAULT_COLS]
+        }
+        # Parse "ROWS COLS\n".
+        alloc sp := -1
+        alloc i := 0
+        loop i < length(s) {
+            if s[i] == " " {
+                sp := i
+                i := length(s)
+            }
+            i := i + 1
+        }
+        if sp < 0 {
+            return [DEFAULT_ROWS, DEFAULT_COLS]
+        }
+        alloc nl := length(s)
+        alloc j := sp + 1
+        loop j < length(s) {
+            if s[j] == "\n" or s[j] == "\r" {
+                nl := j
+                j := length(s)
+            }
+            j := j + 1
+        }
+        alloc rows := int(s[0:sp])
+        alloc cols := int(s[sp + 1:nl])
+        if rows < 6   { rows := DEFAULT_ROWS }
+        if cols < 30  { cols := DEFAULT_COLS }
+        return [rows, cols]
+    } except err {
+        return [DEFAULT_ROWS, DEFAULT_COLS]
+    }
+}
+
+# ============================================================
+# Input parsing
+# ============================================================
+
+# Block on stdin until a key arrives. The runtime's stdin_read_key is
+# non-blocking; we busy-poll with a small sleep so we yield CPU.
+proc read_key_blocking() {
+    loop true {
+        alloc k := stdin_read_key()
+        if k != false { return k }
+        sleep_ms(8)
+    }
+}
+
+# Try to read one more key with a short timeout. Used immediately
+# after ESC to distinguish a bare ESC from the start of a CSI
+# sequence ("ESC [ ..."). 10 ms is enough for local + ssh.
+proc read_key_timeout() {
+    alloc tries := 5
+    loop tries > 0 {
+        alloc k := stdin_read_key()
+        if k != false { return k }
+        sleep_ms(2)
+        tries := tries - 1
+    }
+    return false
+}
+
+# Decode a raw keypress into a semantic name (UP, BACKSPACE,
+# CTRL_X, etc.) so the dispatcher upstream can stay readable.
+# Plain printable ASCII passes through as a 1-char string.
+proc read_full_key() {
+    alloc k := read_key_blocking()
+    if k == ESC {
+        alloc k1 := read_key_timeout()
+        if k1 == false { return "ESC" }
+        if k1 == "[" or k1 == "O" {
+            alloc k2 := read_key_timeout()
+            if k2 == false { return "ESC" }
+            if k2 == "A" { return "UP" }
+            if k2 == "B" { return "DOWN" }
+            if k2 == "C" { return "RIGHT" }
+            if k2 == "D" { return "LEFT" }
+            if k2 == "H" { return "HOME" }
+            if k2 == "F" { return "END" }
+            # CSI numeric form: ESC [ <digits> ~
+            if k2 >= "0" and k2 <= "9" {
+                alloc num := k2
+                loop true {
+                    alloc k3 := read_key_timeout()
+                    if k3 == false { return "ESC" }
+                    if k3 == "~" {
+                        if num == "1" { return "HOME" }
+                        if num == "3" { return "DELETE" }
+                        if num == "4" { return "END" }
+                        if num == "5" { return "PGUP" }
+                        if num == "6" { return "PGDOWN" }
+                        if num == "7" { return "HOME" }
+                        if num == "8" { return "END" }
+                        return "UNKNOWN"
+                    }
+                    if k3 >= "0" and k3 <= "9" {
+                        num := num + k3
+                    } else {
+                        return "UNKNOWN"
+                    }
+                }
+            }
+            return "UNKNOWN"
+        }
+        return "ESC"
+    }
+    # Single-byte control codes. Map to nano-equivalent semantic
+    # names so the dispatcher only sees high-level events.
+    alloc b := ascii(k)
+    if b == 1   { return "CTRL_A" }
+    if b == 2   { return "CTRL_B" }
+    if b == 5   { return "CTRL_E" }
+    if b == 6   { return "CTRL_F" }
+    if b == 7   { return "CTRL_G" }
+    if b == 8   { return "BACKSPACE" }
+    if b == 9   { return "TAB" }
+    if b == 10  { return "ENTER" }
+    if b == 11  { return "CTRL_K" }
+    if b == 12  { return "CTRL_L" }
+    if b == 13  { return "ENTER" }
+    if b == 14  { return "CTRL_N" }
+    if b == 15  { return "CTRL_O" }
+    if b == 16  { return "CTRL_P" }
+    if b == 20  { return "CTRL_T" }
+    if b == 21  { return "CTRL_U" }
+    if b == 23  { return "CTRL_W" }
+    if b == 24  { return "CTRL_X" }
+    if b == 31  { return "CTRL_UNDERSCORE" }
+    if b == 127 { return "BACKSPACE" }
+    return k
+}
+
+# ============================================================
+# Syntax highlighting (for .omg files)
+# ============================================================
+
+alloc KEYWORDS := [
+    "alloc", "proc", "loop", "if", "elif", "else",
+    "return", "break", "try", "except", "facts",
+    "import", "as", "emit", "panic", "raise",
+    "and", "or", "true", "false"
+]
+
+proc is_keyword(w) {
+    alloc i := 0
+    loop i < length(KEYWORDS) {
+        if KEYWORDS[i] == w { return true }
+        i := i + 1
+    }
+    return false
+}
+
+# Wrap each token in its colour code. Walks the line one char at a
+# time, classifying into comment / string / word / number / other.
+# Operates on the visible slice rather than the full line, so
+# horizontal scrolling that cuts a token in half just shows the
+# remainder uncoloured — a small visual cost for not having to
+# colourise lines we'll never display.
+proc colourise_omg(line) {
+    alloc out := ""
+    alloc i := 0
+    alloc n := length(line)
+    loop i < n {
+        alloc c := line[i]
+        if c == "#" {
+            out := out + COL_GRAY + line[i:n] + RESET
+            i := n
+        } elif c == "\"" {
+            alloc start := i
+            i := i + 1
+            alloc closed := false
+            loop i < n and closed == false {
+                if line[i] == "\\" and i + 1 < n {
+                    i := i + 2
+                } elif line[i] == "\"" {
+                    i := i + 1
+                    closed := true
+                } else {
+                    i := i + 1
+                }
+            }
+            out := out + COL_GREEN + line[start:i] + RESET
+        } elif is_word_start(c) {
+            alloc start := i
+            loop i < n and is_word_cont(line[i]) {
+                i := i + 1
+            }
+            alloc word := line[start:i]
+            if is_keyword(word) {
+                out := out + COL_CYAN + word + RESET
+            } else {
+                out := out + word
+            }
+        } elif is_digit_char(c) {
+            alloc start := i
+            loop i < n and (is_digit_char(line[i]) or line[i] == ".") {
+                i := i + 1
+            }
+            out := out + COL_YELLOW + line[start:i] + RESET
+        } else {
+            out := out + c
+            i := i + 1
+        }
+    }
+    return out
+}
+
+# Decide whether a buffer wants syntax colouring based on its
+# extension. v1 only knows .omg; new languages would slot in here.
+proc colourise_for(path, line) {
+    if length(path) >= 4 and path[length(path) - 4:length(path)] == ".omg" {
+        return colourise_omg(line)
+    }
+    return line
+}
+
+# ============================================================
+# Editor state
+# ============================================================
+#
+# A single global dict so individual procs can mutate it without
+# threading a state value through every signature. The runtime
+# already does this for the OMG VM; we follow the same pattern.
+
+alloc SIDEBAR_W := 24
+
+alloc ed := {
+    lines: [""],
+    cy: 0,
+    cx: 0,
+    scroll_y: 0,
+    scroll_x: 0,
+    filename: "",
+    modified: false,
+    rows: DEFAULT_ROWS,
+    cols: DEFAULT_COLS,
+    status: "",
+    clipboard: [],
+    in_kill_chain: false,
+    highlight: true,
+    quit: false,
+    # ---- Sidebar / file browser ----
+    sidebar_open: false,         # currently visible?
+    focus: "editor",             # "editor" or "sidebar"
+    cwd: "",                     # the directory the sidebar is showing
+    entries: [],                 # cached [{name, is_dir}, ...]
+    sidebar_cy: 0,               # selected row in entries
+    sidebar_scroll: 0            # top visible entry index
+}
+
+proc edit_rows() { return ed.rows - 3 }
+# Edit area width depends on whether the sidebar is taking space.
+# When the sidebar is open we lose SIDEBAR_W cols plus 2 for the
+# "| " divider+margin between sidebar and editor.
+proc edit_cols() {
+    if ed.sidebar_open {
+        return ed.cols - SIDEBAR_W - 2
+    }
+    return ed.cols
+}
+# Screen column (1-indexed) where the edit area starts. The +3 is
+# SIDEBAR_W + 1 (divider) + 1 (margin) + 1 (1-indexed column).
+proc edit_start_col() {
+    if ed.sidebar_open {
+        return SIDEBAR_W + 3
+    }
+    return 1
+}
+
+proc set_modified(b) { ed.modified := b }
+proc set_status(s)   { ed.status := s }
+
+# Move the cursor to a valid spot (within bounds, on a real line,
+# not past the line's end). Called after any movement / edit.
+proc clamp_cursor() {
+    if ed.cy < 0 { ed.cy := 0 }
+    if ed.cy >= length(ed.lines) {
+        ed.cy := length(ed.lines) - 1
+    }
+    alloc llen := length(ed.lines[ed.cy])
+    if ed.cx < 0 { ed.cx := 0 }
+    if ed.cx > llen { ed.cx := llen }
+}
+
+# Keep the cursor on screen by adjusting the scroll offsets.
+proc adjust_scroll() {
+    alloc er := edit_rows()
+    alloc ec := edit_cols()
+    if ed.cy < ed.scroll_y { ed.scroll_y := ed.cy }
+    if ed.cy >= ed.scroll_y + er {
+        ed.scroll_y := ed.cy - er + 1
+    }
+    if ed.cx < ed.scroll_x { ed.scroll_x := ed.cx }
+    if ed.cx >= ed.scroll_x + ec {
+        ed.scroll_x := ed.cx - ec + 1
+    }
+    if ed.scroll_y < 0 { ed.scroll_y := 0 }
+    if ed.scroll_x < 0 { ed.scroll_x := 0 }
+}
+
+# ============================================================
+# Movement
+# ============================================================
+
+proc move_left() {
+    if ed.cx > 0 {
+        ed.cx := ed.cx - 1
+    } elif ed.cy > 0 {
+        ed.cy := ed.cy - 1
+        ed.cx := length(ed.lines[ed.cy])
+    }
+}
+
+proc move_right() {
+    if ed.cx < length(ed.lines[ed.cy]) {
+        ed.cx := ed.cx + 1
+    } elif ed.cy + 1 < length(ed.lines) {
+        ed.cy := ed.cy + 1
+        ed.cx := 0
+    }
+}
+
+proc move_up() {
+    if ed.cy > 0 {
+        ed.cy := ed.cy - 1
+        clamp_cursor()
+    }
+}
+
+proc move_down() {
+    if ed.cy + 1 < length(ed.lines) {
+        ed.cy := ed.cy + 1
+        clamp_cursor()
+    }
+}
+
+proc move_home() { ed.cx := 0 }
+proc move_end()  { ed.cx := length(ed.lines[ed.cy]) }
+
+proc move_pgup() {
+    alloc er := edit_rows()
+    ed.cy := ed.cy - er
+    if ed.cy < 0 { ed.cy := 0 }
+    clamp_cursor()
+}
+
+proc move_pgdown() {
+    alloc er := edit_rows()
+    ed.cy := ed.cy + er
+    if ed.cy >= length(ed.lines) {
+        ed.cy := length(ed.lines) - 1
+    }
+    clamp_cursor()
+}
+
+# ============================================================
+# Sidebar navigation
+# ============================================================
+
+proc sidebar_adjust_scroll() {
+    alloc er := edit_rows()
+    if ed.sidebar_cy < ed.sidebar_scroll {
+        ed.sidebar_scroll := ed.sidebar_cy
+    }
+    if ed.sidebar_cy >= ed.sidebar_scroll + er {
+        ed.sidebar_scroll := ed.sidebar_cy - er + 1
+    }
+    if ed.sidebar_scroll < 0 { ed.sidebar_scroll := 0 }
+}
+
+proc sidebar_up() {
+    if ed.sidebar_cy > 0 {
+        ed.sidebar_cy := ed.sidebar_cy - 1
+    }
+    sidebar_adjust_scroll()
+}
+
+proc sidebar_down() {
+    if ed.sidebar_cy + 1 < length(ed.entries) {
+        ed.sidebar_cy := ed.sidebar_cy + 1
+    }
+    sidebar_adjust_scroll()
+}
+
+proc sidebar_pgup() {
+    alloc er := edit_rows()
+    ed.sidebar_cy := ed.sidebar_cy - er
+    if ed.sidebar_cy < 0 { ed.sidebar_cy := 0 }
+    sidebar_adjust_scroll()
+}
+
+proc sidebar_pgdown() {
+    alloc er := edit_rows()
+    ed.sidebar_cy := ed.sidebar_cy + er
+    if ed.sidebar_cy >= length(ed.entries) {
+        ed.sidebar_cy := length(ed.entries) - 1
+    }
+    sidebar_adjust_scroll()
+}
+
+proc sidebar_home() {
+    ed.sidebar_cy := 0
+    sidebar_adjust_scroll()
+}
+
+proc sidebar_end() {
+    ed.sidebar_cy := length(ed.entries) - 1
+    if ed.sidebar_cy < 0 { ed.sidebar_cy := 0 }
+    sidebar_adjust_scroll()
+}
+
+proc sidebar_go_parent() {
+    open_directory(path_parent(ed.cwd))
+}
+
+# Load the file under the sidebar cursor into the editor buffer.
+# Refuses if the current buffer has unsaved changes, so we don't
+# trash work — user has to ^O save (or ^X discard) first.
+proc open_entry_file(e) {
+    if ed.modified {
+        set_status("Buffer modified — save (^O) or discard with ^X first")
+        return false
+    }
+    alloc loaded := load_file(e.full_path)
+    if loaded[1] != false {
+        set_status(loaded[1])
+        return false
+    }
+    ed.filename := e.full_path
+    ed.lines := loaded[0]
+    ed.cy := 0
+    ed.cx := 0
+    ed.scroll_y := 0
+    ed.scroll_x := 0
+    ed.modified := false
+    ed.in_kill_chain := false
+    ed.focus := "editor"
+    set_status("Opened " + e.full_path)
+}
+
+# Enter / Right on the selected entry. Folders toggle expanded;
+# files open into the editor; `..` walks the filesystem up a level.
+proc sidebar_expand_or_open() {
+    if length(ed.entries) == 0 { return false }
+    alloc e := ed.entries[ed.sidebar_cy]
+    if e.name == ".." {
+        sidebar_go_parent()
+        return false
+    }
+    if e.is_dir {
+        if e.expanded {
+            collapse_at(ed.sidebar_cy)
+        } else {
+            expand_at(ed.sidebar_cy)
+        }
+        return false
+    }
+    open_entry_file(e)
+}
+
+# Left arrow / h. Three-tier behaviour, in order:
+#   1. If on an expanded folder, collapse it.
+#   2. Otherwise, jump to the entry's tree parent.
+#   3. If already at the tree root, re-root the sidebar at cwd's
+#      filesystem parent.
+proc sidebar_collapse_or_parent() {
+    if length(ed.entries) == 0 { return false }
+    alloc e := ed.entries[ed.sidebar_cy]
+    if e.is_dir and e.expanded {
+        collapse_at(ed.sidebar_cy)
+        return false
+    }
+    if e.depth > 0 {
+        alloc target := e.depth - 1
+        alloc i := ed.sidebar_cy - 1
+        loop i >= 0 {
+            if ed.entries[i].depth == target {
+                ed.sidebar_cy := i
+                sidebar_adjust_scroll()
+                return false
+            }
+            i := i - 1
+        }
+    }
+    sidebar_go_parent()
+}
+
+# Compatibility alias — older code in this file (and any external
+# callers) used sidebar_select. Keep the same behaviour as Enter.
+proc sidebar_select() { sidebar_expand_or_open() }
+
+# Toggle visibility. First-time open lazily populates the entry list
+# from the directory containing the current file (or ./ if none).
+proc toggle_sidebar() {
+    if ed.sidebar_open {
+        ed.sidebar_open := false
+        ed.focus := "editor"
+        return false
+    }
+    ed.sidebar_open := true
+    if length(ed.entries) == 0 {
+        alloc dir := "."
+        if ed.filename != "" {
+            dir := path_parent(ed.filename)
+        }
+        open_directory(dir)
+    }
+    ed.focus := "sidebar"
+}
+
+# Swap focus between sidebar and editor. No-op if sidebar is hidden.
+proc toggle_focus() {
+    if ed.sidebar_open == false { return false }
+    if ed.focus == "editor" {
+        ed.focus := "sidebar"
+    } else {
+        ed.focus := "editor"
+    }
+}
+
+# ============================================================
+# Editing
+# ============================================================
+
+# Insert a string (typically a single char) at the cursor.
+proc insert_str(s) {
+    alloc line := ed.lines[ed.cy]
+    ed.lines[ed.cy] := line[0:ed.cx] + s + line[ed.cx:length(line)]
+    ed.cx := ed.cx + length(s)
+    set_modified(true)
+}
+
+# Split the current line at the cursor and insert the right half as
+# a new line below.
+proc do_newline() {
+    alloc line := ed.lines[ed.cy]
+    alloc left := line[0:ed.cx]
+    alloc right := line[ed.cx:length(line)]
+    ed.lines[ed.cy] := left
+    ed.lines := ed.lines[0:ed.cy + 1] + [right] + ed.lines[ed.cy + 1:length(ed.lines)]
+    ed.cy := ed.cy + 1
+    ed.cx := 0
+    set_modified(true)
+}
+
+# Backspace = delete the char before the cursor. At the start of a
+# line, merge with the previous line.
+proc do_backspace() {
+    if ed.cx > 0 {
+        alloc line := ed.lines[ed.cy]
+        ed.lines[ed.cy] := line[0:ed.cx - 1] + line[ed.cx:length(line)]
+        ed.cx := ed.cx - 1
+        set_modified(true)
+    } elif ed.cy > 0 {
+        alloc prev := ed.lines[ed.cy - 1]
+        alloc cur := ed.lines[ed.cy]
+        ed.lines[ed.cy - 1] := prev + cur
+        ed.lines := ed.lines[0:ed.cy] + ed.lines[ed.cy + 1:length(ed.lines)]
+        ed.cy := ed.cy - 1
+        ed.cx := length(prev)
+        set_modified(true)
+    }
+}
+
+# Delete = remove the char *at* the cursor. At end of line, splice
+# the next line onto this one.
+proc do_delete() {
+    alloc line := ed.lines[ed.cy]
+    if ed.cx < length(line) {
+        ed.lines[ed.cy] := line[0:ed.cx] + line[ed.cx + 1:length(line)]
+        set_modified(true)
+    } elif ed.cy + 1 < length(ed.lines) {
+        ed.lines[ed.cy] := line + ed.lines[ed.cy + 1]
+        ed.lines := ed.lines[0:ed.cy + 1] + ed.lines[ed.cy + 2:length(ed.lines)]
+        set_modified(true)
+    }
+}
+
+# Cut the current line. Consecutive cuts append to the kill buffer
+# so the next paste replays the full sequence — that's the nano
+# behaviour users expect.
+proc do_cut() {
+    if ed.in_kill_chain == false {
+        ed.clipboard := []
+    }
+    ed.clipboard := ed.clipboard + [ed.lines[ed.cy]]
+    if length(ed.lines) == 1 {
+        # Always keep at least one line; replace contents with empty.
+        ed.lines[0] := ""
+    } else {
+        ed.lines := ed.lines[0:ed.cy] + ed.lines[ed.cy + 1:length(ed.lines)]
+        if ed.cy >= length(ed.lines) {
+            ed.cy := length(ed.lines) - 1
+        }
+    }
+    ed.cx := 0
+    ed.in_kill_chain := true
+    set_modified(true)
+}
+
+# Paste the kill buffer above the current cursor row.
+proc do_paste() {
+    if length(ed.clipboard) == 0 {
+        set_status("Empty clipboard")
+        return false
+    }
+    alloc i := 0
+    loop i < length(ed.clipboard) {
+        ed.lines := ed.lines[0:ed.cy] + [ed.clipboard[i]] + ed.lines[ed.cy:length(ed.lines)]
+        ed.cy := ed.cy + 1
+        i := i + 1
+    }
+    ed.cx := 0
+    set_modified(true)
+}
+
+# ============================================================
+# Prompts on the status line
+# ============================================================
+
+# Display `label` followed by the editable `initial` text, echoing
+# each typed character. Returns the entered string, or false if the
+# user pressed Esc.
+proc do_prompt(label, initial) {
+    alloc buf := initial
+    loop true {
+        alloc out := cursor_to(ed.rows - 1, 1) + INVERSE + label + buf + RESET + CLR_EOL
+        out := out + cursor_to(ed.rows - 1, length(label) + length(buf) + 1)
+        print(out)
+        alloc k := read_full_key()
+        if k == "ENTER" { return buf }
+        if k == "ESC"   { return false }
+        if k == "BACKSPACE" {
+            if length(buf) > 0 {
+                buf := buf[0:length(buf) - 1]
+            }
+        } elif length(k) == 1 {
+            alloc b := ascii(k)
+            if b >= 32 and b < 127 {
+                buf := buf + k
+            }
+        }
+    }
+}
+
+# ============================================================
+# Search forward
+# ============================================================
+
+# Linear search for `needle` inside `s` starting at index `from`.
+# Returns the matching index or -1.
+proc find_in_line(s, needle, from) {
+    if length(needle) == 0 { return -1 }
+    alloc i := from
+    alloc end := length(s) - length(needle)
+    loop i <= end {
+        if s[i:i + length(needle)] == needle {
+            return i
+        }
+        i := i + 1
+    }
+    return -1
+}
+
+# Search forward from one cell past the current cursor. If we run
+# off the end of the buffer we wrap to the top — same as nano.
+proc do_search() {
+    alloc q := do_prompt("Search: ", "")
+    if q == false {
+        set_status("Cancelled")
+        return false
+    }
+    if q == "" {
+        set_status("No search term")
+        return false
+    }
+    alloc start_y := ed.cy
+    alloc start_x := ed.cx + 1
+    alloc y := start_y
+    loop y < length(ed.lines) {
+        alloc x := 0
+        if y == start_y { x := start_x }
+        alloc found := find_in_line(ed.lines[y], q, x)
+        if found >= 0 {
+            ed.cy := y
+            ed.cx := found
+            set_status("Found")
+            return false
+        }
+        y := y + 1
+    }
+    alloc y2 := 0
+    loop y2 <= start_y {
+        alloc found2 := find_in_line(ed.lines[y2], q, 0)
+        if found2 >= 0 {
+            ed.cy := y2
+            ed.cx := found2
+            set_status("Found (wrapped)")
+            return false
+        }
+        y2 := y2 + 1
+    }
+    set_status("Not found")
+}
+
+# ============================================================
+# Go to line
+# ============================================================
+
+proc do_goto() {
+    alloc s := do_prompt("Go to line: ", "")
+    if s == false {
+        set_status("Cancelled")
+        return false
+    }
+    if s == "" {
+        set_status("No line number")
+        return false
+    }
+    try {
+        alloc n := int(s)
+        ed.cy := n - 1
+        if ed.cy < 0 { ed.cy := 0 }
+        if ed.cy >= length(ed.lines) {
+            ed.cy := length(ed.lines) - 1
+        }
+        ed.cx := 0
+        set_status("Line " + (ed.cy + 1))
+    } except err {
+        set_status("Invalid line number: " + s)
+    }
+}
+
+# ============================================================
+# Save / exit
+# ============================================================
+
+proc do_save() {
+    alloc target := ed.filename
+    if target == "" {
+        alloc entered := do_prompt("File Name to Write: ", "")
+        if entered == false {
+            set_status("Cancelled")
+            return false
+        }
+        if entered == "" {
+            set_status("No filename given")
+            return false
+        }
+        target := entered
+    }
+    alloc err := save_file(target, ed.lines)
+    if err != false {
+        set_status("Error: " + err)
+        return false
+    }
+    ed.filename := target
+    ed.modified := false
+    alloc plural := "s"
+    if length(ed.lines) == 1 { plural := "" }
+    set_status("[ Wrote " + length(ed.lines) + " line" + plural + " ]")
+}
+
+# nano's exit flow: if the buffer is clean, just leave. If it's
+# dirty, prompt Y/N/Esc — Y saves and quits, N quits without
+# saving, Esc cancels.
+proc do_exit() {
+    if ed.modified == false {
+        ed.quit := true
+        return false
+    }
+    print(cursor_to(ed.rows - 1, 1) + INVERSE + "Save modified buffer?  Y / N / Esc to cancel" + RESET + CLR_EOL)
+    loop true {
+        alloc k := read_full_key()
+        if k == "y" or k == "Y" {
+            do_save()
+            if ed.modified == false {
+                ed.quit := true
+                return false
+            }
+            return false
+        }
+        if k == "n" or k == "N" {
+            ed.quit := true
+            return false
+        }
+        if k == "ESC" {
+            set_status("Cancelled")
+            return false
+        }
+    }
+}
+
+# ============================================================
+# Render
+# ============================================================
+
+# Render one row of the sidebar tree. The visible content is always
+# exactly SIDEBAR_W columns; ANSI escapes for colour / inverse don't
+# count toward that width.
+#
+# Layout: D copies of "| " for each ancestor depth (the vertical
+# guide rails), then a node marker, then the name. A trailing `*`
+# slot at the very front of the line replaces the leading space if
+# this entry is the currently-open file in the editor.
+#
+# Markers:
+#   v   expanded directory
+#   >   collapsed directory
+#   ¬   file
+#
+# `..` is special — it sits at depth 0 with no marker, just the
+# name, because it's a navigation command rather than a tree node.
+proc render_sidebar_row(r) {
+    alloc idx := ed.sidebar_scroll + r
+    if idx >= length(ed.entries) {
+        return repeat_char(" ", SIDEBAR_W)
+    }
+    alloc e := ed.entries[idx]
+
+    # Open-file marker. Replaces the leading space so the indicator
+    # is visible at the leftmost column even on deeply-nested entries.
+    alloc star := " "
+    if e.is_dir == false and e.full_path == ed.filename {
+        star := "*"
+    }
+
+    # Vertical guide rails for each ancestor depth.
+    alloc rails := ""
+    alloc d := 0
+    loop d < e.depth {
+        rails := rails + "| "
+        d := d + 1
+    }
+
+    # Per-node marker.
+    alloc marker := "¬ "
+    if e.name == ".." {
+        marker := ""
+    } elif e.is_dir {
+        if e.expanded {
+            marker := "v "
+        } else {
+            marker := "> "
+        }
+    }
+
+    alloc name := e.name
+    if e.is_dir and e.name != ".." {
+        name := name + "/"
+    }
+
+    alloc body := star + rails + marker + name
+    # Truncate body to fit SIDEBAR_W with a `~` marker, then pad with
+    # spaces so the divider lines up across rows.
+    if length(body) > SIDEBAR_W {
+        body := body[0:SIDEBAR_W - 1] + "~"
+    }
+    alloc pad := SIDEBAR_W - length(body)
+    if pad < 0 { pad := 0 }
+    alloc filled := body + repeat_char(" ", pad)
+
+    if ed.focus == "sidebar" and idx == ed.sidebar_cy {
+        return INVERSE + filled + RESET
+    }
+    if idx == ed.sidebar_cy {
+        # Selected row when sidebar isn't focused — dim treatment so
+        # the user can still see what's selected.
+        return COL_GRAY + filled + RESET
+    }
+    if e.is_dir {
+        return COL_BLUE + filled + RESET
+    }
+    return filled
+}
+
+# Render one row of the editor pane (just the text slice, no
+# padding — CLR_EOL after composition wipes the rest of the line).
+proc render_edit_row(r) {
+    alloc doc_y := ed.scroll_y + r
+    if doc_y >= length(ed.lines) {
+        return ""
+    }
+    alloc full := ed.lines[doc_y]
+    alloc start := ed.scroll_x
+    alloc end := start + edit_cols()
+    if start > length(full) { start := length(full) }
+    if end > length(full)   { end := length(full) }
+    alloc slice := full[start:end]
+    if ed.highlight {
+        slice := colourise_for(ed.filename, slice)
+    }
+    return slice
+}
+
+proc render() {
+    if ed.focus == "editor" {
+        adjust_scroll()
+    } else {
+        sidebar_adjust_scroll()
+    }
+    alloc out := HOME
+
+    # Top status bar
+    alloc name := ed.filename
+    if name == "" { name := "[New Buffer]" }
+    alloc mod := ""
+    if ed.modified { mod := "  * Modified" }
+    alloc focus_label := ""
+    if ed.sidebar_open {
+        if ed.focus == "sidebar" {
+            focus_label := "  [sidebar]"
+        } else {
+            focus_label := "  [editor]"
+        }
+    }
+    alloc top := " OMG edit " + VERSION + "    " + name + mod + focus_label
+    alloc pad := ed.cols - length(top)
+    if pad < 0 { pad := 0 }
+    out := out + INVERSE + top + repeat_char(" ", pad) + RESET + "\n"
+
+    # Edit area with optional sidebar.
+    alloc er := edit_rows()
+    alloc r := 0
+    loop r < er {
+        alloc row := ""
+        if ed.sidebar_open {
+            # `| ` is divider + 1-cell margin between sidebar and
+            # editor; edit_cols and edit_start_col account for both.
+            row := row + render_sidebar_row(r) + "| "
+        }
+        row := row + render_edit_row(r)
+        out := out + row + CLR_EOL + "\n"
+        r := r + 1
+    }
+
+    # Status message row
+    alloc status_text := " " + ed.status
+    alloc status_pad := ed.cols - length(status_text)
+    if status_pad < 0 { status_pad := 0 }
+    out := out + status_text + repeat_char(" ", status_pad) + CLR_EOL + "\n"
+
+    # Help bar — keys differ slightly between modes so the user sees
+    # the relevant ones rather than the editor-only ones in both
+    # contexts.
+    alloc help := ""
+    if ed.focus == "sidebar" {
+        help := " ^X Exit  Enter Open  Bksp Up dir  ^B Hide  ^T Editor"
+    } else {
+        help := " ^X Exit  ^O Save  ^K Cut  ^U Paste  ^W Search  ^_ GoTo  ^B Sidebar"
+    }
+    alloc help_pad := ed.cols - length(help)
+    if help_pad < 0 { help_pad := 0 }
+    out := out + INVERSE + help + repeat_char(" ", help_pad) + RESET
+
+    # Cursor placement depends on focus: editor mode lands the
+    # terminal caret at the buffer cursor; sidebar mode hides it
+    # because the inverse-highlighted row already shows the
+    # selection.
+    if ed.focus == "sidebar" {
+        alloc sr := ed.sidebar_cy - ed.sidebar_scroll + 2
+        out := out + cursor_to(sr, 1) + HIDE_CURSOR
+    } else {
+        alloc sr := ed.cy - ed.scroll_y + 2
+        alloc sc := ed.cx - ed.scroll_x + edit_start_col()
+        out := out + cursor_to(sr, sc) + SHOW_CURSOR
+    }
+    print(out)
+}
+
+# ============================================================
+# Help text
+# ============================================================
+
+proc show_help() {
+    set_status("Keys: arrows  ^X exit  ^O save  ^K cut  ^U paste  ^W search  ^_ goto  ^G help")
+}
+
+# ============================================================
+# Dispatch
+# ============================================================
+
+# Sidebar-only key dispatch. Most editor controls are intentionally
+# inert here — the sidebar is a navigator, not a text input.
+proc handle_sidebar_key(k) {
+    if k == "UP" or k == "CTRL_P" or k == "k" {
+        sidebar_up()
+    } elif k == "DOWN" or k == "CTRL_N" or k == "j" {
+        sidebar_down()
+    } elif k == "PGUP" {
+        sidebar_pgup()
+    } elif k == "PGDOWN" {
+        sidebar_pgdown()
+    } elif k == "HOME" or k == "CTRL_A" {
+        sidebar_home()
+    } elif k == "END" or k == "CTRL_E" {
+        sidebar_end()
+    } elif k == "ENTER" or k == "RIGHT" or k == "l" {
+        sidebar_expand_or_open()
+    } elif k == "LEFT" or k == "h" {
+        sidebar_collapse_or_parent()
+    } elif k == "BACKSPACE" {
+        sidebar_go_parent()
+    }
+    # Anything else is ignored in sidebar mode.
+}
+
+proc handle_editor_key(k) {
+    if k == "CTRL_O" {
+        do_save()
+    } elif k == "CTRL_K" {
+        do_cut()
+    } elif k == "CTRL_U" {
+        do_paste()
+    } elif k == "CTRL_W" {
+        do_search()
+    } elif k == "CTRL_UNDERSCORE" {
+        do_goto()
+    } elif k == "LEFT" {
+        move_left()
+    } elif k == "CTRL_F" or k == "RIGHT" {
+        move_right()
+    } elif k == "UP" or k == "CTRL_P" {
+        move_up()
+    } elif k == "DOWN" or k == "CTRL_N" {
+        move_down()
+    } elif k == "HOME" or k == "CTRL_A" {
+        move_home()
+    } elif k == "END" or k == "CTRL_E" {
+        move_end()
+    } elif k == "PGUP" {
+        move_pgup()
+    } elif k == "PGDOWN" {
+        move_pgdown()
+    } elif k == "ENTER" {
+        do_newline()
+    } elif k == "BACKSPACE" {
+        do_backspace()
+    } elif k == "DELETE" {
+        do_delete()
+    } elif k == "TAB" {
+        insert_str("    ")
+    } elif k == "ESC" {
+        # Ignored.
+    } elif length(k) == 1 {
+        alloc b := ascii(k)
+        if b >= 32 and b < 127 {
+            insert_str(k)
+        }
+    }
+}
+
+# Top-level dispatcher: global keys, then mode-specific. Cut-chain
+# bookkeeping lives here — any non-^K keystroke flips
+# ed.in_kill_chain back off, so the next ^K starts a fresh kill
+# buffer.
+proc handle_key(k) {
+    if k == "CTRL_X" {
+        do_exit()
+    } elif k == "CTRL_B" {
+        toggle_sidebar()
+    } elif k == "CTRL_T" {
+        toggle_focus()
+    } elif k == "CTRL_G" {
+        show_help()
+    } elif k == "CTRL_L" {
+        # No-op — the next render redraws everything anyway.
+        set_status("Redrawn")
+    } elif ed.focus == "sidebar" {
+        handle_sidebar_key(k)
+    } else {
+        handle_editor_key(k)
+    }
+    if k != "CTRL_K" {
+        ed.in_kill_chain := false
+    }
+}
+
+# ============================================================
+# Main loop
+# ============================================================
+
+proc run() {
+    # argv may be a file, a directory, or empty.
+    #   file       → load it, keep sidebar closed
+    #   directory  → open it in the sidebar, leave the buffer empty
+    #   nothing    → open cwd in the sidebar, leave the buffer empty
+    if length(args) >= 2 {
+        alloc arg := args[1]
+        if is_dir(arg) {
+            ed.sidebar_open := true
+            ed.focus := "sidebar"
+            open_directory(arg)
+        } else {
+            ed.filename := arg
+            alloc loaded := load_file(arg)
+            ed.lines := loaded[0]
+            if loaded[1] != false {
+                set_status(loaded[1])
+            } elif file_exists(arg) == false {
+                set_status("[ New file ]")
+            }
+        }
+    } else {
+        # No arg at all: open the cwd in the sidebar so the first
+        # thing the user sees is a navigable file picker.
+        ed.sidebar_open := true
+        ed.focus := "sidebar"
+        open_directory(".")
+    }
+
+    alloc sz := detect_size()
+    ed.rows := sz[0]
+    ed.cols := sz[1]
+
+    emit CLEAR
+    if length(ed.status) == 0 {
+        set_status("Welcome to OMG edit — ^X exit, ^O save, ^B sidebar, ^T swap pane")
+    }
+
+    loop ed.quit == false {
+        render()
+        alloc k := read_full_key()
+        # Transient status lasts one render then clears, so messages
+        # like "Found" or "Wrote 12 lines" disappear after the next
+        # keystroke.
+        ed.status := ""
+        handle_key(k)
+    }
+
+    # Tidy: move cursor to bottom and clear so the shell prompt
+    # appears in a sensible place after exit.
+    print(cursor_to(ed.rows, 1) + CLR_EOL)
+}
+
+# ============================================================
+# Bootstrap
+# ============================================================
+
+try {
+    stdin_set_raw(true)
+    try {
+        run()
+    } except err {
+        stdin_set_raw(false)
+        print(SHOW_CURSOR)
+        emit ""
+        emit err
+    }
+    stdin_set_raw(false)
+} except outer_err {
+    print(SHOW_CURSOR)
+    emit "edit: " + outer_err
+}
