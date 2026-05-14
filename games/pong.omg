@@ -1,0 +1,305 @@
+;;;omg
+
+# Terminal Pong in OMG. Single-player vs a simple CPU.
+#
+# Controls:
+#   k / w / up     paddle up
+#   j / s / down   paddle down
+#   q              quit
+#
+# First to 7 wins. CPU tracks the ball with a slight max speed so
+# it can be beaten by hitting steep angles.
+#
+# AOT-compile for crisper input:
+#     omg --build games/pong.omg pong && ./pong
+
+alloc W := 60        # court width
+alloc H := 20        # court height
+alloc PADDLE_H := 4
+alloc WIN_SCORE := 7
+
+# Paddle x-positions. Column 0 / W-1 are the side walls; column 1 and
+# W-2 are where the paddles live.
+alloc PLAYER_X := 1
+alloc CPU_X := W - 2
+
+alloc CLEAR := chr(27) + "[2J"
+alloc HOME  := chr(27) + "[H"
+alloc HIDE  := chr(27) + "[?25l"
+alloc SHOW  := chr(27) + "[?25h"
+
+# ---- LCG random ------------------------------------------------------
+
+alloc rng_state := 0
+proc rng_next() {
+    rng_state := (rng_state * 1103515245 + 12345) % 2147483648
+    return rng_state
+}
+
+# Random ball direction at serve / reset. Bias toward the loser's
+# side so the next rally starts heading their way.
+proc serve_direction(toward_player) {
+    alloc dvx := 1
+    if toward_player {
+        dvx := -1
+    }
+    # Pick dvy ∈ {-1, +1} uniformly.
+    alloc dvy := 1
+    if rng_next() % 2 == 0 {
+        dvy := -1
+    }
+    return [dvx, dvy]
+}
+
+# ---- Rendering -------------------------------------------------------
+
+proc render(state) {
+    alloc out := HOME
+    alloc bx := state[0]
+    alloc by := state[1]
+    alloc py := state[2]    # player paddle top
+    alloc cy := state[3]    # cpu paddle top
+    alloc ps := state[4]
+    alloc cs := state[5]
+
+    # Score line + top frame
+    out := out + " You: " + ps + "    CPU: " + cs + "       (q to quit)\n"
+    out := out + "+"
+    alloc i := 0
+    loop i < W {
+        out := out + "-"
+        i := i + 1
+    }
+    out := out + "+\n"
+
+    alloc y := 0
+    loop y < H {
+        out := out + "|"
+        alloc x := 0
+        loop x < W {
+            if x == bx and y == by {
+                out := out + "O"
+            } elif x == PLAYER_X and y >= py and y < py + PADDLE_H {
+                out := out + "#"
+            } elif x == CPU_X and y >= cy and y < cy + PADDLE_H {
+                out := out + "#"
+            } elif x == W // 2 and y % 2 == 0 {
+                # Centre dashed line — a flat dot every other row.
+                out := out + ":"
+            } else {
+                out := out + " "
+            }
+            x := x + 1
+        }
+        out := out + "|\n"
+        y := y + 1
+    }
+
+    out := out + "+"
+    alloc j := 0
+    loop j < W {
+        out := out + "-"
+        j := j + 1
+    }
+    out := out + "+\n"
+    print(out)
+}
+
+# ---- Input -----------------------------------------------------------
+
+# Returns [paddle_delta, quit]. Drains the input queue so a held key
+# never lags the paddle by more than one frame.
+proc poll_input() {
+    alloc dy := 0
+    alloc quit := false
+    loop true {
+        alloc k := stdin_read_key()
+        if k == false { break }
+        if k == "q" or k == "Q" {
+            quit := true
+        } elif k == "k" or k == "w" {
+            dy := dy - 1
+        } elif k == "j" or k == "s" {
+            dy := dy + 1
+        }
+    }
+    return [dy, quit]
+}
+
+# ---- CPU AI ----------------------------------------------------------
+
+# Track the ball's y, but cap movement per tick so the CPU can be
+# outpaced by a well-angled ball. `skill` is the max rows it can
+# travel per tick — 1 keeps it beatable, 2 makes it tougher.
+proc cpu_move(cy, ball_y, skill) {
+    alloc target := ball_y - PADDLE_H // 2
+    if target < cy {
+        alloc step := cy - target
+        if step > skill { step := skill }
+        return cy - step
+    } elif target > cy {
+        alloc step := target - cy
+        if step > skill { step := skill }
+        return cy + step
+    }
+    return cy
+}
+
+# ---- Game loop -------------------------------------------------------
+
+# Returns true iff `by` is within the paddle's vertical span.
+proc paddle_hit(py, by) {
+    return by >= py and by < py + PADDLE_H
+}
+
+# Clamp paddle top so it stays inside the court.
+proc clamp_paddle(y) {
+    if y < 0 { return 0 }
+    if y > H - PADDLE_H { return H - PADDLE_H }
+    return y
+}
+
+proc play() {
+    rng_state := time_ms() % 2147483648
+
+    alloc bx := W // 2
+    alloc by := H // 2
+    alloc serve := serve_direction(true)
+    alloc dvx := serve[0]
+    alloc dvy := serve[1]
+    alloc py := H // 2 - PADDLE_H // 2
+    alloc cy := py
+    alloc ps := 0
+    alloc cs := 0
+    # Input and rendering tick at 25 ms; ball + CPU physics only fires
+    # every `physics_every` input ticks. Decoupling lets the paddle
+    # respond crisply (every keystroke is felt within ~25 ms) while
+    # the ball still drifts at a leisurely ~12 cells/sec.
+    alloc tick_ms := 25
+    alloc physics_every := 3
+    alloc physics_counter := 0
+
+    emit CLEAR
+    print(HIDE)
+    render([bx, by, py, cy, ps, cs])
+
+    loop true {
+        # ---- Input (runs every input tick) ----
+        alloc inp := poll_input()
+        if inp[1] { break }
+        py := clamp_paddle(py + inp[0])
+
+        # On non-physics ticks we just re-render the moved paddle and
+        # sleep. Physics (ball + CPU) only fires every `physics_every`
+        # input ticks so the ball stays beatable while the paddle is
+        # responsive on every keystroke.
+        physics_counter := physics_counter + 1
+        alloc do_physics := physics_counter >= physics_every
+        if do_physics {
+            physics_counter := 0
+
+            cy := clamp_paddle(cpu_move(cy, by, 1))
+
+            alloc nx := bx + dvx
+            alloc ny := by + dvy
+
+            # Top / bottom wall bounce.
+            if ny < 0 {
+                ny := 0
+                dvy := 0 - dvy
+            } elif ny >= H {
+                ny := H - 1
+                dvy := 0 - dvy
+            }
+
+            # Paddle collisions. We check the *destination* column so
+            # the ball can't tunnel past a paddle when speeds are >1
+            # cell per physics tick (currently they aren't, but cheap
+            # insurance). On a miss, `scored` short-circuits the
+            # normal "advance ball" path.
+            alloc scored := false
+            if nx <= PLAYER_X {
+                if paddle_hit(py, ny) {
+                    nx := PLAYER_X + 1
+                    dvx := 0 - dvx
+                    # Steer the rebound vertically based on where on
+                    # the paddle the ball hit — edges deflect, centre
+                    # goes straight.
+                    alloc offset := ny - (py + PADDLE_H // 2)
+                    if offset < 0 {
+                        dvy := -1
+                    } elif offset > 0 {
+                        dvy := 1
+                    }
+                } else {
+                    cs := cs + 1
+                    scored := true
+                }
+            } elif nx >= CPU_X {
+                if paddle_hit(cy, ny) {
+                    nx := CPU_X - 1
+                    dvx := 0 - dvx
+                    alloc offset := ny - (cy + PADDLE_H // 2)
+                    if offset < 0 {
+                        dvy := -1
+                    } elif offset > 0 {
+                        dvy := 1
+                    }
+                } else {
+                    ps := ps + 1
+                    scored := true
+                }
+            }
+
+            if scored {
+                if ps >= WIN_SCORE or cs >= WIN_SCORE {
+                    render([bx, by, py, cy, ps, cs])
+                    break
+                }
+                # Reset to centre and pause briefly so the next serve
+                # doesn't feel instant. Serve toward whoever just
+                # lost the rally.
+                bx := W // 2
+                by := H // 2
+                alloc s := serve_direction(cs > ps)
+                dvx := s[0]
+                dvy := s[1]
+                render([bx, by, py, cy, ps, cs])
+                sleep_ms(600)
+            } else {
+                bx := nx
+                by := ny
+            }
+        }
+
+        render([bx, by, py, cy, ps, cs])
+        sleep_ms(tick_ms)
+    }
+
+    print(SHOW)
+    emit ""
+    if ps >= WIN_SCORE {
+        emit "You win " + ps + " - " + cs + ". gg"
+    } elif cs >= WIN_SCORE {
+        emit "CPU wins " + cs + " - " + ps + ". gg"
+    } else {
+        emit "Final: you " + ps + ", CPU " + cs
+    }
+}
+
+# Same raw-mode safety wrap as Snake / Tetris — clean error on
+# non-TTY, restore cooked mode on crash.
+try {
+    stdin_set_raw(true)
+    try {
+        play()
+    } except err {
+        stdin_set_raw(false)
+        print(SHOW)
+        emit err
+    }
+    stdin_set_raw(false)
+} except outer_err {
+    print(SHOW)
+    emit "pong: " + outer_err
+}

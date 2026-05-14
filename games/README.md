@@ -10,6 +10,7 @@ not run them (no controlling terminal).
 | Game            | Size           | Highlights |
 |-----------------|----------------|------------|
 | [`snake.omg`](snake.omg)   | ~200 lines | Walls, self-collision, fruit spawning via LCG, speed-up per apple. Hjkl / wasd / arrows. |
+| [`pong.omg`](pong.omg)     | ~250 lines | Single-player vs CPU, edge-of-paddle deflection, first to 7. CPU's max speed is tuned to be beatable. |
 | [`tetris.omg`](tetris.omg) | ~400 lines | 7 tetrominoes with 4 rotation states each, line clearing, level/score, hard + soft drop, pause. |
 
 ## How to play

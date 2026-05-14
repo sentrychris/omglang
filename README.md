@@ -806,7 +806,7 @@ Some interesting starting points:
 - [`examples/donut.omg`](examples/donut.omg): Andy Sloane's spinning 3D
   ASCII donut, ported to OMG. Exercises the float kit and ANSI-escape
   animation — AOT-compile it for a smooth ~90 FPS spin.
-- [`games/`](games/): interactive terminal games (Snake, Tetris)
+- [`games/`](games/): interactive terminal games (Snake, Pong, Tetris)
   driven by `time_ms` / `sleep_ms` / `stdin_set_raw` /
   `stdin_read_key`. See [`games/README.md`](games/README.md).
 - [`tools/unix/wc.omg`](tools/unix/wc.omg), [`tools/unix/grep.omg`](tools/unix/grep.omg),
