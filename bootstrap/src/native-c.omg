@@ -391,6 +391,7 @@ proc emit_builtin(name, argc) {
     if name == "ascii"    and argc == 1 { return emit_builtin1("omg_ascii") }
     if name == "freeze"   and argc == 1 { return emit_builtin1("omg_dict_freeze") }
     if name == "dict_keys" and argc == 1 { return emit_builtin1("omg_dict_keys") }
+    if name == "has_key"   and argc == 2 { return emit_builtin2("omg_has_key") }
     if name == "list_repeat" and argc == 2 { return emit_builtin2("omg_list_repeat") }
 
     # Numeric / math builtins (phase 6).

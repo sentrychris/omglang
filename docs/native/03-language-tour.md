@@ -327,4 +327,5 @@ proc map(f, xs) {
 ## Read next
 
 - [04-pipeline.md](04-pipeline.md) — what happens between `.omg` and `./foo`
-- [examples/](../../examples/) — 19 working programs of varying size
+- [examples/](../../examples/) — 19 working programs of varying size,
+  from `hello_world.omg` to the spinning ASCII `donut.omg`

@@ -465,7 +465,7 @@ build_binary() {
     base=$(basename "$src" .omg)
     omg_compile  "$src"               "$WORK/$base.omgb"
     omg_transpile "$WORK/$base.omgb"  "$WORK/$base.c"
-    cc -O2 -w "$WORK/$base.c" -o "$out" -lm
+    cc -O3 -w "$WORK/$base.c" -o "$out" -lm
 }
 
 # Install runtime headers FIRST so omgcc/omgjs pick up the latest copy

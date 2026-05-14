@@ -347,7 +347,7 @@ pay for dogfooding by default, and the reason `--rust` exists.
 > **Note**: the *bytecode-VM* path described above is one of two ways
 > OMG can run. There's also a **native-compilation path** —
 > [`bootstrap/src/native-c.omg`](../bootstrap/src/native-c.omg) transpiles
-> bytecode to C, which `cc -O2` turns into a standalone ELF binary.
+> bytecode to C, which `cc -O3` turns into a standalone ELF binary.
 > Programs compiled that way have no Rust dependency at runtime: not
 > the VM, not the built-ins, nothing. See [`docs/native/`](native/)
 > for the full story. The two paths share the same bytecode format;

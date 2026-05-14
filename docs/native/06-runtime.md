@@ -119,14 +119,19 @@ typedef struct OmgDict {
     int rc;
     int len, cap;
     char **keys;
+    uint32_t *hashes;   // FNV-1a 32-bit prefix; lookup gates strcmp on a match
     Value *vals;
-    int frozen;     // set by freeze() — forbids further writes
+    int frozen;         // set by freeze() — forbids further writes
 } OmgDict;
 ```
 
-Linear-scan lookup. Fast enough for the typical OMG dict (a few dozen keys);
-if you have giant dicts, consider switching to a hash table. Keys are owned
-heap copies; values are owning slots.
+Linear-scan lookup, but with a hash-prefix filter (`omg_dict_find` compares
+the FNV-1a of the key against `d->hashes[i]` before falling through to
+strcmp). Practically O(N) but with the strcmp constant cut by an order of
+magnitude — enough to make per-LOAD env lookups in the OMG-in-OMG VM
+tolerable for procs with ~25 locals. For huge dicts a true open-addressed
+hashtable would still win; this is a step on the way without paying for
+rehash-on-resize. Keys are owned heap copies; values are owning slots.
 
 ### Closures
 

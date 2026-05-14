@@ -70,6 +70,10 @@ fn builtin_names() -> &'static [&'static str] {
         // Dict-keys enumeration, used by the OMG-in-OMG VM to iterate a
         // closure's captured environment (and useful generally).
         "dict_keys",
+        // Non-throwing key probe. The OMG-in-OMG VM's lookup paths used
+        // to call `try { d[k] }` per access; `has_key(d, k)` is a single
+        // bool-returning builtin so the try/except setup goes away.
+        "has_key",
         // list_repeat(item, count) — pre-allocate a list of `count`
         // copies of `item`. Lets pure-OMG code build byte vectors at
         // amortised O(1) per push via doubling; without it

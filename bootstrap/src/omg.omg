@@ -216,7 +216,10 @@ proc build_aot(in_path, out_path) {
     file_close(out_h)
 
     # Final step shells out to cc; that's the only external dependency.
-    alloc rc := subprocess(["cc", "-O2", "-w", tmp_c, "-o", out_path, "-lm"])
+    # -O3 unlocks cross-function inlining of the OMG runtime helpers
+    # (omg_eq, omg_index, omg_dict_find, etc.) — these are tiny inline
+    # routines that compound when hot.
+    alloc rc := subprocess(["cc", "-O3", "-w", tmp_c, "-o", out_path, "-lm"])
     if rc != 0 {
         exit(rc)
     }

@@ -1220,6 +1220,32 @@ pub fn call_builtin(
             )),
         },
 
+        // has_key(d, k) -> bool. True iff the dict (or frozen dict) `d`
+        // contains the string key `k`. Non-throwing alternative to the
+        // `try { d[k] }` probe pattern; the OMG-on-OMG VM's hot path
+        // (vm_lookup / vm_store) does multiple such probes per
+        // bytecode op, so the try/except overhead matters.
+        "has_key" => match args {
+            // Key is coerced via Value::to_string() to match how OMG
+            // already stringifies dict keys on write/read (see
+            // ops_struct::handle_index). Non-dict containers cleanly
+            // return false — the OMG-on-OMG VM's `is_vm_none` /
+            // `is_vm_closure` predicates rely on probing arbitrary
+            // values without a try/except wrapper.
+            [Value::Dict(map), key] => {
+                let key_str = key.to_string();
+                Ok(Value::Bool(map.borrow().contains_key(&key_str)))
+            }
+            [Value::FrozenDict(map), key] => {
+                let key_str = key.to_string();
+                Ok(Value::Bool(map.contains_key(&key_str)))
+            }
+            [_, _] => Ok(Value::Bool(false)),
+            _ => Err(RuntimeError::TypeError(
+                "has_key() expects (any, key)".to_string(),
+            )),
+        },
+
         // dict_keys(d) -> [String]. Returns the keys of a dict (or frozen
         // dict) as a list. Order is *unspecified* (HashMap iteration);
         // callers that need determinism should sort. OMG previously had

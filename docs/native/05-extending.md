@@ -181,29 +181,35 @@ In each of these files, add `alloc OP_DUP := 56`:
 
 ### Step E — OMG VM dispatch
 
-In [vm.omg](../../bootstrap/src/vm.omg)'s `step_inner` switch:
+In [vm.omg](../../bootstrap/src/vm.omg)'s `step_inner` switch. `step_inner`
+pre-advances `vm_pc` before dispatching, so a normal-flow opcode skips
+its own pc-increment; only `JUMP` / `JUMP_IF_FALSE` / `CALL` / `RET`
+override the pre-advanced pc:
 
 ```omg
-if op == "DUP" {
-    alloc top := vm_stack[length(vm_stack) - 1]
+if op == OP_DUP {
+    alloc top := vm_stack[vm_stack_top - 1]
     vm_push(top)
-    vm_pc := vm_pc + 1
     return false
 }
 ```
 
-(And register the opcode in vm.omg's decoder if it has its own — currently
-both the OMG compiler and OMG VM share decoding logic in `compiler.omg`.)
+Opcodes are dispatched on integer tags (the `OP_*` constants at the top
+of vm.omg) — the OMG-in-OMG compiler emits string-tagged tuples and
+`vm_extend_code` normalises them to ints on ingest, so step_inner only
+ever sees ints. Also register a new entry in vm.omg's `OPNAME_TO_INT`
+table if the OMG compiler emits this opcode.
 
-### Step F — OMG compiler decoder
+### Step F — OMG VM decoder
 
-In [compiler.omg](../../bootstrap/src/compiler.omg)'s `decode_one`:
+In [vm.omg](../../bootstrap/src/vm.omg)'s `decode_one`:
 
 ```omg
-if op == OP_DUP { return tagged0("DUP", cursor) }
+if op == OP_DUP { return tagged0(OP_DUP, cursor) }
 ```
 
-(Plus the matching encoder if the OMG compiler emits `Dup`.)
+(Plus the matching encoder in [compiler.omg](../../bootstrap/src/compiler.omg)
+if the OMG compiler emits `Dup`.)
 
 ### Step G — Native-c emit handler
 

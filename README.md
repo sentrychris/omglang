@@ -636,6 +636,7 @@ Always available, no import needed.
 | **Collections**                |                                                       |
 | `freeze(d)`                    | turn a dict into a read-only one                      |
 | `dict_keys(d)`                 | list of a dict's keys (strings, in insertion order)   |
+| `has_key(d, k)`                | `true` iff `d` has key `k` (non-dict `d` → `false`)   |
 | **File I/O**                   |                                                       |
 | `read_file(path)`              | read a text file in one shot, or `false` on error     |
 | `file_open(path, mode)`        | open and return a handle (`r`, `rb`, `w`, `wb`, `a`, `ab`) |
@@ -697,7 +698,7 @@ Variables, functions, and imports persist across lines until you `quit`.
 OMG can also be compiled to standalone native ELF binaries — no Rust
 required at runtime. The OMG-to-C transpiler at
 [`bootstrap/src/native-c.omg`](bootstrap/src/native-c.omg) emits self-contained
-C, which `cc -O2` turns into a small (~30 KB) executable.
+C, which `cc -O3` turns into a small (~30 KB) executable.
 
 ```sh
 # One-time bootstrap (uses the Rust runtime to build the native toolchain)
@@ -796,6 +797,9 @@ Some interesting starting points:
 - [`examples/prime_sieve.omg`](examples/prime_sieve.omg): finds primes up to 100.
 - [`examples/maze_solver.omg`](examples/maze_solver.omg): breadth-first search over a grid.
 - [`examples/higher_order.omg`](examples/higher_order.omg): closures + first-class functions.
+- [`examples/donut.omg`](examples/donut.omg): Andy Sloane's spinning 3D
+  ASCII donut, ported to OMG. Exercises the float kit and ANSI-escape
+  animation — AOT-compile it for a smooth ~90 FPS spin.
 - [`tools/unix/wc.omg`](tools/unix/wc.omg), [`tools/unix/grep.omg`](tools/unix/grep.omg),
   [`tools/json.omg`](tools/json.omg): Unix-style utilities,
   written in OMG. See [`tools/README.md`](tools/README.md) for the

@@ -554,6 +554,18 @@ function omg_dict_keys(d) {
     return Array.from(d.keys());
 }
 
+// has_key(d, k) -> bool. Non-throwing key probe; the OMG-on-OMG VM's
+// lookup hot path used to call `try { d[k] }` per access. The key is
+// stringified (matching OMG's d[i] dict-index behaviour for int keys),
+// and non-dict containers cleanly return false so `is_vm_none` /
+// `is_vm_closure` can probe arbitrary values without a try/except
+// wrapper.
+function omg_has_key(d, k) {
+    if (!(d instanceof Map)) return false;
+    const key_str = (typeof k === 'string') ? k : omg_to_string(k);
+    return d.has(key_str);
+}
+
 // list_repeat(item, count) — pre-allocate a list of `count` copies
 // of `item`. Mirrors the Rust runtime's builtin and the C runtime's
 // `omg_list_repeat`. Bridges the gap to amortised-doubling buffer
@@ -857,6 +869,7 @@ const _omg_builtins = {
     length: omg_length,
     freeze: omg_freeze,
     dict_keys: omg_dict_keys,
+    has_key: omg_has_key,
     list_repeat: omg_list_repeat,
     string_bytes: omg_string_bytes,
     bytes_to_string: omg_bytes_to_string,

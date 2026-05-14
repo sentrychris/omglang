@@ -78,8 +78,11 @@ Short version:
    - `omg native-c.omg /tmp/X.omgb /tmp/X.c` — `native-c.omg` running
      under the Rust VM transpiles the bytecode to C, with `omg_rt.h`
      spliced in at the top.
-   - `cc -O2 /tmp/X.c -o bootstrap/bin/X -lm` — system C compiler
-     produces the ELF.
+   - `cc -O3 /tmp/X.c -o bootstrap/bin/X -lm` — system C compiler
+     produces the ELF. `-O3` inlines the runtime helpers (`omg_eq`,
+     `omg_index`, `omg_dict_find` etc.) which compound in `step_inner`'s
+     hot path; the transpiler emits a single TU per binary so `-flto`
+     adds no value here.
 3. After this finishes, you can re-run `bootstrap/build.sh` and it
    picks up `bootstrap/bin/omgc` + `bootstrap/bin/omgcc` instead of the
    Rust runtime — the toolchain rebuilds itself. cargo and the Rust

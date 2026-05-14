@@ -1071,9 +1071,21 @@ typedef struct OmgDict {
     int len;
     int cap;
     char **keys;
+    uint32_t *hashes;   /* FNV-1a of each key — strcmp gated by hash match */
     Value *vals;
     int frozen;
 } OmgDict;
+
+/* FNV-1a 32-bit. Hot path: vm.omg's local-env lookup runs this on
+ * variable names per LOAD; keep it inlineable and branch-free. */
+static inline uint32_t omg_str_hash(const char *s) {
+    uint32_t h = 2166136261u;
+    while (*s) {
+        h ^= (unsigned char)*s++;
+        h *= 16777619u;
+    }
+    return h;
+}
 
 static OmgDict *omg_dict_alloc(void) {
     OmgDict *d = (OmgDict *)malloc(sizeof(OmgDict));
@@ -1082,6 +1094,7 @@ static OmgDict *omg_dict_alloc(void) {
     d->len = 0;
     d->cap = 0;
     d->keys = NULL;
+    d->hashes = NULL;
     d->vals = NULL;
     d->frozen = 0;
     return d;
@@ -1124,6 +1137,7 @@ static void omg_dec(Value v) {
                     omg_dec(d->vals[i]);
                 }
                 free(d->keys);
+                free(d->hashes);
                 free(d->vals);
                 free(d);
             }
@@ -1151,9 +1165,23 @@ static void omg_assign(Value *slot, Value v) {
     omg_dec(old);
 }
 
+/* Hash-gated find: comparing 4 bytes of hash before strcmp filters out
+ * 99%+ of mismatches in one branch, so larger dicts (procs with many
+ * locals, big global tables) no longer pay full strcmp per slot. */
 static int omg_dict_find(OmgDict *d, const char *key) {
+    uint32_t h = omg_str_hash(key);
     for (int i = 0; i < d->len; i++) {
-        if (strcmp(d->keys[i], key) == 0) return i;
+        if (d->hashes[i] == h && strcmp(d->keys[i], key) == 0) return i;
+    }
+    return -1;
+}
+
+/* Variant taking the precomputed hash. omg_dict_set already hashed the
+ * key for the find, so the same value can be reused for the eventual
+ * insert without re-hashing. */
+static int omg_dict_find_h(OmgDict *d, const char *key, uint32_t h) {
+    for (int i = 0; i < d->len; i++) {
+        if (d->hashes[i] == h && strcmp(d->keys[i], key) == 0) return i;
     }
     return -1;
 }
@@ -1162,15 +1190,18 @@ static void omg_dict_grow(OmgDict *d) {
     if (d->len < d->cap) return;
     int newcap = d->cap < 4 ? 4 : d->cap * 2;
     char **nk = (char **)realloc(d->keys, newcap * sizeof(char *));
+    uint32_t *nh = (uint32_t *)realloc(d->hashes, newcap * sizeof(uint32_t));
     Value *nv = (Value *)realloc(d->vals, newcap * sizeof(Value));
-    if (!nk || !nv) { fprintf(stderr, "out of memory\n"); exit(1); }
+    if (!nk || !nh || !nv) { fprintf(stderr, "out of memory\n"); exit(1); }
     d->keys = nk;
+    d->hashes = nh;
     d->vals = nv;
     d->cap = newcap;
 }
 
 static void omg_dict_set(OmgDict *d, const char *key, Value v) {
-    int idx = omg_dict_find(d, key);
+    uint32_t h = omg_str_hash(key);
+    int idx = omg_dict_find_h(d, key, h);
     if (idx >= 0) {
         if (d->frozen) {
             omg_panic("FrozenWriteError", "Imported modules are read-only");
@@ -1189,6 +1220,7 @@ static void omg_dict_set(OmgDict *d, const char *key, Value v) {
     if (!kc) { fprintf(stderr, "out of memory\n"); exit(1); }
     memcpy(kc, key, klen + 1);
     d->keys[d->len] = kc;
+    d->hashes[d->len] = h;
     d->vals[d->len] = v;  /* transferred — no inc */
     d->len++;
 }
@@ -1246,6 +1278,25 @@ static int omg_dict_eq(OmgDict *a, OmgDict *b) {
  * strings can outlive their source. The cost is one strdup per key
  * per call, which leaks per the rest of omg_rt.h's string story
  * (strings are immutable, malloc'd, never explicitly freed). */
+/* has_key(d, k) -> bool. Non-throwing key probe; the OMG-on-OMG VM's
+ * lookup hot path used to call `try { d[k] }` per access. The key is
+ * stringified (matching OMG's d[i] dict-index behaviour for int keys),
+ * and non-dict containers cleanly return false (so `is_vm_none` /
+ * `is_vm_closure` can probe arbitrary values without a try/except
+ * wrapper). */
+static Value omg_has_key(Value v, Value k) {
+    Value r;
+    r.tag = OMG_BOOL;
+    if (v.tag != OMG_DICT) {
+        r.v.b = 0;
+        return r;
+    }
+    char kbuf[64];
+    const char *ks = omg_value_to_cstr(k, kbuf, sizeof(kbuf));
+    r.v.b = (omg_dict_find(v.v.d, ks) >= 0) ? 1 : 0;
+    return r;
+}
+
 static Value omg_dict_keys(Value v) {
     if (v.tag != OMG_DICT) {
         omg_panic("TypeError", "dict_keys() expects a dict");
@@ -2436,6 +2487,7 @@ static Value omg_call_builtin(Value name, Value args) {
     if (argc == 2) {
         if (strcmp(n, "pow") == 0)        return omg_builtin_pow(a[0], a[1]);
         if (strcmp(n, "binary") == 0)     return omg_builtin_binary2(a[0], a[1]);
+        if (strcmp(n, "has_key") == 0)    return omg_has_key(a[0], a[1]);
         if (strcmp(n, "file_open") == 0)  return omg_builtin_file_open(a[0], a[1]);
         if (strcmp(n, "file_write") == 0) return omg_builtin_file_write(a[0], a[1]);
         if (strcmp(n, "file_seek") == 0)  return omg_builtin_file_seek(a[0], a[1]);

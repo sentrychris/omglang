@@ -1,0 +1,170 @@
+;;;omg
+
+# Andy Sloane's spinning ASCII donut (donut.c), ported to OMG.
+#
+# A torus is parameterised by two angles:
+#   theta — around the central axis (sweeps through the hole)
+#   phi   — around the tube
+# Each frame, the donut is rotated by A around the X axis and B
+# around the Z axis. Every (theta, phi) sample is projected onto an
+# 80x22 grid with a per-pixel z-buffer to handle occlusion, and the
+# surface normal is dotted with a fixed light direction to pick a
+# luminance character from ".,-~:;=!*#$@".
+#
+# Animation: chr(27) is ESC; "\x1b[H" moves the cursor back to (0,0)
+# each frame so the donut spins in place. Run in a terminal — if you
+# redirect stdout to a file, the escape codes are just noise.
+# Ctrl-C to stop.
+#
+# Performance: ~28K torus samples per frame. For a smooth spin,
+# AOT-compile it:
+#     omg --build examples/donut.omg donut && ./donut
+# That clocks in around 70 fps. The bytecode interpreter path
+# (`omg examples/donut.omg`) is correct but visibly slower.
+
+alloc W := 80
+alloc H := 22
+alloc CELLS := W * H
+alloc LUMA := ".,-~:;=!*#$@"
+alloc CLEAR := chr(27) + "[2J"
+alloc HOME  := chr(27) + "[H"
+
+# Sample resolution. Each frame visits NPHI*NTHETA torus points;
+# bumping these makes the donut smoother but the loop slower.
+alloc NPHI   := 90
+alloc NTHETA := 314
+alloc TWOPI := 6.283185307179586
+
+# Build a list of `n` copies of `fill`. O(n^2) because of list +
+# semantics — fine for the one-time allocation, but never call this
+# inside the per-frame path.
+proc make_buffer(n, fill) {
+    alloc buf := []
+    alloc k := 0
+    loop k < n {
+        buf := buf + [fill]
+        k := k + 1
+    }
+    return buf
+}
+
+# Precompute sin/cos for n equally-spaced angles in [0, 2π). Returned
+# as [cos_table, sin_table] so the inner render loop can replace
+# 4 * NPHI * NTHETA trig calls with cheap list lookups.
+proc make_trig_table(n) {
+    alloc cs := []
+    alloc ss := []
+    alloc i := 0
+    alloc step := TWOPI / n
+    loop i < n {
+        alloc x := i * step
+        cs := cs + [cos(x)]
+        ss := ss + [sin(x)]
+        i := i + 1
+    }
+    return [cs, ss]
+}
+
+proc reset_buffers(fb, zb) {
+    alloc i := 0
+    loop i < CELLS {
+        fb[i] := " "
+        zb[i] := 0.0
+        i := i + 1
+    }
+}
+
+proc render_frame(fb, zb, A, B, cosphi_t, sinphi_t, costheta_t, sintheta_t) {
+    reset_buffers(fb, zb)
+
+    alloc cosA := cos(A)
+    alloc sinA := sin(A)
+    alloc cosB := cos(B)
+    alloc sinB := sin(B)
+
+    alloc p := 0
+    loop p < NPHI {
+        alloc cosphi := cosphi_t[p]
+        alloc sinphi := sinphi_t[p]
+        alloc h := cosphi + 2.0          # R2 + R1*cos(phi); R1=1, R2=2
+
+        # Hoist everything that depends only on phi (constant across
+        # the inner theta loop). Saves ~9 multiplies per inner iter.
+        alloc h_sinA := h * sinA
+        alloc h_cosA := h * cosA
+        alloc h_cosB := h * cosB
+        alloc h_sinB := h * sinB
+        alloc spcA := sinphi * cosA
+        alloc spsA := sinphi * sinA
+        alloc cpcA := cosphi * cosA
+        alloc cpsA := cosphi * sinA
+        alloc cpsB := cosphi * sinB
+        alloc d_const := spcA + 5.0
+        alloc lum_const := 8.0 * (spsA * cosB - spcA)
+        alloc lum_a := 8.0 * (cpcA * cosB + cpsA)
+        alloc lum_b := 8.0 * cpsB
+
+        alloc t := 0
+        loop t < NTHETA {
+            alloc costheta := costheta_t[t]
+            alloc sintheta := sintheta_t[t]
+
+            alloc D := 1.0 / (sintheta * h_sinA + d_const)
+            alloc tval := sintheta * h_cosA - spsA
+
+            alloc x := int(40.0 + 30.0 * D * (costheta * h_cosB - tval * sinB))
+            alloc y := int(12.0 + 15.0 * D * (costheta * h_sinB + tval * cosB))
+            alloc o := x + W * y
+
+            alloc lum := int(lum_const - (sintheta * lum_a + costheta * lum_b))
+
+            if y > 0 and y < H and x > 0 and x < W and D > zb[o] {
+                zb[o] := D
+                if lum < 0  { lum := 0 }
+                if lum > 11 { lum := 11 }
+                fb[o] := LUMA[lum]
+            }
+
+            t := t + 1
+        }
+        p := p + 1
+    }
+}
+
+proc draw(fb) {
+    emit HOME
+    alloc row := 0
+    loop row < H {
+        alloc line := ""
+        alloc col := 0
+        loop col < W {
+            line := line + fb[row * W + col]
+            col := col + 1
+        }
+        emit line
+        row := row + 1
+    }
+}
+
+proc spin() {
+    alloc fb := make_buffer(CELLS, " ")
+    alloc zb := make_buffer(CELLS, 0.0)
+    alloc phi_tbl   := make_trig_table(NPHI)
+    alloc theta_tbl := make_trig_table(NTHETA)
+    alloc cosphi_t   := phi_tbl[0]
+    alloc sinphi_t   := phi_tbl[1]
+    alloc costheta_t := theta_tbl[0]
+    alloc sintheta_t := theta_tbl[1]
+
+    alloc A := 0.0
+    alloc B := 0.0
+    emit CLEAR
+    loop true {
+        render_frame(fb, zb, A, B, cosphi_t, sinphi_t, costheta_t, sintheta_t)
+        draw(fb)
+        A := A + 0.04
+        B := B + 0.02
+    }
+}
+
+spin()

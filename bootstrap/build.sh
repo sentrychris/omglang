@@ -72,7 +72,12 @@ build_binary() {
     base=$(basename "$src" .omg)
     omg_compile  "$src"               "$WORK/$base.omgb"
     omg_transpile "$WORK/$base.omgb"  "$WORK/$base.c"
-    cc -O2 -w "$WORK/$base.c" -o "$out" -lm
+    # -O3 unlocks aggressive inlining of the OMG runtime helpers
+    # (omg_eq, omg_index, omg_dict_find, etc.) which compound in
+    # step_inner's hot dispatch chain. The transpiler inlines omg_rt.h
+    # into a single TU per binary, so -flto adds overhead and a
+    # serial-LTRANS warning with no measurable benefit.
+    cc -O3 -w "$WORK/$base.c" -o "$out" -lm
 }
 
 # Install the runtime headers FIRST. omgcc reads omg_rt.h via
