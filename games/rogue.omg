@@ -1,0 +1,855 @@
+;;;omg
+
+# Terminal roguelike in OMG. Single-screen dungeon, procedurally
+# generated rooms + corridors, line-of-sight FOV, bump-combat against
+# wandering monsters, multi-level descent. Find the stairs (>) and
+# press > to go deeper. Die or quit to end.
+#
+# Controls (hjkl / arrows / wasd shape):
+#   h / a     west
+#   j / s     south
+#   k / w     north
+#   l / d     east
+#   y / u     diagonal NW / NE   (vi-style)
+#   b / n     diagonal SW / SE
+#   .         wait (skip turn)
+#   >         descend stairs (when standing on >)
+#   g / ,     pick up the item under you
+#   q         quit
+#
+# AOT-compile for crisp single-keystroke input:
+#     omg --build games/rogue.omg rogue && ./rogue
+
+alloc W := 70
+alloc H := 20
+alloc CELLS := W * H
+
+# ---- ANSI ----
+alloc CLEAR := chr(27) + "[2J"
+alloc HOME  := chr(27) + "[H"
+alloc HIDE  := chr(27) + "[?25l"
+alloc SHOW  := chr(27) + "[?25h"
+alloc RESET := chr(27) + "[0m"
+
+# Clear-to-end-of-line. Appended before every "\n" in render() so the
+# new frame wipes any trailing residue from a previously-longer line
+# (HP dropping to single digits, shorter log messages, etc.).
+alloc EOL   := chr(27) + "[K\n"
+# Clear-to-end-of-screen. Used once at the end of a frame to wipe any
+# residue past the last drawn line — matters if a previous frame had
+# extra log lines that the current frame doesn't.
+alloc CLREOS := chr(27) + "[J"
+
+# Foreground colour helpers — `c(code)` wraps text in ANSI SGR. Cheap
+# enough to call per-cell during render; the bottleneck is the print()
+# call, not the string concat.
+proc c(code) { return chr(27) + "[" + code + "m" }
+
+# Palette. We keep these as full strings (open + close) so callers
+# write `out := out + RED + "x" + RESET` without thinking about
+# escape syntax.
+alloc DIM    := c("2")
+alloc RED    := c("31")
+alloc GREEN  := c("32")
+alloc YELLOW := c("33")
+alloc BLUE   := c("34")
+alloc PURPLE := c("35")
+alloc CYAN   := c("36")
+alloc WHITE  := c("37")
+alloc BOLD   := c("1")
+
+# ---- Tiles ----
+alloc T_WALL  := "#"
+alloc T_FLOOR := "."
+alloc T_STAIR := ">"
+alloc T_VOID  := " "
+
+# ---- LCG random ----
+alloc rng_state := 0
+proc rng_next() {
+    rng_state := (rng_state * 1103515245 + 12345) % 2147483648
+    return rng_state
+}
+proc rand_range(n) { return rng_next() % n }
+proc rand_between(lo, hi) { return lo + rand_range(hi - lo + 1) }
+
+# ---- Map helpers ----
+
+proc make_grid(fill) {
+    alloc g := []
+    alloc i := 0
+    loop i < CELLS {
+        g := g + [fill]
+        i := i + 1
+    }
+    return g
+}
+
+proc make_flag_grid() {
+    # Bool grid for visible / explored masks.
+    alloc g := []
+    alloc i := 0
+    loop i < CELLS {
+        g := g + [false]
+        i := i + 1
+    }
+    return g
+}
+
+proc cell_at(map, x, y) { return map[y * W + x] }
+proc set_cell(map, x, y, v) { map[y * W + x] := v }
+
+proc in_bounds(x, y) {
+    return x >= 0 and x < W and y >= 0 and y < H
+}
+
+# ---- Map generation: rooms + L-shaped corridors -----------------------
+#
+# Generate N random non-overlapping rooms, then connect each room to
+# the previous one with an L-shaped corridor through its centre. Rooms
+# are placed via rejection sampling — at this size the placement
+# always converges within a handful of tries.
+
+proc carve_room(map, x0, y0, w, h) {
+    alloc y := y0
+    loop y < y0 + h {
+        alloc x := x0
+        loop x < x0 + w {
+            if in_bounds(x, y) {
+                set_cell(map, x, y, T_FLOOR)
+            }
+            x := x + 1
+        }
+        y := y + 1
+    }
+}
+
+proc rooms_overlap(a, b) {
+    # `a` and `b` are [x, y, w, h]. Add a 1-cell buffer so corridors
+    # don't smash adjacent rooms into a single blob.
+    if a[0] + a[2] + 1 < b[0] { return false }
+    if b[0] + b[2] + 1 < a[0] { return false }
+    if a[1] + a[3] + 1 < b[1] { return false }
+    if b[1] + b[3] + 1 < a[1] { return false }
+    return true
+}
+
+proc carve_h_corridor(map, x0, x1, y) {
+    alloc lo := x0
+    alloc hi := x1
+    if lo > hi {
+        lo := x1
+        hi := x0
+    }
+    alloc x := lo
+    loop x <= hi {
+        if in_bounds(x, y) {
+            set_cell(map, x, y, T_FLOOR)
+        }
+        x := x + 1
+    }
+}
+
+proc carve_v_corridor(map, y0, y1, x) {
+    alloc lo := y0
+    alloc hi := y1
+    if lo > hi {
+        lo := y1
+        hi := y0
+    }
+    alloc y := lo
+    loop y <= hi {
+        if in_bounds(x, y) {
+            set_cell(map, x, y, T_FLOOR)
+        }
+        y := y + 1
+    }
+}
+
+# Returns [map, rooms]. `rooms` is a list of [x, y, w, h] used later
+# to spawn the player + monsters + items inside specific rooms.
+proc generate_map() {
+    alloc map := make_grid(T_WALL)
+    alloc rooms := []
+    alloc target := 8
+    alloc attempts := 0
+    loop length(rooms) < target and attempts < 200 {
+        alloc w := rand_between(4, 9)
+        alloc h := rand_between(3, 5)
+        alloc x := rand_between(1, W - w - 2)
+        alloc y := rand_between(1, H - h - 2)
+        alloc candidate := [x, y, w, h]
+        alloc ok := true
+        alloc i := 0
+        loop i < length(rooms) {
+            if rooms_overlap(candidate, rooms[i]) {
+                ok := false
+                i := length(rooms)
+            }
+            i := i + 1
+        }
+        if ok {
+            carve_room(map, x, y, w, h)
+            if length(rooms) > 0 {
+                # Connect to previous room via an L-shaped corridor
+                # through both centres. Random axis order so corridors
+                # don't all elbow the same way.
+                alloc prev := rooms[length(rooms) - 1]
+                alloc cx1 := x + w // 2
+                alloc cy1 := y + h // 2
+                alloc cx0 := prev[0] + prev[2] // 2
+                alloc cy0 := prev[1] + prev[3] // 2
+                if rand_range(2) == 0 {
+                    carve_h_corridor(map, cx0, cx1, cy0)
+                    carve_v_corridor(map, cy0, cy1, cx1)
+                } else {
+                    carve_v_corridor(map, cy0, cy1, cx0)
+                    carve_h_corridor(map, cx0, cx1, cy1)
+                }
+            }
+            rooms := rooms + [candidate]
+        }
+        attempts := attempts + 1
+    }
+    # Place stairs in the last room.
+    alloc last := rooms[length(rooms) - 1]
+    set_cell(map, last[0] + last[2] // 2, last[1] + last[3] // 2, T_STAIR)
+    return [map, rooms]
+}
+
+# Random walkable spot inside a given room. Used by spawn placement.
+proc room_random_floor(room) {
+    alloc x := room[0] + rand_range(room[2])
+    alloc y := room[1] + rand_range(room[3])
+    return [x, y]
+}
+
+# ---- FOV (line-of-sight raycast) --------------------------------------
+#
+# Mark every cell within `radius` of the player as visible if the
+# Bresenham line from player to cell isn't blocked by a wall. Less
+# elegant than shadow-casting but easy to read and fast enough at
+# radius 8 (~256 cells × ~8-step lines = ~2K cell touches per turn).
+
+proc compute_fov(map, visible, explored, px, py, radius) {
+    # Reset visible. explored is sticky — once you've seen a cell, the
+    # render path keeps drawing it dim even after it goes out of FOV.
+    alloc i := 0
+    loop i < CELLS {
+        visible[i] := false
+        i := i + 1
+    }
+    visible[py * W + px] := true
+    explored[py * W + px] := true
+
+    # Walk the perimeter of the bounding square; the line from (px,py)
+    # to each perimeter cell sweeps the whole interior, so testing
+    # rays-to-perimeter is enough.
+    alloc r := radius
+    alloc x0 := px - r
+    alloc y0 := py - r
+    alloc x1 := px + r
+    alloc y1 := py + r
+    if x0 < 0     { x0 := 0 }
+    if y0 < 0     { y0 := 0 }
+    if x1 >= W    { x1 := W - 1 }
+    if y1 >= H    { y1 := H - 1 }
+
+    alloc edges := []
+    alloc x := x0
+    loop x <= x1 {
+        edges := edges + [[x, y0]]
+        edges := edges + [[x, y1]]
+        x := x + 1
+    }
+    alloc y := y0 + 1
+    loop y < y1 {
+        edges := edges + [[x0, y]]
+        edges := edges + [[x1, y]]
+        y := y + 1
+    }
+
+    alloc ei := 0
+    loop ei < length(edges) {
+        cast_ray(map, visible, explored, px, py, edges[ei][0], edges[ei][1], radius)
+        ei := ei + 1
+    }
+}
+
+# Bresenham line from (x0,y0) to (x1,y1), stopping when we hit a wall
+# (the wall itself becomes visible — you can see the wall *adjacent*
+# to a room you're in — but cells past it stay dark).
+proc cast_ray(map, visible, explored, x0, y0, x1, y1, max_r) {
+    alloc dx := x1 - x0
+    if dx < 0 { dx := 0 - dx }
+    alloc dy := y1 - y0
+    if dy < 0 { dy := 0 - dy }
+    alloc sx := 1
+    if x1 < x0 { sx := -1 }
+    alloc sy := 1
+    if y1 < y0 { sy := -1 }
+    alloc err := dx - dy
+    alloc x := x0
+    alloc y := y0
+    loop true {
+        # Stop at radius.
+        alloc adx := x - x0
+        if adx < 0 { adx := 0 - adx }
+        alloc ady := y - y0
+        if ady < 0 { ady := 0 - ady }
+        if adx > max_r or ady > max_r { return false }
+        if in_bounds(x, y) {
+            visible[y * W + x] := true
+            explored[y * W + x] := true
+            if cell_at(map, x, y) == T_WALL {
+                return false
+            }
+        }
+        if x == x1 and y == y1 { return false }
+        alloc e2 := 2 * err
+        if e2 > 0 - dy {
+            err := err - dy
+            x := x + sx
+        }
+        if e2 < dx {
+            err := err + dx
+            y := y + sy
+        }
+    }
+}
+
+# ---- Entities ---------------------------------------------------------
+#
+# Monsters and items are dicts. Storing them as a flat list lets the
+# turn loop iterate cheaply; ID/position lookups are O(N) but N is
+# tiny (< 20).
+
+# Monster type table. `tier` controls which depths spawn it.
+alloc MONSTER_TYPES := [
+    {glyph: "r", colour: "yellow", name: "rat",     hp: 3, dmg: 1, tier: 1},
+    {glyph: "k", colour: "yellow", name: "kobold",  hp: 5, dmg: 2, tier: 1},
+    {glyph: "g", colour: "green",  name: "goblin",  hp: 8, dmg: 3, tier: 2},
+    {glyph: "o", colour: "green",  name: "orc",     hp: 12, dmg: 4, tier: 3},
+    {glyph: "T", colour: "red",    name: "troll",   hp: 20, dmg: 6, tier: 4},
+    {glyph: "D", colour: "red",    name: "dragon",  hp: 35, dmg: 9, tier: 5}
+]
+
+proc make_monster(type_idx, x, y) {
+    alloc t := MONSTER_TYPES[type_idx]
+    return {x: x, y: y, hp: t.hp, max_hp: t.hp, dmg: t.dmg,
+            glyph: t.glyph, colour: t.colour, name: t.name, alive: true}
+}
+
+# Pick a random monster of tier <= depth+1, biased toward depth.
+proc spawn_monster_for_depth(depth, x, y) {
+    alloc cap := depth + 1
+    if cap > 6 { cap := 6 }
+    alloc candidates := []
+    alloc i := 0
+    loop i < length(MONSTER_TYPES) {
+        if MONSTER_TYPES[i].tier <= cap {
+            candidates := candidates + [i]
+        }
+        i := i + 1
+    }
+    alloc pick := candidates[rand_range(length(candidates))]
+    return make_monster(pick, x, y)
+}
+
+# Items are simpler — for v1 we have potions (heal) and gold (score).
+proc make_potion(x, y) {
+    return {x: x, y: y, kind: "potion", glyph: "!", colour: "purple",
+            name: "healing potion", taken: false}
+}
+
+proc make_gold(x, y) {
+    return {x: x, y: y, kind: "gold", glyph: "$", colour: "yellow",
+            name: "pile of gold", amount: rand_between(5, 30), taken: false}
+}
+
+# ---- Combat -----------------------------------------------------------
+
+# Returns [hit_dmg, killed]. Damage rolls a small dice on top of base
+# so combat has *some* variance without needing a full d20 system.
+proc roll_attack(base) {
+    return base + rand_range(2)
+}
+
+# ---- Render -----------------------------------------------------------
+
+proc colour_for_name(name) {
+    if name == "red"    { return RED }
+    if name == "green"  { return GREEN }
+    if name == "yellow" { return YELLOW }
+    if name == "blue"   { return BLUE }
+    if name == "purple" { return PURPLE }
+    if name == "cyan"   { return CYAN }
+    return WHITE
+}
+
+# Build the next frame as one string and print() it once. The frame
+# is small enough (~1.5 KB with all the escapes) that flicker isn't
+# an issue even at slow terminal redraw rates.
+proc render(state) {
+    alloc map := state.map
+    alloc visible := state.visible
+    alloc explored := state.explored
+    alloc monsters := state.monsters
+    alloc items := state.items
+
+    # Build a per-cell entity overlay so the map walker just consults a
+    # dict instead of scanning the monster/item lists per cell.
+    alloc overlay := {}
+    alloc mi := 0
+    loop mi < length(monsters) {
+        alloc m := monsters[mi]
+        if m.alive {
+            overlay[m.x + "," + m.y] := [m.glyph, m.colour]
+        }
+        mi := mi + 1
+    }
+    alloc ii := 0
+    loop ii < length(items) {
+        alloc it := items[ii]
+        if it.taken == false {
+            alloc key := it.x + "," + it.y
+            if has_key(overlay, key) == false {
+                overlay[key] := [it.glyph, it.colour]
+            }
+        }
+        ii := ii + 1
+    }
+    overlay[state.px + "," + state.py] := ["@", "cyan"]
+
+    alloc out := HOME
+    alloc y := 0
+    loop y < H {
+        alloc x := 0
+        loop x < W {
+            alloc idx := y * W + x
+            if visible[idx] {
+                alloc key := x + "," + y
+                if has_key(overlay, key) {
+                    alloc o := overlay[key]
+                    out := out + colour_for_name(o[1]) + o[0] + RESET
+                } else {
+                    alloc t := cell_at(map, x, y)
+                    if t == T_WALL {
+                        out := out + WHITE + "#" + RESET
+                    } elif t == T_STAIR {
+                        out := out + BOLD + YELLOW + ">" + RESET
+                    } else {
+                        out := out + WHITE + "." + RESET
+                    }
+                }
+            } elif explored[idx] {
+                # Out of sight but remembered. Drop entities (monsters
+                # might have moved) and dim the terrain.
+                alloc t := cell_at(map, x, y)
+                if t == T_WALL {
+                    out := out + DIM + "#" + RESET
+                } elif t == T_STAIR {
+                    out := out + DIM + ">" + RESET
+                } else {
+                    out := out + DIM + "." + RESET
+                }
+            } else {
+                out := out + T_VOID
+            }
+            x := x + 1
+        }
+        out := out + EOL
+        y := y + 1
+    }
+
+    # HUD: HP bar, depth, gold, last few log lines. The bar is just
+    # ASCII — `[####    ]` proportional to hp/max_hp.
+    alloc bar_w := 16
+    alloc filled := state.hp * bar_w // state.max_hp
+    if filled < 0 { filled := 0 }
+    alloc bar := "["
+    alloc bi := 0
+    loop bi < bar_w {
+        if bi < filled {
+            bar := bar + "#"
+        } else {
+            bar := bar + " "
+        }
+        bi := bi + 1
+    }
+    bar := bar + "]"
+    alloc hp_col := GREEN
+    if state.hp <= state.max_hp // 3 {
+        hp_col := RED
+    } elif state.hp <= state.max_hp // 2 {
+        hp_col := YELLOW
+    }
+
+    out := out + " HP " + hp_col + bar + RESET + " " + state.hp + "/" + state.max_hp
+    out := out + "   depth " + state.depth + "   gold " + YELLOW + state.gold + RESET
+    out := out + "   turn " + state.turn + EOL
+
+    # Log: last 3 lines.
+    alloc log := state.log
+    alloc log_start := length(log) - 3
+    if log_start < 0 { log_start := 0 }
+    alloc li := log_start
+    loop li < length(log) {
+        out := out + " " + log[li] + EOL
+        li := li + 1
+    }
+    # Always emit 3 log slots so the cursor lands in the same place.
+    alloc pad := 3 - (length(log) - log_start)
+    loop pad > 0 {
+        out := out + EOL
+        pad := pad - 1
+    }
+
+    # Wipe anything past the last drawn row — covers the case where a
+    # previous frame extended further down for some reason.
+    out := out + CLREOS
+    print(out)
+}
+
+# Push a log line, keeping the last 12 so the buffer doesn't grow
+# unbounded over a long run.
+proc log_push(state, msg) {
+    state.log := state.log + [msg]
+    if length(state.log) > 12 {
+        state.log := state.log[length(state.log) - 12:length(state.log)]
+    }
+}
+
+# ---- Entity helpers ---------------------------------------------------
+
+# Index of a live monster at (x,y), or -1.
+proc monster_at(monsters, x, y) {
+    alloc i := 0
+    loop i < length(monsters) {
+        alloc m := monsters[i]
+        if m.alive and m.x == x and m.y == y {
+            return i
+        }
+        i := i + 1
+    }
+    return -1
+}
+
+proc item_at(items, x, y) {
+    alloc i := 0
+    loop i < length(items) {
+        alloc it := items[i]
+        if it.taken == false and it.x == x and it.y == y {
+            return i
+        }
+        i := i + 1
+    }
+    return -1
+}
+
+proc walkable(map, x, y) {
+    if in_bounds(x, y) == false { return false }
+    alloc t := cell_at(map, x, y)
+    return t == T_FLOOR or t == T_STAIR
+}
+
+# ---- Player actions ---------------------------------------------------
+
+# Returns true iff the player consumed their turn (so monsters get to
+# go). Movement, attacking, waiting all count; descend/pickup do too;
+# bumping into a wall does not (lets the player re-pick a direction).
+proc try_move_player(state, dx, dy) {
+    alloc nx := state.px + dx
+    alloc ny := state.py + dy
+    if in_bounds(nx, ny) == false { return false }
+    alloc mi := monster_at(state.monsters, nx, ny)
+    if mi >= 0 {
+        # Bump = attack.
+        alloc m := state.monsters[mi]
+        alloc dmg := roll_attack(2 + state.depth // 2)
+        m.hp := m.hp - dmg
+        log_push(state, "You hit " + m.name + " for " + dmg + ".")
+        if m.hp <= 0 {
+            m.alive := false
+            log_push(state, BOLD + GREEN + "The " + m.name + " dies." + RESET)
+            state.kills := state.kills + 1
+        }
+        return true
+    }
+    if walkable(state.map, nx, ny) {
+        state.px := nx
+        state.py := ny
+        # Pick up gold automatically (it's "in the way"); potions
+        # require the explicit `g` action.
+        alloc itx := item_at(state.items, nx, ny)
+        if itx >= 0 {
+            alloc it := state.items[itx]
+            if it.kind == "gold" {
+                it.taken := true
+                state.gold := state.gold + it.amount
+                log_push(state, "Picked up " + it.amount + " gold.")
+            }
+        }
+        return true
+    }
+    return false
+}
+
+# Returns "descend" if the player took the stairs, "quit" if quit,
+# otherwise true/false for "turn used / not used".
+proc handle_key(state, k) {
+    if k == "q" or k == "Q" { return "quit" }
+    if k == "h" or k == "a" { return try_move_player(state, -1,  0) }
+    if k == "l" or k == "d" { return try_move_player(state,  1,  0) }
+    if k == "k" or k == "w" { return try_move_player(state,  0, -1) }
+    if k == "j" or k == "s" { return try_move_player(state,  0,  1) }
+    if k == "y"             { return try_move_player(state, -1, -1) }
+    if k == "u"             { return try_move_player(state,  1, -1) }
+    if k == "b"             { return try_move_player(state, -1,  1) }
+    if k == "n"             { return try_move_player(state,  1,  1) }
+    if k == "." or k == " " {
+        log_push(state, "You wait.")
+        return true
+    }
+    if k == ">" {
+        if cell_at(state.map, state.px, state.py) == T_STAIR {
+            return "descend"
+        }
+        log_push(state, "There are no stairs here.")
+        return false
+    }
+    if k == "g" or k == "," {
+        alloc itx := item_at(state.items, state.px, state.py)
+        if itx < 0 {
+            log_push(state, "Nothing to pick up.")
+            return false
+        }
+        alloc it := state.items[itx]
+        if it.kind == "potion" {
+            alloc heal := rand_between(8, 14)
+            state.hp := state.hp + heal
+            if state.hp > state.max_hp { state.hp := state.max_hp }
+            it.taken := true
+            log_push(state, BOLD + PURPLE + "Quaff: heal " + heal + " HP." + RESET)
+            return true
+        }
+        return false
+    }
+    return false
+}
+
+# ---- Monster AI -------------------------------------------------------
+
+# Distance metric for the "do I see the player" check. Chebyshev so
+# diagonals don't get a false range bonus.
+proc cheb(ax, ay, bx, by) {
+    alloc dx := ax - bx
+    if dx < 0 { dx := 0 - dx }
+    alloc dy := ay - by
+    if dy < 0 { dy := 0 - dy }
+    if dx > dy { return dx }
+    return dy
+}
+
+# Sign helper: -1, 0, +1.
+proc sgn(n) {
+    if n < 0 { return -1 }
+    if n > 0 { return 1 }
+    return 0
+}
+
+proc monster_turn(state, idx) {
+    alloc m := state.monsters[idx]
+    if m.alive == false { return false }
+    alloc dist := cheb(m.x, m.y, state.px, state.py)
+    if dist == 1 {
+        # Adjacent — attack.
+        alloc dmg := roll_attack(m.dmg)
+        state.hp := state.hp - dmg
+        log_push(state, RED + "The " + m.name + " hits you for " + dmg + "." + RESET)
+        return false
+    }
+    if dist <= 8 and state.visible[m.y * W + m.x] {
+        # Aggro: step toward the player. Prefer the diagonal that
+        # reduces both distances, fall back to a single axis if
+        # diagonal is blocked.
+        alloc dx := sgn(state.px - m.x)
+        alloc dy := sgn(state.py - m.y)
+        alloc tries := [[dx, dy], [dx, 0], [0, dy]]
+        alloc ti := 0
+        loop ti < length(tries) {
+            alloc tx := m.x + tries[ti][0]
+            alloc ty := m.y + tries[ti][1]
+            if walkable(state.map, tx, ty) and monster_at(state.monsters, tx, ty) < 0 and (tx != state.px or ty != state.py) {
+                m.x := tx
+                m.y := ty
+                ti := length(tries)
+            }
+            ti := ti + 1
+        }
+        return false
+    }
+    # Idle: random nudge 30% of the time.
+    if rand_range(10) < 3 {
+        alloc rx := rand_range(3) - 1
+        alloc ry := rand_range(3) - 1
+        alloc tx := m.x + rx
+        alloc ty := m.y + ry
+        if walkable(state.map, tx, ty) and monster_at(state.monsters, tx, ty) < 0 and (tx != state.px or ty != state.py) {
+            m.x := tx
+            m.y := ty
+        }
+    }
+    return false
+}
+
+# ---- Level setup ------------------------------------------------------
+
+proc spawn_level(state) {
+    alloc gen := generate_map()
+    state.map := gen[0]
+    alloc rooms := gen[1]
+    state.visible := make_flag_grid()
+    state.explored := make_flag_grid()
+
+    # Player drops into the first room's centre.
+    alloc r0 := rooms[0]
+    state.px := r0[0] + r0[2] // 2
+    state.py := r0[1] + r0[3] // 2
+
+    # Monsters in rooms 1..N-1 (skip the player's starting room so the
+    # opening turn isn't immediately a fight).
+    alloc monsters := []
+    alloc ri := 1
+    loop ri < length(rooms) {
+        alloc count := 1 + rand_range(2 + state.depth // 2)
+        alloc c := 0
+        loop c < count {
+            alloc pos := room_random_floor(rooms[ri])
+            # Avoid stacking on the stair tile.
+            if cell_at(state.map, pos[0], pos[1]) == T_FLOOR {
+                monsters := monsters + [spawn_monster_for_depth(state.depth, pos[0], pos[1])]
+            }
+            c := c + 1
+        }
+        ri := ri + 1
+    }
+    state.monsters := monsters
+
+    # Items: a potion or two and one gold pile per non-starting room.
+    alloc items := []
+    alloc ii := 1
+    loop ii < length(rooms) {
+        if rand_range(3) == 0 {
+            alloc pos := room_random_floor(rooms[ii])
+            if cell_at(state.map, pos[0], pos[1]) == T_FLOOR {
+                items := items + [make_potion(pos[0], pos[1])]
+            }
+        }
+        if rand_range(2) == 0 {
+            alloc pos := room_random_floor(rooms[ii])
+            if cell_at(state.map, pos[0], pos[1]) == T_FLOOR {
+                items := items + [make_gold(pos[0], pos[1])]
+            }
+        }
+        ii := ii + 1
+    }
+    state.items := items
+    compute_fov(state.map, state.visible, state.explored, state.px, state.py, 8)
+}
+
+# ---- Input ------------------------------------------------------------
+
+# Block until a key is available. The game is turn-based, so we just
+# busy-poll with a small sleep — no need to drain a queue like the
+# real-time games.
+proc wait_key() {
+    loop true {
+        alloc k := stdin_read_key()
+        if k != false {
+            return k
+        }
+        sleep_ms(15)
+    }
+}
+
+# ---- Game loop --------------------------------------------------------
+
+proc play() {
+    rng_state := time_ms() % 2147483648
+
+    alloc state := {
+        map: [], visible: [], explored: [],
+        px: 0, py: 0,
+        hp: 30, max_hp: 30,
+        gold: 0, depth: 1, turn: 0, kills: 0,
+        monsters: [], items: [],
+        log: []
+    }
+    spawn_level(state)
+    log_push(state, BOLD + CYAN + "Welcome to the dungeon. Find > to descend." + RESET)
+
+    emit CLEAR
+    print(HIDE)
+    render(state)
+
+    loop true {
+        alloc k := wait_key()
+        alloc result := handle_key(state, k)
+        if result == "quit" { break }
+        if result == "descend" {
+            state.depth := state.depth + 1
+            log_push(state, BOLD + YELLOW + "You descend to depth " + state.depth + "." + RESET)
+            spawn_level(state)
+            render(state)
+        } elif result == true {
+            state.turn := state.turn + 1
+            # Monsters take their turn.
+            alloc mi := 0
+            loop mi < length(state.monsters) {
+                monster_turn(state, mi)
+                mi := mi + 1
+                if state.hp <= 0 { mi := length(state.monsters) }
+            }
+            compute_fov(state.map, state.visible, state.explored, state.px, state.py, 8)
+            render(state)
+            if state.hp <= 0 {
+                log_push(state, BOLD + RED + "You die." + RESET)
+                render(state)
+                sleep_ms(800)
+                break
+            }
+        } else {
+            render(state)
+        }
+    }
+
+    print(SHOW)
+    emit ""
+    emit BOLD + " Final stats " + RESET
+    emit "  Depth reached: " + state.depth
+    emit "  Monsters slain: " + state.kills
+    emit "  Gold: " + state.gold
+    emit "  Turns: " + state.turn
+    if state.hp <= 0 {
+        emit RED + "  Status: dead" + RESET
+    } else {
+        emit GREEN + "  Status: retired (q)" + RESET
+    }
+}
+
+# Raw-mode wrap. Non-TTY → clean error.
+try {
+    stdin_set_raw(true)
+    try {
+        play()
+    } except err {
+        stdin_set_raw(false)
+        print(SHOW)
+        emit err
+    }
+    stdin_set_raw(false)
+} except outer_err {
+    print(SHOW)
+    emit "rogue: " + outer_err
+}

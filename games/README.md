@@ -11,6 +11,7 @@ not run them (no controlling terminal).
 |-----------------|----------------|------------|
 | [`snake.omg`](snake.omg)   | ~200 lines | Walls, self-collision, fruit spawning via LCG, speed-up per apple. Hjkl / wasd / arrows. |
 | [`pong.omg`](pong.omg)     | ~250 lines | Single-player vs CPU, edge-of-paddle deflection, first to 7. CPU's max speed is tuned to be beatable. |
+| [`rogue.omg`](rogue.omg)   | ~600 lines | Procgen rooms + corridors, Bresenham FOV (visible/explored/dark), 6 monster types with depth-scaled spawns, bump combat, potions + gold, infinite descent. First game in the repo to use ANSI colour. |
 | [`tetris.omg`](tetris.omg) | ~400 lines | 7 tetrominoes with 4 rotation states each, line clearing, level/score, hard + soft drop, pause. |
 
 ## How to play
