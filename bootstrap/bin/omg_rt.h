@@ -1904,11 +1904,18 @@ static Value omg_builtin_stdin_set_raw(Value v) {
     struct termios t;
     if (tcgetattr(0, &t) != 0) omg_panic("ValueError", "stdin_set_raw: tcgetattr failed");
     if (v.v.b) {
-        t.c_lflag &= ~(ICANON | ECHO);
+        /* ICANON / ECHO: standard raw-mode (line buffering / echo off).
+         * ISIG: keep Ctrl-C / Ctrl-Z / Ctrl-\ from generating signals
+         * — TUI apps want those as plain bytes (e.g. ^Z for undo).
+         * IXON: keep Ctrl-S / Ctrl-Q from triggering XON/XOFF flow
+         * control, which would otherwise freeze terminal output. */
+        t.c_lflag &= ~(ICANON | ECHO | ISIG);
+        t.c_iflag &= ~IXON;
         t.c_cc[VMIN] = 0;
         t.c_cc[VTIME] = 0;
     } else {
-        t.c_lflag |= ICANON | ECHO;
+        t.c_lflag |= ICANON | ECHO | ISIG;
+        t.c_iflag |= IXON;
     }
     if (tcsetattr(0, TCSANOW, &t) != 0) omg_panic("ValueError", "stdin_set_raw: tcsetattr failed");
     return omg_none();

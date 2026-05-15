@@ -14,6 +14,8 @@
 # Editor controls (nano-shaped):
 #   ^X       exit (prompts if buffer is modified)
 #   ^O       save (prompts for filename on a new buffer)
+#   ^Z       undo the last edit
+#   ^R       redo (un-undo)
 #   ^K       cut current line (consecutive ^K accumulate into kill buffer)
 #   ^U       paste the kill buffer
 #   ^W       search forward
@@ -28,6 +30,8 @@
 # Sidebar / navigation:
 #   ^B       toggle sidebar visibility
 #   ^T       swap focus between sidebar and editor
+#   ^V       Widen sidebar (when visible)
+#   ^Y       Narrow sidebar (when visible)
 #   In the sidebar:
 #     ↑ ↓        move selection (j / k too)
 #     Enter      open file, or descend into folder
@@ -461,12 +465,14 @@ proc read_full_key() {
     if b == 14  { return "CTRL_N" }
     if b == 15  { return "CTRL_O" }
     if b == 16  { return "CTRL_P" }
+    if b == 18  { return "CTRL_R" }
     if b == 20  { return "CTRL_T" }
     if b == 21  { return "CTRL_U" }
     if b == 22  { return "CTRL_V" }
     if b == 23  { return "CTRL_W" }
     if b == 24  { return "CTRL_X" }
     if b == 25  { return "CTRL_Y" }
+    if b == 26  { return "CTRL_Z" }
     if b == 31  { return "CTRL_UNDERSCORE" }
     if b == 127 { return "BACKSPACE" }
     return k
@@ -572,6 +578,14 @@ alloc SIDEBAR_W_MIN     := 16
 alloc SIDEBAR_W_DEFAULT := 24
 alloc SIDEBAR_W_STEP    := 4
 
+# Undo / redo: each mutating action pushes a snapshot of the buffer
+# onto undo_stack and clears redo_stack. ^Z pops a snapshot back,
+# moving the prior state onto redo_stack so ^R can recover it.
+# Snapshots store a *copy* of the line list so future edits don't
+# alias them. Cap is in entries, not bytes — for a 1000-line file
+# that's still well under tens of megabytes.
+alloc UNDO_LIMIT := 1000
+
 alloc ed := {
     lines: [""],
     cy: 0,
@@ -594,7 +608,10 @@ alloc ed := {
     cwd: "",                     # the directory the sidebar is showing
     entries: [],                 # cached tree nodes
     sidebar_cy: 0,               # selected row in entries
-    sidebar_scroll: 0            # top visible entry index
+    sidebar_scroll: 0,           # top visible entry index
+    # ---- Undo / redo ----
+    undo_stack: [],              # snapshots pushed before each edit
+    redo_stack: []               # snapshots popped from undo
 }
 
 proc edit_rows() { return ed.rows - 3 }
@@ -784,6 +801,8 @@ proc open_entry_file(e) {
     ed.modified := false
     ed.in_kill_chain := false
     ed.focus := "editor"
+    # Wipe undo history — it referenced the previous file's content.
+    reset_undo()
     set_status("Opened " + e.full_path)
 }
 
@@ -899,11 +918,104 @@ proc narrow_sidebar() {
 }
 
 # ============================================================
+# Undo / redo
+# ============================================================
+
+# Shallow-copy a list of strings. The strings themselves are
+# immutable in OMG, so copying their references is enough — what we
+# *can't* share is the list itself, since lines[i] := ... would
+# otherwise mutate both the live buffer and the snapshot.
+proc copy_lines(lines) {
+    alloc out := []
+    alloc i := 0
+    loop i < length(lines) {
+        out := out + [lines[i]]
+        i := i + 1
+    }
+    return out
+}
+
+# Capture every bit of buffer state needed to restore exactly what
+# the screen looked like before an edit: line content, cursor,
+# scroll, and the modified flag.
+proc make_snapshot() {
+    return {
+        lines: copy_lines(ed.lines),
+        cy: ed.cy,
+        cx: ed.cx,
+        scroll_y: ed.scroll_y,
+        scroll_x: ed.scroll_x,
+        modified: ed.modified
+    }
+}
+
+# Restore a snapshot in place. clamp_cursor handles the unlikely
+# case where the snapshot's cursor lands past the end of a line
+# after some pathological edit sequence.
+proc apply_snapshot(snap) {
+    ed.lines := snap.lines
+    ed.cy := snap.cy
+    ed.cx := snap.cx
+    ed.scroll_y := snap.scroll_y
+    ed.scroll_x := snap.scroll_x
+    ed.modified := snap.modified
+    clamp_cursor()
+}
+
+# Push the current state onto the undo stack before a mutation, and
+# discard the redo chain — any fresh edit invalidates the path
+# back forward through the previous history.
+proc push_undo() {
+    ed.undo_stack := ed.undo_stack + [make_snapshot()]
+    if length(ed.undo_stack) > UNDO_LIMIT {
+        # Drop the oldest snapshot to keep memory bounded.
+        ed.undo_stack := ed.undo_stack[1:length(ed.undo_stack)]
+    }
+    ed.redo_stack := []
+}
+
+# Clear both stacks. Called when the buffer is replaced wholesale
+# (open a new file via the sidebar), since the previous history
+# refers to a different file's contents.
+proc reset_undo() {
+    ed.undo_stack := []
+    ed.redo_stack := []
+}
+
+proc do_undo() {
+    if length(ed.undo_stack) == 0 {
+        set_status("Nothing to undo")
+        return false
+    }
+    # Push the current state to redo so it can be reached again.
+    ed.redo_stack := ed.redo_stack + [make_snapshot()]
+    alloc top := length(ed.undo_stack) - 1
+    alloc snap := ed.undo_stack[top]
+    ed.undo_stack := ed.undo_stack[0:top]
+    apply_snapshot(snap)
+    set_status("Undo (" + length(ed.undo_stack) + " left)")
+}
+
+proc do_redo() {
+    if length(ed.redo_stack) == 0 {
+        set_status("Nothing to redo")
+        return false
+    }
+    ed.undo_stack := ed.undo_stack + [make_snapshot()]
+    alloc top := length(ed.redo_stack) - 1
+    alloc snap := ed.redo_stack[top]
+    ed.redo_stack := ed.redo_stack[0:top]
+    apply_snapshot(snap)
+    set_status("Redo (" + length(ed.redo_stack) + " left)")
+}
+
+# ============================================================
 # Editing
 # ============================================================
 
 # Insert a string (typically a single char) at the cursor.
 proc insert_str(s) {
+    push_undo()
     alloc line := ed.lines[ed.cy]
     ed.lines[ed.cy] := line[0:ed.cx] + s + line[ed.cx:length(line)]
     ed.cx := ed.cx + length(s)
@@ -913,6 +1025,7 @@ proc insert_str(s) {
 # Split the current line at the cursor and insert the right half as
 # a new line below.
 proc do_newline() {
+    push_undo()
     alloc line := ed.lines[ed.cy]
     alloc left := line[0:ed.cx]
     alloc right := line[ed.cx:length(line)]
@@ -927,11 +1040,13 @@ proc do_newline() {
 # line, merge with the previous line.
 proc do_backspace() {
     if ed.cx > 0 {
+        push_undo()
         alloc line := ed.lines[ed.cy]
         ed.lines[ed.cy] := line[0:ed.cx - 1] + line[ed.cx:length(line)]
         ed.cx := ed.cx - 1
         set_modified(true)
     } elif ed.cy > 0 {
+        push_undo()
         alloc prev := ed.lines[ed.cy - 1]
         alloc cur := ed.lines[ed.cy]
         ed.lines[ed.cy - 1] := prev + cur
@@ -947,9 +1062,11 @@ proc do_backspace() {
 proc do_delete() {
     alloc line := ed.lines[ed.cy]
     if ed.cx < length(line) {
+        push_undo()
         ed.lines[ed.cy] := line[0:ed.cx] + line[ed.cx + 1:length(line)]
         set_modified(true)
     } elif ed.cy + 1 < length(ed.lines) {
+        push_undo()
         ed.lines[ed.cy] := line + ed.lines[ed.cy + 1]
         ed.lines := ed.lines[0:ed.cy + 1] + ed.lines[ed.cy + 2:length(ed.lines)]
         set_modified(true)
@@ -960,6 +1077,7 @@ proc do_delete() {
 # so the next paste replays the full sequence — that's the nano
 # behaviour users expect.
 proc do_cut() {
+    push_undo()
     if ed.in_kill_chain == false {
         ed.clipboard := []
     }
@@ -984,6 +1102,7 @@ proc do_paste() {
         set_status("Empty clipboard")
         return false
     }
+    push_undo()
     alloc i := 0
     loop i < length(ed.clipboard) {
         ed.lines := ed.lines[0:ed.cy] + [ed.clipboard[i]] + ed.lines[ed.cy:length(ed.lines)]
@@ -1329,7 +1448,7 @@ proc render() {
     if ed.focus == "sidebar" {
         help := " ^X Exit  Enter Open  Bksp Up  ^B Hide  ^T Editor  ^V/^Y Width"
     } else {
-        help := " ^X Exit  ^O Save  ^K Cut  ^U Paste  ^W Search  ^_ GoTo  ^B Sidebar"
+        help := " ^X Exit  ^O Save  ^Z Undo  ^R Redo  ^K Cut  ^U Paste  ^W Search  ^B Sidebar"
     }
     alloc help_pad := ed.cols - length(help)
     if help_pad < 0 { help_pad := 0 }
@@ -1355,7 +1474,7 @@ proc render() {
 # ============================================================
 
 proc show_help() {
-    set_status("Keys: arrows  ^X exit  ^O save  ^K cut  ^U paste  ^W search  ^_ goto  ^G help")
+    set_status("Keys: arrows  ^X exit  ^O save  ^Z/^R undo/redo  ^K/^U cut/paste  ^W search  ^_ goto  ^B sidebar")
 }
 
 # ============================================================
@@ -1390,6 +1509,10 @@ proc handle_sidebar_key(k) {
 proc handle_editor_key(k) {
     if k == "CTRL_O" {
         do_save()
+    } elif k == "CTRL_Z" {
+        do_undo()
+    } elif k == "CTRL_R" {
+        do_redo()
     } elif k == "CTRL_K" {
         do_cut()
     } elif k == "CTRL_U" {

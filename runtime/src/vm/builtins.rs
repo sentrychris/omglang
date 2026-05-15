@@ -411,11 +411,22 @@ pub fn call_builtin(
                         // Disable canonical mode + echo. VMIN/VTIME = 0
                         // makes read() return 0 with no input rather
                         // than blocking — pairs with stdin_read_key().
-                        t.c_lflag &= !(libc::ICANON | libc::ECHO);
+                        // ICANON / ECHO: line buffering and char echo off
+                        // (the obvious raw-mode bits).
+                        // ISIG: don't let the kernel intercept Ctrl-C,
+                        // Ctrl-Z, Ctrl-\\ as signals — TUI apps want
+                        // those as plain bytes (e.g. an editor binding
+                        // Ctrl-Z to undo).
+                        // IXON: don't let Ctrl-S/Ctrl-Q pause output
+                        // via XON/XOFF — same reasoning, plus it stops
+                        // Ctrl-S from freezing the terminal.
+                        t.c_lflag &= !(libc::ICANON | libc::ECHO | libc::ISIG);
+                        t.c_iflag &= !libc::IXON;
                         t.c_cc[libc::VMIN] = 0;
                         t.c_cc[libc::VTIME] = 0;
                     } else {
-                        t.c_lflag |= libc::ICANON | libc::ECHO;
+                        t.c_lflag |= libc::ICANON | libc::ECHO | libc::ISIG;
+                        t.c_iflag |= libc::IXON;
                     }
                     if libc::tcsetattr(fd, libc::TCSANOW, &t) != 0 {
                         return Err(RuntimeError::ValueError(
