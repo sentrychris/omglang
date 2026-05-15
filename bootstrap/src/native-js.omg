@@ -347,6 +347,9 @@ proc emit_builtin1(js_func) {
 proc emit_builtin2(js_func) {
     return "    { const _b = _s.pop(); const _a = _s.pop(); _s.push(" + js_func + "(_a, _b)); }\n"
 }
+proc emit_builtin3(js_func) {
+    return "    { const _c = _s.pop(); const _b = _s.pop(); const _a = _s.pop(); _s.push(" + js_func + "(_a, _b, _c)); }\n"
+}
 proc emit_builtin0(js_func) {
     return "    _s.push(" + js_func + "());\n"
 }
@@ -415,6 +418,15 @@ proc emit_builtin(name, argc) {
     if name == "time_ms"          and argc == 0 { return emit_builtin0("omg_time_ms") }
     if name == "sleep_ms"         and argc == 1 { return emit_builtin1("omg_sleep_ms") }
     if name == "stdin_set_raw"    and argc == 1 { return emit_builtin1("omg_stdin_set_raw") }
+
+    # Pty primitives. JS-side runtime stubs panic — terminals only
+    # make sense under native or Node-with-extras. Routed through the
+    # transpiler anyway so the JS path compiles uniformly.
+    if name == "pty_spawn"        and argc == 1 { return emit_builtin1("omg_pty_spawn") }
+    if name == "pty_read"         and argc == 1 { return emit_builtin1("omg_pty_read") }
+    if name == "pty_close"        and argc == 1 { return emit_builtin1("omg_pty_close") }
+    if name == "pty_write"        and argc == 2 { return emit_builtin2("omg_pty_write") }
+    if name == "pty_resize"       and argc == 3 { return emit_builtin3("omg_pty_resize") }
 
     panic("native-js: builtin '" + name + "' (argc=" + argc + ") not implemented yet")
 }

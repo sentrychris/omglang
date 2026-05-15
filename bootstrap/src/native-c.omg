@@ -385,6 +385,12 @@ proc emit_builtin2(c_func) {
     return "    { Value b = stack[--sp]; Value a = stack[--sp]; Value r = " + c_func + "(a, b); omg_dec(a); omg_dec(b); stack[sp++] = r; }\n"
 }
 
+# Three-argument builtin call. Order on the stack is a, b, c (a pushed
+# first); we pop them in reverse so the call site reads naturally.
+proc emit_builtin3(c_func) {
+    return "    { Value c = stack[--sp]; Value b = stack[--sp]; Value a = stack[--sp]; Value r = " + c_func + "(a, b, c); omg_dec(a); omg_dec(b); omg_dec(c); stack[sp++] = r; }\n"
+}
+
 proc emit_builtin(name, argc) {
     if name == "length"   and argc == 1 { return emit_builtin1("omg_length") }
     if name == "chr"      and argc == 1 { return emit_builtin1("omg_chr") }
@@ -470,6 +476,15 @@ proc emit_builtin(name, argc) {
 
     # POSIX fork for process-per-request concurrency in the HTTP server.
     if name == "fork" and argc == 0 { return emit_builtin0("omg_builtin_fork") }
+
+    # Pseudo-terminal primitives. The 3-arg pty_resize is the only
+    # builtin in the repo that uses emit_builtin3 — see the comment
+    # at emit_builtin3 for the stack-order rationale.
+    if name == "pty_spawn"  and argc == 1 { return emit_builtin1("omg_builtin_pty_spawn") }
+    if name == "pty_read"   and argc == 1 { return emit_builtin1("omg_builtin_pty_read") }
+    if name == "pty_close"  and argc == 1 { return emit_builtin1("omg_builtin_pty_close") }
+    if name == "pty_write"  and argc == 2 { return emit_builtin2("omg_builtin_pty_write") }
+    if name == "pty_resize" and argc == 3 { return emit_builtin3("omg_builtin_pty_resize") }
 
     panic("native-c: builtin '" + name + "' (argc=" + argc + ") not implemented yet")
 }

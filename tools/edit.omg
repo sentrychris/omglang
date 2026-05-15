@@ -1,7 +1,7 @@
 ;;;omg
 
-# OMG edit — a terminal editor with a sidebar file browser, written
-# in OMG. Started life as a nano clone (keybindings are still
+# OMG edit — a terminal editor with a sidebar and integrated shell,
+# written in OMG. Started life as a nano clone (keybindings are still
 # nano-shaped) and grew into its own thing: open a directory and you
 # get a navigable sidebar; pick a file and the editor swaps to it;
 # ^B toggles the sidebar, ^T swaps focus between panes.
@@ -407,8 +407,11 @@ proc read_key_timeout() {
 # Decode a raw keypress into a semantic name (UP, BACKSPACE,
 # CTRL_X, etc.) so the dispatcher upstream can stay readable.
 # Plain printable ASCII passes through as a 1-char string.
-proc read_full_key() {
-    alloc k := read_key_blocking()
+# Given an already-read first byte `k`, complete decoding any
+# multi-byte sequence (CSI, etc.) and return the semantic key name.
+# Separated from read_full_key so the non-blocking poller can share
+# the ESC-sequence logic.
+proc decode_key(k) {
     if k == ESC {
         alloc k1 := read_key_timeout()
         if k1 == false { return "ESC" }
@@ -421,7 +424,6 @@ proc read_full_key() {
             if k2 == "D" { return "LEFT" }
             if k2 == "H" { return "HOME" }
             if k2 == "F" { return "END" }
-            # CSI numeric form: ESC [ <digits> ~
             if k2 >= "0" and k2 <= "9" {
                 alloc num := k2
                 loop true {
@@ -448,8 +450,6 @@ proc read_full_key() {
         }
         return "ESC"
     }
-    # Single-byte control codes. Map to nano-equivalent semantic
-    # names so the dispatcher only sees high-level events.
     alloc b := ascii(k)
     if b == 1   { return "CTRL_A" }
     if b == 2   { return "CTRL_B" }
@@ -473,9 +473,25 @@ proc read_full_key() {
     if b == 24  { return "CTRL_X" }
     if b == 25  { return "CTRL_Y" }
     if b == 26  { return "CTRL_Z" }
+    if b == 28  { return "CTRL_BACKSLASH" }
     if b == 31  { return "CTRL_UNDERSCORE" }
     if b == 127 { return "BACKSPACE" }
     return k
+}
+
+# Blocking version: spins until a byte arrives.
+proc read_full_key() {
+    return decode_key(read_key_blocking())
+}
+
+# Non-blocking version: returns the next decoded key if one is
+# already buffered, or false if stdin is empty right now. Used by
+# the main loop so a running shell can keep producing output even
+# when the user isn't typing.
+proc try_read_full_key() {
+    alloc k := stdin_read_key()
+    if k == false { return false }
+    return decode_key(k)
 }
 
 # ============================================================
@@ -586,6 +602,15 @@ alloc SIDEBAR_W_STEP    := 4
 # that's still well under tens of megabytes.
 alloc UNDO_LIMIT := 1000
 
+# Integrated terminal pane. Sits below the editor, above the status
+# / help bars. TERM_PANE_ROWS is the *content* height; render() adds
+# one divider row above it for visual separation.
+alloc TERM_PANE_ROWS := 10
+# Default shell argv. Bash with --noprofile/--norc keeps the prompt
+# plain so our minimal VT emulator doesn't have to deal with
+# elaborate colour-rich PS1 setups from the user's dotfiles.
+alloc SHELL_ARGV := ["/bin/bash", "--noprofile", "--norc", "-i"]
+
 alloc ed := {
     lines: [""],
     cy: 0,
@@ -611,10 +636,29 @@ alloc ed := {
     sidebar_scroll: 0,           # top visible entry index
     # ---- Undo / redo ----
     undo_stack: [],              # snapshots pushed before each edit
-    redo_stack: []               # snapshots popped from undo
+    redo_stack: [],              # snapshots popped from undo
+    # ---- Integrated terminal ----
+    term_open: false,            # is the pane visible?
+    term_fd: -1,                 # pty master fd; -1 when nothing running
+    term_rows: TERM_PANE_ROWS,   # pane content height
+    term_cols: 80,               # set when the pane opens (= ed.cols)
+    term_grid: [],               # term_rows × term_cols of 1-char strings
+    term_cy: 0,                  # terminal cursor row (within the pane)
+    term_cx: 0,                  # terminal cursor col
+    term_pending: "",            # partial escape sequence buffered between reads
+    dirty: true,                 # full-screen redraw needed
+    term_dirty: false            # only the terminal pane needs redrawing
 }
 
-proc edit_rows() { return ed.rows - 3 }
+proc edit_rows() {
+    # Total rows minus top bar, status, help. When the terminal pane
+    # is open we also subtract its rows plus one divider row.
+    alloc h := ed.rows - 3
+    if ed.term_open {
+        h := h - ed.term_rows - 1
+    }
+    return h
+}
 # Edit area width depends on whether the sidebar is taking space.
 # When the sidebar is open we lose ed.sidebar_w cols plus 2 for the
 # "| " divider + 1-cell margin between sidebar and editor.
@@ -634,7 +678,8 @@ proc edit_start_col() {
 }
 
 proc set_modified(b) { ed.modified := b }
-proc set_status(s)   { ed.status := s }
+proc set_status(s)   { ed.status := s  ed.dirty := true }
+proc mark_dirty()    { ed.dirty := true }
 
 # Move the cursor to a valid spot (within bounds, on a real line,
 # not past the line's end). Called after any movement / edit.
@@ -876,14 +921,27 @@ proc toggle_sidebar() {
     ed.focus := "sidebar"
 }
 
-# Swap focus between sidebar and editor. No-op if sidebar is hidden.
+# Cycle focus across the visible panes: editor → sidebar (if open)
+# → terminal (if open) → editor. Skips any pane that isn't open, so
+# with no extras open this is a no-op.
 proc toggle_focus() {
-    if ed.sidebar_open == false { return false }
+    alloc next := "editor"
     if ed.focus == "editor" {
-        ed.focus := "sidebar"
-    } else {
-        ed.focus := "editor"
+        if ed.sidebar_open {
+            next := "sidebar"
+        } elif ed.term_open {
+            next := "terminal"
+        }
+    } elif ed.focus == "sidebar" {
+        if ed.term_open {
+            next := "terminal"
+        } else {
+            next := "editor"
+        }
+    } elif ed.focus == "terminal" {
+        next := "editor"
     }
+    ed.focus := next
 }
 
 # Widen the sidebar by SIDEBAR_W_STEP cols, capped at half the
@@ -1007,6 +1065,410 @@ proc do_redo() {
     ed.redo_stack := ed.redo_stack[0:top]
     apply_snapshot(snap)
     set_status("Redo (" + length(ed.redo_stack) + " left)")
+}
+
+# ============================================================
+# Integrated terminal (VT emulator + lifecycle)
+# ============================================================
+#
+# A tiny xterm-shaped emulator: maintains a 2D grid of single-char
+# cells, accepts a stream of bytes from the pty master fd, and
+# interprets the subset of escape sequences a typical shell session
+# emits (cursor motion, line/screen erase). SGR (colour) is silently
+# consumed for now — the pane renders monochrome but is otherwise
+# accurate. Wide CJK chars are also out of scope; cells are one byte
+# wide, same as the rest of the editor.
+
+# Build a fresh blank grid. Each row is a list of single-char
+# strings so cell writes are O(1) via `row[col] := ch`.
+proc make_term_grid(rows, cols) {
+    alloc g := []
+    alloc r := 0
+    loop r < rows {
+        alloc row := []
+        alloc c := 0
+        loop c < cols {
+            row := row + [" "]
+            c := c + 1
+        }
+        g := g + [row]
+        r := r + 1
+    }
+    return g
+}
+
+# Clear the grid completely and home the cursor.
+proc term_clear_grid() {
+    ed.term_grid := make_term_grid(ed.term_rows, ed.term_cols)
+    ed.term_cx := 0
+    ed.term_cy := 0
+}
+
+# Scroll the entire grid up by one row, leaving an empty bottom row.
+proc term_scroll_up() {
+    alloc r := 0
+    loop r < ed.term_rows - 1 {
+        ed.term_grid[r] := ed.term_grid[r + 1]
+        r := r + 1
+    }
+    alloc bot := []
+    alloc c := 0
+    loop c < ed.term_cols {
+        bot := bot + [" "]
+        c := c + 1
+    }
+    ed.term_grid[ed.term_rows - 1] := bot
+}
+
+# Move the cursor to the next row, scrolling if we'd fall off the
+# bottom. Used by LF and by line-wrap.
+proc term_newline() {
+    ed.term_cy := ed.term_cy + 1
+    if ed.term_cy >= ed.term_rows {
+        term_scroll_up()
+        ed.term_cy := ed.term_rows - 1
+    }
+}
+
+# Write a single visible char at the cursor; advance and wrap.
+proc term_put_char(c) {
+    if ed.term_cy < 0 { ed.term_cy := 0 }
+    if ed.term_cy >= ed.term_rows { ed.term_cy := ed.term_rows - 1 }
+    if ed.term_cx >= 0 and ed.term_cx < ed.term_cols {
+        ed.term_grid[ed.term_cy][ed.term_cx] := c
+    }
+    ed.term_cx := ed.term_cx + 1
+    if ed.term_cx >= ed.term_cols {
+        ed.term_cx := 0
+        term_newline()
+    }
+}
+
+# CSI parameter parser: returns int value or `default` when params
+# is empty. Used by cursor / erase dispatch.
+proc parse_csi_default(params, default) {
+    if length(params) == 0 { return default }
+    try {
+        return int(params)
+    } except err {
+        return default
+    }
+}
+
+# CSI two-param parser for `ESC [ a ; b H` (cursor positioning).
+proc parse_csi_two(params, d1, d2) {
+    alloc semi := -1
+    alloc i := 0
+    loop i < length(params) {
+        if params[i] == ";" {
+            semi := i
+            i := length(params)
+        }
+        i := i + 1
+    }
+    if semi < 0 {
+        alloc a := parse_csi_default(params, d1)
+        return [a, d2]
+    }
+    alloc a := parse_csi_default(params[0:semi], d1)
+    alloc b := parse_csi_default(params[semi + 1:length(params)], d2)
+    return [a, b]
+}
+
+# Erase Line (CSI K). mode 0 = cursor to end, 1 = start to cursor,
+# 2 = whole line. We implement 0 and 2 (the common ones).
+proc term_erase_line(mode) {
+    if mode == 0 or mode == 2 {
+        alloc start := ed.term_cx
+        alloc end := ed.term_cols
+        if mode == 2 { start := 0 }
+        alloc c := start
+        loop c < end {
+            ed.term_grid[ed.term_cy][c] := " "
+            c := c + 1
+        }
+    } elif mode == 1 {
+        alloc c := 0
+        loop c <= ed.term_cx and c < ed.term_cols {
+            ed.term_grid[ed.term_cy][c] := " "
+            c := c + 1
+        }
+    }
+}
+
+# Erase Display (CSI J). mode 0 = cursor → end of screen, 2 = all.
+proc term_erase_display(mode) {
+    if mode == 0 {
+        term_erase_line(0)
+        alloc r := ed.term_cy + 1
+        loop r < ed.term_rows {
+            alloc c := 0
+            loop c < ed.term_cols {
+                ed.term_grid[r][c] := " "
+                c := c + 1
+            }
+            r := r + 1
+        }
+    } elif mode == 2 {
+        alloc r := 0
+        loop r < ed.term_rows {
+            alloc c := 0
+            loop c < ed.term_cols {
+                ed.term_grid[r][c] := " "
+                c := c + 1
+            }
+            r := r + 1
+        }
+    }
+}
+
+# Dispatch a fully-collected CSI sequence (params string + final
+# byte). Handles cursor motion (A/B/C/D/H/f), erase (J/K), and
+# silently consumes the rest — SGR (m), DEC private modes (h/l),
+# scroll regions (r), etc.
+proc term_csi_dispatch(params, final) {
+    if final == "A" {
+        alloc n := parse_csi_default(params, 1)
+        ed.term_cy := ed.term_cy - n
+        if ed.term_cy < 0 { ed.term_cy := 0 }
+    } elif final == "B" {
+        alloc n := parse_csi_default(params, 1)
+        ed.term_cy := ed.term_cy + n
+        if ed.term_cy >= ed.term_rows { ed.term_cy := ed.term_rows - 1 }
+    } elif final == "C" {
+        alloc n := parse_csi_default(params, 1)
+        ed.term_cx := ed.term_cx + n
+        if ed.term_cx >= ed.term_cols { ed.term_cx := ed.term_cols - 1 }
+    } elif final == "D" {
+        alloc n := parse_csi_default(params, 1)
+        ed.term_cx := ed.term_cx - n
+        if ed.term_cx < 0 { ed.term_cx := 0 }
+    } elif final == "H" or final == "f" {
+        alloc rc := parse_csi_two(params, 1, 1)
+        ed.term_cy := rc[0] - 1
+        ed.term_cx := rc[1] - 1
+        if ed.term_cy < 0 { ed.term_cy := 0 }
+        if ed.term_cy >= ed.term_rows { ed.term_cy := ed.term_rows - 1 }
+        if ed.term_cx < 0 { ed.term_cx := 0 }
+        if ed.term_cx >= ed.term_cols { ed.term_cx := ed.term_cols - 1 }
+    } elif final == "J" {
+        term_erase_display(parse_csi_default(params, 0))
+    } elif final == "K" {
+        term_erase_line(parse_csi_default(params, 0))
+    }
+    # Everything else (SGR, DEC modes, …) silently consumed.
+}
+
+# Try to parse an escape sequence starting at `data[i]` (one byte
+# past the ESC). Returns the new cursor index after the sequence,
+# or -1 if the sequence is incomplete and we need more bytes.
+proc term_parse_esc(data, i) {
+    alloc n := length(data)
+    if i >= n { return -1 }
+    alloc c := data[i]
+    if c == "[" {
+        # CSI: collect parameter bytes (0x30-0x3F + space) up to a
+        # final byte in 0x40-0x7E.
+        alloc j := i + 1
+        loop j < n {
+            alloc b := ascii(data[j])
+            if b >= 64 and b <= 126 {
+                alloc params := data[i + 1:j]
+                term_csi_dispatch(params, data[j])
+                return j + 1
+            }
+            j := j + 1
+        }
+        return -1
+    }
+    if c == "]" {
+        # OSC: scan for ST (ESC \) or BEL (0x07) terminator.
+        alloc j := i + 1
+        loop j < n {
+            alloc b := ascii(data[j])
+            if b == 7 { return j + 1 }
+            if b == 27 and j + 1 < n and data[j + 1] == "\\" { return j + 2 }
+            j := j + 1
+        }
+        return -1
+    }
+    # Two-char escape (ESC + letter, ESC =, etc.) — consume + ignore.
+    return i + 1
+}
+
+# Feed a chunk of bytes from the pty into the emulator. Maintains
+# `term_pending` to handle escape sequences split across reads.
+proc term_feed(bytes) {
+    alloc data := ed.term_pending + bytes
+    ed.term_pending := ""
+    alloc i := 0
+    alloc n := length(data)
+    loop i < n {
+        alloc c := data[i]
+        alloc b := ascii(c)
+        if b == 27 {                    # ESC
+            alloc r := term_parse_esc(data, i + 1)
+            if r < 0 {
+                # Incomplete sequence — stash for next read.
+                ed.term_pending := data[i:n]
+                i := n
+            } else {
+                i := r
+            }
+        } elif b == 10 {                # LF — next row, col stays
+            term_newline()
+            i := i + 1
+        } elif b == 13 {                # CR — col 0
+            ed.term_cx := 0
+            i := i + 1
+        } elif b == 8 {                 # BS
+            if ed.term_cx > 0 { ed.term_cx := ed.term_cx - 1 }
+            i := i + 1
+        } elif b == 9 {                 # TAB — next 8-col stop
+            alloc next := (ed.term_cx // 8 + 1) * 8
+            if next >= ed.term_cols { next := ed.term_cols - 1 }
+            ed.term_cx := next
+            i := i + 1
+        } elif b == 7 {                 # BEL — ignore
+            i := i + 1
+        } elif b >= 32 and b < 127 {
+            term_put_char(c)
+            i := i + 1
+        } else {
+            # Some other control byte we don't model — skip.
+            i := i + 1
+        }
+    }
+}
+
+# Lifecycle: spawn /bin/bash via the runtime's pty primitives,
+# set the pane size correctly, initialise the grid.
+proc term_spawn() {
+    if ed.term_fd >= 0 { return false }
+    ed.term_cols := ed.cols
+    ed.term_grid := make_term_grid(ed.term_rows, ed.term_cols)
+    ed.term_cx := 0
+    ed.term_cy := 0
+    ed.term_pending := ""
+    alloc fd := pty_spawn(SHELL_ARGV)
+    ed.term_fd := fd
+    pty_resize(fd, ed.term_rows, ed.term_cols)
+}
+
+# Tear down: closing the master fd sends SIGHUP to the child, which
+# exits on its own. Reset all the per-session state so the next
+# spawn starts clean.
+proc term_kill() {
+    if ed.term_fd >= 0 {
+        pty_close(ed.term_fd)
+        ed.term_fd := -1
+    }
+    ed.term_grid := []
+    ed.term_pending := ""
+    ed.term_cx := 0
+    ed.term_cy := 0
+}
+
+# Toggle visibility. First open spawns the shell; subsequent
+# toggles just hide/show the pane. Closing the pane kills the
+# shell so we don't leak processes when the user closes it.
+proc toggle_terminal() {
+    if ed.term_open {
+        ed.term_open := false
+        ed.focus := "editor"
+        term_kill()
+        return false
+    }
+    ed.term_open := true
+    ed.focus := "terminal"
+    term_spawn()
+}
+
+# Pull as many bytes as are available right now off the pty master.
+# Called each main-loop tick. On EOF (child exited) the pane stays
+# open with the last-rendered grid so the user can read any final
+# output, but term_fd is reset so further reads do nothing.
+proc term_pump() {
+    if ed.term_fd < 0 { return false }
+    loop true {
+        alloc chunk := pty_read(ed.term_fd)
+        if chunk == false {
+            # EOF — child exited.
+            pty_close(ed.term_fd)
+            ed.term_fd := -1
+            set_status("Shell exited (^\\ to reopen)")
+            return false
+        }
+        if length(chunk) == 0 { return false }
+        term_feed(chunk)
+        # Shell output only touches the terminal grid — flag the pane
+        # for partial redraw, not a full-screen repaint. This keeps
+        # the editor area static while a noisy shell is running.
+        ed.term_dirty := true
+    }
+}
+
+# Translate a semantic key into the byte sequence a real terminal
+# would send. Used when the terminal pane is focused.
+proc encode_key_for_pty(k) {
+    if k == "LEFT"             { return ESC + "[D" }
+    if k == "RIGHT"            { return ESC + "[C" }
+    if k == "UP"               { return ESC + "[A" }
+    if k == "DOWN"             { return ESC + "[B" }
+    if k == "HOME"             { return ESC + "[H" }
+    if k == "END"              { return ESC + "[F" }
+    if k == "PGUP"             { return ESC + "[5~" }
+    if k == "PGDOWN"           { return ESC + "[6~" }
+    if k == "DELETE"           { return ESC + "[3~" }
+    if k == "BACKSPACE"        { return chr(127) }
+    if k == "ENTER"            { return "\r" }
+    if k == "TAB"              { return "\t" }
+    if k == "ESC"              { return ESC }
+    # CTRL_<letter> → the single corresponding control byte.
+    if k == "CTRL_A" { return chr(1) }
+    if k == "CTRL_B" { return chr(2) }
+    if k == "CTRL_E" { return chr(5) }
+    if k == "CTRL_F" { return chr(6) }
+    if k == "CTRL_G" { return chr(7) }
+    if k == "CTRL_K" { return chr(11) }
+    if k == "CTRL_L" { return chr(12) }
+    if k == "CTRL_N" { return chr(14) }
+    if k == "CTRL_O" { return chr(15) }
+    if k == "CTRL_P" { return chr(16) }
+    if k == "CTRL_R" { return chr(18) }
+    if k == "CTRL_U" { return chr(21) }
+    if k == "CTRL_V" { return chr(22) }
+    if k == "CTRL_W" { return chr(23) }
+    if k == "CTRL_Y" { return chr(25) }
+    if k == "CTRL_Z" { return chr(26) }
+    if k == "CTRL_UNDERSCORE" { return chr(31) }
+    # Otherwise pass through the literal byte (printable ASCII).
+    if length(k) == 1 { return k }
+    return ""
+}
+
+# Global keys are ones that change layout / focus / state outside the
+# terminal pane (and so need a full repaint when handled). Anything
+# else, when the terminal is focused, just goes to the shell — that
+# only affects the pane, so a partial repaint is enough.
+proc is_global_key(k) {
+    if k == "CTRL_X"           { return true }
+    if k == "CTRL_B"           { return true }
+    if k == "CTRL_BACKSLASH"   { return true }
+    if k == "CTRL_T"           { return true }
+    if k == "CTRL_G"           { return true }
+    if k == "CTRL_L"           { return true }
+    return false
+}
+
+# Send the decoded key to the shell, mapping multi-byte sequences
+# back to their canonical wire encoding.
+proc handle_terminal_key(k) {
+    if ed.term_fd < 0 { return false }
+    alloc bytes := encode_key_for_pty(k)
+    if length(bytes) > 0 {
+        pty_write(ed.term_fd, bytes)
+    }
 }
 
 # ============================================================
@@ -1394,13 +1856,53 @@ proc render_edit_row(r) {
     return slice
 }
 
+# Partial redraw: just the terminal pane + cursor restoration. Used
+# when shell output is streaming but no editor state has changed —
+# avoids repainting the (static) editor area on every shell byte.
+proc render_terminal_pane() {
+    if ed.term_open == false { return false }
+    alloc base := 1 + edit_rows() + 1 + 1   # first row of pane content
+    alloc out := HIDE_CURSOR + cursor_to(base, 1)
+    alloc tr := 0
+    loop tr < ed.term_rows {
+        alloc trow := ""
+        if tr < length(ed.term_grid) {
+            alloc grid_row := ed.term_grid[tr]
+            alloc tc := 0
+            loop tc < length(grid_row) and tc < ed.cols {
+                trow := trow + grid_row[tc]
+                tc := tc + 1
+            }
+        }
+        out := out + cursor_to(base + tr, 1) + trow + CLR_EOL
+        tr := tr + 1
+    }
+    if ed.focus == "terminal" {
+        alloc tsr := base + ed.term_cy
+        alloc tsc := ed.term_cx + 1
+        out := out + cursor_to(tsr, tsc) + SHOW_CURSOR
+    } elif ed.focus == "editor" {
+        alloc sr := ed.cy - ed.scroll_y + 2
+        alloc sc := ed.cx - ed.scroll_x + edit_start_col()
+        out := out + cursor_to(sr, sc) + SHOW_CURSOR
+    } else {
+        alloc sr := ed.sidebar_cy - ed.sidebar_scroll + 2
+        out := out + cursor_to(sr, 1) + HIDE_CURSOR
+    }
+    print(out)
+}
+
 proc render() {
     if ed.focus == "editor" {
         adjust_scroll()
     } else {
         sidebar_adjust_scroll()
     }
-    alloc out := HOME
+    # Hide the cursor for the duration of the frame so it doesn't
+    # visibly streak through every intermediate position the terminal
+    # passes through while we paint. We show (or keep hidden) at the
+    # end based on focus.
+    alloc out := HIDE_CURSOR + HOME
 
     # Top status bar
     alloc name := ed.filename
@@ -1435,6 +1937,31 @@ proc render() {
         r := r + 1
     }
 
+    # Terminal pane: divider row then the grid contents. When the
+    # pane is open we've already shrunk edit_rows() to make space.
+    if ed.term_open {
+        alloc div_label := "── Terminal"
+        if ed.term_fd < 0 { div_label := div_label + "  (shell exited)" }
+        alloc div := div_label + " "
+        alloc dash := ed.cols - length(div)
+        if dash < 0 { dash := 0 }
+        out := out + DIM + div + repeat_char("-", dash) + RESET + CLR_EOL + "\n"
+        alloc tr := 0
+        loop tr < ed.term_rows {
+            alloc trow := ""
+            if tr < length(ed.term_grid) {
+                alloc grid_row := ed.term_grid[tr]
+                alloc tc := 0
+                loop tc < length(grid_row) and tc < ed.cols {
+                    trow := trow + grid_row[tc]
+                    tc := tc + 1
+                }
+            }
+            out := out + trow + CLR_EOL + "\n"
+            tr := tr + 1
+        }
+    }
+
     # Status message row
     alloc status_text := " " + ed.status
     alloc status_pad := ed.cols - length(status_text)
@@ -1446,21 +1973,30 @@ proc render() {
     # contexts.
     alloc help := ""
     if ed.focus == "sidebar" {
-        help := " ^X Exit  Enter Open  Bksp Up  ^B Hide  ^T Editor  ^V/^Y Width"
+        help := " ^X Exit  Enter Open  Bksp Up  ^B Hide  ^T Cycle  ^V/^Y Width"
+    } elif ed.focus == "terminal" {
+        help := " ^X Exit  ^\\ Hide term  ^T Cycle pane  (keys forwarded to shell)"
     } else {
-        help := " ^X Exit  ^O Save  ^Z Undo  ^R Redo  ^K Cut  ^U Paste  ^W Search  ^B Sidebar"
+        help := " ^X Exit  ^O Save  ^Z/^R Undo/Redo  ^K Cut  ^U Paste  ^W Search  ^\\ Terminal"
     }
     alloc help_pad := ed.cols - length(help)
     if help_pad < 0 { help_pad := 0 }
     out := out + INVERSE + help + repeat_char(" ", help_pad) + RESET
 
-    # Cursor placement depends on focus: editor mode lands the
-    # terminal caret at the buffer cursor; sidebar mode hides it
-    # because the inverse-highlighted row already shows the
-    # selection.
+    # Cursor placement depends on focus. Editor: at the buffer cursor.
+    # Sidebar: at the highlighted row (terminal cursor hidden).
+    # Terminal: at the emulator cursor inside the pane.
     if ed.focus == "sidebar" {
         alloc sr := ed.sidebar_cy - ed.sidebar_scroll + 2
         out := out + cursor_to(sr, 1) + HIDE_CURSOR
+    } elif ed.focus == "terminal" {
+        # Pane starts at: 1 (top bar) + edit_rows() + 1 (divider) + 1
+        # for 1-indexed. Cursor is at (term_cy, term_cx) within the
+        # pane.
+        alloc base := 1 + edit_rows() + 1 + 1
+        alloc tsr := base + ed.term_cy
+        alloc tsc := ed.term_cx + 1
+        out := out + cursor_to(tsr, tsc) + SHOW_CURSOR
     } else {
         alloc sr := ed.cy - ed.scroll_y + 2
         alloc sc := ed.cx - ed.scroll_x + edit_start_col()
@@ -1560,25 +2096,42 @@ proc handle_editor_key(k) {
 # ed.in_kill_chain back off, so the next ^K starts a fresh kill
 # buffer.
 proc handle_key(k) {
+    # Global keys first. ^X always quits the editor, ^B/^\ toggle
+    # the side and bottom panes respectively, and ^T cycles focus
+    # across whichever panes are visible. Everything else routes to
+    # the per-focus dispatcher.
     if k == "CTRL_X" {
         do_exit()
     } elif k == "CTRL_B" {
         toggle_sidebar()
+    } elif k == "CTRL_BACKSLASH" {
+        toggle_terminal()
     } elif k == "CTRL_T" {
         toggle_focus()
-    } elif k == "CTRL_V" {
-        widen_sidebar()
-    } elif k == "CTRL_Y" {
-        narrow_sidebar()
     } elif k == "CTRL_G" {
         show_help()
     } elif k == "CTRL_L" {
         # No-op — the next render redraws everything anyway.
         set_status("Redrawn")
+    } elif ed.focus == "terminal" {
+        handle_terminal_key(k)
     } elif ed.focus == "sidebar" {
-        handle_sidebar_key(k)
+        # ^V / ^Y were sidebar-only keys before; keep them there.
+        if k == "CTRL_V" {
+            widen_sidebar()
+        } elif k == "CTRL_Y" {
+            narrow_sidebar()
+        } else {
+            handle_sidebar_key(k)
+        }
     } else {
-        handle_editor_key(k)
+        if k == "CTRL_V" {
+            widen_sidebar()
+        } elif k == "CTRL_Y" {
+            narrow_sidebar()
+        } else {
+            handle_editor_key(k)
+        }
     }
     if k != "CTRL_K" {
         ed.in_kill_chain := false
@@ -1624,17 +2177,47 @@ proc run() {
 
     emit CLEAR
     if length(ed.status) == 0 {
-        set_status("Welcome to OMG edit — ^X exit, ^O save, ^B sidebar, ^T swap pane")
+        set_status("Welcome to OMG edit — ^X exit, ^O save, ^B sidebar, ^\\ terminal")
     }
 
+    # Main loop: drain the pty (if any), redraw, then non-blockingly
+    # poll for a keystroke. Sleeping briefly when neither side has
+    # work prevents the loop from pegging a core; ~12 ms gives both
+    # responsive input and a busy shell time to make progress.
     loop ed.quit == false {
-        render()
-        alloc k := read_full_key()
-        # Transient status lasts one render then clears, so messages
-        # like "Found" or "Wrote 12 lines" disappear after the next
-        # keystroke.
-        ed.status := ""
-        handle_key(k)
+        term_pump()
+        if ed.dirty {
+            render()
+            ed.dirty := false
+            ed.term_dirty := false
+        } elif ed.term_dirty {
+            render_terminal_pane()
+            ed.term_dirty := false
+        }
+        alloc k := try_read_full_key()
+        if k != false {
+            # Snapshot before dispatch so we can decide whether the
+            # editor area needs repainting at all. Clearing a non-empty
+            # status is visible on screen → full repaint. Terminal-mode
+            # keys that aren't global toggles only mutate shell state.
+            alloc was_status := length(ed.status) > 0
+            ed.status := ""
+            alloc term_only_key := (ed.focus == "terminal") and is_global_key(k) == false
+            handle_key(k)
+            if was_status or term_only_key == false {
+                ed.dirty := true
+            } else {
+                ed.term_dirty := true
+            }
+        } else {
+            sleep_ms(20)
+        }
+    }
+
+    # If the user quits with the terminal still up, send SIGHUP so
+    # we don't orphan the shell.
+    if ed.term_fd >= 0 {
+        term_kill()
     }
 }
 

@@ -102,6 +102,14 @@ fn builtin_names() -> &'static [&'static str] {
         "sleep_ms",
         "stdin_set_raw",
         "stdin_read_key",
+        // Pseudo-terminal primitives — spawn a child connected via a
+        // pty, then non-blocking read/write its master fd. Used by
+        // tools/edit.omg's integrated terminal pane.
+        "pty_spawn",
+        "pty_read",
+        "pty_write",
+        "pty_close",
+        "pty_resize",
         "print",
         // TCP networking. Six builtins mirror the file_* shape (open,
         // accept→stream, read, write, close). Bytes-in / bytes-out;

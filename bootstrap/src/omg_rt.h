@@ -24,6 +24,9 @@
 #include <netinet/in.h>
 #include <time.h>
 #include <termios.h>
+#include <pty.h>          /* forkpty */
+#include <sys/ioctl.h>    /* TIOCSWINSZ */
+#include <fcntl.h>        /* fcntl */
 #include <arpa/inet.h>
 #include <netdb.h>
 #include <signal.h>
@@ -1936,6 +1939,109 @@ static Value omg_builtin_stdin_read_key(void) {
     return omg_str(out);
 }
 
+/* === Pseudo-terminal primitives ========================================
+ *
+ * Five tiny shims around forkpty / read / write / close / TIOCSWINSZ
+ * so OMG programs can embed an interactive child (a shell, less,
+ * vim, etc.). The master fd is always set non-blocking — pty_read
+ * polls cheaply and returns "" when no data is available, so the
+ * caller can multiplex with stdin in a single loop.
+ *
+ * The whole pty package is mirrored in runtime/src/vm/builtins.rs;
+ * keep them in sync.
+ */
+
+static Value omg_builtin_pty_spawn(Value v) {
+    if (v.tag != OMG_LIST) omg_panic("TypeError", "pty_spawn() expects a list");
+    OmgList *l = v.v.l;
+    if (l->len == 0) omg_panic("ValueError", "pty_spawn() needs at least the command");
+    char **argv = (char **)malloc((l->len + 1) * sizeof(char *));
+    if (!argv) { fprintf(stderr, "out of memory\n"); exit(1); }
+    for (int i = 0; i < l->len; i++) {
+        if (l->items[i].tag != OMG_STR) {
+            free(argv);
+            omg_panic("TypeError", "pty_spawn() argv must be all strings");
+        }
+        argv[i] = (char *)l->items[i].v.s;
+    }
+    argv[l->len] = NULL;
+
+    int master;
+    pid_t pid = forkpty(&master, NULL, NULL, NULL);
+    if (pid < 0) {
+        free(argv);
+        omg_panic("ValueError", "pty_spawn(): forkpty failed");
+    }
+    if (pid == 0) {
+        /* Child. Set TERM, exec, and _exit on failure so we don't
+         * unwind back into the OMG runtime. */
+        setenv("TERM", "xterm-256color", 1);
+        execvp(argv[0], argv);
+        _exit(127);
+    }
+    /* Parent: master fd non-blocking so pty_read() can poll. */
+    int flags = fcntl(master, F_GETFL, 0);
+    fcntl(master, F_SETFL, flags | O_NONBLOCK);
+    free(argv);
+    return omg_int((int64_t)master);
+}
+
+/* Non-blocking read from the master fd. Three return shapes:
+ *   - OMG_STR with bytes: data delivered
+ *   - OMG_STR empty:      no data right now, try again later
+ *   - OMG_BOOL false:     EOF / error (child closed) */
+static Value omg_builtin_pty_read(Value fd_v) {
+    if (fd_v.tag != OMG_INT) omg_panic("TypeError", "pty_read() expects an int fd");
+    char buf[4096];
+    ssize_t n = read((int)fd_v.v.i, buf, sizeof(buf));
+    if (n > 0) {
+        char *s = (char *)malloc(n + 1);
+        if (!s) { fprintf(stderr, "out of memory\n"); exit(1); }
+        memcpy(s, buf, n);
+        s[n] = 0;
+        return omg_str(s);
+    }
+    if (n == 0) {
+        return omg_bool(0);
+    }
+    if (errno == EAGAIN || errno == EWOULDBLOCK) {
+        char *empty = (char *)malloc(1);
+        if (!empty) { fprintf(stderr, "out of memory\n"); exit(1); }
+        empty[0] = 0;
+        return omg_str(empty);
+    }
+    return omg_bool(0);
+}
+
+/* Write bytes to the master fd. Returns the number of bytes written
+ * (may be short if the pty buffer is full). */
+static Value omg_builtin_pty_write(Value fd_v, Value s_v) {
+    if (fd_v.tag != OMG_INT) omg_panic("TypeError", "pty_write() fd must be int");
+    if (s_v.tag != OMG_STR)  omg_panic("TypeError", "pty_write() data must be string");
+    ssize_t n = write((int)fd_v.v.i, s_v.v.s, strlen(s_v.v.s));
+    return omg_int((int64_t)n);
+}
+
+static Value omg_builtin_pty_close(Value fd_v) {
+    if (fd_v.tag != OMG_INT) omg_panic("TypeError", "pty_close() expects an int fd");
+    close((int)fd_v.v.i);
+    return omg_none();
+}
+
+/* TIOCSWINSZ + SIGWINCH: the child re-reads dimensions and reflows. */
+static Value omg_builtin_pty_resize(Value fd_v, Value rows_v, Value cols_v) {
+    if (fd_v.tag != OMG_INT)   omg_panic("TypeError", "pty_resize() fd must be int");
+    if (rows_v.tag != OMG_INT) omg_panic("TypeError", "pty_resize() rows must be int");
+    if (cols_v.tag != OMG_INT) omg_panic("TypeError", "pty_resize() cols must be int");
+    struct winsize ws;
+    ws.ws_row = (unsigned short)rows_v.v.i;
+    ws.ws_col = (unsigned short)cols_v.v.i;
+    ws.ws_xpixel = 0;
+    ws.ws_ypixel = 0;
+    ioctl((int)fd_v.v.i, TIOCSWINSZ, &ws);
+    return omg_none();
+}
+
 /* subprocess(argv): fork + execvp + waitpid. argv is a list of strings;
  * argv[0] is the program (PATH-resolved via execvp), the rest are args.
  * stdin/stdout/stderr are inherited. Returns the child's exit code.
@@ -2570,6 +2676,9 @@ static Value omg_call_builtin(Value name, Value args) {
         if (strcmp(n, "print") == 0)           return omg_builtin_print(a[0]);
         if (strcmp(n, "sleep_ms") == 0)        return omg_builtin_sleep_ms(a[0]);
         if (strcmp(n, "stdin_set_raw") == 0)   return omg_builtin_stdin_set_raw(a[0]);
+        if (strcmp(n, "pty_spawn") == 0)       return omg_builtin_pty_spawn(a[0]);
+        if (strcmp(n, "pty_read") == 0)        return omg_builtin_pty_read(a[0]);
+        if (strcmp(n, "pty_close") == 0)       return omg_builtin_pty_close(a[0]);
     }
     if (argc == 2) {
         if (strcmp(n, "pow") == 0)        return omg_builtin_pow(a[0], a[1]);
@@ -2583,6 +2692,10 @@ static Value omg_call_builtin(Value name, Value args) {
         if (strcmp(n, "tcp_connect") == 0) return omg_builtin_tcp_connect(a[0], a[1]);
         if (strcmp(n, "tcp_read") == 0)    return omg_builtin_tcp_read(a[0], a[1]);
         if (strcmp(n, "tcp_write") == 0)   return omg_builtin_tcp_write(a[0], a[1]);
+        if (strcmp(n, "pty_write") == 0)   return omg_builtin_pty_write(a[0], a[1]);
+    }
+    if (argc == 3) {
+        if (strcmp(n, "pty_resize") == 0) return omg_builtin_pty_resize(a[0], a[1], a[2]);
     }
     omg_panicf("TypeError", "unknown builtin: %s", n);
     return omg_none(); /* unreachable */

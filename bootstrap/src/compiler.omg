@@ -1094,6 +1094,7 @@ alloc cc_builtins := [
     "exit_with_error", "exit", "getpid", "subprocess",
     "stdin_readline", "stdin_read", "stdin_read_bytes",
     "time_ms", "sleep_ms", "stdin_set_raw", "stdin_read_key",
+    "pty_spawn", "pty_read", "pty_write", "pty_close", "pty_resize",
     "print", "executable_path",
     "tcp_listen", "tcp_accept", "tcp_connect",
     "tcp_read", "tcp_write", "tcp_close",

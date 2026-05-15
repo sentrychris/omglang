@@ -898,6 +898,11 @@ const _omg_builtins = {
     stdin_set_raw: omg_stdin_set_raw,
     time_ms: omg_time_ms,
     sleep_ms: omg_sleep_ms,
+    pty_spawn: omg_pty_spawn,
+    pty_read: omg_pty_read,
+    pty_write: omg_pty_write,
+    pty_close: omg_pty_close,
+    pty_resize: omg_pty_resize,
     subprocess: omg_subprocess,
     getpid: omg_getpid,
     executable_path: omg_executable_path,
@@ -945,6 +950,28 @@ function omg_stdin_read_key() {
     catch (_e) { return false; }
     if (n !== 1) return false;
     return String.fromCharCode(buf[0]);
+}
+
+// === Pty primitives ============================================
+// JS / Node has no portable pty story without an external package,
+// so we panic rather than fail silently. The browser playground
+// never touches these — the editor that uses them is a native-only
+// tool.
+
+function omg_pty_spawn(_argv) {
+    omg_panic('RuntimeError', 'pty_spawn is not supported in the JS runtime');
+}
+function omg_pty_read(_fd) {
+    omg_panic('RuntimeError', 'pty_read is not supported in the JS runtime');
+}
+function omg_pty_write(_fd, _s) {
+    omg_panic('RuntimeError', 'pty_write is not supported in the JS runtime');
+}
+function omg_pty_close(_fd) {
+    omg_panic('RuntimeError', 'pty_close is not supported in the JS runtime');
+}
+function omg_pty_resize(_fd, _r, _c) {
+    omg_panic('RuntimeError', 'pty_resize is not supported in the JS runtime');
 }
 
 function omg_call_builtin(name, args) {

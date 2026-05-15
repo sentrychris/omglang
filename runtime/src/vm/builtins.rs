@@ -468,6 +468,167 @@ pub fn call_builtin(
             }
         }
 
+        // === Pseudo-terminal (pty) primitives =================
+        //
+        // Together these five builtins are enough to embed an
+        // interactive shell inside an OMG program — see
+        // tools/edit.omg's integrated terminal. The master fd is
+        // always non-blocking, so pty_read can poll without
+        // stalling the main loop.
+        //
+        //   pty_spawn(argv)    fork + forkpty + execvp; -> master fd
+        //   pty_read(fd)       -> str (may be empty)  or  false on EOF
+        //   pty_write(fd, s)   -> bytes written (int)
+        //   pty_close(fd)      close master fd (child gets SIGHUP)
+        //   pty_resize(fd, rows, cols)  TIOCSWINSZ ioctl
+
+        // pty_spawn: fork a child running argv, connected via a pty.
+        // Sets TERM=xterm-256color in the child before exec so the
+        // hosted process picks reasonable capabilities.
+        "pty_spawn" => match args {
+            [Value::List(argv)] => {
+                let borrowed = argv.borrow();
+                if borrowed.is_empty() {
+                    return Err(RuntimeError::ValueError(
+                        "pty_spawn(): argv must be non-empty".to_string(),
+                    ));
+                }
+                let mut cstrs: Vec<std::ffi::CString> = Vec::new();
+                for a in borrowed.iter() {
+                    match a {
+                        Value::Str(s) => {
+                            cstrs.push(std::ffi::CString::new(s.as_str()).map_err(|_| {
+                                RuntimeError::ValueError(
+                                    "pty_spawn(): nul byte in argv element".to_string(),
+                                )
+                            })?);
+                        }
+                        _ => {
+                            return Err(RuntimeError::TypeError(
+                                "pty_spawn(): argv must be all strings".to_string(),
+                            ))
+                        }
+                    }
+                }
+                let mut argv_p: Vec<*const libc::c_char> =
+                    cstrs.iter().map(|s| s.as_ptr()).collect();
+                argv_p.push(std::ptr::null());
+                unsafe {
+                    let mut master_fd: libc::c_int = 0;
+                    let pid = libc::forkpty(
+                        &mut master_fd,
+                        std::ptr::null_mut(),
+                        std::ptr::null(),
+                        std::ptr::null(),
+                    );
+                    if pid < 0 {
+                        return Err(RuntimeError::ValueError(
+                            "pty_spawn(): forkpty failed".to_string(),
+                        ));
+                    }
+                    if pid == 0 {
+                        // Child: set a sensible TERM and exec. If exec
+                        // fails we _exit so we don't unwind back into
+                        // OMG's runtime in the child.
+                        let term = std::ffi::CString::new("TERM=xterm-256color").unwrap();
+                        libc::putenv(term.into_raw());
+                        libc::execvp(cstrs[0].as_ptr(), argv_p.as_ptr());
+                        libc::_exit(127);
+                    }
+                    // Parent: make the master fd non-blocking so
+                    // pty_read can poll cheaply.
+                    let flags = libc::fcntl(master_fd, libc::F_GETFL, 0);
+                    libc::fcntl(master_fd, libc::F_SETFL, flags | libc::O_NONBLOCK);
+                    Ok(Value::Int(master_fd as i64))
+                }
+            }
+            _ => Err(RuntimeError::TypeError(
+                "pty_spawn() expects a list of strings".to_string(),
+            )),
+        },
+
+        // pty_read: non-blocking read from the master. Distinguishes
+        // three cases: bytes available (str), no data right now
+        // (empty str), EOF / error (false). Bytes are forwarded
+        // verbatim — the OMG layer interprets escape sequences via
+        // its own VT emulator.
+        "pty_read" => match args {
+            [Value::Int(fd)] => unsafe {
+                let mut buf = [0u8; 4096];
+                let n = libc::read(*fd as libc::c_int, buf.as_mut_ptr() as *mut _, buf.len());
+                if n > 0 {
+                    // Build a string that preserves the exact byte
+                    // sequence. UTF-8 lossy is fine because the VT
+                    // emulator works byte-by-byte and ASCII / valid
+                    // UTF-8 round-trips faithfully.
+                    let s = String::from_utf8_lossy(&buf[..n as usize]).into_owned();
+                    Ok(Value::Str(s))
+                } else if n == 0 {
+                    Ok(Value::Bool(false))
+                } else {
+                    let err = *libc::__errno_location();
+                    if err == libc::EAGAIN || err == libc::EWOULDBLOCK {
+                        Ok(Value::Str(String::new()))
+                    } else {
+                        Ok(Value::Bool(false))
+                    }
+                }
+            },
+            _ => Err(RuntimeError::TypeError(
+                "pty_read() expects an int fd".to_string(),
+            )),
+        },
+
+        // pty_write: write the given bytes to the master fd. Short
+        // writes are possible — callers should loop until either the
+        // string is consumed or write returns <= 0.
+        "pty_write" => match args {
+            [Value::Int(fd), Value::Str(s)] => unsafe {
+                let bytes = s.as_bytes();
+                let n = libc::write(
+                    *fd as libc::c_int,
+                    bytes.as_ptr() as *const _,
+                    bytes.len(),
+                );
+                Ok(Value::Int(n as i64))
+            },
+            _ => Err(RuntimeError::TypeError(
+                "pty_write() expects (int fd, string)".to_string(),
+            )),
+        },
+
+        // pty_close: close the master fd. The kernel sends SIGHUP to
+        // the child's process group, so the shell tears down on its
+        // own.
+        "pty_close" => match args {
+            [Value::Int(fd)] => unsafe {
+                libc::close(*fd as libc::c_int);
+                Ok(Value::None)
+            },
+            _ => Err(RuntimeError::TypeError(
+                "pty_close() expects an int fd".to_string(),
+            )),
+        },
+
+        // pty_resize: tell the pty its visible dimensions. The shell
+        // and any tty-aware program (less, vim, etc.) re-read this
+        // via SIGWINCH and reflow.
+        "pty_resize" => match args {
+            [Value::Int(fd), Value::Int(rows), Value::Int(cols)] => unsafe {
+                let ws = libc::winsize {
+                    ws_row: *rows as u16,
+                    ws_col: *cols as u16,
+                    ws_xpixel: 0,
+                    ws_ypixel: 0,
+                };
+                libc::ioctl(*fd as libc::c_int, libc::TIOCSWINSZ, &ws);
+                Ok(Value::None)
+            },
+            _ => Err(RuntimeError::TypeError(
+                "pty_resize() expects (int fd, int rows, int cols)".to_string(),
+            )),
+        },
+
         // stdin_read_bytes() -> [int, ...]. Like stdin_read but for
         // binary pipes — returns a list of byte values (0-255). The
         // pipe-friendly counterpart to file_open(path, "rb") +
