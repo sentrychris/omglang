@@ -463,8 +463,10 @@ proc read_full_key() {
     if b == 16  { return "CTRL_P" }
     if b == 20  { return "CTRL_T" }
     if b == 21  { return "CTRL_U" }
+    if b == 22  { return "CTRL_V" }
     if b == 23  { return "CTRL_W" }
     if b == 24  { return "CTRL_X" }
+    if b == 25  { return "CTRL_Y" }
     if b == 31  { return "CTRL_UNDERSCORE" }
     if b == 127 { return "BACKSPACE" }
     return k
@@ -562,7 +564,13 @@ proc colourise_for(path, line) {
 # threading a state value through every signature. The runtime
 # already does this for the OMG VM; we follow the same pattern.
 
-alloc SIDEBAR_W := 24
+# Sidebar width is held in `ed.sidebar_w` (mutable, resizable via
+# ^V / ^Y) so deeply-nested trees can grow the pane on demand. The
+# constants here are just the limits and step size used by the
+# resize procs.
+alloc SIDEBAR_W_MIN     := 16
+alloc SIDEBAR_W_DEFAULT := 24
+alloc SIDEBAR_W_STEP    := 4
 
 alloc ed := {
     lines: [""],
@@ -581,28 +589,29 @@ alloc ed := {
     quit: false,
     # ---- Sidebar / file browser ----
     sidebar_open: false,         # currently visible?
+    sidebar_w: SIDEBAR_W_DEFAULT, # width in cols; ^V widens, ^Y narrows
     focus: "editor",             # "editor" or "sidebar"
     cwd: "",                     # the directory the sidebar is showing
-    entries: [],                 # cached [{name, is_dir}, ...]
+    entries: [],                 # cached tree nodes
     sidebar_cy: 0,               # selected row in entries
     sidebar_scroll: 0            # top visible entry index
 }
 
 proc edit_rows() { return ed.rows - 3 }
 # Edit area width depends on whether the sidebar is taking space.
-# When the sidebar is open we lose SIDEBAR_W cols plus 2 for the
-# "| " divider+margin between sidebar and editor.
+# When the sidebar is open we lose ed.sidebar_w cols plus 2 for the
+# "| " divider + 1-cell margin between sidebar and editor.
 proc edit_cols() {
     if ed.sidebar_open {
-        return ed.cols - SIDEBAR_W - 2
+        return ed.cols - ed.sidebar_w - 2
     }
     return ed.cols
 }
-# Screen column (1-indexed) where the edit area starts. The +3 is
-# SIDEBAR_W + 1 (divider) + 1 (margin) + 1 (1-indexed column).
+# Screen column (1-indexed) where the edit area starts: sidebar_w
+# (sidebar width) + 1 (divider) + 1 (margin) + 1 (1-indexed origin).
 proc edit_start_col() {
     if ed.sidebar_open {
-        return SIDEBAR_W + 3
+        return ed.sidebar_w + 3
     }
     return 1
 }
@@ -856,6 +865,37 @@ proc toggle_focus() {
     } else {
         ed.focus := "editor"
     }
+}
+
+# Widen the sidebar by SIDEBAR_W_STEP cols, capped at half the
+# terminal width so the editor pane always keeps a usable strip.
+proc widen_sidebar() {
+    if ed.sidebar_open == false {
+        set_status("Sidebar hidden — ^B to show, then ^V to widen")
+        return false
+    }
+    alloc max_w := ed.cols // 2
+    if ed.sidebar_w + SIDEBAR_W_STEP > max_w {
+        set_status("Sidebar at max (" + ed.sidebar_w + ")")
+        return false
+    }
+    ed.sidebar_w := ed.sidebar_w + SIDEBAR_W_STEP
+    set_status("Sidebar width: " + ed.sidebar_w)
+}
+
+# Narrow the sidebar in SIDEBAR_W_STEP increments, floored at the
+# minimum so guides + names stay legible.
+proc narrow_sidebar() {
+    if ed.sidebar_open == false {
+        set_status("Sidebar hidden — ^B to show, then ^Y to narrow")
+        return false
+    }
+    if ed.sidebar_w - SIDEBAR_W_STEP < SIDEBAR_W_MIN {
+        set_status("Sidebar at min (" + ed.sidebar_w + ")")
+        return false
+    }
+    ed.sidebar_w := ed.sidebar_w - SIDEBAR_W_STEP
+    set_status("Sidebar width: " + ed.sidebar_w)
 }
 
 # ============================================================
@@ -1154,7 +1194,7 @@ proc do_exit() {
 proc render_sidebar_row(r) {
     alloc idx := ed.sidebar_scroll + r
     if idx >= length(ed.entries) {
-        return repeat_char(" ", SIDEBAR_W)
+        return repeat_char(" ", ed.sidebar_w)
     }
     alloc e := ed.entries[idx]
 
@@ -1165,15 +1205,17 @@ proc render_sidebar_row(r) {
         star := "*"
     }
 
-    # Vertical guide rails for each ancestor depth.
+    # Vertical guide rails — one column per ancestor depth. Compact
+    # on purpose so deeply-nested names still have room to render.
     alloc rails := ""
     alloc d := 0
     loop d < e.depth {
-        rails := rails + "| "
+        rails := rails + "|"
         d := d + 1
     }
 
-    # Per-node marker.
+    # Per-node marker (one char + one space) so the marker lines up
+    # adjacent to the deepest rail and the name reads cleanly.
     alloc marker := "¬ "
     if e.name == ".." {
         marker := ""
@@ -1191,12 +1233,12 @@ proc render_sidebar_row(r) {
     }
 
     alloc body := star + rails + marker + name
-    # Truncate body to fit SIDEBAR_W with a `~` marker, then pad with
-    # spaces so the divider lines up across rows.
-    if length(body) > SIDEBAR_W {
-        body := body[0:SIDEBAR_W - 1] + "~"
+    # Truncate body to fit, then pad with spaces so the divider
+    # lines up across rows.
+    if length(body) > ed.sidebar_w {
+        body := body[0:ed.sidebar_w - 1] + "~"
     }
-    alloc pad := SIDEBAR_W - length(body)
+    alloc pad := ed.sidebar_w - length(body)
     if pad < 0 { pad := 0 }
     alloc filled := body + repeat_char(" ", pad)
 
@@ -1285,7 +1327,7 @@ proc render() {
     # contexts.
     alloc help := ""
     if ed.focus == "sidebar" {
-        help := " ^X Exit  Enter Open  Bksp Up dir  ^B Hide  ^T Editor"
+        help := " ^X Exit  Enter Open  Bksp Up  ^B Hide  ^T Editor  ^V/^Y Width"
     } else {
         help := " ^X Exit  ^O Save  ^K Cut  ^U Paste  ^W Search  ^_ GoTo  ^B Sidebar"
     }
@@ -1401,6 +1443,10 @@ proc handle_key(k) {
         toggle_sidebar()
     } elif k == "CTRL_T" {
         toggle_focus()
+    } elif k == "CTRL_V" {
+        widen_sidebar()
+    } elif k == "CTRL_Y" {
+        narrow_sidebar()
     } elif k == "CTRL_G" {
         show_help()
     } elif k == "CTRL_L" {
