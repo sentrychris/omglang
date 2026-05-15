@@ -58,6 +58,12 @@ alloc INVERSE := ESC + "[7m"
 alloc RESET := ESC + "[0m"
 alloc HIDE_CURSOR := ESC + "[?25l"
 alloc SHOW_CURSOR := ESC + "[?25h"
+# Alternate screen buffer: the same DEC private mode that nano,
+# less, vim, etc. use. Switching in saves the user's previous
+# terminal contents; switching out restores them, so closing the
+# editor leaves the shell prompt exactly where it was before launch.
+alloc ALT_SCREEN_ON  := ESC + "[?1049h"
+alloc ALT_SCREEN_OFF := ESC + "[?1049l"
 alloc CLR_EOL := ESC + "[K"
 
 proc cursor_to(row, col) {
@@ -1461,28 +1467,38 @@ proc run() {
         ed.status := ""
         handle_key(k)
     }
-
-    # Tidy: move cursor to bottom and clear so the shell prompt
-    # appears in a sensible place after exit.
-    print(cursor_to(ed.rows, 1) + CLR_EOL)
 }
 
 # ============================================================
 # Bootstrap
 # ============================================================
+#
+# Two nested try/except layers ensure we always restore the user's
+# terminal on the way out — both the raw-mode TTY flags and the
+# alternate screen buffer. Without that, a crash mid-edit would
+# leave the shell with no echo and the editor's last frame still
+# stuck on screen.
 
 try {
     stdin_set_raw(true)
+    print(ALT_SCREEN_ON)
     try {
         run()
     } except err {
+        # Run the same shutdown sequence as the clean path so an
+        # uncaught error doesn't leave the tty in raw mode or pinned
+        # to the alt screen.
+        print(ALT_SCREEN_OFF + SHOW_CURSOR)
         stdin_set_raw(false)
-        print(SHOW_CURSOR)
-        emit ""
         emit err
     }
+    # Clean shutdown: leave alt screen first (the terminal will
+    # restore whatever was visible before launch), then drop raw
+    # mode. Order matters: doing them backwards races the kernel's
+    # echo handling on slow ttys.
+    print(ALT_SCREEN_OFF + SHOW_CURSOR)
     stdin_set_raw(false)
 } except outer_err {
-    print(SHOW_CURSOR)
+    print(ALT_SCREEN_OFF + SHOW_CURSOR)
     emit "edit: " + outer_err
 }
