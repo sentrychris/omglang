@@ -14,12 +14,11 @@
 //!   `FrozenWriteError`.
 
 use std::cell::RefCell;
-use std::collections::HashMap;
 use std::rc::Rc;
 
 use super::pop;
 use crate::error::RuntimeError;
-use crate::value::Value;
+use crate::value::{OmgDict, Value};
 
 /// Build a list from the top `n` stack values, preserving source order.
 pub(super) fn handle_build_list(n: usize, stack: &mut Vec<Value>) -> Result<(), RuntimeError> {
@@ -32,14 +31,22 @@ pub(super) fn handle_build_list(n: usize, stack: &mut Vec<Value>) -> Result<(), 
     Ok(())
 }
 
-/// Build a dict from the top `n` (key, value) pairs. Keys are stringified
-/// (matching Python interpreter behaviour).
+/// Build a dict from the top `n` (key, value) pairs. Keys are stringified.
+///
+/// The pairs sit on the stack in source order, so they are taken off as a
+/// block and inserted first-to-last: the dict keeps the order the literal
+/// was written in, and when a key is repeated the *last* value wins
+/// (`{a: 1, a: 2}` is `{a: 2}`), as in Python and JavaScript and in the
+/// C and JS backends. Popping pair by pair would insert them backwards.
 pub(super) fn handle_build_dict(n: usize, stack: &mut Vec<Value>) -> Result<(), RuntimeError> {
-    let mut map: HashMap<String, Value> = HashMap::new();
-    for _ in 0..n {
-        let val = pop(stack)?;
-        let key = pop(stack)?.to_string();
-        map.insert(key, val);
+    let needed = n
+        .checked_mul(2)
+        .filter(|needed| *needed <= stack.len())
+        .ok_or_else(|| RuntimeError::VmInvariant("stack underflow".to_string()))?;
+    let mut map = OmgDict::new();
+    let mut items = stack.split_off(stack.len() - needed).into_iter();
+    while let (Some(key), Some(val)) = (items.next(), items.next()) {
+        map.insert(key.to_string(), val);
     }
     stack.push(Value::Dict(Rc::new(RefCell::new(map))));
     Ok(())

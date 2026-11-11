@@ -28,7 +28,7 @@
 
 use super::pop;
 use crate::error::RuntimeError;
-use crate::value::Value;
+use crate::value::{OmgDict, Value};
 
 /// Floor division on i64: rounds the quotient toward minus infinity.
 /// Matches Python's `//`. `i64::div_floor` is still unstable on stable
@@ -204,6 +204,21 @@ pub(super) fn handle_ne(stack: &mut Vec<Value>) -> Result<(), RuntimeError> {
     Ok(())
 }
 
+/// Two dicts are equal when they hold the same keys with equal values.
+/// Insertion order is not part of a dict's identity.
+fn dicts_equal(a: &OmgDict, b: &OmgDict) -> bool {
+    if a.len() != b.len() {
+        return false;
+    }
+    for (k, v) in a.iter() {
+        match b.get(k) {
+            Some(w) if values_equal(v, w) => {}
+            _ => return false,
+        }
+    }
+    true
+}
+
 /// Structural equality without coercion. Two values of incompatible types
 /// are never equal.
 pub(crate) fn values_equal(a: &Value, b: &Value) -> bool {
@@ -224,31 +239,21 @@ pub(crate) fn values_equal(a: &Value, b: &Value) -> bool {
             let lb = lb.borrow();
             la.len() == lb.len() && la.iter().zip(lb.iter()).all(|(x, y)| values_equal(x, y))
         }
-        (Value::Dict(da), Value::Dict(db)) => {
-            let da = da.borrow();
-            let db = db.borrow();
-            if da.len() != db.len() {
-                return false;
-            }
-            da.iter()
-                .all(|(k, v)| db.get(k).map_or(false, |w| values_equal(v, w)))
-        }
-        (Value::FrozenDict(da), Value::FrozenDict(db)) => {
-            if da.len() != db.len() {
-                return false;
-            }
-            da.iter()
-                .all(|(k, v)| db.get(k).map_or(false, |w| values_equal(v, w)))
-        }
+        (Value::Dict(da), Value::Dict(db)) => dicts_equal(&da.borrow(), &db.borrow()),
+        (Value::FrozenDict(da), Value::FrozenDict(db)) => dicts_equal(da, db),
         // Mixed mutable/frozen dicts compare by contents.
         (Value::Dict(da), Value::FrozenDict(db)) | (Value::FrozenDict(db), Value::Dict(da)) => {
-            let da = da.borrow();
-            if da.len() != db.len() {
-                return false;
-            }
-            da.iter()
-                .all(|(k, v)| db.get(k).map_or(false, |w| values_equal(v, w)))
+            dicts_equal(&da.borrow(), db)
         }
+        // A function equals itself: same code *and* the same captured
+        // environment. (Two closures made by separate calls to the same
+        // factory are different values.) Without this arm `f == f` was
+        // false, so a function could never be found in a list or
+        // compared against a stored callback.
+        (
+            Value::Closure { name: na, captured: ca },
+            Value::Closure { name: nb, captured: cb },
+        ) => na == nb && (std::rc::Rc::ptr_eq(ca, cb) || (ca.is_empty() && cb.is_empty())),
         _ => false,
     }
 }

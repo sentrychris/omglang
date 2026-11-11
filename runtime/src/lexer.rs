@@ -194,6 +194,7 @@ pub fn tokenize(code: &str, file: &str) -> Result<Vec<Token>, RuntimeError> {
         // Doc blocks /** ... */ (Python lexer treats /* */ as well; we follow
         // the documented form).  We accept any /* ... */ for simplicity.
         if c == '/' && i + 1 < chars.len() && chars[i + 1] == '*' {
+            let open_line = line;
             i += 2;
             while i + 1 < chars.len() && !(chars[i] == '*' && chars[i + 1] == '/') {
                 if chars[i] == '\n' {
@@ -201,7 +202,16 @@ pub fn tokenize(code: &str, file: &str) -> Result<Vec<Token>, RuntimeError> {
                 }
                 i += 1;
             }
-            i = (i + 2).min(chars.len());
+            if i + 1 >= chars.len() {
+                // Ran off the end without finding `*/`. Swallowing the
+                // rest of the file silently would turn a typo into a
+                // program that just stops early.
+                return Err(RuntimeError::SyntaxError(format!(
+                    "Unterminated block comment starting on line {} in {}",
+                    open_line, file
+                )));
+            }
+            i += 2;
             continue;
         }
         // Numbers
@@ -343,9 +353,12 @@ pub fn tokenize(code: &str, file: &str) -> Result<Vec<Token>, RuntimeError> {
             continue;
         }
         // Identifiers / keywords
-        if c.is_alphabetic() || c == '_' {
+        // ASCII only, matching the OMG-written lexer in
+        // bootstrap/src/compiler.omg — the two frontends must accept
+        // exactly the same programs.
+        if c.is_ascii_alphabetic() || c == '_' {
             let start = i;
-            while i < chars.len() && (chars[i].is_alphanumeric() || chars[i] == '_') {
+            while i < chars.len() && (chars[i].is_ascii_alphanumeric() || chars[i] == '_') {
                 i += 1;
             }
             let word: String = chars[start..i].iter().collect();
@@ -550,6 +563,27 @@ mod tests {
     fn lexes_binary_literal() {
         let toks = tokenize(";;;omg\nemit 0b1010\n", "<t>").unwrap();
         assert!(matches!(toks[1].kind, TokKind::Number(10)));
+    }
+
+    #[test]
+    fn rejects_unterminated_block_comment() {
+        let err = tokenize(";;;omg\nemit 1\n/* never closed\nemit 2\n", "<t>").unwrap_err();
+        match err {
+            RuntimeError::SyntaxError(m) => {
+                assert!(m.contains("Unterminated block comment"), "{}", m);
+                assert!(m.contains("line 3"), "{}", m);
+            }
+            other => panic!("expected SyntaxError, got {:?}", other),
+        }
+        // A closed comment at the very end of the file is still fine.
+        assert!(tokenize(";;;omg\nemit 1 /* done */", "<t>").is_ok());
+        assert!(tokenize(";;;omg\nemit 1 /**/", "<t>").is_ok());
+    }
+
+    #[test]
+    fn identifiers_are_ascii_only() {
+        assert!(tokenize(";;;omg\nalloc caf\u{e9} := 1\n", "<t>").is_err());
+        assert!(tokenize(";;;omg\nalloc _ok9 := 1\n", "<t>").is_ok());
     }
 
     #[test]

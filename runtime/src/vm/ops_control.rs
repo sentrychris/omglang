@@ -12,7 +12,7 @@ use std::collections::HashMap;
 use std::mem;
 use std::rc::Rc;
 
-use super::builtins::call_builtin;
+use super::builtins::{call_builtin, write_stdout};
 use super::{pop, Block};
 use crate::bytecode::Function;
 use crate::error::{ErrorKind, RuntimeError};
@@ -216,7 +216,7 @@ pub(super) fn handle_ret(
 
 pub(super) fn handle_emit(stack: &mut Vec<Value>) {
     if let Some(v) = stack.pop() {
-        println!("{}", v.to_string());
+        write_stdout(&v.to_string(), true);
     }
 }
 

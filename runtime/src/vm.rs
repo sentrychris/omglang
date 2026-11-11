@@ -51,6 +51,7 @@ mod builtins;
 mod ops_arith;
 mod ops_control;
 mod ops_struct;
+pub mod sys;
 
 /// Exception-handling frame.
 ///

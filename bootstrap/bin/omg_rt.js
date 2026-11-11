@@ -193,7 +193,7 @@ function omg_panic(kind, msg) { throw new OmgError(kind, msg); }
 
 // Mirrors omg_rt.h's omg_value_to_cstr / omg_print_value. Used by
 // `emit` and by string concatenation when one side is non-string.
-function omg_to_string(v) {
+function omg_to_string(v, seen) {
     if (v === null) return '';
     if (typeof v === 'boolean') return v ? 'true' : 'false';
     if (typeof v === 'string') return v;
@@ -207,11 +207,23 @@ function omg_to_string(v) {
         return v.toString();
     }
     if (Array.isArray(v)) {
-        return '[' + v.map(omg_to_string).join(', ') + ']';
+        // `seen` holds the containers on the current path, so a list
+        // that contains itself prints as [...] instead of recursing
+        // forever, while one that merely appears twice prints in full.
+        if (seen === undefined) seen = new Set();
+        if (seen.has(v)) return '[...]';
+        seen.add(v);
+        const out = '[' + v.map((x) => omg_to_string(x, seen)).join(', ') + ']';
+        seen.delete(v);
+        return out;
     }
     if (v instanceof Map) {
+        if (seen === undefined) seen = new Set();
+        if (seen.has(v)) return '{...}';
+        seen.add(v);
         const parts = [];
-        for (const [k, val] of v) parts.push(k + ': ' + omg_to_string(val));
+        for (const [k, val] of v) parts.push(k + ': ' + omg_to_string(val, seen));
+        seen.delete(v);
         return '{' + parts.join(', ') + '}';
     }
     if (typeof v === 'function') return '<proc>';
@@ -499,13 +511,17 @@ function omg_float(v) { return omg_as_float(v); }
 function omg_floor(v) { return BigInt(Math.floor(omg_as_float(v))); }
 function omg_ceil(v)  { return BigInt(Math.ceil (omg_as_float(v))); }
 function omg_round(v) {
-    // Banker's rounding to match Rust's f64 round-half-to-even.
+    // Banker's rounding (ties to even), matching the Rust VM. A tie is
+    // a fractional part of exactly one half; Math.round on its own
+    // sends every tie towards +infinity, which is wrong for half of
+    // them (2.5 -> 3) and for all negative ones (-2.5 -> -2 is right
+    // only by accident, -3.5 -> -3 is not).
     const x = omg_as_float(v);
-    const r = Math.round(x);
-    if (Math.abs(x - Math.trunc(x)) === 0.5 && (Math.trunc(x) & 1) === 0) {
-        return BigInt(r - Math.sign(x));
+    const t = Math.trunc(x);
+    if (Math.abs(x - t) === 0.5) {
+        return BigInt(t % 2 === 0 ? t : t + Math.sign(x));
     }
-    return BigInt(r);
+    return BigInt(Math.round(x));
 }
 function omg_abs(v) {
     if (typeof v === 'bigint') return v < 0n ? -v : v;
@@ -530,17 +546,18 @@ function omg_hex(n) {
     return i.toString(16);
 }
 function omg_binary(n, w) {
-    let i = omg_as_int(n);
-    let s;
-    if (i < 0n) s = '-' + (-i).toString(2);
-    else s = i.toString(2);
-    if (w !== undefined) {
-        const width = Number(omg_as_int(w));
-        // Pad without sign if positive; if negative we leave as-is
-        // (matches OMG which doesn't sign-extend the binary builtin).
-        while (s.length < width) s = '0' + s;
+    const i = omg_as_int(n);
+    if (w === undefined) {
+        return i < 0n ? '-' + (-i).toString(2) : i.toString(2);
     }
-    return s;
+    // With a width: the two's-complement bits of `n`, truncated to
+    // `width` and zero-padded — binary(-1, 8) is "11111111" and
+    // binary(300, 8) is "00101100". Values are 64-bit, so widths past
+    // 64 only add leading zeros.
+    const width = Number(omg_as_int(w));
+    if (width <= 0) omg_panic('ValueError', 'binary() width must be positive');
+    if (width > 4096) omg_panic('ValueError', 'binary() width ' + width + ' is too large (max 4096)');
+    return BigInt.asUintN(Math.min(width, 64), i).toString(2).padStart(width, '0');
 }
 
 function omg_freeze(d) {

@@ -17,23 +17,41 @@ use crate::ast::{BinOp, Node, UnaryOp};
 use crate::error::RuntimeError;
 use crate::lexer::{TokKind, Token};
 
+/// Deepest nesting of expressions / blocks the parser accepts. The
+/// parser is recursive, so without a limit a pathological input (a few
+/// thousand opening brackets) overflows the native stack and kills the
+/// process with no message. Real programs stay in the low dozens.
+const MAX_NESTING: usize = 1000;
+
 pub struct Parser<'a> {
     tokens: &'a [Token],
     pos: usize,
     pub source_file: String,
+    /// Current recursion depth, checked against [`MAX_NESTING`].
+    depth: usize,
 }
 
 impl<'a> Parser<'a> {
     pub fn new(tokens: &'a [Token], source_file: impl Into<String>) -> Self {
+        assert!(
+            matches!(tokens.last().map(|t| &t.kind), Some(TokKind::Eof)),
+            "token stream must end with Eof"
+        );
         Self {
             tokens,
             pos: 0,
             source_file: source_file.into(),
+            depth: 0,
         }
     }
 
+    /// Current token. The lexer always terminates the stream with an
+    /// `Eof` token; once the cursor reaches it, it stays there, so a
+    /// production that keeps asking for "one more token" on truncated
+    /// input sees `Eof` (and reports a syntax error) instead of
+    /// indexing past the end of the vector.
     fn peek(&self) -> &Token {
-        &self.tokens[self.pos]
+        &self.tokens[self.pos.min(self.tokens.len() - 1)]
     }
 
     fn peek_at(&self, off: usize) -> Option<&Token> {
@@ -41,9 +59,13 @@ impl<'a> Parser<'a> {
     }
 
     fn advance(&mut self) -> &Token {
-        let t = &self.tokens[self.pos];
-        self.pos += 1;
-        t
+        let last = self.tokens.len() - 1;
+        let idx = self.pos.min(last);
+        // Never step past the trailing `Eof`.
+        if self.pos < last {
+            self.pos += 1;
+        }
+        &self.tokens[idx]
     }
 
     fn skip_newlines(&mut self) {
@@ -92,7 +114,25 @@ impl<'a> Parser<'a> {
     // Statements
     // ------------------------------------------------------------------
 
+    fn enter_nesting(&mut self) -> Result<(), RuntimeError> {
+        self.depth += 1;
+        if self.depth > MAX_NESTING {
+            return Err(self.syntax(format!(
+                "Code is nested too deeply (more than {} levels)",
+                MAX_NESTING
+            )));
+        }
+        Ok(())
+    }
+
     fn parse_statement(&mut self) -> Result<Node, RuntimeError> {
+        self.enter_nesting()?;
+        let result = self.parse_statement_inner();
+        self.depth -= 1;
+        result
+    }
+
+    fn parse_statement_inner(&mut self) -> Result<Node, RuntimeError> {
         let tok = self.peek().clone();
         match tok.kind {
             TokKind::Facts => self.parse_facts(),
@@ -488,6 +528,13 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_factor(&mut self) -> Result<Node, RuntimeError> {
+        self.enter_nesting()?;
+        let result = self.parse_factor_inner();
+        self.depth -= 1;
+        result
+    }
+
+    fn parse_factor_inner(&mut self) -> Result<Node, RuntimeError> {
         let tok = self.peek().clone();
         // Unary operators
         match tok.kind {
@@ -668,6 +715,54 @@ mod tests {
     fn parses_if_with_elif_else() {
         let ast = parse(";;;omg\nif 1 { emit 1 } elif 2 { emit 2 } else { emit 3 }\n").unwrap();
         assert!(matches!(ast[0], Node::If(_, _, Some(_), _)));
+    }
+
+    /// Every one of these used to index past the end of the token
+    /// vector and panic when the file had no trailing newline.
+    #[test]
+    fn truncated_input_is_a_syntax_error_not_a_panic() {
+        for src in [
+            ";;;omg\nimport",
+            ";;;omg\nimport \"m.omg\" as",
+            ";;;omg\nalloc",
+            ";;;omg\nproc",
+            ";;;omg\nproc f(",
+            ";;;omg\nproc f(a,",
+            ";;;omg\nemit x.",
+            ";;;omg\nemit {",
+            ";;;omg\nemit [1,",
+            ";;;omg\nemit f(",
+            ";;;omg\nx.",
+            ";;;omg\nx[",
+            ";;;omg\nif",
+            ";;;omg\ntry {",
+        ] {
+            match parse(src) {
+                Err(RuntimeError::SyntaxError(_)) => {}
+                other => panic!("{:?}: expected SyntaxError, got {:?}", src, other.map(|_| ())),
+            }
+        }
+    }
+
+    #[test]
+    fn absurd_nesting_is_a_syntax_error_not_a_stack_overflow() {
+        // Run on a thread with the same generous stack `main` uses, so
+        // the test exercises the depth limit rather than the test
+        // harness's small default stack.
+        let handle = std::thread::Builder::new()
+            .stack_size(64 * 1024 * 1024)
+            .spawn(|| {
+                let deep = format!(";;;omg\nemit {}1{}\n", "(".repeat(5000), ")".repeat(5000));
+                let shallow = format!(";;;omg\nemit {}1{}\n", "[".repeat(200), "]".repeat(200));
+                (parse(&deep).map(|_| ()), parse(&shallow).map(|_| ()))
+            })
+            .unwrap();
+        let (deep, shallow) = handle.join().unwrap();
+        match deep {
+            Err(RuntimeError::SyntaxError(m)) => assert!(m.contains("nested too deeply"), "{}", m),
+            other => panic!("expected SyntaxError, got {:?}", other),
+        }
+        assert!(shallow.is_ok());
     }
 
     #[test]

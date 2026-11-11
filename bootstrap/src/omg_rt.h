@@ -24,7 +24,17 @@
 #include <netinet/in.h>
 #include <time.h>
 #include <termios.h>
-#include <pty.h>          /* forkpty */
+/* forkpty lives in a different header on each Unix family. */
+#if defined(__APPLE__) || defined(__OpenBSD__) || defined(__NetBSD__)
+#include <util.h>
+#elif defined(__FreeBSD__) || defined(__DragonFly__)
+#include <libutil.h>
+#else
+#include <pty.h>
+#endif
+#if defined(__APPLE__)
+#include <mach-o/dyld.h>  /* _NSGetExecutablePath */
+#endif
 #include <sys/ioctl.h>    /* TIOCSWINSZ */
 #include <fcntl.h>        /* fcntl */
 #include <arpa/inet.h>
@@ -1336,74 +1346,77 @@ static Value omg_dict_keys(Value v) {
 
 /* === Print compound values ============================================== */
 
-static void omg_print_value(Value v) {
+/* Containers on the path from the value being printed down to the one
+ * currently being visited. A container found on its own path is a
+ * cycle and prints as `[...]` / `{...}` instead of recursing until the
+ * stack runs out; one that merely appears twice (`[a, a]`) is not on
+ * the path the second time and prints in full. Mirrors the `seen` set
+ * in the Rust VM's Value::to_string. */
+#define OMG_PRINT_MAX_DEPTH 256
+static const void *omg_print_path[OMG_PRINT_MAX_DEPTH];
+static int omg_print_depth = 0;
+
+static int omg_print_enter(const void *p) {
+    for (int i = 0; i < omg_print_depth; i++) {
+        if (omg_print_path[i] == p) return 0;
+    }
+    /* Absurdly deep nesting is cut off the same way a cycle is. */
+    if (omg_print_depth >= OMG_PRINT_MAX_DEPTH) return 0;
+    omg_print_path[omg_print_depth++] = p;
+    return 1;
+}
+
+static void omg_fprint_value(FILE *out, Value v) {
     char buf[64];
     switch (v.tag) {
-        case OMG_INT:     printf("%lld", (long long)v.v.i); break;
-        case OMG_FLOAT:   fputs(omg_float_format(v.v.f, buf, sizeof(buf)), stdout); break;
-        case OMG_STR:     fputs(v.v.s, stdout); break;
-        case OMG_BOOL:    fputs(v.v.b ? "true" : "false", stdout); break;
+        case OMG_INT:     fprintf(out, "%lld", (long long)v.v.i); break;
+        case OMG_FLOAT:   fputs(omg_float_format(v.v.f, buf, sizeof(buf)), out); break;
+        case OMG_STR:     fputs(v.v.s, out); break;
+        case OMG_BOOL:    fputs(v.v.b ? "true" : "false", out); break;
         case OMG_NONE:    break;
-        case OMG_CLOSURE: fputs("<proc>", stdout); break;
+        case OMG_CLOSURE: fputs("<proc>", out); break;
         case OMG_LIST: {
-            putchar('[');
+            if (!omg_print_enter(v.v.l)) { fputs("[...]", out); break; }
+            fputc('[', out);
             for (int i = 0; i < v.v.l->len; i++) {
-                if (i) fputs(", ", stdout);
-                omg_print_value(v.v.l->items[i]);
+                if (i) fputs(", ", out);
+                omg_fprint_value(out, v.v.l->items[i]);
             }
-            putchar(']');
+            fputc(']', out);
+            omg_print_depth--;
             break;
         }
         case OMG_DICT: {
-            putchar('{');
+            if (!omg_print_enter(v.v.d)) { fputs("{...}", out); break; }
+            fputc('{', out);
             for (int i = 0; i < v.v.d->len; i++) {
-                if (i) fputs(", ", stdout);
-                fputs(v.v.d->keys[i], stdout);
-                fputs(": ", stdout);
-                omg_print_value(v.v.d->vals[i]);
+                if (i) fputs(", ", out);
+                fputs(v.v.d->keys[i], out);
+                fputs(": ", out);
+                omg_fprint_value(out, v.v.d->vals[i]);
             }
-            putchar('}');
+            fputc('}', out);
+            omg_print_depth--;
             break;
         }
     }
-    (void)buf;
+}
+
+static void omg_print_value(Value v) {
+    omg_fprint_value(stdout, v);
 }
 
 /* Stringify a list/dict for use in a string-concat context. Allocates a
- * fresh malloc'd buffer; leaked along with the rest of phase-5 storage. */
+ * fresh malloc'd buffer; leaked along with the rest of phase-5 storage.
+ * Renders through a POSIX memstream (glibc, musl, macOS 10.13+, BSDs). */
 static char *omg_compound_to_cstr(Value v) {
-    /* Use a temporary memstream-style growing buffer. C99 doesn't have
-     * memstream; allocate generously and grow if needed. */
-    size_t cap = 256, len = 0;
-    char *buf = (char *)malloc(cap);
-    if (!buf) { fprintf(stderr, "out of memory\n"); exit(1); }
-    /* Sub-helper: render Value into the growing buffer. */
-    /* For simplicity we re-render via snprintf into a scratch then
-     * concatenate. This isn't fast but is correct. */
-    /* Render to a temp file via fmemopen would be ideal, but POSIX-only.
-     * We'll keep it portable: format with omg_print_value into a popen-
-     * style sink? Easiest: use a recursive helper that writes into
-     * the buffer. */
-    /* For simplicity here, reuse omg_print_value via a temp memstream.
-     * Most platforms support it; fall back to a simple length-only
-     * serialiser if needed. We rely on POSIX open_memstream. */
-    {
-        size_t mlen = 0;
-        char *mptr = NULL;
-        FILE *m = open_memstream(&mptr, &mlen);
-        if (!m) { fprintf(stderr, "open_memstream failed\n"); exit(1); }
-        FILE *saved = stdout;
-        /* Trick: repurpose stdout temporarily. Easier than refactoring
-         * omg_print_value to take a FILE*. */
-        stdout = m;
-        omg_print_value(v);
-        fflush(m);
-        stdout = saved;
-        fclose(m);
-        free(buf);
-        return mptr;
-    }
-    (void)cap; (void)len;
+    size_t mlen = 0;
+    char *mptr = NULL;
+    FILE *m = open_memstream(&mptr, &mlen);
+    if (!m) { fprintf(stderr, "open_memstream failed\n"); exit(1); }
+    omg_fprint_value(m, v);
+    fclose(m);
+    return mptr;
 }
 
 /* === Polymorphic operators (extended) ==================================== */
@@ -1574,12 +1587,13 @@ static Value omg_builtin_round(Value v) {
     if (v.tag == OMG_FLOAT) {
         double f = v.v.f;
         double r = round(f);                    /* half away from zero */
-        double diff = fabs(f - trunc(f));
-        if (fabs(diff - 0.5) < 1e-9) {
-            /* Exactly halfway: pick the even neighbour. */
-            double down = trunc(f);
+        double down = trunc(f);
+        /* A tie is a fractional part of *exactly* one half, which is
+         * exactly representable, so no tolerance: with one,
+         * round(1.4999999999) came out as 2. */
+        if (fabs(f - down) == 0.5) {
             double up = f >= 0.0 ? down + 1.0 : down - 1.0;
-            r = (((int64_t)down) % 2 == 0) ? down : up;
+            r = (fmod(down, 2.0) == 0.0) ? down : up;
         }
         return omg_int((int64_t)r);
     }
@@ -1635,11 +1649,15 @@ static Value omg_builtin_hex(Value v) {
 static Value omg_binary_format(int64_t n, int has_width, int64_t width) {
     if (has_width) {
         if (width <= 0) omg_panic("ValueError", "binary() width must be positive");
-        int64_t mask = ((int64_t)1 << width) - 1;
-        int64_t masked = n & mask;
+        if (width > 4096) omg_panicf("ValueError", "binary() width %lld is too large (max 4096)", (long long)width);
+        /* Two's-complement bits of n, truncated to `width` and
+         * zero-padded. Values are 64-bit: shifting by 64 or more is
+         * undefined in C, so bits past 63 are written as zeros. */
+        uint64_t masked = (uint64_t)n;
+        if (width < 64) masked &= (((uint64_t)1 << width) - 1);
         char *buf = omg_str_alloc((size_t)width + 1);
         for (int64_t i = 0; i < width; i++) {
-            buf[width - 1 - i] = (masked >> i) & 1 ? '1' : '0';
+            buf[width - 1 - i] = (i < 64 && ((masked >> i) & 1)) ? '1' : '0';
         }
         buf[width] = 0;
         return omg_str(buf);
@@ -1771,10 +1789,10 @@ static Value omg_builtin_getpid(void) {
  * it was invoked. Returns `false` on platforms where we don't have a
  * way to look this up — callers fall back to dirname(args[0]).
  *
- * Only Linux is implemented for now (readlink on /proc/self/exe). Mac
- * would use _NSGetExecutablePath; BSDs vary. The fallback path keeps
- * the toolchain working on those platforms when invoked via an
- * absolute or relative path. */
+ * Linux reads /proc/self/exe; macOS asks dyld (_NSGetExecutablePath).
+ * BSDs vary and aren't implemented: the fallback path keeps the
+ * toolchain working there when invoked via an absolute or relative
+ * path. */
 static Value omg_builtin_executable_path(void) {
 #if defined(__linux__)
     char buf[4096];
@@ -1784,6 +1802,20 @@ static Value omg_builtin_executable_path(void) {
     char *out = (char *)malloc((size_t)n + 1);
     if (!out) { fprintf(stderr, "out of memory\n"); exit(1); }
     memcpy(out, buf, (size_t)n + 1);
+    return omg_str(out);
+#elif defined(__APPLE__)
+    char buf[4096];
+    uint32_t size = (uint32_t)sizeof(buf);
+    if (_NSGetExecutablePath(buf, &size) != 0) return omg_bool(0);
+    /* Resolve symlinks and `..` so dirname() of the result is the real
+     * directory holding omg_rt.h. Fall back to the raw path. */
+    char resolved[4096];
+    const char *src = realpath(buf, resolved) ? resolved : buf;
+    size_t n = strlen(src);
+    char *out = (char *)malloc(n + 1);
+    if (!out) { fprintf(stderr, "out of memory
+"); exit(1); }
+    memcpy(out, src, n + 1);
     return omg_str(out);
 #else
     return omg_bool(0);

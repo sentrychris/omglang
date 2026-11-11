@@ -247,6 +247,20 @@ pub struct Compiler {
     /// — silently consumed by later instructions, with weird and
     /// hard-to-trace consequences.
     proc_arity: HashMap<String, usize>,
+    /// Lexical stack of the nested procs whose bodies are currently being
+    /// compiled, innermost last: `(source name, function-table key)`.
+    ///
+    /// The function table is one flat, program-wide namespace, so a
+    /// nested proc can't be registered under its source name — two
+    /// procs each defining a local `helper` would overwrite one another
+    /// (and a nested `helper` would replace a top-level `helper` for
+    /// the whole program). Each nested proc therefore gets a unique key
+    /// of the form `__mod_<n>__<name>`. That is the shape the VMs
+    /// already strip back to the bare name when binding `MAKE_FUNC`
+    /// inside a function and when printing tracebacks, so no backend
+    /// needs to know about it. This stack is how a recursive call inside
+    /// the body finds its own key.
+    nested_procs: Vec<(String, String)>,
 }
 
 #[derive(Clone)]
@@ -289,6 +303,7 @@ impl Compiler {
             local_scopes: vec![HashSet::new()],
             top_level_declared: HashSet::new(),
             proc_arity: HashMap::new(),
+            nested_procs: Vec::new(),
         }
     }
 
@@ -668,8 +683,27 @@ impl Compiler {
                 self.patch_jump(end_jump, end_pc);
             }
             Node::FuncDef(name, params, body, _) => {
-                let (body_code, body_lines) = self.compile_function_body(params, body)?;
-                let mangled = self.mangle(name);
+                // A proc defined inside another proc gets a unique
+                // function-table key (see `nested_procs`); a top-level
+                // proc keeps its module-mangled source name. The key is
+                // chosen *before* compiling the body so that both
+                // frontends number nested procs in the same order.
+                let nested = self.local_scopes.len() > 1;
+                let mangled = if nested {
+                    self.module_counter += 1;
+                    format!("__mod_{}__{}", self.module_counter, name)
+                } else {
+                    self.mangle(name)
+                };
+                if nested {
+                    self.proc_arity.insert(mangled.clone(), params.len());
+                    self.nested_procs.push((name.clone(), mangled.clone()));
+                }
+                let body_result = self.compile_function_body(params, body);
+                if nested {
+                    self.nested_procs.pop();
+                }
+                let (body_code, body_lines) = body_result?;
                 let source_file_idx = self.current_file_idx;
                 self.pending_funcs.push(PendingFunc {
                     name: mangled.clone(),
@@ -681,17 +715,29 @@ impl Compiler {
                 // Bind the function as a first-class value at the definition
                 // site. At top level this stores `Closure { mangled, ∅ }` to
                 // globals; inside a function body it captures the current
-                // local environment so nested procs become real closures.
+                // local environment so nested procs become real closures
+                // (the VM binds the closure under its bare source name).
                 self.emit(Instr::MakeFunc(mangled));
                 // Inside another function, the proc lives in the local env,
                 // so further references resolve via Load + CallValue. At
                 // top level we leave it out of the local-scope tracker so
                 // calls of the form `foo()` compile to fast direct `Call`s.
-                if self.local_scopes.len() > 1 {
+                if nested {
                     self.declare_local(name);
                 }
             }
-            Node::Return(expr, _) => {
+            Node::Return(expr, line) => {
+                // `return` only means something inside a proc. At top
+                // level there is no frame to return to; this used to
+                // compile anyway and die at run time with an internal
+                // "RET with empty return stack" error.
+                if self.local_scopes.len() <= 1 {
+                    return Err(RuntimeError::SyntaxError(format!(
+                        "'return' outside of a proc on line {} in {}",
+                        line,
+                        self.current_file.display()
+                    )));
+                }
                 if let Node::FuncCall(callee, args, _) = expr.as_ref() {
                     if let Node::Ident(name, _) = callee.as_ref() {
                         if let Some(kind) = lookup_raise(name) {
@@ -826,6 +872,11 @@ impl Compiler {
     /// function by bare name, the compiler resolves it against the active
     /// mangling prefix.
     fn resolve_call_name(&self, name: &str) -> String {
+        // A call to an enclosing nested proc (most commonly: a nested
+        // proc calling itself) goes to that proc's unique key.
+        if let Some((_, key)) = self.nested_procs.iter().rev().find(|(bare, _)| bare == name) {
+            return key.clone();
+        }
         // Imported modules use their own mangling prefix while compiling, so
         // calling a sibling proc within the same module gets the prefix
         // applied.  Since we don't know at this point whether `name` is a
@@ -909,26 +960,16 @@ impl Compiler {
     }
 
     fn resolve_module_path(&self, raw: &str) -> std::io::Result<PathBuf> {
-        let raw = raw.replace('\\', "/");
-        let p = Path::new(&raw);
-        let base = self
-            .current_file
-            .parent()
-            .map(|p| p.to_path_buf())
-            .unwrap_or_else(|| PathBuf::from("."));
-        let candidate = if p.is_absolute() {
-            p.to_path_buf()
-        } else {
-            base.join(p)
-        };
-        // Normalise (`./` and `..` collapse) without canonicalising so
+        // Resolve relative to the importing file's directory, then
+        // normalise (`./` and `..` collapse) without canonicalising so
         // the path stored in the source-file table matches what the
         // OMG-in-OMG compiler stores — required for triple-meta
         // byte-identical parity. Cycle-detection still works since
         // imports of the same logical path produce the same normalised
         // key. (A symlink redirecting two paths to the same file would
         // load it twice; not a concern in the corpus.)
-        Ok(PathBuf::from(path_normalize(&candidate.to_string_lossy())))
+        let current = self.current_file.to_string_lossy();
+        Ok(PathBuf::from(path_join(&path_dirname(&current), raw)))
     }
 
     fn compile_module_inline(
@@ -981,10 +1022,14 @@ impl Compiler {
         let new_file_idx = self.intern_file(resolved);
         let saved_file_idx = self.current_file_idx;
         self.current_file_idx = new_file_idx;
+        // The module is its own lexical world: a call inside it must
+        // never resolve to a nested proc of whoever is importing it.
+        let saved_nested = mem::take(&mut self.nested_procs);
         self.collect_proc_arity(&ast);
         for stmt in ast {
             self.compile_stmt(&stmt)?;
         }
+        self.nested_procs = saved_nested;
         self.current_prefix = saved_prefix;
         self.current_file = saved_file;
         self.current_file_idx = saved_file_idx;
@@ -1158,55 +1203,140 @@ impl Compiler {
     }
 }
 
-/// Collapse `./` and `..` segments in a path string. Mirrors the OMG
-/// compiler's `path_normalize` (bootstrap/src/compiler.omg) byte-for-
-/// byte so both frontends store the same path in the source-file
-/// table. We can't use `fs::canonicalize` here because the OMG side
-/// has no OS-level canonicalisation primitive — matching its weaker
-/// normalisation is what keeps the triple-meta `.omgb` bytes equal.
+// ---------------------------------------------------------------------------
+// Path helpers
+//
+// These are deliberately plain string functions rather than `std::path`
+// calls. `std::path` behaves differently on every OS (a `C:\` prefix is a
+// root on Windows and an ordinary file name on Linux), while the
+// OMG-written compiler in `bootstrap/src/compiler.omg` has only strings to
+// work with. Both frontends must store byte-identical paths in the
+// source-file table — that is what `--verify-self-hosted` and
+// `--verify-omg-vm` compare — so both implement the *same* algorithm, on
+// every platform. Keep the two in lockstep.
+// ---------------------------------------------------------------------------
+
+fn is_sep(b: u8) -> bool {
+    b == b'/' || b == b'\\'
+}
+
+/// True for `C:` / `c:` style drive prefixes.
+fn has_drive_prefix(p: &str) -> bool {
+    let b = p.as_bytes();
+    b.len() >= 2 && b[0].is_ascii_alphabetic() && b[1] == b':'
+}
+
+/// A path is absolute when it starts with a separator (`/usr`, `\\server`)
+/// or with a Windows drive prefix (`C:/Users`, `C:\Users`).
+pub fn path_is_absolute(p: &str) -> bool {
+    let b = p.as_bytes();
+    (!b.is_empty() && is_sep(b[0])) || has_drive_prefix(p)
+}
+
+/// Everything before the last separator. `"/a/b.omg"` → `"/a"`,
+/// `"/b.omg"` → `"/"`, `"b.omg"` → `""`.
+pub fn path_dirname(p: &str) -> String {
+    match p.bytes().rposition(is_sep) {
+        Some(0) => "/".to_string(),
+        Some(i) => p[..i].to_string(),
+        None => String::new(),
+    }
+}
+
+/// Join `rel` onto `base` and normalise. An absolute `rel` replaces
+/// `base` entirely; an empty `base` leaves `rel` relative.
+pub fn path_join(base: &str, rel: &str) -> String {
+    if path_is_absolute(rel) || base.is_empty() {
+        return path_normalize(rel);
+    }
+    // Don't double the separator when `base` already ends in one (the
+    // filesystem root, or `C:/`): a leading `//` means "UNC path" to
+    // `path_normalize`.
+    if base.as_bytes().last().copied().map_or(false, is_sep) {
+        path_normalize(&format!("{}{}", base, rel))
+    } else {
+        path_normalize(&format!("{}/{}", base, rel))
+    }
+}
+
+/// Collapse `.` and `..` segments, repeated separators, and backslashes
+/// in a path string, always producing forward slashes. Purely lexical:
+/// symlinks are not resolved (the OMG side has no primitive for that, and
+/// matching its weaker normalisation is what keeps the `.omgb` bytes
+/// equal).
 ///
-/// Also called from main.rs's `absolute_normalised` helper to make
-/// entry paths absolute before the compiler sees them.
+/// The root of an absolute path is preserved and can't be `..`-ed away:
+///
+/// | input                  | output             |
+/// | ---------------------- | ------------------ |
+/// | `/a/./b/../c`          | `/a/c`             |
+/// | `a/../../b`            | `../b`             |
+/// | `C:\Users\me\..\x.omg` | `C:/Users/x.omg`   |
+/// | `\\server\share\a\..`  | `//server/share`   |
 pub fn path_normalize(p: &str) -> String {
     if p.is_empty() {
         return String::new();
     }
-    let absolute = p.starts_with('/');
-    let mut parts: Vec<&str> = Vec::new();
-    for seg in p.split(|c| c == '/' || c == '\\') {
-        if !seg.is_empty() {
-            parts.push(seg);
+    let b = p.as_bytes();
+    let n = b.len();
+    // Split off the root, if any.
+    let (root, rest_start): (String, usize) = if is_sep(b[0]) {
+        if n >= 3 && is_sep(b[1]) && !is_sep(b[2]) {
+            // Exactly two leading separators: a UNC path (`\\server\share`).
+            ("//".to_string(), 2)
+        } else {
+            ("/".to_string(), 1)
         }
-    }
+    } else if has_drive_prefix(p) {
+        if n >= 3 && is_sep(b[2]) {
+            (format!("{}/", &p[..2]), 3)
+        } else {
+            // Drive-relative (`C:foo`): keep the drive, nothing more.
+            (p[..2].to_string(), 2)
+        }
+    } else {
+        (String::new(), 0)
+    };
+    let rooted = !root.is_empty();
     let mut stack: Vec<&str> = Vec::new();
-    for seg in &parts {
-        if *seg == "." {
-            // drop
-        } else if *seg == ".." {
-            if let Some(&top) = stack.last() {
-                if top != ".." {
+    for seg in p[rest_start..].split(|c| c == '/' || c == '\\') {
+        if seg.is_empty() || seg == "." {
+            continue;
+        }
+        if seg == ".." {
+            match stack.last() {
+                Some(&top) if top != ".." => {
                     stack.pop();
-                    continue;
                 }
-            }
-            // Only meaningful on relative paths.
-            if !absolute {
-                stack.push(*seg);
+                // Nothing left to pop. Above the root there is nowhere
+                // to go, so drop it; on a relative path keep the `..`.
+                _ if rooted => {}
+                _ => stack.push(seg),
             }
         } else {
-            stack.push(*seg);
+            stack.push(seg);
         }
     }
-    let body = stack.join("/");
-    let out = if absolute {
-        format!("/{}", body)
-    } else {
-        body
-    };
+    let out = format!("{}{}", root, stack.join("/"));
     if out.is_empty() {
         ".".to_string()
     } else {
         out
+    }
+}
+
+/// Make `path` absolute by joining it onto `cwd` when it is relative,
+/// then normalise. `cwd` is passed in (rather than read from the
+/// environment) so the function stays pure and testable.
+pub fn path_absolute_normalised(path: &str, cwd: &str) -> String {
+    if path_is_absolute(path) {
+        path_normalize(path)
+    } else if cwd.is_empty() {
+        path_normalize(path)
+    } else if cwd.as_bytes().last().copied().map_or(false, is_sep) {
+        path_normalize(&format!("{}{}", cwd, path))
+    } else {
+        path_normalize(&format!("{}/{}", cwd, path))
     }
 }
 
@@ -1318,6 +1448,144 @@ mod tests {
     fn compiles_hello() {
         let prog = compile(";;;omg\nemit \"hi\"\n");
         assert!(matches!(prog.code.first(), Some(Instr::PushStr(_))));
+    }
+
+    fn compile_err(src: &str) -> String {
+        match compile_source(src, "/virtual/test.omg") {
+            Err(e) => e.to_string(),
+            Ok(_) => panic!("expected a compile error for {:?}", src),
+        }
+    }
+
+    #[test]
+    fn top_level_return_is_a_syntax_error() {
+        let msg = compile_err(";;;omg\nreturn 5\n");
+        assert!(msg.starts_with("SyntaxError: 'return' outside of a proc on line 2"), "{}", msg);
+        // ...including the tail-call form, and inside top-level blocks.
+        let msg = compile_err(";;;omg\nproc f() { return 1 }\nif true {\n  return f()\n}\n");
+        assert!(msg.contains("'return' outside of a proc on line 4"), "{}", msg);
+        // Inside a proc it is of course fine.
+        compile(";;;omg\nproc f() { if true { return 1 } return 2 }\n");
+    }
+
+    #[test]
+    fn nested_procs_get_unique_function_table_keys() {
+        let prog = compile(
+            ";;;omg\n\
+             proc helper() { return \"top\" }\n\
+             proc a() { proc helper() { return 1 } return helper() }\n\
+             proc b() { proc helper() { return 2 } return helper() }\n",
+        );
+        let mut names: Vec<&String> = prog.funcs.keys().collect();
+        names.sort();
+        assert_eq!(
+            names,
+            vec!["__mod_1__helper", "__mod_2__helper", "a", "b", "helper"]
+        );
+    }
+
+    #[test]
+    fn nested_proc_recursion_targets_its_own_key() {
+        let prog = compile(
+            ";;;omg\n\
+             proc fact(n) { return 0 }\n\
+             proc outer(n) {\n\
+                 proc fact(k) {\n\
+                     if k <= 1 { return 1 }\n\
+                     return k * fact(k - 1)\n\
+                 }\n\
+                 return fact(n)\n\
+             }\n",
+        );
+        let calls: Vec<&String> = prog
+            .code
+            .iter()
+            .filter_map(|i| match i {
+                Instr::Call(n) | Instr::TailCall(n) => Some(n),
+                _ => None,
+            })
+            .collect();
+        // The only direct call in the program is the recursive one, and
+        // it must not hit the unrelated top-level `fact`.
+        assert_eq!(calls, vec!["__mod_1__fact"]);
+    }
+
+    #[test]
+    fn nested_proc_direct_calls_are_arity_checked() {
+        let msg = compile_err(
+            ";;;omg\nproc outer() {\n  proc f(a) {\n    return f(1, 2)\n  }\n  return f(1)\n}\n",
+        );
+        assert!(msg.contains("function 'f' expects 1 argument, got 2"), "{}", msg);
+    }
+
+    #[test]
+    fn path_normalize_posix() {
+        assert_eq!(path_normalize(""), "");
+        assert_eq!(path_normalize("/a/./b/../c"), "/a/c");
+        assert_eq!(path_normalize("/a//b///c/"), "/a/b/c");
+        assert_eq!(path_normalize("/.."), "/");
+        assert_eq!(path_normalize("/"), "/");
+        assert_eq!(path_normalize("a/../../b"), "../b");
+        assert_eq!(path_normalize("./a/.."), ".");
+        assert_eq!(path_normalize("a\\b"), "a/b");
+    }
+
+    #[test]
+    fn path_normalize_windows() {
+        assert_eq!(path_normalize("C:\\Users\\me\\..\\x.omg"), "C:/Users/x.omg");
+        assert_eq!(path_normalize("C:/Users/./me"), "C:/Users/me");
+        assert_eq!(path_normalize("c:/.."), "c:/");
+        assert_eq!(path_normalize("C:foo/../bar"), "C:bar");
+        assert_eq!(path_normalize("\\\\server\\share\\a\\.."), "//server/share");
+        assert_eq!(path_normalize("//server/share/x.omg"), "//server/share/x.omg");
+        // Three or more leading separators are just a sloppy root.
+        assert_eq!(path_normalize("///a"), "/a");
+    }
+
+    #[test]
+    fn path_is_absolute_recognises_every_root_style() {
+        assert!(path_is_absolute("/usr"));
+        assert!(path_is_absolute("\\Users"));
+        assert!(path_is_absolute("C:/Users"));
+        assert!(path_is_absolute("c:\\Users"));
+        assert!(path_is_absolute("//server/share"));
+        assert!(!path_is_absolute(""));
+        assert!(!path_is_absolute("a/b"));
+        assert!(!path_is_absolute("./a"));
+        assert!(!path_is_absolute("1:/a"));
+    }
+
+    #[test]
+    fn path_dirname_and_join() {
+        assert_eq!(path_dirname("/a/b.omg"), "/a");
+        assert_eq!(path_dirname("/b.omg"), "/");
+        assert_eq!(path_dirname("b.omg"), "");
+        assert_eq!(path_dirname("C:/b.omg"), "C:");
+        assert_eq!(path_dirname("C:\\a\\b.omg"), "C:\\a");
+        assert_eq!(path_join("/a", "m.omg"), "/a/m.omg");
+        assert_eq!(path_join("/", "m.omg"), "/m.omg");
+        assert_eq!(path_join("", "m.omg"), "m.omg");
+        assert_eq!(path_join("/a", "../m.omg"), "/m.omg");
+        assert_eq!(path_join("/a", "/abs/m.omg"), "/abs/m.omg");
+        assert_eq!(path_join("C:", "m.omg"), "C:/m.omg");
+        assert_eq!(path_join("C:/a", "D:/m.omg"), "D:/m.omg");
+        assert_eq!(path_join("C:\\a\\b", "modules\\m.omg"), "C:/a/b/modules/m.omg");
+    }
+
+    #[test]
+    fn path_absolute_normalised_joins_cwd_only_when_relative() {
+        assert_eq!(path_absolute_normalised("x.omg", "/work"), "/work/x.omg");
+        assert_eq!(path_absolute_normalised("x.omg", "/"), "/x.omg");
+        assert_eq!(path_absolute_normalised("/abs/x.omg", "/work"), "/abs/x.omg");
+        assert_eq!(
+            path_absolute_normalised("examples\\x.omg", "C:\\Users\\me"),
+            "C:/Users/me/examples/x.omg"
+        );
+        assert_eq!(
+            path_absolute_normalised("C:\\tmp\\x.omg", "C:\\Users\\me"),
+            "C:/tmp/x.omg"
+        );
+        assert_eq!(path_absolute_normalised("x.omg", "C:\\"), "C:/x.omg");
     }
 
     #[test]

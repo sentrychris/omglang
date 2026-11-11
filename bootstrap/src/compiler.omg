@@ -274,7 +274,36 @@ proc decode_escape(c) {
     if c == "\\" { return "\\" }
     if c == "\"" { return "\"" }
     if c == "0"  { return chr(0) }
-    return c
+    if c == "'"  { return "'" }
+    # Unknown escape: keep the backslash, exactly as the Rust lexer does
+    # (so "\d" stays a backslash followed by `d`).
+    return "\\" + c
+}
+
+# Convert the digits of a decimal integer literal to an int. Literals
+# that don't fit in a signed 64-bit integer are a SyntaxError here —
+# accumulating digit by digit would instead trip the VM's overflow
+# check and surface as an internal error inside the compiler.
+proc parse_int_literal(text, line, file) {
+    alloc k := 0
+    alloc m := length(text)
+    loop k < m - 1 and text[k] == "0" {
+        k := k + 1
+    }
+    alloc digits := text[k:]
+    alloc nd := length(digits)
+    if nd > 19 or (nd == 19 and digits > "9223372036854775807") {
+        panic("SyntaxError: Invalid integer literal '" + text + "' on line " + line + " in " + file)
+    }
+    alloc num := 0
+    alloc j := 0
+    loop j < nd {
+        # Parenthesised so the largest literal (9223372036854775807) does
+        # not overflow in the intermediate `num * 10 + <char code>`.
+        num := num * 10 + (ascii(digits[j]) - ascii("0"))
+        j := j + 1
+    }
+    return num
 }
 
 proc tokenize(src, file) {
@@ -297,6 +326,7 @@ proc tokenize(src, file) {
                 i := i + 1
             }
         } elif c == "/" and i + 1 < n and body[i + 1] == "*" {
+            alloc comment_line := line
             i := i + 2
             loop i + 1 < n and (body[i] != "*" or body[i + 1] != "/") {
                 if body[i] == "\n" {
@@ -307,23 +337,38 @@ proc tokenize(src, file) {
             if i + 1 < n {
                 i := i + 2
             } else {
-                i := n
+                # Ran off the end without finding the closing marker.
+                # Swallowing the rest of the file silently would turn a
+                # typo into a program that just stops early.
+                panic("SyntaxError: Unterminated block comment starting on line " + comment_line + " in " + file)
             }
         } elif c == "0" and i + 1 < n and (body[i + 1] == "b" or body[i + 1] == "B") {
             i := i + 2
+            alloc bin_start := i
             alloc bin_num := 0
+            # Leading zeros carry no value; after them at most 63 bits
+            # fit in a signed 64-bit integer.
+            alloc bin_sig := 0
             loop i < n and (body[i] == "0" or body[i] == "1") {
-                bin_num := bin_num * 2 + ascii(body[i]) - ascii("0")
+                if bin_sig > 0 or body[i] == "1" {
+                    bin_sig := bin_sig + 1
+                }
+                if bin_sig > 63 {
+                    panic("SyntaxError: Invalid binary literal on line " + line + " in " + file + ": number too large to fit in target type")
+                }
+                bin_num := bin_num * 2 + (ascii(body[i]) - ascii("0"))
                 i := i + 1
+            }
+            if i == bin_start {
+                panic("SyntaxError: Empty binary literal on line " + line + " in " + file)
             }
             tokens := tokens + [["NUM", bin_num, line]]
         } elif is_digit(c) {
-            alloc num := 0
             alloc start := i
             loop i < n and is_digit(body[i]) {
-                num := num * 10 + ascii(body[i]) - ascii("0")
                 i := i + 1
             }
+            alloc int_end := i
             # Promote to float if followed by `.<digit>` or `[eE][+-]?<digit>`.
             # A bare trailing `.` (e.g. `5.`) does NOT promote, so `5.foo`
             # parses as attribute access on int 5.
@@ -352,7 +397,7 @@ proc tokenize(src, file) {
                         i := i + 1
                     }
                     if exp_start == i {
-                        panic("Float exponent has no digits on line " + line + " in " + file)
+                        panic("SyntaxError: Float exponent has no digits in '" + body[start:i] + "' on line " + line + " in " + file)
                     }
                 }
                 # Slice the literal text out so the runtime can convert it
@@ -361,7 +406,7 @@ proc tokenize(src, file) {
                 alloc lit := body[start:i]
                 tokens := tokens + [["FNUM", lit, line]]
             } else {
-                tokens := tokens + [["NUM", num, line]]
+                tokens := tokens + [["NUM", parse_int_literal(body[start:int_end], line, file), line]]
             }
         } elif c == "\"" {
             i := i + 1
@@ -378,9 +423,10 @@ proc tokenize(src, file) {
                     i := i + 1
                 }
             }
-            if i < n {
-                i := i + 1
+            if i >= n {
+                panic("SyntaxError: Unterminated string starting on line " + line + " in " + file)
             }
+            i := i + 1
             tokens := tokens + [["STR", s, line]]
         } elif is_alpha(c) {
             alloc word := ""
@@ -479,7 +525,7 @@ proc tokenize(src, file) {
             tokens := tokens + [["GT", "", line]]
             i := i + 1
         } else {
-            panic("Unexpected character '" + c + "' on line " + line + " in " + file)
+            panic("SyntaxError: Unexpected character '" + c + "' on line " + line + " in " + file)
         }
     }
     tokens := tokens + [["EOF", "", line]]
@@ -1079,6 +1125,21 @@ alloc cc_proc_arity := []
 # before they recurse infinitely.
 alloc cc_loading := []
 
+# Lexical stack of the nested procs whose bodies are currently being
+# compiled, innermost last: [source name, function-table key].
+#
+# The function table is one flat, program-wide namespace, so a nested
+# proc can't be registered under its source name — two procs each
+# defining a local `helper` would overwrite one another (and a nested
+# `helper` would replace a top-level `helper` for the whole program).
+# Each nested proc therefore gets a unique key of the form
+# `__mod_<n>__<name>`. That is the shape the VMs already strip back to
+# the bare name when binding MAKE_FUNC inside a function and when
+# printing tracebacks, so no backend needs to know about it. This stack
+# is how a recursive call inside the body finds its own key. Mirrors
+# `nested_procs` in runtime/src/compiler.rs.
+alloc cc_nested_procs := []
+
 # Builtin names: calls to these become BUILTIN.
 alloc cc_builtins := [
     "chr", "ascii", "hex", "binary", "length", "read_file",
@@ -1135,6 +1196,21 @@ proc cc_mangle(name) {
         return name
     }
     return cc_current_prefix + name
+}
+
+# Function-table key for a direct CALL/TCALL of `name`. A call to an
+# enclosing nested proc (most commonly: a nested proc calling itself)
+# goes to that proc's unique key; everything else is a top-level proc
+# of the current module.
+proc cc_resolve_call_name(name) {
+    alloc i := length(cc_nested_procs) - 1
+    loop i >= 0 {
+        if cc_nested_procs[i][0] == name {
+            return cc_nested_procs[i][1]
+        }
+        i := i - 1
+    }
+    return cc_mangle(name)
 }
 
 proc cc_in_function_scope(name) {
@@ -1393,7 +1469,7 @@ proc compile_expr(node) {
                 cc_emit(["CALL_VALUE", n])
                 return false
             }
-            alloc resolved_call_name := cc_mangle(cname)
+            alloc resolved_call_name := cc_resolve_call_name(cname)
             cc_check_direct_call_arity(cname, resolved_call_name, length(args), cc_current_line)
             alloc i := 0
             alloc n := length(args)
@@ -1543,12 +1619,47 @@ proc compile_block_node(block) {
     return false
 }
 
-# Path resolution for compile-time imports. Keep it simple: drop the last
-# path component of `base` and join with `rel`.
+# === Path helpers ===========================================================
+#
+# Plain string functions, mirrored one-for-one by `path_*` in
+# runtime/src/compiler.rs. Both frontends must store byte-identical
+# paths in the source-file table (that is what `--verify-self-hosted`
+# and `--verify-omg-vm` compare), so both implement the same algorithm
+# on every platform — including Windows, where paths arrive with a
+# drive prefix (`C:/Users/...`) and either kind of slash. Keep the two
+# in lockstep.
+
+proc path_is_sep(ch) {
+    return ch == "/" or ch == "\\"
+}
+
+# True for `C:` / `c:` style drive prefixes.
+proc path_has_drive(p) {
+    if length(p) < 2 {
+        return false
+    }
+    alloc d := p[0]
+    return ((d >= "a" and d <= "z") or (d >= "A" and d <= "Z")) and p[1] == ":"
+}
+
+# A path is absolute when it starts with a separator (`/usr`,
+# `\\server`) or with a Windows drive prefix (`C:/Users`, `C:\Users`).
+proc path_is_absolute(p) {
+    if length(p) > 0 and path_is_sep(p[0]) {
+        return true
+    }
+    return path_has_drive(p)
+}
+
+# Everything before the last separator. "/a/b.omg" -> "/a",
+# "/b.omg" -> "/", "b.omg" -> "".
 proc path_dirname(p) {
     alloc i := length(p) - 1
     loop i >= 0 {
-        if p[i] == "/" or p[i] == "\\" {
+        if path_is_sep(p[i]) {
+            if i == 0 {
+                return "/"
+            }
             return p[0:i]
         }
         i := i - 1
@@ -1556,34 +1667,65 @@ proc path_dirname(p) {
     return ""
 }
 
+# Join `rel` onto `base` and normalise. An absolute `rel` replaces
+# `base` entirely; an empty `base` leaves `rel` relative.
 proc path_join(base, rel) {
-    if length(rel) > 0 and (rel[0] == "/" or rel[0] == "\\") {
+    if path_is_absolute(rel) or length(base) == 0 {
         return path_normalize(rel)
     }
-    if length(base) == 0 {
-        return path_normalize(rel)
+    # Don't double the separator when `base` already ends in one (the
+    # filesystem root, or `C:/`): a leading `//` means "UNC path" to
+    # path_normalize.
+    if path_is_sep(base[length(base) - 1]) {
+        return path_normalize(base + rel)
     }
     return path_normalize(base + "/" + rel)
 }
 
-# Collapse `./` and `../` segments in a path so it matches what the
-# Rust compiler stores after `fs::canonicalize`. The triple-meta
-# fixed-point check compares .omgb bytes; if one side keeps `./` in
-# the source-file table and the other doesn't, the bytes diverge.
+# Collapse `.` and `..` segments, repeated separators, and backslashes,
+# always producing forward slashes. Purely lexical — symlinks are not
+# resolved. The root of an absolute path is preserved and can't be
+# `..`-ed away:
+#
+#   /a/./b/../c            ->  /a/c
+#   a/../../b              ->  ../b
+#   C:\Users\me\..\x.omg   ->  C:/Users/x.omg
+#   \\server\share\a\..    ->  //server/share
 proc path_normalize(p) {
-    if length(p) == 0 {
+    alloc n := length(p)
+    if n == 0 {
         return p
     }
-    alloc absolute := p[0] == "/"
-    # Split on `/` into segments. Multiple consecutive slashes collapse
-    # to one (the empty segments between them get skipped below).
+    # Split off the root, if any.
+    alloc root := ""
+    alloc i := 0
+    if path_is_sep(p[0]) {
+        if n >= 3 and path_is_sep(p[1]) and path_is_sep(p[2]) == false {
+            # Exactly two leading separators: a UNC path (\\server\share).
+            root := "//"
+            i := 2
+        } else {
+            root := "/"
+            i := 1
+        }
+    } elif path_has_drive(p) {
+        if n >= 3 and path_is_sep(p[2]) {
+            root := p[0:2] + "/"
+            i := 3
+        } else {
+            # Drive-relative (C:foo): keep the drive, nothing more.
+            root := p[0:2]
+            i := 2
+        }
+    }
+    alloc rooted := length(root) > 0
+    # Split the remainder into segments. Consecutive separators collapse
+    # (the empty segments between them are skipped).
     alloc parts := []
     alloc cur := ""
-    alloc i := 0
-    alloc n := length(p)
     loop i < n {
         alloc ch := p[i]
-        if ch == "/" or ch == "\\" {
+        if path_is_sep(ch) {
             if length(cur) > 0 {
                 parts := parts + [cur]
             }
@@ -1596,9 +1738,10 @@ proc path_normalize(p) {
     if length(cur) > 0 {
         parts := parts + [cur]
     }
-    # Walk segments: `.` drops, `..` pops a prior non-`..` segment if
-    # any, otherwise stays (so relative paths with too many `..`s
-    # don't crash).
+    # Walk segments: `.` drops; `..` pops a prior non-`..` segment if
+    # there is one. With nothing left to pop, a rooted path stays at
+    # its root (there is nowhere above it) and a relative one keeps
+    # the `..`.
     alloc stack := []
     alloc j := 0
     alloc np := length(parts)
@@ -1610,12 +1753,8 @@ proc path_normalize(p) {
             alloc top := length(stack) - 1
             if top >= 0 and stack[top] != ".." {
                 stack := stack[0:top]
-            } else {
-                # Only meaningful on relative paths — absolute paths
-                # cannot legitimately go above `/`, so we just drop.
-                if absolute == false {
-                    stack := stack + [seg]
-                }
+            } elif rooted == false {
+                stack := stack + [seg]
             }
         } else {
             stack := stack + [seg]
@@ -1623,10 +1762,7 @@ proc path_normalize(p) {
         j := j + 1
     }
     # Rebuild the path.
-    alloc out := ""
-    if absolute {
-        out := "/"
-    }
+    alloc out := root
     alloc k := 0
     alloc ns := length(stack)
     loop k < ns {
@@ -1640,6 +1776,18 @@ proc path_normalize(p) {
         return "."
     }
     return out
+}
+
+# Make `path` absolute by joining it onto `cwd` when it is relative,
+# then normalise.
+proc path_absolute_normalised(path, cwd) {
+    if path_is_absolute(path) or length(cwd) == 0 {
+        return path_normalize(path)
+    }
+    if path_is_sep(cwd[length(cwd) - 1]) {
+        return path_normalize(cwd + path)
+    }
+    return path_normalize(cwd + "/" + path)
 }
 
 # Look up a previously-compiled module by its resolved path.  Returns the
@@ -1768,12 +1916,17 @@ proc compile_import(path, alias, line) {
         cc_current_prefix := prefix
         cc_current_file   := resolved
         cc_current_file_idx := cc_intern_file(resolved)
+        # The module is its own lexical world: a call inside it must
+        # never resolve to a nested proc of whoever is importing it.
+        alloc saved_nested := cc_nested_procs
+        cc_nested_procs := []
         cc_collect_proc_arity(ast)
         i := 0
         loop i < n {
             compile_stmt(ast[i])
             i := i + 1
         }
+        cc_nested_procs := saved_nested
         cc_current_prefix := saved_prefix
         cc_current_file   := saved_file
         cc_current_file_idx := saved_file_idx
@@ -1827,7 +1980,7 @@ proc compile_stmt(stmt) {
         if length(cc_local_scopes) == 1 {
             alloc dn_mangled := cc_resolve_store(stmt[1])
             if list_contains_name(cc_top_level_declared, dn_mangled) {
-                panic("'" + stmt[1] + "' is already declared at the top level on line " + stmt[3] + " in " + cc_current_file)
+                panic("SyntaxError: '" + stmt[1] + "' is already declared at the top level on line " + stmt[3] + " in " + cc_current_file)
             }
             cc_top_level_declared := cc_top_level_declared + [dn_mangled]
         }
@@ -1964,19 +2117,41 @@ proc compile_stmt(stmt) {
         alloc name := stmt[1]
         alloc params := stmt[2]
         alloc body := stmt[3]
+        # A proc defined inside another proc gets a unique function-table
+        # key (see cc_nested_procs); a top-level proc keeps its
+        # module-mangled source name. The key is chosen *before*
+        # compiling the body so both frontends number nested procs in
+        # the same order.
+        alloc nested := length(cc_local_scopes) > 1
+        alloc mangled := cc_mangle(name)
+        if nested {
+            cc_module_counter := cc_module_counter + 1
+            mangled := "__mod_" + cc_module_counter + "__" + name
+            cc_proc_arity := cc_proc_arity + [[mangled, length(params)]]
+            cc_nested_procs := cc_nested_procs + [[name, mangled]]
+        }
         alloc body_pair := compile_function_body(params, body)
+        if nested {
+            cc_nested_procs := cc_nested_procs[0:length(cc_nested_procs) - 1]
+        }
         alloc body_code := body_pair[0]
         alloc body_lines := body_pair[1]
-        alloc mangled := cc_mangle(name)
         alloc fn_file_idx := cc_current_file_idx
         cc_pending_funcs := cc_pending_funcs + [[mangled, params, body_code, body_lines, fn_file_idx]]
         cc_emit(["MAKE_FUNC", mangled])
-        if length(cc_local_scopes) > 1 {
+        if nested {
             cc_declare_local(name)
         }
         return false
     }
     if kind == "return" {
+        # `return` only means something inside a proc. At top level
+        # there is no frame to return to; this used to compile anyway
+        # and die at run time with an internal "RET with empty return
+        # stack" error.
+        if length(cc_local_scopes) <= 1 {
+            panic("SyntaxError: 'return' outside of a proc on line " + stmt[2] + " in " + cc_current_file)
+        }
         alloc expr := stmt[1]
         if expr[0] == "call" and expr[1][0] == "id" {
             alloc cname := expr[1][1]
@@ -1993,7 +2168,7 @@ proc compile_stmt(stmt) {
             if cc_is_builtin(cname) == false and cc_is_value_binding(cname) == false {
                 # Direct tail call of a top-level proc.
                 alloc args := expr[2]
-                alloc resolved_tcall_name := cc_mangle(cname)
+                alloc resolved_tcall_name := cc_resolve_call_name(cname)
                 cc_check_direct_call_arity(cname, resolved_tcall_name, length(args), cc_current_line)
                 alloc i := 0
                 alloc n := length(args)
@@ -2017,6 +2192,9 @@ proc compile_stmt(stmt) {
         # Drain SETUP_EXCEPT blocks opened *between* the enclosing loop
         # and this break. cc_loop_try_depth records cc_try_depth as it
         # was when the loop started.
+        if length(cc_break_stack) == 0 {
+            panic("SyntaxError: 'break' outside of loop in " + cc_current_file)
+        }
         alloc ltd_top := length(cc_loop_try_depth) - 1
         alloc saved := cc_loop_try_depth[ltd_top]
         cc_emit_pop_blocks(cc_try_depth - saved)
@@ -2120,6 +2298,14 @@ proc compile_program_node_seeded(ast, file, known_globals) {
     cc_loaded_modules := []
     cc_loading := []
     cc_proc_arity := []
+    # Everything below is per-compilation state too. Leaving it set
+    # leaked one compile into the next when the compiler is used as a
+    # library (the REPL): `alloc x` in a second turn was rejected as
+    # "already declared".
+    cc_top_level_declared := []
+    cc_nested_procs := []
+    cc_try_depth := 0
+    cc_loop_try_depth := []
     cc_collect_proc_arity(ast)
     alloc i := 0
     alloc n := length(ast)
@@ -2337,11 +2523,7 @@ proc do_compile(in_path, out_path) {
 # collapse `./` / `..` segments. Symlinks NOT resolved — keeping
 # parity with how every other implementation produces the same path.
 proc cc_absolute_normalised(path) {
-    alloc combined := path
-    if length(path) == 0 or (path[0] != "/" and path[0] != "\\") {
-        combined := current_dir + "/" + path
-    }
-    return path_normalize(combined)
+    return path_absolute_normalised(path, current_dir)
 }
 
 # Library entry point: compile a source string in-memory and return
@@ -2412,6 +2594,9 @@ proc compile_reset() {
     cc_loading := []
     cc_try_depth := 0
     cc_loop_try_depth := []
+    cc_top_level_declared := []
+    cc_proc_arity := []
+    cc_nested_procs := []
 }
 
 # Seed the outermost scope with names that exist in the VM's globals

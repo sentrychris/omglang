@@ -9,8 +9,8 @@
 //! - `Str(String)` – UTF-8 string
 //! - `Bool(bool)` – boolean truth values
 //! - `List(Rc<RefCell<Vec<Value>>>)` – mutable, reference-counted lists
-//! - `Dict(Rc<RefCell<HashMap<String, Value>>>)` – mutable, reference-counted dictionaries
-//! - `FrozenDict(Rc<HashMap<String, Value>>)` – immutable dictionaries (used for imports)
+//! - `Dict(Rc<RefCell<OmgDict>>)` – mutable, reference-counted, insertion-ordered dictionaries
+//! - `FrozenDict(Rc<OmgDict>)` – immutable dictionaries (used for imports)
 //! - `None` – sentinel for “no value” (similar to Python’s `None` / JS’s `undefined`)
 //!
 //! ## Design
@@ -57,6 +57,65 @@ pub fn new_cell(v: Value) -> EnvCell {
     Rc::new(RefCell::new(v))
 }
 
+/// An insertion-ordered string-keyed dictionary — the storage behind
+/// OMG's `{...}` values.
+///
+/// A plain `HashMap` iterates in an order that changes from run to run,
+/// which made `emit some_dict` and `dict_keys(d)` print differently every
+/// time and disagree with the C and JS backends (both insertion-ordered,
+/// as the language reference promises). Entries live in a `Vec` in the
+/// order they were first inserted; a side index gives O(1) lookup.
+/// Assigning to an existing key replaces its value in place and keeps its
+/// position, like Python and JavaScript. There is no removal: the
+/// language has no way to delete a key.
+#[derive(Clone, Default)]
+pub struct OmgDict {
+    entries: Vec<(String, Value)>,
+    index: HashMap<String, usize>,
+}
+
+impl OmgDict {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn insert(&mut self, key: String, value: Value) {
+        match self.index.get(&key) {
+            Some(&i) => self.entries[i].1 = value,
+            None => {
+                self.index.insert(key.clone(), self.entries.len());
+                self.entries.push((key, value));
+            }
+        }
+    }
+
+    pub fn get(&self, key: &str) -> Option<&Value> {
+        self.index.get(key).map(|&i| &self.entries[i].1)
+    }
+
+    pub fn contains_key(&self, key: &str) -> bool {
+        self.index.contains_key(key)
+    }
+
+    pub fn len(&self) -> usize {
+        self.entries.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.entries.is_empty()
+    }
+
+    /// Keys in insertion order.
+    pub fn keys(&self) -> impl Iterator<Item = &String> {
+        self.entries.iter().map(|(k, _)| k)
+    }
+
+    /// `(key, value)` pairs in insertion order.
+    pub fn iter(&self) -> impl Iterator<Item = (&String, &Value)> {
+        self.entries.iter().map(|(k, v)| (k, v))
+    }
+}
+
 /// Value type for the VM stack and environments.
 #[derive(Clone)]
 pub enum Value {
@@ -71,9 +130,9 @@ pub enum Value {
     /// Mutable list (reference-counted, interior-mutable).
     List(Rc<RefCell<Vec<Value>>>),
     /// Mutable dictionary (reference-counted, interior-mutable).
-    Dict(Rc<RefCell<HashMap<String, Value>>>),
+    Dict(Rc<RefCell<OmgDict>>),
     /// Immutable dictionary (reference-counted).
-    FrozenDict(Rc<HashMap<String, Value>>),
+    FrozenDict(Rc<OmgDict>),
     /// First-class function reference. Top-level procs are stored as
     /// `Closure { name, captured: empty }`; nested procs capture the
     /// surrounding local environment at the point of definition.
@@ -125,7 +184,7 @@ impl Value {
                         f
                     )));
                 }
-                if *f < i64::MIN as f64 || *f > i64::MAX as f64 {
+                if !float_fits_i64(*f) {
                     return Err(RuntimeError::ValueError(format!(
                         "float {} is outside the i64 range",
                         f
@@ -201,6 +260,11 @@ impl Value {
                     }
                     let inner: Vec<String> =
                         list.borrow().iter().map(|v| helper(v, seen)).collect();
+                    // Only containers on the *current path* count as a
+                    // cycle. Without this, a list that merely appears
+                    // twice (`[a, a]`) printed its second occurrence
+                    // as `[...]`.
+                    seen.remove(&ptr);
                     format!("[{}]", inner.join(", "))
                 }
 
@@ -215,6 +279,7 @@ impl Value {
                         .iter()
                         .map(|(k, v)| format!("{}: {}", k, helper(v, seen)))
                         .collect();
+                    seen.remove(&ptr);
                     format!("{{{}}}", inner.join(", "))
                 }
 
@@ -228,6 +293,7 @@ impl Value {
                         .iter()
                         .map(|(k, v)| format!("{}: {}", k, helper(v, seen)))
                         .collect();
+                    seen.remove(&ptr);
                     format!("{{{}}}", inner.join(", "))
                 }
 
@@ -243,6 +309,16 @@ impl Value {
         let mut seen = HashSet::new();
         helper(self, &mut seen)
     }
+}
+
+/// True when a finite `f` truncates to a value representable as `i64`.
+///
+/// `i64::MAX as f64` rounds *up* to 2^63, which is one past the largest
+/// i64, so the upper bound has to be exclusive; `i64::MIN as f64` is
+/// exactly -2^63 and is inclusive. (An inclusive upper bound let 2^63
+/// through, and the `as i64` cast then silently saturated it.)
+pub(crate) fn float_fits_i64(f: f64) -> bool {
+    f >= -9_223_372_036_854_775_808.0 && f < 9_223_372_036_854_775_808.0
 }
 
 /// Format an f64 the way OMG prints floats: always with a decimal point so
@@ -261,5 +337,68 @@ pub(crate) fn format_float(f: f64) -> String {
         s
     } else {
         format!("{}.0", s)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn list(items: Vec<Value>) -> Value {
+        Value::List(Rc::new(RefCell::new(items)))
+    }
+
+    #[test]
+    fn shared_list_is_not_mistaken_for_a_cycle() {
+        let a = list(vec![Value::Int(1)]);
+        let outer = list(vec![a.clone(), a.clone()]);
+        assert_eq!(outer.to_string(), "[[1], [1]]");
+    }
+
+    #[test]
+    fn shared_dict_is_not_mistaken_for_a_cycle() {
+        let mut m = OmgDict::new();
+        m.insert("x".to_string(), Value::Int(1));
+        let d = Value::Dict(Rc::new(RefCell::new(m)));
+        let outer = list(vec![d.clone(), d.clone()]);
+        assert_eq!(outer.to_string(), "[{x: 1}, {x: 1}]");
+    }
+
+    #[test]
+    fn dicts_keep_insertion_order() {
+        let mut m = OmgDict::new();
+        for (i, k) in ["zeta", "alpha", "mid", "beta", "omega"].iter().enumerate() {
+            m.insert(k.to_string(), Value::Int(i as i64));
+        }
+        // Re-assigning an existing key keeps its position.
+        m.insert("alpha".to_string(), Value::Int(99));
+        let keys: Vec<&str> = m.keys().map(|k| k.as_str()).collect();
+        assert_eq!(keys, ["zeta", "alpha", "mid", "beta", "omega"]);
+        assert_eq!(m.len(), 5);
+        assert_eq!(
+            Value::Dict(Rc::new(RefCell::new(m))).to_string(),
+            "{zeta: 0, alpha: 99, mid: 2, beta: 3, omega: 4}"
+        );
+    }
+
+    #[test]
+    fn real_cycles_still_print_an_ellipsis() {
+        let inner = Rc::new(RefCell::new(vec![Value::Int(1)]));
+        let v = Value::List(inner.clone());
+        inner.borrow_mut().push(v.clone());
+        assert_eq!(v.to_string(), "[1, [...]]");
+        // Break the cycle so the test doesn't leak.
+        inner.borrow_mut().clear();
+    }
+
+    #[test]
+    fn float_to_int_range_is_exact_at_the_edges() {
+        assert!(Value::Float(9.223372036854775e18).as_int().is_ok());
+        assert!(Value::Float(9_223_372_036_854_775_808.0).as_int().is_err());
+        assert_eq!(
+            Value::Float(-9_223_372_036_854_775_808.0).as_int(),
+            Ok(i64::MIN)
+        );
+        assert!(Value::Float(-9.3e18).as_int().is_err());
     }
 }

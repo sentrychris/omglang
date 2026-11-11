@@ -41,14 +41,12 @@ use std::net::{TcpListener, TcpStream};
 use std::path::PathBuf;
 use std::rc::Rc;
 use std::cell::RefCell;
-use std::sync::{atomic::{AtomicI32, Ordering}, Mutex};
-
-use once_cell::sync::Lazy;
+use std::sync::{atomic::{AtomicI32, Ordering}, LazyLock, Mutex};
 
 use super::ops_control;
+use super::sys;
 use crate::error::{ErrorKind, RuntimeError};
-use crate::value::Env;
-use crate::value::Value;
+use crate::value::{float_fits_i64, Env, Value};
 
 /// Entry in the in-process file descriptor table.
 struct FileEntry {
@@ -59,8 +57,8 @@ struct FileEntry {
 
 /// Global FD table. A simple, process-local registry mapping `i32` handles to open files.
 /// Wrapped in a `Mutex` to be usable from multiple threads safely.
-static FILE_HANDLES: Lazy<Mutex<HashMap<i32, FileEntry>>> =
-    Lazy::new(|| Mutex::new(HashMap::new()));
+static FILE_HANDLES: LazyLock<Mutex<HashMap<i32, FileEntry>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
 
 /// Monotonic counter to allocate new integer file descriptors.
 static NEXT_FD: AtomicI32 = AtomicI32::new(0);
@@ -75,8 +73,8 @@ enum TcpEntry {
 
 /// Global TCP handle table. Kept separate from `FILE_HANDLES` so the
 /// type-check at dispatch is cheap (no enum unwrap on every file op).
-static TCP_HANDLES: Lazy<Mutex<HashMap<i32, TcpEntry>>> =
-    Lazy::new(|| Mutex::new(HashMap::new()));
+static TCP_HANDLES: LazyLock<Mutex<HashMap<i32, TcpEntry>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
 
 /// Monotonic counter for TCP handles. Starts at 1 so a 0 handle is
 /// always invalid (mirrors the C runtime's convention).
@@ -92,7 +90,7 @@ fn float_to_int_rounded(f: f64, op: &'static str) -> Result<Value, RuntimeError>
             op, f
         )));
     }
-    if f < i64::MIN as f64 || f > i64::MAX as f64 {
+    if !float_fits_i64(f) {
         return Err(RuntimeError::ValueError(format!(
             "{}() result {} is outside the i64 range",
             op, f
@@ -102,21 +100,71 @@ fn float_to_int_rounded(f: f64, op: &'static str) -> Result<Value, RuntimeError>
 }
 
 /// Round half to even (banker's rounding). Matches Python 3 `round()`.
+///
+/// A tie is a fractional part of *exactly* one half — which is exactly
+/// representable in binary, so the comparison needs no tolerance. (An
+/// earlier version used `< 1e-9`, which misread values merely close to
+/// a tie: `round(1.4999999999)` came out as 2 and `round(0.5000000001)`
+/// as 0.)
 fn round_half_even(f: f64) -> f64 {
-    let rounded = f.round(); // half away from zero
-    let diff = (f - f.trunc()).abs();
-    if (diff - 0.5).abs() < 1e-9 {
-        // Exactly halfway: pick the even neighbour.
-        let down = f.trunc();
-        let up = if f >= 0.0 { down + 1.0 } else { down - 1.0 };
-        if (down as i64) % 2 == 0 {
-            down
+    let t = f.trunc();
+    if (f - t).abs() == 0.5 {
+        if t % 2.0 == 0.0 {
+            t
         } else {
-            up
+            t + f.signum()
         }
     } else {
-        rounded
+        f.round()
     }
+}
+
+/// `hex(n)` / `binary(n)`: magnitude in the given radix with a leading
+/// `-` for negatives (`hex(-255)` is `-ff`), the same convention Python
+/// uses and the one the C and JS runtimes implement.
+fn format_radix(n: i64, radix: u32) -> String {
+    let mag = n.unsigned_abs();
+    let digits = if radix == 16 {
+        format!("{:x}", mag)
+    } else {
+        format!("{:b}", mag)
+    };
+    if n < 0 {
+        format!("-{}", digits)
+    } else {
+        digits
+    }
+}
+
+/// Write to stdout for `emit` / `print`. If stdout has gone away (the
+/// reader of a pipe exited) there is nothing useful left to do, so stop
+/// quietly instead of panicking the way `println!` does.
+pub(super) fn write_stdout(s: &str, newline: bool) {
+    let stdout = std::io::stdout();
+    let mut out = stdout.lock();
+    let res = out.write_all(s.as_bytes()).and_then(|_| {
+        if newline {
+            out.write_all(b"\n")
+        } else {
+            out.flush()
+        }
+    });
+    if let Err(e) = res {
+        drop(out);
+        sys::restore_terminal();
+        if e.kind() != std::io::ErrorKind::BrokenPipe {
+            eprintln!("omg: cannot write to stdout: {}", e);
+        }
+        std::process::exit(1);
+    }
+}
+
+/// Leave the process from a builtin: flush what we buffered and hand
+/// the terminal back in the state we found it.
+fn exit_process(code: i32) -> ! {
+    let _ = std::io::stdout().flush();
+    sys::restore_terminal();
+    std::process::exit(code);
 }
 
 /// Resolve a user-supplied path relative to `current_dir` (env or globals).
@@ -174,9 +222,9 @@ pub fn call_builtin(
             )),
         },
 
-        // hex(i64) -> lowercase hex string
+        // hex(i64) -> lowercase hex string (`-ff` for negatives)
         "hex" => match args {
-            [Value::Int(i)] => Ok(Value::Str(format!("{:x}", i))),
+            [Value::Int(i)] => Ok(Value::Str(format_radix(*i, 16))),
             _ => Err(RuntimeError::TypeError(
                 "hex() expects one integer (arity mismatch)".to_string(),
             )),
@@ -184,18 +232,30 @@ pub fn call_builtin(
 
         // binary(n[, width]) -> binary string; with width, mask & zero-pad
         "binary" => match args {
-            [Value::Int(n)] => Ok(Value::Str(format!("{:b}", n))),
+            [Value::Int(n)] => Ok(Value::Str(format_radix(*n, 2))),
             [Value::Int(n), Value::Int(width)] => {
                 if *width <= 0 {
                     Err(RuntimeError::ValueError(
                         "binary() width must be positive".to_string(),
                     ))
+                } else if *width > 4096 {
+                    Err(RuntimeError::ValueError(format!(
+                        "binary() width {} is too large (max 4096)",
+                        width
+                    )))
                 } else {
-                    // Mask to width, then print padded.
-                    let mask = (1_i64 << width) - 1;
+                    // Two's-complement bits of `n`, truncated to `width`
+                    // and zero-padded. Values are 64-bit, so a width of
+                    // 64 or more keeps every bit (`1 << width` would
+                    // overflow there, hence the explicit branch).
+                    let bits = if *width >= 64 {
+                        *n as u64
+                    } else {
+                        (*n as u64) & ((1u64 << *width) - 1)
+                    };
                     Ok(Value::Str(format!(
                         "{:0width$b}",
-                        n & mask,
+                        bits,
                         width = *width as usize
                     )))
                 }
@@ -269,8 +329,9 @@ pub fn call_builtin(
         // without wrapping it in another `RuntimeError:` prefix.
         "exit_with_error" => match args {
             [Value::Str(msg)] => {
+                let _ = std::io::stdout().flush();
                 eprintln!("{}", msg);
-                std::process::exit(1);
+                exit_process(1);
             }
             _ => Err(RuntimeError::TypeError(
                 "exit_with_error() expects a string".to_string(),
@@ -280,9 +341,7 @@ pub fn call_builtin(
         // exit(code) -> std::process::exit(code). Used by the OMG-native
         // `omg` driver to propagate child-process exit codes.
         "exit" => match args {
-            [Value::Int(code)] => {
-                std::process::exit(*code as i32);
-            }
+            [Value::Int(code)] => exit_process(*code as i32),
             _ => Err(RuntimeError::TypeError(
                 "exit() expects an integer".to_string(),
             )),
@@ -394,46 +453,13 @@ pub fn call_builtin(
         // the controlling terminal so reads return immediately and the
         // tty doesn't line-buffer or echo input. Must be called twice
         // around an interactive section (`true` to enter raw mode,
-        // `false` to restore). Linux-only — Windows would need
-        // SetConsoleMode; not implemented.
+        // `false` to restore). Implemented with termios on Unix and
+        // console modes on Windows — see `sys.rs`. If the program ends
+        // while raw mode is still on, the runtime restores the terminal
+        // itself.
         "stdin_set_raw" => match args {
             [Value::Bool(on)] => {
-                unsafe {
-                    use std::os::fd::AsRawFd;
-                    let fd = std::io::stdin().as_raw_fd();
-                    let mut t: libc::termios = std::mem::zeroed();
-                    if libc::tcgetattr(fd, &mut t) != 0 {
-                        return Err(RuntimeError::ValueError(
-                            "stdin_set_raw: tcgetattr failed".to_string(),
-                        ));
-                    }
-                    if *on {
-                        // Disable canonical mode + echo. VMIN/VTIME = 0
-                        // makes read() return 0 with no input rather
-                        // than blocking — pairs with stdin_read_key().
-                        // ICANON / ECHO: line buffering and char echo off
-                        // (the obvious raw-mode bits).
-                        // ISIG: don't let the kernel intercept Ctrl-C,
-                        // Ctrl-Z, Ctrl-\\ as signals — TUI apps want
-                        // those as plain bytes (e.g. an editor binding
-                        // Ctrl-Z to undo).
-                        // IXON: don't let Ctrl-S/Ctrl-Q pause output
-                        // via XON/XOFF — same reasoning, plus it stops
-                        // Ctrl-S from freezing the terminal.
-                        t.c_lflag &= !(libc::ICANON | libc::ECHO | libc::ISIG);
-                        t.c_iflag &= !libc::IXON;
-                        t.c_cc[libc::VMIN] = 0;
-                        t.c_cc[libc::VTIME] = 0;
-                    } else {
-                        t.c_lflag |= libc::ICANON | libc::ECHO | libc::ISIG;
-                        t.c_iflag |= libc::IXON;
-                    }
-                    if libc::tcsetattr(fd, libc::TCSANOW, &t) != 0 {
-                        return Err(RuntimeError::ValueError(
-                            "stdin_set_raw: tcsetattr failed".to_string(),
-                        ));
-                    }
-                }
+                sys::stdin_set_raw(*on).map_err(RuntimeError::ValueError)?;
                 Ok(Value::None)
             }
             _ => Err(RuntimeError::TypeError(
@@ -445,26 +471,18 @@ pub fn call_builtin(
         // read. Returns a 1-character string if a key is available, or
         // false otherwise. Requires stdin_set_raw(true) first; in
         // cooked mode the kernel buffers input until newline so reads
-        // would still block at the read syscall.
+        // would still block at the read syscall. Arrow keys and other
+        // navigation keys arrive as their VT escape sequences, one
+        // byte per call, on every platform.
         "stdin_read_key" => {
             if !args.is_empty() {
                 return Err(RuntimeError::TypeError(
                     "stdin_read_key() takes no arguments".to_string(),
                 ));
             }
-            unsafe {
-                use std::os::fd::AsRawFd;
-                let fd = std::io::stdin().as_raw_fd();
-                let mut buf: [u8; 1] = [0];
-                let n = libc::read(fd, buf.as_mut_ptr() as *mut _, 1);
-                if n == 1 {
-                    Ok(Value::Str((buf[0] as char).to_string()))
-                } else {
-                    // n == 0 with VMIN=VTIME=0 means "no input ready"
-                    // when raw mode is on; n < 0 is an error (EAGAIN
-                    // when nonblocking — we treat the same).
-                    Ok(Value::Bool(false))
-                }
+            match sys::stdin_read_key() {
+                Some(b) => Ok(Value::Str((b as char).to_string())),
+                None => Ok(Value::Bool(false)),
             }
         }
 
@@ -481,6 +499,9 @@ pub fn call_builtin(
         //   pty_write(fd, s)   -> bytes written (int)
         //   pty_close(fd)      close master fd (child gets SIGHUP)
         //   pty_resize(fd, rows, cols)  TIOCSWINSZ ioctl
+        //
+        // Unix only. On Windows pty_spawn raises a ValueError, which a
+        // program can catch to degrade gracefully.
 
         // pty_spawn: fork a child running argv, connected via a pty.
         // Sets TERM=xterm-256color in the child before exec so the
@@ -493,16 +514,10 @@ pub fn call_builtin(
                         "pty_spawn(): argv must be non-empty".to_string(),
                     ));
                 }
-                let mut cstrs: Vec<std::ffi::CString> = Vec::new();
+                let mut strs: Vec<String> = Vec::with_capacity(borrowed.len());
                 for a in borrowed.iter() {
                     match a {
-                        Value::Str(s) => {
-                            cstrs.push(std::ffi::CString::new(s.as_str()).map_err(|_| {
-                                RuntimeError::ValueError(
-                                    "pty_spawn(): nul byte in argv element".to_string(),
-                                )
-                            })?);
-                        }
+                        Value::Str(s) => strs.push(s.clone()),
                         _ => {
                             return Err(RuntimeError::TypeError(
                                 "pty_spawn(): argv must be all strings".to_string(),
@@ -510,37 +525,9 @@ pub fn call_builtin(
                         }
                     }
                 }
-                let mut argv_p: Vec<*const libc::c_char> =
-                    cstrs.iter().map(|s| s.as_ptr()).collect();
-                argv_p.push(std::ptr::null());
-                unsafe {
-                    let mut master_fd: libc::c_int = 0;
-                    let pid = libc::forkpty(
-                        &mut master_fd,
-                        std::ptr::null_mut(),
-                        std::ptr::null(),
-                        std::ptr::null(),
-                    );
-                    if pid < 0 {
-                        return Err(RuntimeError::ValueError(
-                            "pty_spawn(): forkpty failed".to_string(),
-                        ));
-                    }
-                    if pid == 0 {
-                        // Child: set a sensible TERM and exec. If exec
-                        // fails we _exit so we don't unwind back into
-                        // OMG's runtime in the child.
-                        let term = std::ffi::CString::new("TERM=xterm-256color").unwrap();
-                        libc::putenv(term.into_raw());
-                        libc::execvp(cstrs[0].as_ptr(), argv_p.as_ptr());
-                        libc::_exit(127);
-                    }
-                    // Parent: make the master fd non-blocking so
-                    // pty_read can poll cheaply.
-                    let flags = libc::fcntl(master_fd, libc::F_GETFL, 0);
-                    libc::fcntl(master_fd, libc::F_SETFL, flags | libc::O_NONBLOCK);
-                    Ok(Value::Int(master_fd as i64))
-                }
+                sys::pty_spawn(&strs)
+                    .map(Value::Int)
+                    .map_err(RuntimeError::ValueError)
             }
             _ => Err(RuntimeError::TypeError(
                 "pty_spawn() expects a list of strings".to_string(),
@@ -553,27 +540,16 @@ pub fn call_builtin(
         // verbatim — the OMG layer interprets escape sequences via
         // its own VT emulator.
         "pty_read" => match args {
-            [Value::Int(fd)] => unsafe {
-                let mut buf = [0u8; 4096];
-                let n = libc::read(*fd as libc::c_int, buf.as_mut_ptr() as *mut _, buf.len());
-                if n > 0 {
-                    // Build a string that preserves the exact byte
-                    // sequence. UTF-8 lossy is fine because the VT
-                    // emulator works byte-by-byte and ASCII / valid
-                    // UTF-8 round-trips faithfully.
-                    let s = String::from_utf8_lossy(&buf[..n as usize]).into_owned();
-                    Ok(Value::Str(s))
-                } else if n == 0 {
-                    Ok(Value::Bool(false))
-                } else {
-                    let err = *libc::__errno_location();
-                    if err == libc::EAGAIN || err == libc::EWOULDBLOCK {
-                        Ok(Value::Str(String::new()))
-                    } else {
-                        Ok(Value::Bool(false))
-                    }
+            [Value::Int(fd)] => Ok(match sys::pty_read(*fd) {
+                // UTF-8 lossy is fine: the VT emulator works
+                // byte-by-byte and ASCII / valid UTF-8 round-trips
+                // faithfully.
+                sys::PtyRead::Data(bytes) => {
+                    Value::Str(String::from_utf8_lossy(&bytes).into_owned())
                 }
-            },
+                sys::PtyRead::Empty => Value::Str(String::new()),
+                sys::PtyRead::Eof => Value::Bool(false),
+            }),
             _ => Err(RuntimeError::TypeError(
                 "pty_read() expects an int fd".to_string(),
             )),
@@ -583,15 +559,9 @@ pub fn call_builtin(
         // writes are possible — callers should loop until either the
         // string is consumed or write returns <= 0.
         "pty_write" => match args {
-            [Value::Int(fd), Value::Str(s)] => unsafe {
-                let bytes = s.as_bytes();
-                let n = libc::write(
-                    *fd as libc::c_int,
-                    bytes.as_ptr() as *const _,
-                    bytes.len(),
-                );
-                Ok(Value::Int(n as i64))
-            },
+            [Value::Int(fd), Value::Str(s)] => sys::pty_write(*fd, s.as_bytes())
+                .map(Value::Int)
+                .map_err(RuntimeError::ValueError),
             _ => Err(RuntimeError::TypeError(
                 "pty_write() expects (int fd, string)".to_string(),
             )),
@@ -601,10 +571,10 @@ pub fn call_builtin(
         // the child's process group, so the shell tears down on its
         // own.
         "pty_close" => match args {
-            [Value::Int(fd)] => unsafe {
-                libc::close(*fd as libc::c_int);
+            [Value::Int(fd)] => {
+                sys::pty_close(*fd).map_err(RuntimeError::ValueError)?;
                 Ok(Value::None)
-            },
+            }
             _ => Err(RuntimeError::TypeError(
                 "pty_close() expects an int fd".to_string(),
             )),
@@ -614,16 +584,10 @@ pub fn call_builtin(
         // and any tty-aware program (less, vim, etc.) re-read this
         // via SIGWINCH and reflow.
         "pty_resize" => match args {
-            [Value::Int(fd), Value::Int(rows), Value::Int(cols)] => unsafe {
-                let ws = libc::winsize {
-                    ws_row: *rows as u16,
-                    ws_col: *cols as u16,
-                    ws_xpixel: 0,
-                    ws_ypixel: 0,
-                };
-                libc::ioctl(*fd as libc::c_int, libc::TIOCSWINSZ, &ws);
+            [Value::Int(fd), Value::Int(rows), Value::Int(cols)] => {
+                sys::pty_resize(*fd, *rows, *cols).map_err(RuntimeError::ValueError)?;
                 Ok(Value::None)
-            },
+            }
             _ => Err(RuntimeError::TypeError(
                 "pty_resize() expects (int fd, int rows, int cols)".to_string(),
             )),
@@ -657,9 +621,7 @@ pub fn call_builtin(
         // the REPL so the prompt sits on the same line as user input.
         "print" => match args {
             [Value::Str(s)] => {
-                use std::io::Write;
-                print!("{}", s);
-                let _ = std::io::stdout().flush();
+                write_stdout(s, false);
                 Ok(Value::None)
             }
             _ => Err(RuntimeError::TypeError(
@@ -1298,27 +1260,21 @@ pub fn call_builtin(
         // Refcounted heap state isn't thread-safe in either runtime,
         // so we deliberately chose processes over threads — each
         // child gets its own copy-on-write address space, no shared-
-        // mutability hazards. Unix-only.
+        // mutability hazards. Unix only: Windows has no fork, so
+        // there it raises a (catchable) ValueError.
         "fork" => {
             if !args.is_empty() {
                 return Err(RuntimeError::TypeError(
                     "fork() takes no arguments".to_string(),
                 ));
             }
-            // SAFETY: signal/fork are standard libc functions; calling
-            // them is fine from a single-threaded VM. Setting SIGCHLD
-            // to SIG_IGN is the POSIX-blessed way to disable zombies
-            // without a SIGCHLD handler.
-            unsafe {
-                libc::signal(libc::SIGCHLD, libc::SIG_IGN);
-                let pid = libc::fork();
-                if pid < 0 {
-                    let err = std::io::Error::last_os_error();
-                    Err(RuntimeError::ValueError(format!("fork: {}", err)))
-                } else {
-                    Ok(Value::Int(pid as i64))
-                }
+            // Flush buffered output first so the child doesn't inherit
+            // (and later re-print) anything the parent already wrote.
+            {
+                use std::io::Write;
+                let _ = std::io::stdout().flush();
             }
+            sys::fork().map(Value::Int).map_err(RuntimeError::ValueError)
         }
 
         // tcp_close(handle) -> None. Drops the listener or stream,
@@ -1524,9 +1480,8 @@ pub fn call_builtin(
         },
 
         // dict_keys(d) -> [String]. Returns the keys of a dict (or frozen
-        // dict) as a list. Order is *unspecified* (HashMap iteration);
-        // callers that need determinism should sort. OMG previously had
-        // no way to enumerate a dict's keys from inside the language.
+        // dict) as a list, in insertion order — the same order `emit d`
+        // prints them in, and the same on every backend.
         "dict_keys" => match args {
             [Value::Dict(map)] => {
                 let keys: Vec<Value> = map

@@ -38,7 +38,7 @@ pub fn repl_interpret() {
     let mut brace_depth: i32 = 0;
     let mut paren_depth: i32 = 0;
     let mut bracket_depth: i32 = 0;
-    let mut in_string: Option<char> = None;
+    let mut in_string = false;
 
     loop {
         let prompt = if buffer.is_empty() { ">>> " } else { "... " };
@@ -62,28 +62,34 @@ pub fn repl_interpret() {
             return;
         }
 
-        // Track brace nesting (ignoring braces inside string literals).
+        // Track bracket nesting so a block can span several lines.
+        // Brackets inside string literals and `#` comments don't count
+        // (an apostrophe in a comment used to be mistaken for the start
+        // of a string, leaving the prompt stuck on `...` forever — OMG
+        // has no single-quoted strings).
         let mut escape = false;
         for ch in line.chars() {
             if escape {
                 escape = false;
                 continue;
             }
-            match ch {
-                '\\' => escape = true,
-                '"' | '\'' => {
-                    if in_string == Some(ch) {
-                        in_string = None;
-                    } else if in_string.is_none() {
-                        in_string = Some(ch);
-                    }
+            if in_string {
+                match ch {
+                    '\\' => escape = true,
+                    '"' => in_string = false,
+                    _ => {}
                 }
-                '{' if in_string.is_none() => brace_depth += 1,
-                '}' if in_string.is_none() => brace_depth -= 1,
-                '(' if in_string.is_none() => paren_depth += 1,
-                ')' if in_string.is_none() => paren_depth -= 1,
-                '[' if in_string.is_none() => bracket_depth += 1,
-                ']' if in_string.is_none() => bracket_depth -= 1,
+                continue;
+            }
+            match ch {
+                '#' => break,
+                '"' => in_string = true,
+                '{' => brace_depth += 1,
+                '}' => brace_depth -= 1,
+                '(' => paren_depth += 1,
+                ')' => paren_depth -= 1,
+                '[' => bracket_depth += 1,
+                ']' => bracket_depth -= 1,
                 _ => {}
             }
         }
@@ -91,7 +97,7 @@ pub fn repl_interpret() {
         if brace_depth > 0
             || paren_depth > 0
             || bracket_depth > 0
-            || in_string.is_some()
+            || in_string
         {
             continue;
         }
@@ -168,7 +174,7 @@ pub fn repl_interpret() {
         brace_depth = 0;
         paren_depth = 0;
         bracket_depth = 0;
-        in_string = None;
+        in_string = false;
     }
 }
 

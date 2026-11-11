@@ -440,3 +440,138 @@ fn int_mod_takes_sign_of_divisor() {
     assert_eq!(run_int_binop_int(handle_mod, 7, -2), -1);
     assert_eq!(run_int_binop_int(handle_mod, -7, -2), -1);
 }
+// --- Builtin regression tests ------------------------------------------------
+
+fn call(name: &str, args: &[Value]) -> Result<Value, RuntimeError> {
+    builtins::call_builtin(name, args, &Env::new(), &HashMap::new())
+}
+
+fn as_str(v: Result<Value, RuntimeError>) -> String {
+    match v {
+        Ok(v) => v.to_string(),
+        Err(e) => panic!("builtin failed: {}", e),
+    }
+}
+
+#[test]
+fn round_only_treats_exact_halves_as_ties() {
+    let r = |f: f64| as_str(call("round", &[Value::Float(f)]));
+    // Exact ties go to the even neighbour...
+    assert_eq!(r(0.5), "0");
+    assert_eq!(r(1.5), "2");
+    assert_eq!(r(2.5), "2");
+    assert_eq!(r(3.5), "4");
+    assert_eq!(r(-0.5), "0");
+    assert_eq!(r(-1.5), "-2");
+    assert_eq!(r(-2.5), "-2");
+    // ...but values that are merely *near* a tie round normally.
+    assert_eq!(r(0.5000000001), "1");
+    assert_eq!(r(1.4999999999), "1");
+    assert_eq!(r(2.5000000001), "3");
+    assert_eq!(r(-1.4999999999), "-1");
+    assert_eq!(r(2.4), "2");
+    assert_eq!(r(2.6), "3");
+}
+
+#[test]
+fn hex_and_binary_use_a_sign_prefix_for_negatives() {
+    assert_eq!(as_str(call("hex", &[Value::Int(255)])), "ff");
+    assert_eq!(as_str(call("hex", &[Value::Int(-255)])), "-ff");
+    assert_eq!(as_str(call("hex", &[Value::Int(0)])), "0");
+    assert_eq!(
+        as_str(call("hex", &[Value::Int(i64::MIN)])),
+        "-8000000000000000"
+    );
+    assert_eq!(as_str(call("binary", &[Value::Int(5)])), "101");
+    assert_eq!(as_str(call("binary", &[Value::Int(-5)])), "-101");
+}
+
+#[test]
+fn binary_with_width_masks_and_pads() {
+    let b = |n: i64, w: i64| as_str(call("binary", &[Value::Int(n), Value::Int(w)]));
+    assert_eq!(b(5, 8), "00000101");
+    assert_eq!(b(-1, 8), "11111111");
+    assert_eq!(b(300, 8), "00101100");
+    // Width 64 used to shift by 64 (an overflow) and print all zeros.
+    assert_eq!(b(-1, 64), "1".repeat(64));
+    assert_eq!(b(1, 64), format!("{}1", "0".repeat(63)));
+    assert_eq!(b(-1, 70), format!("{}{}", "0".repeat(6), "1".repeat(64)));
+    assert!(call("binary", &[Value::Int(1), Value::Int(0)]).is_err());
+    assert!(call("binary", &[Value::Int(1), Value::Int(1_000_000)]).is_err());
+}
+
+#[test]
+fn floor_and_ceil_reject_values_outside_i64() {
+    assert!(call("floor", &[Value::Float(9_223_372_036_854_775_808.0)]).is_err());
+    assert!(call("ceil", &[Value::Float(1e300)]).is_err());
+    assert_eq!(as_str(call("floor", &[Value::Float(-0.5)])), "-1");
+    assert_eq!(as_str(call("ceil", &[Value::Float(-0.5)])), "0");
+}
+
+#[test]
+fn unsupported_platform_builtins_fail_cleanly() {
+    // On Unix these are real; elsewhere they must raise a catchable
+    // ValueError rather than abort or fail to compile.
+    if cfg!(not(unix)) {
+        let argv = Value::List(std::rc::Rc::new(std::cell::RefCell::new(vec![Value::Str(
+            "sh".to_string(),
+        )])));
+        assert!(matches!(
+            call("pty_spawn", &[argv]),
+            Err(RuntimeError::ValueError(_))
+        ));
+        assert!(matches!(call("fork", &[]), Err(RuntimeError::ValueError(_))));
+    }
+}
+
+#[test]
+fn functions_compare_equal_to_themselves() {
+    let f = || Value::Closure {
+        name: "f".to_string(),
+        captured: std::rc::Rc::new(Env::new()),
+    };
+    let g = Value::Closure {
+        name: "g".to_string(),
+        captured: std::rc::Rc::new(Env::new()),
+    };
+    assert!(ops_arith::values_equal(&f(), &f()));
+    assert!(!ops_arith::values_equal(&f(), &g));
+    // Closures over different environments are different values.
+    let mut env_a = Env::new();
+    env_a.insert("x".to_string(), crate::value::new_cell(Value::Int(1)));
+    let mut env_b = Env::new();
+    env_b.insert("x".to_string(), crate::value::new_cell(Value::Int(1)));
+    let ca = Value::Closure {
+        name: "c".to_string(),
+        captured: std::rc::Rc::new(env_a),
+    };
+    let cb = Value::Closure {
+        name: "c".to_string(),
+        captured: std::rc::Rc::new(env_b),
+    };
+    assert!(ops_arith::values_equal(&ca, &ca.clone()));
+    assert!(!ops_arith::values_equal(&ca, &cb));
+}
+
+#[test]
+fn dict_literal_keeps_source_order_and_last_duplicate_wins() {
+    // {b: 1, a: 2, b: 3}
+    let mut stack = vec![
+        Value::Str("b".to_string()),
+        Value::Int(1),
+        Value::Str("a".to_string()),
+        Value::Int(2),
+        Value::Str("b".to_string()),
+        Value::Int(3),
+    ];
+    ops_struct::handle_build_dict(3, &mut stack).unwrap();
+    assert_eq!(stack.len(), 1);
+    assert_eq!(stack[0].to_string(), "{b: 3, a: 2}");
+    assert_eq!(
+        as_str(call("dict_keys", &[stack[0].clone()])),
+        "[b, a]"
+    );
+    // Asking for more pairs than the stack holds is an error, not a panic.
+    let mut short = vec![Value::Int(1)];
+    assert!(ops_struct::handle_build_dict(1, &mut short).is_err());
+}

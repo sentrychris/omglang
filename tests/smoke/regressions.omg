@@ -1,0 +1,164 @@
+;;;omg
+
+# Cross-backend regression program.
+#
+# Every block below pins down a bug that was found and fixed. The
+# program is deterministic and prints the same text on every backend
+# (Rust VM via either frontend, the OMG-written VM, and the JS
+# transpiler) and on every OS; tests/smoke.sh diffs each backend's
+# output against regressions.expected.
+
+# --- Printing: a container that appears twice is not a cycle ----------------
+# The second `a` used to print as `[...]`.
+alloc a := [1]
+emit [a, a]
+alloc d := {x: 1}
+emit [d, d]
+
+# A real cycle still prints an ellipsis instead of recursing forever.
+alloc cyc := [1]
+cyc[0] := cyc
+emit cyc
+alloc self_dict := {}
+self_dict.me := self_dict
+emit self_dict
+
+# --- Dicts keep insertion order ----------------------------------------------
+# The Rust VM used to print these in a different order on every run.
+alloc ordered := {zeta: 1, alpha: 2, mid: 3}
+ordered.beta := 4
+ordered.alpha := 20
+emit ordered
+emit dict_keys(ordered)
+# A repeated key in a literal: the last value wins.
+emit {k: 1, k: 2}
+
+# --- Nested procs: names are local to the proc that defines them ------------
+# Both used to return 2, because nested procs shared one global table.
+proc first() {
+    proc helper() { return 1 }
+    return helper()
+}
+proc second() {
+    proc helper() { return 2 }
+    return helper()
+}
+emit first()
+emit second()
+
+# A nested proc must not replace a top-level proc of the same name.
+proc label() { return "top" }
+proc shadowing() {
+    proc label() { return "nested" }
+    return label()
+}
+emit shadowing()
+emit label()
+
+# A nested proc can call itself, even when a top-level proc shares its name.
+proc fact(n) { return -1 }
+proc outer(n) {
+    proc fact(k) {
+        if k <= 1 { return 1 }
+        return k * fact(k - 1)
+    }
+    return fact(n)
+}
+emit outer(5)
+emit fact(5)
+
+# Closures still capture by reference.
+proc make_counter() {
+    alloc c := 0
+    proc inc() {
+        c := c + 1
+        return c
+    }
+    return inc
+}
+alloc k1 := make_counter()
+alloc k2 := make_counter()
+emit k1()
+emit k1()
+emit k2()
+
+# --- round(): only exact halves are ties ------------------------------------
+emit round(0.5)
+emit round(1.5)
+emit round(2.5)
+emit round(3.5)
+emit round(-0.5)
+emit round(-1.5)
+emit round(-2.5)
+emit round(-3.5)
+emit round(0.5000000001)
+emit round(1.4999999999)
+emit round(2.4)
+emit round(2.6)
+
+# --- hex() / binary() --------------------------------------------------------
+emit hex(255)
+emit hex(-255)
+emit binary(5)
+emit binary(-5)
+emit binary(5, 8)
+emit binary(-1, 8)
+emit binary(300, 8)
+emit binary(-1, 64)
+emit binary(1, 66)
+
+# --- Literals ----------------------------------------------------------------
+# The largest int literal used to overflow inside the OMG-written lexer,
+# as did any float literal with 19 or more integer digits.
+emit 9223372036854775807
+emit 0b0111111111111111111111111111111111111111111111111111111111111111
+emit 10000000000000000000.0 > 1.0
+# An unknown escape keeps its backslash.
+emit "a\qb"
+emit length("a\qb")
+
+# --- Functions compare equal to themselves ------------------------------------
+proc f() { return 1 }
+alloc g := f
+emit g == f
+emit f == label
+
+# --- try / except unwinding ---------------------------------------------------
+proc risky(xs) {
+    try {
+        return xs[5]
+    } except e {
+        emit "caught: " + e
+    }
+    return -1
+}
+emit risky([1])
+proc deep(n) {
+    if n == 0 { panic("bottom") }
+    return 1 + deep(n - 1)
+}
+try {
+    emit deep(50)
+} except e {
+    emit e
+}
+proc break_in_try() {
+    alloc i := 0
+    loop i < 5 {
+        try {
+            if i == 2 { break }
+            i := i + 1
+        } except e {
+            emit "unexpected"
+        }
+    }
+    return i
+}
+emit break_in_try()
+try {
+    panic("still works after a break inside try")
+} except e {
+    emit e
+}
+
+emit "done"

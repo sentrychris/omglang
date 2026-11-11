@@ -130,12 +130,8 @@ proc check_unhandled_error() {
 # sides go through cwd-join + path_normalize so the source-file table
 # in the resulting .omgb is identical.
 proc absolute_normalised(file) {
-    alloc combined := file
-    if length(file) == 0 or (file[0] != "/" and file[0] != "\\") {
-        # `current_dir` is the runtime-injected cwd global.
-        combined := current_dir + "/" + file
-    }
-    return cc.path_normalize(combined)
+    # `current_dir` is the runtime-injected cwd global.
+    return cc.path_absolute_normalised(file, current_dir)
 }
 
 # Compile <file.omg> in-process and run it. forward_args becomes the

@@ -2,6 +2,8 @@
 name = "omg"
 version = "0.2.0"
 edition = "2021"
+# std::sync::LazyLock (used for the builtin handle tables) landed in 1.80.
+rust-version = "1.80"
 include = [
   "src/**",
   "build.rs",
@@ -21,6 +23,16 @@ keywords = ["language", "vm", "bytecode", "interpreter", "educational"]
 categories = ["compilers", "development-tools"]
 
 
-[dependencies]
-once_cell = "1.19"
+# The runtime has no cross-platform dependencies. The only crates it
+# pulls in are thin OS bindings, selected per target, for the handful of
+# builtins that talk to the terminal directly (raw-mode keyboard input,
+# pseudo-terminals, fork).
+
+[target.'cfg(unix)'.dependencies]
 libc = "0.2"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = [
+  "Win32_Foundation",
+  "Win32_System_Console",
+] }

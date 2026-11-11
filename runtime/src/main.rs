@@ -64,16 +64,13 @@ const SELF_HOSTED_VM: &[u8] =
 /// algorithm is what makes the source-file table byte-identical
 /// across implementations.
 fn absolute_normalised(path: &PathBuf) -> PathBuf {
-    let p = path.to_string_lossy().to_string();
-    let prefixed = if path.is_absolute() {
-        p
-    } else {
-        let cwd = env::current_dir()
-            .map(|c| c.to_string_lossy().to_string())
-            .unwrap_or_else(|_| ".".to_string());
-        format!("{}/{}", cwd, p)
-    };
-    PathBuf::from(compiler::path_normalize(&prefixed))
+    let cwd = env::current_dir()
+        .map(|c| c.to_string_lossy().to_string())
+        .unwrap_or_else(|_| ".".to_string());
+    PathBuf::from(compiler::path_absolute_normalised(
+        &path.to_string_lossy(),
+        &cwd,
+    ))
 }
 
 fn usage() -> String {
@@ -124,7 +121,37 @@ Examples:
     )
 }
 
+/// Stack size for the interpreter thread. The lexer/parser/compiler
+/// and value printing are recursive, and the *default* main-thread stack
+/// differs wildly by platform (8 MiB on Linux, 1 MiB on Windows — where
+/// a few hundred nested brackets were enough to crash). Running on our
+/// own thread gives every platform the same, generous limit.
+const STACK_SIZE: usize = 64 * 1024 * 1024;
+
 fn main() -> ExitCode {
+    vm::sys::init();
+    let code = match std::thread::Builder::new()
+        .name("omg".to_string())
+        .stack_size(STACK_SIZE)
+        .spawn(run_cli)
+    {
+        Ok(handle) => handle.join().unwrap_or(101),
+        // Couldn't get a big stack (very constrained system): carry on
+        // with whatever the main thread has.
+        Err(_) => run_cli(),
+    };
+    // If the program left the terminal in raw mode (it crashed, or just
+    // forgot `stdin_set_raw(false)`), give the user their shell back.
+    vm::sys::restore_terminal();
+    ExitCode::from(code)
+}
+
+/// Process exit codes. Plain `u8`s (rather than `ExitCode`) so they can
+/// be returned from the interpreter thread.
+const EXIT_OK: u8 = 0;
+const EXIT_FAIL: u8 = 1;
+
+fn run_cli() -> u8 {
     let mut args: Vec<String> = env::args().collect();
 
     // Pull `--rust` off the front (if present) so the rest of dispatch
@@ -147,13 +174,13 @@ fn main() -> ExitCode {
 
     if args.len() == 1 {
         repl_interpret();
-        return ExitCode::SUCCESS;
+        return EXIT_OK;
     }
 
     match args[1].as_str() {
         "-h" | "--help" => {
             println!("{}", usage());
-            return ExitCode::SUCCESS;
+            return EXIT_OK;
         }
         "-v" | "--version" => {
             println!(
@@ -162,7 +189,7 @@ fn main() -> ExitCode {
                 env::consts::ARCH,
                 VERSION
             );
-            return ExitCode::SUCCESS;
+            return EXIT_OK;
         }
         "--compile" => return cmd_compile(&args[2..]),
         "--disasm" => return cmd_disasm(&args[2..]),
@@ -203,12 +230,48 @@ fn main() -> ExitCode {
     };
 
     match result {
-        Ok(()) => ExitCode::SUCCESS,
+        Ok(()) => EXIT_OK,
         Err(e) => {
+            // Flush program output first so the error appears after it
+            // even when stdout and stderr share a pipe.
+            {
+                use std::io::Write;
+                let _ = std::io::stdout().flush();
+            }
             eprintln!("{}", e);
-            ExitCode::FAILURE
+            EXIT_FAIL
         }
     }
+}
+
+/// Turn a failure of the *embedded* compiler into the error the user
+/// should see. The OMG-written compiler reports problems in the user's
+/// program by panicking with a ready-made `Kind: message` string, which
+/// the VM then wraps in a traceback through the compiler's own source
+/// (fifteen frames of `parse_or` / `parse_and` / ...). That traceback is
+/// noise: show just the diagnostic, as the Rust frontend does. Anything
+/// else — an `IndexError` inside the compiler, say — is a compiler bug,
+/// and keeps its traceback so it can be reported.
+fn clean_compile_error(e: RuntimeError) -> RuntimeError {
+    let text = e.to_string();
+    let last = text.lines().last().unwrap_or("");
+    let diagnostic = |msg: &str| -> Option<RuntimeError> {
+        if let Some(m) = msg.strip_prefix("SyntaxError: ") {
+            Some(RuntimeError::SyntaxError(m.to_string()))
+        } else {
+            msg.strip_prefix("ModuleImportError: ")
+                .map(|m| RuntimeError::ModuleImportError(m.to_string()))
+        }
+    };
+    if let Some(found) = diagnostic(last) {
+        return found;
+    }
+    if let Some(msg) = last.strip_prefix("RuntimeError: ") {
+        // A deliberate `panic(...)` from the compiler: always a
+        // diagnostic about the input, with or without a kind prefix.
+        return diagnostic(msg).unwrap_or_else(|| RuntimeError::SyntaxError(msg.to_string()));
+    }
+    e
 }
 
 fn run_omg(path: &PathBuf, full_args: &[String]) -> Result<(), RuntimeError> {
@@ -265,10 +328,10 @@ fn check_header(source: &str, path: &PathBuf) -> Result<(), RuntimeError> {
     )))
 }
 
-fn cmd_compile(args: &[String]) -> ExitCode {
+fn cmd_compile(args: &[String]) -> u8 {
     if args.is_empty() {
         eprintln!("--compile expects an input .omg path");
-        return ExitCode::FAILURE;
+        return EXIT_FAIL;
     }
     let in_path = PathBuf::from(&args[0]);
     let out: Option<PathBuf> = args.get(1).map(PathBuf::from);
@@ -276,12 +339,12 @@ fn cmd_compile(args: &[String]) -> ExitCode {
         Ok(s) => s,
         Err(e) => {
             eprintln!("cannot read '{}': {}", in_path.display(), e);
-            return ExitCode::FAILURE;
+            return EXIT_FAIL;
         }
     };
     if let Err(e) = check_header(&source, &in_path) {
         eprintln!("{}", e);
-        return ExitCode::FAILURE;
+        return EXIT_FAIL;
     }
     // Absolute-normalise so the .omgb's source-file table matches
     // what bootstrap/bin/omgc produces.
@@ -290,7 +353,7 @@ fn cmd_compile(args: &[String]) -> ExitCode {
         Ok(p) => p,
         Err(e) => {
             eprintln!("{}", e);
-            return ExitCode::FAILURE;
+            return EXIT_FAIL;
         }
     };
     let bytes = write_bytecode(&program.code, &program.funcs, &program.src_map);
@@ -298,25 +361,25 @@ fn cmd_compile(args: &[String]) -> ExitCode {
         Some(p) => {
             if let Err(e) = fs::write(&p, &bytes) {
                 eprintln!("cannot write '{}': {}", p.display(), e);
-                return ExitCode::FAILURE;
+                return EXIT_FAIL;
             }
         }
         None => {
             use std::io::Write;
             if std::io::stdout().write_all(&bytes).is_err() {
-                return ExitCode::FAILURE;
+                return EXIT_FAIL;
             }
         }
     }
-    ExitCode::SUCCESS
+    EXIT_OK
 }
 
 /// Compile a `.omg` file with the embedded OMG-in-OMG compiler and write
 /// the bytecode to disk — the self-hosted analogue of `--compile`.
-fn cmd_self_hosted_compile(args: &[String]) -> ExitCode {
+fn cmd_self_hosted_compile(args: &[String]) -> u8 {
     if args.is_empty() {
         eprintln!("--self-hosted-compile expects <in.omg> [<out.omgb>]");
-        return ExitCode::FAILURE;
+        return EXIT_FAIL;
     }
     let in_path = PathBuf::from(&args[0]);
     let out: Option<PathBuf> = args.get(1).map(PathBuf::from);
@@ -324,40 +387,40 @@ fn cmd_self_hosted_compile(args: &[String]) -> ExitCode {
         Ok(b) => b,
         Err(e) => {
             eprintln!("{}", e);
-            return ExitCode::FAILURE;
+            return EXIT_FAIL;
         }
     };
     match out {
         Some(p) => {
             if let Err(e) = fs::write(&p, &bytes) {
                 eprintln!("cannot write '{}': {}", p.display(), e);
-                return ExitCode::FAILURE;
+                return EXIT_FAIL;
             }
         }
         None => {
             use std::io::Write;
             if std::io::stdout().write_all(&bytes).is_err() {
-                return ExitCode::FAILURE;
+                return EXIT_FAIL;
             }
         }
     }
-    ExitCode::SUCCESS
+    EXIT_OK
 }
 
 /// Compile a `.omg` file with both the Rust frontend and the OMG-in-OMG
 /// frontend, then assert the byte streams are identical. Used to verify
 /// that the self-hosted compiler is a fixed point.
-fn cmd_verify_self_hosted(args: &[String]) -> ExitCode {
+fn cmd_verify_self_hosted(args: &[String]) -> u8 {
     if args.is_empty() {
         eprintln!("--verify-self-hosted expects a .omg path");
-        return ExitCode::FAILURE;
+        return EXIT_FAIL;
     }
     let in_path = PathBuf::from(&args[0]);
     let source = match fs::read_to_string(&in_path) {
         Ok(s) => s,
         Err(e) => {
             eprintln!("cannot read '{}': {}", in_path.display(), e);
-            return ExitCode::FAILURE;
+            return EXIT_FAIL;
         }
     };
     // Both frontends absolute-normalise the entry path the same way
@@ -368,14 +431,14 @@ fn cmd_verify_self_hosted(args: &[String]) -> ExitCode {
         Ok(p) => write_bytecode(&p.code, &p.funcs, &p.src_map),
         Err(e) => {
             eprintln!("Rust frontend failed: {}", e);
-            return ExitCode::FAILURE;
+            return EXIT_FAIL;
         }
     };
     let omg_bytes = match self_hosted_compile(&in_path) {
         Ok(b) => b,
         Err(e) => {
             eprintln!("OMG frontend failed: {}", e);
-            return ExitCode::FAILURE;
+            return EXIT_FAIL;
         }
     };
     if rust_bytes == omg_bytes {
@@ -384,7 +447,7 @@ fn cmd_verify_self_hosted(args: &[String]) -> ExitCode {
             in_path.display(),
             rust_bytes.len()
         );
-        ExitCode::SUCCESS
+        EXIT_OK
     } else {
         println!(
             "FAIL  {}: Rust={} bytes, OMG={} bytes — outputs differ",
@@ -392,7 +455,7 @@ fn cmd_verify_self_hosted(args: &[String]) -> ExitCode {
             rust_bytes.len(),
             omg_bytes.len()
         );
-        ExitCode::FAILURE
+        EXIT_FAIL
     }
 }
 
@@ -419,7 +482,10 @@ fn self_hosted_compile(in_path: &PathBuf) -> Result<Vec<u8>, RuntimeError> {
         abs_in.to_string_lossy().to_string(),
         tmp.to_string_lossy().to_string(),
     ];
-    run(&code, &funcs, &src_map, &args)?;
+    if let Err(e) = run(&code, &funcs, &src_map, &args) {
+        let _ = fs::remove_file(&tmp);
+        return Err(clean_compile_error(e));
+    }
     let bytes = fs::read(&tmp).map_err(|e| {
         RuntimeError::ModuleImportError(format!(
             "cannot read self-hosted output '{}': {}",
@@ -489,17 +555,17 @@ fn omg_vm_compile(in_path: &PathBuf) -> Result<Vec<u8>, RuntimeError> {
 /// streams are identical. The strongest self-hosting invariant the
 /// project tests — proves *both* the OMG compiler and the OMG VM behave
 /// like their Rust counterparts on the input.
-fn cmd_verify_omg_vm(args: &[String]) -> ExitCode {
+fn cmd_verify_omg_vm(args: &[String]) -> u8 {
     if args.is_empty() {
         eprintln!("--verify-omg-vm expects a .omg path");
-        return ExitCode::FAILURE;
+        return EXIT_FAIL;
     }
     let in_path = PathBuf::from(&args[0]);
     let source = match fs::read_to_string(&in_path) {
         Ok(s) => s,
         Err(e) => {
             eprintln!("cannot read '{}': {}", in_path.display(), e);
-            return ExitCode::FAILURE;
+            return EXIT_FAIL;
         }
     };
     let abs_in = absolute_normalised(&in_path);
@@ -507,14 +573,14 @@ fn cmd_verify_omg_vm(args: &[String]) -> ExitCode {
         Ok(p) => write_bytecode(&p.code, &p.funcs, &p.src_map),
         Err(e) => {
             eprintln!("Rust frontend failed: {}", e);
-            return ExitCode::FAILURE;
+            return EXIT_FAIL;
         }
     };
     let meta_bytes = match omg_vm_compile(&in_path) {
         Ok(b) => b,
         Err(e) => {
             eprintln!("OMG-on-OMG-VM failed: {}", e);
-            return ExitCode::FAILURE;
+            return EXIT_FAIL;
         }
     };
     if rust_bytes == meta_bytes {
@@ -523,7 +589,7 @@ fn cmd_verify_omg_vm(args: &[String]) -> ExitCode {
             in_path.display(),
             rust_bytes.len()
         );
-        ExitCode::SUCCESS
+        EXIT_OK
     } else {
         println!(
             "FAIL  {}: Rust={} bytes, OMG-on-OMG-VM={} bytes — outputs differ",
@@ -531,7 +597,7 @@ fn cmd_verify_omg_vm(args: &[String]) -> ExitCode {
             rust_bytes.len(),
             meta_bytes.len()
         );
-        ExitCode::FAILURE
+        EXIT_FAIL
     }
 }
 
@@ -543,17 +609,17 @@ fn rand_suffix() -> u64 {
         .unwrap_or(0)
 }
 
-fn cmd_disasm(args: &[String]) -> ExitCode {
+fn cmd_disasm(args: &[String]) -> u8 {
     if args.is_empty() {
         eprintln!("--disasm expects a file path");
-        return ExitCode::FAILURE;
+        return EXIT_FAIL;
     }
     let path = PathBuf::from(&args[0]);
     let bytes = match fs::read(&path) {
         Ok(b) => b,
         Err(e) => {
             eprintln!("cannot read '{}': {}", path.display(), e);
-            return ExitCode::FAILURE;
+            return EXIT_FAIL;
         }
     };
     let (code, funcs): (Vec<Instr>, std::collections::HashMap<String, Function>) =
@@ -562,20 +628,20 @@ fn cmd_disasm(args: &[String]) -> ExitCode {
                 Ok((code, funcs, _src_map)) => (code, funcs),
                 Err(e) => {
                     eprintln!("{}", e);
-                    return ExitCode::FAILURE;
+                    return EXIT_FAIL;
                 }
             }
         } else {
             let source = String::from_utf8_lossy(&bytes).to_string();
             if let Err(e) = check_header(&source, &path) {
                 eprintln!("{}", e);
-                return ExitCode::FAILURE;
+                return EXIT_FAIL;
             }
             match compile_source(&source, &path) {
                 Ok(p) => (p.code, p.funcs),
                 Err(e) => {
                     eprintln!("{}", e);
-                    return ExitCode::FAILURE;
+                    return EXIT_FAIL;
                 }
             }
         };
@@ -595,5 +661,5 @@ fn cmd_disasm(args: &[String]) -> ExitCode {
     for (i, instr) in code.iter().enumerate() {
         println!("{:04}  {:?}", i, instr);
     }
-    ExitCode::SUCCESS
+    EXIT_OK
 }

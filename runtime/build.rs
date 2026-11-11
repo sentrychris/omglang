@@ -63,7 +63,11 @@ fn bootstrap_one(project_root: &PathBuf, src_rel: &str, out_rel: &str) {
     let out_path = project_root.join(out_rel);
     let src = fs::read_to_string(&src_path)
         .unwrap_or_else(|e| panic!("read {}: {}", src_path.display(), e));
-    let program = compiler::compile_source(&src, &src_path)
+    // Hand the compiler a normalised, forward-slash path: it is embedded
+    // in the bytecode's source-file table and shows up in tracebacks,
+    // where `C:\repo\bootstrap/src/compiler.omg` would look broken.
+    let display_path = compiler::path_normalize(&src_path.to_string_lossy());
+    let program = compiler::compile_source(&src, &display_path)
         .unwrap_or_else(|e| panic!("compile {}: {}", src_path.display(), e));
     let bytes = bytecode::write_bytecode(&program.code, &program.funcs, &program.src_map);
     fs::write(&out_path, &bytes)

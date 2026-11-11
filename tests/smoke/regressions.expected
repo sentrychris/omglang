@@ -1,0 +1,50 @@
+[[1], [1]]
+[{x: 1}, {x: 1}]
+[[...]]
+{me: {...}}
+{zeta: 1, alpha: 20, mid: 3, beta: 4}
+[zeta, alpha, mid, beta]
+{k: 2}
+1
+2
+nested
+top
+120
+-1
+1
+2
+1
+0
+2
+2
+4
+0
+-2
+-2
+-4
+1
+1
+2
+3
+ff
+-ff
+101
+-101
+00000101
+11111111
+00101100
+1111111111111111111111111111111111111111111111111111111111111111
+000000000000000000000000000000000000000000000000000000000000000001
+9223372036854775807
+9223372036854775807
+true
+a\qb
+4
+true
+false
+caught: IndexError: index 5 out of range for length 1
+-1
+RuntimeError: bottom
+2
+RuntimeError: still works after a break inside try
+done
