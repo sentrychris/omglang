@@ -15,8 +15,12 @@ require_native_toolchain
 # compare just the user-visible output. The banner is always two lines.
 # We only strip leading prompts — orphan leading whitespace stays
 # intact so multi-line tracebacks keep their `  File ...` indent.
+#
+# `-E` (extended regex) rather than `\|`: alternation in a basic regex
+# is a GNU extension that BSD/macOS sed treats as literal text, which
+# left every prompt in place there.
 strip_repl() {
-    sed -e '1,2d' -e 's/^\(>>> \|\.\.\. \)*//' | sed '/^$/d'
+    sed -E -e '1,2d' -e 's/^(>>> |\.\.\. )*//' | sed '/^$/d'
 }
 
 # Run a session and capture (banner-stripped) stdout + stderr combined.

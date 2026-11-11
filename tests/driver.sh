@@ -101,11 +101,12 @@ square(7) = 49"
 assert_stdout "AOT binary produces correct output" "$expected" \
     "$TMPDIR_TEST/fixture-aot" p q
 
-# AOT binary should be a real ELF, not a shell script.
+# AOT binary should be a real native executable (ELF on Linux, Mach-O
+# on macOS), not a shell script.
 file_output=$(file "$TMPDIR_TEST/fixture-aot")
 case "$file_output" in
-    *ELF*) pass "AOT output is an ELF binary" ;;
-    *) fail "AOT output is not ELF" "got: $file_output" ;;
+    *ELF*|*Mach-O*) pass "AOT output is a native executable" ;;
+    *) fail "AOT output is not a native executable" "got: $file_output" ;;
 esac
 
 # Default output path: input minus .omg.
