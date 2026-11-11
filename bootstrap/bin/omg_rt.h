@@ -1813,8 +1813,7 @@ static Value omg_builtin_executable_path(void) {
     const char *src = realpath(buf, resolved) ? resolved : buf;
     size_t n = strlen(src);
     char *out = (char *)malloc(n + 1);
-    if (!out) { fprintf(stderr, "out of memory
-"); exit(1); }
+    if (!out) { fprintf(stderr, "out of memory\n"); exit(1); }
     memcpy(out, src, n + 1);
     return omg_str(out);
 #else

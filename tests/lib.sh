@@ -50,8 +50,7 @@ fail() {
     # without digging through the log.
     if [ -n "${GITHUB_ACTIONS:-}" ]; then
         local detail
-        detail=$(printf '%s' "${2:-}" | head -n 12 | tr '
-' '|')
+        detail=$(printf '%s' "${2:-}" | head -n 12 | tr '\n' '|')
         echo "::error title=test failed: $1::$detail"
     fi
 }
