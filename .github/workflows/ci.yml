@@ -35,7 +35,7 @@ jobs:
         os: [ubuntu-latest, macos-latest, windows-latest]
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -92,7 +92,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Install Rust 1.80
         uses: dtolnay/rust-toolchain@1.80.0
@@ -120,7 +120,7 @@ jobs:
         os: [ubuntu-latest, macos-latest]
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -207,8 +207,8 @@ jobs:
           done
           # Annotate with the tail of the *last* log written — the step
           # that failed.
-          last=$(ls -t build.log native-build.log native-rebuild.log tests.log regressions.log package.log 2>/dev/null | head -n 1)
+          last=$(ls -t build.log native-build.log native-rebuild.log tests.log regressions.log package.log 2>/dev/null | head -n 1 || true)
           if [ -n "$last" ]; then
-            msg=$(tail -n 30 "$last" | sed 's/%/%25/g' | awk '{printf "%s%%0A", $0}')
+            msg=$(tail -n 60 "$last" | sed 's/%/%25/g' | awk '{printf "%s%%0A", $0}')
             echo "::error title=${{ matrix.os }} $last::$msg"
           fi
