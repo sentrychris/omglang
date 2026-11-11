@@ -30,6 +30,10 @@ proc make_adder(n) {
 alloc add5 := make_adder(5)
 emit add5(10)
 ` },
+    // Float literals reach the transpilers in a different form from the
+    // one the VM runs; the C and JS stages used to fail on any of them.
+    { name: 'floats',    src: ';;;omg\n\nemit 1.5 + 2\nemit 0.1 + 0.2\n', expectRun: '3.5\n0.30000000000000004' },
+    { name: 'dicts',     src: ';;;omg\n\nalloc d := {b: 1, a: 2}\nemit d\nemit length(d)\n', expectRun: '{b: 1, a: 2}\n2' },
     { name: 'syntax_err', src: ';;;omg\n\nemit (((\n' },
     { name: 'compile_err', src: ';;;omg\n\nimport "no_such.omg" as x\nemit 1\n' },
 ];
@@ -110,7 +114,19 @@ for (const s of SAMPLES) {
         const firstLine = v.split('\n').find(l => l.trim().length > 0) || '(blank)';
         console.log(`  ${st.padEnd(8)}: ${v.length} chars · "${firstLine.slice(0, 70)}"`);
     }
-    if (!ok) failed++;
+    // A stage that caught an internal error still produces framed
+    // output, so check for the error markers explicitly, and compare
+    // the run stage against the expected output where one is given.
+    let stageError = null;
+    for (const st of ['c', 'js']) {
+        const v = r.sections[st] || '';
+        if (/^(C-gen|JS-gen) error:/.test(v)) stageError = `${st} stage: ${v.split('\n')[0]}`;
+    }
+    if (s.expectRun !== undefined && r.sections.run !== s.expectRun) {
+        stageError = `run stage printed ${JSON.stringify(r.sections.run)}, expected ${JSON.stringify(s.expectRun)}`;
+    }
+    if (stageError) console.log('  error: ' + stageError);
+    if (!ok || stageError) failed++;
 }
 
 console.log('---');
