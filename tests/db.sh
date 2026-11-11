@@ -131,7 +131,8 @@ last=400"
 assert_eq "400 rows round-trip (Rust)" "$expected" "$actual"
 
 # File should have at least 3 pages (meta + 2 leaf).
-size=$(stat -c%s "$DB")
+# `wc -c` rather than `stat -c%s`: stat's flags differ between GNU and BSD.
+size=$(wc -c < "$DB" | tr -d ' ')
 if [ "$size" -ge 12288 ]; then
     pass "400-row file allocated ≥3 pages (size=$size)"
 else

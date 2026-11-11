@@ -1,7 +1,12 @@
 #!/bin/bash
 # Build the OMG native toolchain into bootstrap/bin/. Produces four
-# native ELF binaries plus the C runtime header. After this completes,
+# native binaries plus the C runtime header. After this completes,
 # the Rust runtime is no longer required to compile or run OMG programs.
+#
+# Works on Linux and macOS (any Unix with a C compiler). The binaries
+# checked into bootstrap/bin/ are Linux x86-64; on other hosts the first
+# run bootstraps from the Rust runtime and replaces them with native
+# ones — don't commit those back.
 #
 # Two modes:
 #   1. Bootstrap: native toolchain doesn't yet exist — uses the Rust
@@ -33,20 +38,40 @@ SRC_DIR=bootstrap/src
 BIN_DIR=bootstrap/bin
 mkdir -p "$BIN_DIR"
 
-if [ -x "$BIN_DIR/omgc" ] && [ -x "$BIN_DIR/omgcc" ]; then
+# The binaries checked into bootstrap/bin/ are Linux x86-64 ELFs. On any
+# other host (macOS, Linux on ARM, ...) they exist and are executable
+# but can't actually run, so "is the file there" isn't enough — ask each
+# one for its version and see whether the kernel will have it.
+runs_here() {
+    [ -x "$1" ] && "$1" --version >/dev/null 2>&1
+}
+
+if ! command -v cc >/dev/null 2>&1; then
+    echo "No C compiler found (need 'cc' on PATH)."
+    echo "  Linux:  install gcc or clang (e.g. apt install build-essential)"
+    echo "  macOS:  xcode-select --install"
+    echo "  Windows: the native toolchain needs a POSIX environment; use WSL,"
+    echo "           or run OMG through the Rust runtime (runtime/), which"
+    echo "           builds natively on Windows."
+    exit 1
+fi
+
+if runs_here "$BIN_DIR/omgc" && runs_here "$BIN_DIR/omgcc"; then
     echo "[1/4] Self-rebuild from existing native toolchain"
     DRIVER=native
 elif [ -x runtime/target/release/omg ]; then
     echo "[1/4] Bootstrapping from Rust runtime"
+    echo "      (no native toolchain that runs on this host: $(uname -sm))"
     DRIVER=rust
 else
-    echo "Need either $BIN_DIR/{omgc,omgcc} or runtime/target/release/omg."
+    echo "Need either a $BIN_DIR/{omgc,omgcc} that runs on this host"
+    echo "($(uname -sm)), or the Rust runtime at runtime/target/release/omg."
     echo "First-time build: cd runtime && cargo build --release"
     exit 1
 fi
 
 WORK=$(mktemp -d)
-trap "rm -rf $WORK" EXIT
+trap 'rm -rf "$WORK"' EXIT
 
 # Compile .omg -> .omgb using the chosen driver.
 omg_compile() {
@@ -77,7 +102,11 @@ build_binary() {
     # step_inner's hot dispatch chain. The transpiler inlines omg_rt.h
     # into a single TU per binary, so -flto adds overhead and a
     # serial-LTRANS warning with no measurable benefit.
-    cc -O3 -w "$WORK/$base.c" -o "$out" -lm
+    # Build to a temp name and move into place: when self-rebuilding,
+    # "$out" may be the very compiler that is running this pipeline, and
+    # some systems refuse to overwrite a busy executable.
+    cc -O3 -w "$WORK/$base.c" -o "$WORK/$base.bin" -lm
+    mv -f "$WORK/$base.bin" "$out"
 }
 
 # Install the runtime headers FIRST. omgcc reads omg_rt.h via

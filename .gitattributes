@@ -1,0 +1,12 @@
+# Keep line endings stable across platforms. Without this, a Windows
+# checkout with core.autocrlf=true turns the shell scripts and expected
+# test outputs into CRLF, which breaks bash and every output comparison.
+* text=auto eol=lf
+
+# Pre-built native toolchain (Linux x86-64 ELF) and anything else that
+# must never be touched by line-ending conversion.
+bootstrap/bin/omg   binary
+bootstrap/bin/omgc  binary
+bootstrap/bin/omgcc binary
+bootstrap/bin/omgjs binary
+*.omgb binary

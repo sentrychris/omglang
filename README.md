@@ -49,13 +49,37 @@ cd omglang
 cargo build --release --manifest-path runtime/Cargo.toml
 ```
 
-That builds the OMG runtime as `runtime/target/release/omg`. From here
-on this README assumes you have it on your `PATH` as `omg`. Either
-copy/symlink the binary somewhere on your `PATH`, or alias it:
+That builds the OMG runtime as `runtime/target/release/omg`
+(`omg.exe` on Windows). From here on this README assumes you have it on
+your `PATH` as `omg`. Either copy/symlink the binary somewhere on your
+`PATH`, or alias it:
 
 ```sh
 alias omg=$(pwd)/runtime/target/release/omg
 ```
+
+```powershell
+# Windows (PowerShell)
+Set-Alias omg "$PWD\runtime\target\release\omg.exe"
+```
+
+### Platform support
+
+|                                              | Linux | macOS | Windows |
+| -------------------------------------------- | :---: | :---: | :-----: |
+| Rust runtime (`cargo build`): VM, both compilers, REPL | ✓ | ✓ | ✓ |
+| Raw-mode keyboard input (`stdin_set_raw`, `stdin_read_key`), so the games run | ✓ | ✓ | ✓ |
+| Pseudo-terminals and `fork` (`pty_*`, `fork`) | ✓ | ✓ | raise a catchable `ValueError` |
+| Native toolchain (`bootstrap/build.sh`, `omg --build`) | ✓ | ✓ | needs WSL |
+
+The runtime needs Rust 1.80 or newer and nothing else. CI builds and
+tests it on all three systems on every push. The binaries checked into
+`bootstrap/bin/` are Linux x86-64; on macOS `bootstrap/build.sh`
+notices they can't run and bootstraps native ones from the Rust runtime
+instead.
+
+`tests/smoke.sh` is a quick, portable self-check (it needs only the
+Rust runtime, so it also runs under Git Bash on Windows).
 
 ### Hello, world
 
@@ -629,8 +653,8 @@ Always available, no import needed.
 | `log(x)`                       | natural log, returns float                            |
 | `sin(x)` / `cos(x)` / `tan(x)` | trigonometry in radians, returns float                |
 | **Formatting**                 |                                                       |
-| `hex(n)`                       | lowercase hex string for integer `n`                  |
-| `binary(n)` / `binary(n, w)`   | binary string for `n`, optionally `w` bits wide       |
+| `hex(n)`                       | lowercase hex string for integer `n` (`hex(-255)` is `-ff`) |
+| `binary(n)` / `binary(n, w)`   | binary string for `n`; with `w`, the low `w` two's-complement bits, zero-padded |
 | `float_bits(s)`                | parse a float literal to its IEEE-754 i64 bit pattern |
 | `bits_to_float(i)`             | inverse: i64 bits → float                             |
 | **Collections**                |                                                       |
@@ -654,7 +678,7 @@ Always available, no import needed.
 | **Real-time terminal I/O**     |                                                       |
 | `time_ms()`                    | current time in ms (epoch-based; suitable for elapsed-time) |
 | `sleep_ms(n)`                  | pause the process for `n` milliseconds                |
-| `stdin_set_raw(on)`            | toggle cbreak / no-echo mode (Linux TTY only)         |
+| `stdin_set_raw(on)`            | toggle cbreak / no-echo mode (Unix terminals and the Windows console) |
 | `stdin_read_key()`             | non-blocking one-byte read; returns char or `false`   |
 | **Errors**                     |                                                       |
 | `panic(msg)` / `raise(msg)`    | raise a runtime error (catchable with `try`/`except`) |
@@ -700,8 +724,8 @@ Variables, functions, and imports persist across lines until you `quit`.
 
 ## Compile to a native binary
 
-OMG can also be compiled to standalone native ELF binaries — no Rust
-required at runtime. The OMG-to-C transpiler at
+OMG can also be compiled to standalone native binaries on Linux and
+macOS — no Rust required at runtime. The OMG-to-C transpiler at
 [`bootstrap/src/native-c.omg`](bootstrap/src/native-c.omg) emits self-contained
 C, which `cc -O3` turns into a small (~30 KB) executable.
 
@@ -712,7 +736,7 @@ bootstrap/build.sh
 
 # After that: no Rust required to compile or run OMG
 bootstrap/bin/omg foo.omg              # compile and run
-bootstrap/bin/omg --build foo.omg foo  # AOT to a native ELF
+bootstrap/bin/omg --build foo.omg foo  # AOT to a native executable
 ./foo
 ```
 

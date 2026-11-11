@@ -39,6 +39,15 @@ for arg in "$@"; do
     esac
 done
 
+# In-place sed that works with both GNU sed (`-i`) and BSD/macOS sed
+# (`-i ''`): write to a temp file and move it over the original. The
+# file to edit is the last argument; everything before it is passed to
+# sed unchanged.
+sed_inplace() {
+    local file="${!#}"
+    sed "${@:1:$#-1}" "$file" > "$file.sedtmp" && mv -f "$file.sedtmp" "$file"
+}
+
 # === Sanity checks ===========================================================
 
 for f in compiler.omg vm.omg native-c.omg omg.omg omg_rt.h; do
@@ -109,7 +118,7 @@ done
 # bootstrap/ prefix), and bootstrap/build.sh → build.sh.
 for f in "$DIST_DIR/tests"/*.sh "$DIST_DIR/tests/README.md"; do
     [ -f "$f" ] || continue
-    sed -i \
+    sed_inplace \
         -e 's|bootstrap/bin/|bin/|g' \
         -e 's|bootstrap/src/|src/|g' \
         -e 's|bootstrap/build\.sh|build.sh|g' \
@@ -405,7 +414,7 @@ done
 # Rewrite paths so docs work standalone (no bootstrap/ prefix; no
 # runtime/target/release/omg references).
 for f in "$DIST_DIR/docs"/*.md; do
-    sed -i \
+    sed_inplace \
         -e 's|bootstrap/bin/|bin/|g' \
         -e 's|bootstrap/src/|src/|g' \
         -e 's|bootstrap/build\.sh|./build.sh|g' \

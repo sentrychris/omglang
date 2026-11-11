@@ -45,6 +45,15 @@ fail() {
     if [ -n "${2:-}" ]; then
         echo -e "      ${YELLOW}$2${NC}"
     fi
+    # Under GitHub Actions, also raise an annotation so the failing test
+    # (and the first lines of its detail) shows up on the run summary
+    # without digging through the log.
+    if [ -n "${GITHUB_ACTIONS:-}" ]; then
+        local detail
+        detail=$(printf '%s' "${2:-}" | head -n 12 | tr '
+' '|')
+        echo "::error title=test failed: $1::$detail"
+    fi
 }
 
 # Pretty section header.

@@ -28,6 +28,26 @@ running on the VM — the language compiles itself end to end. Pass
 `--rust` to use the Rust frontend instead, which is significantly faster
 but bypasses the self-hosted toolchain.
 
+## Platforms
+
+The runtime builds and runs on Linux, macOS and Windows with a stock
+Rust toolchain (1.80 or newer). It has no cross-platform dependencies;
+the only crates it uses are OS bindings selected per target — `libc` on
+Unix, `windows-sys` on Windows — for the few builtins that talk to the
+terminal directly. All of that lives in one file,
+[`src/vm/sys.rs`](src/vm/sys.rs):
+
+| Builtin                              | Unix                         | Windows                        |
+| ------------------------------------ | ---------------------------- | ------------------------------ |
+| `stdin_set_raw`, `stdin_read_key`    | termios, non-blocking read   | console modes, input records   |
+| `pty_spawn` / `pty_read` / ...       | `forkpty`                    | raises a catchable `ValueError` |
+| `fork`                               | `fork`                       | raises a catchable `ValueError` |
+
+Paths are handled as plain strings with either kind of slash and an
+optional drive letter (see the `path_*` helpers in `src/compiler.rs`,
+mirrored one-for-one in `bootstrap/src/compiler.omg`), so both compilers
+keep producing byte-identical bytecode on every system.
+
 ## Quick start
 
 ```sh
