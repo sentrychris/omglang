@@ -16,18 +16,58 @@
 set -e
 cd "$(dirname "$0")/.."
 
-OMG=bootstrap/bin/omg
-OMGJS_NATIVE=bootstrap/bin/omgjs
 WEB_OUT=web/examples
 mkdir -p "$WEB_OUT"
 WORK=$(mktemp -d)
-trap "rm -rf $WORK" EXIT
+trap 'rm -rf "$WORK"' EXIT
+
+# Pick a toolchain. Prefer the native binaries; if they can't run on this
+# host (they are Linux x86-64 — so: macOS, Windows under Git Bash, ARM)
+# fall back to the Rust runtime, which compiles to the same bytecode and
+# runs the same OMG-written JS transpiler, just hosted on the VM.
+runs_here() {
+    [ -x "$1" ] && "$1" --version >/dev/null 2>&1
+}
+RUST_OMG=runtime/target/release/omg
+if [ ! -x "$RUST_OMG" ] && [ -x "$RUST_OMG.exe" ]; then
+    RUST_OMG="$RUST_OMG.exe"
+fi
+if runs_here bootstrap/bin/omg && runs_here bootstrap/bin/omgjs; then
+    echo "Using the native toolchain in bootstrap/bin"
+    omg_compile() { bootstrap/bin/omg --compile "$1" "$2"; }
+    omg_to_js()   { bootstrap/bin/omgjs "$1" "$2"; }
+elif [ -x "$RUST_OMG" ]; then
+    echo "Using the Rust runtime ($RUST_OMG)"
+    omg_compile() { "$RUST_OMG" --compile "$1" "$2"; }
+    omg_to_js()   { "$RUST_OMG" --rust bootstrap/src/native-js.omg "$1" "$2"; }
+else
+    echo "Need either a native toolchain that runs on this host (bootstrap/build.sh)"
+    echo "or the Rust runtime (cargo build --release --manifest-path runtime/Cargo.toml)."
+    exit 1
+fi
+
+# The compiler records each source file's absolute path for tracebacks,
+# which would bake this machine's checkout location into the published
+# bundles (and make them differ on every machine). Rewrite those paths
+# relative to the repository root. `pwd -W` is the Windows-style path
+# under Git Bash, which is the form the compiler sees there.
+REPO_ROOT=$(pwd -W 2>/dev/null || pwd)
+#
+# The transpiler's first line names the bytecode file it read, which
+# lives in a random temp directory; keep just the file name so repeated
+# builds produce identical output.
+strip_root() {
+    sed -e "s|$REPO_ROOT/||g" \
+        -e '1s|from .*/\([^/]*\.omgb\)$|from \1|' \
+        "$1" > "$1.tmp" && mv -f "$1.tmp" "$1"
+}
 
 # === Primary: the meta-circular bundle ====================================
 
 echo "Building web/omg-web.js (compiler + VM + driver) ..."
-"$OMG" --compile bootstrap/src/omg-web.omg "$WORK/omg-web.omgb"
-"$OMGJS_NATIVE" "$WORK/omg-web.omgb" web/omg-web.js
+omg_compile bootstrap/src/omg-web.omg "$WORK/omg-web.omgb"
+omg_to_js "$WORK/omg-web.omgb" web/omg-web.js
+strip_root web/omg-web.js
 echo "  $(wc -c < web/omg-web.js | tr -d ' ') bytes"
 
 # === Compiler Explorer bundle =============================================
@@ -37,8 +77,9 @@ echo "  $(wc -c < web/omg-web.js | tr -d ' ') bytes"
 # the explorer page.
 
 echo "Building web/omg-explorer.js (compiler + VM + transpilers + driver) ..."
-"$OMG" --compile bootstrap/src/omg-explorer.omg "$WORK/omg-explorer.omgb"
-"$OMGJS_NATIVE" "$WORK/omg-explorer.omgb" web/omg-explorer.js
+omg_compile bootstrap/src/omg-explorer.omg "$WORK/omg-explorer.omgb"
+omg_to_js "$WORK/omg-explorer.omgb" web/omg-explorer.js
+strip_root web/omg-explorer.js
 echo "  $(wc -c < web/omg-explorer.js | tr -d ' ') bytes"
 
 # === Reference example pairs ==============================================
@@ -58,8 +99,9 @@ for name in "${EXAMPLES[@]}"; do
         continue
     fi
     cp "$src" "$WEB_OUT/$name.omg"
-    "$OMG" --compile "$src" "$WORK/$name.omgb" >/dev/null
-    "$OMGJS_NATIVE" "$WORK/$name.omgb" "$WEB_OUT/$name.js" >/dev/null
+    omg_compile "$src" "$WORK/$name.omgb" >/dev/null
+    omg_to_js "$WORK/$name.omgb" "$WEB_OUT/$name.js" >/dev/null
+    strip_root "$WEB_OUT/$name.js"
     manifest_entries+=("\"$name\"")
     count=$((count + 1))
 done

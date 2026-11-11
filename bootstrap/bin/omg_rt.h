@@ -1506,9 +1506,10 @@ static Value omg_length(Value v) {
     switch (v.tag) {
         case OMG_STR:  return omg_int((int64_t)omg_str_char_count(v.v.s));
         case OMG_LIST: return omg_int((int64_t)v.v.l->len);
+        case OMG_DICT: return omg_int((int64_t)omg_dict_len(v.v.d));
         default: break;
     }
-    omg_panic("TypeError", "length() expects list or string (type mismatch)");
+    omg_panic("TypeError", "length() expects list, string or dict (type mismatch)");
     return omg_none(); /* unreachable */
 }
 

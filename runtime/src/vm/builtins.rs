@@ -283,7 +283,8 @@ pub fn call_builtin(
             )),
         },
 
-        // length(x) for list or string
+        // length(x): elements of a list, characters of a string, or
+        // entries of a dict
         "length" => {
             if args.len() != 1 {
                 Err(RuntimeError::TypeError(
@@ -293,8 +294,10 @@ pub fn call_builtin(
                 match &args[0] {
                     Value::List(list) => Ok(Value::Int(list.borrow().len() as i64)),
                     Value::Str(s) => Ok(Value::Int(s.chars().count() as i64)),
+                    Value::Dict(d) => Ok(Value::Int(d.borrow().len() as i64)),
+                    Value::FrozenDict(d) => Ok(Value::Int(d.len() as i64)),
                     _ => Err(RuntimeError::TypeError(
-                        "length() expects list or string (type mismatch)".to_string(),
+                        "length() expects list, string or dict (type mismatch)".to_string(),
                     )),
                 }
             }

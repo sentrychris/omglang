@@ -69,12 +69,17 @@ jobs:
       - name: Smoke test
         run: tests/smoke.sh 2>&1 | tee smoke.log
 
+      # The checked-in browser bundle (compiler + VM + both transpilers,
+      # transpiled to JS) must still drive every explorer stage.
+      - name: Web explorer bundle
+        run: node web/test-explorer.mjs 2>&1 | tee explorer.log
+
       # Put the tail of whichever step failed on the run summary, so a
       # red matrix cell explains itself without opening the full log.
       - name: Summarise failure
         if: failure()
         run: |
-          for f in build.log test.log smoke.log; do
+          for f in build.log test.log smoke.log explorer.log; do
             [ -f "$f" ] || continue
             {
               echo "### ${{ matrix.os }}: tail of $f"

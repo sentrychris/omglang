@@ -30,6 +30,8 @@ ordered.beta := 4
 ordered.alpha := 20
 emit ordered
 emit dict_keys(ordered)
+# length() counts a dict's entries (the Rust VM and C runtime rejected dicts).
+emit length(ordered)
 # A repeated key in a literal: the last value wins.
 emit {k: 1, k: 2}
 

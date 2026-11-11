@@ -638,7 +638,7 @@ Always available, no import needed.
 | Function                       | What it does                                          |
 | ------------------------------ | ----------------------------------------------------- |
 | **Strings & chars**            |                                                       |
-| `length(x)`                    | length of a list or string                            |
+| `length(x)`                    | length of a list or string, or number of entries in a dict |
 | `chr(n)`                       | one-character string for byte value `n`               |
 | `ascii(c)`                     | code point of a one-character string `c`              |
 | `string_bytes(s)`              | UTF-8 byte values of `s` as a list of integers        |

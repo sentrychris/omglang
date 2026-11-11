@@ -242,7 +242,7 @@ fn length_with_int_type_error() {
     assert_eq!(
         result,
         Err(RuntimeError::TypeError(
-            "length() expects list or string (type mismatch)".to_string()
+            "length() expects list, string or dict (type mismatch)".to_string()
         ))
     );
 }
@@ -574,4 +574,19 @@ fn dict_literal_keeps_source_order_and_last_duplicate_wins() {
     // Asking for more pairs than the stack holds is an error, not a panic.
     let mut short = vec![Value::Int(1)];
     assert!(ops_struct::handle_build_dict(1, &mut short).is_err());
+}
+
+#[test]
+fn length_counts_dict_entries() {
+    let mut stack = vec![
+        Value::Str("name".to_string()),
+        Value::Str("Chris".to_string()),
+        Value::Str("age".to_string()),
+        Value::Int(32),
+    ];
+    ops_struct::handle_build_dict(2, &mut stack).unwrap();
+    let dict = stack.pop().unwrap();
+    assert_eq!(as_str(call("length", &[dict.clone()])), "2");
+    let frozen = call("freeze", &[dict]).unwrap();
+    assert_eq!(as_str(call("length", &[frozen])), "2");
 }

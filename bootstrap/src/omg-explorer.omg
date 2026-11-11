@@ -392,6 +392,29 @@ proc funcs_list_to_dict(funcs_list) {
     return d
 }
 
+# compile_source hands back float literals already decoded
+# (["PUSH_FLOAT", 1.5]) — the form the VM executes. The transpilers work
+# from the on-disk form instead (["PUSH_FLOAT_BITS", <i64 bit pattern>],
+# which is what their own bytecode readers produce), so re-encode before
+# calling generate(). Without this the C and JS stages failed on any
+# program containing a float literal with "opcode 'PUSH_FLOAT' not
+# implemented yet".
+proc code_for_transpilers(code) {
+    alloc out := []
+    alloc i := 0
+    alloc n := length(code)
+    loop i < n {
+        alloc instr := code[i]
+        if instr[0] == "PUSH_FLOAT" {
+            out := out + [["PUSH_FLOAT_BITS", float_bits("" + instr[1])]]
+        } else {
+            out := out + [instr]
+        }
+        i := i + 1
+    }
+    return out
+}
+
 # === Main =================================================================
 
 if length(args) < 3 {
@@ -434,8 +457,10 @@ try {
 }
 
 alloc funcs_dict := false
+alloc gen_code := false
 if compiled != false {
     funcs_dict := funcs_list_to_dict(compiled[1])
+    gen_code := code_for_transpilers(compiled[0])
 }
 
 stage("c")
@@ -444,7 +469,7 @@ if compiled == false {
 } else {
     try {
         alloc c_header := "/* omg_rt.h would be inlined here in the native AOT build.\n   Omitted in the browser explorer for brevity. */\n"
-        alloc c_src := ncc.generate(compiled[0], funcs_dict, compiled[2], compiled[3], c_header, "<explorer>")
+        alloc c_src := ncc.generate(gen_code, funcs_dict, compiled[2], compiled[3], c_header, "<explorer>")
         emit c_src
     } except err {
         emit "C-gen error: " + err
@@ -457,7 +482,7 @@ if compiled == false {
 } else {
     try {
         alloc js_header := "// omg_rt.js would be inlined here in the native build.\n// Omitted in the browser explorer for brevity.\n"
-        alloc js_src := njs.generate(compiled[0], funcs_dict, compiled[2], compiled[3], js_header, "<explorer>")
+        alloc js_src := njs.generate(gen_code, funcs_dict, compiled[2], compiled[3], js_header, "<explorer>")
         emit js_src
     } except err {
         emit "JS-gen error: " + err

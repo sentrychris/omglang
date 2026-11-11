@@ -493,7 +493,7 @@ function omg_length(v) {
     }
     if (Array.isArray(v)) return BigInt(v.length);
     if (v instanceof Map)  return BigInt(v.size);
-    omg_panic('TypeError', 'length() expects a string, list, or dict');
+    omg_panic('TypeError', 'length() expects list, string or dict (type mismatch)');
 }
 
 function omg_chr(n) {
@@ -512,10 +512,9 @@ function omg_floor(v) { return BigInt(Math.floor(omg_as_float(v))); }
 function omg_ceil(v)  { return BigInt(Math.ceil (omg_as_float(v))); }
 function omg_round(v) {
     // Banker's rounding (ties to even), matching the Rust VM. A tie is
-    // a fractional part of exactly one half; Math.round on its own
-    // sends every tie towards +infinity, which is wrong for half of
-    // them (2.5 -> 3) and for all negative ones (-2.5 -> -2 is right
-    // only by accident, -3.5 -> -3 is not).
+    // a fractional part of exactly one half. Math.round on its own
+    // sends every tie towards +infinity (2.5 -> 3, -3.5 -> -3), which
+    // is the even neighbour only half the time.
     const x = omg_as_float(v);
     const t = Math.trunc(x);
     if (Math.abs(x - t) === 0.5) {

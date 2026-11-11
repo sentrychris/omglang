@@ -1436,12 +1436,13 @@ impl<'a> std::fmt::Debug for DebugNode<'a> {
 mod tests {
     use super::*;
 
+    /// Compile from memory. The path is only a label (it is where imports
+    /// would be resolved from); nothing is written to disk. An earlier
+    /// version wrote the source to one shared temp file, which made the
+    /// tests race each other when run in parallel — on Windows that
+    /// surfaced as an intermittent "Access is denied".
     fn compile(src: &str) -> Program {
-        let path = std::env::temp_dir().join("compile_test.omg");
-        fs::write(&path, src).unwrap();
-        let prog = compile_source(src, &path).unwrap();
-        let _ = fs::remove_file(&path);
-        prog
+        compile_source(src, "/virtual/compile_test.omg").unwrap()
     }
 
     #[test]
