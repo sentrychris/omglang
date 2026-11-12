@@ -4,9 +4,9 @@
 native toolchain at `dist/omglang-native/`. The output mirrors the
 layout of the standalone
 [omglang-native](https://github.com/sentrychris/omglang-native)
-companion repo: `src/` for the OMG sources + C runtime header, `bin/`
-for the pre-built ELFs, plus `examples/`, `tools/`, `tests/`, and
-`docs/` for offline use.
+companion repo: `src/` for the OMG sources and the two runtime files,
+`bin/` for the pre-built `omg`, plus `examples/`, `tools/`, `tests/`,
+and `docs/` for offline use.
 
 ## When to use it
 
@@ -53,8 +53,8 @@ files from the source tree and want a guaranteed-fresh output.
 ## What the script does
 
 ```
-bootstrap/src/  ──┬─►  dist/omglang-native/src/    (OMG source + omg_rt.h)
-bootstrap/bin/  ──┴─►  dist/omglang-native/bin/    (pre-built ELFs)
+bootstrap/src/  ──┬─►  dist/omglang-native/src/    (OMG source + omg_rt.h, omg_rt.js)
+bootstrap/bin/  ──┴─►  dist/omglang-native/bin/    (pre-built omg)
 examples/       ────►  dist/omglang-native/examples/
 tools/          ────►  dist/omglang-native/tools/
 tests/          ──[1]►  dist/omglang-native/tests/
@@ -113,13 +113,26 @@ the typical workflow is:
 bootstrap/build.sh                     # ensure bin/ is fresh
 bootstrap/package.sh --clean           # regenerate dist/
 
+# Preview the sync. -n changes nothing; it lists what would be copied
+# and, as "deleting ..." lines, what would be removed.
+rsync -a --delete --exclude .git -n -v dist/omglang-native/ ../omglang-native/
+
 # Sync the dist into the companion repo (rsync preserves permissions)
-rsync -a --delete dist/omglang-native/ ../omglang-native/
+rsync -a --delete --exclude .git dist/omglang-native/ ../omglang-native/
 
 # Then in ../omglang-native/
 git status                             # review what changed
 git add -A && git commit -m "sync from omglang"
 ```
+
+Always keep `--exclude .git`: `--delete` removes everything in the
+destination that the dist does not contain, and that would include the
+companion repo's own `.git` folder. For the same reason, add an
+`--exclude` for any file that lives only in the companion repo (a
+LICENSE, a workflow file), or move it into the `package.sh` templates.
+
+The script is bash and uses `python3`; on Windows run it, and the
+`rsync`, inside WSL.
 
 The `bootstrap/package.sh` script is the single source of truth for
 that repo's layout — anything that diverges between the two should be
