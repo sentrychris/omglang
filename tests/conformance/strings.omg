@@ -1,0 +1,162 @@
+;;;omg
+
+# Conformance: strings.
+
+alloc s := "hello, world"
+emit length(s)
+emit [s[0], s[4], s[-1], s[-5]]
+emit [s[0:5], s[7:], s[-5:], s[3:3], s[5:2], s[0:100], s[-100:2]]
+emit s + "!" + 1 + 2.5 + true + [1, "a"] + {k: 1}
+emit 1 + "x"
+emit "" + 3.0 + "|" + -0.5 + "|" + 100
+emit ["a" == "a", "a" == "b", "a" != "b", "a" < "b", "b" < "a", "abc" < "abd", "ab" < "abc", "Z" < "a", "" < "a"]
+emit ["a" <= "a", "b" >= "c", "10" < "9", "x" > ""]
+
+# Escapes.
+emit "tab[\t] quote[\"] backslash[\\] single[\']"
+emit length("a\nb")
+emit "line1\nline2"
+emit length("\d")
+
+# Unicode: indexing, slicing and length count characters, not bytes.
+alloc u := "naïve café ☕ 日本"
+emit length(u)
+emit [u[2], u[9], u[11], u[-1], u[-2]]
+emit u[6:10]
+emit u[11:]
+emit string_bytes("é☕")
+emit bytes_to_string([104, 105, 226, 152, 149])
+emit length(string_bytes(u))
+emit [ascii("A"), ascii("é"), ascii("☕"), ascii("z")]
+emit [chr(65), chr(97) + chr(98), chr(233), length(chr(233))]
+
+# Number formatting helpers.
+emit [hex(255), hex(0), hex(-255), hex(4095)]
+emit [binary(5), binary(0), binary(-5), binary(5, 8), binary(-1, 4), binary(255, 4)]
+emit [int("42"), int("-7"), int(3.99), int(-3.99), int(true), float("2.5"), float(3), float("1e3")]
+emit ["5" * 2, "10" - 3, "9" // 2, "7" % 4]
+try {
+    emit int("12x")
+} except err {
+    emit "int: " + err[0:9]
+}
+try {
+    emit float("abc")
+} except err {
+    emit "float: " + err[0:9]
+}
+try {
+    emit s[100]
+} except err {
+    emit "index: " + err[0:10]
+}
+try {
+    emit ascii("")
+} except err {
+    emit "ascii: " + err[0:9]
+}
+
+# Strings are values: building a new one leaves the old one alone.
+alloc base := "abc"
+alloc more := base + "def"
+emit [base, more]
+
+# Building strings in loops.
+proc repeat(piece, n) {
+    alloc out := ""
+    alloc i := 0
+    loop i < n {
+        out := out + piece
+        i := i + 1
+    }
+    return out
+}
+emit repeat("ab", 5)
+emit length(repeat("xyz", 1000))
+
+proc reverse(text) {
+    alloc out := ""
+    alloc i := length(text) - 1
+    loop i >= 0 {
+        out := out + text[i]
+        i := i - 1
+    }
+    return out
+}
+emit reverse("stressed")
+emit reverse("日本語")
+
+proc split(text, sep) {
+    alloc parts := []
+    alloc cur := ""
+    alloc i := 0
+    loop i < length(text) {
+        if text[i] == sep {
+            parts := parts + [cur]
+            cur := ""
+        } else {
+            cur := cur + text[i]
+        }
+        i := i + 1
+    }
+    return parts + [cur]
+}
+emit split("a,b,,c", ",")
+emit length(split("", ","))
+
+proc find(text, needle) {
+    alloc n := length(text)
+    alloc m := length(needle)
+    alloc i := 0
+    loop i + m <= n {
+        if text[i:i + m] == needle {
+            return i
+        }
+        i := i + 1
+    }
+    return -1
+}
+emit [find(s, "world"), find(s, "xyz"), find(s, ""), find(u, "☕")]
+
+proc upper(text) {
+    alloc out := ""
+    alloc i := 0
+    loop i < length(text) {
+        alloc c := ascii(text[i])
+        if c >= 97 and c <= 122 {
+            out := out + chr(c - 32)
+        } else {
+            out := out + text[i]
+        }
+        i := i + 1
+    }
+    return out
+}
+emit upper("Hello, World 123")
+
+# Strings as dict keys, and numbers turned into keys.
+alloc counts := {}
+alloc words := split("the cat and the hat and the bat", " ")
+alloc w := 0
+loop w < length(words) {
+    alloc word := words[w]
+    if has_key(counts, word) {
+        counts[word] := counts[word] + 1
+    } else {
+        counts[word] := 1
+    }
+    w := w + 1
+}
+emit counts
+emit dict_keys(counts)
+alloc by_num := {}
+by_num[1] := "one"
+by_num["1"] := "uno"
+by_num[2] := "two"
+emit by_num
+emit [has_key(by_num, 1), has_key(by_num, "2"), has_key(by_num, 3)]
+
+# Truthiness and emptiness.
+if "" { emit "unreachable" } else { emit "empty is falsy" }
+if "0" { emit "non-empty is truthy" }
+emit ["" == "", length(""), "" + "" == ""]

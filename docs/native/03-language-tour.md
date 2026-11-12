@@ -81,12 +81,21 @@ if x > 0 {
 
 loop x < 100 {
     x := x + 1
-    if x == 50 { break }
+    if x % 2 == 0 { continue }     # back to the test
+    if x == 51 { break }
 }
+
+for item in [1, 2, 3] {            # lists, and the characters of a string
+    emit item
+}
+
+if not ready { emit "waiting" }
 ```
 
-There's no `for`. Use `loop` with a counter. There's no `while` either —
-`loop` is the while.
+There's no `while`: `loop` is the while. `for x in xs` evaluates `xs`
+once and is shorthand for a counted `loop` (for a dict, walk
+`dict_keys(d)`). `not` binds looser than a comparison and tighter than
+`and`, so `not a == b and c` is `(not (a == b)) and c`.
 
 ## Functions
 
@@ -203,6 +212,8 @@ emit xs[0:2]               # [1, 2]
 emit xs + [4, 5]           # [1, 2, 3, 4, 5] (fresh list)
 xs[0] := 99                # in-place mutation
 emit xs                    # [99, 2, 3]
+append(xs, 4)              # in-place push, constant time
+emit xs                    # [99, 2, 3, 4]
 ```
 
 ## Dicts
@@ -278,14 +289,16 @@ The full list, grouped by area. Argument counts in parens.
 `hex(i)`, `binary(i)` or `binary(i, width)`, `float_bits(s)`, `bits_to_float(i)`
 
 **Collections**
-`freeze(d)` (makes a dict immutable), `dict_keys(d)`
+`freeze(d)` (makes a dict immutable), `dict_keys(d)`, `has_key(d, k)`,
+`append(list, item)` (in place), `list_repeat(item, n)`
 
 **File I/O**
 `read_file(path)` (returns string),
 `file_open(path, mode)` (returns int handle), `file_read(h)`, `file_write(h, data)`,
 `file_close(h)`,
 `file_exists(p)`, `is_dir(p)`, `read_dir(p)` (sorted list of names),
-`make_dir(p)` (mkdir -p)
+`make_dir(p)` (mkdir -p), `chmod(p, mode)` (permission bits; on
+Windows it only checks that the file exists)
 
 **Errors**
 `panic(msg)`, `raise(msg)`, `exit_with_error(msg)`
@@ -373,10 +386,8 @@ proc sort(xs) {
 ```omg
 proc map(f, xs) {
     alloc out := []
-    alloc i := 0
-    loop i < length(xs) {
-        out := out + [f(xs[i])]
-        i := i + 1
+    for x in xs {
+        append(out, f(x))
     }
     return out
 }

@@ -120,7 +120,7 @@
     "function-calls": {
       "patterns": [
         {
-          "match": "\\b(abs|ascii|binary|bits_to_float|bytes_to_string|call_builtin|ceil|chr|cos|dict_keys|exit_with_error|exit|file_close|file_exists|file_open|file_read|file_seek|file_tell|file_write|float_bits|float|floor|fork|freeze|getpid|hex|int|is_dir|length|list_repeat|log|make_dir|panic|pow|print|raise|read_dir|read_file|round|sin|sqrt|stdin_read_bytes|stdin_readline|stdin_read|string_bytes|subprocess|tan|tcp_accept|tcp_close|tcp_connect|tcp_listen|tcp_read|tcp_write)\\s*(?=\\()",
+          "match": "\\b(abs|append|ascii|binary|bits_to_float|bytes_to_string|call_builtin|ceil|chmod|chr|cos|dict_keys|exit_with_error|exit|file_close|file_exists|file_open|file_read|file_seek|file_tell|file_write|float_bits|float|floor|fork|freeze|getpid|hex|int|is_dir|length|list_repeat|log|make_dir|panic|pow|print|raise|read_dir|read_file|round|sin|sqrt|stdin_read_bytes|stdin_readline|stdin_read|string_bytes|subprocess|tan|tcp_accept|tcp_close|tcp_connect|tcp_listen|tcp_read|tcp_write)\\s*(?=\\()",
           "captures": {
             "1": { "name": "support.function.builtin.omg" }
           }
@@ -137,7 +137,7 @@
       "patterns": [
         {
           "name": "keyword.control.flow.omg",
-          "match": "\\b(if|elif|else|loop|break|return)\\b"
+          "match": "\\b(if|elif|else|loop|for|in|break|continue|return)\\b"
         },
         {
           "name": "keyword.control.exception.omg",
@@ -149,7 +149,7 @@
         },
         {
           "name": "keyword.operator.logical.omg",
-          "match": "\\b(and|or)\\b"
+          "match": "\\b(and|or|not)\\b"
         }
       ]
     },

@@ -1,0 +1,108 @@
+;;;omg
+
+# Conformance: files and directories. Everything is written under
+# tests/conformance/tmp/ (ignored by git), relative to the directory
+# the tests run from.
+
+alloc dir := "tests/conformance/tmp"
+emit make_dir(dir)
+emit [is_dir(dir), file_exists(dir), is_dir(dir + "/nope"), file_exists(dir + "/nope.txt")]
+
+# Text: write, read back, append.
+alloc path := dir + "/note.txt"
+alloc h := file_open(path, "w")
+file_write(h, "first line\n")
+file_write(h, "second: é ☕\n")
+file_close(h)
+emit [file_exists(path), is_dir(path)]
+emit read_file(path)
+h := file_open(path, "a")
+file_write(h, "third\n")
+file_close(h)
+h := file_open(path, "r")
+alloc text := file_read(h)
+file_close(h)
+emit length(text)
+emit text[length(text) - 6:length(text) - 1]
+
+# Lines.
+proc lines_of(t) {
+    alloc out := []
+    alloc cur := ""
+    for ch in t {
+        if ch == "\n" {
+            append(out, cur)
+            cur := ""
+        } else {
+            cur := cur + ch
+        }
+    }
+    if cur != "" {
+        append(out, cur)
+    }
+    return out
+}
+emit lines_of(read_file(path))
+
+# Writing again with "w" replaces the file.
+h := file_open(path, "w")
+file_write(h, "replaced")
+file_close(h)
+emit read_file(path)
+
+# Bytes: every value 0..255 survives a round trip.
+alloc bpath := dir + "/bytes.bin"
+alloc bytes := []
+alloc i := 0
+loop i < 256 {
+    append(bytes, i)
+    i := i + 1
+}
+h := file_open(bpath, "wb")
+file_write(h, bytes)
+file_close(h)
+h := file_open(bpath, "rb")
+alloc back := file_read(h)
+file_close(h)
+emit [length(back), back[0], back[10], back[127], back[128], back[255], back == bytes]
+
+# Seek and tell.
+h := file_open(bpath, "rb+")
+emit file_tell(h)
+file_seek(h, 100)
+emit file_tell(h)
+file_write(h, [1, 2, 3])
+emit file_tell(h)
+file_seek(h, 98)
+alloc tail := file_read(h)
+file_close(h)
+emit [length(tail), tail[0], tail[1], tail[2], tail[3], tail[4], tail[5]]
+
+# Directories.
+emit make_dir(dir + "/sub/deeper")
+emit [is_dir(dir + "/sub"), is_dir(dir + "/sub/deeper")]
+h := file_open(dir + "/sub/b.txt", "w")
+file_write(h, "b")
+file_close(h)
+h := file_open(dir + "/sub/a.txt", "w")
+file_write(h, "a")
+file_close(h)
+emit read_dir(dir + "/sub")
+
+# Errors.
+try {
+    emit read_file(dir + "/does-not-exist.txt")
+} except err {
+    emit "read_file of a missing file raises"
+}
+try {
+    h := file_open(dir + "/no-such-dir/x.txt", "w")
+    emit "unreachable"
+} except err {
+    emit "file_open in a missing directory raises"
+}
+try {
+    file_read(987654)
+} except err {
+    emit "file_read of a bad handle raises"
+}

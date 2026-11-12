@@ -293,6 +293,8 @@ emit 5 != 4             # true
 emit "abc" < "abd"      # true     ← strings compare alphabetically
 emit true and false     # false
 emit true or false      # true
+emit not true           # false
+emit not 5 > 3          # false    ← `not` applies to the whole comparison
 ```
 
 Things considered **falsy** (treated as false in `if` and `loop`):
@@ -367,7 +369,38 @@ loop true {
 emit n              # 128: the first power of 2 greater than 100
 ```
 
-There's no `for` loop. Use `loop` with a counter, like the example above.
+`continue` skips the rest of the body and goes back to the test:
+
+```omg
+;;;omg
+
+alloc i := 0
+loop i < 6 {
+    i := i + 1
+    if i % 2 == 0 {
+        continue
+    }
+    emit i          # 1, 3, 5
+}
+```
+
+To walk a list or the characters of a string, use `for ... in`:
+
+```omg
+;;;omg
+
+for name in ["ada", "grace", "linus"] {
+    emit "hello, " + name
+}
+
+for ch in "omg" {
+    emit ch         # o, m, g
+}
+```
+
+`break` and `continue` work in a `for` loop too. The sequence is
+evaluated once, before the first turn. To walk a dictionary, walk its
+keys: `for k in dict_keys(d) { ... }`.
 
 ### Lists
 
@@ -384,9 +417,15 @@ emit xs[1:3]            # [20, 30]    ← slicing also works on lists
 xs[0] := 99             # replace one element
 emit xs                 # [99, 20, 30]
 
-xs := xs + [40]         # append (creates a new list)
+xs := xs + [40]         # joins two lists into a new one
 emit xs                 # [99, 20, 30, 40]
+
+append(xs, 50)          # adds to the end of this list, in place
+emit xs                 # [99, 20, 30, 40, 50]
 ```
+
+Use `append` when you build a list one item at a time: `xs := xs + [v]`
+copies the whole list on every step.
 
 Two variables holding the "same" list share it, changing one is
 visible through the other:
@@ -698,6 +737,8 @@ Always available, no import needed.
 | `freeze(d)`                    | turn a dict into a read-only one                      |
 | `dict_keys(d)`                 | list of a dict's keys (strings, in insertion order)   |
 | `has_key(d, k)`                | `true` iff `d` has key `k` (non-dict `d` → `false`)   |
+| `append(list, item)`           | add `item` to the end of `list`, in place             |
+| `list_repeat(item, n)`         | a new list holding `item` `n` times                   |
 | **File I/O**                   |                                                       |
 | `read_file(path)`              | read a text file in one shot, or `false` on error     |
 | `file_open(path, mode)`        | open and return a handle (`r`, `rb`, `w`, `wb`, `a`, `ab`) |
@@ -708,6 +749,7 @@ Always available, no import needed.
 | `is_dir(path)`                 | is the path a directory?                              |
 | `read_dir(path)`               | list of entry names (sorted, no `.`/`..`)             |
 | `make_dir(path)`               | create directories (mkdir -p semantics)               |
+| `chmod(path, mode)`            | set a file's permission bits (`493` is `rwxr-xr-x`); on Windows it only checks the file exists |
 | **Standard input**             |                                                       |
 | `stdin_readline()`             | read one line from stdin, or `false` on EOF           |
 | `stdin_read()`                 | slurp all of stdin to EOF as a string (empty on no input) |

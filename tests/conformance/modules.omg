@@ -1,0 +1,66 @@
+;;;omg
+
+# Conformance: imports.
+
+import "modules/shapes.omg" as shapes
+import "modules/util.omg" as util
+
+# Calls through the alias.
+emit shapes.square_area(4)
+emit shapes.circle_area(2)
+emit shapes.describe("box", 16)
+emit util.fact(10)
+emit util.label("x")
+
+# A module keeps its own globals; procs see later changes to them.
+emit shapes.count()
+emit shapes.square_area(1)
+emit shapes.count()
+
+# The same file imported twice (here and by shapes.omg) is one module.
+emit util.call_count()
+emit util.times(6, 7)
+emit util.call_count()
+
+# Exported values are snapshots taken at import time.
+emit shapes.PI
+emit util.PREFIX + util.SUFFIX
+
+# Names in a module do not clash with names here.
+alloc PI := "mine"
+alloc calls := -1
+proc times(a, b) {
+    return "local times"
+}
+emit [PI, calls, times(1, 2), util.times(1, 2)]
+
+# Module procs as values, and closures made inside a module.
+alloc f := util.fact
+emit f(5)
+alloc triple := shapes.make_scaler(3)
+emit triple(14)
+emit util.apply_twice(triple, 2)
+proc add_one(x) {
+    return x + 1
+}
+emit util.apply_twice(add_one, 40)
+
+# A module is read-only from outside.
+try {
+    util.PREFIX := "["
+} except err {
+    emit err[0:16]
+}
+try {
+    emit util.missing
+} except err {
+    emit err[0:8]
+}
+
+# An import inside a proc.
+proc area_via_local_import(n) {
+    import "modules/shapes.omg" as local_shapes
+    return local_shapes.square_area(n)
+}
+emit area_via_local_import(5)
+emit shapes.count()

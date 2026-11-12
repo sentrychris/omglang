@@ -1471,6 +1471,56 @@ pub fn call_builtin(
             )),
         },
 
+        // append(xs, v) -> none. Pushes `v` onto the end of the list
+        // `xs` in place, in amortised constant time. `xs := xs + [v]`
+        // builds a whole new list on every step.
+        "append" => match args {
+            [Value::List(list), v] => {
+                list.borrow_mut().push(v.clone());
+                Ok(Value::None)
+            }
+            _ => Err(RuntimeError::TypeError(
+                "append() expects (list, any)".to_string(),
+            )),
+        },
+
+        // chmod(path, mode) -> true. Sets a file's permission bits
+        // (0o755 is 493). The native back end writes executables itself
+        // and has to mark them runnable. Windows has no such bits, so
+        // there it only checks that the file exists.
+        "chmod" => match args {
+            [Value::Str(path), Value::Int(mode)] => {
+                let path_buf = resolve_path(path, env, globals);
+                #[cfg(unix)]
+                {
+                    use std::os::unix::fs::PermissionsExt;
+                    fs::set_permissions(&path_buf, fs::Permissions::from_mode(*mode as u32))
+                        .map_err(|e| {
+                            RuntimeError::ValueError(format!(
+                                "cannot chmod '{}': {}",
+                                path_buf.display(),
+                                e
+                            ))
+                        })?;
+                }
+                #[cfg(not(unix))]
+                {
+                    let _ = mode;
+                    fs::metadata(&path_buf).map_err(|e| {
+                        RuntimeError::ValueError(format!(
+                            "cannot chmod '{}': {}",
+                            path_buf.display(),
+                            e
+                        ))
+                    })?;
+                }
+                Ok(Value::Bool(true))
+            }
+            _ => Err(RuntimeError::TypeError(
+                "chmod() expects (path, int)".to_string(),
+            )),
+        },
+
         // has_key(d, k) -> bool. True iff the dict (or frozen dict) `d`
         // contains the string key `k`. Non-throwing alternative to the
         // `try { d[k] }` probe pattern; the OMG-on-OMG VM's hot path

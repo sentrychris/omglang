@@ -8,15 +8,19 @@ export const KEYWORDS: readonly string[] = [
     'and',
     'as',
     'break',
+    'continue',
     'elif',
     'else',
     'emit',
     'except',
     'facts',
     'false',
+    'for',
     'if',
     'import',
+    'in',
     'loop',
+    'not',
     'or',
     'proc',
     'return',
@@ -95,6 +99,20 @@ export const BUILTINS: readonly BuiltinDoc[] = [
             'Fresh list of length `count` with every slot holding ' +
             '`item`. Use for amortised-O(1) buffer growth instead of ' +
             'repeated `xs + [v]` (which is O(n²)).'
+    },
+    {
+        name: 'append',
+        signature: 'append(list, item)',
+        detail:
+            'Adds `item` to the end of `list` in place, in constant ' +
+            'time. Returns none.'
+    },
+    {
+        name: 'chmod',
+        signature: 'chmod(path, mode)',
+        detail:
+            'Sets a file\'s permission bits (493 is rwxr-xr-x). On ' +
+            'Windows it only checks that the file exists.'
     },
 
     // --- Errors ------------------------------------------------------------

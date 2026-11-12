@@ -79,6 +79,10 @@ fn builtin_names() -> &'static [&'static str] {
         // amortised O(1) per push via doubling; without it
         // `xs + [v]` is O(n) and `n` appends are O(n²).
         "list_repeat",
+        // In-place list push, and marking a file executable (the
+        // native back end writes executables itself).
+        "append",
+        "chmod",
         // Print msg to stderr verbatim and exit 1. Used by `bootstrap/src/vm.omg`
         // to surface a hosted program's uncaught error without re-wrapping
         // it through `panic`'s "RuntimeError:" prefix.
@@ -219,6 +223,12 @@ pub struct Compiler {
     /// many `PopBlock`s are needed to escape any tries nested between
     /// the break statement and its target loop.
     loop_try_depth: Vec<usize>,
+    /// Address of the test of each currently-open loop, in parallel
+    /// with `break_stack`: where `continue` jumps to.
+    loop_starts: Vec<usize>,
+    /// How many `for` loops enclose the statement being compiled, in
+    /// the current proc. Numbers each loop's hidden variables.
+    for_depth: usize,
     /// Modules already loaded during this compile, keyed by canonical path.
     loaded_modules: HashMap<PathBuf, ModuleInfo>,
     /// Stack of paths currently being loaded — for cycle detection.
@@ -319,6 +329,8 @@ impl Compiler {
             break_stack: Vec::new(),
             try_depth: 0,
             loop_try_depth: Vec::new(),
+            loop_starts: Vec::new(),
+            for_depth: 0,
             loaded_modules: HashMap::new(),
             loading_stack: HashSet::new(),
             module_counter: 0,
@@ -401,6 +413,10 @@ impl Compiler {
                 }
             }
             Node::Loop(_, body, _) => Self::collect_declared(body, out),
+            Node::For(name, _, body, _) => {
+                out.insert(name.clone());
+                Self::collect_declared(body, out);
+            }
             Node::Try(try_block, exc_name, except_block, _) => {
                 Self::collect_declared(try_block, out);
                 if let Some(n) = exc_name {
@@ -752,12 +768,69 @@ impl Compiler {
                 let jf = self.placeholder(Instr::JumpIfFalse(0));
                 self.break_stack.push(Vec::new());
                 self.loop_try_depth.push(self.try_depth);
+                self.loop_starts.push(start);
                 self.compile_block_node(body)?;
                 self.emit(Instr::Jump(start));
                 let here = self.code.len();
                 self.patch_jump(jf, here);
                 let breaks = self.break_stack.pop().unwrap();
                 self.loop_try_depth.pop();
+                self.loop_starts.pop();
+                for b in breaks {
+                    self.patch_jump(b, here);
+                }
+            }
+            Node::For(name, seq, body, _) => {
+                // `for x in xs { body }` is sugar for a counted loop over
+                // two hidden variables, numbered by how deeply `for`
+                // loops are nested in this proc:
+                //
+                //     __for_seq_N := xs
+                //     __for_idx_N := 0
+                //     loop __for_idx_N < length(__for_seq_N) {
+                //         alloc x := __for_seq_N[__for_idx_N]
+                //         __for_idx_N := __for_idx_N + 1
+                //         body
+                //     }
+                //
+                // The index moves on before the body runs, so `continue`
+                // can jump straight back to the test.
+                let depth = self.for_depth;
+                let seq_name = format!("__for_seq_{}", depth);
+                let idx_name = format!("__for_idx_{}", depth);
+                self.compile_expr(seq)?;
+                self.declare_local(&seq_name);
+                self.emit(Instr::StoreLocal(self.resolve_store(&seq_name)));
+                self.emit(Instr::PushInt(0));
+                self.declare_local(&idx_name);
+                self.emit(Instr::StoreLocal(self.resolve_store(&idx_name)));
+                let start = self.code.len();
+                self.emit(Instr::Load(self.resolve_load(&idx_name)));
+                self.emit(Instr::Load(self.resolve_load(&seq_name)));
+                self.emit(Instr::CallBuiltin("length".to_string(), 1));
+                self.emit(Instr::Lt);
+                let jf = self.placeholder(Instr::JumpIfFalse(0));
+                self.emit(Instr::Load(self.resolve_load(&seq_name)));
+                self.emit(Instr::Load(self.resolve_load(&idx_name)));
+                self.emit(Instr::Index);
+                self.declare_local(name);
+                self.emit(Instr::StoreLocal(self.resolve_store(name)));
+                self.emit(Instr::Load(self.resolve_load(&idx_name)));
+                self.emit(Instr::PushInt(1));
+                self.emit(Instr::Add);
+                self.emit(Instr::Store(self.resolve_store(&idx_name)));
+                self.break_stack.push(Vec::new());
+                self.loop_try_depth.push(self.try_depth);
+                self.loop_starts.push(start);
+                self.for_depth += 1;
+                self.compile_block_node(body)?;
+                self.for_depth -= 1;
+                self.emit(Instr::Jump(start));
+                let here = self.code.len();
+                self.patch_jump(jf, here);
+                let breaks = self.break_stack.pop().unwrap();
+                self.loop_try_depth.pop();
+                self.loop_starts.pop();
                 for b in breaks {
                     self.patch_jump(b, here);
                 }
@@ -900,6 +973,20 @@ impl Compiler {
                 let j = self.placeholder(Instr::Jump(0));
                 self.break_stack.last_mut().unwrap().push(j);
             }
+            Node::Continue(_) => {
+                if self.loop_starts.is_empty() {
+                    return Err(RuntimeError::SyntaxError(format!(
+                        "'continue' outside of loop in {}",
+                        self.current_file.display()
+                    )));
+                }
+                // Like `break`: leave the try blocks opened inside the
+                // loop, then go back to the loop's test.
+                let saved = *self.loop_try_depth.last().unwrap();
+                self.emit_pop_blocks(self.try_depth - saved);
+                let start = *self.loop_starts.last().unwrap();
+                self.emit(Instr::Jump(start));
+            }
             Node::Block(stmts, _) => {
                 for s in stmts {
                     self.compile_stmt(s)?;
@@ -945,6 +1032,8 @@ impl Compiler {
         // enclosing block's env_depth, which would be the call frame.)
         let saved_try_depth = self.try_depth;
         let saved_loop_try_depth = mem::take(&mut self.loop_try_depth);
+        let saved_loop_starts = mem::take(&mut self.loop_starts);
+        let saved_for_depth = mem::replace(&mut self.for_depth, 0);
         self.try_depth = 0;
         // Push a new local scope seeded with the parameter names. They are
         // bound by the VM at call time; the compiler only needs to know
@@ -974,6 +1063,8 @@ impl Compiler {
         self.break_stack = saved_break;
         self.try_depth = saved_try_depth;
         self.loop_try_depth = saved_loop_try_depth;
+        self.loop_starts = saved_loop_starts;
+        self.for_depth = saved_for_depth;
         Ok((func_code, func_lines))
     }
 
@@ -1267,6 +1358,14 @@ impl Compiler {
                     UnaryOp::Plus => {} // no-op
                     UnaryOp::Neg => self.emit(Instr::Neg),
                     UnaryOp::BNot => self.emit(Instr::Not),
+                    // `not x`: `x or false` is the truth of x as a bool,
+                    // and comparing that with false flips it.
+                    UnaryOp::Not => {
+                        self.emit(Instr::PushBool(false));
+                        self.emit(Instr::Or);
+                        self.emit(Instr::PushBool(false));
+                        self.emit(Instr::Eq);
+                    }
                 }
             }
             Node::Binary(BinOp::And, lhs, rhs, _) => {
@@ -1558,7 +1657,9 @@ impl<'a> std::fmt::Debug for DebugNode<'a> {
             Node::Import(..) => "Import",
             Node::If(..) => "If",
             Node::Loop(..) => "Loop",
+            Node::For(..) => "For",
             Node::Break(..) => "Break",
+            Node::Continue(..) => "Continue",
             Node::FuncDef(..) => "FuncDef",
             Node::Return(..) => "Return",
             Node::ExprStmt(..) => "ExprStmt",

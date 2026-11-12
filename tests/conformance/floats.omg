@@ -1,0 +1,83 @@
+;;;omg
+
+# Conformance: floats and number printing.
+
+emit [1.5, -2.25, 0.0, 3.0, 100.0, 1.0e3, 2.5e-3, 1e2]
+emit [0.1 + 0.2, 1.0 / 3.0, 2.0 / 3.0, 10.0 / 4.0, 1.1 * 1.1]
+emit [7 / 2, 8 / 2, -7 / 2, 1 / 3]
+emit [7 // 2, -7 // 2, 7 // -2, -7 // -2, 7.5 // 2, -7.5 // 2, 7 // 2.0]
+emit [7 % 3, -7 % 3, 7 % -3, -7 % -3, 7.5 % 2, -7.5 % 2, 5.5 % -2]
+emit [1 + 2.0, 2.0 - 1, 3 * 0.5, 1.5 + 1.5, -(2.5), -0.0 + 0.0]
+emit [1 == 1.0, 1.0 == 1, 0.5 == 0.5, 1 < 1.5, 2.5 > 2, 1.0 <= 1, 3 >= 3.5, 0.1 + 0.2 == 0.3]
+emit [floor(2.7), floor(-2.7), ceil(2.1), ceil(-2.1), floor(3), ceil(3)]
+emit [round(2.5), round(3.5), round(-2.5), round(2.4), round(2.6), round(-2.6), round(0.5), round(1.5)]
+emit [abs(-3), abs(3.5), abs(-0.25), abs(0)]
+emit [int(2.9), int(-2.9), float(2), float("0.25"), int(1e10)]
+emit [sqrt(16), sqrt(2.25), sqrt(0), pow(2, 10), pow(2.0, 3), pow(9, 0.5), pow(2, -1), pow(10, 3)]
+
+# Whole floats keep their ".0"; long fractions print in their shortest form.
+emit [1.0, 10.0, 123456.0, 1234567.0, 0.5, 0.25, 0.125, 0.001, 1.25e-4]
+emit [3.14159, 2.718281828459045, 1.7976931348623157, 123456.789, 0.000123]
+emit [1e15, 1.5e15, 123456789012.5, 4503599627370496.0, 0.1, 0.7, 1.9]
+emit 9007199254740992.0
+emit [100.0 / 3.0, 1.0 / 7.0, 22.0 / 7.0, 5e-5 * 3]
+emit "" + 1.5 + "," + 2.0 + "," + (0.1 + 0.7)
+
+# Trig and log, rounded so the last bits of the libm do not matter.
+proc r6(x) {
+    return round(x * 1000000)
+}
+emit [r6(sin(0)), r6(sin(1)), r6(cos(1)), r6(tan(1)), r6(sin(3.141592653589793 / 2))]
+emit [r6(log(1)), r6(log(2.718281828459045)), r6(log(10)), r6(log(0.5))]
+emit [r6(sqrt(2)), r6(pow(2, 0.5)), r6(pow(1.5, 2.5)), r6(cos(0)), r6(sin(-2.5)), r6(cos(100))]
+
+# Bits.
+emit [float_bits("1.0"), float_bits("-2.5"), float_bits("0.1")]
+emit [bits_to_float(4607182418800017408), bits_to_float(4611686018427387904), bits_to_float(0)]
+emit bits_to_float(float_bits("3.141592653589793"))
+
+# Parsing.
+emit [float("1"), float("-1.5"), float("1e2"), float("2.5E-1"), float(".5"), float("5.")]
+emit [float("0.1") + float("0.2"), float("123456789.125"), float("1e-3")]
+
+# Truthiness.
+emit [not 0.0, not 0.5, not -0.0]
+
+# Errors.
+try { emit 1 / 0 } except err { emit err[0:17] }
+try { emit 1.5 // 0 } except err { emit err[0:17] }
+try { emit 1.5 % 0.0 } except err { emit err[0:17] }
+try { emit sqrt(-1) } except err { emit err[0:10] }
+try { emit log(0) } except err { emit err[0:10] }
+try { emit 1.5 & 1 } except err { emit err[0:9] }
+
+# A numeric loop: sums, means and Newton's method.
+proc newton_sqrt(x) {
+    alloc g := x / 2.0
+    alloc i := 0
+    loop i < 30 {
+        g := (g + x / g) / 2.0
+        i := i + 1
+    }
+    return g
+}
+emit [newton_sqrt(2.0), newton_sqrt(9.0), newton_sqrt(0.25)]
+alloc acc := 0.0
+alloc k := 1
+loop k <= 100 {
+    acc := acc + 1.0 / k
+    k := k + 1
+}
+emit acc
+alloc xs := [1.5, 2.5, 3.0, 4.75]
+alloc sum := 0.0
+alloc j := 0
+loop j < length(xs) {
+    sum := sum + xs[j]
+    j := j + 1
+}
+emit [sum, sum / length(xs)]
+
+# Integers at the edges.
+emit [9223372036854775807, -9223372036854775807 - 1, 1 << 62, 255 >> 4, -16 >> 2, 6 & 3, 6 | 3, 6 ^ 3, ~5]
+emit [2147483648 * 2, 1000000 * 1000000, -3 * 7, 17 % 5 * 2]

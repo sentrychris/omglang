@@ -1,0 +1,33 @@
+;;;omg
+
+# A module used by tests/conformance/modules.omg.
+
+import "util.omg" as util
+
+alloc PI := 3
+alloc made := 0
+
+proc square_area(side) {
+    made := made + 1
+    return util.times(side, side)
+}
+
+proc circle_area(r) {
+    made := made + 1
+    return PI * util.times(r, r)
+}
+
+proc count() {
+    return made
+}
+
+proc describe(name, area) {
+    return util.label(name) + area
+}
+
+proc make_scaler(factor) {
+    proc scale(x) {
+        return util.times(x, factor)
+    }
+    return scale
+}

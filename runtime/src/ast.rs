@@ -39,6 +39,8 @@ pub enum UnaryOp {
     Plus,
     Neg,
     BNot,
+    /// Logical `not x`: true when `x` is falsy.
+    Not,
 }
 
 /// Every AST node. Rc'd children let the compiler walk the tree without
@@ -70,7 +72,10 @@ pub enum Node {
     Import(String, String, usize),
     If(Box<Node>, Box<Node>, Option<Box<Node>>, usize),
     Loop(Box<Node>, Box<Node>, usize),
+    /// `for <name> in <expr> { body }`
+    For(String, Box<Node>, Box<Node>, usize),
     Break(usize),
+    Continue(usize),
     FuncDef(String, Rc<Vec<String>>, Box<Node>, usize),
     Return(Box<Node>, usize),
     ExprStmt(Box<Node>, usize),
@@ -105,7 +110,9 @@ impl Node {
             | Import(_, _, l)
             | If(_, _, _, l)
             | Loop(_, _, l)
+            | For(_, _, _, l)
             | Break(l)
+            | Continue(l)
             | FuncDef(_, _, _, l)
             | Return(_, l)
             | ExprStmt(_, l)

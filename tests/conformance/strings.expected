@@ -1,0 +1,46 @@
+12
+[h, o, d, w]
+[hello, world, world, , , hello, world, he]
+hello, world!12.5true[1, a]{k: 1}
+1x
+3.0|-0.5|100
+[true, false, true, true, false, true, true, true, true]
+[true, false, true, true]
+tab[	] quote["] backslash[\] single[']
+3
+line1
+line2
+2
+15
+[ï, é, ☕, 本, 日]
+café
+☕ 日本
+[195, 169, 226, 152, 149]
+hi☕
+23
+[65, 233, 9749, 122]
+[A, ab, é, 1]
+[ff, 0, -ff, fff]
+[101, 0, -101, 00000101, 1111, 1111]
+[42, -7, 3, -3, 1, 2.5, 3.0, 1000.0]
+[10, 7, 4, 3]
+int: TypeError
+float: TypeError
+index: IndexError
+ascii: TypeError
+[abc, abcdef]
+ababababab
+3000
+desserts
+語本日
+[a, b, , c]
+1
+[7, -1, 0, 11]
+HELLO, WORLD 123
+{the: 3, cat: 1, and: 2, hat: 1, bat: 1}
+[the, cat, and, hat, bat]
+{1: uno, 2: two}
+[true, true, false]
+empty is falsy
+non-empty is truthy
+[true, 0, true]

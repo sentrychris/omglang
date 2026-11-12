@@ -146,14 +146,14 @@ const $sourcePane   = document.getElementById('sourcePane');
 // Mirrors the scopes in vscode/syntaxes/omg.tmLanguage.json.
 
 const OMG_KEYWORDS = new Set([
-    'if', 'elif', 'else', 'loop', 'break', 'return',
+    'if', 'elif', 'else', 'loop', 'for', 'in', 'break', 'continue', 'return',
     'try', 'except', 'facts',
     'alloc', 'proc', 'import', 'as', 'emit',
-    'and', 'or'
+    'and', 'or', 'not'
 ]);
 
 const OMG_BUILTINS = new Set([
-    'length', 'chr', 'ascii', 'hex', 'binary', 'freeze',
+    'length', 'chr', 'ascii', 'hex', 'binary', 'freeze', 'append', 'chmod',
     'panic', 'raise',
     'read_file', 'file_exists', 'file_open', 'file_read',
     'file_write', 'file_close', 'call_builtin'

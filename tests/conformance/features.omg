@@ -1,0 +1,216 @@
+;;;omg
+
+# Conformance: `not`, `continue`, `for ... in` and `append`.
+
+# --- not -------------------------------------------------------------------
+emit [not true, not false]
+# Truthiness: 0, 0.0, "", [], {} and false are falsy.
+emit [not 0, not 1, not "", not "x", not [], not [0], not {}, not 0.0, not 2.5]
+# `not` binds looser than a comparison and tighter than `and` / `or`.
+emit not 1 == 2
+emit not 1 == 1 and true
+emit not false or false
+emit not not 5
+emit (not 3) == false
+proc is_empty(xs) {
+    return not length(xs)
+}
+emit [is_empty([]), is_empty([1]), is_empty("")]
+alloc flag := not is_empty("abc")
+if not flag {
+    emit "unreachable"
+} elif not not flag {
+    emit "flag is set"
+}
+
+# --- continue ---------------------------------------------------------------
+alloc i := 0
+alloc odds := []
+loop i < 10 {
+    i := i + 1
+    if i % 2 == 0 {
+        continue
+    }
+    odds := odds + [i]
+}
+emit odds
+
+# continue goes to the innermost loop only.
+alloc pairs := []
+alloc a := 0
+loop a < 3 {
+    a := a + 1
+    alloc b := 0
+    loop b < 3 {
+        b := b + 1
+        if b == a {
+            continue
+        }
+        pairs := pairs + [[a, b]]
+    }
+}
+emit pairs
+
+# continue from inside try and except leaves the handler stack clean.
+proc skip_bad(items) {
+    alloc out := []
+    alloc k := 0
+    loop k < length(items) {
+        alloc item := items[k]
+        k := k + 1
+        try {
+            if item == 0 {
+                continue
+            }
+            out := out + [100 // item]
+        } except err {
+            out := out + ["bad"]
+            continue
+        }
+        out := out + ["ok"]
+    }
+    return out
+}
+emit skip_bad([1, 0, 5, "x", 0, 20])
+try {
+    panic("still caught after the loop")
+} except err {
+    emit err
+}
+
+# --- for ... in ---------------------------------------------------------------
+alloc total := 0
+for n in [1, 2, 3, 4] {
+    total := total + n
+}
+emit total
+
+for ch in "héy" {
+    emit ch
+}
+
+for nothing in [] {
+    emit "unreachable"
+}
+
+# The loop variable keeps its last value; the sequence is evaluated once.
+proc make_seq() {
+    emit "make_seq called"
+    return [10, 20, 30]
+}
+for v in make_seq() {
+    emit v
+}
+emit v
+
+# break and continue work in a for loop.
+alloc picked := []
+for n in [1, 2, 3, 4, 5, 6, 7, 8] {
+    if n % 2 == 1 {
+        continue
+    }
+    if n > 6 {
+        break
+    }
+    picked := picked + [n]
+}
+emit picked
+
+# Nested for loops, in a proc and at the top level.
+proc table(rows, cols) {
+    alloc out := []
+    for r in rows {
+        alloc line := ""
+        for c in cols {
+            line := line + r + c + " "
+        }
+        out := out + [line]
+    }
+    return out
+}
+emit table(["a", "b"], [1, 2, 3])
+for x in [1, 2] {
+    for y in ["p", "q"] {
+        emit "" + x + y
+    }
+}
+
+# A list that grows while it is walked is walked to its new end.
+alloc grow := [1]
+for g in grow {
+    if g < 4 {
+        append(grow, g + 1)
+    }
+}
+emit grow
+
+# Dict keys.
+alloc d := {one: 1, two: 2, three: 3}
+alloc ksum := 0
+for key in dict_keys(d) {
+    ksum := ksum + d[key]
+}
+emit ksum
+
+# A closure made in a for body sees the variable of its own turn.
+proc make_adders(ns) {
+    alloc fs := []
+    for n in ns {
+        proc add(x) {
+            return x + n
+        }
+        append(fs, add)
+    }
+    return fs
+}
+alloc adders := make_adders([1, 10, 100])
+emit [adders[0](5), adders[1](5), adders[2](5)]
+
+# Recursion inside a for loop: each call has its own hidden counter.
+proc flatten(xs, out) {
+    for x in xs {
+        try {
+            alloc n := length(x)
+            if n >= 0 and ("" + x) != x {
+                flatten(x, out)
+                continue
+            }
+        } except err {
+        }
+        append(out, x)
+    }
+    return out
+}
+emit flatten([1, [2, [3, 4], 5], [[6]], 7], [])
+
+# --- append -------------------------------------------------------------------
+alloc xs := []
+append(xs, 1)
+append(xs, "two")
+append(xs, [3])
+emit xs
+emit length(xs)
+# append changes the list every holder sees.
+alloc same := xs
+append(same, 4)
+emit xs
+# It returns none, which prints as an empty line.
+emit append(xs, 5)
+emit xs[4]
+proc squares(n) {
+    alloc out := []
+    alloc k := 0
+    loop k < n {
+        append(out, k * k)
+        k := k + 1
+    }
+    return out
+}
+emit squares(8)
+emit call_builtin("append", [xs, 6])
+emit length(xs)
+try {
+    append("not a list", 1)
+} except err {
+    emit "TypeError" == err[0:9]
+}

@@ -1,0 +1,21 @@
+true
+[true, true, false, false]
+[true, false]
+first line
+second: é ☕
+
+29
+third
+[first line, second: é ☕, third]
+replaced
+[256, 0, 10, 127, 128, 255, true]
+0
+100
+103
+[158, 98, 99, 1, 2, 3, 103]
+true
+[true, true]
+[a.txt, b.txt, deeper]
+read_file of a missing file raises
+file_open in a missing directory raises
+file_read of a bad handle raises

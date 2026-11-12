@@ -251,6 +251,10 @@ proc keyword_kind(word) {
     if word == "else"   { return "ELSE"   }
     if word == "loop"   { return "LOOP"   }
     if word == "break"  { return "BREAK"  }
+    if word == "for"    { return "FOR"    }
+    if word == "in"     { return "IN"     }
+    if word == "continue" { return "CONTINUE" }
+    if word == "not"    { return "NOT"    }
     if word == "emit"   { return "EMIT"   }
     if word == "import" { return "IMPORT" }
     if word == "as"     { return "AS"     }
@@ -589,6 +593,7 @@ alloc TOK_DESCRIPTIONS := freeze({
     NUM: "number", FNUM: "float", STR: "string", ID: "identifier",
     TRUE: "true", FALSE: "false", IF: "if", ELIF: "elif", ELSE: "else",
     LOOP: "loop", BREAK: "break", EMIT: "emit", IMPORT: "import",
+    FOR: "for", IN: "in", CONTINUE: "continue", NOT: "not",
     AS: "as", FACTS: "facts", FUNC: "proc", RETURN: "return",
     AND: "and", OR: "or", ALLOC: "alloc", TRY: "try", EXCEPT: "except",
     ASSIGN: ":=", LBRACE: "{", RBRACE: "}", LPAREN: "(", RPAREN: ")",
@@ -630,13 +635,24 @@ proc parse_or(i) {
 }
 
 proc parse_and(i) {
-    alloc r := parse_cmp(i)
+    alloc r := parse_not(i)
     loop tok_kind(r[1]) == "AND" {
         alloc line := tok_line(r[1])
-        alloc rhs := parse_cmp(r[1] + 1)
+        alloc rhs := parse_not(r[1] + 1)
         r := [["bin", "and", r[0], rhs[0], line], rhs[1]]
     }
     return r
+}
+
+# `not` binds looser than a comparison and tighter than `and`, so
+# `not a == b and c` reads as `(not (a == b)) and c`.
+proc parse_not(i) {
+    if tok_kind(i) == "NOT" {
+        alloc line := tok_line(i)
+        alloc r := parse_not(i + 1)
+        return [["unary", "not", r[0], line], r[1]]
+    }
+    return parse_cmp(i)
 }
 
 proc parse_cmp(i) {
@@ -1000,8 +1016,22 @@ proc parse_stmt(i) {
         alloc body := parse_block(r[1])
         return [["loop", r[0], body[0], line], body[1]]
     }
+    if k == "FOR" {
+        alloc j := i + 1
+        if tok_kind(j) != "ID" {
+            syntax_error("Expected identifier after 'for'", j)
+        }
+        alloc name := tok_val(j)
+        j := expect("IN", j + 1)
+        alloc r := parse_expr(j)
+        alloc body := parse_block(r[1])
+        return [["for", name, r[0], body[0], line], body[1]]
+    }
     if k == "BREAK" {
         return [["break", line], i + 1]
+    }
+    if k == "CONTINUE" {
+        return [["continue", line], i + 1]
     }
     if k == "FUNC" {
         alloc j := i + 1
@@ -1124,6 +1154,12 @@ alloc cc_try_depth := 0
 # parallel with cc_break_stack. `break` uses this to know how many
 # tries are nested between it and its target loop.
 alloc cc_loop_try_depth := []
+# Address of the test of each currently-open loop, in parallel with
+# cc_break_stack: where `continue` jumps to.
+alloc cc_loop_starts := []
+# How many `for` loops enclose the statement being compiled, in the
+# current proc. Numbers each loop's hidden variables.
+alloc cc_for_depth := 0
 alloc cc_local_scopes := [[]]  # stack of name lists
 alloc cc_module_counter := 0
 alloc cc_current_prefix := ""
@@ -1208,6 +1244,7 @@ alloc cc_builtins := [
     "float_bits", "bits_to_float", "bytes_to_string", "dict_keys",
     "has_key",
     "list_repeat",
+    "append", "chmod",
     "exit_with_error", "exit", "getpid", "subprocess",
     "stdin_readline", "stdin_read", "stdin_read_bytes",
     "time_ms", "sleep_ms", "stdin_set_raw", "stdin_read_key",
@@ -1313,6 +1350,9 @@ proc cc_collect_declared(node, acc) {
     }
     if kind == "loop" {
         return cc_collect_declared(node[2], acc)
+    }
+    if kind == "for" {
+        return cc_collect_declared(node[3], acc + [node[1]])
     }
     if kind == "try" {
         acc := cc_collect_declared(node[1], acc)
@@ -1650,6 +1690,15 @@ proc compile_expr(node) {
             return false
         }
         if node[1] == "plus" { return false }
+        if node[1] == "not" {
+            # `x or false` is the truth of x as a bool, and comparing
+            # that with false flips it.
+            cc_emit(["PUSH_BOOL", false])
+            cc_emit_simple("OR")
+            cc_emit(["PUSH_BOOL", false])
+            cc_emit_simple("EQ")
+            return false
+        }
         panic("unknown unary op " + node[1])
     }
     if kind == "bin" {
@@ -2242,22 +2291,50 @@ proc compile_stmt(stmt) {
         alloc start := length(cc_code)
         compile_expr(stmt[1])
         alloc jf := cc_placeholder("JUMP_IF_FALSE")
-        cc_break_stack := cc_break_stack + [[]]
-        cc_loop_try_depth := cc_loop_try_depth + [cc_try_depth]
-        compile_block_node(stmt[2])
-        cc_emit(["JUMP", start])
-        alloc here := length(cc_code)
-        cc_patch(jf, here)
-        alloc top := length(cc_break_stack) - 1
-        alloc breaks := cc_break_stack[top]
-        cc_break_stack := cc_break_stack[0:top]
-        alloc ltd_top := length(cc_loop_try_depth) - 1
-        cc_loop_try_depth := cc_loop_try_depth[0:ltd_top]
-        alloc i := 0
-        loop i < length(breaks) {
-            cc_patch(breaks[i], here)
-            i := i + 1
-        }
+        cc_compile_loop_body(stmt[2], start, jf)
+        return false
+    }
+    if kind == "for" {
+        # `for x in xs { body }` is sugar for a counted loop over two
+        # hidden variables, numbered by how deeply `for` loops are
+        # nested in this proc:
+        #
+        #     __for_seq_N := xs
+        #     __for_idx_N := 0
+        #     loop __for_idx_N < length(__for_seq_N) {
+        #         alloc x := __for_seq_N[__for_idx_N]
+        #         __for_idx_N := __for_idx_N + 1
+        #         body
+        #     }
+        #
+        # The index moves on before the body runs, so `continue` can
+        # jump straight back to the test.
+        alloc seq_name := "__for_seq_" + cc_for_depth
+        alloc idx_name := "__for_idx_" + cc_for_depth
+        compile_expr(stmt[2])
+        cc_declare_local(seq_name)
+        cc_emit(["STORE_LOCAL", cc_resolve_store(seq_name)])
+        cc_emit(["PUSH_INT", 0])
+        cc_declare_local(idx_name)
+        cc_emit(["STORE_LOCAL", cc_resolve_store(idx_name)])
+        alloc start := length(cc_code)
+        cc_emit(["LOAD", cc_resolve_load(idx_name)])
+        cc_emit(["LOAD", cc_resolve_load(seq_name)])
+        cc_emit(["BUILTIN", ["length", 1]])
+        cc_emit_simple("LT")
+        alloc jf := cc_placeholder("JUMP_IF_FALSE")
+        cc_emit(["LOAD", cc_resolve_load(seq_name)])
+        cc_emit(["LOAD", cc_resolve_load(idx_name)])
+        cc_emit_simple("INDEX")
+        cc_declare_local(stmt[1])
+        cc_emit(["STORE_LOCAL", cc_resolve_store(stmt[1])])
+        cc_emit(["LOAD", cc_resolve_load(idx_name)])
+        cc_emit(["PUSH_INT", 1])
+        cc_emit_simple("ADD")
+        cc_emit(["STORE", cc_resolve_store(idx_name)])
+        cc_for_depth := cc_for_depth + 1
+        cc_compile_loop_body(stmt[3], start, jf)
+        cc_for_depth := cc_for_depth - 1
         return false
     }
     if kind == "try" {
@@ -2380,11 +2457,46 @@ proc compile_stmt(stmt) {
         cc_break_stack[top] := cc_break_stack[top] + [j]
         return false
     }
+    if kind == "continue" {
+        if length(cc_loop_starts) == 0 {
+            panic("SyntaxError: 'continue' outside of loop in " + cc_current_file)
+        }
+        # Like `break`: leave the try blocks opened inside the loop,
+        # then go back to the loop's test.
+        alloc ltd_top := length(cc_loop_try_depth) - 1
+        cc_emit_pop_blocks(cc_try_depth - cc_loop_try_depth[ltd_top])
+        cc_emit(["JUMP", cc_loop_starts[length(cc_loop_starts) - 1]])
+        return false
+    }
     if kind == "block" {
         compile_block_node(stmt)
         return false
     }
     panic("unknown statement: " + kind)
+}
+
+# The part `loop` and `for` share: compile the body of a loop whose
+# test starts at `start` and leaves through the JUMP_IF_FALSE at `jf`,
+# then close the loop and patch every `break` in it.
+proc cc_compile_loop_body(body, start, jf) {
+    cc_break_stack := cc_break_stack + [[]]
+    cc_loop_try_depth := cc_loop_try_depth + [cc_try_depth]
+    cc_loop_starts := cc_loop_starts + [start]
+    compile_block_node(body)
+    cc_emit(["JUMP", start])
+    alloc here := length(cc_code)
+    cc_patch(jf, here)
+    alloc top := length(cc_break_stack) - 1
+    alloc breaks := cc_break_stack[top]
+    cc_break_stack := cc_break_stack[0:top]
+    cc_loop_try_depth := cc_loop_try_depth[0:top]
+    cc_loop_starts := cc_loop_starts[0:top]
+    alloc i := 0
+    loop i < length(breaks) {
+        cc_patch(breaks[i], here)
+        i := i + 1
+    }
+    return false
 }
 
 proc compile_function_body(params, body) {
@@ -2396,6 +2508,10 @@ proc compile_function_body(params, body) {
     # function call boundary.)
     alloc saved_try_depth := cc_try_depth
     alloc saved_loop_try := cc_loop_try_depth
+    alloc saved_loop_starts := cc_loop_starts
+    alloc saved_for_depth := cc_for_depth
+    cc_loop_starts := []
+    cc_for_depth := 0
     cc_code := []
     cc_lines := []
     cc_break_stack := []
@@ -2427,6 +2543,8 @@ proc compile_function_body(params, body) {
     cc_break_stack := saved_breaks
     cc_try_depth := saved_try_depth
     cc_loop_try_depth := saved_loop_try
+    cc_loop_starts := saved_loop_starts
+    cc_for_depth := saved_for_depth
     return [out_code, out_lines]
 }
 
@@ -2487,6 +2605,8 @@ proc compile_program_node_seeded(ast, file, known_globals) {
     cc_file_top_names := cc_collect_top_names(ast)
     cc_try_depth := 0
     cc_loop_try_depth := []
+    cc_loop_starts := []
+    cc_for_depth := 0
     cc_collect_proc_arity(ast)
     alloc i := 0
     alloc n := length(ast)
@@ -2782,6 +2902,8 @@ proc compile_reset() {
     cc_loading := []
     cc_try_depth := 0
     cc_loop_try_depth := []
+    cc_loop_starts := []
+    cc_for_depth := 0
     cc_top_level_declared := []
     cc_proc_arity := []
     cc_nested_procs := []

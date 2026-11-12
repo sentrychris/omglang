@@ -140,7 +140,9 @@ impl<'a> Parser<'a> {
             TokKind::Import => self.parse_import(),
             TokKind::If => self.parse_if(),
             TokKind::Loop => self.parse_loop(),
+            TokKind::For => self.parse_for(),
             TokKind::Break => self.parse_break(),
+            TokKind::Continue => self.parse_continue(),
             TokKind::Func => self.parse_func_def(),
             TokKind::Try => self.parse_try(),
             TokKind::Alloc => self.parse_decl(),
@@ -240,6 +242,29 @@ impl<'a> Parser<'a> {
         let line = self.peek().line;
         self.expect(&TokKind::Break)?;
         Ok(Node::Break(line))
+    }
+
+    fn parse_continue(&mut self) -> Result<Node, RuntimeError> {
+        let line = self.peek().line;
+        self.expect(&TokKind::Continue)?;
+        Ok(Node::Continue(line))
+    }
+
+    /// `for <name> in <expr> { body }`
+    fn parse_for(&mut self) -> Result<Node, RuntimeError> {
+        let line = self.peek().line;
+        self.expect(&TokKind::For)?;
+        let name = match self.peek().kind.clone() {
+            TokKind::Ident(s) => {
+                self.advance();
+                s
+            }
+            _ => return Err(self.syntax("Expected identifier after 'for'")),
+        };
+        self.expect(&TokKind::In)?;
+        let seq = self.parse_expr()?;
+        let body = self.parse_block()?;
+        Ok(Node::For(name, Box::new(seq), Box::new(body), line))
     }
 
     fn parse_func_def(&mut self) -> Result<Node, RuntimeError> {
@@ -414,14 +439,28 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_logical_and(&mut self) -> Result<Node, RuntimeError> {
-        let mut lhs = self.parse_comparison()?;
+        let mut lhs = self.parse_logical_not()?;
         while matches!(self.peek().kind, TokKind::And) {
             let line = self.peek().line;
             self.advance();
-            let rhs = self.parse_comparison()?;
+            let rhs = self.parse_logical_not()?;
             lhs = Node::Binary(BinOp::And, Box::new(lhs), Box::new(rhs), line);
         }
         Ok(lhs)
+    }
+
+    /// `not` binds looser than a comparison and tighter than `and`, so
+    /// `not a == b and c` reads as `(not (a == b)) and c`.
+    fn parse_logical_not(&mut self) -> Result<Node, RuntimeError> {
+        if matches!(self.peek().kind, TokKind::Not) {
+            let line = self.peek().line;
+            self.advance();
+            self.enter_nesting()?;
+            let inner = self.parse_logical_not();
+            self.depth -= 1;
+            return Ok(Node::Unary(UnaryOp::Not, Box::new(inner?), line));
+        }
+        self.parse_comparison()
     }
 
     fn parse_comparison(&mut self) -> Result<Node, RuntimeError> {
