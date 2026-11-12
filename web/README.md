@@ -42,12 +42,13 @@ web/
 ├── index.html          page shell + styling
 ├── app.js              loads the bundle, redirects emit/print into <pre>
 ├── omg-web.js          compiler + VM + driver bundled to JavaScript
-└── examples/           pre-built example pairs (.omg + transpiled .js)
-                        plus manifest.json. The playground and explorer
+└── examples/           copies of a few programs from examples/, plus
+                        manifest.json. The playground and explorer
                         populate their "Examples" dropdown from the
-                        manifest and lazy-fetch the .omg on selection;
-                        the .js files are also there so visitors can
-                        inspect what `omg --emit-js` output looks like
+                        manifest and lazy-fetch the .omg on selection.
+                        To see what `omg --emit-js` writes for a
+                        program, use the explorer page or run
+                        `omg --emit-js prog.omg prog.js`
 ```
 
 ## What's not here

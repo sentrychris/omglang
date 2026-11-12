@@ -8,10 +8,11 @@
 #                    user-typed source goes in via globalThis.args[1],
 #                    output comes back through the redirected omg_emit.
 #
-# Reference artifacts (web/examples/):
-#   <name>.omg + <name>.js — pre-built example pairs so visitors can
-#                            inspect what native-js.omg's output looks
-#                            like without running the build themselves.
+# Also filled in here (web/examples/):
+#   <name>.omg + manifest.json — copies of a few programs from
+#                                examples/, and the list of them, for
+#                                the "Examples" dropdown of the two
+#                                pages.
 
 set -e
 cd "$(dirname "$0")/.."
@@ -88,7 +89,10 @@ omg_to_js "$WORK/omg-explorer.omgb" web/omg-explorer.js
 strip_root web/omg-explorer.js
 echo "  $(wc -c < web/omg-explorer.js | tr -d ' ') bytes"
 
-# === Reference example pairs ==============================================
+# === Examples for the dropdown =============================================
+# The pages fetch these as plain source and compile them in the browser
+# like anything else that is typed in, so nothing is built here: they
+# are copies.
 
 EXAMPLES=(
     assignment bitwise dictionaries floats hex_to_rgb
@@ -105,9 +109,6 @@ for name in "${EXAMPLES[@]}"; do
         continue
     fi
     cp "$src" "$WEB_OUT/$name.omg"
-    omg_compile "$src" "$WORK/$name.omgb"
-    omg_to_js "$WORK/$name.omgb" "$WEB_OUT/$name.js"
-    strip_root "$WEB_OUT/$name.js"
     manifest_entries+=("\"$name\"")
     count=$((count + 1))
 done
@@ -118,7 +119,7 @@ done
 manifest_csv=$(IFS=,; echo "${manifest_entries[*]}")
 printf '[%s]\n' "$manifest_csv" > "$WEB_OUT/manifest.json"
 
-echo "Built $count reference example pairs in $WEB_OUT/ (+ manifest.json)"
+echo "Copied $count examples to $WEB_OUT/ (+ manifest.json)"
 
 echo
 echo "Serve the playground:"

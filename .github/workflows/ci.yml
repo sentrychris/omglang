@@ -234,7 +234,7 @@ jobs:
           } 2>&1 | tee regressions.log
 
       # web/ holds generated bundles (the compiler and VM transpiled to
-      # JS, plus the example pairs). The build is deterministic, so a
+      # JS, plus copies of a few examples). The build is deterministic, so a
       # rebuild that changes anything means they were not regenerated
       # after a change to their sources.
       - name: Checked-in web bundles are current
