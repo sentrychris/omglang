@@ -555,14 +555,22 @@ function omg_abs(v) {
     if (typeof v === 'number') return Math.abs(v);
     omg_panic('TypeError', 'abs() expects a number');
 }
-function omg_sqrt(v) { return Math.sqrt(omg_as_float(v)); }
+function omg_sqrt(v) {
+    const x = omg_as_float(v);
+    if (x < 0) omg_panic('ValueError', 'sqrt() of a negative number');
+    return Math.sqrt(x);
+}
 function omg_pow(a, b) {
     if (typeof a === 'bigint' && typeof b === 'bigint' && b >= 0n) {
         return a ** b;
     }
     return Math.pow(omg_as_float(a), omg_as_float(b));
 }
-function omg_log(v) { return Math.log(omg_as_float(v)); }
+function omg_log(v) {
+    const x = omg_as_float(v);
+    if (x <= 0) omg_panic('ValueError', 'log() requires a positive number');
+    return Math.log(x);
+}
 function omg_sin(v) { return Math.sin(omg_as_float(v)); }
 function omg_cos(v) { return Math.cos(omg_as_float(v)); }
 function omg_tan(v) { return Math.tan(omg_as_float(v)); }

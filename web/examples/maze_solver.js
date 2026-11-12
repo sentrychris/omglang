@@ -558,14 +558,22 @@ function omg_abs(v) {
     if (typeof v === 'number') return Math.abs(v);
     omg_panic('TypeError', 'abs() expects a number');
 }
-function omg_sqrt(v) { return Math.sqrt(omg_as_float(v)); }
+function omg_sqrt(v) {
+    const x = omg_as_float(v);
+    if (x < 0) omg_panic('ValueError', 'sqrt() of a negative number');
+    return Math.sqrt(x);
+}
 function omg_pow(a, b) {
     if (typeof a === 'bigint' && typeof b === 'bigint' && b >= 0n) {
         return a ** b;
     }
     return Math.pow(omg_as_float(a), omg_as_float(b));
 }
-function omg_log(v) { return Math.log(omg_as_float(v)); }
+function omg_log(v) {
+    const x = omg_as_float(v);
+    if (x <= 0) omg_panic('ValueError', 'log() requires a positive number');
+    return Math.log(x);
+}
 function omg_sin(v) { return Math.sin(omg_as_float(v)); }
 function omg_cos(v) { return Math.cos(omg_as_float(v)); }
 function omg_tan(v) { return Math.tan(omg_as_float(v)); }
@@ -626,6 +634,13 @@ function omg_list_repeat(item, count) {
     const out = new Array(n);
     for (let i = 0; i < n; i++) out[i] = item;
     return out;
+}
+
+// append(list, item): push onto the end of the list, in place.
+function omg_append(list, item) {
+    if (!Array.isArray(list)) omg_panic('TypeError', 'append() expects (list, any)');
+    list.push(item);
+    return null;
 }
 
 function omg_string_bytes(s) {
@@ -722,6 +737,17 @@ function omg_make_dir(path) {
     _need_fs('make_dir');
     try { _omg_fs.mkdirSync(path, { recursive: true }); return true; }
     catch (_e) { return false; }
+}
+
+// chmod(path, mode): set a file's permission bits.
+function omg_chmod(path, mode) {
+    _need_fs('chmod');
+    if (typeof path !== 'string' || typeof mode !== 'bigint') {
+        omg_panic('TypeError', 'chmod() expects (path, int)');
+    }
+    try { _omg_fs.chmodSync(path, Number(mode)); }
+    catch (e) { omg_panic('ValueError', "cannot chmod '" + path + "': " + e.message); }
+    return true;
 }
 
 // File handles for stream I/O. We implement a tiny in-memory buffer
@@ -921,6 +947,8 @@ const _omg_builtins = {
     dict_keys: omg_dict_keys,
     has_key: omg_has_key,
     list_repeat: omg_list_repeat,
+    append: omg_append,
+    chmod: omg_chmod,
     string_bytes: omg_string_bytes,
     bytes_to_string: omg_bytes_to_string,
     float_bits: omg_float_bits,
