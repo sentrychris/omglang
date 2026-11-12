@@ -40,6 +40,7 @@
 #include <arpa/inet.h>
 #include <netdb.h>
 #include <signal.h>
+#include <sys/resource.h> /* getrlimit / setrlimit for the stack guard */
 
 typedef enum {
     OMG_INT,
@@ -49,7 +50,12 @@ typedef enum {
     OMG_CLOSURE,
     OMG_LIST,
     OMG_DICT,
-    OMG_FLOAT
+    OMG_FLOAT,
+    /* Not an OMG value: the state of a variable slot that nothing has
+     * been stored into yet. LOAD and STORE check for it and raise
+     * UndefinedIdentError, the way the VMs do when a name is missing
+     * from the environment. It never reaches the operand stack. */
+    OMG_UNSET
 } omg_tag;
 
 /* Forward-declared so Value can hold pointers. */
@@ -151,6 +157,16 @@ static inline Value omg_none(void) {
     return v;
 }
 
+/* The initial contents of every variable slot (see OMG_UNSET). File-
+ * level globals get the same state from OMG_UNSET_INIT. */
+static inline Value omg_unset(void) {
+    Value v;
+    v.tag = OMG_UNSET;
+    v.v.i = 0;
+    return v;
+}
+#define OMG_UNSET_INIT { OMG_UNSET, { 0 } }
+
 /* Build a closure value. `captured` may be NULL when cap_count == 0
  * (top-level procs that don't capture anything). `name` is the bare
  * source name used by traceback rendering. Refcounted: the caller
@@ -204,12 +220,15 @@ typedef struct OmgFrame {
 #define OMG_MAX_FRAMES 1024
 static OmgFrame omg_frame_stack[OMG_MAX_FRAMES];
 static int omg_frame_top = 0;
+/* Calls deeper than OMG_MAX_FRAMES are counted here instead of being
+ * recorded, so each pop still pairs with its own push and the recorded
+ * frames are intact once the recursion unwinds. Only tracebacks care,
+ * and they print the outermost OMG_MAX_FRAMES frames. */
+static int omg_frame_dropped = 0;
 
 static inline void omg_frame_push(const char *name, uint32_t fi, uint32_t ln) {
     if (omg_frame_top >= OMG_MAX_FRAMES) {
-        /* Silently drop — running out of frame slots is an OMG
-         * runaway-recursion scenario; the panic-from-stack-overflow
-         * surfaces some other way. */
+        omg_frame_dropped++;
         return;
     }
     omg_frame_stack[omg_frame_top].name = name;
@@ -219,6 +238,7 @@ static inline void omg_frame_push(const char *name, uint32_t fi, uint32_t ln) {
 }
 
 static inline void omg_frame_pop(void) {
+    if (omg_frame_dropped > 0) { omg_frame_dropped--; return; }
     if (omg_frame_top > 0) omg_frame_top--;
 }
 
@@ -305,6 +325,7 @@ static void omg_emit_traceback(const char *fullmsg) {
 typedef struct OmgBlock {
     int saved_sp;
     int saved_frame_top;   /* depth of omg_frame_stack at try-entry */
+    int saved_frame_dropped; /* omg_frame_dropped at try-entry */
     jmp_buf jb;
 } OmgBlock;
 
@@ -322,6 +343,7 @@ static void omg_block_push(OmgBlock *b) {
         fprintf(stderr, "VmInvariant: try-block stack overflow\n");
         exit(1);
     }
+    b->saved_frame_dropped = omg_frame_dropped;
     omg_block_stack[omg_block_top++] = b;
 }
 
@@ -362,6 +384,7 @@ static void omg_panic(const char *prefix, const char *msg) {
         if (omg_frame_top > b->saved_frame_top) {
             omg_frame_top = b->saved_frame_top;
         }
+        omg_frame_dropped = b->saved_frame_dropped;
         longjmp(b->jb, 1);
     }
     /* Uncaught — emit a traceback if we have any source map info to
@@ -384,6 +407,52 @@ static void omg_panicf(const char *prefix, const char *fmt, ...) {
     va_end(ap);
     omg_panic(prefix, buf);
 }
+
+/* === Native stack guard ====================================================
+ * Every OMG call is a C call, so OMG recursion consumes the C stack.
+ * Without a check, recursing too deep is a segfault with no message.
+ * Each emitted function starts with OMG_STACK_CHECK(), which compares
+ * its frame address against a limit computed once in main() and raises
+ * a normal (catchable) RuntimeError when the stack is nearly used up.
+ *
+ * On Linux the main thread's stack grows on demand up to the soft
+ * RLIMIT_STACK *currently* in force, so omg_stack_init first raises a
+ * small soft limit to 64 MiB (the size of the thread the Rust VM runs
+ * on) to allow deeper recursion. Elsewhere the size is fixed when the
+ * process starts, so the limit is used as found. */
+static uintptr_t omg_stack_limit = 0;
+
+static void omg_stack_init(void *base) {
+    size_t size = (size_t)8 * 1024 * 1024;
+    struct rlimit rl;
+    if (getrlimit(RLIMIT_STACK, &rl) == 0) {
+#ifdef __linux__
+        rlim_t want = (rlim_t)64 * 1024 * 1024;
+        if (rl.rlim_cur != RLIM_INFINITY && rl.rlim_cur < want) {
+            struct rlimit raised = rl;
+            raised.rlim_cur = (rl.rlim_max == RLIM_INFINITY || rl.rlim_max >= want) ? want : rl.rlim_max;
+            if (setrlimit(RLIMIT_STACK, &raised) == 0) rl = raised;
+        }
+#endif
+        if (rl.rlim_cur == RLIM_INFINITY) size = (size_t)256 * 1024 * 1024;
+        else size = (size_t)rl.rlim_cur;
+    }
+    /* Keep room for the environment block above main's frame and for
+     * the frames that format and report the error. */
+    size_t reserve = size >= (size_t)4 * 1024 * 1024 ? (size_t)1024 * 1024 : size / 4;
+    size -= reserve;
+    uintptr_t b = (uintptr_t)base;
+    omg_stack_limit = b > size ? b - size : 0;
+}
+
+static void omg_stack_overflow(void) {
+    omg_panic("RuntimeError", "maximum recursion depth exceeded");
+}
+
+#define OMG_STACK_CHECK() \
+    do { \
+        if ((uintptr_t)__builtin_frame_address(0) < omg_stack_limit) omg_stack_overflow(); \
+    } while (0)
 
 static const char *omg_kind_prefix(int kind) {
     switch (kind) {
@@ -1035,6 +1104,54 @@ static void omg_cell_set(Value cell, Value v) {
     omg_assign(&cell.v.l->items[0], v);
 }
 
+/* A proc entered with the wrong number of arguments. Only a call
+ * through a value can get here (direct calls are checked by the
+ * compiler), and that call site has just pushed a traceback frame for
+ * the callee; drop it so the error is reported at the call, as on the
+ * VMs. */
+static void omg_arity_error(const char *name, int expected, int got) {
+    omg_frame_pop();
+    omg_panicf("TypeError", "function '%s' expects %d arguments, got %d",
+               name, expected, got);
+}
+
+/* A LOAD or STORE of a name that nothing has been stored into yet. */
+static void omg_undefined(const char *name) {
+    omg_panic("UndefinedIdentError", name);
+}
+
+/* LOAD / STORE through a variable slot that holds a cell. The slot is
+ * OMG_UNSET (not a cell) until its `alloc` has run, or when a closure
+ * captured the name before the enclosing proc had declared it. */
+static Value omg_cell_load(Value cell, const char *name) {
+    if (cell.tag != OMG_LIST) omg_undefined(name);
+    return omg_cell_get(cell);
+}
+
+static void omg_cell_store(Value cell, const char *name, Value v) {
+    if (cell.tag != OMG_LIST) omg_undefined(name);
+    omg_cell_set(cell, v);
+}
+
+/* The closure a running proc is, rebuilt from the pieces its C function
+ * was called with. A nested proc that refers to itself (recursion, or
+ * handing itself to someone else) gets this bound to its own name on
+ * entry; the VMs do the same thing in the frame they build for a
+ * closure call. The new closure shares the captured cells but owns its
+ * own array, so there is no reference cycle. */
+static Value omg_closure_self(OmgFn fn, const char *name, Value *captured, int cap_count) {
+    Value *cap = NULL;
+    if (cap_count > 0) {
+        cap = (Value *)malloc((size_t)cap_count * sizeof(Value));
+        if (!cap) { fprintf(stderr, "out of memory\n"); exit(1); }
+        for (int i = 0; i < cap_count; i++) {
+            cap[i] = captured[i];
+            omg_inc(cap[i]);
+        }
+    }
+    return omg_closure(fn, name, cap, cap_count);
+}
+
 static int64_t omg_normalise_index(int64_t idx, int len, const char *opname) {
     int64_t real = idx < 0 ? idx + len : idx;
     if (real < 0 || real >= len) {
@@ -1431,7 +1548,11 @@ static Value omg_index(Value base, Value idx) {
         const char *k = omg_value_to_cstr(idx, buf, sizeof(buf));
         return omg_dict_get(base.v.d, k);
     }
-    omg_panic("TypeError", "cannot index this value");
+    {
+        /* Same wording as the Rust VM ("<value> is not indexable"). */
+        char vbuf[64];
+        omg_panicf("TypeError", "%s is not indexable", omg_value_to_cstr(base, vbuf, sizeof(vbuf)));
+    }
     return omg_none(); /* unreachable */
 }
 
@@ -2716,6 +2837,7 @@ static Value omg_call_builtin(Value name, Value args) {
         if (strcmp(n, "pow") == 0)        return omg_builtin_pow(a[0], a[1]);
         if (strcmp(n, "binary") == 0)     return omg_builtin_binary2(a[0], a[1]);
         if (strcmp(n, "has_key") == 0)    return omg_has_key(a[0], a[1]);
+        if (strcmp(n, "list_repeat") == 0) return omg_list_repeat(a[0], a[1]);
         if (strcmp(n, "file_open") == 0)  return omg_builtin_file_open(a[0], a[1]);
         if (strcmp(n, "file_write") == 0) return omg_builtin_file_write(a[0], a[1]);
         if (strcmp(n, "file_seek") == 0)  return omg_builtin_file_seek(a[0], a[1]);

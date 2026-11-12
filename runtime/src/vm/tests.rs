@@ -590,3 +590,74 @@ fn length_counts_dict_entries() {
     let frozen = call("freeze", &[dict]).unwrap();
     assert_eq!(as_str(call("length", &[frozen])), "2");
 }
+
+/// Compile and run a source string, for tests about what a whole program
+/// does rather than what one instruction does.
+fn run_source(src: &str) -> Result<(), RuntimeError> {
+    let prog = crate::compiler::compile_source(src, "/virtual/vm_test.omg").unwrap();
+    run(&prog.code, &prog.funcs, &prog.src_map, &[])
+}
+
+#[test]
+fn nested_proc_keeps_its_captures_when_it_recurses() {
+    // The recursive call used to start with an empty environment, so
+    // `step` was undefined from the second level down.
+    let result = run_source(
+        ";;;omg\n\
+         proc sum_to(n, step) {\n\
+             proc walk(k) {\n\
+                 if k > n { return 0 }\n\
+                 return k + walk(k + step)\n\
+             }\n\
+             return walk(0)\n\
+         }\n\
+         facts sum_to(10, 1) == 55\n\
+         facts sum_to(10, 5) == 15\n",
+    );
+    assert_eq!(result, Ok(()));
+}
+
+#[test]
+fn closure_sees_itself_when_called_from_elsewhere() {
+    // The self binding belongs to the closure, not to the call site, so
+    // it still works after the closure has left the proc that made it.
+    let result = run_source(
+        ";;;omg\n\
+         proc make_countdown(label) {\n\
+             proc down(k) {\n\
+                 if k == 0 { return label }\n\
+                 return down(k - 1)\n\
+             }\n\
+             return down\n\
+         }\n\
+         alloc f := make_countdown(\"done\")\n\
+         facts f(50) == \"done\"\n",
+    );
+    assert_eq!(result, Ok(()));
+}
+
+#[test]
+fn parameter_named_like_the_proc_wins_over_the_self_binding() {
+    let result = run_source(
+        ";;;omg\n\
+         proc outer() {\n\
+             proc f(f) { return f + 1 }\n\
+             return f(41)\n\
+         }\n\
+         facts outer() == 42\n",
+    );
+    assert_eq!(result, Ok(()));
+}
+
+#[test]
+fn executable_path_is_false_on_this_runtime() {
+    let result = run_source(
+        ";;;omg\nfacts executable_path() == false\nfacts call_builtin(\"executable_path\", []) == false\n",
+    );
+    assert_eq!(result, Ok(()));
+}
+
+#[test]
+fn script_without_the_header_runs() {
+    assert_eq!(run_source("alloc x := 2\nfacts x + x == 4\n"), Ok(()));
+}

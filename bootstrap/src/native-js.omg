@@ -440,6 +440,14 @@ proc emit_push_float_bits(bits) {
     return "    _s.push(omg_bits_to_float(" + bits + "n));\n"
 }
 
+# A CALL or TCALL whose target is not in the function table. The
+# compiler emits these for a call to a name it has never seen; the VMs
+# raise UndefinedIdentError when (and only if) the call is reached, so
+# the generated program does the same instead of failing to build.
+proc emit_undefined_call(fname) {
+    return "    omg_undefined(\"" + js_escape(fname) + "\");\n"
+}
+
 # Emit JS for a single bytecode instruction. `ctx` carries:
 #   ctx.func_index   — name → numeric index
 #   ctx.func_info    — analysis dicts (currently unused; reserved)
@@ -457,40 +465,47 @@ proc emit_js_for_instr(instr, ctx) {
     if op == "PUSH_NONE" { return "    _s.push(null);\n" }
     if op == "PUSH_FLOAT_BITS" { return emit_push_float_bits(arg) }
 
-    # Variables — three storage modes:
-    #   1. Captured from outer (in `current_captured_set`): the cell
-    #      lives in `_captured` (JS Map of name → 1-element arrays);
-    #      access via `_captured.get(name)[0]`.
-    #   2. Local & boxed (in `current_boxed_set`): the cell is the JS
-    #      local `v_x` itself, which holds a 1-element array; access
-    #      via `v_x[0]`.
-    #   3. Local & unboxed: plain `v_x = ...`.
-    # By-reference closure capture works because boxed locals and
-    # captured cells are *the same arrays*, shared by reference.
+    # Variables. Every name a proc uses is a JS variable `v_x`
+    # (function-local, or module-level for a global). Two storage modes:
+    #   1. Boxed: the variable holds a *cell*, a 1-element array, and
+    #      the value is `v_x[0]`. That is the case for names captured
+    #      from an enclosing proc (the cell arrives through
+    #      `_captured`) and for locals that a nested proc captures.
+    #      By-reference capture works because both frames hold the
+    #      same array.
+    #   2. Unboxed: plain `v_x = ...`.
+    # A variable nothing has been stored into yet holds OMG_UNSET; LOAD
+    # and STORE of such a name raise UndefinedIdentError, which is what
+    # the VMs do when a name is in neither the environment nor the
+    # globals. Params are always set, so they skip the check.
+    alloc name_lit := ""
+    if op == "LOAD" or op == "STORE" {
+        name_lit := "\"" + js_escape(arg) + "\""
+    }
     if op == "LOAD" {
-        if has_key(ctx["current_captured_set"], arg) {
-            return "    _s.push(_captured.get(\"" + js_escape(arg) + "\")[0]);\n"
+        if name_is_boxed(arg, ctx) {
+            return "    _s.push(omg_cell_load(" + js_var(arg) + ", " + name_lit + "));\n"
         }
-        if has_key(ctx["current_boxed_set"], arg) {
-            return "    _s.push(" + js_var(arg) + "[0]);\n"
+        if name_is_param(arg, ctx) {
+            return "    _s.push(" + js_var(arg) + ");\n"
         }
-        return "    _s.push(" + js_var(arg) + ");\n"
+        return "    if (" + js_var(arg) + " === OMG_UNSET) omg_undefined(" + name_lit + "); _s.push(" + js_var(arg) + ");\n"
     }
     if op == "STORE" {
-        if has_key(ctx["current_captured_set"], arg) {
-            return "    _captured.get(\"" + js_escape(arg) + "\")[0] = _s.pop();\n"
+        if name_is_boxed(arg, ctx) {
+            return "    omg_cell_store(" + js_var(arg) + ", " + name_lit + ", _s.pop());\n"
         }
-        if has_key(ctx["current_boxed_set"], arg) {
-            return "    " + js_var(arg) + "[0] = _s.pop();\n"
+        if name_is_param(arg, ctx) {
+            return "    " + js_var(arg) + " = _s.pop();\n"
         }
-        return "    " + js_var(arg) + " = _s.pop();\n"
+        return "    if (" + js_var(arg) + " === OMG_UNSET) omg_undefined(" + name_lit + "); " + js_var(arg) + " = _s.pop();\n"
     }
     if op == "STORE_LOCAL" {
         # `alloc` always installs a fresh storage slot. For boxed
-        # locals, that's a fresh single-element array (so any
+        # names, that's a fresh single-element array (so any
         # previously-captured cell with this name is shadowed —
         # matching Rust/OMG-VM semantics).
-        if has_key(ctx["current_boxed_set"], arg) {
+        if name_is_boxed(arg, ctx) {
             return "    " + js_var(arg) + " = [_s.pop()];\n"
         }
         return "    " + js_var(arg) + " = _s.pop();\n"
@@ -565,6 +580,9 @@ proc emit_js_for_instr(instr, ctx) {
     # CALL_VALUE.
     if op == "CALL" {
         alloc fname := arg
+        if has_key(ctx["funcs"], fname) == false {
+            return emit_undefined_call(fname)
+        }
         alloc fidx := ctx["func_index"][fname]
         alloc nparams := length(ctx["funcs"][fname][0])
         alloc display := strip_mod_prefix(fname)
@@ -582,6 +600,9 @@ proc emit_js_for_instr(instr, ctx) {
     }
     if op == "TCALL" {
         alloc fname := arg
+        if has_key(ctx["funcs"], fname) == false {
+            return emit_undefined_call(fname)
+        }
         alloc fidx := ctx["func_index"][fname]
         alloc nparams := length(ctx["funcs"][fname][0])
         alloc display := strip_mod_prefix(fname)
@@ -628,42 +649,42 @@ proc emit_js_for_instr(instr, ctx) {
         out := out + "        const _cap = new Map();\n"
         alloc i := 0
         loop i < nc {
+            # Every captured name is a variable of this frame holding a
+            # cell (or OMG_UNSET when its `alloc` has not run yet, in
+            # which case the inner proc raises if it ever uses it).
             alloc cn := inner_captured[i]
-            # Source for the cell. Three cases, mirroring LOAD:
-            #   - the name is in the current function's captured_set
-            #     (i.e. captured-from-grandparent): read from the
-            #     parent's _captured. The cell lives there.
-            #   - the name is in the current function's boxed_set
-            #     (this function's local): the cell IS v_<cn>.
-            #   - else: (shouldn't happen for a properly captured
-            #     name; defensive fallback).
-            alloc src := js_var(cn)
-            if has_key(ctx["current_captured_set"], cn) {
-                src := "_captured.get(\"" + js_escape(cn) + "\")"
-            }
-            out := out + "        _cap.set(\"" + js_escape(cn) + "\", " + src + ");\n"
+            out := out + "        _cap.set(\"" + js_escape(cn) + "\", " + js_var(cn) + ");\n"
             i := i + 1
         }
         # The wrapper takes only the user-facing args and forwards
         # them with _cap as the captured dict. We use the runtime
         # omg_closure helper so the wrapper also carries an
-        # `__omg_name` for traceback rendering. (Pre-traceback the
-        # transpiler emitted a bare arrow function — equivalent
-        # except for the missing name.)
+        # `__omg_name` for traceback rendering.
         alloc bare := strip_mod_prefix(fname)
         alloc display := bare
         if display == false {
             display := fname
         }
         alloc closure_expr := "omg_closure(" + js_fn_name(fidx) + ", _cap, \"" + js_escape(display) + "\")"
-        if has_key(ctx["current_boxed_set"], fname) {
-            out := out + "        " + js_var(fname) + " = [" + closure_expr + "];\n"
+        # Inside a proc, a nested proc's MAKE_FUNC carries its
+        # function-table key (`__mod_N__<bare>`) but the body refers to
+        # it by the bare name, so that is the variable to bind. When a
+        # proc nested in this one captures that name (a sibling proc
+        # calling this one), the variable holds a cell, and like
+        # STORE_LOCAL each definition gets a fresh one.
+        alloc target := fname
+        if ctx["current_func"] != "" and bare != false {
+            target := bare
+        }
+        if name_is_boxed(target, ctx) {
+            out := out + "        " + js_var(target) + " = [" + closure_expr + "];\n"
         } else {
-            out := out + "        " + js_var(fname) + " = " + closure_expr + ";\n"
+            out := out + "        " + js_var(target) + " = " + closure_expr + ";\n"
         }
 
-        # Cross-module alias (mirror of vm.rs / vm.omg / native-c.omg).
-        if bare != false and has_key(ctx["globals"], bare) {
+        # Cross-module alias at the top level (mirror of vm.rs /
+        # vm.omg / native-c.omg).
+        if ctx["current_func"] == "" and bare != false and has_key(ctx["globals"], bare) {
             out := out + "        " + js_var(bare) + " = " + js_var(fname) + ";\n"
         }
         out := out + "    }\n"
@@ -709,6 +730,26 @@ proc has_key(d, key) {
     } except err {
         return false
     }
+}
+
+# Is the given name stored as a 1-element cell in this emit context?
+# Captured-from-outer names always are (the enclosing frame made the
+# cell); so are this proc's own variables that a nested proc captures.
+proc name_is_boxed(name, ctx) {
+    if has_key(ctx["current_captured_set"], name) {
+        return true
+    }
+    return has_key(ctx["current_boxed_set"], name)
+}
+
+# Is `name` a parameter of the proc being emitted? Params are bound by
+# the call itself, so they are never OMG_UNSET.
+proc name_is_param(name, ctx) {
+    alloc cf := ctx["current_func"]
+    if cf == "" {
+        return false
+    }
+    return has_key(ctx["func_info"][cf]["params_set"], name)
 }
 
 proc strip_mod_prefix(name) {
@@ -811,171 +852,310 @@ proc build_func_index(funcs) {
     return out
 }
 
-# Walk a function body to find every name it stores or loads; used to
-# decide which variables to declare in the JS `let` preamble.
-proc collect_function_locals(body_start, body_end, code) {
-    alloc locals := {}
-    alloc i := body_start
-    loop i < body_end {
-        alloc instr := code[i]
-        alloc op := instr[0]
-        if op == "STORE_LOCAL" or op == "MAKE_FUNC" {
-            locals[instr[1]] := true
+# === Scope analysis =======================================================
+#
+# (Kept identical to the analysis in native-c.omg; change both.)
+#
+# The VMs resolve every name at run time: a frame's environment is a
+# dict, a closure call starts from a copy of the dict captured when the
+# closure was made, and a miss falls through to the globals. The
+# emitted JS uses real variables instead, so each name a proc uses has
+# to be pinned down ahead of time as one of:
+#
+#   param     an argument of this proc
+#   local     bound by an `alloc` (STORE_LOCAL) or a nested `proc`
+#             (MAKE_FUNC) in this proc's own body
+#   self      the proc's own name, for a nested proc that refers to
+#             itself (recursion); bound on entry
+#   captured  a variable of an enclosing proc, passed in through the
+#             closure's _captured Map as a shared cell
+#   global    everything else: a module-level `let`
+#
+# The rules mirror what the compiler and the VMs do between them:
+#
+#   * A closure sees the enclosing proc's variables that exist when it
+#     is *defined*: the params, and the locals bound earlier in the
+#     body than its MAKE_FUNC (bytecode order is source order). Beyond
+#     that it sees whatever the enclosing proc itself could see, and
+#     so on outwards. `scope_visible` implements this.
+#   * A name the proc binds before its first use is simply its local,
+#     even when an enclosing proc has a variable of the same name.
+#   * A name used before the proc's own `alloc` of it starts out as
+#     the captured variable (when one is visible) and is rebound by
+#     the `alloc`, exactly like the VM's environment dict.
+#   * Captures are transitive: if an inner proc needs a variable from
+#     two levels up, the proc in between has to capture it as well so
+#     it has something to hand down.
+#
+# A variable is *boxed* (held in a 1-element cell, so that frames share
+# storage) when it was captured from outside or when a proc nested
+# directly inside this one captures it.
+
+# Is `nm` one of the variables in `fname`'s frame at instruction `pos`
+# of its body (or reachable from there through its own captures)?
+proc scope_visible(fname, pos, nm, raw, parent, def_pos) {
+    alloc cur := fname
+    alloc at := pos
+    loop true {
+        alloc r := raw[cur]
+        if has_key(r["params_set"], nm) {
+            return true
         }
-        i := i + 1
+        if has_key(r["decl_pos"], nm) and r["decl_pos"][nm] < at {
+            return true
+        }
+        if has_key(parent, cur) == false {
+            return false
+        }
+        if r["bare"] == nm {
+            # The enclosing proc's own name: it binds itself on entry.
+            return true
+        }
+        at := def_pos[cur]
+        cur := parent[cur]
     }
-    return locals
+    return false
 }
 
-proc collect_all_local_names(code, funcs) {
-    alloc all := {}
+proc analyze_all_functions(code, funcs, globals) {
     alloc sorted := sorted_funcs_by_addr(funcs)
     alloc n := length(sorted)
     alloc code_len := length(code)
+
+    # Pass 1: the raw facts about each body, plus who is nested in whom.
+    alloc raw := {}
+    alloc parent := {}     # nested proc key -> key of the proc it is defined in
+    alloc def_pos := {}    # nested proc key -> index of its MAKE_FUNC
+    alloc children := {}   # proc key -> keys of the procs defined directly in it
+    alloc order := []
     alloc i := 0
     loop i < n {
-        alloc addr := sorted[i][0]
         alloc nm := sorted[i][1]
-        alloc body_start := addr
+        alloc body_start := sorted[i][0]
         alloc body_end := code_len
         if i + 1 < n {
             body_end := sorted[i + 1][0]
         }
         alloc params := funcs[nm][0]
+        alloc params_set := {}
         alloc p := 0
         loop p < length(params) {
-            all[params[p]] := true
+            params_set[params[p]] := true
             p := p + 1
         }
+        alloc decl_pos := {}    # name -> index of the first instruction binding it
+        alloc first_use := {}   # name -> index of the first LOAD / STORE of it
+        alloc kids := []
         alloc j := body_start
         loop j < body_end {
             alloc instr := code[j]
             alloc op := instr[0]
             if op == "STORE_LOCAL" or op == "MAKE_FUNC" {
-                all[instr[1]] := true
+                # A nested proc's MAKE_FUNC carries its function-table
+                # key (`__mod_N__<bare>`); the body refers to it by the
+                # bare name, so that is the variable.
+                alloc local_name := instr[1]
+                if op == "MAKE_FUNC" {
+                    alloc stripped := strip_mod_prefix(local_name)
+                    if stripped != false { local_name := stripped }
+                    parent[instr[1]] := nm
+                    def_pos[instr[1]] := j
+                    kids := kids + [instr[1]]
+                }
+                if has_key(decl_pos, local_name) == false {
+                    decl_pos[local_name] := j
+                }
+            } elif op == "LOAD" or op == "STORE" {
+                if has_key(first_use, instr[1]) == false {
+                    first_use[instr[1]] := j
+                }
             }
             j := j + 1
         }
+        alloc bare := strip_mod_prefix(nm)
+        raw[nm] := {
+            params: params,
+            params_set: params_set,
+            decl_pos: decl_pos,
+            first_use: first_use,
+            bare: bare,
+            body_start: body_start,
+            body_end: body_end
+        }
+        children[nm] := kids
+        order := order + [nm]
         i := i + 1
     }
-    return all
-}
 
-# For each function, identify which referenced names are locals of an
-# *enclosing* function — those need to be passed via the `_captured`
-# arg at call time. Mirrors native-c.omg's analyze_function.
-proc analyze_function(fname, params, body_start, body_end, code, globals, all_locals) {
-    alloc params_set := {}
-    alloc i := 0
-    loop i < length(params) {
-        params_set[params[i]] := true
-        i := i + 1
-    }
-    alloc locals := {}
-    alloc referenced := {}
-    alloc j := body_start
-    loop j < body_end {
-        alloc instr := code[j]
-        alloc op := instr[0]
-        if op == "STORE_LOCAL" or op == "MAKE_FUNC" {
-            locals[instr[1]] := true
-            referenced[instr[1]] := true
-        } elif op == "LOAD" or op == "STORE" {
-            referenced[instr[1]] := true
-        }
-        j := j + 1
-    }
-    alloc captured_list := []
-    alloc ref_keys := dict_keys(referenced)
-    alloc k := 0
-    loop k < length(ref_keys) {
-        alloc nm := ref_keys[k]
-        if has_key(params_set, nm) == false and has_key(locals, nm) == false and has_key(globals, nm) == false {
-            if has_key(all_locals, nm) {
-                captured_list := captured_list + [nm]
-            } else {
-                globals[nm] := true
-            }
-        }
-        k := k + 1
-    }
-    return {
-        params: params,
-        params_set: params_set,
-        locals: locals,
-        captured_list: captured_list,
-        body_start: body_start,
-        body_end: body_end
-    }
-}
-
-proc analyze_all_functions(code, funcs, globals) {
-    alloc all_locals := collect_all_local_names(code, funcs)
-    alloc sorted := sorted_funcs_by_addr(funcs)
-    alloc analyses := {}
-    alloc i := 0
-    alloc n := length(sorted)
-    alloc code_len := length(code)
+    # Nesting depth of each proc, so the innermost can be resolved first
+    # (a proc's captures feed into what its parent needs).
+    alloc depth := {}
+    alloc max_depth := 0
+    i := 0
     loop i < n {
-        alloc addr := sorted[i][0]
-        alloc nm := sorted[i][1]
-        alloc body_start := addr
-        alloc body_end := code_len
-        if i + 1 < n {
-            body_end := sorted[i + 1][0]
+        alloc d := 0
+        alloc cur := order[i]
+        loop has_key(parent, cur) {
+            d := d + 1
+            cur := parent[cur]
         }
-        alloc params := funcs[nm][0]
-        analyses[nm] := analyze_function(nm, params, body_start, body_end, code, globals, all_locals)
+        depth[order[i]] := d
+        if d > max_depth { max_depth := d }
         i := i + 1
     }
-    # Second pass: compute the *boxed_set* for each function — its
-    # locals/params that are captured by any other function. Boxed
-    # names live in 1-element JS arrays (`[v]`) so closures can share
-    # storage with the enclosing scope. The current_captured_set we
-    # already compute is the inverse view (this function's references
-    # to outer-boxed names).
-    alloc all_captured := {}
-    alloc names := dict_keys(analyses)
-    alloc k := 0
-    loop k < length(names) {
-        alloc cl := analyses[names[k]]["captured_list"]
-        alloc j := 0
-        loop j < length(cl) {
-            all_captured[cl[j]] := true
-            j := j + 1
-        }
-        k := k + 1
-    }
-    k := 0
-    loop k < length(names) {
-        alloc nm := names[k]
-        alloc info := analyses[nm]
-        alloc boxed := {}
-        # Params are also locals, and may be captured by an inner.
-        alloc pkeys := dict_keys(info["params_set"])
-        alloc pi := 0
-        loop pi < length(pkeys) {
-            if has_key(all_captured, pkeys[pi]) {
-                boxed[pkeys[pi]] := true
+
+    # Pass 2: resolve names, deepest procs first.
+    alloc analyses := {}
+    alloc level := max_depth
+    loop level >= 0 {
+        i := 0
+        loop i < n {
+            alloc fname := order[i]
+            if depth[fname] == level {
+                analyses[fname] := resolve_function(fname, raw, parent, def_pos, children[fname], analyses, globals)
             }
-            pi := pi + 1
+            i := i + 1
         }
-        alloc lkeys := dict_keys(info["locals"])
-        alloc li := 0
-        loop li < length(lkeys) {
-            if has_key(all_captured, lkeys[li]) {
-                boxed[lkeys[li]] := true
-            }
-            li := li + 1
-        }
-        info["boxed_set"] := boxed
-        analyses[nm] := info
-        k := k + 1
+        level := level - 1
     }
     return analyses
 }
 
+# Sort one proc's names into params / locals / self / captured / globals
+# (see "Scope analysis" above). `analyses` already holds the result for
+# every proc nested inside this one.
+proc resolve_function(fname, raw, parent, def_pos, kids, analyses, globals) {
+    alloc r := raw[fname]
+    alloc params_set := r["params_set"]
+    alloc decl_pos := r["decl_pos"]
+    alloc nested := has_key(parent, fname)
+
+    # What this frame has to be able to supply, and from which
+    # instruction on: its own uses, plus whatever the procs defined in
+    # it capture (needed at their MAKE_FUNC).
+    alloc need := {}
+    alloc uses := dict_keys(r["first_use"])
+    alloc u := 0
+    loop u < length(uses) {
+        need[uses[u]] := r["first_use"][uses[u]]
+        u := u + 1
+    }
+    alloc boxed := {}
+    alloc k := 0
+    loop k < length(kids) {
+        alloc kid_caps := analyses[kids[k]]["captured_list"]
+        alloc at := def_pos[kids[k]]
+        alloc c := 0
+        loop c < length(kid_caps) {
+            alloc cn := kid_caps[c]
+            boxed[cn] := true
+            if has_key(need, cn) == false or at < need[cn] {
+                need[cn] := at
+            }
+            c := c + 1
+        }
+        k := k + 1
+    }
+
+    alloc captured_list := []
+    alloc captured_set := {}
+    alloc self_name := false
+    alloc names := dict_keys(need)
+    alloc x := 0
+    loop x < length(names) {
+        alloc nm := names[x]
+        alloc declared_first := has_key(decl_pos, nm) and decl_pos[nm] < need[nm]
+        if has_key(params_set, nm) or declared_first {
+            # A param, or a local bound before anything reads it:
+            # nothing to resolve.
+            declared_first := true
+        } elif nested and r["bare"] == nm {
+            self_name := nm
+        } elif nested and scope_visible(parent[fname], def_pos[fname], nm, raw, parent, def_pos) {
+            captured_list := captured_list + [nm]
+            captured_set[nm] := true
+        } elif has_key(decl_pos, nm) == false {
+            # Bound nowhere in sight: a global. That covers the
+            # runtime-injected ones, globals declared by the top-level
+            # code, and plain typos; the last kind stays OMG_UNSET and
+            # raises UndefinedIdentError if the LOAD ever runs, as on
+            # the VMs.
+            globals[nm] := true
+        }
+        x := x + 1
+    }
+
+    # Every non-param variable slot of this frame that is not handed in
+    # through captured[]: the locals, plus the self binding.
+    alloc locals := {}
+    alloc dnames := dict_keys(decl_pos)
+    alloc dn := 0
+    loop dn < length(dnames) {
+        alloc ln := dnames[dn]
+        if has_key(params_set, ln) == false and has_key(captured_set, ln) == false {
+            locals[ln] := true
+        }
+        dn := dn + 1
+    }
+    if self_name != false {
+        locals[self_name] := true
+    }
+
+    return {
+        params: r["params"],
+        params_set: params_set,
+        locals: locals,
+        captured_list: captured_list,
+        captured_set: captured_set,
+        boxed_set: boxed,
+        self_name: self_name,
+        body_start: r["body_start"],
+        body_end: r["body_end"]
+    }
+}
+
 # === Code emission =======================================================
+
+# === Output builder ======================================================
+#
+# Generated source is assembled from a great many small pieces. Doing
+# that with `out := out + piece` copies everything written so far on
+# every append, and the native runtime never frees a string, so memory
+# grew with the square of the output size: about 7 GB to transpile the
+# playground bundle and more than 14 GB for the explorer bundle. The
+# pieces are collected in a list instead and joined once, pairwise,
+# which allocates O(n log n) bytes in total.
+
+proc buf_new() {
+    return {parts: list_repeat("", 64), n: 0}
+}
+
+proc buf_add(buf, piece) {
+    alloc n := buf.n
+    alloc parts := buf.parts
+    if n >= length(parts) {
+        parts := parts + list_repeat("", n)
+        buf.parts := parts
+    }
+    parts[n] := piece
+    buf.n := n + 1
+    return false
+}
+
+proc buf_join_range(parts, lo, hi) {
+    if hi - lo == 1 {
+        return "" + parts[lo]
+    }
+    if hi <= lo {
+        return ""
+    }
+    alloc mid := (lo + hi) // 2
+    return buf_join_range(parts, lo, mid) + buf_join_range(parts, mid, hi)
+}
+
+proc buf_join(buf) {
+    return buf_join_range(buf.parts, 0, buf.n)
+}
 
 # Emit `from..to` of `code` (the function body, or top-level program)
 # as a flat IP-dispatching loop. We use a giant `switch (_ip)` with
@@ -986,47 +1166,52 @@ proc analyze_all_functions(code, funcs, globals) {
 # bloating the output.
 proc emit_body(code, body_start, body_end, ctx) {
     alloc src_lines := ctx["src_lines"]
-    alloc out := "    let _ip = " + body_start + ";\n"
-    out := out + "    let _eh = [];\n"
+    alloc out := buf_new()
+    buf_add(out, "    let _ip = " + body_start + ";\n")
+    buf_add(out, "    let _eh = [];\n")
     # _eh entries are [handler_pc, saved_frame_depth] so the catch
     # handler can also restore the frame stack on entry.
     # Each iteration runs one instruction inside a try/catch so that
     # OmgErrors can be redirected to the most recent SETUP_EXCEPT
     # handler (matching the OMG VM's block-stack semantics: pop one
     # handler, jump to it, push the formatted error message).
-    out := out + "    while (true) {\n"
-    out := out + "        try {\n"
-    out := out + "            switch (_ip) {\n"
+    buf_add(out, "    while (true) {\n")
+    buf_add(out, "        try {\n")
+    buf_add(out, "            switch (_ip) {\n")
     alloc last_line := -1
     alloc i := body_start
     loop i < body_end {
-        out := out + "            case " + i + ": {\n"
+        buf_add(out, "            case " + i + ": {\n")
         if i < length(src_lines) {
             alloc line := src_lines[i][1]
             if line != last_line {
-                out := out + "                omg_current_line = " + line + ";\n"
+                buf_add(out, "                omg_current_line = " + line + ";\n")
                 last_line := line
             }
         }
-        out := out + emit_js_for_instr(code[i], ctx)
-        out := out + "            }\n"
-        out := out + "            // fall through to " + (i + 1) + "\n"
+        buf_add(out, emit_js_for_instr(code[i], ctx))
+        buf_add(out, "            }\n")
+        buf_add(out, "            // fall through to " + (i + 1) + "\n")
         i := i + 1
     }
-    out := out + "            default: return;\n"
-    out := out + "            }\n"
-    out := out + "            _ip += 1;\n"
-    out := out + "        } catch (_e) {\n"
-    out := out + "            if (_e instanceof OmgError && _eh.length > 0) {\n"
-    out := out + "                const _entry = _eh.pop();\n"
-    out := out + "                _ip = _entry[0];\n"
-    out := out + "                while (omg_frame_stack.length > _entry[1]) { omg_frame_pop(); }\n"
-    out := out + "                _s.length = 0;\n"
-    out := out + "                _s.push(_e.kind + ': ' + _e.omgMessage);\n"
-    out := out + "            } else { throw _e; }\n"
-    out := out + "        }\n"
-    out := out + "    }\n"
-    return out
+    buf_add(out, "            default: return;\n")
+    buf_add(out, "            }\n")
+    buf_add(out, "            _ip += 1;\n")
+    buf_add(out, "        } catch (_e) {\n")
+    # Every OMG call is a JS call, so runaway OMG recursion ends in the
+    # engine's RangeError. Turn it into the same catchable RuntimeError
+    # the C backend raises.
+    buf_add(out, "            if (_e instanceof RangeError) { _e = new OmgError('RuntimeError', 'maximum recursion depth exceeded'); }\n")
+    buf_add(out, "            if (_e instanceof OmgError && _eh.length > 0) {\n")
+    buf_add(out, "                const _entry = _eh.pop();\n")
+    buf_add(out, "                _ip = _entry[0];\n")
+    buf_add(out, "                while (omg_frame_stack.length > _entry[1]) { omg_frame_pop(); }\n")
+    buf_add(out, "                _s.length = 0;\n")
+    buf_add(out, "                _s.push(_e.kind + ': ' + _e.omgMessage);\n")
+    buf_add(out, "            } else { throw _e; }\n")
+    buf_add(out, "        }\n")
+    buf_add(out, "    }\n")
+    return buf_join(out)
 }
 
 proc emit_function(name, code, funcs, func_index, func_info, globals, src_lines, fn_file_idx) {
@@ -1036,17 +1221,11 @@ proc emit_function(name, code, funcs, func_index, func_info, globals, src_lines,
     alloc body_end := info["body_end"]
     alloc fidx := func_index[name]
 
-    # Captured-from-outer: where `LOAD x` reads from `_captured`.
-    alloc captured_set := {}
+    # Captured-from-outer names and the locals a nested proc captures
+    # are both held as cells (see the Variables note in
+    # emit_js_for_instr).
+    alloc captured_set := info["captured_set"]
     alloc cl := info["captured_list"]
-    alloc ci := 0
-    loop ci < length(cl) {
-        captured_set[cl[ci]] := true
-        ci := ci + 1
-    }
-    # Boxed-locals: locals/params of *this* function that some inner
-    # captures. They're stored as `[v]` so the inner's _captured can
-    # share the same array.
     alloc boxed_set := info["boxed_set"]
 
     alloc out := "function " + js_fn_name(fidx) + "("
@@ -1057,6 +1236,8 @@ proc emit_function(name, code, funcs, func_index, func_info, globals, src_lines,
         i := i + 1
     }
     out := out + ") {\n"
+    # `arguments` counts `_captured` too.
+    out := out + "    if (arguments.length !== " + (length(params) + 1) + ") omg_arity_error(\"" + js_escape(name) + "\", " + length(params) + ", arguments.length - 1);\n"
 
     # Box any param that's captured-by-inner. Calling code passes the
     # raw value; we wrap in a fresh array on entry so subsequent
@@ -1071,12 +1252,31 @@ proc emit_function(name, code, funcs, func_index, func_info, globals, src_lines,
         pi := pi + 1
     }
 
-    # Declare every STORE_LOCAL / MAKE_FUNC target.
-    alloc locals := collect_function_locals(body_start, body_end, code)
-    alloc lkeys := dict_keys(locals)
+    # Captured names: this frame's variable starts out as the cell the
+    # closure was given. A later `alloc` of the same name rebinds it.
+    alloc ci := 0
+    loop ci < length(cl) {
+        out := out + "    let " + js_var(cl[ci]) + " = _captured.get(\"" + js_escape(cl[ci]) + "\");\n"
+        ci := ci + 1
+    }
+
+    # Locals (the analysis already left out params and captured names)
+    # start out OMG_UNSET. The one exception is the proc's own name,
+    # when its body refers to it: that is bound to the running closure
+    # right here, so a nested proc can call itself.
+    alloc lkeys := dict_keys(info["locals"])
     alloc lk := 0
     loop lk < length(lkeys) {
-        out := out + "    let " + js_var(lkeys[lk]) + ";\n"
+        alloc ln := lkeys[lk]
+        if ln == info["self_name"] {
+            alloc self_expr := "omg_closure(" + js_fn_name(fidx) + ", _captured, \"" + js_escape(ln) + "\")"
+            if has_key(boxed_set, ln) {
+                self_expr := "[" + self_expr + "]"
+            }
+            out := out + "    let " + js_var(ln) + " = " + self_expr + ";\n"
+        } else {
+            out := out + "    let " + js_var(ln) + " = OMG_UNSET;\n"
+        }
         lk := lk + 1
     }
 
@@ -1089,6 +1289,7 @@ proc emit_function(name, code, funcs, func_index, func_info, globals, src_lines,
         func_index: func_index,
         func_info: func_info,
         globals: globals,
+        current_func: name,
         current_captured_set: captured_set,
         current_boxed_set: boxed_set,
         src_lines: src_lines
@@ -1103,23 +1304,24 @@ proc generate(code, funcs, src_files, src_lines, runtime_js, source_path) {
     alloc func_index := build_func_index(funcs)
     alloc func_info := analyze_all_functions(code, funcs, globals)
 
-    alloc out := "// Generated by bootstrap/src/native-js.omg from " + source_path + "\n"
-    out := out + "// Do not edit by hand.\n\n"
-    out := out + runtime_js
-    out := out + "\n// === Program ==============================================================\n\n"
+    alloc out := buf_new()
+    buf_add(out, "// Generated by bootstrap/src/native-js.omg from " + source_path + "\n")
+    buf_add(out, "// Do not edit by hand.\n\n")
+    buf_add(out, runtime_js)
+    buf_add(out, "\n// === Program ==============================================================\n\n")
 
     # Install the source-file table so omg_format_traceback resolves
     # file indices to paths. Mirrors the omg_program_src_files wiring
     # in native-c.omg.
-    out := out + "omg_src_files = [\n"
+    buf_add(out, "omg_src_files = [\n")
     alloc sfi := 0
     alloc sfn := length(src_files)
     loop sfi < sfn {
-        out := out + "    \"" + js_escape(src_files[sfi]) + "\",\n"
+        buf_add(out, "    \"" + js_escape(src_files[sfi]) + "\",\n")
         sfi := sfi + 1
     }
-    out := out + "];\n"
-    out := out + "omg_current_file_idx = 0;\n\n"
+    buf_add(out, "];\n")
+    buf_add(out, "omg_current_file_idx = 0;\n\n")
 
     # Top-level globals. The analysis may have promoted additional
     # names to globals while bucketing each function's references, so
@@ -1129,11 +1331,11 @@ proc generate(code, funcs, src_files, src_lines, runtime_js, source_path) {
     loop gk < length(gkeys) {
         alloc nm := gkeys[gk]
         if nm != "args" and nm != "module_file" and nm != "current_dir" {
-            out := out + "let " + js_var(nm) + ";\n"
+            buf_add(out, "let " + js_var(nm) + " = OMG_UNSET;\n")
         }
         gk := gk + 1
     }
-    if gk > 0 { out := out + "\n" }
+    if gk > 0 { buf_add(out, "\n") }
 
     # Function definitions.
     alloc all_func_names := dict_keys(funcs)
@@ -1141,7 +1343,7 @@ proc generate(code, funcs, src_files, src_lines, runtime_js, source_path) {
     loop fi < length(all_func_names) {
         alloc fname := all_func_names[fi]
         alloc fn_file_idx := funcs[fname][2]
-        out := out + emit_function(fname, code, funcs, func_index, func_info, globals, src_lines, fn_file_idx)
+        buf_add(out, emit_function(fname, code, funcs, func_index, func_info, globals, src_lines, fn_file_idx))
         fi := fi + 1
     }
 
@@ -1151,10 +1353,10 @@ proc generate(code, funcs, src_files, src_lines, runtime_js, source_path) {
     fi := 0
     loop fi < length(all_func_names) {
         alloc fn := all_func_names[fi]
-        out := out + "omg_func_table.set(\"" + js_escape(fn) + "\", " + js_fn_name(func_index[fn]) + ");\n"
+        buf_add(out, "omg_func_table.set(\"" + js_escape(fn) + "\", " + js_fn_name(func_index[fn]) + ");\n")
         fi := fi + 1
     }
-    if length(all_func_names) > 0 { out := out + "\n" }
+    if length(all_func_names) > 0 { buf_add(out, "\n") }
 
     # Top-level: emit_body wrapped in an IIFE. The top level has no
     # enclosing scope, so its captured_set is empty.
@@ -1172,6 +1374,7 @@ proc generate(code, funcs, src_files, src_lines, runtime_js, source_path) {
         func_index: func_index,
         func_info: func_info,
         globals: globals,
+        current_func: "",
         current_captured_set: {},
         current_boxed_set: {},
         src_lines: src_lines
@@ -1179,21 +1382,21 @@ proc generate(code, funcs, src_files, src_lines, runtime_js, source_path) {
     # The IIFE is wrapped in a try/catch so an uncaught OmgError
     # surfaces like the Rust runtime: a Python-style traceback followed
     # by the "Kind: message" line, then exit 1 (not a JS stack trace).
-    out := out + "try {\n"
-    out := out + "(function _omg_main() {\n"
-    out := out + "    const _s = [];\n"
-    out := out + emit_body(code, 0, top_end, top_ctx)
-    out := out + "})();\n"
-    out := out + "} catch (_e) {\n"
-    out := out + "    if (_e instanceof OmgError) {\n"
-    out := out + "        const _full = _e.kind + ': ' + _e.omgMessage;\n"
-    out := out + "        const _trace = omg_format_traceback(_full);\n"
-    out := out + "        if (typeof process !== 'undefined') { process.stderr.write(_trace + '\\n'); process.exit(1); }\n"
-    out := out + "        else { _e.message = _trace; throw _e; }\n"
-    out := out + "    } else { throw _e; }\n"
-    out := out + "}\n"
+    buf_add(out, "try {\n")
+    buf_add(out, "(function _omg_main() {\n")
+    buf_add(out, "    const _s = [];\n")
+    buf_add(out, emit_body(code, 0, top_end, top_ctx))
+    buf_add(out, "})();\n")
+    buf_add(out, "} catch (_e) {\n")
+    buf_add(out, "    if (_e instanceof OmgError) {\n")
+    buf_add(out, "        const _full = _e.kind + ': ' + _e.omgMessage;\n")
+    buf_add(out, "        const _trace = omg_format_traceback(_full);\n")
+    buf_add(out, "        if (typeof process !== 'undefined') { process.stderr.write(_trace + '\\n'); process.exit(1); }\n")
+    buf_add(out, "        else { _e.message = _trace; throw _e; }\n")
+    buf_add(out, "    } else { throw _e; }\n")
+    buf_add(out, "}\n")
 
-    return out
+    return buf_join(out)
 }
 
 # === Runtime path resolution =============================================

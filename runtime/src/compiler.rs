@@ -88,6 +88,9 @@ fn builtin_names() -> &'static [&'static str] {
         // exit codes back to its own caller.
         "exit",
         "getpid",
+        // Path of the native OMG executable that is running the program,
+        // or `false` when there is none (always `false` on this runtime).
+        "executable_path",
         "subprocess",
         // I/O primitives. stdin_readline + print are used by the
         // OMG-native REPL; stdin_read[_bytes] make tools pipe-friendly
@@ -258,9 +261,30 @@ pub struct Compiler {
     /// of the form `__mod_<n>__<name>`. That is the shape the VMs
     /// already strip back to the bare name when binding `MAKE_FUNC`
     /// inside a function and when printing tracebacks, so no backend
-    /// needs to know about it. This stack is how a recursive call inside
-    /// the body finds its own key.
-    nested_procs: Vec<(String, String)>,
+    /// needs to know about it.
+    ///
+    /// A nested proc is a closure, so a call to it from inside its own
+    /// body (recursion) compiles like any other closure call: `Load` of
+    /// the bare name + `CallValue`. The runtimes bind a closure's own
+    /// name in the frame they build for it, which is what makes the
+    /// `Load` resolve. This stack only exists so that such a call can
+    /// still have its argument count checked at compile time. The third
+    /// field is the index in `local_scopes` of the proc's own scope: a
+    /// parameter or local declared at or below it shadows the proc.
+    nested_procs: Vec<(String, String, usize)>,
+    /// For each function body currently being compiled (innermost last),
+    /// every name that body declares anywhere at its own level: `alloc`s,
+    /// nested procs, import aliases and except-bindings, including ones
+    /// further down than the statement being compiled. A closure captures
+    /// the enclosing locals that exist when it is *defined*, so a nested
+    /// proc that names one of these before its declaration can never see
+    /// it; `check_not_declared_later` turns that into a compile error.
+    later_decls: Vec<HashSet<String>>,
+    /// Names declared at the top level of the file being compiled (the
+    /// entry file, or the module currently being inlined). A nested proc
+    /// may legitimately mean one of these even when an enclosing proc
+    /// declares the same name further down.
+    file_top_names: HashSet<String>,
 }
 
 #[derive(Clone)]
@@ -304,6 +328,8 @@ impl Compiler {
             top_level_declared: HashSet::new(),
             proc_arity: HashMap::new(),
             nested_procs: Vec::new(),
+            later_decls: Vec::new(),
+            file_top_names: HashSet::new(),
         }
     }
 
@@ -348,6 +374,78 @@ impl Compiler {
                     self.current_file.display()
                 )));
             }
+        }
+        Ok(())
+    }
+
+    /// Add to `out` every name that `node` declares at its own function
+    /// level: it descends into blocks, `if`/`loop`/`try` bodies, but not
+    /// into nested proc bodies (those are a different scope).
+    fn collect_declared(node: &Node, out: &mut HashSet<String>) {
+        match node {
+            Node::Decl(name, _, _) | Node::FuncDef(name, _, _, _) => {
+                out.insert(name.clone());
+            }
+            Node::Import(_, alias, _) => {
+                out.insert(alias.clone());
+            }
+            Node::Block(stmts, _) => {
+                for s in stmts {
+                    Self::collect_declared(s, out);
+                }
+            }
+            Node::If(_, then_block, else_block, _) => {
+                Self::collect_declared(then_block, out);
+                if let Some(e) = else_block {
+                    Self::collect_declared(e, out);
+                }
+            }
+            Node::Loop(_, body, _) => Self::collect_declared(body, out),
+            Node::Try(try_block, exc_name, except_block, _) => {
+                Self::collect_declared(try_block, out);
+                if let Some(n) = exc_name {
+                    out.insert(n.clone());
+                }
+                Self::collect_declared(except_block, out);
+            }
+            _ => {}
+        }
+    }
+
+    /// The function-table key of the enclosing nested proc called `name`,
+    /// unless a parameter or local inside that proc shadows it.
+    fn enclosing_nested_key(&self, name: &str) -> Option<String> {
+        let (_, key, depth) = self.nested_procs.iter().rev().find(|(bare, _, _)| bare == name)?;
+        if self.local_scopes.iter().skip(*depth).any(|s| s.contains(name)) {
+            return None;
+        }
+        Some(key.clone())
+    }
+
+    /// Reject a nested proc's use of a name that an *enclosing* proc only
+    /// declares further down. Called for names that did not resolve to a
+    /// local, i.e. that are about to be treated as globals.
+    ///
+    /// A closure captures the enclosing locals that exist at the point
+    /// where it is defined, so such a name can never be reached: it used
+    /// to fail at run time with an UndefinedIdentError (and crash an AOT
+    /// binary). A name the file also declares at the top level is left
+    /// alone, because then the reference means that global.
+    fn check_not_declared_later(&self, name: &str) -> Result<(), RuntimeError> {
+        let n = self.later_decls.len();
+        if n < 2 || Self::is_reserved_global(name) {
+            return Ok(());
+        }
+        if self.file_top_names.contains(name) || self.local_scopes[0].contains(name) {
+            return Ok(());
+        }
+        if self.later_decls[..n - 1].iter().any(|d| d.contains(name)) {
+            return Err(RuntimeError::SyntaxError(format!(
+                "'{}' is used in a nested proc before the enclosing proc declares it on line {} in {}",
+                name,
+                self.current_line,
+                self.current_file.display()
+            )));
         }
         Ok(())
     }
@@ -449,6 +547,9 @@ impl Compiler {
     /// final [`Program`].
     pub fn compile_program(mut self, ast: Vec<Node>) -> Result<Program, RuntimeError> {
         self.collect_proc_arity(&ast);
+        for stmt in &ast {
+            Self::collect_declared(stmt, &mut self.file_top_names);
+        }
         for stmt in ast {
             self.compile_stmt(&stmt)?;
         }
@@ -575,6 +676,9 @@ impl Compiler {
             }
             Node::Assign(name, expr, _) => {
                 self.compile_expr(expr)?;
+                if !self.in_function_scope(name) {
+                    self.check_not_declared_later(name)?;
+                }
                 self.emit(Instr::Store(self.resolve_store(name)));
             }
             Node::AttrAssign(target, attr, value, _) => {
@@ -697,7 +801,15 @@ impl Compiler {
                 };
                 if nested {
                     self.proc_arity.insert(mangled.clone(), params.len());
-                    self.nested_procs.push((name.clone(), mangled.clone()));
+                    // Declared in the enclosing scope *before* the body
+                    // is compiled, so the proc's own name is a value
+                    // binding inside its body: a recursive call becomes
+                    // `Load` + `CallValue` and goes through the closure
+                    // (keeping its captured variables), not a direct
+                    // `Call` that would start from an empty frame.
+                    self.declare_local(name);
+                    self.nested_procs
+                        .push((name.clone(), mangled.clone(), self.local_scopes.len()));
                 }
                 let body_result = self.compile_function_body(params, body);
                 if nested {
@@ -717,14 +829,12 @@ impl Compiler {
                 // globals; inside a function body it captures the current
                 // local environment so nested procs become real closures
                 // (the VM binds the closure under its bare source name).
+                // Inside another function the proc lives in the local env
+                // (declared above), so references resolve via Load +
+                // CallValue. At top level it stays out of the local-scope
+                // tracker so calls of the form `foo()` compile to fast
+                // direct `Call`s.
                 self.emit(Instr::MakeFunc(mangled));
-                // Inside another function, the proc lives in the local env,
-                // so further references resolve via Load + CallValue. At
-                // top level we leave it out of the local-scope tracker so
-                // calls of the form `foo()` compile to fast direct `Call`s.
-                if nested {
-                    self.declare_local(name);
-                }
             }
             Node::Return(expr, line) => {
                 // `return` only means something inside a proc. At top
@@ -750,7 +860,15 @@ impl Compiler {
                         // value binding (parameter, alloc, nested proc),
                         // fall through to the generic `Load + CallValue +
                         // Ret` path below so closures resolve correctly.
-                        if !is_builtin(name) && !self.is_value_binding(name) {
+                        //
+                        // Nor does it apply inside a `try` block: a tail
+                        // call gives up the current frame, and with it
+                        // the handler, so an error raised by the callee
+                        // would escape the `except` that is written
+                        // around it. There the call is an ordinary one.
+                        if !is_builtin(name) && !self.is_value_binding(name) && self.try_depth == 0
+                        {
+                            self.check_not_declared_later(name)?;
                             let resolved = self.resolve_call_name(name);
                             self.check_direct_call_arity(name, &resolved, args.len())?;
                             for a in args {
@@ -837,7 +955,12 @@ impl Compiler {
             new_scope.insert(p.clone());
         }
         self.local_scopes.push(new_scope);
-        self.compile_block_node(body)?;
+        let mut declared: HashSet<String> = HashSet::new();
+        Self::collect_declared(body, &mut declared);
+        self.later_decls.push(declared);
+        let body_result = self.compile_block_node(body);
+        self.later_decls.pop();
+        body_result?;
         // Implicit return for procs that fall off the end. Without the
         // PushNone, Ret would pop whatever happened to be on top of the
         // operand stack — including values the *caller* pushed before
@@ -872,11 +995,6 @@ impl Compiler {
     /// function by bare name, the compiler resolves it against the active
     /// mangling prefix.
     fn resolve_call_name(&self, name: &str) -> String {
-        // A call to an enclosing nested proc (most commonly: a nested
-        // proc calling itself) goes to that proc's unique key.
-        if let Some((_, key)) = self.nested_procs.iter().rev().find(|(bare, _)| bare == name) {
-            return key.clone();
-        }
         // Imported modules use their own mangling prefix while compiling, so
         // calling a sibling proc within the same module gets the prefix
         // applied.  Since we don't know at this point whether `name` is a
@@ -1025,11 +1143,19 @@ impl Compiler {
         // The module is its own lexical world: a call inside it must
         // never resolve to a nested proc of whoever is importing it.
         let saved_nested = mem::take(&mut self.nested_procs);
+        let saved_later = mem::take(&mut self.later_decls);
+        let mut top_names: HashSet<String> = HashSet::new();
+        for stmt in &ast {
+            Self::collect_declared(stmt, &mut top_names);
+        }
+        let saved_top_names = mem::replace(&mut self.file_top_names, top_names);
         self.collect_proc_arity(&ast);
         for stmt in ast {
             self.compile_stmt(&stmt)?;
         }
         self.nested_procs = saved_nested;
+        self.later_decls = saved_later;
+        self.file_top_names = saved_top_names;
         self.current_prefix = saved_prefix;
         self.current_file = saved_file;
         self.current_file_idx = saved_file_idx;
@@ -1048,7 +1174,12 @@ impl Compiler {
             Node::Float(v, _) => self.emit(Instr::PushFloat(*v)),
             Node::Str(s, _) => self.emit(Instr::PushStr(s.clone())),
             Node::Bool(b, _) => self.emit(Instr::PushBool(*b)),
-            Node::Ident(name, _) => self.emit(Instr::Load(self.resolve_load(name))),
+            Node::Ident(name, _) => {
+                if !self.in_function_scope(name) {
+                    self.check_not_declared_later(name)?;
+                }
+                self.emit(Instr::Load(self.resolve_load(name)))
+            }
             Node::List(elems, _) => {
                 for e in elems {
                     self.compile_expr(e)?;
@@ -1099,7 +1230,12 @@ impl Compiler {
                         // procs, or top-level allocs holding a closure —
                         // is invoked indirectly via Load + CallValue. Only
                         // top-level proc names use the direct `Call` fast
-                        // path below.
+                        // path below. A call to an enclosing nested
+                        // proc (usually recursion) is one of these; its
+                        // argument count is known, so check it here.
+                        if let Some(key) = self.enclosing_nested_key(name) {
+                            self.check_direct_call_arity(name, &key, args.len())?;
+                        }
                         self.emit(Instr::Load(self.resolve_load(name)));
                         for a in args {
                             self.compile_expr(a)?;
@@ -1108,6 +1244,7 @@ impl Compiler {
                         return Ok(());
                     }
                     // Top-level proc: emit a direct Call for the fast path.
+                    self.check_not_declared_later(name)?;
                     let resolved = self.resolve_call_name(name);
                     self.check_direct_call_arity(name, &resolved, args.len())?;
                     for a in args {
@@ -1486,7 +1623,7 @@ mod tests {
     }
 
     #[test]
-    fn nested_proc_recursion_targets_its_own_key() {
+    fn nested_proc_recursion_goes_through_its_closure() {
         let prog = compile(
             ";;;omg\n\
              proc fact(n) { return 0 }\n\
@@ -1498,7 +1635,12 @@ mod tests {
                  return fact(n)\n\
              }\n",
         );
-        let calls: Vec<&String> = prog
+        // A direct `CALL __mod_1__fact` would start the callee with an
+        // empty environment and lose whatever the nested proc captured,
+        // and a call to the bare name would hit the unrelated top-level
+        // `fact`. Both the recursive call and the call from `outer` must
+        // therefore load the closure and go through CALL_VALUE.
+        let direct: Vec<&String> = prog
             .code
             .iter()
             .filter_map(|i| match i {
@@ -1506,9 +1648,77 @@ mod tests {
                 _ => None,
             })
             .collect();
-        // The only direct call in the program is the recursive one, and
-        // it must not hit the unrelated top-level `fact`.
-        assert_eq!(calls, vec!["__mod_1__fact"]);
+        assert!(direct.is_empty(), "unexpected direct calls: {:?}", direct);
+        let loads = prog
+            .code
+            .iter()
+            .filter(|i| matches!(i, Instr::Load(n) if n == "fact"))
+            .count();
+        let value_calls = prog
+            .code
+            .iter()
+            .filter(|i| matches!(i, Instr::CallValue(1)))
+            .count();
+        assert_eq!((loads, value_calls), (2, 2));
+    }
+
+    #[test]
+    fn nested_proc_cannot_use_a_local_declared_later() {
+        let msg = compile_err(
+            ";;;omg\nproc outer() {\n  proc get() {\n    return late\n  }\n  alloc late := 1\n  return get()\n}\n",
+        );
+        assert_eq!(
+            msg,
+            "SyntaxError: 'late' is used in a nested proc before the enclosing proc declares it on line 4 in /virtual/test.omg"
+        );
+        // Writing to it, and calling a sibling defined further down, are
+        // the same mistake.
+        let msg = compile_err(
+            ";;;omg\nproc outer() {\n  proc set() {\n    late := 2\n  }\n  alloc late := 1\n  set()\n}\n",
+        );
+        assert!(msg.contains("'late' is used in a nested proc before"), "{}", msg);
+        let msg = compile_err(
+            ";;;omg\nproc outer() {\n  proc a() {\n    return b()\n  }\n  proc b() {\n    return 1\n  }\n  return a()\n}\n",
+        );
+        assert!(msg.contains("'b' is used in a nested proc before"), "{}", msg);
+    }
+
+    #[test]
+    fn nested_proc_may_use_what_is_already_in_scope() {
+        // Declared before the nested proc: captured.
+        compile(";;;omg\nproc outer() {\n  alloc early := 1\n  proc get() { return early }\n  return get()\n}\n");
+        // A file-level name declared further down is a global, looked up
+        // when the proc runs, so it stays legal.
+        compile(";;;omg\nproc outer() {\n  proc get() { return late }\n  return get()\n}\nalloc late := 1\nemit outer()\n");
+        // The nested proc's own parameter or local of the same name wins.
+        compile(";;;omg\nproc outer() {\n  proc get(late) { return late }\n  alloc late := 1\n  return get(late)\n}\n");
+        compile(";;;omg\nproc outer() {\n  proc get() {\n    alloc late := 5\n    return late\n  }\n  alloc late := 1\n  return get() + late\n}\n");
+    }
+
+    #[test]
+    fn executable_path_is_a_builtin_in_this_frontend_too() {
+        let prog = compile(";;;omg\nemit executable_path()\n");
+        assert!(prog
+            .code
+            .iter()
+            .any(|i| matches!(i, Instr::CallBuiltin(n, 0) if n == "executable_path")));
+    }
+
+    #[test]
+    fn no_tail_call_inside_a_try_block() {
+        let count = |prog: &Program| {
+            let tail = prog.code.iter().filter(|i| matches!(i, Instr::TailCall(_))).count();
+            let call = prog.code.iter().filter(|i| matches!(i, Instr::Call(_))).count();
+            (tail, call)
+        };
+        let plain = compile(";;;omg\nproc g() { return 1 }\nproc f() { return g() }\n");
+        assert_eq!(count(&plain), (1, 0));
+        // Inside `try` the handler has to stay on the stack while `g`
+        // runs, so the frame cannot be replaced.
+        let guarded = compile(
+            ";;;omg\nproc g() { return 1 }\nproc f() {\n  try {\n    return g()\n  } except {\n    return 0\n  }\n}\n",
+        );
+        assert_eq!(count(&guarded), (0, 1));
     }
 
     #[test]

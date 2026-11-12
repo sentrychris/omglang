@@ -292,10 +292,13 @@ pub fn tokenize(code: &str, file: &str) -> Result<Vec<Token>, RuntimeError> {
                 continue;
             }
             let s: String = chars[start..i].iter().collect();
-            let v: i64 = s.parse().map_err(|e| {
+            // The parse error's own text (Rust's wording for "does not
+            // fit in an i64") is left out so that both frontends print
+            // the same diagnostic.
+            let v: i64 = s.parse().map_err(|_| {
                 RuntimeError::SyntaxError(format!(
-                    "Invalid integer literal '{}' on line {} in {}: {}",
-                    s, line, file, e
+                    "Invalid integer literal '{}' on line {} in {}",
+                    s, line, file
                 ))
             })?;
             tokens.push(Token {

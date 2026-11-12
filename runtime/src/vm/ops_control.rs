@@ -66,6 +66,18 @@ pub(super) fn handle_call_value(
     // environment whose cells are *shared* with the enclosing scope,
     // so closures see (and can mutate) outer locals — Python/JS-style
     // by-reference capture.
+    // A closure sees itself under its own source name, so a nested proc
+    // can recurse (or hand itself to someone else) and still reach the
+    // variables it captured. The closure's captured map cannot hold this
+    // binding: it is a snapshot taken before the closure existed, and
+    // putting the closure inside its own captures would be a reference
+    // cycle. So the binding is made per call instead, in the new frame.
+    let self_binding: Option<(String, Value)> = match &func_val {
+        Value::Closure { name, .. } => {
+            super::strip_mod_prefix(name).map(|bare| (bare.to_string(), func_val.clone()))
+        }
+        _ => None,
+    };
     let (name, captured): (String, Option<Rc<Env>>) =
         match func_val {
             Value::Str(n) => (n, None),
@@ -94,6 +106,10 @@ pub(super) fn handle_call_value(
         Some(cap) => (*cap).clone(),
         None => Env::new(),
     };
+    // Bound before the parameters, so a parameter of the same name wins.
+    if let Some((bare, closure)) = self_binding {
+        new_env.insert(bare, new_cell(closure));
+    }
     // Params are always *fresh* cells: a new call shouldn't see (or
     // share) the previous call's argument slot.
     for (i, param) in func.params.iter().enumerate() {

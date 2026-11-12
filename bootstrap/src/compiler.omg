@@ -582,9 +582,33 @@ proc skip_newlines(i) {
     return i
 }
 
+# How a token kind is spelled in an error message. Same table as
+# `TokKind::describe` in runtime/src/lexer.rs, so both frontends report
+# a syntax error in the same words.
+alloc TOK_DESCRIPTIONS := freeze({
+    NUM: "number", FNUM: "float", STR: "string", ID: "identifier",
+    TRUE: "true", FALSE: "false", IF: "if", ELIF: "elif", ELSE: "else",
+    LOOP: "loop", BREAK: "break", EMIT: "emit", IMPORT: "import",
+    AS: "as", FACTS: "facts", FUNC: "proc", RETURN: "return",
+    AND: "and", OR: "or", ALLOC: "alloc", TRY: "try", EXCEPT: "except",
+    ASSIGN: ":=", LBRACE: "{", RBRACE: "}", LPAREN: "(", RPAREN: ")",
+    LBRACK: "[", RBRACK: "]", COMMA: ",", DOT: ".", COLON: ":",
+    PLUS: "+", MINUS: "-", STAR: "*", PERCENT: "%", SLASH: "/",
+    DSLASH: "//", SHL: "<<", SHR: ">>", AMP: "&", PIPE: "|",
+    CARET: "^", TILDE: "~", GE: ">=", LE: "<=", EQ: "==", NE: "!=",
+    GT: ">", LT: "<", NL: "newline", EOF: "<eof>"
+})
+
+proc tok_describe(kind) {
+    if has_key(TOK_DESCRIPTIONS, kind) {
+        return TOK_DESCRIPTIONS[kind]
+    }
+    return kind
+}
+
 proc expect(kind, i) {
     if tok_kind(i) != kind {
-        syntax_error("expected " + kind + " but got " + tok_kind(i), i)
+        syntax_error("Expected '" + tok_describe(kind) + "' but got '" + tok_describe(tok_kind(i)) + "'", i)
     }
     return i + 1
 }
@@ -781,7 +805,7 @@ proc parse_postfix(i) {
         } elif k == "DOT" {
             alloc line := tok_line(r[1])
             if tok_kind(r[1] + 1) != "ID" {
-                syntax_error("expected identifier after '.'", r[1] + 1)
+                syntax_error("Expected identifier after '.'", r[1] + 1)
             }
             alloc name := tok_val(r[1] + 1)
             r := [["dot", r[0], name, line], r[1] + 2]
@@ -826,6 +850,11 @@ proc parse_primary(i) {
             j := skip_newlines(r[1])
             if tok_kind(j) == "COMMA" {
                 j := skip_newlines(j + 1)
+            } elif tok_kind(j) != "RBRACK" {
+                # No comma, so this has to be the end of the list.
+                # (Elements used to be accepted without separators,
+                # which the Rust parser rejects.)
+                expect("RBRACK", j)
             }
         }
         return [["list", elems, line], j + 1]
@@ -842,7 +871,7 @@ proc parse_primary(i) {
                 key := tok_val(j)
                 j := j + 1
             } else {
-                syntax_error("invalid dict key", j)
+                syntax_error("Invalid dict key", j)
             }
             j := expect("COLON", j)
             j := skip_newlines(j)
@@ -851,11 +880,14 @@ proc parse_primary(i) {
             j := skip_newlines(v[1])
             if tok_kind(j) == "COMMA" {
                 j := skip_newlines(j + 1)
+            } elif tok_kind(j) != "RBRACE" {
+                # No comma, so this has to be the end of the dict.
+                expect("RBRACE", j)
             }
         }
         return [["dict", pairs, line], j + 1]
     }
-    syntax_error("unexpected token " + k, i)
+    syntax_error("Unexpected token '" + tok_describe(k) + "'", i)
     return [false, i]
 }
 
@@ -876,7 +908,7 @@ proc parse_block(i) {
 
 proc parse_lvalue(i) {
     if tok_kind(i) != "ID" {
-        syntax_error("expected identifier", i)
+        syntax_error("Expected identifier", i)
     }
     alloc node := ["id", tok_val(i), tok_line(i)]
     alloc j := i + 1
@@ -884,7 +916,7 @@ proc parse_lvalue(i) {
         alloc k := tok_kind(j)
         if k == "DOT" {
             if tok_kind(j + 1) != "ID" {
-                syntax_error("expected identifier after '.'", j + 1)
+                syntax_error("Expected identifier after '.'", j + 1)
             }
             alloc attr := tok_val(j + 1)
             node := ["dot", node, attr, tok_line(j + 1)]
@@ -907,7 +939,7 @@ proc parse_stmt(i) {
     if k == "ALLOC" {
         alloc j := i + 1
         if tok_kind(j) != "ID" {
-            syntax_error("expected identifier after 'alloc'", j)
+            syntax_error("Expected identifier after 'alloc'", j)
         }
         alloc name := tok_val(j)
         j := expect("ASSIGN", j + 1)
@@ -924,12 +956,12 @@ proc parse_stmt(i) {
     }
     if k == "IMPORT" {
         if tok_kind(i + 1) != "STR" {
-            syntax_error("expected string after 'import'", i + 1)
+            syntax_error("Expected string literal after 'import'", i + 1)
         }
         alloc path := tok_val(i + 1)
         alloc j := expect("AS", i + 2)
         if tok_kind(j) != "ID" {
-            syntax_error("expected identifier after 'as'", j)
+            syntax_error("Expected identifier after 'as'", j)
         }
         alloc alias := tok_val(j)
         return [["import", path, alias, line], j + 1]
@@ -974,7 +1006,7 @@ proc parse_stmt(i) {
     if k == "FUNC" {
         alloc j := i + 1
         if tok_kind(j) != "ID" {
-            syntax_error("expected function name after 'proc'", j)
+            syntax_error("Expected function name after 'proc'", j)
         }
         alloc name := tok_val(j)
         j := expect("LPAREN", j + 1)
@@ -982,14 +1014,14 @@ proc parse_stmt(i) {
         alloc params := []
         if tok_kind(j) != "RPAREN" {
             if tok_kind(j) != "ID" {
-                syntax_error("expected parameter name", j)
+                syntax_error("Expected parameter name", j)
             }
             params := params + [tok_val(j)]
             j := skip_newlines(j + 1)
             loop tok_kind(j) == "COMMA" {
                 j := skip_newlines(j + 1)
                 if tok_kind(j) != "ID" {
-                    syntax_error("expected parameter name", j)
+                    syntax_error("Expected parameter name", j)
                 }
                 params := params + [tok_val(j)]
                 j := skip_newlines(j + 1)
@@ -1038,7 +1070,7 @@ proc parse_stmt(i) {
         alloc r := parse_postfix(i)
         return [["expr_stmt", r[0], line], r[1]]
     }
-    syntax_error("unexpected token " + k, i)
+    syntax_error("Unexpected token '" + tok_describe(k) + "'", i)
     return [false, i]
 }
 
@@ -1135,10 +1167,34 @@ alloc cc_loading := []
 # Each nested proc therefore gets a unique key of the form
 # `__mod_<n>__<name>`. That is the shape the VMs already strip back to
 # the bare name when binding MAKE_FUNC inside a function and when
-# printing tracebacks, so no backend needs to know about it. This stack
-# is how a recursive call inside the body finds its own key. Mirrors
-# `nested_procs` in runtime/src/compiler.rs.
+# printing tracebacks, so no backend needs to know about it.
+#
+# A nested proc is a closure, so a call to it from inside its own body
+# (recursion) compiles like any other closure call: LOAD of the bare
+# name + CALL_VALUE. The runtimes bind a closure's own name in the
+# frame they build for it, which is what makes the LOAD resolve. This
+# stack only exists so that such a call can still have its argument
+# count checked at compile time. The third element is the index in
+# cc_local_scopes of the proc's own scope: a parameter or local
+# declared at or below it shadows the proc. Mirrors `nested_procs` in
+# runtime/src/compiler.rs.
 alloc cc_nested_procs := []
+
+# For each function body currently being compiled (innermost last),
+# every name that body declares anywhere at its own level: allocs,
+# nested procs, import aliases and except-bindings, including ones
+# further down than the statement being compiled. A closure captures
+# the enclosing locals that exist when it is *defined*, so a nested
+# proc that names one of these before its declaration can never see
+# it; cc_check_not_declared_later turns that into a compile error.
+# Mirrors `later_decls` in runtime/src/compiler.rs.
+alloc cc_later_decls := []
+
+# Names declared at the top level of the file being compiled (the entry
+# file, or the module currently being inlined). A nested proc may
+# legitimately mean one of these even when an enclosing proc declares
+# the same name further down. Mirrors `file_top_names`.
+alloc cc_file_top_names := []
 
 # Builtin names: calls to these become BUILTIN.
 alloc cc_builtins := [
@@ -1198,19 +1254,101 @@ proc cc_mangle(name) {
     return cc_current_prefix + name
 }
 
-# Function-table key for a direct CALL/TCALL of `name`. A call to an
-# enclosing nested proc (most commonly: a nested proc calling itself)
-# goes to that proc's unique key; everything else is a top-level proc
-# of the current module.
+# Function-table key for a direct CALL/TCALL of `name`: a top-level
+# proc of the current module. (Calls to nested procs never get here;
+# they are value bindings and go through LOAD + CALL_VALUE.)
 proc cc_resolve_call_name(name) {
+    return cc_mangle(name)
+}
+
+# The function-table key of the enclosing nested proc called `name`, or
+# false when there is none or a parameter/local inside that proc
+# shadows it.
+proc cc_enclosing_nested_key(name) {
     alloc i := length(cc_nested_procs) - 1
     loop i >= 0 {
         if cc_nested_procs[i][0] == name {
+            alloc depth := cc_nested_procs[i][2]
+            alloc n := length(cc_local_scopes)
+            loop depth < n {
+                if list_contains_name(cc_local_scopes[depth], name) {
+                    return false
+                }
+                depth := depth + 1
+            }
             return cc_nested_procs[i][1]
         }
         i := i - 1
     }
-    return cc_mangle(name)
+    return false
+}
+
+# Add to `acc` every name that `node` declares at its own function
+# level, and return the result. Descends into blocks and if/loop/try
+# bodies, but not into nested proc bodies (those are a different scope).
+proc cc_collect_declared(node, acc) {
+    alloc kind := node[0]
+    if kind == "decl" or kind == "func" {
+        return acc + [node[1]]
+    }
+    if kind == "import" {
+        return acc + [node[2]]
+    }
+    if kind == "block" {
+        alloc stmts := node[1]
+        alloc i := 0
+        alloc n := length(stmts)
+        loop i < n {
+            acc := cc_collect_declared(stmts[i], acc)
+            i := i + 1
+        }
+        return acc
+    }
+    if kind == "if" {
+        acc := cc_collect_declared(node[2], acc)
+        if node[3] != false {
+            acc := cc_collect_declared(node[3], acc)
+        }
+        return acc
+    }
+    if kind == "loop" {
+        return cc_collect_declared(node[2], acc)
+    }
+    if kind == "try" {
+        acc := cc_collect_declared(node[1], acc)
+        if node[2] != false {
+            acc := acc + [node[2]]
+        }
+        return cc_collect_declared(node[3], acc)
+    }
+    return acc
+}
+
+# Reject a nested proc's use of a name that an *enclosing* proc only
+# declares further down. Called for names that did not resolve to a
+# local, i.e. that are about to be treated as globals.
+#
+# A closure captures the enclosing locals that exist at the point where
+# it is defined, so such a name can never be reached: it used to fail at
+# run time with an UndefinedIdentError (and crash an AOT binary). A name
+# the file also declares at the top level is left alone, because then
+# the reference means that global.
+proc cc_check_not_declared_later(name) {
+    alloc n := length(cc_later_decls)
+    if n < 2 or cc_is_reserved(name) {
+        return false
+    }
+    if list_contains_name(cc_file_top_names, name) or list_contains_name(cc_local_scopes[0], name) {
+        return false
+    }
+    alloc i := 0
+    loop i < n - 1 {
+        if list_contains_name(cc_later_decls[i], name) {
+            panic("SyntaxError: '" + name + "' is used in a nested proc before the enclosing proc declares it on line " + cc_current_line + " in " + cc_current_file)
+        }
+        i := i + 1
+    }
+    return false
 }
 
 proc cc_in_function_scope(name) {
@@ -1382,6 +1520,9 @@ proc compile_expr(node) {
         return false
     }
     if kind == "id" {
+        if cc_in_function_scope(node[1]) == false {
+            cc_check_not_declared_later(node[1])
+        }
         cc_emit(["LOAD", cc_resolve_load(node[1])])
         return false
     }
@@ -1459,6 +1600,13 @@ proc compile_expr(node) {
                 return false
             }
             if cc_is_value_binding(cname) {
+                # A call to an enclosing nested proc (usually recursion)
+                # is one of these; its argument count is known, so check
+                # it here.
+                alloc nested_key := cc_enclosing_nested_key(cname)
+                if nested_key != false {
+                    cc_check_direct_call_arity(cname, nested_key, length(args), cc_current_line)
+                }
                 cc_emit(["LOAD", cc_resolve_load(cname)])
                 alloc i := 0
                 alloc n := length(args)
@@ -1469,6 +1617,7 @@ proc compile_expr(node) {
                 cc_emit(["CALL_VALUE", n])
                 return false
             }
+            cc_check_not_declared_later(cname)
             alloc resolved_call_name := cc_resolve_call_name(cname)
             cc_check_direct_call_arity(cname, resolved_call_name, length(args), cc_current_line)
             alloc i := 0
@@ -1792,6 +1941,18 @@ proc path_absolute_normalised(path, cwd) {
 
 # Look up a previously-compiled module by its resolved path.  Returns the
 # cached entry [path, prefix, exports] or false.
+# Every name the top-level statements of `ast` declare.
+proc cc_collect_top_names(ast) {
+    alloc names := []
+    alloc i := 0
+    alloc n := length(ast)
+    loop i < n {
+        names := cc_collect_declared(ast[i], names)
+        i := i + 1
+    }
+    return names
+}
+
 # Pre-pass: walk an AST's top-level statements and record every proc's
 # parameter count into cc_proc_arity, mangled with cc_current_prefix.
 # Must run before compile_stmt visits the bodies so direct-call sites
@@ -1920,6 +2081,10 @@ proc compile_import(path, alias, line) {
         # never resolve to a nested proc of whoever is importing it.
         alloc saved_nested := cc_nested_procs
         cc_nested_procs := []
+        alloc saved_later := cc_later_decls
+        cc_later_decls := []
+        alloc saved_top_names := cc_file_top_names
+        cc_file_top_names := cc_collect_top_names(ast)
         cc_collect_proc_arity(ast)
         i := 0
         loop i < n {
@@ -1927,6 +2092,8 @@ proc compile_import(path, alias, line) {
             i := i + 1
         }
         cc_nested_procs := saved_nested
+        cc_later_decls := saved_later
+        cc_file_top_names := saved_top_names
         cc_current_prefix := saved_prefix
         cc_current_file   := saved_file
         cc_current_file_idx := saved_file_idx
@@ -1994,6 +2161,9 @@ proc compile_stmt(stmt) {
     }
     if kind == "assign" {
         compile_expr(stmt[2])
+        if cc_in_function_scope(stmt[1]) == false {
+            cc_check_not_declared_later(stmt[1])
+        }
         cc_emit(["STORE", cc_resolve_store(stmt[1])])
         return false
     }
@@ -2128,7 +2298,13 @@ proc compile_stmt(stmt) {
             cc_module_counter := cc_module_counter + 1
             mangled := "__mod_" + cc_module_counter + "__" + name
             cc_proc_arity := cc_proc_arity + [[mangled, length(params)]]
-            cc_nested_procs := cc_nested_procs + [[name, mangled]]
+            # Declared in the enclosing scope *before* the body is
+            # compiled, so the proc's own name is a value binding inside
+            # its body: a recursive call becomes LOAD + CALL_VALUE and
+            # goes through the closure (keeping its captured variables),
+            # not a direct CALL that would start from an empty frame.
+            cc_declare_local(name)
+            cc_nested_procs := cc_nested_procs + [[name, mangled, length(cc_local_scopes)]]
         }
         alloc body_pair := compile_function_body(params, body)
         if nested {
@@ -2139,9 +2315,6 @@ proc compile_stmt(stmt) {
         alloc fn_file_idx := cc_current_file_idx
         cc_pending_funcs := cc_pending_funcs + [[mangled, params, body_code, body_lines, fn_file_idx]]
         cc_emit(["MAKE_FUNC", mangled])
-        if nested {
-            cc_declare_local(name)
-        }
         return false
     }
     if kind == "return" {
@@ -2165,9 +2338,13 @@ proc compile_stmt(stmt) {
                 cc_emit(["RAISE", rk])
                 return false
             }
-            if cc_is_builtin(cname) == false and cc_is_value_binding(cname) == false {
-                # Direct tail call of a top-level proc.
+            if cc_is_builtin(cname) == false and cc_is_value_binding(cname) == false and cc_try_depth == 0 {
+                # Direct tail call of a top-level proc. Not inside a
+                # `try` block: a tail call gives up the current frame,
+                # and with it the handler, so an error raised by the
+                # callee would escape the `except` written around it.
                 alloc args := expr[2]
+                cc_check_not_declared_later(cname)
                 alloc resolved_tcall_name := cc_resolve_call_name(cname)
                 cc_check_direct_call_arity(cname, resolved_tcall_name, length(args), cc_current_line)
                 alloc i := 0
@@ -2232,7 +2409,9 @@ proc compile_function_body(params, body) {
         i := i + 1
     }
     cc_local_scopes := cc_local_scopes + [new_scope]
+    cc_later_decls := cc_later_decls + [cc_collect_declared(body, [])]
     compile_block_node(body)
+    cc_later_decls := cc_later_decls[0:length(cc_later_decls) - 1]
     # Implicit return for procs that fall off the end. PUSH_NONE ensures
     # RET pops a real value rather than consuming whatever the caller
     # left on the operand stack (e.g. `xs + [void_proc()]` would have
@@ -2304,6 +2483,8 @@ proc compile_program_node_seeded(ast, file, known_globals) {
     # "already declared".
     cc_top_level_declared := []
     cc_nested_procs := []
+    cc_later_decls := []
+    cc_file_top_names := cc_collect_top_names(ast)
     cc_try_depth := 0
     cc_loop_try_depth := []
     cc_collect_proc_arity(ast)
@@ -2503,7 +2684,7 @@ proc write_bytecode(code, funcs, src_files, src_lines) {
 proc do_compile(in_path, out_path) {
     alloc src := read_file(in_path)
     if src == false {
-        panic("cannot read '" + in_path + "'")
+        panic("ModuleImportError: cannot read '" + in_path + "'")
     }
     # Absolute-normalise the entry path so the resulting .omgb's
     # source-file table stays consistent regardless of which CWD
@@ -2597,6 +2778,8 @@ proc compile_reset() {
     cc_top_level_declared := []
     cc_proc_arity := []
     cc_nested_procs := []
+    cc_later_decls := []
+    cc_file_top_names := []
 }
 
 # Seed the outermost scope with names that exist in the VM's globals

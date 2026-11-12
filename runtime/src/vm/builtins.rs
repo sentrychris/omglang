@@ -361,6 +361,21 @@ pub fn call_builtin(
             Ok(Value::Int(std::process::id() as i64))
         }
 
+        // executable_path() -> str | bool. The native toolchain returns
+        // the absolute path of its own binary so it can find the files
+        // shipped next to it (`omg_rt.h`, `omg_rt.js`). Nothing is shipped
+        // next to this runtime, so the answer here is always `false`,
+        // which is what callers already treat as "fall back to the
+        // script's directory".
+        "executable_path" => {
+            if !args.is_empty() {
+                return Err(RuntimeError::TypeError(
+                    "executable_path() takes no arguments".to_string(),
+                ));
+            }
+            Ok(Value::Bool(false))
+        }
+
         // stdin_readline() -> str | bool. Reads one line from stdin
         // (without the trailing newline). Returns `false` on EOF — the
         // same convention `read_file` uses, so callers can `if line ==

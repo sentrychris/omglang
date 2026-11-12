@@ -282,7 +282,6 @@ fn run_omg(path: &PathBuf, full_args: &[String]) -> Result<(), RuntimeError> {
             e
         ))
     })?;
-    check_header(&source, path)?;
     // Absolute-normalise the entry path so traceback frames cite the
     // same unambiguous filename whatever CWD the user invoked us from.
     let abs_path = absolute_normalised(path);
@@ -311,23 +310,6 @@ fn run_omgb(path: &PathBuf, full_args: &[String]) -> Result<(), RuntimeError> {
     run(&code, &funcs, &src_map, full_args)
 }
 
-fn check_header(source: &str, path: &PathBuf) -> Result<(), RuntimeError> {
-    for line in source.lines() {
-        let t = line.trim();
-        if t.is_empty() {
-            continue;
-        }
-        if t == ";;;omg" {
-            return Ok(());
-        }
-        break;
-    }
-    Err(RuntimeError::SyntaxError(format!(
-        "OMG script missing required header ';;;omg' in {}",
-        path.display()
-    )))
-}
-
 fn cmd_compile(args: &[String]) -> u8 {
     if args.is_empty() {
         eprintln!("--compile expects an input .omg path");
@@ -342,10 +324,6 @@ fn cmd_compile(args: &[String]) -> u8 {
             return EXIT_FAIL;
         }
     };
-    if let Err(e) = check_header(&source, &in_path) {
-        eprintln!("{}", e);
-        return EXIT_FAIL;
-    }
     // Absolute-normalise so the .omgb's source-file table matches
     // what bootstrap/bin/omgc produces.
     let abs_path = absolute_normalised(&in_path);
@@ -633,10 +611,6 @@ fn cmd_disasm(args: &[String]) -> u8 {
             }
         } else {
             let source = String::from_utf8_lossy(&bytes).to_string();
-            if let Err(e) = check_header(&source, &path) {
-                eprintln!("{}", e);
-                return EXIT_FAIL;
-            }
             match compile_source(&source, &path) {
                 Ok(p) => (p.code, p.funcs),
                 Err(e) => {

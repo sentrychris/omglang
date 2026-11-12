@@ -406,15 +406,24 @@ alloc VM_UNKNOWN_FILE_IDX := 4294967295
 # === Sentinels and tag helpers ===========================================
 #
 # OMG doesn't expose `None` as a literal, but the bytecode uses PUSH_NONE
-# (e.g. for omitted slice bounds and for void-proc returns). We model it
-# as a uniquely-keyed dict so structural equality lets us recognise it.
-# Closures get the same treatment: a dict with a magic key whose value
-# is [name, captured_env].
+# (e.g. for omitted slice bounds and for void-proc returns). A proc that
+# falls off its end returns the host's own none value, so that is where
+# we get ours: the hosted program then sees exactly what it would see on
+# any other backend (it prints as nothing, is not truthy, and equals
+# only itself). An earlier version modelled none as a marker dict, which
+# was truthy and printed as a dict inside lists and strings.
+# Closures are modelled as a dict with a magic key whose value
+# is [name, captured_env, bare_name]. bare_name is the source name of a
+# mangled proc (`__mod_N__bare`) or false; vm_invoke binds the closure
+# under it in the frame it builds, so a nested proc can call itself.
 
-alloc vm_none := freeze({__omg_none__: 0})
+proc vm_host_none() {
+    alloc unused := 0
+}
+alloc vm_none := vm_host_none()
 
 proc make_closure(name, captured) {
-    return {__omg_closure__: [name, captured]}
+    return {__omg_closure__: [name, captured, strip_mod_prefix(name)]}
 }
 
 # If `name` is a module-mangled identifier (`__mod_N__bare`), return
@@ -445,7 +454,7 @@ proc dict_has(v, key) {
 }
 
 proc is_vm_none(v) {
-    return dict_has(v, "__omg_none__")
+    return v == vm_none
 }
 
 proc is_vm_closure(v) {
@@ -469,12 +478,24 @@ proc is_vm_closure(v) {
 # amortised, ~5-20× faster on bytecode-heavy workloads.
 
 proc vm_push(v) {
-    if vm_stack_top < length(vm_stack) {
-        vm_stack[vm_stack_top] := v
-    } else {
-        vm_stack := vm_stack + [v]
+    if vm_stack_top >= length(vm_stack) {
+        vm_stack := vm_grown(vm_stack)
     }
+    vm_stack[vm_stack_top] := v
     vm_stack_top := vm_stack_top + 1
+}
+
+# Grow a capacity-tracked stack by doubling. Growing by one element
+# (`xs + [v]`) copies the whole list on every push past the high-water
+# mark, so the first descent to depth n cost O(n²): a 100,000-deep
+# recursion spent nearly all its time copying the env and return
+# stacks. Doubling makes n pushes O(n) in total.
+proc vm_grown(xs) {
+    alloc n := length(xs)
+    if n < 16 {
+        n := 16
+    }
+    return xs + list_repeat(false, n)
 }
 
 proc vm_pop() {
@@ -582,7 +603,9 @@ proc dict_snapshot(d) {
 # Invoke `name` with the given positional args. `captured` is a dict
 # snapshot of the surrounding locals at the closure's definition site,
 # or vm_none for plain top-level procs.
-proc vm_invoke(name, call_args, captured) {
+# `self_closure` is the closure value being called, or false for a
+# direct call by name (a top-level proc, which captures nothing).
+proc vm_invoke(name, call_args, captured, self_closure) {
     if dict_has(vm_funcs, name) == false {
         panic("UndefinedIdentError: " + name)
     }
@@ -599,6 +622,18 @@ proc vm_invoke(name, call_args, captured) {
         # and write the same `[v]` cells.
         dict_copy_into(new_env, captured)
     }
+    if self_closure != false {
+        # A closure sees itself under its own source name, so a nested
+        # proc can recurse and still reach the variables it captured.
+        # The captured env cannot hold this binding (it is a snapshot
+        # taken before the closure existed, and a closure inside its
+        # own captures would be a reference cycle), so it is made per
+        # call. Bound before the params, so a param of that name wins.
+        alloc self_bare := self_closure["__omg_closure__"][2]
+        if self_bare != false {
+            new_env[self_bare] := [self_closure]
+        }
+    }
     alloc p := 0
     alloc np := length(params)
     loop p < np {
@@ -608,20 +643,18 @@ proc vm_invoke(name, call_args, captured) {
         p := p + 1
     }
     # Push vm_env onto vm_env_stack (capacity-tracking).
-    if vm_env_stack_top < length(vm_env_stack) {
-        vm_env_stack[vm_env_stack_top] := vm_env
-    } else {
-        vm_env_stack := vm_env_stack + [vm_env]
+    if vm_env_stack_top >= length(vm_env_stack) {
+        vm_env_stack := vm_grown(vm_env_stack)
     }
+    vm_env_stack[vm_env_stack_top] := vm_env
     vm_env_stack_top := vm_env_stack_top + 1
     # Push the return PC. step_inner now pre-advances vm_pc before
     # dispatching, so vm_pc already points one past the CALL — RET
     # should land us there, not one further.
-    if vm_ret_stack_top < length(vm_ret_stack) {
-        vm_ret_stack[vm_ret_stack_top] := vm_pc
-    } else {
-        vm_ret_stack := vm_ret_stack + [vm_pc]
+    if vm_ret_stack_top >= length(vm_ret_stack) {
+        vm_ret_stack := vm_grown(vm_ret_stack)
     }
+    vm_ret_stack[vm_ret_stack_top] := vm_pc
     vm_ret_stack_top := vm_ret_stack_top + 1
     vm_env := new_env
     vm_pc := addr
@@ -793,12 +826,7 @@ proc step_inner() {
         return false
     }
     if op == OP_EMIT {
-        alloc ev := vm_pop()
-        if is_vm_none(ev) {
-            emit ""
-        } else {
-            emit ev
-        }
+        emit vm_pop()
         return false
     }
     if op == OP_HALT {
@@ -955,16 +983,18 @@ proc step_inner() {
         # before the pre-advance refactor.
         alloc call_name := instr[1]
         alloc call_pc := vm_pc - 1
+        if dict_has(vm_funcs, call_name) == false {
+            panic("UndefinedIdentError: " + call_name)
+        }
         alloc info := vm_funcs[call_name]
         alloc params := info[0]
         alloc call_args := vm_pop_n(length(params))
-        vm_invoke(call_name, call_args, vm_none)
+        vm_invoke(call_name, call_args, vm_none, false)
         # Push the new frame (capacity-tracking).
-        if vm_frames_top < length(vm_frames) {
-            vm_frames[vm_frames_top] := [call_name, call_pc]
-        } else {
-            vm_frames := vm_frames + [[call_name, call_pc]]
+        if vm_frames_top >= length(vm_frames) {
+            vm_frames := vm_grown(vm_frames)
         }
+        vm_frames[vm_frames_top] := [call_name, call_pc]
         vm_frames_top := vm_frames_top + 1
         return false
     }
@@ -975,6 +1005,9 @@ proc step_inner() {
         # caller — keep vm_env_stack and vm_ret_stack as-is, rewrite
         # the local env and PC.
         alloc tc_name := instr[1]
+        if dict_has(vm_funcs, tc_name) == false {
+            panic("UndefinedIdentError: " + tc_name)
+        }
         alloc info := vm_funcs[tc_name]
         alloc params := info[0]
         alloc call_args := vm_pop_n(length(params))
@@ -1000,17 +1033,21 @@ proc step_inner() {
         alloc callable := vm_pop()
         alloc fname := callable
         alloc captured_env := vm_none
+        alloc self_closure := false
         if is_vm_closure(callable) {
             alloc cinfo := callable["__omg_closure__"]
             fname := cinfo[0]
             captured_env := cinfo[1]
+            self_closure := callable
+        } elif ("" + callable) != callable {
+            # Neither a closure nor a proc name (a string).
+            panic("TypeError: cannot call non-function value (" + callable + ")")
         }
-        vm_invoke(fname, cv_args, captured_env)
-        if vm_frames_top < length(vm_frames) {
-            vm_frames[vm_frames_top] := [fname, call_pc]
-        } else {
-            vm_frames := vm_frames + [[fname, call_pc]]
+        vm_invoke(fname, cv_args, captured_env, self_closure)
+        if vm_frames_top >= length(vm_frames) {
+            vm_frames := vm_grown(vm_frames)
         }
+        vm_frames[vm_frames_top] := [fname, call_pc]
         vm_frames_top := vm_frames_top + 1
         return false
     }

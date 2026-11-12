@@ -31,8 +31,9 @@ use crate::value::{new_cell, Env, Value};
 /// If `name` looks like a module-mangled identifier (`__mod_N__bare`),
 /// return the bare suffix. Otherwise None. Used by `MakeFunc` to bind
 /// nested-proc closures under both their mangled funcs-table key and
-/// the bare source name that `Load` instructions reference.
-fn strip_mod_prefix(name: &str) -> Option<&str> {
+/// the bare source name that `Load` instructions reference, and by
+/// `CallValue` to bind a closure's own name in the frame it runs in.
+pub(super) fn strip_mod_prefix(name: &str) -> Option<&str> {
     let rest = name.strip_prefix("__mod_")?;
     let end_idx = rest.find("__")?;
     let digits = &rest[..end_idx];
