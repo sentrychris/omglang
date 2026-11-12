@@ -1,0 +1,111 @@
+3.5
+4.0
+3
+-4
+1
+2
+-2
+10
+14
+20
+6
+2.5
+0.30000000000000004
+2.5
+1000.0
+2.0
+0.3333333333333333
+1024
+1.4142135623730951
+2
+3
+2
+3
+3.5
+4.0
+43
+3
+3.0
+5.0
+9223372036854775807
+-9223372036854775808
+2
+14
+12
+-6
+1024
+128
+-4
+ff
+101
+00000101
+true
+true
+false
+true
+true
+true
+true
+false
+true
+false
+false
+true
+true
+true
+false
+false
+true
+12
+h
+d
+world
+hello
+
+
+hello, world
+abcd
+n = 5
+5 apples
+x1.5
+ok: true
+list: [1, two, 3.0]
+65
+a
+[104, 105]
+omg
+tab	here
+quote " inside
+line one
+line two
+[10, 20, 30, 40]
+4
+40
+[20, 30]
+[30, 40]
+[10, 20, 30, 40, 50]
+[10, 20, 30, 40]
+[11, 20, 30, 40]
+[[1, 2], [3, [4, 5]]]
+[]
+[a, b]
+[0, 0, 0, 0]
+[ab, ab]
+[7, 7, 7]
+4
+21
+{name: omg, two words: 2, nested: {deep: [1, 2]}}
+omg
+2
+2
+[name, two words, nested, added]
+4
+true
+false
+false
+{}
+[no, yes, no, yes, no, yes, no, no, no]
+true
+true
+true
+true

@@ -1,0 +1,5 @@
+;;;omg
+# expect: RuntimeError
+emit "before"
+panic("stop here")
+emit "after"

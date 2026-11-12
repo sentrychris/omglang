@@ -1,0 +1,10 @@
+;;;omg
+# expect: KeyError
+alloc d := {a: 1}
+try {
+    emit [1][5]
+} except err {
+    emit "in handler"
+    emit d.missing
+}
+emit "after"

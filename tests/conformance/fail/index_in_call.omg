@@ -1,0 +1,11 @@
+;;;omg
+# expect: IndexError
+proc pick(xs, i) {
+    return xs[i]
+}
+proc outer() {
+    return pick([1, 2], 5) + 1
+}
+emit "before"
+emit outer()
+emit "after"

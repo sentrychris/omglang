@@ -1,0 +1,239 @@
+;;;omg
+
+# Conformance: control flow, try/except and calls.
+
+# --- if / elif / else --------------------------------------------------------
+proc classify(n) {
+    if n < 0 {
+        return "negative"
+    } elif n == 0 {
+        return "zero"
+    } elif n < 10 {
+        return "small"
+    } else {
+        return "large"
+    }
+}
+emit [classify(-5), classify(0), classify(7), classify(70)]
+
+# --- loop and break ----------------------------------------------------------
+alloc i := 0
+alloc total := 0
+loop i < 10 {
+    if i == 6 {
+        break
+    }
+    total := total + i
+    i := i + 1
+}
+emit [i, total]
+
+# break leaves only the innermost loop.
+alloc pairs := []
+alloc a := 0
+loop a < 3 {
+    alloc b := 0
+    loop true {
+        if b > a {
+            break
+        }
+        pairs := pairs + [[a, b]]
+        b := b + 1
+    }
+    a := a + 1
+}
+emit pairs
+
+# A loop whose condition is false at the start never runs.
+loop false {
+    emit "unreachable"
+}
+
+# --- try / except ------------------------------------------------------------
+alloc xs := [1, 2, 3]
+
+# The handler runs, and execution continues after the block.
+try {
+    emit xs[10]
+    emit "unreachable"
+} except err {
+    emit "handled"
+}
+emit "after"
+
+# No error: the handler is skipped.
+try {
+    emit xs[0]
+} except err {
+    emit "unreachable"
+}
+
+# Nested blocks: the innermost handler wins, and an error raised inside
+# a handler goes to the next one out.
+try {
+    try {
+        emit xs[10]
+    } except inner {
+        emit "inner handler"
+        emit xs[20]
+    }
+    emit "unreachable"
+} except outer {
+    emit "outer handler"
+}
+
+# break out of a loop from inside try, then use try again afterwards.
+alloc n := 0
+loop true {
+    try {
+        n := n + 1
+        if n == 3 {
+            break
+        }
+    } except err {
+        emit "unreachable"
+    }
+}
+emit n
+try {
+    emit xs[10]
+} except err {
+    emit "still catching after break"
+}
+
+# return from inside try, inside a loop, many times over. Every return
+# has to unwind its handler, or the handler stack grows without bound.
+proc first_even(values) {
+    alloc k := 0
+    loop k < length(values) {
+        try {
+            if values[k] % 2 == 0 {
+                return values[k]
+            }
+        } except err {
+            return -1
+        }
+        k := k + 1
+    }
+    return false
+}
+alloc round := 0
+alloc found := 0
+loop round < 500 {
+    found := found + first_even([1, 3, 5, 6, 7])
+    round := round + 1
+}
+emit found
+try {
+    emit xs[10]
+} except err {
+    emit "still catching after returns"
+}
+
+# `return f()` inside try: an error raised by f is caught here. (It used
+# to escape, because the call was made as a tail call after the handler
+# had already been removed.)
+proc fails() {
+    return xs[10]
+}
+proc guarded() {
+    try {
+        return fails()
+    } except err {
+        return "caught the callee's error"
+    }
+}
+emit guarded()
+
+# The same call outside try is not guarded, and the caller's handler
+# gets the error instead.
+proc unguarded() {
+    return fails()
+}
+try {
+    emit unguarded()
+} except err {
+    emit "caught one level up"
+}
+
+# After an error unwinds several frames, locals of the catching frame
+# are intact.
+proc depth_then_fail(k) {
+    if k == 0 {
+        return xs[10]
+    }
+    return 1 + depth_then_fail(k - 1)
+}
+proc survives() {
+    alloc before := "intact"
+    try {
+        depth_then_fail(50)
+    } except err {
+        return before
+    }
+    return "unreachable"
+}
+emit survives()
+
+# --- Calls -------------------------------------------------------------------
+# Arguments are evaluated left to right, once each.
+alloc order := []
+proc note(tag) {
+    order := order + [tag]
+    return tag
+}
+proc three(x, y, z) {
+    return [x, y, z]
+}
+emit three(note("a"), note("b"), note("c"))
+emit order
+
+# A proc that falls off the end returns a value that is not truthy.
+proc no_return() {
+    alloc unused := 1
+}
+if no_return() {
+    emit "unreachable"
+} else {
+    emit "falls through"
+}
+
+# Procs can be called before the line that defines them.
+emit defined_later(4)
+proc defined_later(x) {
+    return x * x
+}
+
+# Mutual recursion between top-level procs.
+proc is_even(k) {
+    if k == 0 {
+        return true
+    }
+    return is_odd(k - 1)
+}
+proc is_odd(k) {
+    if k == 0 {
+        return false
+    }
+    return is_even(k - 1)
+}
+emit [is_even(10), is_odd(7), is_even(7)]
+
+# A tail call in a loop-shaped proc. Depth is kept modest because the
+# JS backend has no tail-call elimination; the VMs and AOT reuse the
+# frame.
+proc count(k, acc) {
+    if k == 0 {
+        return acc
+    }
+    return count(k - 1, acc + 2)
+}
+emit count(3000, 0)
+
+# Parameters are fresh on every call and do not leak.
+proc shadow(xs) {
+    xs := "local"
+    return xs
+}
+emit shadow(1)
+emit xs

@@ -1,0 +1,5 @@
+;;;omg
+# expect: UndefinedIdentError
+emit "before"
+emit never_declared
+emit "after"

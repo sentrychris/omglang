@@ -1,0 +1,239 @@
+;;;omg
+
+# Conformance: runtime errors.
+#
+# Only the error *kind* is compared, because the wording after the colon
+# is allowed to differ between backends. What matters is that every
+# backend raises, raises the same kind, and lets the program catch it.
+
+proc kind(err) {
+    alloc s := "" + err
+    alloc i := 0
+    loop i < length(s) {
+        if s[i] == ":" {
+            return s[0:i]
+        }
+        i := i + 1
+    }
+    return s
+}
+
+# --- Undefined names ---------------------------------------------------------
+# AOT used to read an undefined name as 0 and carry on.
+try {
+    emit never_declared
+} except err {
+    emit "load: " + kind(err)
+}
+
+# Assigning to a name that was never declared is an error too; AOT used
+# to create the variable silently.
+try {
+    never_declared := 5
+    emit "assignment went through"
+} except err {
+    emit "store: " + kind(err)
+}
+
+proc reads_missing() {
+    return missing_in_proc + 1
+}
+try {
+    emit reads_missing()
+} except err {
+    emit "load in proc: " + kind(err)
+}
+
+proc writes_missing() {
+    missing_in_proc := 1
+    return "assignment went through"
+}
+try {
+    emit writes_missing()
+} except err {
+    emit "store in proc: " + kind(err)
+}
+
+# A name declared on a path that did not run is still undefined.
+proc maybe(flag) {
+    if flag {
+        alloc value := "set"
+    }
+    return value
+}
+emit maybe(true)
+try {
+    emit maybe(false)
+} except err {
+    emit "skipped alloc: " + kind(err)
+}
+
+try {
+    not_a_proc(1)
+} except err {
+    emit "call: " + kind(err)
+}
+
+# --- Indexing ----------------------------------------------------------------
+alloc xs := [1, 2, 3]
+try {
+    emit xs[3]
+} except err {
+    emit "list index: " + kind(err)
+}
+try {
+    xs[5] := 0
+} except err {
+    emit "list store: " + kind(err)
+}
+try {
+    emit "abc"[9]
+} except err {
+    emit "string index: " + kind(err)
+}
+alloc d := {a: 1}
+try {
+    emit d.missing
+} except err {
+    emit "dict key: " + kind(err)
+}
+try {
+    emit d["missing"]
+} except err {
+    emit "dict index: " + kind(err)
+}
+alloc five := 5
+try {
+    emit five[0]
+} except err {
+    emit "index an int: " + kind(err)
+}
+
+# --- Types -------------------------------------------------------------------
+try {
+    emit 1 - "a"
+} except err {
+    emit "int minus string: " + kind(err)
+}
+try {
+    emit [1] * [2]
+} except err {
+    emit "list times list: " + kind(err)
+}
+try {
+    emit length(5)
+} except err {
+    emit "length of int: " + kind(err)
+}
+try {
+    five(1)
+} except err {
+    emit "call an int: " + kind(err)
+}
+
+# --- Arity through a value call ----------------------------------------------
+proc two(a, b) {
+    return a + b
+}
+alloc f := two
+try {
+    emit f(1)
+} except err {
+    emit "too few arguments: " + kind(err)
+}
+try {
+    emit f(1, 2, 3)
+} except err {
+    emit "too many arguments: " + kind(err)
+}
+
+# --- Arithmetic --------------------------------------------------------------
+alloc zero := 0
+try {
+    emit 1 / zero
+} except err {
+    emit "divide: " + kind(err)
+}
+try {
+    emit 1 // zero
+} except err {
+    emit "floor divide: " + kind(err)
+}
+try {
+    emit 1 % zero
+} except err {
+    emit "modulo: " + kind(err)
+}
+
+# --- Frozen values, assertions, explicit raises ------------------------------
+alloc frozen := freeze({a: 1})
+try {
+    frozen.a := 2
+} except err {
+    emit "frozen write: " + kind(err)
+}
+emit frozen.a
+try {
+    facts 1 == 2
+} except err {
+    emit "facts: " + kind(err)
+}
+try {
+    panic("stop")
+} except err {
+    emit "panic: " + err
+}
+try {
+    raise("ValueError: bad value")
+} except err {
+    emit "raise: " + err
+}
+
+# --- Errors unwind through calls and leave the program usable ----------------
+proc level3() {
+    return xs[99]
+}
+proc level2() {
+    return level3() + 1
+}
+proc level1() {
+    try {
+        return level2()
+    } except err {
+        return "caught at level 1: " + kind(err)
+    }
+}
+emit level1()
+
+proc rethrow() {
+    try {
+        emit xs[99]
+    } except err {
+        panic("wrapped " + kind(err))
+    }
+    return false
+}
+try {
+    rethrow()
+} except err {
+    emit err
+}
+
+# An except block without a binding.
+try {
+    emit xs[99]
+} except {
+    emit "no binding"
+}
+
+# Recursion a few thousand levels deep works everywhere. (Much deeper
+# recursion is where backends differ: the VMs keep going, AOT and JS
+# raise a catchable RuntimeError when the native stack runs out.)
+proc depth(n) {
+    if n == 0 {
+        return 0
+    }
+    return 1 + depth(n - 1)
+}
+emit depth(2000)
+emit "done"

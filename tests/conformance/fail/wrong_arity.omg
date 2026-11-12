@@ -1,0 +1,9 @@
+;;;omg
+# expect: TypeError
+proc two(a, b) {
+    return a + b
+}
+alloc f := two
+emit "before"
+emit f(1, 2, 3)
+emit "after"

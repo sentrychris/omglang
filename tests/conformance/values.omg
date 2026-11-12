@@ -1,0 +1,158 @@
+;;;omg
+
+# Conformance: values, operators and builtins.
+#
+# Arithmetic, coercion, printing and container behaviour that every
+# backend has to agree on down to the last character.
+
+# --- Integer and float arithmetic -------------------------------------------
+emit 7 / 2
+emit 8 / 2
+emit 7 // 2
+emit -7 // 2
+emit 7 % 3
+emit -7 % 3
+emit 7 % -3
+emit 2 * 3 + 4
+emit 2 + 3 * 4
+emit (2 + 3) * 4
+emit -2 * -3
+emit 1.5 + 1
+emit 0.1 + 0.2
+emit 10 / 4
+emit 1e3
+emit 2.0
+emit 1.0 / 3.0
+emit pow(2, 10)
+emit pow(2.0, 0.5)
+emit floor(2.7)
+emit ceil(2.1)
+emit round(2.5)
+emit abs(-3)
+emit abs(-3.5)
+emit sqrt(16)
+emit int("42") + 1
+emit int(3.9)
+emit float(3)
+emit float("2.5") * 2
+emit 9223372036854775807
+emit -9223372036854775807 - 1
+
+# --- Bitwise -----------------------------------------------------------------
+emit 0b1010 & 0b0110
+emit 0b1010 | 0b0110
+emit 0b1010 ^ 0b0110
+emit ~5
+emit 1 << 10
+emit 1024 >> 3
+emit -8 >> 1
+emit hex(255)
+emit binary(5)
+emit binary(5, 8)
+
+# --- Comparison and logic ----------------------------------------------------
+emit 1 < 2
+emit 2 <= 2
+emit 3 > 4
+emit 1 == 1.0
+emit "a" < "b"
+emit "abc" == "abc"
+emit [1, 2] == [1, 2]
+emit [1, 2] == [1, 3]
+emit {a: 1} == {a: 1}
+emit 1 == "1"
+emit true and false
+emit true or false
+emit 0 or "fallback"
+emit 5 and "second"
+emit "" == false
+
+# `and` / `or` do not evaluate the right side when the left decides.
+proc loud(v) {
+    emit "evaluated"
+    return v
+}
+emit false and loud(true)
+emit true or loud(false)
+
+# --- Strings -----------------------------------------------------------------
+alloc s := "hello, world"
+emit length(s)
+emit s[0]
+emit s[-1]
+emit s[7:]
+emit s[0:5]
+emit s[3:3]
+emit s[5:2]
+emit s[0:99]
+emit "ab" + "cd"
+emit "n = " + 5
+emit 5 + " apples"
+emit "x" + 1.5
+emit "ok: " + true
+emit "list: " + [1, "two", 3.0]
+emit ascii("A")
+emit chr(97)
+emit string_bytes("hi")
+emit bytes_to_string([111, 109, 103])
+emit "tab\there"
+emit "quote \" inside"
+emit "line one
+line two"
+
+# --- Lists -------------------------------------------------------------------
+alloc xs := [10, 20, 30, 40]
+emit xs
+emit length(xs)
+emit xs[-1]
+emit xs[1:3]
+emit xs[2:]
+emit xs + [50]
+emit xs
+xs[0] := 11
+emit xs
+emit [[1, 2], [3, [4, 5]]]
+emit []
+emit ["a", "b"]
+emit list_repeat(0, 4)
+emit list_repeat("ab", 2)
+emit call_builtin("list_repeat", [7, 3])
+emit call_builtin("length", ["four"])
+
+# Lists are shared, not copied, on assignment.
+alloc alias := xs
+alias[1] := 21
+emit xs[1]
+
+# --- Dicts -------------------------------------------------------------------
+alloc d := {name: "omg", "two words": 2, nested: {deep: [1, 2]}}
+emit d
+emit d.name
+emit d["two words"]
+emit d.nested.deep[1]
+d.added := true
+d["name"] := "OMG"
+emit dict_keys(d)
+emit length(d)
+emit has_key(d, "added")
+emit has_key(d, "missing")
+emit has_key(5, "a")
+emit {}
+
+# --- Truthiness --------------------------------------------------------------
+proc truthy(v) {
+    if v {
+        return "yes"
+    }
+    return "no"
+}
+emit [truthy(0), truthy(1), truthy(""), truthy("a"), truthy([]), truthy([0]), truthy({}), truthy(0.0), truthy(false)]
+
+# --- Builtins that describe the process --------------------------------------
+# executable_path() is the native executable's path, or false when the
+# program is not running from one. Either way it is a builtin everywhere.
+alloc exe := executable_path()
+emit exe == false or length(exe) > 0
+emit getpid() > 0
+emit length(args) >= 1
+emit time_ms() > 0

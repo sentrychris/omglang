@@ -1,0 +1,23 @@
+[negative, zero, small, large]
+[6, 15]
+[[0, 0], [1, 0], [1, 1], [2, 0], [2, 1], [2, 2]]
+handled
+after
+1
+inner handler
+outer handler
+3
+still catching after break
+3000
+still catching after returns
+caught the callee's error
+caught one level up
+intact
+[a, b, c]
+[a, b, c]
+falls through
+16
+[true, true, false]
+6000
+local
+[1, 2, 3]

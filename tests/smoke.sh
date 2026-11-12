@@ -17,8 +17,11 @@
 #   4. tests/smoke/regressions.omg prints exactly regressions.expected on
 #      every backend available here: Rust VM (both frontends), the
 #      OMG-written VM, and — when node is installed — the JS transpiler.
-#   5. Malformed programs fail with a clean SyntaxError (exit code 1),
-#      never a crash.
+#   5. The conformance corpus (tests/conformance/) behaves the same on
+#      every backend available here. tests/conformance.sh, part of
+#      tests/run.sh, runs the same corpus on the native backends.
+#   6. Malformed programs fail with a clean SyntaxError (exit code 1),
+#      never a crash, and with the same message from both frontends.
 #
 # Usage:
 #   tests/smoke.sh            build first with: cargo build --release
@@ -86,7 +89,7 @@ while IFS= read -r f; do
         bad=$((bad + 1))
         fail "bytecode parity: $f" "$out"
     fi
-done < <(find bootstrap/src examples games tools tests/smoke -name '*.omg' | sort)
+done < <(find bootstrap/src examples games tools tests/smoke tests/conformance -name '*.omg' | sort)
 if [ "$bad" -eq 0 ]; then pass "identical bytecode for all $count .omg files"; fi
 
 # --- 3. Examples: same output through both frontends -------------------------
@@ -147,15 +150,62 @@ else
     fail "compile regression program" "$(cat "$WORK/compile.err")"
 fi
 
-# --- 5. Malformed input fails cleanly ----------------------------------------
+# --- 5. Conformance corpus ---------------------------------------------------
+echo
+echo "== Conformance corpus =="
+CONF_DIR="$WORK/conf"
+mkdir -p "$CONF_DIR"
+source tests/conformance/check.sh
+
+conf_run() {
+    local backend="$1" f="$2"
+    case "$backend" in
+        rust) "$OMG" --rust "$f" >"$CONF_DIR/out" 2>"$CONF_DIR/err"; CONF_RC=$? ;;
+        self) "$OMG" "$f" >"$CONF_DIR/out" 2>"$CONF_DIR/err"; CONF_RC=$? ;;
+        vm)
+            "$OMG" --compile "$f" "$CONF_DIR/p.omgb" 2>"$CONF_DIR/err" &&
+                "$OMG" --rust bootstrap/src/vm.omg "$CONF_DIR/p.omgb" \
+                    >"$CONF_DIR/out" 2>"$CONF_DIR/err"
+            CONF_RC=$? ;;
+        js)
+            # A build failure leaves its log where the caller looks.
+            if "$OMG" --compile "$f" "$CONF_DIR/p.omgb" 2>"$CONF_DIR/err" &&
+               "$OMG" --rust bootstrap/src/native-js.omg "$CONF_DIR/p.omgb" \
+                    "$CONF_DIR/p.js" >"$CONF_DIR/err" 2>&1; then
+                node "$CONF_DIR/p.js" >"$CONF_DIR/out" 2>"$CONF_DIR/err"
+                CONF_RC=$?
+            else
+                CONF_RC=9
+            fi ;;
+    esac
+}
+
+conformance_backend rust "Rust VM, Rust frontend"
+conformance_backend self "Rust VM, self-hosted compiler"
+conformance_backend vm   "OMG-written VM"
+if command -v node >/dev/null 2>&1; then
+    conformance_backend js "JS transpiler"
+else
+    echo "  skip  JS transpiler (node not installed)"
+fi
+
+# --- 6. Malformed input fails cleanly ----------------------------------------
 echo
 echo "== Malformed programs fail cleanly =="
 bad_program() {
-    local name="$1" body="$2" want="$3" flag out rc
+    local name="$1" body="$2" want="$3" flag out rc first=""
     printf ';;;omg\n%b' "$body" > "$WORK/bad.omg"
     for flag in "--rust" ""; do
         # shellcheck disable=SC2086
         out=$("$OMG" $flag "$WORK/bad.omg" 2>&1 | norm)
+        # Both frontends must word the diagnostic identically.
+        if [ -z "$flag" ] && [ "$out" != "$first" ]; then
+            fail "$name (same message from both frontends)" "--- rust frontend
+$first
+--- self-hosted
+$out"
+        fi
+        first="$out"
         # shellcheck disable=SC2086
         "$OMG" $flag "$WORK/bad.omg" >/dev/null 2>&1; rc=$?
         case "$out" in
@@ -182,6 +232,22 @@ bad_program "unterminated string"       'emit "abc\n'                 "Untermina
 bad_program "int literal out of range"  'emit 9223372036854775808\n'  "Invalid integer literal"
 bad_program "non-ASCII identifier"      'alloc caf\xc3\xa9 := 1\n'    "Unexpected character"
 bad_program "duplicate top-level alloc" 'alloc x := 1\nalloc x := 2\n' "already declared"
+# Elements need commas. The self-hosted compiler used to accept these.
+bad_program "list without commas"       'emit [1 2 3]\n'              "Expected ']'"
+bad_program "dict without commas"       'emit {a: 1 b: 2}\n'          "Expected '}'"
+bad_program "call without commas"       'emit pow(2 3)\n'             "Expected ')'"
+bad_program "slice without a start"     'emit "abc"[:2]\n'            "Unexpected token ':'"
+# A nested proc cannot use a variable that its enclosing proc declares
+# further down: the closure is built before that variable exists.
+bad_program "nested proc reads a later local" \
+    'proc outer() {\n  proc get() {\n    return late\n  }\n  alloc late := 1\n  return get()\n}\n' \
+    "'late' is used in a nested proc before the enclosing proc declares it on line 4"
+bad_program "nested proc calls a later sibling" \
+    'proc outer() {\n  proc a() {\n    return b()\n  }\n  proc b() {\n    return 1\n  }\n  return a()\n}\n' \
+    "'b' is used in a nested proc before the enclosing proc declares it on line 4"
+bad_program "nested proc called with the wrong argument count" \
+    'proc outer() {\n  proc f(a) {\n    return f(1, 2)\n  }\n  return f(1)\n}\n' \
+    "function 'f' expects 1 argument, got 2"
 
 echo
 echo "================================================"

@@ -1,0 +1,5 @@
+;;;omg
+# expect: AssertionError
+emit "before"
+facts 1 == 2
+emit "after"

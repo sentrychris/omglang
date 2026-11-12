@@ -1,0 +1,249 @@
+;;;omg
+
+# Conformance: closures and nested procs.
+#
+# Every backend must print exactly closures.expected. Each block names
+# the behaviour it pins down; several of them were wrong on at least one
+# backend before this corpus existed.
+
+# --- A nested proc keeps its captures when it calls itself ------------------
+# The recursive call used to start with an empty environment, so `step`
+# and `limit` were undefined from the second level down (a crash in AOT).
+proc sum_to(limit, step) {
+    proc walk(k) {
+        if k > limit {
+            return 0
+        }
+        return k + walk(k + step)
+    }
+    return walk(0)
+}
+emit sum_to(10, 1)
+emit sum_to(10, 5)
+
+# The same in tail position.
+proc count_up(limit) {
+    proc go(k, acc) {
+        if k > limit {
+            return acc
+        }
+        return go(k + 1, acc + k)
+    }
+    return go(1, 0)
+}
+emit count_up(100)
+
+# A recursive walk over a tree, with an accumulator in the enclosing proc.
+proc flatten(tree) {
+    alloc out := []
+    proc visit(node) {
+        if node.kids == false {
+            out := out + [node.name]
+            return false
+        }
+        alloc i := 0
+        loop i < length(node.kids) {
+            visit(node.kids[i])
+            i := i + 1
+        }
+        return false
+    }
+    visit(tree)
+    return out
+}
+alloc leaf_a := {name: "a", kids: false}
+alloc leaf_b := {name: "b", kids: false}
+alloc leaf_c := {name: "c", kids: false}
+alloc inner := {name: "inner", kids: [leaf_b, leaf_c]}
+emit flatten({name: "root", kids: [leaf_a, inner]})
+
+# --- A recursive closure still works after it leaves its proc ---------------
+proc make_countdown(label) {
+    proc down(k) {
+        if k == 0 {
+            return label
+        }
+        return down(k - 1)
+    }
+    return down
+}
+alloc countdown := make_countdown("liftoff")
+emit countdown(25)
+
+# Handing itself to another proc is the same thing.
+proc apply_n(f, n, x) {
+    alloc i := 0
+    loop i < n {
+        x := f(x)
+        i := i + 1
+    }
+    return x
+}
+proc make_doubler() {
+    alloc calls := 0
+    proc double(x) {
+        calls := calls + 1
+        if calls == 1 {
+            return apply_n(double, 2, x) * 2
+        }
+        return x * 2
+    }
+    return double
+}
+alloc doubler := make_doubler()
+emit doubler(1)
+
+# A parameter named like the proc wins over the proc itself.
+proc shadow_self() {
+    proc f(f) {
+        return f + 1
+    }
+    return f(41)
+}
+emit shadow_self()
+
+# --- Sibling nested procs can call each other -------------------------------
+# AOT used to fail here with "cannot call non-function value".
+proc pipeline(x) {
+    proc inc(v) {
+        return v + 1
+    }
+    proc twice(v) {
+        return inc(inc(v))
+    }
+    proc four_times(v) {
+        return twice(twice(v))
+    }
+    return four_times(x)
+}
+emit pipeline(10)
+
+# --- Captures reach through more than one level -----------------------------
+# AOT used to produce C that did not compile for this.
+proc outer(a) {
+    alloc b := a * 2
+    proc middle(c) {
+        proc innermost(d) {
+            return a + b + c + d
+        }
+        return innermost
+    }
+    return middle(100)
+}
+alloc deep := outer(1)
+emit deep(1000)
+
+# The innermost proc writes to a variable two levels up.
+proc tally() {
+    alloc total := 0
+    proc add_all(xs) {
+        proc add(x) {
+            total := total + x
+            return total
+        }
+        alloc i := 0
+        loop i < length(xs) {
+            add(xs[i])
+            i := i + 1
+        }
+        return total
+    }
+    add_all([1, 2, 3])
+    add_all([10, 20])
+    return total
+}
+emit tally()
+
+# --- A local that shadows a global is the one that gets captured ------------
+alloc mode := "global"
+proc reader() {
+    alloc mode := "local"
+    proc get() {
+        return mode
+    }
+    return get()
+}
+emit reader()
+emit mode
+
+# A nested proc that does not shadow it reads and writes the global.
+alloc hits := 0
+proc bump_twice() {
+    proc bump() {
+        hits := hits + 1
+        return hits
+    }
+    bump()
+    return bump()
+}
+emit bump_twice()
+emit hits
+
+# --- Closures share variables by reference ----------------------------------
+proc make_counter(start) {
+    alloc n := start
+    proc next() {
+        n := n + 1
+        return n
+    }
+    proc peek() {
+        return n
+    }
+    return {next: next, peek: peek}
+}
+alloc c1 := make_counter(0)
+alloc c2 := make_counter(100)
+c1.next()
+c1.next()
+c2.next()
+emit [c1.peek(), c2.peek()]
+
+# The enclosing proc sees what the closure wrote.
+proc write_through() {
+    alloc seen := []
+    proc note(x) {
+        seen := seen + [x]
+        return false
+    }
+    note("a")
+    note("b")
+    return seen
+}
+emit write_through()
+
+# --- Each loop iteration's `alloc` is a fresh variable ----------------------
+proc make_adders() {
+    alloc adders := []
+    alloc i := 0
+    loop i < 3 {
+        alloc captured := i * 10
+        proc add(x) {
+            return x + captured
+        }
+        adders := adders + [add]
+        i := i + 1
+    }
+    return adders
+}
+alloc adders := make_adders()
+emit [adders[0](1), adders[1](1), adders[2](1)]
+
+# --- Procs are values --------------------------------------------------------
+proc compose(f, g) {
+    proc composed(x) {
+        return f(g(x))
+    }
+    return composed
+}
+proc add1(x) {
+    return x + 1
+}
+proc times3(x) {
+    return x * 3
+}
+alloc both := compose(add1, times3)
+emit both(5)
+alloc table := {inc: add1, triple: times3}
+emit table.triple(table.inc(1))
+alloc fs := [add1, times3, both]
+emit fs[2](fs[1](fs[0](0)))

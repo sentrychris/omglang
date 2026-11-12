@@ -1,0 +1,6 @@
+;;;omg
+# expect: ZeroDivisionError
+alloc zero := 0
+emit "before"
+emit 1 / zero
+emit "after"

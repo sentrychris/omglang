@@ -1,0 +1,5 @@
+;;;omg
+# expect: TypeError
+emit "before"
+emit 1 - "a"
+emit "after"

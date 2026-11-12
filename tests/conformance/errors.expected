@@ -1,0 +1,32 @@
+load: UndefinedIdentError
+store: UndefinedIdentError
+load in proc: UndefinedIdentError
+store in proc: UndefinedIdentError
+set
+skipped alloc: UndefinedIdentError
+call: UndefinedIdentError
+list index: IndexError
+list store: IndexError
+string index: IndexError
+dict key: KeyError
+dict index: KeyError
+index an int: TypeError
+int minus string: TypeError
+list times list: TypeError
+length of int: TypeError
+call an int: TypeError
+too few arguments: TypeError
+too many arguments: TypeError
+divide: ZeroDivisionError
+floor divide: ZeroDivisionError
+modulo: ZeroDivisionError
+frozen write: FrozenWriteError
+1
+facts: AssertionError
+panic: RuntimeError: stop
+raise: RuntimeError: ValueError: bad value
+caught at level 1: IndexError
+RuntimeError: wrapped IndexError
+no binding
+2000
+done
