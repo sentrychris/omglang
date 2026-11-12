@@ -40,8 +40,8 @@ use error::RuntimeError;
 use repl::repl_interpret;
 use vm::run;
 
-/// Human-facing runtime version. Bump in lockstep with `Cargo.toml`.
-const VERSION: &str = "0.2.0";
+/// Human-facing runtime version, taken from `Cargo.toml`.
+const VERSION: &str = env!("CARGO_PKG_VERSION");
 
 /// Embedded `bootstrap/src/compiler.omgb` — the OMG-written OMG compiler,
 /// pre-compiled by the Rust frontend at build time. Loaded on demand by
@@ -325,7 +325,7 @@ fn cmd_compile(args: &[String]) -> u8 {
         }
     };
     // Absolute-normalise so the .omgb's source-file table matches
-    // what bootstrap/bin/omgc produces.
+    // what the native `omg --compile` produces.
     let abs_path = absolute_normalised(&in_path);
     let program = match compile_source(&source, &abs_path) {
         Ok(p) => p,

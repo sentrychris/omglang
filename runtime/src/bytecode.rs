@@ -641,6 +641,102 @@ pub fn write_bytecode(
 mod tests {
     use super::*;
 
+    // ---- The OMG-side copies of this file's tables -----------------------
+    //
+    // The toolchain written in OMG cannot import Rust, so the opcode
+    // numbers and the format version are written out again there:
+    // compiler.omg writes them, vm.omg dispatches on them, and
+    // bytecode.omg reads them back for the C and JS back ends. A copy
+    // that drifts produces bytecode the other implementations misread,
+    // so these tests compare every copy with the table above.
+
+    use std::collections::BTreeMap;
+
+    const COMPILER_OMG: &str = include_str!("../../bootstrap/src/compiler.omg");
+    const VM_OMG: &str = include_str!("../../bootstrap/src/vm.omg");
+    const BYTECODE_OMG: &str = include_str!("../../bootstrap/src/bytecode.omg");
+    const DRIVER_OMG: &str = include_str!("../../bootstrap/src/omg.omg");
+
+    /// `pub const NAME: u8 = N;` lines of `mod opcode` in this file.
+    fn rust_opcodes() -> BTreeMap<String, u32> {
+        let mut out = BTreeMap::new();
+        for line in include_str!("bytecode.rs").lines() {
+            let Some(rest) = line.trim().strip_prefix("pub const ") else {
+                continue;
+            };
+            let Some((name, value)) = rest.split_once(": u8 = ") else {
+                continue;
+            };
+            let value = value.trim_end_matches(';').parse().unwrap();
+            out.insert(name.to_string(), value);
+        }
+        out
+    }
+
+    /// The value of a top-level `alloc NAME := value` line in OMG source.
+    fn omg_alloc<'a>(source: &'a str, name: &str) -> Option<&'a str> {
+        source.lines().find_map(|line| {
+            let rest = line.strip_prefix("alloc ")?;
+            let (lhs, rhs) = rest.split_once(":=")?;
+            (lhs.trim() == name).then(|| rhs.trim())
+        })
+    }
+
+    /// Every top-level `alloc OP_NAME := N` line in OMG source.
+    fn omg_opcodes(source: &str) -> BTreeMap<String, u32> {
+        let mut out = BTreeMap::new();
+        for line in source.lines() {
+            let Some(rest) = line.strip_prefix("alloc OP_") else {
+                continue;
+            };
+            let (name, value) = rest.split_once(":=").unwrap();
+            out.insert(name.trim().to_string(), value.trim().parse().unwrap());
+        }
+        out
+    }
+
+    #[test]
+    fn omg_opcode_tables_match_this_file() {
+        let rust = rust_opcodes();
+        assert!(rust.len() > 40, "failed to read `mod opcode`");
+        for (file, source) in [
+            ("compiler.omg", COMPILER_OMG),
+            ("vm.omg", VM_OMG),
+            ("bytecode.omg", BYTECODE_OMG),
+        ] {
+            assert_eq!(
+                omg_opcodes(source),
+                rust,
+                "the OP_* table in bootstrap/src/{file} differs from `mod opcode` in bytecode.rs"
+            );
+        }
+    }
+
+    #[test]
+    fn omg_bytecode_version_matches_this_file() {
+        for (file, source) in [
+            ("compiler.omg", COMPILER_OMG),
+            ("vm.omg", VM_OMG),
+            ("bytecode.omg", BYTECODE_OMG),
+        ] {
+            assert_eq!(
+                omg_alloc(source, "BC_VERSION"),
+                Some(BC_VERSION.to_string().as_str()),
+                "BC_VERSION in bootstrap/src/{file} differs from bytecode.rs"
+            );
+        }
+    }
+
+    #[test]
+    fn omg_driver_version_matches_cargo_toml() {
+        let want = format!("\"{}\"", env!("CARGO_PKG_VERSION"));
+        assert_eq!(
+            omg_alloc(DRIVER_OMG, "VERSION"),
+            Some(want.as_str()),
+            "VERSION in bootstrap/src/omg.omg differs from runtime/Cargo.toml"
+        );
+    }
+
     #[test]
     fn round_trips_a_minimal_program() {
         let code = vec![Instr::PushInt(7), Instr::Emit, Instr::Halt];

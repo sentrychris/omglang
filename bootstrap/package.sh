@@ -4,9 +4,9 @@
 # omglang-native companion repo (https://github.com/sentrychris/omglang-native).
 #
 # The output directory is self-contained: src/ holds the OMG sources +
-# C runtime header, bin/ holds the pre-built ELFs, and the included
-# build.sh self-rebuilds bin/ from src/ without requiring the Rust
-# runtime. examples/, tools/, tests/, and docs/ are mirrored for use
+# the C and JS runtime files, bin/ holds the pre-built `omg`, and the
+# included build.sh self-rebuilds bin/ from src/ without requiring the
+# Rust runtime. examples/, tools/, tests/, and docs/ are mirrored for use
 # offline.
 #
 # Usage:
@@ -14,7 +14,7 @@
 #   bootstrap/package.sh --clean      # wipe dist/omglang-native/ first
 #   bootstrap/package.sh --tarball    # also produce dist/omglang-native.tar.gz
 #
-# Prerequisites: bootstrap/bin/ must already contain the four ELFs
+# Prerequisites: bootstrap/bin/omg must already exist
 # (run bootstrap/build.sh first).
 
 set -eu
@@ -40,30 +40,34 @@ for arg in "$@"; do
 done
 
 # In-place sed that works with both GNU sed (`-i`) and BSD/macOS sed
-# (`-i ''`): write to a temp file and move it over the original. The
-# file to edit is the last argument; everything before it is passed to
-# sed unchanged.
+# (`-i ''`): write to a temp file, then copy the result back into the
+# original so it keeps its mode (moving the temp file over it would
+# drop the executable bit). The file to edit is the last argument;
+# everything before it is passed to sed unchanged.
 sed_inplace() {
     local file="${!#}"
-    sed "${@:1:$#-1}" "$file" > "$file.sedtmp" && mv -f "$file.sedtmp" "$file"
+    sed "${@:1:$#-1}" "$file" > "$file.sedtmp" && cat "$file.sedtmp" > "$file" && rm -f "$file.sedtmp"
 }
 
 # === Sanity checks ===========================================================
 
-for f in compiler.omg vm.omg native-c.omg omg.omg omg_rt.h; do
+# Everything bootstrap/src/omg.omg imports, plus the two runtime files
+# the back ends paste into their output. (omg-web.omg and
+# omg-explorer.omg are the browser drivers and stay behind.)
+TOOLCHAIN_SRC="omg.omg compiler.omg vm.omg bytecode.omg backend.omg native-c.omg native-js.omg omg_rt.h omg_rt.js"
+
+for f in $TOOLCHAIN_SRC; do
     if [ ! -f "$SRC_IN/$f" ]; then
         echo "ERROR: missing $SRC_IN/$f" >&2
         exit 1
     fi
 done
 
-for b in omg omgc omgcc omgjs; do
-    if [ ! -x "$BIN_IN/$b" ]; then
-        echo "ERROR: missing or non-executable $BIN_IN/$b" >&2
-        echo "       Run bootstrap/build.sh first." >&2
-        exit 1
-    fi
-done
+if [ ! -x "$BIN_IN/omg" ]; then
+    echo "ERROR: missing or non-executable $BIN_IN/omg" >&2
+    echo "       Run bootstrap/build.sh first." >&2
+    exit 1
+fi
 
 # === Output prep =============================================================
 
@@ -77,18 +81,19 @@ mkdir -p "$DIST_DIR"/{src,bin,examples,tools,tests,docs}
 # === src/ — OMG sources + C runtime header ==================================
 # Mirrors bootstrap/src/
 
-echo "[1/7] src/  — OMG sources + runtime headers"
-for f in compiler.omg vm.omg native-c.omg native-js.omg omg.omg omg_rt.h omg_rt.js; do
+echo "[1/7] src/  — OMG sources + runtime files"
+for f in $TOOLCHAIN_SRC; do
     cp "$SRC_IN/$f" "$DIST_DIR/src/$f"
 done
 
 # === bin/ — pre-built native toolchain ======================================
 
-echo "[2/7] bin/  — pre-built native ELFs"
-for b in omg omgc omgcc omgjs; do
-    cp "$BIN_IN/$b" "$DIST_DIR/bin/$b"
-    chmod +x "$DIST_DIR/bin/$b"
-done
+echo "[2/7] bin/  — pre-built omg"
+# A dist directory populated by an older version of this script still
+# holds the three binaries that `omg` has since absorbed.
+rm -f "$DIST_DIR/bin/omgc" "$DIST_DIR/bin/omgcc" "$DIST_DIR/bin/omgjs"
+cp "$BIN_IN/omg" "$DIST_DIR/bin/omg"
+chmod +x "$DIST_DIR/bin/omg"
 cp "$BIN_IN/omg_rt.h"  "$DIST_DIR/bin/omg_rt.h"
 cp "$BIN_IN/omg_rt.js" "$DIST_DIR/bin/omg_rt.js"
 
@@ -135,6 +140,7 @@ p = sys.argv[1]
 src = open(p).read()
 # Remove the OMG_RUST definition line.
 src = re.sub(r'^OMG_RUST=.*\n', '', src, flags=re.M)
+src = src.replace('either binary via $OMG_NATIVE / $OMG_RUST.', 'the binary via $OMG_NATIVE.')
 # Remove the Rust-runtime check block in require_native_toolchain.
 src = re.sub(
     r'    if \[ ! -x "\$OMG_RUST" \]; then\n'
@@ -330,9 +336,9 @@ src = re.sub(
     src,
     flags=re.S,
 )
-# Drop the omgc-vs-Rust-frontend section.
+# Drop the native-compiler-vs-Rust-frontend section.
 src = re.sub(
-    r'# === omgc vs Rust frontend.*?(?=# === )',
+    r'# === native compiler vs Rust frontend.*?(?=# === )',
     '',
     src,
     flags=re.S,
@@ -350,6 +356,17 @@ src = src.replace(
     'nat_out=$("$OMG_NATIVE" "$src" 2>&1)\n    aot_out=$("$bin" 2>&1)\n    if [ "$nat_out" = "$aot_out" ]; then\n        pass "AOT == native: $name"',
 )
 src = src.replace('fail "AOT == Rust:', 'fail "AOT == native:')
+# Same for the JavaScript section: compare node's output with the
+# native interpreter's.
+src = src.replace(
+    'section "Parity: native-js (node) vs Rust runtime"',
+    'section "Parity: native-js (node) vs native interpreted"',
+)
+src = src.replace(
+    'rust_out=$("$OMG_RUST" "$src" 2>&1)\n        js_out=$(node "$jsfile" 2>&1)\n        if [ "$rust_out" = "$js_out" ]; then\n            pass "JS == Rust: $name"',
+    'nat_out=$("$OMG_NATIVE" "$src" 2>&1)\n        js_out=$(node "$jsfile" 2>&1)\n        if [ "$nat_out" = "$js_out" ]; then\n            pass "JS == native: $name"',
+)
+src = src.replace('fail "JS == Rust:', 'fail "JS == native:')
 # Drop the native-vs-Rust interpreted section entirely (no Rust here).
 src = re.sub(
     r'# === Native interpreted parity.*?(?=# === )',
@@ -357,6 +374,8 @@ src = re.sub(
     src,
     flags=re.S,
 )
+if 'OMG_RUST' in src:
+    sys.exit('package.sh: tests/parity.sh still refers to $OMG_RUST after rewriting')
 open(p, 'w').write(src)
 PY
 
@@ -383,10 +402,10 @@ def drop_rust_named_asserts(src):
             i += 1
     return ''.join(line for i, line in enumerate(lines) if not drop[i])
 
-# Rewrite the compiler-fixed-point check (compile compiler.omg twice
-# via omgc, expect identical bytes — still meaningful even without a
-# Rust comparison). All other OMG_RUST refs collapse to OMG_NATIVE.
-src = src.replace('"$OMG_RUST"   --compile', '"$OMGC_NATIVE"           ')
+# OMG_RUST refs collapse to OMG_NATIVE. That turns the
+# compiler-fixed-point check into "compile compiler.omg twice with the
+# native omg, expect identical bytes" — still meaningful without a Rust
+# comparison.
 src = re.sub(r'(["\']?)\$OMG_RUST\1', r'\1$OMG_NATIVE\1', src)
 src = drop_rust_named_asserts(src)
 # Drop any orphan top-level `actual=$(...)` line followed only by an
@@ -423,6 +442,7 @@ for f in "$DIST_DIR/docs"/*.md; do
         -e 's|cd runtime && cargo build --release && cd \.\.|./build.sh|g' \
         -e 's|cd runtime && cargo build --release|./build.sh|g' \
         -e 's|runtime/target/release/omg|bin/omg|g' \
+        -e 's|(\.\./toolchain\.md)|(https://github.com/sentrychris/omglang/blob/main/docs/toolchain.md)|g' \
         "$f"
 done
 
@@ -432,18 +452,15 @@ echo "[7/7] build.sh + README.md"
 cat > "$DIST_DIR/build.sh" <<'EOF'
 #!/bin/bash
 # Rebuild the OMG native toolchain from the OMG sources in src/.
-# Self-bootstrapping: uses the existing native binaries in bin/ to
-# compile fresh ones. The repo ships pre-built binaries for first-use,
-# so this only needs to run after editing anything in src/.
+# The toolchain is one program, bin/omg, and it compiles itself:
 #
-# Sources compiled (each .omg → .omgb → .c → ELF):
-#   src/compiler.omg  → omgc   compiler      (.omg  → .omgb)
-#   src/native-c.omg  → omgcc  C transpiler  (.omgb → .c)
-#   src/native-js.omg → omgjs  JS transpiler (.omgb → .js)
-#   src/omg.omg       → omg    unified driver (run/compile/build/REPL)
+#     bin/omg --emit-c src/omg.omg omg.c     # OMG -> C
+#     cc -O3 omg.c -o bin/omg                # C -> executable
 #
-# vm.omg is NOT compiled standalone — bin/omg imports it in-process so
-# `omg foo.omgb` already covers the bytecode-runner case.
+# src/omg.omg imports the compiler, the VM and both back ends, so that
+# one file is the whole toolchain. The repo ships a pre-built bin/omg
+# for first use, so this only needs to run after editing anything in
+# src/.
 set -e
 
 cd "$(dirname "$0")"
@@ -452,51 +469,44 @@ SRC_DIR=src
 BIN_DIR=bin
 mkdir -p "$BIN_DIR"
 
-if [ ! -x "$BIN_DIR/omgc" ] || [ ! -x "$BIN_DIR/omgcc" ]; then
-    echo "ERROR: $BIN_DIR/{omgc,omgcc} are missing." >&2
+if ! [ -x "$BIN_DIR/omg" ] || ! "$BIN_DIR/omg" --help 2>/dev/null | grep -q -- '--emit-c'; then
+    echo "ERROR: $BIN_DIR/omg is missing or does not run on this machine." >&2
     echo "" >&2
-    echo "This repo ships pre-built binaries for first-use. If you" >&2
-    echo "removed them, you'll need to re-bootstrap from a working" >&2
-    echo "OMG toolchain elsewhere." >&2
+    echo "This repo ships a pre-built Linux x86-64 binary for first use." >&2
+    echo "On another platform, or if you removed it, bootstrap once from" >&2
+    echo "the parent repo (https://github.com/sentrychris/omglang), whose" >&2
+    echo "Rust runtime can build bin/omg from these same sources." >&2
     exit 1
 fi
 
-echo "[1/4] Self-rebuild from existing native toolchain"
+if ! command -v cc >/dev/null 2>&1; then
+    echo "ERROR: no C compiler found (need 'cc' on PATH)." >&2
+    exit 1
+fi
+
+echo "[1/3] Self-rebuild: $BIN_DIR/omg compiles its own source"
 
 WORK=$(mktemp -d)
-trap "rm -rf $WORK" EXIT
+trap 'rm -rf "$WORK"' EXIT
 
-omg_compile()  { "$BIN_DIR/omgc"  "$1" "$2"; }
-omg_transpile(){ "$BIN_DIR/omgcc" "$1" "$2"; }
-
-build_binary() {
-    local src="$1" out="$2" base
-    base=$(basename "$src" .omg)
-    omg_compile  "$src"               "$WORK/$base.omgb"
-    omg_transpile "$WORK/$base.omgb"  "$WORK/$base.c"
-    cc -O3 -w "$WORK/$base.c" -o "$out" -lm
-}
-
-# Install runtime headers FIRST so omgcc/omgjs pick up the latest copy
-# on the very first rebuild after a src/omg_rt.{h,js} change.
-echo "[2/4] Installing runtime headers"
+# Install the runtime files FIRST: omg pastes bin/omg_rt.h into the C
+# it generates, so an edit to src/omg_rt.h has to be in place before
+# the new binary is generated.
+echo "[2/3] Installing runtime files"
 cp "$SRC_DIR/omg_rt.h"  "$BIN_DIR/omg_rt.h"
 cp "$SRC_DIR/omg_rt.js" "$BIN_DIR/omg_rt.js"
 
-echo "[3/4] Building toolchain core (omgc, omgcc, omgjs)"
-build_binary "$SRC_DIR/compiler.omg"  "$BIN_DIR/omgc"
-build_binary "$SRC_DIR/native-c.omg"  "$BIN_DIR/omgcc"
-build_binary "$SRC_DIR/native-js.omg" "$BIN_DIR/omgjs"
-
-echo "[4/4] Building unified driver (omg)"
-build_binary "$SRC_DIR/omg.omg"       "$BIN_DIR/omg"
+echo "[3/3] Building omg"
+"$BIN_DIR/omg" --emit-c "$SRC_DIR/omg.omg" "$WORK/omg.c"
+cc -O3 -w "$WORK/omg.c" -o "$WORK/omg.bin" -lm
+mv -f "$WORK/omg.bin" "$BIN_DIR/omg"
 
 echo
 echo "Native toolchain in $BIN_DIR:"
 ls -la "$BIN_DIR/"
 echo
 echo "Run a program with:    $BIN_DIR/omg foo.omg"
-echo "AOT-build a program:   $BIN_DIR/omg --build foo.omg"
+echo "Build an executable:   $BIN_DIR/omg --build foo.omg"
 EOF
 chmod +x "$DIST_DIR/build.sh"
 
@@ -510,11 +520,12 @@ OMG itself with a small C runtime.
 
 This directory is a Rust-free distribution of the
 [`omglang`](https://github.com/sentrychris/omglang) project's native
-pipeline. The compiler, the bytecode VM, the OMG-to-C transpiler, and
-the user-facing driver are **all OMG source** (in [`src/`](src/)). The
-C runtime header (`src/omg_rt.h`) provides the value representation,
-refcounting, and OS-facing builtins that any native binary links
-against. That's the entire non-OMG surface.
+pipeline. The compiler, the bytecode VM, the C and JavaScript back
+ends, and the `omg` command that ties them together are **all OMG
+source** (in [`src/`](src/)). The C runtime header (`src/omg_rt.h`)
+provides the value representation, refcounting, and OS-facing builtins
+that any native binary links against; `src/omg_rt.js` does the same
+job for JavaScript output. That's the entire non-OMG surface.
 
 It was produced by `bootstrap/package.sh` in the parent repo. To
 regenerate it, run that script from a clean checkout of
@@ -526,9 +537,13 @@ regenerate it, run that script from a clean checkout of
 # Compile and run an OMG program
 bin/omg examples/hello_world.omg
 
-# AOT-build to a standalone ELF (no Rust, no VM)
+# Build a standalone executable (no Rust, no VM)
 bin/omg --build examples/hello_world.omg hello
 ./hello
+
+# Or stop at the generated source
+bin/omg --emit-c  examples/hello_world.omg hello.c
+bin/omg --emit-js examples/hello_world.omg hello.js && node hello.js
 
 # Interactive REPL
 bin/omg
@@ -538,20 +553,17 @@ Drop `bin/` on your `$PATH` if you'd like to call it as just `omg`.
 
 ## What's in `bin/`
 
-Pre-built binaries that ship with this distribution:
+One program and the two runtime files it needs:
 
-| Binary     | Role                                              |
-| ---------- | ------------------------------------------------- |
-| `omg`      | unified driver: run / compile / build / REPL      |
-| `omgc`     | compiler: `.omg` → `.omgb` bytecode               |
-| `omgcc`    | C transpiler: `.omgb` → `.c`                      |
-| `omgjs`    | JS transpiler: `.omgb` → `.js`                    |
-| `omg_rt.h` | C runtime header (inlined into every `.c` omgcc emits)   |
-| `omg_rt.js`| JS runtime (inlined into every `.js` omgjs emits) |
+| File        | Role                                                                 |
+| ----------- | -------------------------------------------------------------------- |
+| `omg`       | the whole toolchain: run, REPL, `--compile`, `--build`, `--emit-c`, `--emit-js`, `--disasm` |
+| `omg_rt.h`  | C runtime, pasted at the top of every `.c` that `omg` generates      |
+| `omg_rt.js` | JS runtime, pasted at the top of every `.js` that `omg` generates    |
 
-All four ELFs are compiled from the OMG sources in [`src/`](src/).
-`bin/omg` runs `.omgb` files directly (no separate bytecode VM needed —
-`omg` imports `vm.omg` in-process).
+`omg` is compiled from the OMG sources in [`src/`](src/), by itself.
+It runs `.omg` and `.omgb` files directly: the compiler and the
+bytecode VM are part of it.
 
 ## Rebuild the toolchain
 
@@ -561,8 +573,8 @@ If you change anything in `src/`, rebuild:
 ./build.sh
 ```
 
-It self-rebuilds: the existing native binaries in `bin/` compile fresh
-ones from the updated sources.
+It self-rebuilds: the existing `bin/omg` compiles a fresh one from the
+updated sources (`omg --emit-c src/omg.omg`, then `cc`).
 
 ## Run the test suite
 
@@ -581,13 +593,17 @@ Rust-vs-native parity check, use the parent
 omglang-native/
 ├── README.md         this file
 ├── build.sh          rebuild bin/ from src/ (self-bootstrapping)
-├── src/              all OMG source + the C runtime header
-│   ├── compiler.omg     OMG compiler, in OMG
-│   ├── vm.omg           OMG-in-OMG bytecode VM
-│   ├── native-c.omg     OMG-to-C transpiler
-│   ├── omg.omg          unified driver
-│   └── omg_rt.h         C runtime header
-├── bin/              pre-built ELFs + omg_rt.h
+├── src/              all OMG source + the two runtime files
+│   ├── omg.omg          the `omg` command; imports everything below
+│   ├── compiler.omg     source -> bytecode
+│   ├── vm.omg           runs bytecode
+│   ├── bytecode.omg     reads a .omgb file back in
+│   ├── native-c.omg     bytecode -> C
+│   ├── native-js.omg    bytecode -> JavaScript
+│   ├── backend.omg      what the two back ends share
+│   ├── omg_rt.h         C runtime
+│   └── omg_rt.js        JS runtime
+├── bin/              pre-built omg + omg_rt.h + omg_rt.js
 ├── examples/         small standalone OMG programs
 ├── tools/            command-line utilities written in OMG
 ├── tests/            end-to-end test suite (native-only)

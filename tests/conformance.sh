@@ -3,7 +3,7 @@
 #
 #   - the native interpreter   bootstrap/bin/omg prog.omg
 #   - ahead-of-time compiled   bootstrap/bin/omg --build prog.omg out
-#   - the native JS transpiler omgc + omgjs, run under node
+#   - compiled to JavaScript   bootstrap/bin/omg --emit-js prog.omg out.js, run under node
 #
 # tests/smoke.sh runs the same corpus on the backends that need nothing
 # but the Rust runtime (the Rust VM through both frontends, the
@@ -39,8 +39,7 @@ conf_run() {
                 CONF_RC=9
             fi ;;
         js)
-            if "$OMGC_NATIVE" "$f" "$CONF_DIR/p.omgb" >"$CONF_DIR/err" 2>&1 &&
-               "$OMGJS_NATIVE" "$CONF_DIR/p.omgb" "$CONF_DIR/p.js" >"$CONF_DIR/err" 2>&1; then
+            if "$OMG_NATIVE" --emit-js "$f" "$CONF_DIR/p.js" >"$CONF_DIR/err" 2>&1; then
                 node "$CONF_DIR/p.js" >"$CONF_DIR/out" 2>"$CONF_DIR/err"
                 CONF_RC=$?
             else
@@ -55,9 +54,9 @@ conformance_backend native "native interpreter"
 section "Conformance: AOT"
 conformance_backend aot "AOT"
 
-section "Conformance: native JS transpiler"
+section "Conformance: native JS back end"
 if command -v node >/dev/null 2>&1; then
-    conformance_backend js "omgjs"
+    conformance_backend js "omg --emit-js"
 else
     echo "  (skipped: node not installed)"
 fi

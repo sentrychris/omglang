@@ -45,19 +45,19 @@ else
     fail "triple-meta fixed-point" "$fp_out"
 fi
 
-# === omgc vs Rust frontend ============================================
-section "Parity: omgc vs Rust frontend bytecode"
+# === native compiler vs Rust frontend ==================================
+section "Parity: native omg vs Rust frontend bytecode"
 
 for src in "${EXAMPLES[@]}"; do
     local_omgb="$TMPDIR_TEST/$(basename "$src" .omg)-rust.omgb"
     native_omgb="$TMPDIR_TEST/$(basename "$src" .omg)-native.omgb"
     "$OMG_RUST" --compile "$src" "$local_omgb"
-    "$OMGC_NATIVE" "$src" "$native_omgb"
+    "$OMG_NATIVE" --compile "$src" "$native_omgb"
     if cmp -s "$local_omgb" "$native_omgb"; then
         pass "byte-identical: $(basename "$src")"
     else
         fail "byte-identical: $(basename "$src")" \
-             "Rust frontend and omgc produced different bytecode"
+             "Rust frontend and native omg produced different bytecode"
     fi
 done
 
@@ -103,14 +103,9 @@ if command -v node >/dev/null 2>&1; then
     section "Parity: native-js (node) vs Rust runtime"
     for src in "${EXAMPLES[@]}"; do
         name=$(basename "$src" .omg)
-        omgb="$TMPDIR_TEST/$name.js.omgb"
         jsfile="$TMPDIR_TEST/$name.js"
-        if ! "$OMG_NATIVE" --compile "$src" "$omgb" >/dev/null 2>&1; then
-            fail "JS == Rust: $name (compile)"
-            continue
-        fi
-        if ! "$OMG_NATIVE" "$REPO_ROOT/bootstrap/src/native-js.omg" "$omgb" "$jsfile" >/dev/null 2>&1; then
-            fail "JS == Rust: $name (transpile)"
+        if ! "$OMG_NATIVE" --emit-js "$src" "$jsfile" >/dev/null 2>&1; then
+            fail "JS == Rust: $name (--emit-js)"
             continue
         fi
         rust_out=$("$OMG_RUST" "$src" 2>&1)
@@ -127,22 +122,25 @@ fi
 section "Parity: native toolchain self-rebuild"
 
 # The toolchain should be able to rebuild itself with no Rust runtime
-# involved. We trigger a fresh build and check the resulting binaries
-# all run.
+# involved. We trigger a fresh build and check the resulting binary
+# runs, and that rebuilding changed nothing: `omg` compiling its own
+# source must reproduce itself byte for byte.
+before_sum=$(cksum < "$OMG_NATIVE")
 build_out=$("$REPO_ROOT/bootstrap/build.sh" 2>&1)
-if echo "$build_out" | grep -q "Self-rebuild from existing native toolchain"; then
+if echo "$build_out" | grep -q "Self-rebuild"; then
     pass "build script chose self-rebuild path"
 else
     fail "build script didn't self-rebuild" "$build_out"
 fi
 
-# After self-rebuild every binary is still callable.
-for bin in "$OMG_NATIVE" "$OMGC_NATIVE" "$OMGCC_NATIVE" "$OMGJS_NATIVE"; do
-    if "$bin" --help >/dev/null 2>&1 || \
-       "$bin" -h >/dev/null 2>&1 || \
-       echo 'quit' | "$bin" >/dev/null 2>&1; then
-        pass "rebuilt binary works: $(basename "$bin")"
-    else
-        fail "rebuilt binary broken: $(basename "$bin")"
-    fi
-done
+if "$OMG_NATIVE" --help >/dev/null 2>&1; then
+    pass "rebuilt omg works"
+else
+    fail "rebuilt omg is broken"
+fi
+if [ "$before_sum" = "$(cksum < "$OMG_NATIVE")" ]; then
+    pass "self-rebuild reproduces the same binary"
+else
+    fail "self-rebuild changed the binary" \
+         "bootstrap/bin/omg was not at its fixed point; run bootstrap/build.sh again and commit"
+fi

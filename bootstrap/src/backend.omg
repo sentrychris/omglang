@@ -1,0 +1,465 @@
+;;;omg
+
+# backend.omg
+#
+# What the C back end (native-c.omg) and the JS back end (native-js.omg)
+# have in common. Both turn the same bytecode into source text for a
+# language with static names, so both need the same answers about each
+# proc (which names are params, locals, captured or global) and both
+# build a large output string from many small pieces.
+#
+#     import "backend.omg" as be
+#
+# There is exactly one copy of this logic. A change to how names
+# resolve is made here once and reaches both back ends.
+
+# === Names in an emit context =============================================
+
+# Is the given name stored as a 1-element cell in this emit context?
+# Captured-from-outer (current_captured_set) is always boxed: the
+# enclosing frame allocates the cell. Captured-by-inner
+# (current_boxed_set) is boxed in *this* frame so inner MAKE_FUNCs
+# can share the cell. Top-level / non-boxed names short-circuit to
+# false (top_ctx supplies empty sets).
+proc name_is_boxed(name, ctx) {
+    if has_key(ctx, "current_captured_set") and has_key(ctx["current_captured_set"], name) {
+        return true
+    }
+    if has_key(ctx, "current_boxed_set") and has_key(ctx["current_boxed_set"], name) {
+        return true
+    }
+    return false
+}
+
+# Is `name` a parameter of the proc being emitted? Params are bound by
+# the call itself, so their slots are never OMG_UNSET.
+proc name_is_param(name, ctx) {
+    alloc cf := ctx["current_func"]
+    if cf == "" {
+        return false
+    }
+    return has_key(ctx["func_info"][cf]["params_set"], name)
+}
+
+# If `name` is a module-mangled identifier (`__mod_N__bare`), return
+# the bare suffix. Otherwise return `false`. Mirrors the helper in
+# the Rust runtime + OMG VM (see vm.rs / vm.omg) so MAKE_FUNC code
+# generation can also bind the closure under its bare source name —
+# resolving cross-module Load(bare) in generated code.
+proc strip_mod_prefix(name) {
+    alloc n := length(name)
+    if n < 9 { return false }
+    if name[0:6] != "__mod_" { return false }
+    alloc i := 6
+    loop i < n and name[i] >= "0" and name[i] <= "9" {
+        i := i + 1
+    }
+    if i == 6 { return false }
+    if i + 2 > n { return false }
+    if name[i:i + 2] != "__" { return false }
+    alloc bare := name[i + 2:]
+    if length(bare) == 0 { return false }
+    return bare
+}
+
+# === Pre-analysis =========================================================
+#
+# Before emitting anything we walk the bytecode once to figure out:
+#   * which names are top-level globals (declared before HALT),
+#   * the boundary of each function's body in the instruction stream,
+#   * each function's parameters / locals / captured variables,
+#   * a stable integer index for each function (used in its output name).
+
+# Names of runtime-injected globals the OMG VM populates at startup.
+# Programs may LOAD these without an explicit declaration, so we make
+# them file-level variables in the output.
+alloc INJECTED_GLOBALS := ["args", "module_file", "current_dir"]
+
+proc collect_globals(code) {
+    alloc globals := {}
+    alloc i := 0
+    alloc n := length(code)
+    loop i < n {
+        alloc instr := code[i]
+        alloc op := instr[0]
+        if op == "STORE_LOCAL" or op == "STORE" or op == "LOAD" {
+            globals[instr[1]] := true
+        }
+        if op == "MAKE_FUNC" {
+            # Top-level MAKE_FUNC binds a closure value to a name in
+            # globals; the name is the proc's mangled name.
+            globals[instr[1]] := true
+        }
+        if op == "HALT" {
+            # Add the runtime-injected globals so functions that LOAD
+            # them resolve to the file-static binding rather than to
+            # an undeclared identifier.
+            alloc j := 0
+            loop j < length(INJECTED_GLOBALS) {
+                globals[INJECTED_GLOBALS[j]] := true
+                j := j + 1
+            }
+            return globals
+        }
+        i := i + 1
+    }
+    alloc j := 0
+    loop j < length(INJECTED_GLOBALS) {
+        globals[INJECTED_GLOBALS[j]] := true
+        j := j + 1
+    }
+    return globals
+}
+
+# Build a sorted [address, name] list so we can determine each function's
+# body boundary (start of next function, or end of code).
+proc sorted_funcs_by_addr(funcs) {
+    alloc names := dict_keys(funcs)
+    alloc pairs := []
+    alloc i := 0
+    alloc n := length(names)
+    loop i < n {
+        alloc nm := names[i]
+        pairs := pairs + [[funcs[nm][1], nm]]
+        i := i + 1
+    }
+    # Insertion sort by address (small N).
+    alloc np := length(pairs)
+    alloc j := 1
+    loop j < np {
+        alloc k := j
+        loop k > 0 and pairs[k][0] < pairs[k - 1][0] {
+            alloc tmp := pairs[k]
+            pairs[k] := pairs[k - 1]
+            pairs[k - 1] := tmp
+            k := k - 1
+        }
+        j := j + 1
+    }
+    return pairs
+}
+
+# === Scope analysis =======================================================
+#
+# The VMs resolve every name at run time: a frame's environment is a
+# dict, a closure call starts from a copy of the dict captured when the
+# closure was made, and a miss falls through to the globals. Generated
+# C and JS have no such dict, so each name a proc uses has to be pinned
+# down ahead of time as one of:
+#
+#   param     an argument of this proc
+#   local     bound by an `alloc` (STORE_LOCAL) or a nested `proc`
+#             (MAKE_FUNC) in this proc's own body
+#   self      the proc's own name, for a nested proc that refers to
+#             itself (recursion); bound on entry, see omg_closure_self
+#   captured  a variable of an enclosing proc, passed in through the
+#             closure's captured[] array as a shared cell
+#   global    everything else: a file-level static
+#
+# The rules mirror what the compiler and the VMs do between them:
+#
+#   * A closure sees the enclosing proc's variables that exist when it
+#     is *defined*: the params, and the locals bound earlier in the
+#     body than its MAKE_FUNC (bytecode order is source order). Beyond
+#     that it sees whatever the enclosing proc itself could see, and
+#     so on outwards. `scope_visible` implements this.
+#   * A name the proc binds before its first use is simply its local,
+#     even when an enclosing proc has a variable of the same name.
+#   * A name used before the proc's own `alloc` of it starts out as
+#     the captured variable (when one is visible) and is rebound by
+#     the `alloc`, exactly like the VM's environment dict.
+#   * Captures are transitive: if an inner proc needs a variable from
+#     two levels up, the proc in between has to capture it as well so
+#     it has something to hand down.
+#
+# A variable is *boxed* (held in a 1-element cell, so that frames share
+# storage) when it was captured from outside or when a proc nested
+# directly inside this one captures it.
+
+# Is `nm` one of the variables in `fname`'s frame at instruction `pos`
+# of its body (or reachable from there through its own captures)?
+proc scope_visible(fname, pos, nm, raw, parent, def_pos) {
+    alloc cur := fname
+    alloc at := pos
+    loop true {
+        alloc r := raw[cur]
+        if has_key(r["params_set"], nm) {
+            return true
+        }
+        if has_key(r["decl_pos"], nm) and r["decl_pos"][nm] < at {
+            return true
+        }
+        if has_key(parent, cur) == false {
+            return false
+        }
+        if r["bare"] == nm {
+            # The enclosing proc's own name: it binds itself on entry.
+            return true
+        }
+        at := def_pos[cur]
+        cur := parent[cur]
+    }
+    return false
+}
+
+proc analyze_all_functions(code, funcs, globals) {
+    alloc sorted := sorted_funcs_by_addr(funcs)
+    alloc n := length(sorted)
+    alloc code_len := length(code)
+
+    # Pass 1: the raw facts about each body, plus who is nested in whom.
+    alloc raw := {}
+    alloc parent := {}     # nested proc key -> key of the proc it is defined in
+    alloc def_pos := {}    # nested proc key -> index of its MAKE_FUNC
+    alloc children := {}   # proc key -> keys of the procs defined directly in it
+    alloc order := []
+    alloc i := 0
+    loop i < n {
+        alloc nm := sorted[i][1]
+        alloc body_start := sorted[i][0]
+        alloc body_end := code_len
+        if i + 1 < n {
+            body_end := sorted[i + 1][0]
+        }
+        alloc params := funcs[nm][0]
+        alloc params_set := {}
+        alloc p := 0
+        loop p < length(params) {
+            params_set[params[p]] := true
+            p := p + 1
+        }
+        alloc decl_pos := {}    # name -> index of the first instruction binding it
+        alloc first_use := {}   # name -> index of the first LOAD / STORE of it
+        alloc kids := []
+        alloc j := body_start
+        loop j < body_end {
+            alloc instr := code[j]
+            alloc op := instr[0]
+            if op == "STORE_LOCAL" or op == "MAKE_FUNC" {
+                # A nested proc's MAKE_FUNC carries its function-table
+                # key (`__mod_N__<bare>`); the body refers to it by the
+                # bare name, so that is the variable.
+                alloc local_name := instr[1]
+                if op == "MAKE_FUNC" {
+                    alloc stripped := strip_mod_prefix(local_name)
+                    if stripped != false { local_name := stripped }
+                    parent[instr[1]] := nm
+                    def_pos[instr[1]] := j
+                    kids := kids + [instr[1]]
+                }
+                if has_key(decl_pos, local_name) == false {
+                    decl_pos[local_name] := j
+                }
+            } elif op == "LOAD" or op == "STORE" {
+                if has_key(first_use, instr[1]) == false {
+                    first_use[instr[1]] := j
+                }
+            }
+            j := j + 1
+        }
+        alloc bare := strip_mod_prefix(nm)
+        raw[nm] := {
+            params: params,
+            params_set: params_set,
+            decl_pos: decl_pos,
+            first_use: first_use,
+            bare: bare,
+            body_start: body_start,
+            body_end: body_end
+        }
+        children[nm] := kids
+        order := order + [nm]
+        i := i + 1
+    }
+
+    # Nesting depth of each proc, so the innermost can be resolved first
+    # (a proc's captures feed into what its parent needs).
+    alloc depth := {}
+    alloc max_depth := 0
+    i := 0
+    loop i < n {
+        alloc d := 0
+        alloc cur := order[i]
+        loop has_key(parent, cur) {
+            d := d + 1
+            cur := parent[cur]
+        }
+        depth[order[i]] := d
+        if d > max_depth { max_depth := d }
+        i := i + 1
+    }
+
+    # Pass 2: resolve names, deepest procs first.
+    alloc analyses := {}
+    alloc level := max_depth
+    loop level >= 0 {
+        i := 0
+        loop i < n {
+            alloc fname := order[i]
+            if depth[fname] == level {
+                analyses[fname] := resolve_function(fname, raw, parent, def_pos, children[fname], analyses, globals)
+            }
+            i := i + 1
+        }
+        level := level - 1
+    }
+    return analyses
+}
+
+# Sort one proc's names into params / locals / self / captured / globals
+# (see "Scope analysis" above). `analyses` already holds the result for
+# every proc nested inside this one.
+proc resolve_function(fname, raw, parent, def_pos, kids, analyses, globals) {
+    alloc r := raw[fname]
+    alloc params_set := r["params_set"]
+    alloc decl_pos := r["decl_pos"]
+    alloc nested := has_key(parent, fname)
+
+    # What this frame has to be able to supply, and from which
+    # instruction on: its own uses, plus whatever the procs defined in
+    # it capture (needed at their MAKE_FUNC).
+    alloc need := {}
+    alloc uses := dict_keys(r["first_use"])
+    alloc u := 0
+    loop u < length(uses) {
+        need[uses[u]] := r["first_use"][uses[u]]
+        u := u + 1
+    }
+    alloc boxed := {}
+    alloc k := 0
+    loop k < length(kids) {
+        alloc kid_caps := analyses[kids[k]]["captured_list"]
+        alloc at := def_pos[kids[k]]
+        alloc c := 0
+        loop c < length(kid_caps) {
+            alloc cn := kid_caps[c]
+            boxed[cn] := true
+            if has_key(need, cn) == false or at < need[cn] {
+                need[cn] := at
+            }
+            c := c + 1
+        }
+        k := k + 1
+    }
+
+    alloc captured_list := []
+    alloc captured_set := {}
+    alloc self_name := false
+    alloc names := dict_keys(need)
+    alloc x := 0
+    loop x < length(names) {
+        alloc nm := names[x]
+        alloc declared_first := has_key(decl_pos, nm) and decl_pos[nm] < need[nm]
+        if has_key(params_set, nm) or declared_first {
+            # A param, or a local bound before anything reads it:
+            # nothing to resolve.
+            declared_first := true
+        } elif nested and r["bare"] == nm {
+            self_name := nm
+        } elif nested and scope_visible(parent[fname], def_pos[fname], nm, raw, parent, def_pos) {
+            captured_list := captured_list + [nm]
+            captured_set[nm] := true
+        } elif has_key(decl_pos, nm) == false {
+            # Bound nowhere in sight: a global. That covers the
+            # runtime-injected ones, globals declared by the top-level
+            # code, and plain typos; the last kind stays OMG_UNSET and
+            # raises UndefinedIdentError if the LOAD ever runs, as on
+            # the VMs.
+            globals[nm] := true
+        }
+        x := x + 1
+    }
+
+    # Every non-param variable slot of this frame that is not handed in
+    # through captured[]: the locals, plus the self binding.
+    alloc locals := {}
+    alloc dnames := dict_keys(decl_pos)
+    alloc dn := 0
+    loop dn < length(dnames) {
+        alloc ln := dnames[dn]
+        if has_key(params_set, ln) == false and has_key(captured_set, ln) == false {
+            locals[ln] := true
+        }
+        dn := dn + 1
+    }
+    if self_name != false {
+        locals[self_name] := true
+    }
+
+    return {
+        params: r["params"],
+        params_set: params_set,
+        locals: locals,
+        captured_list: captured_list,
+        captured_set: captured_set,
+        boxed_set: boxed,
+        self_name: self_name,
+        body_start: r["body_start"],
+        body_end: r["body_end"]
+    }
+}
+
+proc build_func_index(funcs) {
+    alloc names := dict_keys(funcs)
+    # Sort alphabetically for deterministic numbering.
+    alloc nn := length(names)
+    alloc j := 1
+    loop j < nn {
+        alloc k := j
+        loop k > 0 and names[k] < names[k - 1] {
+            alloc tmp := names[k]
+            names[k] := names[k - 1]
+            names[k - 1] := tmp
+            k := k - 1
+        }
+        j := j + 1
+    }
+    alloc index := {}
+    alloc i := 0
+    loop i < nn {
+        index[names[i]] := i
+        i := i + 1
+    }
+    return index
+}
+
+# === Output builder ======================================================
+#
+# Generated source is assembled from a great many small pieces. Doing
+# that with `out := out + piece` copies everything written so far on
+# every append, and the native runtime never frees a string, so memory
+# grew with the square of the output size: about 7 GB to transpile the
+# playground bundle and more than 14 GB for the explorer bundle. The
+# pieces are collected in a list instead and joined once, pairwise,
+# which allocates O(n log n) bytes in total.
+
+proc buf_new() {
+    return {parts: list_repeat("", 64), n: 0}
+}
+
+proc buf_add(buf, piece) {
+    alloc n := buf.n
+    alloc parts := buf.parts
+    if n >= length(parts) {
+        parts := parts + list_repeat("", n)
+        buf.parts := parts
+    }
+    parts[n] := piece
+    buf.n := n + 1
+    return false
+}
+
+proc buf_join_range(parts, lo, hi) {
+    if hi - lo == 1 {
+        return "" + parts[lo]
+    }
+    if hi <= lo {
+        return ""
+    }
+    alloc mid := (lo + hi) // 2
+    return buf_join_range(parts, lo, mid) + buf_join_range(parts, mid, hi)
+}
+
+proc buf_join(buf) {
+    return buf_join_range(buf.parts, 0, buf.n)
+}

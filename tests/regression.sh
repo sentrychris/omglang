@@ -175,12 +175,12 @@ assert_eq "AOT stdout flushes before stderr" "$expected" "$actual"
 section "Regression: compiler.omg fixed point"
 
 "$OMG_RUST"   --compile bootstrap/src/compiler.omg "$TMPDIR_TEST/cmp-rust.omgb"
-"$OMGC_NATIVE" bootstrap/src/compiler.omg          "$TMPDIR_TEST/cmp-native.omgb"
+"$OMG_NATIVE" --compile bootstrap/src/compiler.omg "$TMPDIR_TEST/cmp-native.omgb"
 if cmp -s "$TMPDIR_TEST/cmp-rust.omgb" "$TMPDIR_TEST/cmp-native.omgb"; then
-    pass "compiler.omg via Rust == via omgc"
+    pass "compiler.omg via Rust == via native omg"
 else
     fail "compiler.omg byte-identical" \
-         "Rust frontend and omgc produced different bytecode"
+         "Rust frontend and native omg produced different bytecode"
 fi
 
 # === Compile-source uses no ambient state =============================
@@ -239,7 +239,7 @@ fi
 # MAKE_FUNC emitter):
 #   (a) omg_dict_keys returned aliases into the dict's owned key
 #       storage. When the dict was freed, the list of returned keys
-#       dangled; the captured_list inside native-c.omg's analyze
+#       dangled; the captured_list inside the back end's analyze
 #       step ended up containing freed memory, so the wrong variable
 #       got marked as captured.
 #   (b) The MAKE_FUNC C-emission only assigned to the mangled C
@@ -355,8 +355,8 @@ assert_eq "Rust runtime: closures by reference" "$EXPECTED" "$actual"
 actual=$("$OMG_NATIVE" "$TMPDIR_TEST/closure_byref.omg" 2>&1)
 assert_eq "Native interp: closures by reference" "$EXPECTED" "$actual"
 
-# OMG VM (bin/omg runs a .omgb produced by omgc, importing vm.omg in-process).
-"$OMGC_NATIVE" "$TMPDIR_TEST/closure_byref.omg" "$TMPDIR_TEST/closure_byref.omgb" >/dev/null
+# OMG VM (bin/omg runs a .omgb it compiled earlier, importing vm.omg in-process).
+"$OMG_NATIVE" --compile "$TMPDIR_TEST/closure_byref.omg" "$TMPDIR_TEST/closure_byref.omgb" >/dev/null
 actual=$("$OMG_NATIVE" "$TMPDIR_TEST/closure_byref.omgb" 2>&1)
 assert_eq "OMG VM: closures by reference" "$EXPECTED" "$actual"
 
@@ -365,7 +365,7 @@ actual=$("$TMPDIR_TEST/closure_byref_aot" 2>&1)
 assert_eq "AOT binary: closures by reference" "$EXPECTED" "$actual"
 
 if command -v node >/dev/null 2>&1; then
-    "$OMG_NATIVE" "$REPO_ROOT/bootstrap/src/native-js.omg" \
+    "$OMG_NATIVE" --emit-js \
         "$TMPDIR_TEST/closure_byref.omgb" "$TMPDIR_TEST/closure_byref.js" >/dev/null
     actual=$(node "$TMPDIR_TEST/closure_byref.js" 2>&1)
     assert_eq "native-js: closures by reference" "$EXPECTED" "$actual"

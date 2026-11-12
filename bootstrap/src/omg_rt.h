@@ -1,6 +1,6 @@
 /*
  * omg_rt.h  →  inlined at the top of every .c emitted by
- *              bootstrap/src/native-c.omg (and bootstrap/bin/omgcc).
+ *              bootstrap/src/native-c.omg (`omg --build`, `omg --emit-c`).
  *
  * The OMG C runtime: value types, refcounting, list/dict/string
  * helpers, error handling, file + TCP builtins. Every transpiled
@@ -2200,8 +2200,7 @@ static Value omg_builtin_pty_resize(Value fd_v, Value rows_v, Value cols_v) {
  * stdin/stdout/stderr are inherited. Returns the child's exit code.
  *
  * Mirrors std::process::Command::status() in the Rust runtime so the
- * OMG-native `omg` driver can dispatch to omgc/cc the same way
- * the bash wrapper used to. */
+ * OMG-native `omg` driver can start `cc` the same way. */
 static Value omg_builtin_subprocess(Value v) {
     if (v.tag != OMG_LIST) omg_panic("TypeError", "subprocess() expects a list of strings");
     OmgList *l = v.v.l;

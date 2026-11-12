@@ -138,8 +138,9 @@ if [ $? -eq 0 ]; then
     check_backend "OMG-written VM (vm.omg)" \
         "$("$OMG" --rust bootstrap/src/vm.omg "$WORK/reg.omgb" 2>&1 | norm)"
     if command -v node >/dev/null 2>&1; then
-        # native-js.omg reads its runtime (omg_rt.js) from next to itself.
-        "$OMG" --rust bootstrap/src/native-js.omg "$WORK/reg.omgb" "$WORK/reg.js" \
+        # The driver, run from source, reads the JS runtime (omg_rt.js)
+        # from next to itself in bootstrap/src/.
+        "$OMG" --rust bootstrap/src/omg.omg --emit-js "$WORK/reg.omgb" "$WORK/reg.js" \
             >"$WORK/js.log" 2>&1
         if [ $? -eq 0 ]; then
             check_backend "JS transpiler (node)" "$(node "$WORK/reg.js" 2>&1 | norm)"
@@ -173,7 +174,7 @@ conf_run() {
         js)
             # A build failure leaves its log where the caller looks.
             if "$OMG" --compile "$f" "$CONF_DIR/p.omgb" 2>"$CONF_DIR/err" &&
-               "$OMG" --rust bootstrap/src/native-js.omg "$CONF_DIR/p.omgb" \
+               "$OMG" --rust bootstrap/src/omg.omg --emit-js "$CONF_DIR/p.omgb" \
                     "$CONF_DIR/p.js" >"$CONF_DIR/err" 2>&1; then
                 node "$CONF_DIR/p.js" >"$CONF_DIR/out" 2>"$CONF_DIR/err"
                 CONF_RC=$?

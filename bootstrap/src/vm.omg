@@ -30,15 +30,12 @@
 # the OMG-on-VM compile path would otherwise run on top of this VM,
 # which is slow squared.
 
-# Human-facing version string. Keep in sync with VERSION in
-# bootstrap/src/{omg,compiler,native-c}.omg, runtime/Cargo.toml, and
-# runtime/src/main.rs.
-alloc VERSION := "0.2.0"
-
 # === Opcode constants =====================================================
 #
-# Mirror of `runtime/src/bytecode.rs` and `bootstrap/src/compiler.omg`'s
-# OP_* table.  Anything we emit has to be parseable here.
+# Mirror of `mod opcode` in runtime/src/bytecode.rs, which is the ground
+# truth; `cargo test` fails if this table disagrees with it. They are
+# plain globals here (rather than imported from bytecode.omg) because
+# the dispatch loop compares against them on every instruction.
 
 alloc OP_PUSH_INT       := 0
 alloc OP_PUSH_STR       := 1
@@ -1404,10 +1401,6 @@ proc vm_is_main_invocation() {
     return bn == "vm.omg" or bn == "vm.omgb" or bn == "<embedded-vm>"
 }
 
-if vm_is_main_invocation() and length(args) >= 2 and (args[1] == "-v" or args[1] == "--version") {
-    emit "vm.omg: v" + VERSION
-    exit(0)
-}
 if vm_is_main_invocation() and length(args) >= 2 and vm_path_ends_with(args[1], ".omgb") {
     alloc bc_path := args[1]
     alloc fh := file_open(bc_path, "rb")

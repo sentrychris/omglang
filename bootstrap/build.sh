@@ -1,35 +1,30 @@
 #!/bin/bash
-# Build the OMG native toolchain into bootstrap/bin/. Produces four
-# native binaries plus the C runtime header. After this completes,
-# the Rust runtime is no longer required to compile or run OMG programs.
+# Build the OMG native toolchain into bootstrap/bin/. The toolchain is
+# one program, `omg`, plus the two runtime files it pastes into the
+# code it generates (omg_rt.h for C, omg_rt.js for JavaScript). After
+# this completes, the Rust runtime is no longer required to compile or
+# run OMG programs.
 #
-# Works on Linux and macOS (any Unix with a C compiler). The binaries
-# checked into bootstrap/bin/ are Linux x86-64; on other hosts the first
-# run bootstraps from the Rust runtime and replaces them with native
-# ones — don't commit those back.
+# Works on Linux and macOS (any Unix with a C compiler). The binary
+# checked into bootstrap/bin/ is Linux x86-64; on other hosts the first
+# run bootstraps from the Rust runtime and replaces it with a native
+# one — don't commit that back.
 #
-# Two modes:
-#   1. Bootstrap: native toolchain doesn't yet exist — uses the Rust
-#      runtime at runtime/target/release/omg.
-#   2. Self-rebuild: native toolchain already exists — uses the
-#      existing omgc + omgcc to rebuild themselves.
+# The whole build is two commands:
 #
-# Sources compiled (each .omg → .omgb → .c → ELF):
-#   bootstrap/src/compiler.omg  → omgc   compiler   (.omg → .omgb)     standalone
-#   bootstrap/src/native-c.omg  → omgcc  C transpiler  (.omgb → .c)    standalone
-#   bootstrap/src/native-js.omg → omgjs  JS transpiler (.omgb → .js)   standalone
-#   bootstrap/src/omg.omg       → omg    unified driver (run/compile/  primary
-#                                        build/REPL all in-process)    user-facing
+#     omg --emit-c bootstrap/src/omg.omg omg.c     # OMG -> C
+#     cc -O3 omg.c -o bootstrap/bin/omg            # C -> executable
 #
-# `omg` is the "all-in-one" binary, mirroring the Rust runtime: it
-# imports compiler.omg, vm.omg, and native-c.omg directly so compile,
-# run, and REPL happen in-process. The standalone tools (omgc, omgcc)
-# are kept around for build pipelines, but day-to-day usage goes
-# through `omg`.
+# and the only question is which `omg` runs the first one:
+#   1. Self-rebuild: bootstrap/bin/omg already runs here, so it
+#      compiles its own source.
+#   2. Bootstrap: there is no usable bootstrap/bin/omg yet, so the Rust
+#      runtime at runtime/target/release/omg runs omg.omg from source.
 #
-# Note: vm.omg is *not* compiled to a standalone ELF — bin/omg imports
-# it in-process so `omg foo.omgb` covers the bytecode-runner case, and
-# the verify-omg-vm flow uses vm.omgb embedded in rust_omg.
+# bootstrap/src/omg.omg imports the compiler, the VM and both back ends
+# (compiler.omg, vm.omg, native-c.omg, native-js.omg, plus the shared
+# bytecode.omg and backend.omg), so that one file is the whole
+# toolchain.
 set -e
 
 cd "$(dirname "$0")/.."
@@ -56,16 +51,25 @@ if ! command -v cc >/dev/null 2>&1; then
     exit 1
 fi
 
-if runs_here "$BIN_DIR/omgc" && runs_here "$BIN_DIR/omgcc"; then
-    echo "[1/4] Self-rebuild from existing native toolchain"
-    DRIVER=native
+# A bootstrap/bin/omg from before --emit-c existed can run here and
+# still be unable to build the toolchain, so ask it.
+can_emit_c() {
+    runs_here "$1" && "$1" --help 2>/dev/null | grep -q -- '--emit-c'
+}
+
+if can_emit_c "$BIN_DIR/omg"; then
+    echo "[1/3] Self-rebuild: $BIN_DIR/omg compiles its own source"
+    OMG=("$BIN_DIR/omg")
 elif [ -x runtime/target/release/omg ]; then
-    echo "[1/4] Bootstrapping from Rust runtime"
-    echo "      (no native toolchain that runs on this host: $(uname -sm))"
-    DRIVER=rust
+    echo "[1/3] Bootstrapping from the Rust runtime"
+    echo "      (no $BIN_DIR/omg that can do it on this host: $(uname -sm))"
+    # The Rust runtime runs the driver from source. `--rust` picks its
+    # Rust frontend to load omg.omg, which takes milliseconds; the
+    # compile of the toolchain itself is still done by compiler.omg.
+    OMG=(runtime/target/release/omg --rust "$SRC_DIR/omg.omg")
 else
-    echo "Need either a $BIN_DIR/{omgc,omgcc} that runs on this host"
-    echo "($(uname -sm)), or the Rust runtime at runtime/target/release/omg."
+    echo "Need either a $BIN_DIR/omg that runs on this host ($(uname -sm)),"
+    echo "or the Rust runtime at runtime/target/release/omg."
     echo "First-time build: cd runtime && cargo build --release"
     exit 1
 fi
@@ -73,61 +77,34 @@ fi
 WORK=$(mktemp -d)
 trap 'rm -rf "$WORK"' EXIT
 
-# Compile .omg -> .omgb using the chosen driver.
-omg_compile() {
-    if [ "$DRIVER" = native ]; then
-        "$BIN_DIR/omgc" "$1" "$2"
-    else
-        runtime/target/release/omg --compile "$1" "$2"
-    fi
-}
-
-# Transpile .omgb -> .c using the chosen driver.
-omg_transpile() {
-    if [ "$DRIVER" = native ]; then
-        "$BIN_DIR/omgcc" "$1" "$2"
-    else
-        runtime/target/release/omg "$SRC_DIR/native-c.omg" "$1" "$2"
-    fi
-}
-
-# Build a binary end-to-end: source .omg -> .omgb -> .c -> ELF.
-build_binary() {
-    local src="$1" out="$2" base
-    base=$(basename "$src" .omg)
-    omg_compile  "$src"               "$WORK/$base.omgb"
-    omg_transpile "$WORK/$base.omgb"  "$WORK/$base.c"
-    # -O3 unlocks aggressive inlining of the OMG runtime helpers
-    # (omg_eq, omg_index, omg_dict_find, etc.) which compound in
-    # step_inner's hot dispatch chain. The transpiler inlines omg_rt.h
-    # into a single TU per binary, so -flto adds overhead and a
-    # serial-LTRANS warning with no measurable benefit.
-    # Build to a temp name and move into place: when self-rebuilding,
-    # "$out" may be the very compiler that is running this pipeline, and
-    # some systems refuse to overwrite a busy executable.
-    cc -O3 -w "$WORK/$base.c" -o "$WORK/$base.bin" -lm
-    mv -f "$WORK/$base.bin" "$out"
-}
-
-# Install the runtime headers FIRST. omgcc reads omg_rt.h via
-# bin_dir/omg_rt.h to splice into transpiled C output, and native-js
-# reads bin_dir/omg_rt.js the same way for transpiled JS output, so
-# any change to either source must take effect on the *first* rebuild —
-# otherwise the rebuilt binaries read stale copies in bin/.
-echo "[2/4] Installing runtime headers"
+# Install the runtime files FIRST. The driver reads omg_rt.h (and
+# omg_rt.js) from the directory it lives in and pastes it into what it
+# generates, so a change to either must be in place before the rebuilt
+# binary is generated — otherwise it would be built on a stale runtime.
+# (When bootstrapping, the driver runs from bootstrap/src/ and reads
+# the originals there.)
+echo "[2/3] Installing runtime files"
 cp "$SRC_DIR/omg_rt.h"  "$BIN_DIR/omg_rt.h"
 cp "$SRC_DIR/omg_rt.js" "$BIN_DIR/omg_rt.js"
 
-echo "[3/4] Building toolchain core (omgc, omgcc, omgjs)"
-build_binary "$SRC_DIR/compiler.omg"  "$BIN_DIR/omgc"
-build_binary "$SRC_DIR/native-c.omg"  "$BIN_DIR/omgcc"
-build_binary "$SRC_DIR/native-js.omg" "$BIN_DIR/omgjs"
+echo "[3/3] Building omg"
+"${OMG[@]}" --emit-c "$SRC_DIR/omg.omg" "$WORK/omg.c"
+# -O3 unlocks aggressive inlining of the OMG runtime helpers (omg_eq,
+# omg_index, omg_dict_find, etc.) which compound in the VM's dispatch
+# chain. The generated file is a single translation unit with omg_rt.h
+# pasted in, so -flto would add build time and nothing else.
+# Build to a temp name and move into place: when self-rebuilding, the
+# target is the very program that just ran, and some systems refuse to
+# overwrite a busy executable.
+cc -O3 -w "$WORK/omg.c" -o "$WORK/omg.bin" -lm
+mv -f "$WORK/omg.bin" "$BIN_DIR/omg"
 
-echo "[4/4] Building unified driver (omg)"
-build_binary "$SRC_DIR/omg.omg"      "$BIN_DIR/omg"
+# Earlier versions of the toolchain were four binaries. `omg` does all
+# of it now; clear out leftovers from an older build.
+rm -f "$BIN_DIR/omgc" "$BIN_DIR/omgcc" "$BIN_DIR/omgjs"
 
-# Record which sources these binaries were built from, so that
-# check-bin.sh (and CI) can tell when the checked-in binaries have
+# Record which sources this binary was built from, so that
+# check-bin.sh (and CI) can tell when the checked-in binary has
 # fallen behind bootstrap/src/.
 bootstrap/sources-hash.sh > "$BIN_DIR/SOURCES.sha256"
 
@@ -136,4 +113,4 @@ echo "Native toolchain in $BIN_DIR:"
 ls -la "$BIN_DIR/"
 echo
 echo "Run a program with:    $BIN_DIR/omg foo.omg"
-echo "AOT-build a program:   $BIN_DIR/omg --build foo.omg"
+echo "Build an executable:   $BIN_DIR/omg --build foo.omg"

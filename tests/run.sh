@@ -6,7 +6,6 @@
 # Usage:
 #   tests/run.sh                 Run every suite
 #   tests/run.sh builtins        Run a single suite (no .sh extension)
-#   tests/run.sh -v              Verbose: don't suppress test internal logs
 #
 # Exit codes:
 #   0  all tests passed
@@ -30,10 +29,9 @@ SUITES=(
 
 # Allow filtering: `tests/run.sh builtins repl`.
 FILTER=()
-VERBOSE=0
 while [ $# -gt 0 ]; do
     case "$1" in
-        -v|--verbose) VERBOSE=1 ;;
+        -v|--verbose) ;;  # accepted for old habits; nothing is hidden any more
         -h|--help)
             grep '^# ' "$0" | sed 's/^# //'
             exit 0
@@ -66,15 +64,7 @@ for suite in "${SUITES[@]}"; do
         echo -e "${RED}No such suite: $suite${NC}"
         exit 2
     fi
-    if [ "$VERBOSE" = 1 ]; then
-        source "$suite_file"
-    else
-        # Source but suppress the per-test internal stderr (binaries we
-        # invoke are noisy by design — e.g. native-c.omg emits a
-        # "[native-c] ..." line for every transpile). Pass/fail lines
-        # come from `pass`/`fail` which write to stdout.
-        source "$suite_file" 2> >(grep -v '^\[native-c\]' >&2)
-    fi
+    source "$suite_file"
 done
 
 END=$(date +%s)

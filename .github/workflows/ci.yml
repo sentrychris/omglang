@@ -115,8 +115,8 @@ jobs:
 
   # The native toolchain (OMG -> bytecode -> C -> machine code) needs a
   # C compiler and a POSIX libc, so it is built and tested on Linux and
-  # macOS. On Linux this is a *self-rebuild* from the binaries checked
-  # into bootstrap/bin/; on macOS those binaries can't run, so build.sh
+  # macOS. On Linux this is a *self-rebuild* from the `omg` checked
+  # into bootstrap/bin/; on macOS that binary can't run, so build.sh
   # bootstraps from the Rust runtime instead.
   native:
     name: Native toolchain (${{ matrix.os }})
@@ -139,49 +139,53 @@ jobs:
 
       # The Rust runtime is the bootstrap seed for build.rs (which
       # produces `bootstrap/src/{compiler,vm}.omgb`) and the reference
-      # implementation the test suite compares the native binaries
+      # implementation the test suite compares the native `omg`
       # against.
       - name: Build Rust runtime (bootstrap seed)
         run: cargo build --release --manifest-path runtime/Cargo.toml 2>&1 | tee build.log
 
-      # The binaries in bootstrap/bin/ are committed so a fresh clone
-      # has a native toolchain without the Rust runtime. Check that
-      # they were built from bootstrap/src/ as it is in this commit
-      # (build.sh stamps them with a hash of their sources) *before*
-      # the steps below rebuild them and hide the answer. Linux only:
-      # the committed binaries are Linux x86-64.
-      - name: Checked-in native binaries are current
+      # bootstrap/bin/omg is committed so a fresh clone has a native
+      # toolchain without the Rust runtime. Check that it was built
+      # from bootstrap/src/ as it is in this commit (build.sh stamps
+      # it with a hash of its sources) *before* the steps below
+      # rebuild it and hide the answer. Linux only: the committed
+      # binary is Linux x86-64.
+      - name: Checked-in native binary is current
         if: runner.os == 'Linux'
         run: bootstrap/check-bin.sh 2>&1 | tee check-bin.log
 
-      # Compiles bootstrap/src/*.omg → bootstrap/bin/{omg,omgc,omgcc,omgjs}.
-      # On Linux this validates that the in-repo binaries can rebuild
-      # themselves from the current OMG sources, the load-bearing
-      # self-hosting invariant for the native pipeline.
+      # Compiles bootstrap/src/omg.omg (which imports the rest of the
+      # toolchain) → bootstrap/bin/omg. On Linux this validates that
+      # the in-repo binary can rebuild itself from the current OMG
+      # sources, the load-bearing self-hosting invariant for the
+      # native pipeline.
       - name: Build native toolchain
         run: bootstrap/build.sh 2>&1 | tee native-build.log
 
-      # A second pass always self-rebuilds: the binaries from the first
-      # pass were produced by an older compiler (Linux) or by the Rust
+      # A second pass always self-rebuilds: the binary from the first
+      # pass was produced by an older compiler (Linux) or by the Rust
       # runtime (macOS); this one is the toolchain compiling itself.
       - name: Self-rebuild native toolchain
         run: bootstrap/build.sh 2>&1 | tee native-rebuild.log
 
       # tests/run.sh is the comprehensive end-to-end suite. It exercises
-      # the omg / omgc / omgcc binaries directly:
+      # bootstrap/bin/omg directly:
       #   * builtins   — process & I/O builtins via Rust + native AOT
       #   * driver     — every omg invocation form (interpret / --build
-      #                  / --compile / REPL) and the standalone tools
+      #                  / --compile / --emit-c / --emit-js / --disasm
+      #                  / REPL)
       #   * repl       — REPL state, multi-line input, error recovery
       #   * regression — specific bugs we've fixed, each through every
       #                  applicable backend
       #   * conformance — the corpus in tests/conformance/ on the
-      #                  native interpreter, AOT and omgjs (the smoke
-      #                  test runs it on the portable backends)
+      #                  native interpreter, AOT and `omg --emit-js`
+      #                  (the smoke test runs it on the portable
+      #                  backends)
       #   * parity     — triple-meta fixed-point + byte-identical
-      #                  bytecode (Rust frontend vs omgc) + AOT corpus
-      #                  parity (Rust runtime vs `omg --build` vs
-      #                  `omg <file.omg>`) + native self-rebuild
+      #                  bytecode (Rust frontend vs native omg) + AOT
+      #                  corpus parity (Rust runtime vs `omg --build`
+      #                  vs `omg <file.omg>`) + native self-rebuild,
+      #                  which must reproduce the same binary
       - name: Run end-to-end test suite
         run: tests/run.sh 2>&1 | tee tests.log
 
@@ -216,7 +220,8 @@ jobs:
       # standalone Rust-free distribution at dist/omglang-native/.
       # We don't run its tests here (that's a strict subset of
       # tests/run.sh above), but we do verify a smoke-test program
-      # still runs after going through the dist's binaries.
+      # still runs through the dist's `omg`, and that the dist can
+      # rebuild itself with its own build.sh (no Rust runtime).
       - name: Package native distribution
         run: bootstrap/package.sh --clean 2>&1 | tee package.log
 
@@ -225,6 +230,8 @@ jobs:
           dist/omglang-native/bin/omg dist/omglang-native/examples/hello_world.omg
           dist/omglang-native/bin/omg --build dist/omglang-native/examples/hello_world.omg /tmp/dist-smoke
           /tmp/dist-smoke
+          dist/omglang-native/build.sh
+          dist/omglang-native/bin/omg dist/omglang-native/examples/hello_world.omg
 
       - name: Summarise failure
         if: failure()
