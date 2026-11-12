@@ -5,25 +5,20 @@ scratch.omg
 .DS_Store
 Thumbs.db
 
-# Python cache
-__pycache__/
-.pytest_cache/
-*.py[cod]
-*.egg-info/
+# Logs
 *.log
 
-# VS Code and Python environment
+# VS Code
 .vscode/
-.env/
-.venv/
 
-# Output and structure tools
-project_tree.txt
-package_resources/upx*
-runtime/interpreter.omgb
+# Scratch files and output
 scratchpad.omg
 output/
 dump*
+
+# Executables made by `omg --build tools/edit.omg`
+/tools/edit
+/tools/edit.exe
 
 # Scratch build output (the packaging script that wrote here is gone)
 dist/

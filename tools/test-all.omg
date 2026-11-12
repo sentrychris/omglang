@@ -5,23 +5,19 @@
 #
 # Usage:  omg tools/test-all.omg
 #
-# How it works.  OMG can't spawn subprocesses, so to "run" each tool we
-# `import` it.  Imports are compile-time inlined: the compiler embeds
-# each tool's source (including its imports of `lib.omg`) into this
-# script's bytecode.  At runtime each `import` causes the tool's top-
-# level code to execute in source order; we override `args` immediately
-# before each one and wrap the import in `try { ... } except { ... }` so
-# panics bubble up as a per-tool failure instead of aborting the run.
+# How it works.  Each tool is a script that reads `args` and does its
+# job at the top level, so to run one we `import` it.  Imports are
+# resolved at compile time: the compiler puts each tool's source
+# (including its own import of `lib.omg`) into this script's bytecode,
+# and at run time the tool's top-level code runs where its `import`
+# statement stands.  We set `args` just before each one and wrap the
+# import in `try { ... } except { ... }`, so a tool that panics counts
+# as one failure and the rest still run.
 #
-# The end result is fast — all 14 tools run in well under a second total,
-# whereas using the tree-walk interpreter for the same job took several
-# minutes per tool.
+# All 14 tools run in one process, in well under a second.
 #
-# `omg-test.omg` is intentionally skipped here: it itself imports the
-# bootstrap interpreter to run further tests, which would inflate this
-# harness's compile + boot time substantially.  Verify it directly with:
-#
-#     omg tools/omg/omg-test.omg <test_pass.omg> [...]
+# A module's top-level code runs once however often it is imported, so
+# each tool is exercised with one set of arguments.
 
 # === helpers (defined first so we can call them at top level) ============
 

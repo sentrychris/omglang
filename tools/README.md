@@ -15,9 +15,9 @@ omg tools/<dir>/<tool>.omg <args...>
 For example:
 
 ```sh
-omg tools/omg/unix/wc.omg examples/hello_world.omg examples/prime_sieve.omg
-omg tools/omg/unix/grep.omg "proc " examples/higher_order.omg
-omg tools/omg/unix/hex.omg bootstrap/src/compiler.omgb | head
+omg tools/unix/wc.omg examples/hello_world.omg examples/prime_sieve.omg
+omg tools/unix/grep.omg "proc " examples/higher_order.omg
+omg tools/unix/hex.omg bootstrap/src/compiler.omgb | head
 ```
 
 ## Path handling
