@@ -123,9 +123,11 @@ section "Parity: native toolchain self-rebuild"
 
 # The toolchain should be able to rebuild itself with no Rust runtime
 # involved. We trigger a fresh build and check the resulting binary
-# runs, and that rebuilding changed nothing: `omg` compiling its own
-# source must reproduce itself byte for byte.
-before_sum=$(cksum < "$OMG_NATIVE")
+# runs, and that it is at its fixed point: the C that `omg` writes for
+# its own source must be the same before and after the rebuild. (The C
+# is compared, not the binary, because the binary records the absolute
+# paths of its sources and so differs from one checkout to the next.)
+"$OMG_NATIVE" --emit-c "$REPO_ROOT/bootstrap/src/omg.omg" "$TMPDIR_TEST/self-before.c" >/dev/null 2>&1
 build_out=$("$REPO_ROOT/bootstrap/build.sh" 2>&1)
 if echo "$build_out" | grep -q "Self-rebuild"; then
     pass "build script chose self-rebuild path"
@@ -138,9 +140,10 @@ if "$OMG_NATIVE" --help >/dev/null 2>&1; then
 else
     fail "rebuilt omg is broken"
 fi
-if [ "$before_sum" = "$(cksum < "$OMG_NATIVE")" ]; then
-    pass "self-rebuild reproduces the same binary"
+"$OMG_NATIVE" --emit-c "$REPO_ROOT/bootstrap/src/omg.omg" "$TMPDIR_TEST/self-after.c" >/dev/null 2>&1
+if [ -s "$TMPDIR_TEST/self-before.c" ] && cmp -s "$TMPDIR_TEST/self-before.c" "$TMPDIR_TEST/self-after.c"; then
+    pass "self-rebuild is a fixed point (omg writes the same C for itself)"
 else
-    fail "self-rebuild changed the binary" \
-         "bootstrap/bin/omg was not at its fixed point; run bootstrap/build.sh again and commit"
+    fail "self-rebuild is not a fixed point" \
+         "bootstrap/bin/omg was built from older sources; run bootstrap/build.sh twice and commit"
 fi

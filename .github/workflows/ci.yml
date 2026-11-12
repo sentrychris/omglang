@@ -185,7 +185,8 @@ jobs:
       #                  bytecode (Rust frontend vs native omg) + AOT
       #                  corpus parity (Rust runtime vs `omg --build`
       #                  vs `omg <file.omg>`) + native self-rebuild,
-      #                  which must reproduce the same binary
+      #                  after which omg must write the same C for
+      #                  itself as it did before
       - name: Run end-to-end test suite
         run: tests/run.sh 2>&1 | tee tests.log
 

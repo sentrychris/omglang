@@ -119,7 +119,10 @@ running `omg.omg` from source.
 
 **The script is idempotent.** Run it again and `omg` rebuilds itself
 with no Rust involvement, and the result is byte-for-byte the same
-binary: `omg` compiling `omg.omg` reproduces `omg`.
+binary: `omg` compiling `omg.omg` reproduces `omg`. (In the same
+checkout, that is. The binary records the full paths of its sources
+for tracebacks, so a build in another directory differs in those
+strings and nothing else.)
 
 ## The fixed-point check
 
