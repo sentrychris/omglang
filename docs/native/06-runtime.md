@@ -317,11 +317,11 @@ which make the same check on the slot that should hold the cell. A
 `omg_undefined("name")`, so it too fails only if it is reached.
 
 Which names are parameters, locals, captured or global is decided by
-the scope analysis at the top of `native-c.omg` (`analyze_all_functions`),
-which follows the same rules as the compiler: a name belongs to the
-nearest enclosing proc that declares it before the nested proc is
-defined. `native-js.omg` carries a copy of the same analysis; keep the
-two identical.
+the scope analysis in `backend.omg` (`analyze_all_functions`), which
+follows the same rules as the compiler: a name belongs to the nearest
+enclosing proc that declares it before the nested proc is defined.
+`native-c.omg` and `native-js.omg` both import that one module, so the
+C and JavaScript output always agree on what a name refers to.
 
 ### Caveats
 
@@ -384,21 +384,19 @@ where decimal would be unwieldy, falls back to `%.17g` scientific notation.
 
 ```
 $ wc -l bootstrap/src/omg_rt.h
-1697 bootstrap/src/omg_rt.h
+2855 bootstrap/src/omg_rt.h
 ```
 
 | Program                  | Source size | AOT binary |
 | ------------------------ | ----------- | ---------- |
 | Hello world (1 emit)     | 22 B        | 16 KB      |
 | Calculator (~25 lines)   | 1 KB        | 35 KB      |
-| `compiler.omg` (omgc)    | 65 KB       | 432 KB     |
-| `native-c.omg` (omgcc)   | 54 KB       | 290 KB     |
-| `native-js.omg` (omgjs)  | 53 KB       | 330 KB     |
+| `omg.omg` and its imports (the whole toolchain) | 291 KB | 2.4 MB |
 
 The constant overhead is small (~16 KB for trivial programs, mostly libc);
-the rest scales with how much OMG you've got. For `omgc` (the largest of the
-toolchain binaries), almost all the size is generated code for `compiler.omg`
-itself — the runtime is < 5%.
+the rest scales with how much OMG you've got. For `omg` itself, almost
+all the size is generated code for the compiler, the VM and the two
+back ends — the runtime is a few percent.
 
 ## Read next
 

@@ -9,6 +9,7 @@ into standalone ELF binaries with no Rust runtime needed.
 | If you want to...                                  | Read                          |
 | -------------------------------------------------- | ----------------------------- |
 | ...write and run your first program in 5 minutes   | [01-quickstart.md](01-quickstart.md) |
+| ...know what each part is for, on one page         | [../toolchain.md](../toolchain.md) |
 | ...understand how Rust, OMG, and C fit together    | [02-architecture.md](02-architecture.md) |
 | ...learn the language itself                       | [03-language-tour.md](03-language-tour.md) |
 | ...see what happens between `.omg` and `./foo`     | [04-pipeline.md](04-pipeline.md) |
@@ -28,24 +29,29 @@ bootstrap/build.sh
 ./bootstrap/bin/omg foo.omg              # compile and run
 ./bootstrap/bin/omg --build foo.omg foo  # AOT to a small ELF (~30 KB)
 ./foo
+./bootstrap/bin/omg --emit-c  foo.omg foo.c    # stop at the generated C
+./bootstrap/bin/omg --emit-js foo.omg foo.js   # or generate JavaScript
 ```
 
 ## What's in `bootstrap/bin/`
 
-| Binary     | Role                                              |
-| ---------- | ------------------------------------------------- |
-| `omg`      | Unified driver: run / compile / build / REPL      |
-| `omgc`     | Compiler: `.omg` → `.omgb` bytecode               |
-| `omgcc`    | C transpiler: `.omgb` → `.c`                      |
-| `omgjs`    | JS transpiler: `.omgb` → `.js`                    |
-| `omg_rt.h` | C runtime header (inlined into every `.c` omgcc emits)   |
-| `omg_rt.js`| JS runtime (inlined into every `.js` omgjs emits) |
+One program and the two runtime files it needs:
 
-All four binaries are native ELFs compiled from OMG source. `omg`
-imports `compiler.omg`, `vm.omg`, and `native-c.omg` directly so
-compile, run, REPL, and `omg foo.omgb` (running precompiled bytecode)
-all happen in-process — the only external command invoked is `cc` for
-the final ELF link in `--build`.
+| File        | Role                                                        |
+| ----------- | ----------------------------------------------------------- |
+| `omg`       | The whole toolchain: run / REPL / `--compile` / `--build` / `--emit-c` / `--emit-js` / `--disasm` |
+| `omg_rt.h`  | C runtime header (pasted into every `.c` that `omg` generates) |
+| `omg_rt.js` | JS runtime (pasted into every `.js` that `omg` generates)   |
+
+`omg` is a native ELF compiled from OMG source. It imports
+`compiler.omg`, `vm.omg`, `native-c.omg` and `native-js.omg` directly,
+so compile, run, REPL, `omg foo.omgb` (running precompiled bytecode)
+and code generation all happen in-process — the only external command
+invoked is `cc` for the final ELF link in `--build`.
+
+Earlier versions shipped three more binaries (`omgc`, `omgcc`,
+`omgjs`). They are gone; their jobs are `omg --compile`,
+`omg --emit-c` and `omg --emit-js`.
 
 ## Conventions in these docs
 

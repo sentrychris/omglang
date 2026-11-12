@@ -1,6 +1,8 @@
 # 02 · Architecture
 
 OMG runs on three substrates. Knowing which is which prevents most confusion.
+(For a one-page list of every part and what it is for, see
+[../toolchain.md](../toolchain.md).)
 
 ## The three substrates
 
@@ -9,7 +11,7 @@ OMG runs on three substrates. Knowing which is which prevents most confusion.
        │  OMG: the language. Source files are .omg        │
        │  Bytecode files are .omgb                        │
        │  All "interesting" logic — compiler, parser,     │
-       │  transpiler, meta-circular VM — is OMG.          │
+       │  back ends, meta-circular VM — is OMG.           │
        └──────────────────────────────────────────────────┘
                             │
                             │ runs on
@@ -39,7 +41,7 @@ C compiles to native and disappears once `cc` finishes.
 | Editing source           | (none)    | A `.omg` text file            |
 | `.omg` → `.omgb`         | OMG-on-VM | `compiler.omg` running on the VM |
 | Picked the VM path: run  | Rust      | `vm.rs` interpreting bytecode |
-| Picked the AOT path: build | OMG-on-VM + cc | `native-c.omg` runs on the VM emitting C; cc compiles |
+| Picked the AOT path: build | OMG + cc | `native-c.omg` (inside `omg`) emits C; cc compiles |
 | AOT path: run            | OS + CPU  | Native ELF, no VM, no Rust    |
 
 The "running on the VM" rows can use either the Rust VM (`runtime/src/vm.rs`)
@@ -79,41 +81,45 @@ byte-identical no matter which historical iteration you started from.
    so the very first run can compile and execute `.omg` sources without the
    user already having either.
 
-The native toolchain (`bootstrap/bin/`) replaces #1 with a C-compiled
-version: `omgc` is the OMG compiler fused into a binary. #2 (the VM)
-isn't compiled to its own ELF — `bin/omg` imports `vm.omg` in-process,
-so `omg foo.omgb` already covers the bytecode-runner case.
+The native toolchain (`bootstrap/bin/omg`) is the same three things
+with no Rust: the OMG compiler and the OMG VM, compiled to C and fused
+into one binary together with the C and JS back ends. `bin/omg`
+imports `compiler.omg` and `vm.omg` in-process, so `omg foo.omg` and
+`omg foo.omgb` need nothing else.
 
 ## Native toolchain inventory
 
 ```
 bootstrap/bin/
-├── omg         user-facing driver: run / compile / build / REPL all in-process
-├── omgc        compiler.omg compiled to native     (.omg → .omgb)
-├── omgcc       native-c.omg compiled to native     (.omgb → .c)
-├── omgjs       native-js.omg compiled to native    (.omgb → .js)
-├── omg_rt.h    C runtime header  (inlined into every .c omgcc emits)
-└── omg_rt.js   JS runtime        (inlined into every .js omgjs emits)
+├── omg         the toolchain: run / REPL / --compile / --build /
+│               --emit-c / --emit-js / --disasm, all in-process
+├── omg_rt.h    C runtime header  (pasted into every .c omg generates)
+└── omg_rt.js   JS runtime        (pasted into every .js omg generates)
 ```
 
-All four tools are native ELFs compiled from OMG source. `omg` is written
-in OMG (see [`bootstrap/src/omg.omg`](../../bootstrap/src/omg.omg)) and
-runs its imports in-process — including `vm.omg`, which is why running a
-precompiled `.omgb` doesn't need a separate ELF. `subprocess()` is only
-invoked for the final `cc` call during `--build`.
+`omg` is a native ELF compiled from OMG source: it is written in OMG
+(see [`bootstrap/src/omg.omg`](../../bootstrap/src/omg.omg)) and runs
+its imports in-process — the compiler, the VM (which is why running a
+precompiled `.omgb` doesn't need a separate ELF) and the two back
+ends. `subprocess()` is only invoked for the final `cc` call during
+`--build`.
 
-These are produced by `bootstrap/build.sh`, which:
+It is produced by `bootstrap/build.sh`, which:
 
-1. Uses the Rust binary (or itself, if already present) to compile each
-   of the four `.omg` sources (compiler, native-c, native-js, omg) to
-   bytecode.
-2. Runs `native-c.omg` on each bytecode file to emit C.
-3. Runs `cc -O2` to produce the four native binaries.
-4. Copies `omg_rt.h` and `omg_rt.js` next to them so AOT builds find them.
+1. Copies `omg_rt.h` and `omg_rt.js` into `bootstrap/bin/` so generated
+   code is built on the current runtime.
+2. Runs `omg --emit-c bootstrap/src/omg.omg omg.c`: the driver compiles
+   its own source (and everything it imports) to bytecode and puts that
+   through the C back end.
+3. Runs `cc -O3 omg.c` to produce the new `bootstrap/bin/omg`.
 
-**The script is idempotent.** Run it again and the native binaries rebuild
-themselves with no Rust involvement (as long as `omgc`/`omgcc` are already
-in place from a prior build).
+The `omg` in step 2 is `bootstrap/bin/omg` itself when one that runs
+on this machine is already there. Otherwise it is the Rust runtime
+running `omg.omg` from source.
+
+**The script is idempotent.** Run it again and `omg` rebuilds itself
+with no Rust involvement, and the result is byte-for-byte the same
+binary: `omg` compiling `omg.omg` reproduces `omg`.
 
 ## The fixed-point check
 
@@ -145,6 +151,8 @@ in `compiler.omg`, or this check will fail. See [05-extending.md](05-extending.m
 - `bootstrap/src/omg_rt.h` — C. Value representation, refcounting, builtins,
   setjmp-based exception handling, call-frame stack + traceback formatter.
   ~2200 lines. Linked into every AOT binary.
+- `bootstrap/src/omg_rt.js` — JavaScript. The same job for programs
+  generated by `omg --emit-js`, and for the browser playground.
 
 That's the whole non-OMG surface. Everything else is `.omg`.
 

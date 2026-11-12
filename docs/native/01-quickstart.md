@@ -13,12 +13,15 @@ You'll be running and compiling OMG programs in five minutes.
 # Build the Rust runtime (used once to seed the native toolchain)
 cd runtime && cargo build --release && cd ..
 
-# Build the OMG-native toolchain (omg, omgc, omgcc, omgjs) into bootstrap/bin/
+# Build the OMG-native toolchain (one binary, omg) into bootstrap/bin/
 bootstrap/build.sh
 ```
 
-You'll see four steps print: bootstrap source → bytecode → C → ELF. Takes
-~10 seconds. After this, `bootstrap/bin/` has everything you need.
+You'll see three steps print: pick a compiler, install the runtime
+files, build `omg` (OMG source → C → ELF). Takes a couple of minutes,
+most of it the C compiler. After this, `bootstrap/bin/` has everything
+you need. (On Linux x86-64 a working `bootstrap/bin/omg` is already
+checked in, so you can skip both commands.)
 
 ## Hello world
 

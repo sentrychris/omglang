@@ -10,11 +10,12 @@ problems second.
 | Source        | `cat foo.omg`                                        |
 | Tokens / AST  | (no dump tool yet — read the parser if needed)       |
 | Bytecode      | `omg --disasm foo.omgb` (or `foo.omg`)               |
-| C source      | run `omgcc` manually to produce a `.c` you can keep  |
+| C source      | `omg --emit-c foo.omg foo.c`                         |
+| JS source     | `omg --emit-js foo.omg foo.js`                       |
 | Native binary | gdb, strace, valgrind                                |
 
-`omg --build` cleans up its tempdir, so to keep the intermediate `.c`,
-run the transpiler yourself.
+`omg --build` deletes its intermediate `.c`, so to keep one, ask for it
+with `--emit-c`.
 
 ### Disassembling bytecode
 
@@ -44,10 +45,13 @@ disasm is usually the first place to look.
 ### Inspecting generated C
 
 ```sh
-omg --compile foo.omg foo.omgb
-bootstrap/bin/omgcc foo.omgb /tmp/foo.c     # or runtime/target/release/omg bootstrap/src/native-c.omg foo.omgb /tmp/foo.c
+omg --emit-c foo.omg /tmp/foo.c     # a .omgb works as input too
 less /tmp/foo.c
 ```
+
+Without a native `omg` (on Windows, say) the Rust runtime can run the
+driver from source and do the same thing:
+`runtime/target/release/omg --rust bootstrap/src/omg.omg --emit-c foo.omg /tmp/foo.c`.
 
 The runtime header is at the top (~1700 lines) — skip past it. Each
 generated proc starts with:
@@ -149,9 +153,10 @@ Fix: see [05-extending.md](05-extending.md), Step C of "Adding a builtin."
 
 You did `dict["foo"]` (or `dict.foo`) on a dict that doesn't have that key.
 
-If this happens during *transpilation* (`omgcc` errors out with this), it
-usually means `native-c.omg` doesn't recognize an instruction or builtin
-in the bytecode. Run `--disasm` to see what's there.
+If this happens during *code generation* (`omg --build` or `--emit-c`
+errors out with this), it usually means `native-c.omg` doesn't recognize
+an instruction or builtin in the bytecode. Run `--disasm` to see what's
+there.
 
 ### `TypeError: cannot order-compare these values`
 
@@ -179,8 +184,7 @@ If `cc -O2 ...` emits a warning, it's almost always a false positive. The
 To get cc's stderr:
 
 ```sh
-omg --compile foo.omg foo.omgb
-bootstrap/bin/omgcc foo.omgb /tmp/foo.c
+omg --emit-c foo.omg /tmp/foo.c
 cc -O2 /tmp/foo.c -o /tmp/foo -lm   # no -w; see all warnings
 ```
 

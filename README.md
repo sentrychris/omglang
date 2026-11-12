@@ -73,10 +73,15 @@ Set-Alias omg "$PWD\runtime\target\release\omg.exe"
 | Native toolchain (`bootstrap/build.sh`, `omg --build`) | ✓ | ✓ | needs WSL |
 
 The runtime needs Rust 1.80 or newer and nothing else. CI builds and
-tests it on all three systems on every push. The binaries checked into
-`bootstrap/bin/` are Linux x86-64; on macOS `bootstrap/build.sh`
-notices they can't run and bootstraps native ones from the Rust runtime
+tests it on all three systems on every push. The native `omg` checked
+into `bootstrap/bin/` is Linux x86-64; on macOS `bootstrap/build.sh`
+notices it can't run and bootstraps a native one from the Rust runtime
 instead.
+
+There are two `omg` commands in this repo, one written in Rust and one
+written in OMG, plus a C and a JavaScript back end.
+[`docs/toolchain.md`](docs/toolchain.md) is one page that says what
+each part is for and which one you want.
 
 `tests/smoke.sh` is a quick, portable self-check (it needs only the
 Rust runtime, so it also runs under Git Bash on Windows).
@@ -751,9 +756,12 @@ Variables, functions, and imports persist across lines until you `quit`.
 ## Compile to a native binary
 
 OMG can also be compiled to standalone native binaries on Linux and
-macOS — no Rust required at runtime. The OMG-to-C transpiler at
+macOS — no Rust required at runtime. The C back end at
 [`bootstrap/src/native-c.omg`](bootstrap/src/native-c.omg) emits self-contained
 C, which `cc -O3` turns into a small (~30 KB) executable.
+
+All of it is one program, `bootstrap/bin/omg`: the compiler, a VM and
+the back ends, written in OMG and compiled by themselves.
 
 ```sh
 # One-time bootstrap (uses the Rust runtime to build the native toolchain)
@@ -764,6 +772,10 @@ bootstrap/build.sh
 bootstrap/bin/omg foo.omg              # compile and run
 bootstrap/bin/omg --build foo.omg foo  # AOT to a native executable
 ./foo
+
+# Or stop at the generated source
+bootstrap/bin/omg --emit-c  foo.omg foo.c    # the C that --build compiles
+bootstrap/bin/omg --emit-js foo.omg foo.js   # JavaScript; run it with node or in a page
 ```
 
 The full guide — architecture, language tour, pipeline, extension guide,
@@ -824,20 +836,22 @@ highlighting and the OMG file icon. Start typing `proc`, `loop`,
 omglang/
 ├── runtime/         the Rust implementation: lexer, parser, compiler, VM, REPL
 ├── bootstrap/
-│   ├── src/         OMG sources for the self-hosted toolchain + C runtime header
+│   ├── src/         OMG sources for the self-hosted toolchain + its two runtime files
+│   │   ├── omg.omg          the native `omg` command, in OMG; imports the modules below
 │   │   ├── compiler.omg     the OMG compiler, written in OMG
 │   │   ├── compiler.omgb    its compiled bytecode (re-built on `cargo build`)
-│   │   ├── vm.omg           the OMG-in-OMG VM (used for fixed-point verification)
-│   │   ├── native-c.omg     OMG-to-C transpiler (used by the native build path)
-│   │   ├── native-js.omg    OMG-to-JS transpiler (alternative backend)
-│   │   ├── omg.omg          user-facing driver (run / compile / build / REPL), in OMG
+│   │   ├── vm.omg           the OMG-in-OMG VM (runs programs in the native `omg`)
+│   │   ├── bytecode.omg     reads a .omgb file back in
+│   │   ├── native-c.omg     C back end (`omg --build`, `omg --emit-c`)
+│   │   ├── native-js.omg    JS back end (`omg --emit-js`, the browser builds)
+│   │   ├── backend.omg      what the two back ends share (scope analysis)
 │   │   ├── omg-web.omg      driver bundled into the browser playground
 │   │   ├── omg-explorer.omg driver for the in-browser compiler explorer
 │   │   ├── omg_rt.h         C runtime header inlined into native binaries
-│   │   └── omg_rt.js        JS runtime inlined into transpiled JavaScript
-│   ├── bin/         Rust-free toolchain (4 native ELFs + omg_rt.h + omg_rt.js)
-│   ├── build.sh     builds bootstrap/bin/ from bootstrap/src/
-│   ├── build-web.sh builds the web/ bundle from bootstrap/src/omg-web.omg
+│   │   └── omg_rt.js        JS runtime inlined into generated JavaScript
+│   ├── bin/         Rust-free toolchain (one native ELF, omg, + omg_rt.h + omg_rt.js)
+│   ├── build.sh     builds bootstrap/bin/omg from bootstrap/src/
+│   ├── build-web.sh builds the web/ bundles from bootstrap/src/
 │   └── package.sh   spins out a slim native-only distribution into dist/
 ├── examples/        small standalone programs (one language feature each)
 ├── games/           larger interactive terminal games (snake, tetris)
@@ -915,6 +929,9 @@ bottom.
 
 ## More reading
 
+- [`docs/toolchain.md`](docs/toolchain.md): **what each part is for**,
+  on one page. The two `omg` commands, the compiler, the VMs, the C and
+  JS back ends, and which of them you need.
 - [`docs/native/`](docs/native/): the **native compilation path** —
   turning `.omg` source into standalone ELF binaries with no Rust runtime
   needed. Covers the architecture, language, pipeline, runtime header,

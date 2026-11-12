@@ -1,89 +1,91 @@
 # `bootstrap/src/` — the OMG toolchain in OMG
 
-Four of these files are compiled (by [`bootstrap/build.sh`](../build.sh))
-into the ELFs that live in [`bootstrap/bin/`](../bin/). The other source
-files (`vm.omg`, the runtime headers, the web bundle) are libraries or
-inlined runtimes rather than standalone binaries. Each file's first
-comment line records what it becomes so you can trace the mapping from
-either end.
+Everything here is OMG source, plus the two runtime files that
+generated code needs. One file, [`omg.omg`](omg.omg), is the program;
+the rest are modules it imports. [`bootstrap/build.sh`](../build.sh)
+turns it into [`bootstrap/bin/omg`](../bin/).
 
-## Compiled to binaries
+For what each part is for and how they relate to the Rust runtime, see
+[`docs/toolchain.md`](../../docs/toolchain.md).
 
-| Source                                       | Built binary                | Role                                                  |
-| -------------------------------------------- | --------------------------- | ----------------------------------------------------- |
-| [`compiler.omg`](compiler.omg)               | `bootstrap/bin/omgc`        | OMG frontend: `.omg` → `.omgb` bytecode               |
-| [`native-c.omg`](native-c.omg)               | `bootstrap/bin/omgcc`       | C backend: `.omgb` → `.c` (splices in `omg_rt.h`)     |
-| [`native-js.omg`](native-js.omg)             | `bootstrap/bin/omgjs`       | JS backend: `.omgb` → `.js` (splices in `omg_rt.js`)  |
-| [`omg.omg`](omg.omg)                         | `bootstrap/bin/omg`         | Unified driver: run / compile / `--build` / REPL      |
+## The program
 
-Why two names for the same thing? Source files keep descriptive names
-(`native-c.omg` says what it *is* — the C backend) while binaries follow
-the Unix `omg*` convention so they sit cleanly on `$PATH` (`omgc`,
-`omgcc`, `omgjs`).
+| Source               | Becomes             | Role |
+| -------------------- | ------------------- | ---- |
+| [`omg.omg`](omg.omg) | `bootstrap/bin/omg` | The `omg` command: run, REPL, `--compile`, `--build`, `--emit-c`, `--emit-js`, `--disasm` |
 
-## Libraries (imported, never compiled standalone)
+## The modules it imports
 
-| Source                                       | Where it's used                                                            |
-| -------------------------------------------- | -------------------------------------------------------------------------- |
-| [`vm.omg`](vm.omg)                           | OMG-in-OMG VM. Embedded into `runtime/target/release/omg` (via cargo) and imported by `omg.omg` so `bin/omg foo.omgb` works in-process. Also used by `--verify-omg-vm` for the triple-meta fixed-point check. |
-| [`omg-web.omg`](omg-web.omg)                 | Browser playground driver. Transpiled to `web/omg-web.js` by `bootstrap/build-web.sh`. |
+| Source                           | Role |
+| -------------------------------- | ---- |
+| [`compiler.omg`](compiler.omg)   | Source to bytecode: lexer, parser, code generator, `.omgb` writer. A single file with no imports. Also embedded in the Rust runtime (`cargo build` compiles it to `compiler.omgb`), where it is the default frontend. |
+| [`vm.omg`](vm.omg)               | The OMG-in-OMG VM: runs bytecode. It is what `bin/omg foo.omg` and `bin/omg foo.omgb` execute on. Also embedded in the Rust runtime for the `--verify-omg-vm` fixed-point check. |
+| [`bytecode.omg`](bytecode.omg)   | Reads a `.omgb` file back into instructions, for the back ends and `--disasm`. |
+| [`native-c.omg`](native-c.omg)   | The C back end: bytecode to one C file with `omg_rt.h` pasted in. Used by `--build` and `--emit-c`. |
+| [`native-js.omg`](native-js.omg) | The JS back end: bytecode to one JavaScript file with `omg_rt.js` pasted in. Used by `--emit-js` and by the web builds. |
+| [`backend.omg`](backend.omg)     | What the two back ends share: the scope analysis (is each name a parameter, a local, captured, or a global?) and the output buffer. |
 
-## Runtime headers (inlined into transpiled output)
+None of these is a program in its own right. There used to be a binary
+for three of them (`omgc`, `omgcc`, `omgjs`); `omg --compile`,
+`omg --emit-c` and `omg --emit-js` do those jobs now.
 
-These two files are not compiled to anything by themselves. They get
-*inlined* at the top of every transpiled output, so the resulting
-program is self-contained.
+`compiler.omg` and `vm.omg` can still be *run* as scripts by the Rust
+runtime, because that is how it uses its embedded copies:
 
-| Source                          | Where it ends up                                                  |
-| ------------------------------- | ----------------------------------------------------------------- |
-| [`omg_rt.h`](omg_rt.h)          | Pasted at the top of every `.c` emitted by `omgcc` / `native-c.omg` |
-| [`omg_rt.js`](omg_rt.js)        | Pasted at the top of every `.js` emitted by `omgjs` / `native-js.omg` |
+```sh
+runtime/target/release/omg --rust bootstrap/src/vm.omg foo.omgb
+```
 
-`build.sh` also copies both into `bootstrap/bin/` so `omgcc` and `omgjs`
-can find them via `executable_path` at transpile time.
+## The browser drivers
 
-## Runtime headers (not binaries)
+| Source                                 | Becomes               | Role |
+| -------------------------------------- | --------------------- | ---- |
+| [`omg-web.omg`](omg-web.omg)           | `web/omg-web.js`      | The playground: compiler + VM. |
+| [`omg-explorer.omg`](omg-explorer.omg) | `web/omg-explorer.js` | The compiler explorer: compiler + VM + both back ends, so the page can show every stage. |
 
-These two files are not compiled to anything by themselves. They get
-*inlined* at the top of every transpiled output, so the resulting
-program is self-contained.
+Both are built by [`bootstrap/build-web.sh`](../build-web.sh), which is
+`omg --compile` followed by `omg --emit-js`.
 
-| Source                          | Where it ends up                                                  |
-| ------------------------------- | ----------------------------------------------------------------- |
-| [`omg_rt.h`](omg_rt.h)          | Pasted at the top of every `.c` emitted by `omgcc` / `native-c.omg` |
-| [`omg_rt.js`](omg_rt.js)        | Pasted at the top of every `.js` emitted by `omgjs` / `native-js.omg` |
+## Runtime files (pasted into generated code)
 
-`build.sh` also copies both into `bootstrap/bin/` so `omgcc` and `omgjs`
-can find them via `executable_path` at transpile time.
+These two files are not compiled to anything by themselves. They are
+pasted at the top of every file a back end generates, so the result is
+self-contained.
+
+| Source                   | Where it ends up |
+| ------------------------ | ---------------- |
+| [`omg_rt.h`](omg_rt.h)   | The top of every `.c` from `omg --build` / `omg --emit-c` |
+| [`omg_rt.js`](omg_rt.js) | The top of every `.js` from `omg --emit-js` |
+
+`build.sh` copies both into `bootstrap/bin/`, where `omg` finds them
+next to itself (through the `executable_path` builtin).
 
 ## How a build works
-
-The full picture (cargo, build.sh, the self-rebuild loop, the AOT paths,
-verify, packaging) lives at [`docs/flow/`](../../docs/flow/) — open
-`index.html` for the interactive version, or read the JSON directly if
-you prefer plain text.
-
-Short version:
 
 1. `cargo build --release --manifest-path runtime/Cargo.toml` produces
    `runtime/target/release/omg` — the Rust runtime, with `compiler.omg`
    and `vm.omg` pre-compiled to bytecode and **embedded inside the
-   binary** so the resulting `omg` can do self-hosted compilation
-   without reading any external file.
-2. `bash bootstrap/build.sh` then uses that Rust runtime as the driver
-   to translate every `.omg` source in this directory into a standalone
-   ELF in `bootstrap/bin/`. For each source, it runs three steps
-   internally (not commands you type):
-   - `omg --compile X.omg /tmp/X.omgb` — Rust frontend produces bytecode
-   - `omg native-c.omg /tmp/X.omgb /tmp/X.c` — `native-c.omg` running
-     under the Rust VM transpiles the bytecode to C, with `omg_rt.h`
-     spliced in at the top.
-   - `cc -O3 /tmp/X.c -o bootstrap/bin/X -lm` — system C compiler
+   binary** so it can do self-hosted compilation without reading any
+   external file. This step is only needed when there is no
+   `bootstrap/bin/omg` that runs on your machine.
+2. `bootstrap/build.sh` builds `bootstrap/bin/omg` in two commands:
+   - `omg --emit-c bootstrap/src/omg.omg omg.c` — the driver compiles
+     its own source, and everything it imports, to bytecode, and puts
+     that through the C back end with `omg_rt.h` pasted in at the top.
+   - `cc -O3 omg.c -o bootstrap/bin/omg -lm` — the system C compiler
      produces the ELF. `-O3` inlines the runtime helpers (`omg_eq`,
-     `omg_index`, `omg_dict_find` etc.) which compound in `step_inner`'s
-     hot path; the transpiler emits a single TU per binary so `-flto`
-     adds no value here.
-3. After this finishes, you can re-run `bootstrap/build.sh` and it
-   picks up `bootstrap/bin/omgc` + `bootstrap/bin/omgcc` instead of the
-   Rust runtime — the toolchain rebuilds itself. cargo and the Rust
-   runtime are no longer required.
+     `omg_index`, `omg_dict_find` etc.) which compound in the VM's hot
+     path; the output is a single translation unit, so `-flto` adds no
+     value here.
+
+   The `omg` in the first command is `bootstrap/bin/omg` itself if it
+   runs here. If not, it is the Rust runtime running the driver from
+   source: `runtime/target/release/omg --rust bootstrap/src/omg.omg`.
+3. From then on `bootstrap/build.sh` is a self-rebuild: the toolchain
+   compiles itself, and cargo and the Rust runtime are no longer
+   required. Rebuilding twice gives the same bytes both times.
+
+After changing anything in this directory, rebuild and commit
+`bootstrap/bin/` (and `web/` after `bootstrap/build-web.sh`): both are
+checked in, and CI fails when they are stale
+([`bootstrap/check-bin.sh`](../check-bin.sh)).

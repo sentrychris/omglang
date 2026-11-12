@@ -320,14 +320,19 @@ remain callable later.
 The Rust runtime is one of two execution paths. There's also a
 **native-compilation path** that turns OMG source into standalone ELF
 binaries with no Rust runtime needed: `bootstrap/src/native-c.omg`
-transpiles bytecode to C, which `cc -O2` compiles to a small native
-binary. Both paths share this runtime's compiler and bytecode format —
-they differ only in the backend that executes the bytecode. See
-[`docs/native/`](../docs/native/) for the full guide.
+transpiles bytecode to C, which `cc -O3` compiles to a small native
+binary. That path lives in a second `omg`, `bootstrap/bin/omg`, which
+is the OMG-written toolchain compiled by itself (`omg --build`,
+`omg --emit-c`, `omg --emit-js`). Both paths share the same compiler
+and bytecode format — they differ only in the backend that executes
+the bytecode. See [`docs/toolchain.md`](../docs/toolchain.md) for which
+part does what, and [`docs/native/`](../docs/native/) for the full
+guide.
 
 ## Links
 
 * [Top-level README](../README.md)
+* [What each part is for](../docs/toolchain.md)
 * [Native compilation guide](../docs/native/)
 * [Compilation pipeline](../docs/compilation-pipeline.md)
 * [OMG-in-OMG tools](../tools/README.md)

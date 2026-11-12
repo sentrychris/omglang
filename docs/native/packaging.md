@@ -31,8 +31,8 @@ cargo build --release --manifest-path runtime/Cargo.toml
 bootstrap/build.sh
 ```
 
-After that, `bootstrap/bin/` contains the four native ELFs (omg, omgc,
-omgcc, omgjs) plus the inlined runtime headers (omg_rt.h, omg_rt.js).
+After that, `bootstrap/bin/` contains the native `omg` plus the two
+runtime files it pastes into generated code (omg_rt.h, omg_rt.js).
 You can package them at any time without touching Rust again.
 
 ## Running it
@@ -76,8 +76,9 @@ prerequisite step becomes `./build.sh`.
 
 [3] **build.sh** is generated from a template inside `package.sh`. It's
 the self-rebuild path of `bootstrap/build.sh` with the Rust bootstrap
-branch removed: the dist always has `bin/omgc` + `bin/omgcc`
-pre-built, so it never needs the Rust runtime to rebuild itself.
+branch removed: the dist always has `bin/omg` pre-built, and `omg`
+compiles its own source (`omg --emit-c src/omg.omg`, then `cc`), so it
+never needs the Rust runtime to rebuild itself.
 
 [4] **README.md** is also generated from a template. It's the
 native-edition README pointing at the parent repo for the full

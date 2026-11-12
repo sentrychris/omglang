@@ -144,9 +144,12 @@ If you took the AOT path instead, `native-c.omg` reads the same bytecode
 and emits C. You can see the output:
 
 ```sh
-bootstrap/bin/omgcc /tmp/trace.omgb /tmp/trace.c
+bootstrap/bin/omg --emit-c /tmp/trace.omgb /tmp/trace.c
 head -200 /tmp/trace.c
 ```
+
+(`--emit-c` takes the `.omg` source directly too. `--emit-js` is the
+same thing through the JavaScript back end.)
 
 You'll see `omg_rt.h` inlined at the top (~1700 lines), then runtime-injected
 globals (`args`, `module_file`, `current_dir`), then your program — one
@@ -232,8 +235,13 @@ that any OMG runtime can execute, no source required.
 | Parser         | `runtime/src/parser.rs`         | second half of `bootstrap/src/compiler.omg` |
 | Compiler       | `runtime/src/compiler.rs`       | rest of `bootstrap/src/compiler.omg`  |
 | Bytecode VM    | `runtime/src/vm.rs` + `vm/ops_*.rs` | `bootstrap/src/vm.omg`            |
+| Bytecode reader for the back ends | (none)           | `bootstrap/src/bytecode.omg`          |
 | Bytecode → C   | (none)                          | `bootstrap/src/native-c.omg`          |
+| Bytecode → JS  | (none)                          | `bootstrap/src/native-js.omg`         |
+| Scope analysis shared by both | (none)           | `bootstrap/src/backend.omg`           |
 | C runtime      | (none)                          | `bootstrap/src/omg_rt.h`              |
+| JS runtime     | (none)                          | `bootstrap/src/omg_rt.js`             |
+| The `omg` command | `runtime/src/main.rs`        | `bootstrap/src/omg.omg`               |
 
 The Rust and OMG implementations of stages 1-4 are kept in lockstep — see
 [05-extending.md](05-extending.md).

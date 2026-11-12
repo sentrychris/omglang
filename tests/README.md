@@ -28,10 +28,10 @@ prerequisites aren't built.
 | `tests/run.sh`         | Top-level runner; sources each suite in turn         |
 | `tests/lib.sh`         | Shared assertions (`assert_eq`, `assert_stdout`, …)  |
 | `tests/builtins.sh`    | New process & I/O builtins: `subprocess`, `exit`, `getpid`, `stdin_readline`, `print` |
-| `tests/driver.sh`      | The five `omg` modes (run `.omg` / run `.omgb` / `--compile` / `--build` / `--help`) plus the standalone tools (`omgc`, `omgcc`) |
+| `tests/driver.sh`      | Every `omg` mode: run `.omg` / run `.omgb` / `--compile` / `--build` / `--emit-c` / `--emit-js` / `--disasm` / `--help` |
 | `tests/repl.sh`        | REPL behaviour: state persistence, multi-line input, error recovery, exit/quit/EOF, closures |
-| `tests/parity.sh`      | Triple-meta fixed-point, byte-identical bytecode (Rust frontend vs `omgc`), AOT/native-interpreted corpus parity, self-rebuild |
-| `tests/conformance.sh` | The conformance corpus on the native backends (native interpreter, AOT, `omgjs`), plus native-only stack-limit checks |
+| `tests/parity.sh`      | Triple-meta fixed-point, byte-identical bytecode (Rust frontend vs native `omg`), AOT/native-interpreted corpus parity, self-rebuild (which must reproduce the same binary) |
+| `tests/conformance.sh` | The conformance corpus on the native backends (native interpreter, AOT, `omg --emit-js`), plus native-only stack-limit checks |
 | `tests/conformance/`   | The corpus itself: `NAME.omg` must print `NAME.expected`; `fail/NAME.omg` must die with the error kind on its `# expect:` line. `tests/smoke.sh` runs it on the Rust VM (both frontends), the OMG-written VM and the JS transpiler |
 | `tests/regression.sh`  | Specific bugs we've fixed: control-flow inside `try`, float-bits decoding in `compile_source`, `args[0]` semantics, doubled `RuntimeError:` prefix, `;;;omg` header is optional, stdout/stderr ordering |
 

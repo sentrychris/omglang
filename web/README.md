@@ -20,9 +20,10 @@ omg-web.js  (compiler.omg + vm.omg + driver, all transpiled to JS)
 emit output → page <pre>
 ```
 
-The bundle is built by `bootstrap/src/native-js.omg` from
+The bundle is built by `bootstrap/build-web.sh`, which puts
 `bootstrap/src/omg-web.omg` (a stripped-down driver that takes the
-user source from `args[1]` instead of reading a file). Every Run
+user source from `args[1]` instead of reading a file) through the JS
+back end: `omg --compile`, then `omg --emit-js`. Every Run
 click re-evaluates the bundle so OMG-side globals start fresh.
 
 ## Running locally
@@ -46,7 +47,7 @@ web/
                         populate their "Examples" dropdown from the
                         manifest and lazy-fetch the .omg on selection;
                         the .js files are also there so visitors can
-                        inspect what native-js.omg's output looks like
+                        inspect what `omg --emit-js` output looks like
 ```
 
 ## What's not here

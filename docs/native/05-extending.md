@@ -12,14 +12,22 @@ check fails.
 
 ## The lockstep rule
 
-| Rust layer             | OMG layer               | C layer (for native)         |
+| Rust layer             | OMG layer               | C and JS layers (for native and the web) |
 | ---------------------- | ----------------------- | ---------------------------- |
 | `lexer.rs`             | first half of `compiler.omg` | (n/a — pre-bytecode)    |
 | `parser.rs`            | second half `compiler.omg`   | (n/a — pre-bytecode)    |
 | `compiler.rs`          | rest of `compiler.omg`  | (n/a — pre-bytecode)         |
-| `bytecode.rs` (opcodes) | constants in `compiler.omg` + `vm.omg` + `native-c.omg` | constants in `omg_rt.h` if user-visible |
-| `vm.rs` + `vm/ops_*.rs`| `vm.omg`                | inline emission in `native-c.omg`, helpers in `omg_rt.h` |
-| `vm/builtins.rs`       | `cc_builtins` list in `compiler.omg` | `omg_call_builtin` switch in `omg_rt.h`, `emit_builtin` in `native-c.omg` |
+| `bytecode.rs` (opcodes) | constants in `compiler.omg` + `vm.omg` + `bytecode.omg` | constants in `omg_rt.h` if user-visible |
+| `vm.rs` + `vm/ops_*.rs`| `vm.omg`                | inline emission in `native-c.omg` and `native-js.omg`, helpers in `omg_rt.h` and `omg_rt.js` |
+| `vm/builtins.rs`       | `cc_builtins` list in `compiler.omg` | `omg_call_builtin` switch in `omg_rt.h`, `emit_builtin` in `native-c.omg` and `native-js.omg`, the function itself in `omg_rt.h` and `omg_rt.js` |
+
+Two things are *not* duplicated and need changing in one place only:
+how names resolve in generated code (`backend.omg`, shared by both
+back ends) and how a `.omgb` is read back for them (`bytecode.omg`).
+
+`cargo test` compares the opcode tables and the format version in the
+three OMG files with `bytecode.rs`, so a missed or mistyped constant
+fails there before it can produce bad bytecode.
 
 After any change, run:
 
@@ -102,6 +110,11 @@ Add a case to `emit_builtin` in [bootstrap/src/native-c.omg](../../bootstrap/src
 if name == "square" and argc == 1 { return emit_builtin1("omg_builtin_square") }
 ```
 
+The JS back end needs the same two things, or the builtin will be
+missing in the playground and from `omg --emit-js`: a function in
+[bootstrap/src/omg_rt.js](../../bootstrap/src/omg_rt.js) and a case in
+`emit_builtin` in [bootstrap/src/native-js.omg](../../bootstrap/src/native-js.omg).
+
 ### Step F — Rebuild and verify
 
 ```sh
@@ -175,9 +188,11 @@ in [compiler.rs](../../runtime/src/compiler.rs). If it's only used by
 
 In each of these files, add `alloc OP_DUP := 56`:
 
-- [bootstrap/src/compiler.omg](../../bootstrap/src/compiler.omg)
-- [bootstrap/src/vm.omg](../../bootstrap/src/vm.omg)
-- [bootstrap/src/native-c.omg](../../bootstrap/src/native-c.omg)
+- [bootstrap/src/compiler.omg](../../bootstrap/src/compiler.omg) (it writes the opcode)
+- [bootstrap/src/vm.omg](../../bootstrap/src/vm.omg) (it dispatches on it)
+- [bootstrap/src/bytecode.omg](../../bootstrap/src/bytecode.omg) (it reads it back for the C and JS back ends)
+
+`cargo test` fails until all three match `bytecode.rs`.
 
 ### Step E — OMG VM dispatch
 
@@ -211,6 +226,14 @@ if op == OP_DUP { return tagged0(OP_DUP, cursor) }
 (Plus the matching encoder in [compiler.omg](../../bootstrap/src/compiler.omg)
 if the OMG compiler emits `Dup`.)
 
+The back ends read bytecode through a second decoder, `decode_one` in
+[bytecode.omg](../../bootstrap/src/bytecode.omg), which keeps opcode
+names as strings. Add the opcode there as well:
+
+```omg
+if op == OP_DUP { return tagged0("DUP", cursor) }
+```
+
 ### Step G — Native-c emit handler
 
 In [native-c.omg](../../bootstrap/src/native-c.omg)'s `emit_c_for_instr`:
@@ -223,6 +246,9 @@ if op == "DUP" {
 
 Note the `omg_inc` — duplicating a refcounted value bumps the count so both
 slots own a reference.
+
+And the same opcode in [native-js.omg](../../bootstrap/src/native-js.omg)'s
+`emit_js_for_instr`, where there is no reference counting to do.
 
 ### Step H — Rebuild and verify
 
@@ -306,8 +332,9 @@ fixed-point check is `--verify-omg-vm` — it runs `compiler.omg` *on*
 `bootstrap/src/compiler.omg` has `BC_VERSION := 512` (`0x000200` —
 `(MAJOR<<16)|(MINOR<<8)|PATCH`), matching `BC_VERSION` in
 `runtime/src/bytecode.rs` and the same constant in
-`bootstrap/src/{vm,native-c,native-js}.omg`. If you change the
-bytecode format incompatibly, bump this in **all five** places. Old
+`bootstrap/src/{vm,bytecode}.omg`. If you change the
+bytecode format incompatibly, bump this in **all four** places
+(`cargo test` fails if you miss one). Old
 `.omgb` files are rejected at load time with a clear "recompile your
 .omgb" SyntaxError — there's no silent breakage, but also no fallback
 to v1.
