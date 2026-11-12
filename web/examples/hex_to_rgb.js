@@ -192,6 +192,33 @@ class OmgError extends Error {
 
 function omg_panic(kind, msg) { throw new OmgError(kind, msg); }
 
+// The state of a variable nothing has been stored into yet. LOAD and
+// STORE check for it and raise UndefinedIdentError, the way the VMs do
+// when a name is missing from the environment. It is not an OMG value
+// and never reaches the operand stack.
+const OMG_UNSET = Symbol('omg_unset');
+
+// A proc entered with the wrong number of arguments. Only a call
+// through a value can get here: direct calls are checked by the compiler.
+function omg_arity_error(name, expected, got) {
+    omg_frame_pop();
+    omg_panic('TypeError', "function '" + name + "' expects " + expected + ' arguments, got ' + got);
+}
+function omg_undefined(name) { omg_panic('UndefinedIdentError', name); }
+
+// LOAD / STORE through a variable that holds a cell (a 1-element
+// array shared between a proc and the closures that captured the
+// name). The variable is OMG_UNSET until its `alloc` has run.
+function omg_cell_load(cell, name) {
+    if (cell === OMG_UNSET || cell === undefined) omg_undefined(name);
+    return cell[0];
+}
+
+function omg_cell_store(cell, name, v) {
+    if (cell === OMG_UNSET || cell === undefined) omg_undefined(name);
+    cell[0] = v;
+}
+
 // === to_string + emit ======================================================
 
 // Mirrors omg_rt.h's omg_value_to_cstr / omg_print_value. Used by
@@ -431,7 +458,8 @@ function omg_index(base, idx) {
         if (!base.has(key)) omg_panic('KeyError', "Key '" + key + "' not found");
         return base.get(key);
     }
-    omg_panic('TypeError', 'cannot index value');
+    // Same wording as the Rust VM.
+    omg_panic('TypeError', omg_to_string(base) + ' is not indexable');
 }
 
 function omg_index_set(base, idx, val) {
@@ -663,8 +691,11 @@ function omg_read_file(path) {
     _need_fs('read_file');
     try {
         return _omg_fs.readFileSync(path, 'utf8');
-    } catch (_e) {
-        return false;
+    } catch (e) {
+        // A missing or unreadable file raises, as it does on the Rust VM
+        // and in the C runtime; this used to return `false`.
+        throw new OmgError('ModuleImportError',
+            "failed to read '" + path + "': " + ((e && e.code) || 'error'));
     }
 }
 
@@ -1040,17 +1071,18 @@ omg_src_files = [
 ];
 omg_current_file_idx = 0;
 
-let v_HEXCHARS;
-let v_hex_char_to_int;
-let v_hex_to_byte;
-let v_hex_to_rgb;
-let v_nibble_to_hex;
-let v_byte_to_hex;
-let v_rgb_to_hex;
+let v_HEXCHARS = OMG_UNSET;
+let v_hex_char_to_int = OMG_UNSET;
+let v_hex_to_byte = OMG_UNSET;
+let v_hex_to_rgb = OMG_UNSET;
+let v_nibble_to_hex = OMG_UNSET;
+let v_byte_to_hex = OMG_UNSET;
+let v_rgb_to_hex = OMG_UNSET;
 
 function omg_p0(_captured, v_n) {
-    let v_hi;
-    let v_lo;
+    if (arguments.length !== 2) omg_arity_error("byte_to_hex", 1, arguments.length - 1);
+    let v_hi = OMG_UNSET;
+    let v_lo = OMG_UNSET;
     const _s = [];
     omg_current_file_idx = 0;
     let _ip = 99;
@@ -1094,7 +1126,7 @@ function omg_p0(_captured, v_n) {
             // fall through to 107
             case 107: {
                 omg_current_line = 42;
-    _s.push(v_hi);
+    if (v_hi === OMG_UNSET) omg_undefined("hi"); _s.push(v_hi);
             }
             // fall through to 108
             case 108: {
@@ -1102,7 +1134,7 @@ function omg_p0(_captured, v_n) {
             }
             // fall through to 109
             case 109: {
-    _s.push(v_lo);
+    if (v_lo === OMG_UNSET) omg_undefined("lo"); _s.push(v_lo);
             }
             // fall through to 110
             case 110: {
@@ -1129,6 +1161,7 @@ function omg_p0(_captured, v_n) {
             }
             _ip += 1;
         } catch (_e) {
+            if (_e instanceof RangeError) { _e = new OmgError('RuntimeError', 'maximum recursion depth exceeded'); }
             if (_e instanceof OmgError && _eh.length > 0) {
                 const _entry = _eh.pop();
                 _ip = _entry[0];
@@ -1141,7 +1174,8 @@ function omg_p0(_captured, v_n) {
 }
 
 function omg_p1(_captured, v_ch) {
-    let v_i;
+    if (arguments.length !== 2) omg_arity_error("hex_char_to_int", 1, arguments.length - 1);
+    let v_i = OMG_UNSET;
     const _s = [];
     omg_current_file_idx = 0;
     let _ip = 21;
@@ -1160,7 +1194,7 @@ function omg_p1(_captured, v_ch) {
             // fall through to 23
             case 23: {
                 omg_current_line = 9;
-    _s.push(v_i);
+    if (v_i === OMG_UNSET) omg_undefined("i"); _s.push(v_i);
             }
             // fall through to 24
             case 24: {
@@ -1177,11 +1211,11 @@ function omg_p1(_captured, v_ch) {
             // fall through to 27
             case 27: {
                 omg_current_line = 10;
-    _s.push(v_HEXCHARS);
+    if (v_HEXCHARS === OMG_UNSET) omg_undefined("HEXCHARS"); _s.push(v_HEXCHARS);
             }
             // fall through to 28
             case 28: {
-    _s.push(v_i);
+    if (v_i === OMG_UNSET) omg_undefined("i"); _s.push(v_i);
             }
             // fall through to 29
             case 29: {
@@ -1202,7 +1236,7 @@ function omg_p1(_captured, v_ch) {
             // fall through to 33
             case 33: {
                 omg_current_line = 11;
-    _s.push(v_i);
+    if (v_i === OMG_UNSET) omg_undefined("i"); _s.push(v_i);
             }
             // fall through to 34
             case 34: {
@@ -1215,7 +1249,7 @@ function omg_p1(_captured, v_ch) {
             // fall through to 36
             case 36: {
                 omg_current_line = 13;
-    _s.push(v_i);
+    if (v_i === OMG_UNSET) omg_undefined("i"); _s.push(v_i);
             }
             // fall through to 37
             case 37: {
@@ -1227,7 +1261,7 @@ function omg_p1(_captured, v_ch) {
             }
             // fall through to 39
             case 39: {
-    v_i = _s.pop();
+    if (v_i === OMG_UNSET) omg_undefined("i"); v_i = _s.pop();
             }
             // fall through to 40
             case 40: {
@@ -1255,6 +1289,7 @@ function omg_p1(_captured, v_ch) {
             }
             _ip += 1;
         } catch (_e) {
+            if (_e instanceof RangeError) { _e = new OmgError('RuntimeError', 'maximum recursion depth exceeded'); }
             if (_e instanceof OmgError && _eh.length > 0) {
                 const _entry = _eh.pop();
                 _ip = _entry[0];
@@ -1267,8 +1302,9 @@ function omg_p1(_captured, v_ch) {
 }
 
 function omg_p2(_captured, v_pair) {
-    let v_high;
-    let v_low;
+    if (arguments.length !== 2) omg_arity_error("hex_to_byte", 1, arguments.length - 1);
+    let v_high = OMG_UNSET;
+    let v_low = OMG_UNSET;
     const _s = [];
     omg_current_file_idx = 0;
     let _ip = 45;
@@ -1320,7 +1356,7 @@ function omg_p2(_captured, v_pair) {
             // fall through to 55
             case 55: {
                 omg_current_line = 22;
-    _s.push(v_high);
+    if (v_high === OMG_UNSET) omg_undefined("high"); _s.push(v_high);
             }
             // fall through to 56
             case 56: {
@@ -1332,7 +1368,7 @@ function omg_p2(_captured, v_pair) {
             }
             // fall through to 58
             case 58: {
-    _s.push(v_low);
+    if (v_low === OMG_UNSET) omg_undefined("low"); _s.push(v_low);
             }
             // fall through to 59
             case 59: {
@@ -1355,6 +1391,7 @@ function omg_p2(_captured, v_pair) {
             }
             _ip += 1;
         } catch (_e) {
+            if (_e instanceof RangeError) { _e = new OmgError('RuntimeError', 'maximum recursion depth exceeded'); }
             if (_e instanceof OmgError && _eh.length > 0) {
                 const _entry = _eh.pop();
                 _ip = _entry[0];
@@ -1367,9 +1404,10 @@ function omg_p2(_captured, v_pair) {
 }
 
 function omg_p3(_captured, v_hexstr) {
-    let v_r;
-    let v_g;
-    let v_b;
+    if (arguments.length !== 2) omg_arity_error("hex_to_rgb", 1, arguments.length - 1);
+    let v_r = OMG_UNSET;
+    let v_g = OMG_UNSET;
+    let v_b = OMG_UNSET;
     const _s = [];
     omg_current_file_idx = 0;
     let _ip = 63;
@@ -1454,7 +1492,7 @@ function omg_p3(_captured, v_hexstr) {
             // fall through to 81
             case 81: {
                 omg_current_line = 30;
-    _s.push(v_r);
+    if (v_r === OMG_UNSET) omg_undefined("r"); _s.push(v_r);
             }
             // fall through to 82
             case 82: {
@@ -1466,7 +1504,7 @@ function omg_p3(_captured, v_hexstr) {
             }
             // fall through to 84
             case 84: {
-    _s.push(v_g);
+    if (v_g === OMG_UNSET) omg_undefined("g"); _s.push(v_g);
             }
             // fall through to 85
             case 85: {
@@ -1482,7 +1520,7 @@ function omg_p3(_captured, v_hexstr) {
             }
             // fall through to 88
             case 88: {
-    _s.push(v_b);
+    if (v_b === OMG_UNSET) omg_undefined("b"); _s.push(v_b);
             }
             // fall through to 89
             case 89: {
@@ -1505,6 +1543,7 @@ function omg_p3(_captured, v_hexstr) {
             }
             _ip += 1;
         } catch (_e) {
+            if (_e instanceof RangeError) { _e = new OmgError('RuntimeError', 'maximum recursion depth exceeded'); }
             if (_e instanceof OmgError && _eh.length > 0) {
                 const _entry = _eh.pop();
                 _ip = _entry[0];
@@ -1517,6 +1556,7 @@ function omg_p3(_captured, v_hexstr) {
 }
 
 function omg_p4(_captured, v_n) {
+    if (arguments.length !== 2) omg_arity_error("nibble_to_hex", 1, arguments.length - 1);
     const _s = [];
     omg_current_file_idx = 0;
     let _ip = 93;
@@ -1526,7 +1566,7 @@ function omg_p4(_captured, v_n) {
             switch (_ip) {
             case 93: {
                 omg_current_line = 35;
-    _s.push(v_HEXCHARS);
+    if (v_HEXCHARS === OMG_UNSET) omg_undefined("HEXCHARS"); _s.push(v_HEXCHARS);
             }
             // fall through to 94
             case 94: {
@@ -1553,6 +1593,7 @@ function omg_p4(_captured, v_n) {
             }
             _ip += 1;
         } catch (_e) {
+            if (_e instanceof RangeError) { _e = new OmgError('RuntimeError', 'maximum recursion depth exceeded'); }
             if (_e instanceof OmgError && _eh.length > 0) {
                 const _entry = _eh.pop();
                 _ip = _entry[0];
@@ -1565,6 +1606,7 @@ function omg_p4(_captured, v_n) {
 }
 
 function omg_p5(_captured, v_r, v_g, v_b) {
+    if (arguments.length !== 4) omg_arity_error("rgb_to_hex", 3, arguments.length - 1);
     const _s = [];
     omg_current_file_idx = 0;
     let _ip = 115;
@@ -1621,6 +1663,7 @@ function omg_p5(_captured, v_r, v_g, v_b) {
             }
             _ip += 1;
         } catch (_e) {
+            if (_e instanceof RangeError) { _e = new OmgError('RuntimeError', 'maximum recursion depth exceeded'); }
             if (_e instanceof OmgError && _eh.length > 0) {
                 const _entry = _eh.pop();
                 _ip = _entry[0];
@@ -1762,6 +1805,7 @@ try {
             }
             _ip += 1;
         } catch (_e) {
+            if (_e instanceof RangeError) { _e = new OmgError('RuntimeError', 'maximum recursion depth exceeded'); }
             if (_e instanceof OmgError && _eh.length > 0) {
                 const _entry = _eh.pop();
                 _ip = _entry[0];

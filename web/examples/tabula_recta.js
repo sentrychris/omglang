@@ -192,6 +192,33 @@ class OmgError extends Error {
 
 function omg_panic(kind, msg) { throw new OmgError(kind, msg); }
 
+// The state of a variable nothing has been stored into yet. LOAD and
+// STORE check for it and raise UndefinedIdentError, the way the VMs do
+// when a name is missing from the environment. It is not an OMG value
+// and never reaches the operand stack.
+const OMG_UNSET = Symbol('omg_unset');
+
+// A proc entered with the wrong number of arguments. Only a call
+// through a value can get here: direct calls are checked by the compiler.
+function omg_arity_error(name, expected, got) {
+    omg_frame_pop();
+    omg_panic('TypeError', "function '" + name + "' expects " + expected + ' arguments, got ' + got);
+}
+function omg_undefined(name) { omg_panic('UndefinedIdentError', name); }
+
+// LOAD / STORE through a variable that holds a cell (a 1-element
+// array shared between a proc and the closures that captured the
+// name). The variable is OMG_UNSET until its `alloc` has run.
+function omg_cell_load(cell, name) {
+    if (cell === OMG_UNSET || cell === undefined) omg_undefined(name);
+    return cell[0];
+}
+
+function omg_cell_store(cell, name, v) {
+    if (cell === OMG_UNSET || cell === undefined) omg_undefined(name);
+    cell[0] = v;
+}
+
 // === to_string + emit ======================================================
 
 // Mirrors omg_rt.h's omg_value_to_cstr / omg_print_value. Used by
@@ -431,7 +458,8 @@ function omg_index(base, idx) {
         if (!base.has(key)) omg_panic('KeyError', "Key '" + key + "' not found");
         return base.get(key);
     }
-    omg_panic('TypeError', 'cannot index value');
+    // Same wording as the Rust VM.
+    omg_panic('TypeError', omg_to_string(base) + ' is not indexable');
 }
 
 function omg_index_set(base, idx, val) {
@@ -663,8 +691,11 @@ function omg_read_file(path) {
     _need_fs('read_file');
     try {
         return _omg_fs.readFileSync(path, 'utf8');
-    } catch (_e) {
-        return false;
+    } catch (e) {
+        // A missing or unreadable file raises, as it does on the Rust VM
+        // and in the C runtime; this used to return `false`.
+        throw new OmgError('ModuleImportError',
+            "failed to read '" + path + "': " + ((e && e.code) || 'error'));
     }
 }
 
@@ -1040,15 +1071,16 @@ omg_src_files = [
 ];
 omg_current_file_idx = 0;
 
-let v_alphabet;
-let v_shift;
-let v_tabula_recta;
-let v_table;
-let v_i;
+let v_alphabet = OMG_UNSET;
+let v_shift = OMG_UNSET;
+let v_tabula_recta = OMG_UNSET;
+let v_table = OMG_UNSET;
+let v_i = OMG_UNSET;
 
 function omg_p0(_captured) {
-    let v_i;
-    let v_result;
+    if (arguments.length !== 1) omg_arity_error("alphabet", 0, arguments.length - 1);
+    let v_i = OMG_UNSET;
+    let v_result = OMG_UNSET;
     const _s = [];
     omg_current_file_idx = 0;
     let _ip = 22;
@@ -1076,7 +1108,7 @@ function omg_p0(_captured) {
             // fall through to 26
             case 26: {
                 omg_current_line = 7;
-    _s.push(v_i);
+    if (v_i === OMG_UNSET) omg_undefined("i"); _s.push(v_i);
             }
             // fall through to 27
             case 27: {
@@ -1093,7 +1125,7 @@ function omg_p0(_captured) {
             // fall through to 30
             case 30: {
                 omg_current_line = 8;
-    _s.push(v_result);
+    if (v_result === OMG_UNSET) omg_undefined("result"); _s.push(v_result);
             }
             // fall through to 31
             case 31: {
@@ -1101,7 +1133,7 @@ function omg_p0(_captured) {
             }
             // fall through to 32
             case 32: {
-    _s.push(v_i);
+    if (v_i === OMG_UNSET) omg_undefined("i"); _s.push(v_i);
             }
             // fall through to 33
             case 33: {
@@ -1121,12 +1153,12 @@ function omg_p0(_captured) {
             }
             // fall through to 37
             case 37: {
-    v_result = _s.pop();
+    if (v_result === OMG_UNSET) omg_undefined("result"); v_result = _s.pop();
             }
             // fall through to 38
             case 38: {
                 omg_current_line = 9;
-    _s.push(v_i);
+    if (v_i === OMG_UNSET) omg_undefined("i"); _s.push(v_i);
             }
             // fall through to 39
             case 39: {
@@ -1138,7 +1170,7 @@ function omg_p0(_captured) {
             }
             // fall through to 41
             case 41: {
-    v_i = _s.pop();
+    if (v_i === OMG_UNSET) omg_undefined("i"); v_i = _s.pop();
             }
             // fall through to 42
             case 42: {
@@ -1147,7 +1179,7 @@ function omg_p0(_captured) {
             // fall through to 43
             case 43: {
                 omg_current_line = 11;
-    _s.push(v_result);
+    if (v_result === OMG_UNSET) omg_undefined("result"); _s.push(v_result);
             }
             // fall through to 44
             case 44: {
@@ -1166,6 +1198,7 @@ function omg_p0(_captured) {
             }
             _ip += 1;
         } catch (_e) {
+            if (_e instanceof RangeError) { _e = new OmgError('RuntimeError', 'maximum recursion depth exceeded'); }
             if (_e instanceof OmgError && _eh.length > 0) {
                 const _entry = _eh.pop();
                 _ip = _entry[0];
@@ -1178,10 +1211,11 @@ function omg_p0(_captured) {
 }
 
 function omg_p1(_captured, v_a_list, v_n) {
-    let v_i;
-    let v_result;
-    let v_len;
-    let v_shifted;
+    if (arguments.length !== 3) omg_arity_error("shift", 2, arguments.length - 1);
+    let v_i = OMG_UNSET;
+    let v_result = OMG_UNSET;
+    let v_len = OMG_UNSET;
+    let v_shifted = OMG_UNSET;
     const _s = [];
     omg_current_file_idx = 0;
     let _ip = 47;
@@ -1231,11 +1265,11 @@ function omg_p1(_captured, v_a_list, v_n) {
             // fall through to 56
             case 56: {
                 omg_current_line = 20;
-    _s.push(v_i);
+    if (v_i === OMG_UNSET) omg_undefined("i"); _s.push(v_i);
             }
             // fall through to 57
             case 57: {
-    _s.push(v_len);
+    if (v_len === OMG_UNSET) omg_undefined("len"); _s.push(v_len);
             }
             // fall through to 58
             case 58: {
@@ -1252,7 +1286,7 @@ function omg_p1(_captured, v_a_list, v_n) {
             }
             // fall through to 61
             case 61: {
-    _s.push(v_i);
+    if (v_i === OMG_UNSET) omg_undefined("i"); _s.push(v_i);
             }
             // fall through to 62
             case 62: {
@@ -1264,7 +1298,7 @@ function omg_p1(_captured, v_a_list, v_n) {
             }
             // fall through to 64
             case 64: {
-    _s.push(v_len);
+    if (v_len === OMG_UNSET) omg_undefined("len"); _s.push(v_len);
             }
             // fall through to 65
             case 65: {
@@ -1276,16 +1310,16 @@ function omg_p1(_captured, v_a_list, v_n) {
             }
             // fall through to 67
             case 67: {
-    v_shifted = _s.pop();
+    if (v_shifted === OMG_UNSET) omg_undefined("shifted"); v_shifted = _s.pop();
             }
             // fall through to 68
             case 68: {
                 omg_current_line = 22;
-    _s.push(v_result);
+    if (v_result === OMG_UNSET) omg_undefined("result"); _s.push(v_result);
             }
             // fall through to 69
             case 69: {
-    _s.push(v_shifted);
+    if (v_shifted === OMG_UNSET) omg_undefined("shifted"); _s.push(v_shifted);
             }
             // fall through to 70
             case 70: {
@@ -1297,12 +1331,12 @@ function omg_p1(_captured, v_a_list, v_n) {
             }
             // fall through to 72
             case 72: {
-    v_result = _s.pop();
+    if (v_result === OMG_UNSET) omg_undefined("result"); v_result = _s.pop();
             }
             // fall through to 73
             case 73: {
                 omg_current_line = 23;
-    _s.push(v_i);
+    if (v_i === OMG_UNSET) omg_undefined("i"); _s.push(v_i);
             }
             // fall through to 74
             case 74: {
@@ -1314,7 +1348,7 @@ function omg_p1(_captured, v_a_list, v_n) {
             }
             // fall through to 76
             case 76: {
-    v_i = _s.pop();
+    if (v_i === OMG_UNSET) omg_undefined("i"); v_i = _s.pop();
             }
             // fall through to 77
             case 77: {
@@ -1323,7 +1357,7 @@ function omg_p1(_captured, v_a_list, v_n) {
             // fall through to 78
             case 78: {
                 omg_current_line = 25;
-    _s.push(v_result);
+    if (v_result === OMG_UNSET) omg_undefined("result"); _s.push(v_result);
             }
             // fall through to 79
             case 79: {
@@ -1342,6 +1376,7 @@ function omg_p1(_captured, v_a_list, v_n) {
             }
             _ip += 1;
         } catch (_e) {
+            if (_e instanceof RangeError) { _e = new OmgError('RuntimeError', 'maximum recursion depth exceeded'); }
             if (_e instanceof OmgError && _eh.length > 0) {
                 const _entry = _eh.pop();
                 _ip = _entry[0];
@@ -1354,9 +1389,10 @@ function omg_p1(_captured, v_a_list, v_n) {
 }
 
 function omg_p2(_captured) {
-    let v_i;
-    let v_base;
-    let v_result;
+    if (arguments.length !== 1) omg_arity_error("tabula_recta", 0, arguments.length - 1);
+    let v_i = OMG_UNSET;
+    let v_base = OMG_UNSET;
+    let v_result = OMG_UNSET;
     const _s = [];
     omg_current_file_idx = 0;
     let _ip = 82;
@@ -1393,7 +1429,7 @@ function omg_p2(_captured) {
             // fall through to 88
             case 88: {
                 omg_current_line = 33;
-    _s.push(v_i);
+    if (v_i === OMG_UNSET) omg_undefined("i"); _s.push(v_i);
             }
             // fall through to 89
             case 89: {
@@ -1410,15 +1446,15 @@ function omg_p2(_captured) {
             // fall through to 92
             case 92: {
                 omg_current_line = 34;
-    _s.push(v_result);
+    if (v_result === OMG_UNSET) omg_undefined("result"); _s.push(v_result);
             }
             // fall through to 93
             case 93: {
-    _s.push(v_base);
+    if (v_base === OMG_UNSET) omg_undefined("base"); _s.push(v_base);
             }
             // fall through to 94
             case 94: {
-    _s.push(v_i);
+    if (v_i === OMG_UNSET) omg_undefined("i"); _s.push(v_i);
             }
             // fall through to 95
             case 95: {
@@ -1434,12 +1470,12 @@ function omg_p2(_captured) {
             }
             // fall through to 98
             case 98: {
-    v_result = _s.pop();
+    if (v_result === OMG_UNSET) omg_undefined("result"); v_result = _s.pop();
             }
             // fall through to 99
             case 99: {
                 omg_current_line = 35;
-    _s.push(v_i);
+    if (v_i === OMG_UNSET) omg_undefined("i"); _s.push(v_i);
             }
             // fall through to 100
             case 100: {
@@ -1451,7 +1487,7 @@ function omg_p2(_captured) {
             }
             // fall through to 102
             case 102: {
-    v_i = _s.pop();
+    if (v_i === OMG_UNSET) omg_undefined("i"); v_i = _s.pop();
             }
             // fall through to 103
             case 103: {
@@ -1460,7 +1496,7 @@ function omg_p2(_captured) {
             // fall through to 104
             case 104: {
                 omg_current_line = 37;
-    _s.push(v_result);
+    if (v_result === OMG_UNSET) omg_undefined("result"); _s.push(v_result);
             }
             // fall through to 105
             case 105: {
@@ -1479,6 +1515,7 @@ function omg_p2(_captured) {
             }
             _ip += 1;
         } catch (_e) {
+            if (_e instanceof RangeError) { _e = new OmgError('RuntimeError', 'maximum recursion depth exceeded'); }
             if (_e instanceof OmgError && _eh.length > 0) {
                 const _entry = _eh.pop();
                 _ip = _entry[0];
@@ -1546,11 +1583,11 @@ try {
             // fall through to 7
             case 7: {
                 omg_current_line = 43;
-    _s.push(v_i);
+    if (v_i === OMG_UNSET) omg_undefined("i"); _s.push(v_i);
             }
             // fall through to 8
             case 8: {
-    _s.push(v_table);
+    if (v_table === OMG_UNSET) omg_undefined("table"); _s.push(v_table);
             }
             // fall through to 9
             case 9: {
@@ -1567,11 +1604,11 @@ try {
             // fall through to 12
             case 12: {
                 omg_current_line = 44;
-    _s.push(v_table);
+    if (v_table === OMG_UNSET) omg_undefined("table"); _s.push(v_table);
             }
             // fall through to 13
             case 13: {
-    _s.push(v_i);
+    if (v_i === OMG_UNSET) omg_undefined("i"); _s.push(v_i);
             }
             // fall through to 14
             case 14: {
@@ -1584,7 +1621,7 @@ try {
             // fall through to 16
             case 16: {
                 omg_current_line = 45;
-    _s.push(v_i);
+    if (v_i === OMG_UNSET) omg_undefined("i"); _s.push(v_i);
             }
             // fall through to 17
             case 17: {
@@ -1596,7 +1633,7 @@ try {
             }
             // fall through to 19
             case 19: {
-    v_i = _s.pop();
+    if (v_i === OMG_UNSET) omg_undefined("i"); v_i = _s.pop();
             }
             // fall through to 20
             case 20: {
@@ -1611,6 +1648,7 @@ try {
             }
             _ip += 1;
         } catch (_e) {
+            if (_e instanceof RangeError) { _e = new OmgError('RuntimeError', 'maximum recursion depth exceeded'); }
             if (_e instanceof OmgError && _eh.length > 0) {
                 const _entry = _eh.pop();
                 _ip = _entry[0];

@@ -192,6 +192,33 @@ class OmgError extends Error {
 
 function omg_panic(kind, msg) { throw new OmgError(kind, msg); }
 
+// The state of a variable nothing has been stored into yet. LOAD and
+// STORE check for it and raise UndefinedIdentError, the way the VMs do
+// when a name is missing from the environment. It is not an OMG value
+// and never reaches the operand stack.
+const OMG_UNSET = Symbol('omg_unset');
+
+// A proc entered with the wrong number of arguments. Only a call
+// through a value can get here: direct calls are checked by the compiler.
+function omg_arity_error(name, expected, got) {
+    omg_frame_pop();
+    omg_panic('TypeError', "function '" + name + "' expects " + expected + ' arguments, got ' + got);
+}
+function omg_undefined(name) { omg_panic('UndefinedIdentError', name); }
+
+// LOAD / STORE through a variable that holds a cell (a 1-element
+// array shared between a proc and the closures that captured the
+// name). The variable is OMG_UNSET until its `alloc` has run.
+function omg_cell_load(cell, name) {
+    if (cell === OMG_UNSET || cell === undefined) omg_undefined(name);
+    return cell[0];
+}
+
+function omg_cell_store(cell, name, v) {
+    if (cell === OMG_UNSET || cell === undefined) omg_undefined(name);
+    cell[0] = v;
+}
+
 // === to_string + emit ======================================================
 
 // Mirrors omg_rt.h's omg_value_to_cstr / omg_print_value. Used by
@@ -431,7 +458,8 @@ function omg_index(base, idx) {
         if (!base.has(key)) omg_panic('KeyError', "Key '" + key + "' not found");
         return base.get(key);
     }
-    omg_panic('TypeError', 'cannot index value');
+    // Same wording as the Rust VM.
+    omg_panic('TypeError', omg_to_string(base) + ' is not indexable');
 }
 
 function omg_index_set(base, idx, val) {
@@ -663,8 +691,11 @@ function omg_read_file(path) {
     _need_fs('read_file');
     try {
         return _omg_fs.readFileSync(path, 'utf8');
-    } catch (_e) {
-        return false;
+    } catch (e) {
+        // A missing or unreadable file raises, as it does on the Rust VM
+        // and in the C runtime; this used to return `false`.
+        throw new OmgError('ModuleImportError',
+            "failed to read '" + path + "': " + ((e && e.code) || 'error'));
     }
 }
 
@@ -1040,39 +1071,40 @@ omg_src_files = [
 ];
 omg_current_file_idx = 0;
 
-let v_OP_PUSH;
-let v_OP_POP;
-let v_OP_ADD;
-let v_OP_SUB;
-let v_OP_MUL;
-let v_OP_DIV;
-let v_OP_STORE;
-let v_OP_LOAD;
-let v_OP_EMIT;
-let v_OP_JMP;
-let v_OP_JNZ;
-let v_OP_HALT;
-let v_OP_DUP;
-let v_has_key;
-let v_assemble;
-let v_run;
-let v_prog_add;
-let v_prog_fact;
-let v_prog_fib;
-let v_prog_div0;
-let v_prog_badjump;
-let v_prog_underflow;
-let v_test;
-let v_run_tests;
+let v_OP_PUSH = OMG_UNSET;
+let v_OP_POP = OMG_UNSET;
+let v_OP_ADD = OMG_UNSET;
+let v_OP_SUB = OMG_UNSET;
+let v_OP_MUL = OMG_UNSET;
+let v_OP_DIV = OMG_UNSET;
+let v_OP_STORE = OMG_UNSET;
+let v_OP_LOAD = OMG_UNSET;
+let v_OP_EMIT = OMG_UNSET;
+let v_OP_JMP = OMG_UNSET;
+let v_OP_JNZ = OMG_UNSET;
+let v_OP_HALT = OMG_UNSET;
+let v_OP_DUP = OMG_UNSET;
+let v_has_key = OMG_UNSET;
+let v_assemble = OMG_UNSET;
+let v_run = OMG_UNSET;
+let v_prog_add = OMG_UNSET;
+let v_prog_fact = OMG_UNSET;
+let v_prog_fib = OMG_UNSET;
+let v_prog_div0 = OMG_UNSET;
+let v_prog_badjump = OMG_UNSET;
+let v_prog_underflow = OMG_UNSET;
+let v_test = OMG_UNSET;
+let v_run_tests = OMG_UNSET;
 
 function omg_p0(_captured, v_asm) {
-    let v_labels;
-    let v_pc;
-    let v_i;
-    let v_inst;
-    let v_op;
-    let v_bytecode;
-    let v_addr;
+    if (arguments.length !== 2) omg_arity_error("assemble", 1, arguments.length - 1);
+    let v_labels = OMG_UNSET;
+    let v_pc = OMG_UNSET;
+    let v_i = OMG_UNSET;
+    let v_inst = OMG_UNSET;
+    let v_op = OMG_UNSET;
+    let v_bytecode = OMG_UNSET;
+    let v_addr = OMG_UNSET;
     const _s = [];
     omg_current_file_idx = 0;
     let _ip = 243;
@@ -1127,7 +1159,7 @@ function omg_p0(_captured, v_asm) {
             // fall through to 253
             case 253: {
                 omg_current_line = 36;
-    _s.push(v_i);
+    if (v_i === OMG_UNSET) omg_undefined("i"); _s.push(v_i);
             }
             // fall through to 254
             case 254: {
@@ -1152,7 +1184,7 @@ function omg_p0(_captured, v_asm) {
             }
             // fall through to 259
             case 259: {
-    _s.push(v_i);
+    if (v_i === OMG_UNSET) omg_undefined("i"); _s.push(v_i);
             }
             // fall through to 260
             case 260: {
@@ -1160,12 +1192,12 @@ function omg_p0(_captured, v_asm) {
             }
             // fall through to 261
             case 261: {
-    v_inst = _s.pop();
+    if (v_inst === OMG_UNSET) omg_undefined("inst"); v_inst = _s.pop();
             }
             // fall through to 262
             case 262: {
                 omg_current_line = 38;
-    _s.push(v_inst);
+    if (v_inst === OMG_UNSET) omg_undefined("inst"); _s.push(v_inst);
             }
             // fall through to 263
             case 263: {
@@ -1177,12 +1209,12 @@ function omg_p0(_captured, v_asm) {
             }
             // fall through to 265
             case 265: {
-    v_op = _s.pop();
+    if (v_op === OMG_UNSET) omg_undefined("op"); v_op = _s.pop();
             }
             // fall through to 266
             case 266: {
                 omg_current_line = 39;
-    _s.push(v_op);
+    if (v_op === OMG_UNSET) omg_undefined("op"); _s.push(v_op);
             }
             // fall through to 267
             case 267: {
@@ -1199,11 +1231,11 @@ function omg_p0(_captured, v_asm) {
             // fall through to 270
             case 270: {
                 omg_current_line = 40;
-    _s.push(v_labels);
+    if (v_labels === OMG_UNSET) omg_undefined("labels"); _s.push(v_labels);
             }
             // fall through to 271
             case 271: {
-    _s.push(v_inst);
+    if (v_inst === OMG_UNSET) omg_undefined("inst"); _s.push(v_inst);
             }
             // fall through to 272
             case 272: {
@@ -1215,7 +1247,7 @@ function omg_p0(_captured, v_asm) {
             }
             // fall through to 274
             case 274: {
-    _s.push(v_pc);
+    if (v_pc === OMG_UNSET) omg_undefined("pc"); _s.push(v_pc);
             }
             // fall through to 275
             case 275: {
@@ -1228,7 +1260,7 @@ function omg_p0(_captured, v_asm) {
             // fall through to 277
             case 277: {
                 omg_current_line = 42;
-    _s.push(v_pc);
+    if (v_pc === OMG_UNSET) omg_undefined("pc"); _s.push(v_pc);
             }
             // fall through to 278
             case 278: {
@@ -1240,12 +1272,12 @@ function omg_p0(_captured, v_asm) {
             }
             // fall through to 280
             case 280: {
-    v_pc = _s.pop();
+    if (v_pc === OMG_UNSET) omg_undefined("pc"); v_pc = _s.pop();
             }
             // fall through to 281
             case 281: {
                 omg_current_line = 44;
-    _s.push(v_i);
+    if (v_i === OMG_UNSET) omg_undefined("i"); _s.push(v_i);
             }
             // fall through to 282
             case 282: {
@@ -1257,7 +1289,7 @@ function omg_p0(_captured, v_asm) {
             }
             // fall through to 284
             case 284: {
-    v_i = _s.pop();
+    if (v_i === OMG_UNSET) omg_undefined("i"); v_i = _s.pop();
             }
             // fall through to 285
             case 285: {
@@ -1288,12 +1320,12 @@ function omg_p0(_captured, v_asm) {
             }
             // fall through to 291
             case 291: {
-    v_i = _s.pop();
+    if (v_i === OMG_UNSET) omg_undefined("i"); v_i = _s.pop();
             }
             // fall through to 292
             case 292: {
                 omg_current_line = 50;
-    _s.push(v_i);
+    if (v_i === OMG_UNSET) omg_undefined("i"); _s.push(v_i);
             }
             // fall through to 293
             case 293: {
@@ -1318,7 +1350,7 @@ function omg_p0(_captured, v_asm) {
             }
             // fall through to 298
             case 298: {
-    _s.push(v_i);
+    if (v_i === OMG_UNSET) omg_undefined("i"); _s.push(v_i);
             }
             // fall through to 299
             case 299: {
@@ -1326,12 +1358,12 @@ function omg_p0(_captured, v_asm) {
             }
             // fall through to 300
             case 300: {
-    v_inst = _s.pop();
+    if (v_inst === OMG_UNSET) omg_undefined("inst"); v_inst = _s.pop();
             }
             // fall through to 301
             case 301: {
                 omg_current_line = 52;
-    _s.push(v_inst);
+    if (v_inst === OMG_UNSET) omg_undefined("inst"); _s.push(v_inst);
             }
             // fall through to 302
             case 302: {
@@ -1343,12 +1375,12 @@ function omg_p0(_captured, v_asm) {
             }
             // fall through to 304
             case 304: {
-    v_op = _s.pop();
+    if (v_op === OMG_UNSET) omg_undefined("op"); v_op = _s.pop();
             }
             // fall through to 305
             case 305: {
                 omg_current_line = 53;
-    _s.push(v_op);
+    if (v_op === OMG_UNSET) omg_undefined("op"); _s.push(v_op);
             }
             // fall through to 306
             case 306: {
@@ -1365,15 +1397,15 @@ function omg_p0(_captured, v_asm) {
             // fall through to 309
             case 309: {
                 omg_current_line = 54;
-    _s.push(v_bytecode);
+    if (v_bytecode === OMG_UNSET) omg_undefined("bytecode"); _s.push(v_bytecode);
             }
             // fall through to 310
             case 310: {
-    _s.push(v_OP_PUSH);
+    if (v_OP_PUSH === OMG_UNSET) omg_undefined("OP_PUSH"); _s.push(v_OP_PUSH);
             }
             // fall through to 311
             case 311: {
-    _s.push(v_inst);
+    if (v_inst === OMG_UNSET) omg_undefined("inst"); _s.push(v_inst);
             }
             // fall through to 312
             case 312: {
@@ -1397,7 +1429,7 @@ function omg_p0(_captured, v_asm) {
             }
             // fall through to 317
             case 317: {
-    v_bytecode = _s.pop();
+    if (v_bytecode === OMG_UNSET) omg_undefined("bytecode"); v_bytecode = _s.pop();
             }
             // fall through to 318
             case 318: {
@@ -1406,7 +1438,7 @@ function omg_p0(_captured, v_asm) {
             // fall through to 319
             case 319: {
                 omg_current_line = 55;
-    _s.push(v_op);
+    if (v_op === OMG_UNSET) omg_undefined("op"); _s.push(v_op);
             }
             // fall through to 320
             case 320: {
@@ -1423,11 +1455,11 @@ function omg_p0(_captured, v_asm) {
             // fall through to 323
             case 323: {
                 omg_current_line = 56;
-    _s.push(v_bytecode);
+    if (v_bytecode === OMG_UNSET) omg_undefined("bytecode"); _s.push(v_bytecode);
             }
             // fall through to 324
             case 324: {
-    _s.push(v_OP_POP);
+    if (v_OP_POP === OMG_UNSET) omg_undefined("OP_POP"); _s.push(v_OP_POP);
             }
             // fall through to 325
             case 325: {
@@ -1443,7 +1475,7 @@ function omg_p0(_captured, v_asm) {
             }
             // fall through to 328
             case 328: {
-    v_bytecode = _s.pop();
+    if (v_bytecode === OMG_UNSET) omg_undefined("bytecode"); v_bytecode = _s.pop();
             }
             // fall through to 329
             case 329: {
@@ -1452,7 +1484,7 @@ function omg_p0(_captured, v_asm) {
             // fall through to 330
             case 330: {
                 omg_current_line = 57;
-    _s.push(v_op);
+    if (v_op === OMG_UNSET) omg_undefined("op"); _s.push(v_op);
             }
             // fall through to 331
             case 331: {
@@ -1469,11 +1501,11 @@ function omg_p0(_captured, v_asm) {
             // fall through to 334
             case 334: {
                 omg_current_line = 58;
-    _s.push(v_bytecode);
+    if (v_bytecode === OMG_UNSET) omg_undefined("bytecode"); _s.push(v_bytecode);
             }
             // fall through to 335
             case 335: {
-    _s.push(v_OP_ADD);
+    if (v_OP_ADD === OMG_UNSET) omg_undefined("OP_ADD"); _s.push(v_OP_ADD);
             }
             // fall through to 336
             case 336: {
@@ -1489,7 +1521,7 @@ function omg_p0(_captured, v_asm) {
             }
             // fall through to 339
             case 339: {
-    v_bytecode = _s.pop();
+    if (v_bytecode === OMG_UNSET) omg_undefined("bytecode"); v_bytecode = _s.pop();
             }
             // fall through to 340
             case 340: {
@@ -1498,7 +1530,7 @@ function omg_p0(_captured, v_asm) {
             // fall through to 341
             case 341: {
                 omg_current_line = 59;
-    _s.push(v_op);
+    if (v_op === OMG_UNSET) omg_undefined("op"); _s.push(v_op);
             }
             // fall through to 342
             case 342: {
@@ -1515,11 +1547,11 @@ function omg_p0(_captured, v_asm) {
             // fall through to 345
             case 345: {
                 omg_current_line = 60;
-    _s.push(v_bytecode);
+    if (v_bytecode === OMG_UNSET) omg_undefined("bytecode"); _s.push(v_bytecode);
             }
             // fall through to 346
             case 346: {
-    _s.push(v_OP_SUB);
+    if (v_OP_SUB === OMG_UNSET) omg_undefined("OP_SUB"); _s.push(v_OP_SUB);
             }
             // fall through to 347
             case 347: {
@@ -1535,7 +1567,7 @@ function omg_p0(_captured, v_asm) {
             }
             // fall through to 350
             case 350: {
-    v_bytecode = _s.pop();
+    if (v_bytecode === OMG_UNSET) omg_undefined("bytecode"); v_bytecode = _s.pop();
             }
             // fall through to 351
             case 351: {
@@ -1544,7 +1576,7 @@ function omg_p0(_captured, v_asm) {
             // fall through to 352
             case 352: {
                 omg_current_line = 61;
-    _s.push(v_op);
+    if (v_op === OMG_UNSET) omg_undefined("op"); _s.push(v_op);
             }
             // fall through to 353
             case 353: {
@@ -1561,11 +1593,11 @@ function omg_p0(_captured, v_asm) {
             // fall through to 356
             case 356: {
                 omg_current_line = 62;
-    _s.push(v_bytecode);
+    if (v_bytecode === OMG_UNSET) omg_undefined("bytecode"); _s.push(v_bytecode);
             }
             // fall through to 357
             case 357: {
-    _s.push(v_OP_MUL);
+    if (v_OP_MUL === OMG_UNSET) omg_undefined("OP_MUL"); _s.push(v_OP_MUL);
             }
             // fall through to 358
             case 358: {
@@ -1581,7 +1613,7 @@ function omg_p0(_captured, v_asm) {
             }
             // fall through to 361
             case 361: {
-    v_bytecode = _s.pop();
+    if (v_bytecode === OMG_UNSET) omg_undefined("bytecode"); v_bytecode = _s.pop();
             }
             // fall through to 362
             case 362: {
@@ -1590,7 +1622,7 @@ function omg_p0(_captured, v_asm) {
             // fall through to 363
             case 363: {
                 omg_current_line = 63;
-    _s.push(v_op);
+    if (v_op === OMG_UNSET) omg_undefined("op"); _s.push(v_op);
             }
             // fall through to 364
             case 364: {
@@ -1607,11 +1639,11 @@ function omg_p0(_captured, v_asm) {
             // fall through to 367
             case 367: {
                 omg_current_line = 64;
-    _s.push(v_bytecode);
+    if (v_bytecode === OMG_UNSET) omg_undefined("bytecode"); _s.push(v_bytecode);
             }
             // fall through to 368
             case 368: {
-    _s.push(v_OP_DIV);
+    if (v_OP_DIV === OMG_UNSET) omg_undefined("OP_DIV"); _s.push(v_OP_DIV);
             }
             // fall through to 369
             case 369: {
@@ -1627,7 +1659,7 @@ function omg_p0(_captured, v_asm) {
             }
             // fall through to 372
             case 372: {
-    v_bytecode = _s.pop();
+    if (v_bytecode === OMG_UNSET) omg_undefined("bytecode"); v_bytecode = _s.pop();
             }
             // fall through to 373
             case 373: {
@@ -1636,7 +1668,7 @@ function omg_p0(_captured, v_asm) {
             // fall through to 374
             case 374: {
                 omg_current_line = 65;
-    _s.push(v_op);
+    if (v_op === OMG_UNSET) omg_undefined("op"); _s.push(v_op);
             }
             // fall through to 375
             case 375: {
@@ -1653,15 +1685,15 @@ function omg_p0(_captured, v_asm) {
             // fall through to 378
             case 378: {
                 omg_current_line = 66;
-    _s.push(v_bytecode);
+    if (v_bytecode === OMG_UNSET) omg_undefined("bytecode"); _s.push(v_bytecode);
             }
             // fall through to 379
             case 379: {
-    _s.push(v_OP_STORE);
+    if (v_OP_STORE === OMG_UNSET) omg_undefined("OP_STORE"); _s.push(v_OP_STORE);
             }
             // fall through to 380
             case 380: {
-    _s.push(v_inst);
+    if (v_inst === OMG_UNSET) omg_undefined("inst"); _s.push(v_inst);
             }
             // fall through to 381
             case 381: {
@@ -1685,7 +1717,7 @@ function omg_p0(_captured, v_asm) {
             }
             // fall through to 386
             case 386: {
-    v_bytecode = _s.pop();
+    if (v_bytecode === OMG_UNSET) omg_undefined("bytecode"); v_bytecode = _s.pop();
             }
             // fall through to 387
             case 387: {
@@ -1694,7 +1726,7 @@ function omg_p0(_captured, v_asm) {
             // fall through to 388
             case 388: {
                 omg_current_line = 67;
-    _s.push(v_op);
+    if (v_op === OMG_UNSET) omg_undefined("op"); _s.push(v_op);
             }
             // fall through to 389
             case 389: {
@@ -1711,15 +1743,15 @@ function omg_p0(_captured, v_asm) {
             // fall through to 392
             case 392: {
                 omg_current_line = 68;
-    _s.push(v_bytecode);
+    if (v_bytecode === OMG_UNSET) omg_undefined("bytecode"); _s.push(v_bytecode);
             }
             // fall through to 393
             case 393: {
-    _s.push(v_OP_LOAD);
+    if (v_OP_LOAD === OMG_UNSET) omg_undefined("OP_LOAD"); _s.push(v_OP_LOAD);
             }
             // fall through to 394
             case 394: {
-    _s.push(v_inst);
+    if (v_inst === OMG_UNSET) omg_undefined("inst"); _s.push(v_inst);
             }
             // fall through to 395
             case 395: {
@@ -1743,7 +1775,7 @@ function omg_p0(_captured, v_asm) {
             }
             // fall through to 400
             case 400: {
-    v_bytecode = _s.pop();
+    if (v_bytecode === OMG_UNSET) omg_undefined("bytecode"); v_bytecode = _s.pop();
             }
             // fall through to 401
             case 401: {
@@ -1752,7 +1784,7 @@ function omg_p0(_captured, v_asm) {
             // fall through to 402
             case 402: {
                 omg_current_line = 69;
-    _s.push(v_op);
+    if (v_op === OMG_UNSET) omg_undefined("op"); _s.push(v_op);
             }
             // fall through to 403
             case 403: {
@@ -1769,11 +1801,11 @@ function omg_p0(_captured, v_asm) {
             // fall through to 406
             case 406: {
                 omg_current_line = 70;
-    _s.push(v_bytecode);
+    if (v_bytecode === OMG_UNSET) omg_undefined("bytecode"); _s.push(v_bytecode);
             }
             // fall through to 407
             case 407: {
-    _s.push(v_OP_EMIT);
+    if (v_OP_EMIT === OMG_UNSET) omg_undefined("OP_EMIT"); _s.push(v_OP_EMIT);
             }
             // fall through to 408
             case 408: {
@@ -1789,7 +1821,7 @@ function omg_p0(_captured, v_asm) {
             }
             // fall through to 411
             case 411: {
-    v_bytecode = _s.pop();
+    if (v_bytecode === OMG_UNSET) omg_undefined("bytecode"); v_bytecode = _s.pop();
             }
             // fall through to 412
             case 412: {
@@ -1798,7 +1830,7 @@ function omg_p0(_captured, v_asm) {
             // fall through to 413
             case 413: {
                 omg_current_line = 71;
-    _s.push(v_op);
+    if (v_op === OMG_UNSET) omg_undefined("op"); _s.push(v_op);
             }
             // fall through to 414
             case 414: {
@@ -1815,11 +1847,11 @@ function omg_p0(_captured, v_asm) {
             // fall through to 417
             case 417: {
                 omg_current_line = 72;
-    _s.push(v_bytecode);
+    if (v_bytecode === OMG_UNSET) omg_undefined("bytecode"); _s.push(v_bytecode);
             }
             // fall through to 418
             case 418: {
-    _s.push(v_OP_DUP);
+    if (v_OP_DUP === OMG_UNSET) omg_undefined("OP_DUP"); _s.push(v_OP_DUP);
             }
             // fall through to 419
             case 419: {
@@ -1835,7 +1867,7 @@ function omg_p0(_captured, v_asm) {
             }
             // fall through to 422
             case 422: {
-    v_bytecode = _s.pop();
+    if (v_bytecode === OMG_UNSET) omg_undefined("bytecode"); v_bytecode = _s.pop();
             }
             // fall through to 423
             case 423: {
@@ -1844,7 +1876,7 @@ function omg_p0(_captured, v_asm) {
             // fall through to 424
             case 424: {
                 omg_current_line = 73;
-    _s.push(v_op);
+    if (v_op === OMG_UNSET) omg_undefined("op"); _s.push(v_op);
             }
             // fall through to 425
             case 425: {
@@ -1861,11 +1893,11 @@ function omg_p0(_captured, v_asm) {
             // fall through to 428
             case 428: {
                 omg_current_line = 74;
-    _s.push(v_labels);
+    if (v_labels === OMG_UNSET) omg_undefined("labels"); _s.push(v_labels);
             }
             // fall through to 429
             case 429: {
-    _s.push(v_inst);
+    if (v_inst === OMG_UNSET) omg_undefined("inst"); _s.push(v_inst);
             }
             // fall through to 430
             case 430: {
@@ -1911,19 +1943,19 @@ function omg_p0(_captured, v_asm) {
             // fall through to 440
             case 440: {
                 omg_current_line = 77;
-    _s.push(v_bytecode);
+    if (v_bytecode === OMG_UNSET) omg_undefined("bytecode"); _s.push(v_bytecode);
             }
             // fall through to 441
             case 441: {
-    _s.push(v_OP_JMP);
+    if (v_OP_JMP === OMG_UNSET) omg_undefined("OP_JMP"); _s.push(v_OP_JMP);
             }
             // fall through to 442
             case 442: {
-    _s.push(v_labels);
+    if (v_labels === OMG_UNSET) omg_undefined("labels"); _s.push(v_labels);
             }
             // fall through to 443
             case 443: {
-    _s.push(v_inst);
+    if (v_inst === OMG_UNSET) omg_undefined("inst"); _s.push(v_inst);
             }
             // fall through to 444
             case 444: {
@@ -1951,7 +1983,7 @@ function omg_p0(_captured, v_asm) {
             }
             // fall through to 450
             case 450: {
-    v_bytecode = _s.pop();
+    if (v_bytecode === OMG_UNSET) omg_undefined("bytecode"); v_bytecode = _s.pop();
             }
             // fall through to 451
             case 451: {
@@ -1960,7 +1992,7 @@ function omg_p0(_captured, v_asm) {
             // fall through to 452
             case 452: {
                 omg_current_line = 78;
-    _s.push(v_op);
+    if (v_op === OMG_UNSET) omg_undefined("op"); _s.push(v_op);
             }
             // fall through to 453
             case 453: {
@@ -1977,11 +2009,11 @@ function omg_p0(_captured, v_asm) {
             // fall through to 456
             case 456: {
                 omg_current_line = 79;
-    _s.push(v_labels);
+    if (v_labels === OMG_UNSET) omg_undefined("labels"); _s.push(v_labels);
             }
             // fall through to 457
             case 457: {
-    _s.push(v_inst);
+    if (v_inst === OMG_UNSET) omg_undefined("inst"); _s.push(v_inst);
             }
             // fall through to 458
             case 458: {
@@ -2027,19 +2059,19 @@ function omg_p0(_captured, v_asm) {
             // fall through to 468
             case 468: {
                 omg_current_line = 82;
-    _s.push(v_bytecode);
+    if (v_bytecode === OMG_UNSET) omg_undefined("bytecode"); _s.push(v_bytecode);
             }
             // fall through to 469
             case 469: {
-    _s.push(v_OP_JNZ);
+    if (v_OP_JNZ === OMG_UNSET) omg_undefined("OP_JNZ"); _s.push(v_OP_JNZ);
             }
             // fall through to 470
             case 470: {
-    _s.push(v_labels);
+    if (v_labels === OMG_UNSET) omg_undefined("labels"); _s.push(v_labels);
             }
             // fall through to 471
             case 471: {
-    _s.push(v_inst);
+    if (v_inst === OMG_UNSET) omg_undefined("inst"); _s.push(v_inst);
             }
             // fall through to 472
             case 472: {
@@ -2067,7 +2099,7 @@ function omg_p0(_captured, v_asm) {
             }
             // fall through to 478
             case 478: {
-    v_bytecode = _s.pop();
+    if (v_bytecode === OMG_UNSET) omg_undefined("bytecode"); v_bytecode = _s.pop();
             }
             // fall through to 479
             case 479: {
@@ -2076,7 +2108,7 @@ function omg_p0(_captured, v_asm) {
             // fall through to 480
             case 480: {
                 omg_current_line = 83;
-    _s.push(v_op);
+    if (v_op === OMG_UNSET) omg_undefined("op"); _s.push(v_op);
             }
             // fall through to 481
             case 481: {
@@ -2093,11 +2125,11 @@ function omg_p0(_captured, v_asm) {
             // fall through to 484
             case 484: {
                 omg_current_line = 84;
-    _s.push(v_bytecode);
+    if (v_bytecode === OMG_UNSET) omg_undefined("bytecode"); _s.push(v_bytecode);
             }
             // fall through to 485
             case 485: {
-    _s.push(v_OP_HALT);
+    if (v_OP_HALT === OMG_UNSET) omg_undefined("OP_HALT"); _s.push(v_OP_HALT);
             }
             // fall through to 486
             case 486: {
@@ -2113,7 +2145,7 @@ function omg_p0(_captured, v_asm) {
             }
             // fall through to 489
             case 489: {
-    v_bytecode = _s.pop();
+    if (v_bytecode === OMG_UNSET) omg_undefined("bytecode"); v_bytecode = _s.pop();
             }
             // fall through to 490
             case 490: {
@@ -2122,7 +2154,7 @@ function omg_p0(_captured, v_asm) {
             // fall through to 491
             case 491: {
                 omg_current_line = 85;
-    _s.push(v_op);
+    if (v_op === OMG_UNSET) omg_undefined("op"); _s.push(v_op);
             }
             // fall through to 492
             case 492: {
@@ -2156,7 +2188,7 @@ function omg_p0(_captured, v_asm) {
             // fall through to 499
             case 499: {
                 omg_current_line = 90;
-    _s.push(v_i);
+    if (v_i === OMG_UNSET) omg_undefined("i"); _s.push(v_i);
             }
             // fall through to 500
             case 500: {
@@ -2168,7 +2200,7 @@ function omg_p0(_captured, v_asm) {
             }
             // fall through to 502
             case 502: {
-    v_i = _s.pop();
+    if (v_i === OMG_UNSET) omg_undefined("i"); v_i = _s.pop();
             }
             // fall through to 503
             case 503: {
@@ -2181,7 +2213,7 @@ function omg_p0(_captured, v_asm) {
             }
             // fall through to 505
             case 505: {
-    _s.push(v_bytecode);
+    if (v_bytecode === OMG_UNSET) omg_undefined("bytecode"); _s.push(v_bytecode);
             }
             // fall through to 506
             case 506: {
@@ -2204,6 +2236,7 @@ function omg_p0(_captured, v_asm) {
             }
             _ip += 1;
         } catch (_e) {
+            if (_e instanceof RangeError) { _e = new OmgError('RuntimeError', 'maximum recursion depth exceeded'); }
             if (_e instanceof OmgError && _eh.length > 0) {
                 const _entry = _eh.pop();
                 _ip = _entry[0];
@@ -2216,8 +2249,9 @@ function omg_p0(_captured, v_asm) {
 }
 
 function omg_p1(_captured, v_d, v_k) {
-    let v_probe;
-    let v_err;
+    if (arguments.length !== 3) omg_arity_error("has_key", 2, arguments.length - 1);
+    let v_probe = OMG_UNSET;
+    let v_err = OMG_UNSET;
     const _s = [];
     omg_current_file_idx = 0;
     let _ip = 228;
@@ -2293,6 +2327,7 @@ function omg_p1(_captured, v_d, v_k) {
             }
             _ip += 1;
         } catch (_e) {
+            if (_e instanceof RangeError) { _e = new OmgError('RuntimeError', 'maximum recursion depth exceeded'); }
             if (_e instanceof OmgError && _eh.length > 0) {
                 const _entry = _eh.pop();
                 _ip = _entry[0];
@@ -2305,17 +2340,18 @@ function omg_p1(_captured, v_d, v_k) {
 }
 
 function omg_p2(_captured, v_program) {
-    let v_pc;
-    let v_stack;
-    let v_memory;
-    let v_output;
-    let v_status;
-    let v_instr;
-    let v_opcode;
-    let v_operand;
-    let v_lhs;
-    let v_rhs;
-    let v_cond;
+    if (arguments.length !== 2) omg_arity_error("run", 1, arguments.length - 1);
+    let v_pc = OMG_UNSET;
+    let v_stack = OMG_UNSET;
+    let v_memory = OMG_UNSET;
+    let v_output = OMG_UNSET;
+    let v_status = OMG_UNSET;
+    let v_instr = OMG_UNSET;
+    let v_opcode = OMG_UNSET;
+    let v_operand = OMG_UNSET;
+    let v_lhs = OMG_UNSET;
+    let v_rhs = OMG_UNSET;
+    let v_cond = OMG_UNSET;
     const _s = [];
     omg_current_file_idx = 0;
     let _ip = 510;
@@ -2424,7 +2460,7 @@ function omg_p2(_captured, v_program) {
             // fall through to 532
             case 532: {
                 omg_current_line = 108;
-    _s.push(v_pc);
+    if (v_pc === OMG_UNSET) omg_undefined("pc"); _s.push(v_pc);
             }
             // fall through to 533
             case 533: {
@@ -2449,7 +2485,7 @@ function omg_p2(_captured, v_program) {
             }
             // fall through to 538
             case 538: {
-    _s.push(v_pc);
+    if (v_pc === OMG_UNSET) omg_undefined("pc"); _s.push(v_pc);
             }
             // fall through to 539
             case 539: {
@@ -2457,12 +2493,12 @@ function omg_p2(_captured, v_program) {
             }
             // fall through to 540
             case 540: {
-    v_instr = _s.pop();
+    if (v_instr === OMG_UNSET) omg_undefined("instr"); v_instr = _s.pop();
             }
             // fall through to 541
             case 541: {
                 omg_current_line = 110;
-    _s.push(v_pc);
+    if (v_pc === OMG_UNSET) omg_undefined("pc"); _s.push(v_pc);
             }
             // fall through to 542
             case 542: {
@@ -2474,12 +2510,12 @@ function omg_p2(_captured, v_program) {
             }
             // fall through to 544
             case 544: {
-    v_pc = _s.pop();
+    if (v_pc === OMG_UNSET) omg_undefined("pc"); v_pc = _s.pop();
             }
             // fall through to 545
             case 545: {
                 omg_current_line = 111;
-    _s.push(v_instr);
+    if (v_instr === OMG_UNSET) omg_undefined("instr"); _s.push(v_instr);
             }
             // fall through to 546
             case 546: {
@@ -2491,16 +2527,16 @@ function omg_p2(_captured, v_program) {
             }
             // fall through to 548
             case 548: {
-    v_opcode = _s.pop();
+    if (v_opcode === OMG_UNSET) omg_undefined("opcode"); v_opcode = _s.pop();
             }
             // fall through to 549
             case 549: {
                 omg_current_line = 112;
-    _s.push(v_opcode);
+    if (v_opcode === OMG_UNSET) omg_undefined("opcode"); _s.push(v_opcode);
             }
             // fall through to 550
             case 550: {
-    _s.push(v_OP_PUSH);
+    if (v_OP_PUSH === OMG_UNSET) omg_undefined("OP_PUSH"); _s.push(v_OP_PUSH);
             }
             // fall through to 551
             case 551: {
@@ -2513,11 +2549,11 @@ function omg_p2(_captured, v_program) {
             // fall through to 553
             case 553: {
                 omg_current_line = 113;
-    _s.push(v_stack);
+    if (v_stack === OMG_UNSET) omg_undefined("stack"); _s.push(v_stack);
             }
             // fall through to 554
             case 554: {
-    _s.push(v_instr);
+    if (v_instr === OMG_UNSET) omg_undefined("instr"); _s.push(v_instr);
             }
             // fall through to 555
             case 555: {
@@ -2537,7 +2573,7 @@ function omg_p2(_captured, v_program) {
             }
             // fall through to 559
             case 559: {
-    v_stack = _s.pop();
+    if (v_stack === OMG_UNSET) omg_undefined("stack"); v_stack = _s.pop();
             }
             // fall through to 560
             case 560: {
@@ -2546,11 +2582,11 @@ function omg_p2(_captured, v_program) {
             // fall through to 561
             case 561: {
                 omg_current_line = 114;
-    _s.push(v_opcode);
+    if (v_opcode === OMG_UNSET) omg_undefined("opcode"); _s.push(v_opcode);
             }
             // fall through to 562
             case 562: {
-    _s.push(v_OP_POP);
+    if (v_OP_POP === OMG_UNSET) omg_undefined("OP_POP"); _s.push(v_OP_POP);
             }
             // fall through to 563
             case 563: {
@@ -2563,7 +2599,7 @@ function omg_p2(_captured, v_program) {
             // fall through to 565
             case 565: {
                 omg_current_line = 115;
-    _s.push(v_stack);
+    if (v_stack === OMG_UNSET) omg_undefined("stack"); _s.push(v_stack);
             }
             // fall through to 566
             case 566: {
@@ -2588,7 +2624,7 @@ function omg_p2(_captured, v_program) {
             }
             // fall through to 571
             case 571: {
-    v_status = _s.pop();
+    if (v_status === OMG_UNSET) omg_undefined("status"); v_status = _s.pop();
             }
             // fall through to 572
             case 572: {
@@ -2602,7 +2638,7 @@ function omg_p2(_captured, v_program) {
             // fall through to 574
             case 574: {
                 omg_current_line = 119;
-    _s.push(v_stack);
+    if (v_stack === OMG_UNSET) omg_undefined("stack"); _s.push(v_stack);
             }
             // fall through to 575
             case 575: {
@@ -2610,7 +2646,7 @@ function omg_p2(_captured, v_program) {
             }
             // fall through to 576
             case 576: {
-    _s.push(v_stack);
+    if (v_stack === OMG_UNSET) omg_undefined("stack"); _s.push(v_stack);
             }
             // fall through to 577
             case 577: {
@@ -2630,7 +2666,7 @@ function omg_p2(_captured, v_program) {
             }
             // fall through to 581
             case 581: {
-    v_stack = _s.pop();
+    if (v_stack === OMG_UNSET) omg_undefined("stack"); v_stack = _s.pop();
             }
             // fall through to 582
             case 582: {
@@ -2639,11 +2675,11 @@ function omg_p2(_captured, v_program) {
             // fall through to 583
             case 583: {
                 omg_current_line = 120;
-    _s.push(v_opcode);
+    if (v_opcode === OMG_UNSET) omg_undefined("opcode"); _s.push(v_opcode);
             }
             // fall through to 584
             case 584: {
-    _s.push(v_OP_ADD);
+    if (v_OP_ADD === OMG_UNSET) omg_undefined("OP_ADD"); _s.push(v_OP_ADD);
             }
             // fall through to 585
             case 585: {
@@ -2656,7 +2692,7 @@ function omg_p2(_captured, v_program) {
             // fall through to 587
             case 587: {
                 omg_current_line = 121;
-    _s.push(v_stack);
+    if (v_stack === OMG_UNSET) omg_undefined("stack"); _s.push(v_stack);
             }
             // fall through to 588
             case 588: {
@@ -2681,7 +2717,7 @@ function omg_p2(_captured, v_program) {
             }
             // fall through to 593
             case 593: {
-    v_status = _s.pop();
+    if (v_status === OMG_UNSET) omg_undefined("status"); v_status = _s.pop();
             }
             // fall through to 594
             case 594: {
@@ -2695,11 +2731,11 @@ function omg_p2(_captured, v_program) {
             // fall through to 596
             case 596: {
                 omg_current_line = 125;
-    _s.push(v_stack);
+    if (v_stack === OMG_UNSET) omg_undefined("stack"); _s.push(v_stack);
             }
             // fall through to 597
             case 597: {
-    _s.push(v_stack);
+    if (v_stack === OMG_UNSET) omg_undefined("stack"); _s.push(v_stack);
             }
             // fall through to 598
             case 598: {
@@ -2719,12 +2755,12 @@ function omg_p2(_captured, v_program) {
             }
             // fall through to 602
             case 602: {
-    v_rhs = _s.pop();
+    if (v_rhs === OMG_UNSET) omg_undefined("rhs"); v_rhs = _s.pop();
             }
             // fall through to 603
             case 603: {
                 omg_current_line = 126;
-    _s.push(v_stack);
+    if (v_stack === OMG_UNSET) omg_undefined("stack"); _s.push(v_stack);
             }
             // fall through to 604
             case 604: {
@@ -2732,7 +2768,7 @@ function omg_p2(_captured, v_program) {
             }
             // fall through to 605
             case 605: {
-    _s.push(v_stack);
+    if (v_stack === OMG_UNSET) omg_undefined("stack"); _s.push(v_stack);
             }
             // fall through to 606
             case 606: {
@@ -2752,16 +2788,16 @@ function omg_p2(_captured, v_program) {
             }
             // fall through to 610
             case 610: {
-    v_stack = _s.pop();
+    if (v_stack === OMG_UNSET) omg_undefined("stack"); v_stack = _s.pop();
             }
             // fall through to 611
             case 611: {
                 omg_current_line = 127;
-    _s.push(v_stack);
+    if (v_stack === OMG_UNSET) omg_undefined("stack"); _s.push(v_stack);
             }
             // fall through to 612
             case 612: {
-    _s.push(v_stack);
+    if (v_stack === OMG_UNSET) omg_undefined("stack"); _s.push(v_stack);
             }
             // fall through to 613
             case 613: {
@@ -2781,12 +2817,12 @@ function omg_p2(_captured, v_program) {
             }
             // fall through to 617
             case 617: {
-    v_lhs = _s.pop();
+    if (v_lhs === OMG_UNSET) omg_undefined("lhs"); v_lhs = _s.pop();
             }
             // fall through to 618
             case 618: {
                 omg_current_line = 128;
-    _s.push(v_stack);
+    if (v_stack === OMG_UNSET) omg_undefined("stack"); _s.push(v_stack);
             }
             // fall through to 619
             case 619: {
@@ -2794,7 +2830,7 @@ function omg_p2(_captured, v_program) {
             }
             // fall through to 620
             case 620: {
-    _s.push(v_stack);
+    if (v_stack === OMG_UNSET) omg_undefined("stack"); _s.push(v_stack);
             }
             // fall through to 621
             case 621: {
@@ -2814,20 +2850,20 @@ function omg_p2(_captured, v_program) {
             }
             // fall through to 625
             case 625: {
-    v_stack = _s.pop();
+    if (v_stack === OMG_UNSET) omg_undefined("stack"); v_stack = _s.pop();
             }
             // fall through to 626
             case 626: {
                 omg_current_line = 129;
-    _s.push(v_stack);
+    if (v_stack === OMG_UNSET) omg_undefined("stack"); _s.push(v_stack);
             }
             // fall through to 627
             case 627: {
-    _s.push(v_lhs);
+    if (v_lhs === OMG_UNSET) omg_undefined("lhs"); _s.push(v_lhs);
             }
             // fall through to 628
             case 628: {
-    _s.push(v_rhs);
+    if (v_rhs === OMG_UNSET) omg_undefined("rhs"); _s.push(v_rhs);
             }
             // fall through to 629
             case 629: {
@@ -2843,7 +2879,7 @@ function omg_p2(_captured, v_program) {
             }
             // fall through to 632
             case 632: {
-    v_stack = _s.pop();
+    if (v_stack === OMG_UNSET) omg_undefined("stack"); v_stack = _s.pop();
             }
             // fall through to 633
             case 633: {
@@ -2852,11 +2888,11 @@ function omg_p2(_captured, v_program) {
             // fall through to 634
             case 634: {
                 omg_current_line = 130;
-    _s.push(v_opcode);
+    if (v_opcode === OMG_UNSET) omg_undefined("opcode"); _s.push(v_opcode);
             }
             // fall through to 635
             case 635: {
-    _s.push(v_OP_SUB);
+    if (v_OP_SUB === OMG_UNSET) omg_undefined("OP_SUB"); _s.push(v_OP_SUB);
             }
             // fall through to 636
             case 636: {
@@ -2869,7 +2905,7 @@ function omg_p2(_captured, v_program) {
             // fall through to 638
             case 638: {
                 omg_current_line = 131;
-    _s.push(v_stack);
+    if (v_stack === OMG_UNSET) omg_undefined("stack"); _s.push(v_stack);
             }
             // fall through to 639
             case 639: {
@@ -2894,7 +2930,7 @@ function omg_p2(_captured, v_program) {
             }
             // fall through to 644
             case 644: {
-    v_status = _s.pop();
+    if (v_status === OMG_UNSET) omg_undefined("status"); v_status = _s.pop();
             }
             // fall through to 645
             case 645: {
@@ -2908,11 +2944,11 @@ function omg_p2(_captured, v_program) {
             // fall through to 647
             case 647: {
                 omg_current_line = 135;
-    _s.push(v_stack);
+    if (v_stack === OMG_UNSET) omg_undefined("stack"); _s.push(v_stack);
             }
             // fall through to 648
             case 648: {
-    _s.push(v_stack);
+    if (v_stack === OMG_UNSET) omg_undefined("stack"); _s.push(v_stack);
             }
             // fall through to 649
             case 649: {
@@ -2932,12 +2968,12 @@ function omg_p2(_captured, v_program) {
             }
             // fall through to 653
             case 653: {
-    v_rhs = _s.pop();
+    if (v_rhs === OMG_UNSET) omg_undefined("rhs"); v_rhs = _s.pop();
             }
             // fall through to 654
             case 654: {
                 omg_current_line = 136;
-    _s.push(v_stack);
+    if (v_stack === OMG_UNSET) omg_undefined("stack"); _s.push(v_stack);
             }
             // fall through to 655
             case 655: {
@@ -2945,7 +2981,7 @@ function omg_p2(_captured, v_program) {
             }
             // fall through to 656
             case 656: {
-    _s.push(v_stack);
+    if (v_stack === OMG_UNSET) omg_undefined("stack"); _s.push(v_stack);
             }
             // fall through to 657
             case 657: {
@@ -2965,16 +3001,16 @@ function omg_p2(_captured, v_program) {
             }
             // fall through to 661
             case 661: {
-    v_stack = _s.pop();
+    if (v_stack === OMG_UNSET) omg_undefined("stack"); v_stack = _s.pop();
             }
             // fall through to 662
             case 662: {
                 omg_current_line = 137;
-    _s.push(v_stack);
+    if (v_stack === OMG_UNSET) omg_undefined("stack"); _s.push(v_stack);
             }
             // fall through to 663
             case 663: {
-    _s.push(v_stack);
+    if (v_stack === OMG_UNSET) omg_undefined("stack"); _s.push(v_stack);
             }
             // fall through to 664
             case 664: {
@@ -2994,12 +3030,12 @@ function omg_p2(_captured, v_program) {
             }
             // fall through to 668
             case 668: {
-    v_lhs = _s.pop();
+    if (v_lhs === OMG_UNSET) omg_undefined("lhs"); v_lhs = _s.pop();
             }
             // fall through to 669
             case 669: {
                 omg_current_line = 138;
-    _s.push(v_stack);
+    if (v_stack === OMG_UNSET) omg_undefined("stack"); _s.push(v_stack);
             }
             // fall through to 670
             case 670: {
@@ -3007,7 +3043,7 @@ function omg_p2(_captured, v_program) {
             }
             // fall through to 671
             case 671: {
-    _s.push(v_stack);
+    if (v_stack === OMG_UNSET) omg_undefined("stack"); _s.push(v_stack);
             }
             // fall through to 672
             case 672: {
@@ -3027,20 +3063,20 @@ function omg_p2(_captured, v_program) {
             }
             // fall through to 676
             case 676: {
-    v_stack = _s.pop();
+    if (v_stack === OMG_UNSET) omg_undefined("stack"); v_stack = _s.pop();
             }
             // fall through to 677
             case 677: {
                 omg_current_line = 139;
-    _s.push(v_stack);
+    if (v_stack === OMG_UNSET) omg_undefined("stack"); _s.push(v_stack);
             }
             // fall through to 678
             case 678: {
-    _s.push(v_lhs);
+    if (v_lhs === OMG_UNSET) omg_undefined("lhs"); _s.push(v_lhs);
             }
             // fall through to 679
             case 679: {
-    _s.push(v_rhs);
+    if (v_rhs === OMG_UNSET) omg_undefined("rhs"); _s.push(v_rhs);
             }
             // fall through to 680
             case 680: {
@@ -3056,7 +3092,7 @@ function omg_p2(_captured, v_program) {
             }
             // fall through to 683
             case 683: {
-    v_stack = _s.pop();
+    if (v_stack === OMG_UNSET) omg_undefined("stack"); v_stack = _s.pop();
             }
             // fall through to 684
             case 684: {
@@ -3065,11 +3101,11 @@ function omg_p2(_captured, v_program) {
             // fall through to 685
             case 685: {
                 omg_current_line = 140;
-    _s.push(v_opcode);
+    if (v_opcode === OMG_UNSET) omg_undefined("opcode"); _s.push(v_opcode);
             }
             // fall through to 686
             case 686: {
-    _s.push(v_OP_MUL);
+    if (v_OP_MUL === OMG_UNSET) omg_undefined("OP_MUL"); _s.push(v_OP_MUL);
             }
             // fall through to 687
             case 687: {
@@ -3082,7 +3118,7 @@ function omg_p2(_captured, v_program) {
             // fall through to 689
             case 689: {
                 omg_current_line = 141;
-    _s.push(v_stack);
+    if (v_stack === OMG_UNSET) omg_undefined("stack"); _s.push(v_stack);
             }
             // fall through to 690
             case 690: {
@@ -3107,7 +3143,7 @@ function omg_p2(_captured, v_program) {
             }
             // fall through to 695
             case 695: {
-    v_status = _s.pop();
+    if (v_status === OMG_UNSET) omg_undefined("status"); v_status = _s.pop();
             }
             // fall through to 696
             case 696: {
@@ -3121,11 +3157,11 @@ function omg_p2(_captured, v_program) {
             // fall through to 698
             case 698: {
                 omg_current_line = 145;
-    _s.push(v_stack);
+    if (v_stack === OMG_UNSET) omg_undefined("stack"); _s.push(v_stack);
             }
             // fall through to 699
             case 699: {
-    _s.push(v_stack);
+    if (v_stack === OMG_UNSET) omg_undefined("stack"); _s.push(v_stack);
             }
             // fall through to 700
             case 700: {
@@ -3145,12 +3181,12 @@ function omg_p2(_captured, v_program) {
             }
             // fall through to 704
             case 704: {
-    v_rhs = _s.pop();
+    if (v_rhs === OMG_UNSET) omg_undefined("rhs"); v_rhs = _s.pop();
             }
             // fall through to 705
             case 705: {
                 omg_current_line = 146;
-    _s.push(v_stack);
+    if (v_stack === OMG_UNSET) omg_undefined("stack"); _s.push(v_stack);
             }
             // fall through to 706
             case 706: {
@@ -3158,7 +3194,7 @@ function omg_p2(_captured, v_program) {
             }
             // fall through to 707
             case 707: {
-    _s.push(v_stack);
+    if (v_stack === OMG_UNSET) omg_undefined("stack"); _s.push(v_stack);
             }
             // fall through to 708
             case 708: {
@@ -3178,16 +3214,16 @@ function omg_p2(_captured, v_program) {
             }
             // fall through to 712
             case 712: {
-    v_stack = _s.pop();
+    if (v_stack === OMG_UNSET) omg_undefined("stack"); v_stack = _s.pop();
             }
             // fall through to 713
             case 713: {
                 omg_current_line = 147;
-    _s.push(v_stack);
+    if (v_stack === OMG_UNSET) omg_undefined("stack"); _s.push(v_stack);
             }
             // fall through to 714
             case 714: {
-    _s.push(v_stack);
+    if (v_stack === OMG_UNSET) omg_undefined("stack"); _s.push(v_stack);
             }
             // fall through to 715
             case 715: {
@@ -3207,12 +3243,12 @@ function omg_p2(_captured, v_program) {
             }
             // fall through to 719
             case 719: {
-    v_lhs = _s.pop();
+    if (v_lhs === OMG_UNSET) omg_undefined("lhs"); v_lhs = _s.pop();
             }
             // fall through to 720
             case 720: {
                 omg_current_line = 148;
-    _s.push(v_stack);
+    if (v_stack === OMG_UNSET) omg_undefined("stack"); _s.push(v_stack);
             }
             // fall through to 721
             case 721: {
@@ -3220,7 +3256,7 @@ function omg_p2(_captured, v_program) {
             }
             // fall through to 722
             case 722: {
-    _s.push(v_stack);
+    if (v_stack === OMG_UNSET) omg_undefined("stack"); _s.push(v_stack);
             }
             // fall through to 723
             case 723: {
@@ -3240,20 +3276,20 @@ function omg_p2(_captured, v_program) {
             }
             // fall through to 727
             case 727: {
-    v_stack = _s.pop();
+    if (v_stack === OMG_UNSET) omg_undefined("stack"); v_stack = _s.pop();
             }
             // fall through to 728
             case 728: {
                 omg_current_line = 149;
-    _s.push(v_stack);
+    if (v_stack === OMG_UNSET) omg_undefined("stack"); _s.push(v_stack);
             }
             // fall through to 729
             case 729: {
-    _s.push(v_lhs);
+    if (v_lhs === OMG_UNSET) omg_undefined("lhs"); _s.push(v_lhs);
             }
             // fall through to 730
             case 730: {
-    _s.push(v_rhs);
+    if (v_rhs === OMG_UNSET) omg_undefined("rhs"); _s.push(v_rhs);
             }
             // fall through to 731
             case 731: {
@@ -3269,7 +3305,7 @@ function omg_p2(_captured, v_program) {
             }
             // fall through to 734
             case 734: {
-    v_stack = _s.pop();
+    if (v_stack === OMG_UNSET) omg_undefined("stack"); v_stack = _s.pop();
             }
             // fall through to 735
             case 735: {
@@ -3278,11 +3314,11 @@ function omg_p2(_captured, v_program) {
             // fall through to 736
             case 736: {
                 omg_current_line = 150;
-    _s.push(v_opcode);
+    if (v_opcode === OMG_UNSET) omg_undefined("opcode"); _s.push(v_opcode);
             }
             // fall through to 737
             case 737: {
-    _s.push(v_OP_DIV);
+    if (v_OP_DIV === OMG_UNSET) omg_undefined("OP_DIV"); _s.push(v_OP_DIV);
             }
             // fall through to 738
             case 738: {
@@ -3295,7 +3331,7 @@ function omg_p2(_captured, v_program) {
             // fall through to 740
             case 740: {
                 omg_current_line = 151;
-    _s.push(v_stack);
+    if (v_stack === OMG_UNSET) omg_undefined("stack"); _s.push(v_stack);
             }
             // fall through to 741
             case 741: {
@@ -3320,7 +3356,7 @@ function omg_p2(_captured, v_program) {
             }
             // fall through to 746
             case 746: {
-    v_status = _s.pop();
+    if (v_status === OMG_UNSET) omg_undefined("status"); v_status = _s.pop();
             }
             // fall through to 747
             case 747: {
@@ -3334,11 +3370,11 @@ function omg_p2(_captured, v_program) {
             // fall through to 749
             case 749: {
                 omg_current_line = 155;
-    _s.push(v_stack);
+    if (v_stack === OMG_UNSET) omg_undefined("stack"); _s.push(v_stack);
             }
             // fall through to 750
             case 750: {
-    _s.push(v_stack);
+    if (v_stack === OMG_UNSET) omg_undefined("stack"); _s.push(v_stack);
             }
             // fall through to 751
             case 751: {
@@ -3358,12 +3394,12 @@ function omg_p2(_captured, v_program) {
             }
             // fall through to 755
             case 755: {
-    v_rhs = _s.pop();
+    if (v_rhs === OMG_UNSET) omg_undefined("rhs"); v_rhs = _s.pop();
             }
             // fall through to 756
             case 756: {
                 omg_current_line = 156;
-    _s.push(v_stack);
+    if (v_stack === OMG_UNSET) omg_undefined("stack"); _s.push(v_stack);
             }
             // fall through to 757
             case 757: {
@@ -3371,7 +3407,7 @@ function omg_p2(_captured, v_program) {
             }
             // fall through to 758
             case 758: {
-    _s.push(v_stack);
+    if (v_stack === OMG_UNSET) omg_undefined("stack"); _s.push(v_stack);
             }
             // fall through to 759
             case 759: {
@@ -3391,12 +3427,12 @@ function omg_p2(_captured, v_program) {
             }
             // fall through to 763
             case 763: {
-    v_stack = _s.pop();
+    if (v_stack === OMG_UNSET) omg_undefined("stack"); v_stack = _s.pop();
             }
             // fall through to 764
             case 764: {
                 omg_current_line = 157;
-    _s.push(v_rhs);
+    if (v_rhs === OMG_UNSET) omg_undefined("rhs"); _s.push(v_rhs);
             }
             // fall through to 765
             case 765: {
@@ -3417,7 +3453,7 @@ function omg_p2(_captured, v_program) {
             }
             // fall through to 769
             case 769: {
-    v_status = _s.pop();
+    if (v_status === OMG_UNSET) omg_undefined("status"); v_status = _s.pop();
             }
             // fall through to 770
             case 770: {
@@ -3431,11 +3467,11 @@ function omg_p2(_captured, v_program) {
             // fall through to 772
             case 772: {
                 omg_current_line = 161;
-    _s.push(v_stack);
+    if (v_stack === OMG_UNSET) omg_undefined("stack"); _s.push(v_stack);
             }
             // fall through to 773
             case 773: {
-    _s.push(v_stack);
+    if (v_stack === OMG_UNSET) omg_undefined("stack"); _s.push(v_stack);
             }
             // fall through to 774
             case 774: {
@@ -3455,12 +3491,12 @@ function omg_p2(_captured, v_program) {
             }
             // fall through to 778
             case 778: {
-    v_lhs = _s.pop();
+    if (v_lhs === OMG_UNSET) omg_undefined("lhs"); v_lhs = _s.pop();
             }
             // fall through to 779
             case 779: {
                 omg_current_line = 162;
-    _s.push(v_stack);
+    if (v_stack === OMG_UNSET) omg_undefined("stack"); _s.push(v_stack);
             }
             // fall through to 780
             case 780: {
@@ -3468,7 +3504,7 @@ function omg_p2(_captured, v_program) {
             }
             // fall through to 781
             case 781: {
-    _s.push(v_stack);
+    if (v_stack === OMG_UNSET) omg_undefined("stack"); _s.push(v_stack);
             }
             // fall through to 782
             case 782: {
@@ -3488,20 +3524,20 @@ function omg_p2(_captured, v_program) {
             }
             // fall through to 786
             case 786: {
-    v_stack = _s.pop();
+    if (v_stack === OMG_UNSET) omg_undefined("stack"); v_stack = _s.pop();
             }
             // fall through to 787
             case 787: {
                 omg_current_line = 163;
-    _s.push(v_stack);
+    if (v_stack === OMG_UNSET) omg_undefined("stack"); _s.push(v_stack);
             }
             // fall through to 788
             case 788: {
-    _s.push(v_lhs);
+    if (v_lhs === OMG_UNSET) omg_undefined("lhs"); _s.push(v_lhs);
             }
             // fall through to 789
             case 789: {
-    _s.push(v_rhs);
+    if (v_rhs === OMG_UNSET) omg_undefined("rhs"); _s.push(v_rhs);
             }
             // fall through to 790
             case 790: {
@@ -3517,7 +3553,7 @@ function omg_p2(_captured, v_program) {
             }
             // fall through to 793
             case 793: {
-    v_stack = _s.pop();
+    if (v_stack === OMG_UNSET) omg_undefined("stack"); v_stack = _s.pop();
             }
             // fall through to 794
             case 794: {
@@ -3526,11 +3562,11 @@ function omg_p2(_captured, v_program) {
             // fall through to 795
             case 795: {
                 omg_current_line = 164;
-    _s.push(v_opcode);
+    if (v_opcode === OMG_UNSET) omg_undefined("opcode"); _s.push(v_opcode);
             }
             // fall through to 796
             case 796: {
-    _s.push(v_OP_STORE);
+    if (v_OP_STORE === OMG_UNSET) omg_undefined("OP_STORE"); _s.push(v_OP_STORE);
             }
             // fall through to 797
             case 797: {
@@ -3543,7 +3579,7 @@ function omg_p2(_captured, v_program) {
             // fall through to 799
             case 799: {
                 omg_current_line = 165;
-    _s.push(v_stack);
+    if (v_stack === OMG_UNSET) omg_undefined("stack"); _s.push(v_stack);
             }
             // fall through to 800
             case 800: {
@@ -3568,7 +3604,7 @@ function omg_p2(_captured, v_program) {
             }
             // fall through to 805
             case 805: {
-    v_status = _s.pop();
+    if (v_status === OMG_UNSET) omg_undefined("status"); v_status = _s.pop();
             }
             // fall through to 806
             case 806: {
@@ -3582,7 +3618,7 @@ function omg_p2(_captured, v_program) {
             // fall through to 808
             case 808: {
                 omg_current_line = 169;
-    _s.push(v_instr);
+    if (v_instr === OMG_UNSET) omg_undefined("instr"); _s.push(v_instr);
             }
             // fall through to 809
             case 809: {
@@ -3594,16 +3630,16 @@ function omg_p2(_captured, v_program) {
             }
             // fall through to 811
             case 811: {
-    v_operand = _s.pop();
+    if (v_operand === OMG_UNSET) omg_undefined("operand"); v_operand = _s.pop();
             }
             // fall through to 812
             case 812: {
                 omg_current_line = 170;
-    _s.push(v_stack);
+    if (v_stack === OMG_UNSET) omg_undefined("stack"); _s.push(v_stack);
             }
             // fall through to 813
             case 813: {
-    _s.push(v_stack);
+    if (v_stack === OMG_UNSET) omg_undefined("stack"); _s.push(v_stack);
             }
             // fall through to 814
             case 814: {
@@ -3623,12 +3659,12 @@ function omg_p2(_captured, v_program) {
             }
             // fall through to 818
             case 818: {
-    v_rhs = _s.pop();
+    if (v_rhs === OMG_UNSET) omg_undefined("rhs"); v_rhs = _s.pop();
             }
             // fall through to 819
             case 819: {
                 omg_current_line = 171;
-    _s.push(v_stack);
+    if (v_stack === OMG_UNSET) omg_undefined("stack"); _s.push(v_stack);
             }
             // fall through to 820
             case 820: {
@@ -3636,7 +3672,7 @@ function omg_p2(_captured, v_program) {
             }
             // fall through to 821
             case 821: {
-    _s.push(v_stack);
+    if (v_stack === OMG_UNSET) omg_undefined("stack"); _s.push(v_stack);
             }
             // fall through to 822
             case 822: {
@@ -3656,20 +3692,20 @@ function omg_p2(_captured, v_program) {
             }
             // fall through to 826
             case 826: {
-    v_stack = _s.pop();
+    if (v_stack === OMG_UNSET) omg_undefined("stack"); v_stack = _s.pop();
             }
             // fall through to 827
             case 827: {
                 omg_current_line = 172;
-    _s.push(v_memory);
+    if (v_memory === OMG_UNSET) omg_undefined("memory"); _s.push(v_memory);
             }
             // fall through to 828
             case 828: {
-    _s.push(v_operand);
+    if (v_operand === OMG_UNSET) omg_undefined("operand"); _s.push(v_operand);
             }
             // fall through to 829
             case 829: {
-    _s.push(v_rhs);
+    if (v_rhs === OMG_UNSET) omg_undefined("rhs"); _s.push(v_rhs);
             }
             // fall through to 830
             case 830: {
@@ -3682,11 +3718,11 @@ function omg_p2(_captured, v_program) {
             // fall through to 832
             case 832: {
                 omg_current_line = 173;
-    _s.push(v_opcode);
+    if (v_opcode === OMG_UNSET) omg_undefined("opcode"); _s.push(v_opcode);
             }
             // fall through to 833
             case 833: {
-    _s.push(v_OP_LOAD);
+    if (v_OP_LOAD === OMG_UNSET) omg_undefined("OP_LOAD"); _s.push(v_OP_LOAD);
             }
             // fall through to 834
             case 834: {
@@ -3699,7 +3735,7 @@ function omg_p2(_captured, v_program) {
             // fall through to 836
             case 836: {
                 omg_current_line = 174;
-    _s.push(v_instr);
+    if (v_instr === OMG_UNSET) omg_undefined("instr"); _s.push(v_instr);
             }
             // fall through to 837
             case 837: {
@@ -3711,16 +3747,16 @@ function omg_p2(_captured, v_program) {
             }
             // fall through to 839
             case 839: {
-    v_operand = _s.pop();
+    if (v_operand === OMG_UNSET) omg_undefined("operand"); v_operand = _s.pop();
             }
             // fall through to 840
             case 840: {
                 omg_current_line = 175;
-    _s.push(v_memory);
+    if (v_memory === OMG_UNSET) omg_undefined("memory"); _s.push(v_memory);
             }
             // fall through to 841
             case 841: {
-    _s.push(v_operand);
+    if (v_operand === OMG_UNSET) omg_undefined("operand"); _s.push(v_operand);
             }
             // fall through to 842
             case 842: {
@@ -3733,15 +3769,15 @@ function omg_p2(_captured, v_program) {
             // fall through to 844
             case 844: {
                 omg_current_line = 176;
-    _s.push(v_stack);
+    if (v_stack === OMG_UNSET) omg_undefined("stack"); _s.push(v_stack);
             }
             // fall through to 845
             case 845: {
-    _s.push(v_memory);
+    if (v_memory === OMG_UNSET) omg_undefined("memory"); _s.push(v_memory);
             }
             // fall through to 846
             case 846: {
-    _s.push(v_operand);
+    if (v_operand === OMG_UNSET) omg_undefined("operand"); _s.push(v_operand);
             }
             // fall through to 847
             case 847: {
@@ -3757,7 +3793,7 @@ function omg_p2(_captured, v_program) {
             }
             // fall through to 850
             case 850: {
-    v_stack = _s.pop();
+    if (v_stack === OMG_UNSET) omg_undefined("stack"); v_stack = _s.pop();
             }
             // fall through to 851
             case 851: {
@@ -3766,7 +3802,7 @@ function omg_p2(_captured, v_program) {
             // fall through to 852
             case 852: {
                 omg_current_line = 178;
-    _s.push(v_stack);
+    if (v_stack === OMG_UNSET) omg_undefined("stack"); _s.push(v_stack);
             }
             // fall through to 853
             case 853: {
@@ -3782,7 +3818,7 @@ function omg_p2(_captured, v_program) {
             }
             // fall through to 856
             case 856: {
-    v_stack = _s.pop();
+    if (v_stack === OMG_UNSET) omg_undefined("stack"); v_stack = _s.pop();
             }
             // fall through to 857
             case 857: {
@@ -3791,11 +3827,11 @@ function omg_p2(_captured, v_program) {
             // fall through to 858
             case 858: {
                 omg_current_line = 180;
-    _s.push(v_opcode);
+    if (v_opcode === OMG_UNSET) omg_undefined("opcode"); _s.push(v_opcode);
             }
             // fall through to 859
             case 859: {
-    _s.push(v_OP_EMIT);
+    if (v_OP_EMIT === OMG_UNSET) omg_undefined("OP_EMIT"); _s.push(v_OP_EMIT);
             }
             // fall through to 860
             case 860: {
@@ -3808,7 +3844,7 @@ function omg_p2(_captured, v_program) {
             // fall through to 862
             case 862: {
                 omg_current_line = 181;
-    _s.push(v_stack);
+    if (v_stack === OMG_UNSET) omg_undefined("stack"); _s.push(v_stack);
             }
             // fall through to 863
             case 863: {
@@ -3833,7 +3869,7 @@ function omg_p2(_captured, v_program) {
             }
             // fall through to 868
             case 868: {
-    v_status = _s.pop();
+    if (v_status === OMG_UNSET) omg_undefined("status"); v_status = _s.pop();
             }
             // fall through to 869
             case 869: {
@@ -3847,11 +3883,11 @@ function omg_p2(_captured, v_program) {
             // fall through to 871
             case 871: {
                 omg_current_line = 185;
-    _s.push(v_stack);
+    if (v_stack === OMG_UNSET) omg_undefined("stack"); _s.push(v_stack);
             }
             // fall through to 872
             case 872: {
-    _s.push(v_stack);
+    if (v_stack === OMG_UNSET) omg_undefined("stack"); _s.push(v_stack);
             }
             // fall through to 873
             case 873: {
@@ -3871,16 +3907,16 @@ function omg_p2(_captured, v_program) {
             }
             // fall through to 877
             case 877: {
-    v_rhs = _s.pop();
+    if (v_rhs === OMG_UNSET) omg_undefined("rhs"); v_rhs = _s.pop();
             }
             // fall through to 878
             case 878: {
                 omg_current_line = 186;
-    _s.push(v_output);
+    if (v_output === OMG_UNSET) omg_undefined("output"); _s.push(v_output);
             }
             // fall through to 879
             case 879: {
-    _s.push(v_rhs);
+    if (v_rhs === OMG_UNSET) omg_undefined("rhs"); _s.push(v_rhs);
             }
             // fall through to 880
             case 880: {
@@ -3892,7 +3928,7 @@ function omg_p2(_captured, v_program) {
             }
             // fall through to 882
             case 882: {
-    v_output = _s.pop();
+    if (v_output === OMG_UNSET) omg_undefined("output"); v_output = _s.pop();
             }
             // fall through to 883
             case 883: {
@@ -3901,11 +3937,11 @@ function omg_p2(_captured, v_program) {
             // fall through to 884
             case 884: {
                 omg_current_line = 187;
-    _s.push(v_opcode);
+    if (v_opcode === OMG_UNSET) omg_undefined("opcode"); _s.push(v_opcode);
             }
             // fall through to 885
             case 885: {
-    _s.push(v_OP_DUP);
+    if (v_OP_DUP === OMG_UNSET) omg_undefined("OP_DUP"); _s.push(v_OP_DUP);
             }
             // fall through to 886
             case 886: {
@@ -3918,7 +3954,7 @@ function omg_p2(_captured, v_program) {
             // fall through to 888
             case 888: {
                 omg_current_line = 188;
-    _s.push(v_stack);
+    if (v_stack === OMG_UNSET) omg_undefined("stack"); _s.push(v_stack);
             }
             // fall through to 889
             case 889: {
@@ -3943,7 +3979,7 @@ function omg_p2(_captured, v_program) {
             }
             // fall through to 894
             case 894: {
-    v_status = _s.pop();
+    if (v_status === OMG_UNSET) omg_undefined("status"); v_status = _s.pop();
             }
             // fall through to 895
             case 895: {
@@ -3957,11 +3993,11 @@ function omg_p2(_captured, v_program) {
             // fall through to 897
             case 897: {
                 omg_current_line = 192;
-    _s.push(v_stack);
+    if (v_stack === OMG_UNSET) omg_undefined("stack"); _s.push(v_stack);
             }
             // fall through to 898
             case 898: {
-    _s.push(v_stack);
+    if (v_stack === OMG_UNSET) omg_undefined("stack"); _s.push(v_stack);
             }
             // fall through to 899
             case 899: {
@@ -3981,16 +4017,16 @@ function omg_p2(_captured, v_program) {
             }
             // fall through to 903
             case 903: {
-    v_rhs = _s.pop();
+    if (v_rhs === OMG_UNSET) omg_undefined("rhs"); v_rhs = _s.pop();
             }
             // fall through to 904
             case 904: {
                 omg_current_line = 193;
-    _s.push(v_stack);
+    if (v_stack === OMG_UNSET) omg_undefined("stack"); _s.push(v_stack);
             }
             // fall through to 905
             case 905: {
-    _s.push(v_rhs);
+    if (v_rhs === OMG_UNSET) omg_undefined("rhs"); _s.push(v_rhs);
             }
             // fall through to 906
             case 906: {
@@ -4002,7 +4038,7 @@ function omg_p2(_captured, v_program) {
             }
             // fall through to 908
             case 908: {
-    v_stack = _s.pop();
+    if (v_stack === OMG_UNSET) omg_undefined("stack"); v_stack = _s.pop();
             }
             // fall through to 909
             case 909: {
@@ -4011,11 +4047,11 @@ function omg_p2(_captured, v_program) {
             // fall through to 910
             case 910: {
                 omg_current_line = 194;
-    _s.push(v_opcode);
+    if (v_opcode === OMG_UNSET) omg_undefined("opcode"); _s.push(v_opcode);
             }
             // fall through to 911
             case 911: {
-    _s.push(v_OP_JMP);
+    if (v_OP_JMP === OMG_UNSET) omg_undefined("OP_JMP"); _s.push(v_OP_JMP);
             }
             // fall through to 912
             case 912: {
@@ -4028,7 +4064,7 @@ function omg_p2(_captured, v_program) {
             // fall through to 914
             case 914: {
                 omg_current_line = 195;
-    _s.push(v_instr);
+    if (v_instr === OMG_UNSET) omg_undefined("instr"); _s.push(v_instr);
             }
             // fall through to 915
             case 915: {
@@ -4040,12 +4076,12 @@ function omg_p2(_captured, v_program) {
             }
             // fall through to 917
             case 917: {
-    v_operand = _s.pop();
+    if (v_operand === OMG_UNSET) omg_undefined("operand"); v_operand = _s.pop();
             }
             // fall through to 918
             case 918: {
                 omg_current_line = 196;
-    _s.push(v_operand);
+    if (v_operand === OMG_UNSET) omg_undefined("operand"); _s.push(v_operand);
             }
             // fall through to 919
             case 919: {
@@ -4066,7 +4102,7 @@ function omg_p2(_captured, v_program) {
             }
             // fall through to 923
             case 923: {
-    v_status = _s.pop();
+    if (v_status === OMG_UNSET) omg_undefined("status"); v_status = _s.pop();
             }
             // fall through to 924
             case 924: {
@@ -4080,7 +4116,7 @@ function omg_p2(_captured, v_program) {
             // fall through to 926
             case 926: {
                 omg_current_line = 200;
-    _s.push(v_operand);
+    if (v_operand === OMG_UNSET) omg_undefined("operand"); _s.push(v_operand);
             }
             // fall through to 927
             case 927: {
@@ -4105,7 +4141,7 @@ function omg_p2(_captured, v_program) {
             }
             // fall through to 932
             case 932: {
-    v_status = _s.pop();
+    if (v_status === OMG_UNSET) omg_undefined("status"); v_status = _s.pop();
             }
             // fall through to 933
             case 933: {
@@ -4119,11 +4155,11 @@ function omg_p2(_captured, v_program) {
             // fall through to 935
             case 935: {
                 omg_current_line = 204;
-    _s.push(v_operand);
+    if (v_operand === OMG_UNSET) omg_undefined("operand"); _s.push(v_operand);
             }
             // fall through to 936
             case 936: {
-    v_pc = _s.pop();
+    if (v_pc === OMG_UNSET) omg_undefined("pc"); v_pc = _s.pop();
             }
             // fall through to 937
             case 937: {
@@ -4132,11 +4168,11 @@ function omg_p2(_captured, v_program) {
             // fall through to 938
             case 938: {
                 omg_current_line = 205;
-    _s.push(v_opcode);
+    if (v_opcode === OMG_UNSET) omg_undefined("opcode"); _s.push(v_opcode);
             }
             // fall through to 939
             case 939: {
-    _s.push(v_OP_JNZ);
+    if (v_OP_JNZ === OMG_UNSET) omg_undefined("OP_JNZ"); _s.push(v_OP_JNZ);
             }
             // fall through to 940
             case 940: {
@@ -4149,7 +4185,7 @@ function omg_p2(_captured, v_program) {
             // fall through to 942
             case 942: {
                 omg_current_line = 206;
-    _s.push(v_stack);
+    if (v_stack === OMG_UNSET) omg_undefined("stack"); _s.push(v_stack);
             }
             // fall through to 943
             case 943: {
@@ -4174,7 +4210,7 @@ function omg_p2(_captured, v_program) {
             }
             // fall through to 948
             case 948: {
-    v_status = _s.pop();
+    if (v_status === OMG_UNSET) omg_undefined("status"); v_status = _s.pop();
             }
             // fall through to 949
             case 949: {
@@ -4188,11 +4224,11 @@ function omg_p2(_captured, v_program) {
             // fall through to 951
             case 951: {
                 omg_current_line = 210;
-    _s.push(v_stack);
+    if (v_stack === OMG_UNSET) omg_undefined("stack"); _s.push(v_stack);
             }
             // fall through to 952
             case 952: {
-    _s.push(v_stack);
+    if (v_stack === OMG_UNSET) omg_undefined("stack"); _s.push(v_stack);
             }
             // fall through to 953
             case 953: {
@@ -4212,12 +4248,12 @@ function omg_p2(_captured, v_program) {
             }
             // fall through to 957
             case 957: {
-    v_cond = _s.pop();
+    if (v_cond === OMG_UNSET) omg_undefined("cond"); v_cond = _s.pop();
             }
             // fall through to 958
             case 958: {
                 omg_current_line = 211;
-    _s.push(v_stack);
+    if (v_stack === OMG_UNSET) omg_undefined("stack"); _s.push(v_stack);
             }
             // fall through to 959
             case 959: {
@@ -4225,7 +4261,7 @@ function omg_p2(_captured, v_program) {
             }
             // fall through to 960
             case 960: {
-    _s.push(v_stack);
+    if (v_stack === OMG_UNSET) omg_undefined("stack"); _s.push(v_stack);
             }
             // fall through to 961
             case 961: {
@@ -4245,12 +4281,12 @@ function omg_p2(_captured, v_program) {
             }
             // fall through to 965
             case 965: {
-    v_stack = _s.pop();
+    if (v_stack === OMG_UNSET) omg_undefined("stack"); v_stack = _s.pop();
             }
             // fall through to 966
             case 966: {
                 omg_current_line = 212;
-    _s.push(v_cond);
+    if (v_cond === OMG_UNSET) omg_undefined("cond"); _s.push(v_cond);
             }
             // fall through to 967
             case 967: {
@@ -4267,7 +4303,7 @@ function omg_p2(_captured, v_program) {
             // fall through to 970
             case 970: {
                 omg_current_line = 213;
-    _s.push(v_instr);
+    if (v_instr === OMG_UNSET) omg_undefined("instr"); _s.push(v_instr);
             }
             // fall through to 971
             case 971: {
@@ -4279,12 +4315,12 @@ function omg_p2(_captured, v_program) {
             }
             // fall through to 973
             case 973: {
-    v_operand = _s.pop();
+    if (v_operand === OMG_UNSET) omg_undefined("operand"); v_operand = _s.pop();
             }
             // fall through to 974
             case 974: {
                 omg_current_line = 214;
-    _s.push(v_operand);
+    if (v_operand === OMG_UNSET) omg_undefined("operand"); _s.push(v_operand);
             }
             // fall through to 975
             case 975: {
@@ -4305,7 +4341,7 @@ function omg_p2(_captured, v_program) {
             }
             // fall through to 979
             case 979: {
-    v_status = _s.pop();
+    if (v_status === OMG_UNSET) omg_undefined("status"); v_status = _s.pop();
             }
             // fall through to 980
             case 980: {
@@ -4319,7 +4355,7 @@ function omg_p2(_captured, v_program) {
             // fall through to 982
             case 982: {
                 omg_current_line = 218;
-    _s.push(v_operand);
+    if (v_operand === OMG_UNSET) omg_undefined("operand"); _s.push(v_operand);
             }
             // fall through to 983
             case 983: {
@@ -4344,7 +4380,7 @@ function omg_p2(_captured, v_program) {
             }
             // fall through to 988
             case 988: {
-    v_status = _s.pop();
+    if (v_status === OMG_UNSET) omg_undefined("status"); v_status = _s.pop();
             }
             // fall through to 989
             case 989: {
@@ -4358,11 +4394,11 @@ function omg_p2(_captured, v_program) {
             // fall through to 991
             case 991: {
                 omg_current_line = 222;
-    _s.push(v_operand);
+    if (v_operand === OMG_UNSET) omg_undefined("operand"); _s.push(v_operand);
             }
             // fall through to 992
             case 992: {
-    v_pc = _s.pop();
+    if (v_pc === OMG_UNSET) omg_undefined("pc"); v_pc = _s.pop();
             }
             // fall through to 993
             case 993: {
@@ -4375,11 +4411,11 @@ function omg_p2(_captured, v_program) {
             // fall through to 995
             case 995: {
                 omg_current_line = 224;
-    _s.push(v_opcode);
+    if (v_opcode === OMG_UNSET) omg_undefined("opcode"); _s.push(v_opcode);
             }
             // fall through to 996
             case 996: {
-    _s.push(v_OP_HALT);
+    if (v_OP_HALT === OMG_UNSET) omg_undefined("OP_HALT"); _s.push(v_OP_HALT);
             }
             // fall through to 997
             case 997: {
@@ -4405,7 +4441,7 @@ function omg_p2(_captured, v_program) {
             }
             // fall through to 1002
             case 1002: {
-    v_status = _s.pop();
+    if (v_status === OMG_UNSET) omg_undefined("status"); v_status = _s.pop();
             }
             // fall through to 1003
             case 1003: {
@@ -4419,11 +4455,11 @@ function omg_p2(_captured, v_program) {
             // fall through to 1005
             case 1005: {
                 omg_current_line = 231;
-    _s.push(v_status);
+    if (v_status === OMG_UNSET) omg_undefined("status"); _s.push(v_status);
             }
             // fall through to 1006
             case 1006: {
-    _s.push(v_output);
+    if (v_output === OMG_UNSET) omg_undefined("output"); _s.push(v_output);
             }
             // fall through to 1007
             case 1007: {
@@ -4446,6 +4482,7 @@ function omg_p2(_captured, v_program) {
             }
             _ip += 1;
         } catch (_e) {
+            if (_e instanceof RangeError) { _e = new OmgError('RuntimeError', 'maximum recursion depth exceeded'); }
             if (_e instanceof OmgError && _eh.length > 0) {
                 const _entry = _eh.pop();
                 _ip = _entry[0];
@@ -4458,6 +4495,7 @@ function omg_p2(_captured, v_program) {
 }
 
 function omg_p3(_captured) {
+    if (arguments.length !== 1) omg_arity_error("run_tests", 0, arguments.length - 1);
     const _s = [];
     omg_current_file_idx = 0;
     let _ip = 1092;
@@ -4471,7 +4509,7 @@ function omg_p3(_captured) {
             }
             // fall through to 1093
             case 1093: {
-    _s.push(v_prog_add);
+    if (v_prog_add === OMG_UNSET) omg_undefined("prog_add"); _s.push(v_prog_add);
             }
             // fall through to 1094
             case 1094: {
@@ -4500,7 +4538,7 @@ function omg_p3(_captured) {
             }
             // fall through to 1100
             case 1100: {
-    _s.push(v_prog_fact);
+    if (v_prog_fact === OMG_UNSET) omg_undefined("prog_fact"); _s.push(v_prog_fact);
             }
             // fall through to 1101
             case 1101: {
@@ -4545,7 +4583,7 @@ function omg_p3(_captured) {
             }
             // fall through to 1111
             case 1111: {
-    _s.push(v_prog_fib);
+    if (v_prog_fib === OMG_UNSET) omg_undefined("prog_fib"); _s.push(v_prog_fib);
             }
             // fall through to 1112
             case 1112: {
@@ -4602,7 +4640,7 @@ function omg_p3(_captured) {
             }
             // fall through to 1125
             case 1125: {
-    _s.push(v_prog_div0);
+    if (v_prog_div0 === OMG_UNSET) omg_undefined("prog_div0"); _s.push(v_prog_div0);
             }
             // fall through to 1126
             case 1126: {
@@ -4627,7 +4665,7 @@ function omg_p3(_captured) {
             }
             // fall through to 1131
             case 1131: {
-    _s.push(v_prog_badjump);
+    if (v_prog_badjump === OMG_UNSET) omg_undefined("prog_badjump"); _s.push(v_prog_badjump);
             }
             // fall through to 1132
             case 1132: {
@@ -4652,7 +4690,7 @@ function omg_p3(_captured) {
             }
             // fall through to 1137
             case 1137: {
-    _s.push(v_prog_underflow);
+    if (v_prog_underflow === OMG_UNSET) omg_undefined("prog_underflow"); _s.push(v_prog_underflow);
             }
             // fall through to 1138
             case 1138: {
@@ -4683,6 +4721,7 @@ function omg_p3(_captured) {
             }
             _ip += 1;
         } catch (_e) {
+            if (_e instanceof RangeError) { _e = new OmgError('RuntimeError', 'maximum recursion depth exceeded'); }
             if (_e instanceof OmgError && _eh.length > 0) {
                 const _entry = _eh.pop();
                 _ip = _entry[0];
@@ -4695,11 +4734,12 @@ function omg_p3(_captured) {
 }
 
 function omg_p4(_captured, v_name, v_prog, v_expect_status, v_expect_output) {
-    let v_asm_res;
-    let v_bytecode;
-    let v_run_res;
-    let v_status;
-    let v_out;
+    if (arguments.length !== 5) omg_arity_error("test", 4, arguments.length - 1);
+    let v_asm_res = OMG_UNSET;
+    let v_bytecode = OMG_UNSET;
+    let v_run_res = OMG_UNSET;
+    let v_status = OMG_UNSET;
+    let v_out = OMG_UNSET;
     const _s = [];
     omg_current_file_idx = 0;
     let _ip = 1011;
@@ -4722,7 +4762,7 @@ function omg_p4(_captured, v_name, v_prog, v_expect_status, v_expect_output) {
             // fall through to 1014
             case 1014: {
                 omg_current_line = 323;
-    _s.push(v_asm_res);
+    if (v_asm_res === OMG_UNSET) omg_undefined("asm_res"); _s.push(v_asm_res);
             }
             // fall through to 1015
             case 1015: {
@@ -4747,7 +4787,7 @@ function omg_p4(_captured, v_name, v_prog, v_expect_status, v_expect_output) {
             // fall through to 1020
             case 1020: {
                 omg_current_line = 324;
-    _s.push(v_asm_res);
+    if (v_asm_res === OMG_UNSET) omg_undefined("asm_res"); _s.push(v_asm_res);
             }
             // fall through to 1021
             case 1021: {
@@ -4805,7 +4845,7 @@ function omg_p4(_captured, v_name, v_prog, v_expect_status, v_expect_output) {
             }
             // fall through to 1034
             case 1034: {
-    _s.push(v_asm_res);
+    if (v_asm_res === OMG_UNSET) omg_undefined("asm_res"); _s.push(v_asm_res);
             }
             // fall through to 1035
             case 1035: {
@@ -4847,7 +4887,7 @@ function omg_p4(_captured, v_name, v_prog, v_expect_status, v_expect_output) {
             // fall through to 1044
             case 1044: {
                 omg_current_line = 331;
-    _s.push(v_asm_res);
+    if (v_asm_res === OMG_UNSET) omg_undefined("asm_res"); _s.push(v_asm_res);
             }
             // fall through to 1045
             case 1045: {
@@ -4864,7 +4904,7 @@ function omg_p4(_captured, v_name, v_prog, v_expect_status, v_expect_output) {
             // fall through to 1048
             case 1048: {
                 omg_current_line = 332;
-    _s.push(v_bytecode);
+    if (v_bytecode === OMG_UNSET) omg_undefined("bytecode"); _s.push(v_bytecode);
             }
             // fall through to 1049
             case 1049: {
@@ -4877,7 +4917,7 @@ function omg_p4(_captured, v_name, v_prog, v_expect_status, v_expect_output) {
             // fall through to 1051
             case 1051: {
                 omg_current_line = 333;
-    _s.push(v_run_res);
+    if (v_run_res === OMG_UNSET) omg_undefined("run_res"); _s.push(v_run_res);
             }
             // fall through to 1052
             case 1052: {
@@ -4894,7 +4934,7 @@ function omg_p4(_captured, v_name, v_prog, v_expect_status, v_expect_output) {
             // fall through to 1055
             case 1055: {
                 omg_current_line = 334;
-    _s.push(v_run_res);
+    if (v_run_res === OMG_UNSET) omg_undefined("run_res"); _s.push(v_run_res);
             }
             // fall through to 1056
             case 1056: {
@@ -4911,7 +4951,7 @@ function omg_p4(_captured, v_name, v_prog, v_expect_status, v_expect_output) {
             // fall through to 1059
             case 1059: {
                 omg_current_line = 335;
-    _s.push(v_status);
+    if (v_status === OMG_UNSET) omg_undefined("status"); _s.push(v_status);
             }
             // fall through to 1060
             case 1060: {
@@ -4927,7 +4967,7 @@ function omg_p4(_captured, v_name, v_prog, v_expect_status, v_expect_output) {
             }
             // fall through to 1063
             case 1063: {
-    _s.push(v_out);
+    if (v_out === OMG_UNSET) omg_undefined("out"); _s.push(v_out);
             }
             // fall through to 1064
             case 1064: {
@@ -4993,7 +5033,7 @@ function omg_p4(_captured, v_name, v_prog, v_expect_status, v_expect_output) {
             }
             // fall through to 1079
             case 1079: {
-    _s.push(v_status);
+    if (v_status === OMG_UNSET) omg_undefined("status"); _s.push(v_status);
             }
             // fall through to 1080
             case 1080: {
@@ -5009,7 +5049,7 @@ function omg_p4(_captured, v_name, v_prog, v_expect_status, v_expect_output) {
             }
             // fall through to 1083
             case 1083: {
-    _s.push(v_out);
+    if (v_out === OMG_UNSET) omg_undefined("out"); _s.push(v_out);
             }
             // fall through to 1084
             case 1084: {
@@ -5049,6 +5089,7 @@ function omg_p4(_captured, v_name, v_prog, v_expect_status, v_expect_output) {
             }
             _ip += 1;
         } catch (_e) {
+            if (_e instanceof RangeError) { _e = new OmgError('RuntimeError', 'maximum recursion depth exceeded'); }
             if (_e instanceof OmgError && _eh.length > 0) {
                 const _entry = _eh.pop();
                 _ip = _entry[0];
@@ -6091,6 +6132,7 @@ try {
             }
             _ip += 1;
         } catch (_e) {
+            if (_e instanceof RangeError) { _e = new OmgError('RuntimeError', 'maximum recursion depth exceeded'); }
             if (_e instanceof OmgError && _eh.length > 0) {
                 const _entry = _eh.pop();
                 _ip = _entry[0];
