@@ -225,10 +225,10 @@ Four opcodes beyond the v0.1 baseline:
   see writes from the next iteration's fresh binding.
 - **54 (`PushFloat`)** pushes an IEEE-754 f64 literal onto the stack
   (8-byte little-endian payload, same layout as `PushInt`).
-- **55 (`FloorDiv`)** implements the `//` operator. `/` between two ints
-  is still floor division (back-compat), but as soon as either operand
-  is a float `/` becomes true division, so `//` exists for cases where
-  the source needs to *force* the floor.
+- **55 (`FloorDiv`)** implements the `//` operator. `/` is always true
+  division and always produces a float, even between two ints
+  (`7 / 2` is `3.5`, `8 / 2` is `4.0`); `//` floors toward minus
+  infinity and keeps the integer type when both operands are ints.
 
 Functions are emitted in **sorted name order** so the writer is
 deterministic — the self-hosted fixed-point check depends on it.

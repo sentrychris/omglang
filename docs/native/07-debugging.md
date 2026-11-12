@@ -118,6 +118,25 @@ Common causes:
 The traceback's last `File` line tells you exactly which expression
 referenced `foo` — start there.
 
+Every backend raises this, including AOT-compiled binaries (which used
+to read an undefined name as `0`). A name that is only declared on a
+path that did not run, such as an `alloc` inside an `if`, is undefined
+too.
+
+### `SyntaxError: 'foo' is used in a nested proc before the enclosing proc declares it`
+
+A nested proc captures the variables that exist where it is written.
+`foo` is declared by the enclosing proc, but further down, so the
+closure could never see it. Move the `alloc foo` (or the sibling
+`proc foo`) above the nested proc.
+
+### `RuntimeError: maximum recursion depth exceeded`
+
+An AOT-compiled binary (or a program transpiled to JavaScript) ran out
+of native stack. It is catchable. The VMs do not have this limit; in a
+compiled program, turn the recursion into a loop or a tail call to a
+top-level proc.
+
 ### `UndefinedIdentError: foo` *only on native, not on `omg`*
 
 You added a builtin but forgot to add it to the OMG compiler's allowlist

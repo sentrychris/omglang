@@ -162,6 +162,23 @@ typedef Value (*OmgFn)(Value *captured, int cap_count, int argc,
                        Value a0,  Value a1,  ...,  Value a30, Value a31);
 ```
 
+Every compiled proc starts with two checks. `argc` is compared with the
+proc's parameter count (`omg_arity_error`): direct calls are checked by
+the compiler, but a call through a value is not, and without the check a
+missing argument would be read as whatever happened to be in the slot.
+Then `OMG_STACK_CHECK()` compares the frame address with a limit that
+`omg_stack_init` computed in `main` from `RLIMIT_STACK` (which it first
+raises to 64 MiB where the hard limit allows). Past the limit the proc
+raises `RuntimeError: maximum recursion depth exceeded` instead of
+running off the end of the stack, so runaway recursion is an ordinary,
+catchable error rather than a segfault.
+
+A closure that names itself (a nested proc that recurses) finds itself
+through `omg_closure_self`, which rebuilds the closure value from the
+`captured` array the proc was entered with. The closure cannot simply
+capture itself: its captures are collected before it exists, and a
+closure that owned a reference to itself would never be freed.
+
 Args are passed inline rather than as an array, so cc -O3 can sibling-call
 optimize tail calls. `OMG_MAX_ARITY = 32`; bump it (everywhere) if you need
 more parameters. The cap *only* applies to the C-AOT path
@@ -284,6 +301,25 @@ The first frame's call site is labelled `<top-level>`; subsequent
 frames take their *caller's* display name (i.e. `frames[i-1].name`).
 The site line uses `omg_current_file_idx` / `omg_current_line`, which
 are the globals the transpiler updated at the most recent instruction.
+
+### Undefined names
+
+A variable slot that nothing has been stored into holds `OMG_UNSET`, a
+tag no OMG value ever has. `LOAD` and `STORE` of such a slot raise
+`UndefinedIdentError: name`, as the VMs do, where they used to read `0`
+and to create the variable silently. Globals start out as
+`OMG_UNSET_INIT`, locals as `omg_unset()`, and a boxed variable (one that
+a nested proc captures) goes through `omg_cell_load` / `omg_cell_store`,
+which make the same check on the slot that should hold the cell. A
+`CALL` to a name that is not in the function table compiles to
+`omg_undefined("name")`, so it too fails only if it is reached.
+
+Which names are parameters, locals, captured or global is decided by
+the scope analysis at the top of `native-c.omg` (`analyze_all_functions`),
+which follows the same rules as the compiler: a name belongs to the
+nearest enclosing proc that declares it before the nested proc is
+defined. `native-js.omg` carries a copy of the same analysis; keep the
+two identical.
 
 ### Caveats
 

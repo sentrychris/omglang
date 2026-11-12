@@ -489,6 +489,31 @@ Same semantics as Python and JavaScript — closures share storage with
 their enclosing scope, not just the values that were there at
 definition time.
 
+A nested proc can call itself, and still sees everything it captured:
+
+```omg
+;;;omg
+
+proc sum_to(limit, step) {
+    proc walk(k) {
+        if k > limit {
+            return 0
+        }
+        return k + walk(k + step)
+    }
+    return walk(0)
+}
+
+emit sum_to(10, 5)      # 15   (0 + 5 + 10)
+```
+
+One rule to remember: a nested proc can only use variables that the
+enclosing proc has *already declared* at the point where the nested proc
+is written. Using one that is declared further down is a `SyntaxError`
+(`'x' is used in a nested proc before the enclosing proc declares it`).
+Move the `alloc` above the nested proc. Variables declared at the top
+level of a file are globals and can be used from anywhere.
+
 ### Multi-file programs: `import`
 
 Save this as `mathlib.omg`:
@@ -687,6 +712,7 @@ Always available, no import needed.
 | `subprocess([cmd, args...])`   | run a child process; returns its exit code           |
 | `exit(code)`                   | exit the current process with the given status       |
 | `getpid()`                     | current process ID (useful for unique tempfile names) |
+| `executable_path()`            | path of the native OMG executable running the program, or `false` (always `false` on the Rust runtime) |
 | **Reflection**                 |                                                       |
 | `call_builtin(name, args)`     | call a builtin by name (advanced)                     |
 

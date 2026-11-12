@@ -12,22 +12,27 @@ OMG files conventionally start with:
 ;;;omg
 ```
 
-It's stripped by the lexer if present. The header isn't strictly required —
-files without it parse fine — but it's the canonical way to mark a file as
-OMG source (so editors and tools can recognize it).
+It's stripped by the lexer if present. The header isn't required — every
+way of running a file (`omg`, `omg --rust`, `--compile`, `--build`,
+`--disasm`) accepts a file without it — but it's the canonical way to mark
+a file as OMG source (so editors and tools can recognize it).
 
 ## Types
 
 | Type    | Examples                            |
 | ------- | ----------------------------------- |
-| Int     | `42`, `-7`, `0xff`, `0b1010`        |
-| Float   | `3.14`, `1.0e-3`, `nan`, `inf`      |
+| Int     | `42`, `-7`, `0b1010` (64-bit signed) |
+| Float   | `3.14`, `1.0e-3`                    |
 | String  | `"hello"`, `"line\n"`               |
 | Bool    | `true`, `false`                     |
 | None    | no literal; produced when a `proc` falls off the end without `return`. `emit` of None prints a blank line. |
 | List    | `[1, 2, 3]`, `[]`, `["a", 5, true]` |
 | Dict    | `{name: "Ada", age: 36}`            |
 | Closure | from `proc` definitions             |
+
+There are no hexadecimal literals (`hex(n)` formats an int as hex, but
+`0xff` is not a number in source) and no `nan` / `inf` literals. List and dict elements, and call arguments, are separated by
+commas; leaving one out is a `SyntaxError`.
 
 Lists and dicts are heterogeneous. Equality is structural (`[1,2] == [1,2]`).
 
@@ -104,8 +109,38 @@ emit add5(7)              # 12
 Procs can be passed around as values, returned, called via the captured
 result, etc. Closures work as you'd expect.
 
-Tail calls inside `proc` are optimized — recursion of any depth doesn't
-blow the stack:
+A nested proc can call itself, and keeps what it captured while it does:
+
+```omg
+proc sum_to(limit, step) {
+    proc walk(k) {
+        if k > limit { return 0 }
+        return k + walk(k + step)   # `limit` and `step` are still visible
+    }
+    return walk(0)
+}
+emit sum_to(10, 5)            # 15
+```
+
+A closure captures the variables that exist *at the point where the
+nested proc is written*. Using a variable that the enclosing proc only
+declares further down is therefore a compile-time error, rather than a
+surprise at run time:
+
+```omg
+proc outer() {
+    proc get() { return late }    # SyntaxError: 'late' is used in a nested
+    alloc late := 1               # proc before the enclosing proc declares it
+    return get()
+}
+```
+
+Move the `alloc` (or the sibling `proc`) above the nested proc that uses
+it. Names declared at the top level of a file are globals and are exempt:
+they are looked up when the proc runs.
+
+Tail calls to top-level procs are optimized — recursion of any depth
+doesn't blow the stack:
 
 ```omg
 proc count_down(n) {
@@ -114,6 +149,24 @@ proc count_down(n) {
 }
 emit count_down(1000000)       # works
 ```
+
+Three cases are ordinary calls instead, and do use a stack frame each:
+
+- `return f(...)` inside a `try` block. The handler has to stay in place
+  while `f` runs, otherwise an error raised by `f` would escape the
+  `except` written around it.
+- A call through a value: a nested proc (including one calling itself), a
+  parameter, or anything held in a variable.
+- Any tail call in a program transpiled to JavaScript, which has no
+  tail-call elimination.
+
+How deep ordinary recursion can go depends on the backend. The Rust VM
+and the native interpreter keep their call stack on the heap and handle
+hundreds of thousands of frames. An AOT-compiled binary uses the C stack
+(about 10,000 frames; it raises its own soft stack limit to 64 MiB on
+Linux) and JavaScript uses the engine's. Running out is not a crash on
+either: it raises `RuntimeError: maximum recursion depth exceeded`, which
+`try` / `except` can catch.
 
 ## Strings
 
@@ -237,7 +290,9 @@ The full list, grouped by area. Argument counts in parens.
 
 **Process control**
 `subprocess(argv_list)` (run a child, return its exit code),
-`exit(code)`, `getpid()`
+`exit(code)`, `getpid()`, `executable_path()` (absolute path of the
+native OMG executable running the program, or `false` when there is
+none: always `false` on the Rust runtime)
 
 **Reflection**
 `call_builtin(name, args_list)` — dispatches to another builtin. Used by
