@@ -1,0 +1,24 @@
+new name at top level: UndefinedIdentError
+typo inside a proc: UndefinedIdentError
+0
+1
+3
+101
+51
+6
+local read from outside: UndefinedIdentError
+local assigned from outside: UndefinedIdentError
+declared in a loop
+declared in an if
+10
+then
+else
+3
+4
+true
+true
+inner!
+outer
+3
+true
+done
