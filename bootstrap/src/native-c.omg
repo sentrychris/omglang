@@ -1006,15 +1006,12 @@ proc generate(code, funcs, src_files, src_lines, runtime_header, source_path) {
     be.buf_add(out, "    return NULL;\n")
     be.buf_add(out, "}\n\n")
 
-    # main(): the top-level code (instructions 0 .. first HALT).
-    be.buf_add(out, "int main(int argc, char **argv) {\n")
+    # omg_main(): the top-level code (instructions 0 .. first HALT).
+    # main(), emitted last, hands it to omg_start() in omg_rt.h
+    # ("Program entry"), where the per-platform start-up lives.
+    be.buf_add(out, "static int omg_main(int argc, char **argv) {\n")
     be.buf_add(out, "    (void)argc; (void)argv;\n")
     be.buf_add(out, "    omg_stack_init(__builtin_frame_address(0));\n")
-    be.buf_add(out, "    /* Force line-buffered stdout so stdout/stderr interleave the\n")
-    be.buf_add(out, "     * way Rust's stdio does (Rust's println! flushes on \\n via\n")
-    be.buf_add(out, "     * LineWriter even when piped). Matters for error tests where a\n")
-    be.buf_add(out, "     * panic to stderr must come AFTER prior emits, not before. */\n")
-    be.buf_add(out, "    setvbuf(stdout, NULL, _IOLBF, 0);\n")
     be.buf_add(out, "    /* Hook the source-file table into omg_rt.h's traceback path. */\n")
     be.buf_add(out, "    omg_src_files = omg_program_src_files;\n")
     be.buf_add(out, "    omg_src_files_n = omg_program_src_files_n;\n")
@@ -1026,19 +1023,11 @@ proc generate(code, funcs, src_files, src_lines, runtime_header, source_path) {
     # Initialise runtime-injected globals to match the OMG VM:
     #   - args         = list of [argv[0], argv[1], ...]
     #   - module_file  = argv[0] (script path; here, the binary's own path)
-    #   - current_dir  = OS cwd via getcwd()
+    #   - current_dir  = the OS working directory (omg_os_getcwd)
     # omg_cwd_str is the path-resolution base used by file_open/etc.;
     # mirroring it to v_current_dir keeps the user-visible global
     # consistent for read access.
-    be.buf_add(out, "    {\n")
-    be.buf_add(out, "        char *cwdbuf = (char *)malloc(4096);\n")
-    be.buf_add(out, "        if (cwdbuf && getcwd(cwdbuf, 4096)) {\n")
-    be.buf_add(out, "            omg_cwd_str = cwdbuf;\n")
-    be.buf_add(out, "        } else {\n")
-    be.buf_add(out, "            free(cwdbuf);\n")
-    be.buf_add(out, "            omg_cwd_str = \".\";\n")
-    be.buf_add(out, "        }\n")
-    be.buf_add(out, "    }\n")
+    be.buf_add(out, "    omg_cwd_str = omg_os_getcwd();\n")
     be.buf_add(out, "    " + c_var("module_file") + " = omg_str(argc > 0 ? argv[0] : \"<stdin>\");\n")
     be.buf_add(out, "    " + c_var("current_dir") + " = omg_str(omg_cwd_str);\n")
     be.buf_add(out, "    {\n")
@@ -1072,6 +1061,7 @@ proc generate(code, funcs, src_files, src_lines, runtime_header, source_path) {
     }
     be.buf_add(out, emit_body(code, 0, main_end, ctx))
     be.buf_add(out, "    return 0;\n")
-    be.buf_add(out, "}\n")
+    be.buf_add(out, "}\n\n")
+    be.buf_add(out, "int main(int argc, char **argv) { return omg_start(argc, argv, omg_main); }\n")
     return be.buf_join(out)
 }

@@ -78,12 +78,9 @@ assert_both_paths "subprocess argv items stay separate" \
     "$TMPDIR_TEST/subprocess_argv.omg" \
     "a|b c|d"
 
-# Failed exec (binary not found) is catchable on the Rust runtime
-# because std::process::Command::status() returns Err. The native
-# C runtime's fork+execvp path forks unconditionally, so the child
-# exits 127 and the parent gets that as the subprocess() return value
-# (no exception). This is a documented divergence; we test the two
-# behaviours separately rather than asserting parity.
+# Failed exec (binary not found) is an error the program can catch, the
+# same on every backend. (The native runtime used to fork first and
+# hand back the child's exit code 127 instead.)
 cat > "$TMPDIR_TEST/subprocess_missing.omg" <<'EOF'
 ;;;omg
 try {
@@ -93,16 +90,9 @@ try {
     emit "caught"
 }
 EOF
-rust_out=$("$OMG_RUST" "$TMPDIR_TEST/subprocess_missing.omg" 2>/dev/null)
-assert_eq "subprocess missing-binary: Rust raises catchable error" \
-    "caught" "$rust_out"
-
-# Native: child exits 127 from the failed exec (its stderr leaks the
-# error message — we ignore it for this assertion).
-build_aot "$TMPDIR_TEST/subprocess_missing.omg" "$TMPDIR_TEST/sp_missing-aot" >/dev/null
-nat_out=$("$TMPDIR_TEST/sp_missing-aot" 2>/dev/null)
-assert_eq "subprocess missing-binary: native returns 127" \
-    "rc=127" "$nat_out"
+assert_both_paths "subprocess missing-binary is catchable" \
+    "$TMPDIR_TEST/subprocess_missing.omg" \
+    "caught"
 
 section "Builtins: exit"
 

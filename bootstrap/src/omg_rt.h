@@ -4,25 +4,64 @@
  *
  * The OMG C runtime: value types, refcounting, list/dict/string
  * helpers, error handling, file + TCP builtins. Every transpiled
- * program has this header pasted in, so the resulting ELF depends
- * only on libc.
+ * program has this header pasted in, so the resulting executable
+ * depends only on libc (plus, on Windows, the system DLLs).
+ *
+ * Portability: everything that differs between POSIX (Linux, macOS,
+ * the BSDs) and Windows sits behind `#ifdef _WIN32`, in the "Platform
+ * layer" section below and in the handful of builtins that talk to the
+ * operating system directly. The behaviour on Windows follows the Rust
+ * runtime's Windows backend (runtime/src/vm/sys.rs): what cannot exist
+ * there (fork, pseudo-terminals) raises a catchable ValueError.
+ * On Windows the supported C compilers are GCC and Clang (MinGW-w64).
  */
+#ifdef _WIN32
+/* C99 printf/scanf (%lld, %zu, two-digit exponents) from MinGW itself
+ * rather than from the old msvcrt. Must precede every system header. */
+#ifndef __USE_MINGW_ANSI_STDIO
+#define __USE_MINGW_ANSI_STDIO 1
+#endif
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+/* try/except is setjmp/longjmp. MinGW's default longjmp on 64-bit
+ * Windows walks the stack with the system unwinder, which is meant for
+ * C++ and SEH frames and is not reliable through generated code like
+ * this (it can end the process silently). There is nothing to unwind
+ * here, so ask for the plain register-restoring kind. */
+#ifndef __USE_MINGW_SETJMP_NON_SEH
+#define __USE_MINGW_SETJMP_NON_SEH 1
+#endif
+#include <winsock2.h>
+#include <ws2tcpip.h>
+#include <windows.h>
+#include <shellapi.h>     /* CommandLineToArgvW */
+#include <io.h>           /* _setmode, _read */
+#include <fcntl.h>        /* _O_BINARY */
+#include <wchar.h>
+#endif
 #include <stdio.h>
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
 #include <setjmp.h>
+#if defined(_WIN32) && defined(__x86_64__) && defined(__SEH__)
+/* Headers older than the switch above: same effect by hand. */
+#undef setjmp
+#define setjmp(BUF) _setjmp((BUF), NULL)
+#endif
 #include <stdarg.h>
 #include <errno.h>
+#include <time.h>
 #include <sys/stat.h>
 #include <sys/types.h>
+#ifndef _WIN32
 #include <sys/wait.h>
 #include <dirent.h>
 #include <unistd.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
-#include <time.h>
 #include <termios.h>
 /* forkpty lives in a different header on each Unix family. */
 #if defined(__APPLE__) || defined(__OpenBSD__) || defined(__NetBSD__)
@@ -41,6 +80,7 @@
 #include <netdb.h>
 #include <signal.h>
 #include <sys/resource.h> /* getrlimit / setrlimit for the stack guard */
+#endif
 
 typedef enum {
     OMG_INT,
@@ -419,9 +459,27 @@ static void omg_panicf(const char *prefix, const char *fmt, ...) {
  * RLIMIT_STACK *currently* in force, so omg_stack_init first raises a
  * small soft limit to 64 MiB (the size of the thread the Rust VM runs
  * on) to allow deeper recursion. Elsewhere the size is fixed when the
- * process starts, so the limit is used as found. */
+ * process starts, so the limit is used as found.
+ *
+ * On Windows a thread's stack is reserved in one piece when the thread
+ * is created, so the runtime asks the system where that reservation
+ * ends. main() (at the end of the platform layer) runs the program on
+ * a thread with a 64 MiB stack for the same reason as the Linux case. */
 static uintptr_t omg_stack_limit = 0;
 
+#ifdef _WIN32
+static void omg_stack_init(void *base) {
+    /* The region a local variable lives in is the thread's stack; its
+     * AllocationBase is the lowest address of the whole reservation. */
+    MEMORY_BASIC_INFORMATION mbi;
+    uintptr_t b = (uintptr_t)base;
+    if (VirtualQuery((LPCVOID)b, &mbi, sizeof(mbi)) == 0) { omg_stack_limit = 0; return; }
+    uintptr_t low = (uintptr_t)mbi.AllocationBase;
+    size_t size = b > low ? (size_t)(b - low) : 0;
+    size_t reserve = size >= (size_t)4 * 1024 * 1024 ? (size_t)1024 * 1024 : size / 4;
+    omg_stack_limit = low + reserve;
+}
+#else
 static void omg_stack_init(void *base) {
     size_t size = (size_t)8 * 1024 * 1024;
     struct rlimit rl;
@@ -444,6 +502,7 @@ static void omg_stack_init(void *base) {
     uintptr_t b = (uintptr_t)base;
     omg_stack_limit = b > size ? b - size : 0;
 }
+#endif
 
 static void omg_stack_overflow(void) {
     omg_panic("RuntimeError", "maximum recursion depth exceeded");
@@ -566,6 +625,18 @@ static const char *omg_float_format(double f, char *buf, size_t bufsize) {
 /* Forward declarations for stringification of compound values. */
 static void omg_print_value(Value v);
 
+/* stdout is line-buffered everywhere, so that output and a later error
+ * on stderr come out in the order they happened (and so a long-running
+ * program's progress shows through a pipe), as with the Rust runtime.
+ * POSIX stdio can do that itself (setvbuf in main). The Windows C
+ * runtime has no line-buffered mode, so there each emit ends with a
+ * flush. */
+#ifdef _WIN32
+#define OMG_EMIT_DONE() fflush(stdout)
+#else
+#define OMG_EMIT_DONE() ((void)0)
+#endif
+
 static void omg_emit(Value v) {
     char fbuf[64];
     switch (v.tag) {
@@ -581,6 +652,7 @@ static void omg_emit(Value v) {
             putchar('\n');
             break;
     }
+    OMG_EMIT_DONE();
 }
 
 /* === Integer arithmetic ====================================================
@@ -1483,40 +1555,77 @@ static int omg_print_enter(const void *p) {
     return 1;
 }
 
-static void omg_fprint_value(FILE *out, Value v) {
+/* Where a printed value goes: a stdio stream, or (fp == NULL) a heap
+ * buffer that grows as needed. One writer for both keeps `emit xs` and
+ * `"" + xs` identical, and needs nothing beyond standard C (the old
+ * version used POSIX open_memstream, which Windows does not have). */
+typedef struct {
+    FILE *fp;
+    char *p;
+    size_t len, cap;
+} OmgOut;
+
+static void omg_out_write(OmgOut *o, const char *s, size_t n) {
+    if (o->fp) { fwrite(s, 1, n, o->fp); return; }
+    if (o->len + n + 1 > o->cap) {
+        size_t cap = o->cap ? o->cap : 64;
+        while (o->len + n + 1 > cap) cap *= 2;
+        char *np = (char *)realloc(o->p, cap);
+        if (!np) { fprintf(stderr, "out of memory\n"); exit(1); }
+        o->p = np;
+        o->cap = cap;
+    }
+    memcpy(o->p + o->len, s, n);
+    o->len += n;
+    o->p[o->len] = 0;
+}
+
+static void omg_out_puts(OmgOut *o, const char *s) {
+    omg_out_write(o, s, strlen(s));
+}
+
+static void omg_out_value(OmgOut *out, Value v) {
     char buf[64];
     switch (v.tag) {
-        case OMG_INT:     fprintf(out, "%lld", (long long)v.v.i); break;
-        case OMG_FLOAT:   fputs(omg_float_format(v.v.f, buf, sizeof(buf)), out); break;
-        case OMG_STR:     fputs(v.v.s, out); break;
-        case OMG_BOOL:    fputs(v.v.b ? "true" : "false", out); break;
+        case OMG_INT:
+            snprintf(buf, sizeof(buf), "%lld", (long long)v.v.i);
+            omg_out_puts(out, buf);
+            break;
+        case OMG_FLOAT:   omg_out_puts(out, omg_float_format(v.v.f, buf, sizeof(buf))); break;
+        case OMG_STR:     omg_out_puts(out, v.v.s); break;
+        case OMG_BOOL:    omg_out_puts(out, v.v.b ? "true" : "false"); break;
         case OMG_NONE:    break;
-        case OMG_CLOSURE: fputs("<proc>", out); break;
+        case OMG_CLOSURE: omg_out_puts(out, "<proc>"); break;
         case OMG_LIST: {
-            if (!omg_print_enter(v.v.l)) { fputs("[...]", out); break; }
-            fputc('[', out);
+            if (!omg_print_enter(v.v.l)) { omg_out_puts(out, "[...]"); break; }
+            omg_out_write(out, "[", 1);
             for (int i = 0; i < v.v.l->len; i++) {
-                if (i) fputs(", ", out);
-                omg_fprint_value(out, v.v.l->items[i]);
+                if (i) omg_out_write(out, ", ", 2);
+                omg_out_value(out, v.v.l->items[i]);
             }
-            fputc(']', out);
+            omg_out_write(out, "]", 1);
             omg_print_depth--;
             break;
         }
         case OMG_DICT: {
-            if (!omg_print_enter(v.v.d)) { fputs("{...}", out); break; }
-            fputc('{', out);
+            if (!omg_print_enter(v.v.d)) { omg_out_puts(out, "{...}"); break; }
+            omg_out_write(out, "{", 1);
             for (int i = 0; i < v.v.d->len; i++) {
-                if (i) fputs(", ", out);
-                fputs(v.v.d->keys[i], out);
-                fputs(": ", out);
-                omg_fprint_value(out, v.v.d->vals[i]);
+                if (i) omg_out_write(out, ", ", 2);
+                omg_out_puts(out, v.v.d->keys[i]);
+                omg_out_write(out, ": ", 2);
+                omg_out_value(out, v.v.d->vals[i]);
             }
-            fputc('}', out);
+            omg_out_write(out, "}", 1);
             omg_print_depth--;
             break;
         }
     }
+}
+
+static void omg_fprint_value(FILE *out, Value v) {
+    OmgOut o = {out, NULL, 0, 0};
+    omg_out_value(&o, v);
 }
 
 static void omg_print_value(Value v) {
@@ -1524,16 +1633,12 @@ static void omg_print_value(Value v) {
 }
 
 /* Stringify a list/dict for use in a string-concat context. Allocates a
- * fresh malloc'd buffer; leaked along with the rest of phase-5 storage.
- * Renders through a POSIX memstream (glibc, musl, macOS 10.13+, BSDs). */
+ * fresh malloc'd buffer; leaked along with the rest of phase-5 storage. */
 static char *omg_compound_to_cstr(Value v) {
-    size_t mlen = 0;
-    char *mptr = NULL;
-    FILE *m = open_memstream(&mptr, &mlen);
-    if (!m) { fprintf(stderr, "open_memstream failed\n"); exit(1); }
-    omg_fprint_value(m, v);
-    fclose(m);
-    return mptr;
+    OmgOut o = {NULL, NULL, 0, 0};
+    omg_out_write(&o, "", 0);   /* allocate, so the result is never NULL */
+    omg_out_value(&o, v);
+    return o.p;
 }
 
 /* === Polymorphic operators (extended) ==================================== */
@@ -1899,11 +2004,184 @@ static Value omg_builtin_exit(Value v) {
     return omg_none(); /* unreachable */
 }
 
+/* === Platform layer =======================================================
+ * The operating-system calls the builtins below are written against.
+ * Each helper has a POSIX and a Windows body and reports failure through
+ * its return value (and errno where that makes sense), never by raising,
+ * so the builtins keep one copy of their argument checks and messages.
+ *
+ * On Windows every path and argument crosses the boundary as UTF-8 on
+ * the OMG side and UTF-16 on the system side, files are always opened
+ * in binary mode (no "\n" <-> "\r\n" translation, as in the Rust
+ * runtime), and paths are returned the way the system spells them.
+ */
+#ifdef _WIN32
+/* UTF-8 -> UTF-16. Caller frees. NULL on invalid input / out of memory. */
+static wchar_t *omg_os_wide(const char *s) {
+    int n = MultiByteToWideChar(CP_UTF8, 0, s, -1, NULL, 0);
+    if (n <= 0) return NULL;
+    wchar_t *w = (wchar_t *)malloc((size_t)n * sizeof(wchar_t));
+    if (!w) return NULL;
+    if (MultiByteToWideChar(CP_UTF8, 0, s, -1, w, n) <= 0) { free(w); return NULL; }
+    return w;
+}
+
+/* UTF-16 -> UTF-8. Caller owns the result. NULL on failure. */
+static char *omg_os_utf8(const wchar_t *w) {
+    int n = WideCharToMultiByte(CP_UTF8, 0, w, -1, NULL, 0, NULL, NULL);
+    if (n <= 0) return NULL;
+    char *s = (char *)malloc((size_t)n);
+    if (!s) return NULL;
+    if (WideCharToMultiByte(CP_UTF8, 0, w, -1, s, n, NULL, NULL) <= 0) { free(s); return NULL; }
+    return s;
+}
+
+/* Attributes of `path`, or INVALID_FILE_ATTRIBUTES. */
+static DWORD omg_os_attrs(const char *path) {
+    wchar_t *w = omg_os_wide(path);
+    if (!w) return INVALID_FILE_ATTRIBUTES;
+    DWORD a = GetFileAttributesW(w);
+    free(w);
+    return a;
+}
+#endif
+
+/* The process's working directory as a heap string; "." if unknown. */
+static const char *omg_os_getcwd(void) {
+#ifdef _WIN32
+    DWORD n = GetCurrentDirectoryW(0, NULL);
+    if (n > 0) {
+        wchar_t *w = (wchar_t *)malloc((size_t)n * sizeof(wchar_t));
+        if (w && GetCurrentDirectoryW(n, w) > 0) {
+            char *s = omg_os_utf8(w);
+            free(w);
+            if (s) return s;
+        } else {
+            free(w);
+        }
+    }
+    return ".";
+#else
+    char *cwdbuf = (char *)malloc(4096);
+    if (cwdbuf && getcwd(cwdbuf, 4096)) return cwdbuf;
+    free(cwdbuf);
+    return ".";
+#endif
+}
+
+/* fopen. `mode` is one of r, w, a, rb, wb, ab, rb+, wb+. */
+static FILE *omg_os_fopen(const char *path, const char *mode) {
+#ifdef _WIN32
+    /* Always binary: text mode would rewrite line endings. */
+    const wchar_t *wm = L"rb";
+    if (mode[0] == 'w') wm = strchr(mode, '+') ? L"wb+" : L"wb";
+    else if (mode[0] == 'a') wm = L"ab";
+    else if (strchr(mode, '+')) wm = L"rb+";
+    wchar_t *w = omg_os_wide(path);
+    if (!w) { errno = EINVAL; return NULL; }
+    FILE *fp = _wfopen(w, wm);
+    free(w);
+    return fp;
+#else
+    return fopen(path, mode);
+#endif
+}
+
+static int omg_os_exists(const char *path) {
+#ifdef _WIN32
+    return omg_os_attrs(path) != INVALID_FILE_ATTRIBUTES;
+#else
+    struct stat st;
+    return stat(path, &st) == 0;
+#endif
+}
+
+static int omg_os_is_dir(const char *path) {
+#ifdef _WIN32
+    DWORD a = omg_os_attrs(path);
+    return a != INVALID_FILE_ATTRIBUTES && (a & FILE_ATTRIBUTE_DIRECTORY) != 0;
+#else
+    struct stat st;
+    if (stat(path, &st) != 0) return 0;
+    return (st.st_mode & S_IFMT) == S_IFDIR;
+#endif
+}
+
+/* Create one directory. 0 on success or if it is already there. */
+static int omg_os_mkdir(const char *path) {
+#ifdef _WIN32
+    wchar_t *w = omg_os_wide(path);
+    if (!w) { errno = EINVAL; return -1; }
+    int rc = _wmkdir(w);
+    free(w);
+#else
+    int rc = mkdir(path, 0755);
+#endif
+    if (rc == 0 || errno == EEXIST) return 0;
+    /* "C:" or "/" as the first prefix of a longer path: fine if it is
+     * a directory already, whatever errno says. */
+    int saved = errno;
+    if (omg_os_is_dir(path)) return 0;
+    errno = saved;
+    return -1;
+}
+
+/* 64-bit seek / tell (`long` is 32 bits on Windows). */
+static int omg_os_seek(FILE *fp, int64_t off) {
+#ifdef _WIN32
+    return _fseeki64(fp, off, SEEK_SET);
+#else
+    return fseek(fp, (long)off, SEEK_SET);
+#endif
+}
+
+static int64_t omg_os_tell(FILE *fp) {
+#ifdef _WIN32
+    return (int64_t)_ftelli64(fp);
+#else
+    return (int64_t)ftell(fp);
+#endif
+}
+
+/* Milliseconds since the UNIX epoch; 0 if the clock cannot be read. */
+static int64_t omg_os_time_ms(void) {
+#ifdef _WIN32
+    FILETIME ft;
+    GetSystemTimeAsFileTime(&ft);
+    uint64_t t = ((uint64_t)ft.dwHighDateTime << 32) | (uint64_t)ft.dwLowDateTime;
+    /* FILETIME counts 100 ns ticks from 1601-01-01. */
+    return (int64_t)((t - 116444736000000000ULL) / 10000ULL);
+#else
+    struct timespec ts;
+    if (clock_gettime(CLOCK_REALTIME, &ts) != 0) return 0;
+    return (int64_t)ts.tv_sec * 1000 + (int64_t)(ts.tv_nsec / 1000000);
+#endif
+}
+
+static void omg_os_sleep_ms(int64_t n) {
+#ifdef _WIN32
+    while (n > 0) {
+        DWORD step = n > 0x7fffffff ? 0x7fffffff : (DWORD)n;
+        Sleep(step);
+        n -= step;
+    }
+#else
+    struct timespec ts;
+    ts.tv_sec = (time_t)(n / 1000);
+    ts.tv_nsec = (long)((n % 1000) * 1000000);
+    nanosleep(&ts, NULL);
+#endif
+}
+
 /* getpid(): return the process ID. Used by the OMG-native driver to
  * generate unique tempfile paths (e.g. /tmp/omg-<pid>.omgb) without
  * needing a mktemp builtin. */
 static Value omg_builtin_getpid(void) {
+#ifdef _WIN32
+    return omg_int((int64_t)GetCurrentProcessId());
+#else
     return omg_int((int64_t)getpid());
+#endif
 }
 
 /* executable_path(): absolute path of the currently running binary, so
@@ -1911,12 +2189,20 @@ static Value omg_builtin_getpid(void) {
  * it was invoked. Returns `false` on platforms where we don't have a
  * way to look this up — callers fall back to dirname(args[0]).
  *
- * Linux reads /proc/self/exe; macOS asks dyld (_NSGetExecutablePath).
+ * Linux reads /proc/self/exe; macOS asks dyld (_NSGetExecutablePath);
+ * Windows asks the loader (GetModuleFileNameW).
  * BSDs vary and aren't implemented: the fallback path keeps the
  * toolchain working there when invoked via an absolute or relative
  * path. */
 static Value omg_builtin_executable_path(void) {
-#if defined(__linux__)
+#if defined(_WIN32)
+    wchar_t wbuf[32768];
+    DWORD n = GetModuleFileNameW(NULL, wbuf, (DWORD)(sizeof(wbuf) / sizeof(wbuf[0])));
+    if (n == 0 || n >= sizeof(wbuf) / sizeof(wbuf[0])) return omg_bool(0);
+    char *out = omg_os_utf8(wbuf);
+    if (!out) return omg_bool(0);
+    return omg_str(out);
+#elif defined(__linux__)
     char buf[4096];
     ssize_t n = readlink("/proc/self/exe", buf, sizeof(buf) - 1);
     if (n < 0) return omg_bool(0);
@@ -2033,10 +2319,7 @@ static Value omg_builtin_print(Value v) {
  * time / frame pacing; not a real monotonic clock — system time changes
  * are visible. */
 static Value omg_builtin_time_ms(void) {
-    struct timespec ts;
-    if (clock_gettime(CLOCK_REALTIME, &ts) != 0) return omg_int(0);
-    int64_t ms = (int64_t)ts.tv_sec * 1000 + (int64_t)(ts.tv_nsec / 1000000);
-    return omg_int(ms);
+    return omg_int(omg_os_time_ms());
 }
 
 /* sleep_ms(n): pause this process for n ms. Negative / zero is a no-op. */
@@ -2044,13 +2327,192 @@ static Value omg_builtin_sleep_ms(Value v) {
     if (v.tag != OMG_INT) omg_panic("TypeError", "sleep_ms() expects an int");
     int64_t n = v.v.i;
     if (n <= 0) return omg_none();
-    struct timespec ts;
-    ts.tv_sec = (time_t)(n / 1000);
-    ts.tv_nsec = (long)((n % 1000) * 1000000);
-    nanosleep(&ts, NULL);
+    omg_os_sleep_ms(n);
     return omg_none();
 }
 
+#ifdef _WIN32
+/* --- Windows console ------------------------------------------------------
+ * The same two builtins on the Windows console. This is the C twin of
+ * the Windows backend in runtime/src/vm/sys.rs: raw mode is three
+ * console-mode flags, keys arrive as input records, and the bytes handed
+ * to the program are the UTF-8 / VT sequences a Unix terminal would
+ * have sent, so the games and the editor need no Windows code. */
+#ifndef ENABLE_VIRTUAL_TERMINAL_INPUT
+#define ENABLE_VIRTUAL_TERMINAL_INPUT 0x0200
+#endif
+#ifndef ENABLE_VIRTUAL_TERMINAL_PROCESSING
+#define ENABLE_VIRTUAL_TERMINAL_PROCESSING 0x0004
+#endif
+
+#define OMG_CON_QUEUE 1024
+static struct {
+    int have_saved;        /* saved_mode is valid: raw mode is active   */
+    DWORD saved_mode;      /* input mode before the first set_raw(true) */
+    int vt_input;          /* the console itself sends VT sequences     */
+    int atexit_set;
+    WCHAR high_surrogate;  /* first half of a UTF-16 pair, or 0         */
+    unsigned char pending[OMG_CON_QUEUE];  /* bytes decoded, not yet read */
+    int head, len;
+} omg_con;
+
+static void omg_con_push(unsigned char b) {
+    if (omg_con.len < OMG_CON_QUEUE) {
+        omg_con.pending[(omg_con.head + omg_con.len) % OMG_CON_QUEUE] = b;
+        omg_con.len++;
+    }
+}
+
+static int omg_con_pop(void) {
+    if (omg_con.len == 0) return -1;
+    int b = omg_con.pending[omg_con.head];
+    omg_con.head = (omg_con.head + 1) % OMG_CON_QUEUE;
+    omg_con.len--;
+    return b;
+}
+
+/* Queue one UTF-16 unit as UTF-8, pairing surrogates. */
+static void omg_con_push_utf16(WCHAR unit) {
+    uint32_t c;
+    if (unit >= 0xD800 && unit <= 0xDBFF) { omg_con.high_surrogate = unit; return; }
+    if (unit >= 0xDC00 && unit <= 0xDFFF) {
+        if (omg_con.high_surrogate == 0) return;
+        c = 0x10000 + (((uint32_t)omg_con.high_surrogate - 0xD800) << 10) + ((uint32_t)unit - 0xDC00);
+    } else {
+        c = unit;
+    }
+    omg_con.high_surrogate = 0;
+    if (c < 0x80) {
+        omg_con_push((unsigned char)c);
+    } else if (c < 0x800) {
+        omg_con_push((unsigned char)(0xC0 | (c >> 6)));
+        omg_con_push((unsigned char)(0x80 | (c & 0x3F)));
+    } else if (c < 0x10000) {
+        omg_con_push((unsigned char)(0xE0 | (c >> 12)));
+        omg_con_push((unsigned char)(0x80 | ((c >> 6) & 0x3F)));
+        omg_con_push((unsigned char)(0x80 | (c & 0x3F)));
+    } else {
+        omg_con_push((unsigned char)(0xF0 | (c >> 18)));
+        omg_con_push((unsigned char)(0x80 | ((c >> 12) & 0x3F)));
+        omg_con_push((unsigned char)(0x80 | ((c >> 6) & 0x3F)));
+        omg_con_push((unsigned char)(0x80 | (c & 0x3F)));
+    }
+}
+
+/* The escape sequence a VT terminal sends for a navigation key. Only
+ * used when the console refused ENABLE_VIRTUAL_TERMINAL_INPUT. */
+static const char *omg_con_vk_to_vt(WORD vk) {
+    switch (vk) {
+        case 0x26: return "\x1b[A";   /* VK_UP */
+        case 0x28: return "\x1b[B";   /* VK_DOWN */
+        case 0x27: return "\x1b[C";   /* VK_RIGHT */
+        case 0x25: return "\x1b[D";   /* VK_LEFT */
+        case 0x24: return "\x1b[H";   /* VK_HOME */
+        case 0x23: return "\x1b[F";   /* VK_END */
+        case 0x2D: return "\x1b[2~";  /* VK_INSERT */
+        case 0x2E: return "\x1b[3~";  /* VK_DELETE */
+        case 0x21: return "\x1b[5~";  /* VK_PRIOR (Page Up) */
+        case 0x22: return "\x1b[6~";  /* VK_NEXT (Page Down) */
+        default:   return NULL;
+    }
+}
+
+/* Put the console back the way it was. Registered with atexit() the
+ * first time raw mode is switched on, so a program that exits (or dies
+ * with an uncaught error) in raw mode does not leave the shell broken. */
+static void omg_con_restore(void) {
+    if (!omg_con.have_saved) return;
+    HANDLE h = GetStdHandle(STD_INPUT_HANDLE);
+    if (h != NULL && h != INVALID_HANDLE_VALUE) SetConsoleMode(h, omg_con.saved_mode);
+    omg_con.have_saved = 0;
+}
+
+static Value omg_builtin_stdin_set_raw(Value v) {
+    if (v.tag != OMG_BOOL) omg_panic("TypeError", "stdin_set_raw() expects a bool");
+    HANDLE h = GetStdHandle(STD_INPUT_HANDLE);
+    DWORD mode = 0;
+    if (h == NULL || h == INVALID_HANDLE_VALUE || !GetConsoleMode(h, &mode)) {
+        omg_panic("ValueError", "stdin_set_raw: stdin is not a console");
+    }
+    const DWORD cooked = ENABLE_LINE_INPUT | ENABLE_ECHO_INPUT | ENABLE_PROCESSED_INPUT;
+    if (v.v.b) {
+        if (!omg_con.have_saved) {
+            omg_con.saved_mode = mode;
+            omg_con.have_saved = 1;
+            if (!omg_con.atexit_set) { atexit(omg_con_restore); omg_con.atexit_set = 1; }
+        }
+        /* LINE_INPUT ~ ICANON, ECHO_INPUT ~ ECHO, PROCESSED_INPUT ~ ISIG
+         * (Ctrl-C arrives as byte 0x03 instead of ending the program). */
+        DWORD raw = mode & ~cooked;
+        if (SetConsoleMode(h, raw | ENABLE_VIRTUAL_TERMINAL_INPUT)) omg_con.vt_input = 1;
+        else if (SetConsoleMode(h, raw)) omg_con.vt_input = 0;
+        else omg_panic("ValueError", "stdin_set_raw: SetConsoleMode failed");
+    } else {
+        DWORD restore = omg_con.have_saved
+            ? omg_con.saved_mode
+            : ((mode | cooked) & ~(DWORD)ENABLE_VIRTUAL_TERMINAL_INPUT);
+        omg_con.have_saved = 0;
+        omg_con.vt_input = 0;
+        omg_con.head = 0;
+        omg_con.len = 0;
+        omg_con.high_surrogate = 0;
+        if (!SetConsoleMode(h, restore)) omg_panic("ValueError", "stdin_set_raw: SetConsoleMode failed");
+    }
+    return omg_none();
+}
+
+/* One byte of keyboard input, or -1 when no key is waiting. */
+static int omg_con_read_byte(void) {
+    int b = omg_con_pop();
+    if (b >= 0) return b;
+    HANDLE h = GetStdHandle(STD_INPUT_HANDLE);
+    DWORD mode = 0;
+    if (h == NULL || h == INVALID_HANDLE_VALUE) return -1;
+    if (!GetConsoleMode(h, &mode)) {
+        /* Redirected stdin (a pipe or a file) has no "no key yet"
+         * state: behave like a blocking one-byte read, which is what
+         * read(0) does for a pipe on Unix. */
+        unsigned char c;
+        return _read(0, &c, 1) == 1 ? (int)c : -1;
+    }
+    /* Drain queued console events until one yields a byte. Mouse, focus
+     * and resize events, key releases and bare modifier presses are
+     * consumed and skipped; left queued, the count would never reach 0. */
+    for (;;) {
+        DWORD count = 0, got = 0;
+        INPUT_RECORD rec;
+        if (!GetNumberOfConsoleInputEvents(h, &count) || count == 0) return -1;
+        if (!ReadConsoleInputW(h, &rec, 1, &got) || got == 0) return -1;
+        if (rec.EventType != KEY_EVENT || !rec.Event.KeyEvent.bKeyDown) continue;
+        WCHAR unit = rec.Event.KeyEvent.uChar.UnicodeChar;
+        int repeat = rec.Event.KeyEvent.wRepeatCount > 0 ? rec.Event.KeyEvent.wRepeatCount : 1;
+        if (unit != 0) {
+            for (int i = 0; i < repeat; i++) omg_con_push_utf16(unit);
+        } else if (!omg_con.vt_input) {
+            const char *seq = omg_con_vk_to_vt(rec.Event.KeyEvent.wVirtualKeyCode);
+            if (seq) {
+                for (int i = 0; i < repeat; i++) {
+                    for (const char *q = seq; *q; q++) omg_con_push((unsigned char)*q);
+                }
+            }
+        }
+        b = omg_con_pop();
+        if (b >= 0) return b;
+    }
+}
+
+/* stdin_read_key(): non-blocking single-byte read; see the POSIX
+ * version below for the contract. */
+static Value omg_builtin_stdin_read_key(void) {
+    int b = omg_con_read_byte();
+    if (b < 0) return omg_bool(0);
+    char *out = (char *)malloc(2);
+    if (!out) { fprintf(stderr, "out of memory\n"); exit(1); }
+    out[0] = (char)b;
+    out[1] = 0;
+    return omg_str(out);
+}
+#else
 /* stdin_set_raw(on): toggle cbreak / no-echo on the controlling TTY.
  * In raw mode reads return immediately (VMIN=VTIME=0) so they pair with
  * stdin_read_key(). Caller is responsible for restoring cooked mode
@@ -2092,6 +2554,8 @@ static Value omg_builtin_stdin_read_key(void) {
     return omg_str(out);
 }
 
+#endif /* _WIN32 */
+
 /* === Pseudo-terminal primitives ========================================
  *
  * Five tiny shims around forkpty / read / write / close / TIOCSWINSZ
@@ -2104,6 +2568,40 @@ static Value omg_builtin_stdin_read_key(void) {
  * keep them in sync.
  */
 
+#ifdef _WIN32
+/* Windows has no forkpty. Same answers as the Rust runtime gives there:
+ * spawn and write raise, read reports end-of-file, close and resize do
+ * nothing. A program can probe with try / except. */
+static Value omg_builtin_pty_spawn(Value v) {
+    if (v.tag != OMG_LIST) omg_panic("TypeError", "pty_spawn() expects a list");
+    omg_panic("ValueError", "pty_spawn(): pseudo-terminals are not supported on Windows");
+    return omg_none();
+}
+
+static Value omg_builtin_pty_read(Value fd_v) {
+    if (fd_v.tag != OMG_INT) omg_panic("TypeError", "pty_read() expects an int fd");
+    return omg_bool(0);
+}
+
+static Value omg_builtin_pty_write(Value fd_v, Value s_v) {
+    if (fd_v.tag != OMG_INT) omg_panic("TypeError", "pty_write() fd must be int");
+    if (s_v.tag != OMG_STR)  omg_panic("TypeError", "pty_write() data must be string");
+    omg_panic("ValueError", "pty_write(): pseudo-terminals are not supported on Windows");
+    return omg_none();
+}
+
+static Value omg_builtin_pty_close(Value fd_v) {
+    if (fd_v.tag != OMG_INT) omg_panic("TypeError", "pty_close() expects an int fd");
+    return omg_none();
+}
+
+static Value omg_builtin_pty_resize(Value fd_v, Value rows_v, Value cols_v) {
+    if (fd_v.tag != OMG_INT)   omg_panic("TypeError", "pty_resize() fd must be int");
+    if (rows_v.tag != OMG_INT) omg_panic("TypeError", "pty_resize() rows must be int");
+    if (cols_v.tag != OMG_INT) omg_panic("TypeError", "pty_resize() cols must be int");
+    return omg_none();
+}
+#else
 static Value omg_builtin_pty_spawn(Value v) {
     if (v.tag != OMG_LIST) omg_panic("TypeError", "pty_spawn() expects a list");
     OmgList *l = v.v.l;
@@ -2194,13 +2692,109 @@ static Value omg_builtin_pty_resize(Value fd_v, Value rows_v, Value cols_v) {
     ioctl((int)fd_v.v.i, TIOCSWINSZ, &ws);
     return omg_none();
 }
+#endif /* _WIN32 */
 
-/* subprocess(argv): fork + execvp + waitpid. argv is a list of strings;
- * argv[0] is the program (PATH-resolved via execvp), the rest are args.
- * stdin/stdout/stderr are inherited. Returns the child's exit code.
+/* subprocess(argv): run a program and wait for it. argv is a list of
+ * strings; argv[0] is the program (looked up on PATH), the rest are its
+ * arguments. stdin/stdout/stderr are inherited. Returns the child's
+ * exit code.
  *
  * Mirrors std::process::Command::status() in the Rust runtime so the
- * OMG-native `omg` driver can start `cc` the same way. */
+ * OMG-native `omg` driver can start `cc` the same way. POSIX: fork +
+ * execvp + waitpid. Windows: CreateProcess. */
+#ifdef _WIN32
+/* Growable byte buffer for building the command line. */
+typedef struct { char *p; size_t len, cap; } OmgCmdBuf;
+
+static void omg_cmd_put(OmgCmdBuf *b, char c) {
+    if (b->len + 1 >= b->cap) {
+        b->cap = b->cap ? b->cap * 2 : 256;
+        char *np = (char *)realloc(b->p, b->cap);
+        if (!np) { fprintf(stderr, "out of memory\n"); exit(1); }
+        b->p = np;
+    }
+    b->p[b->len++] = c;
+    b->p[b->len] = 0;
+}
+
+/* Append one argument, quoted so that the child's C runtime (and
+ * CommandLineToArgvW) parse it back to exactly `arg`: backslashes are
+ * literal unless they precede a double quote. */
+static void omg_cmd_arg(OmgCmdBuf *b, const char *arg) {
+    if (b->len > 0) omg_cmd_put(b, ' ');
+    if (arg[0] != 0 && strpbrk(arg, " \t\n\v\"") == NULL) {
+        for (const char *q = arg; *q; q++) omg_cmd_put(b, *q);
+        return;
+    }
+    omg_cmd_put(b, '"');
+    for (const char *q = arg;; q++) {
+        size_t slashes = 0;
+        while (*q == '\\') { q++; slashes++; }
+        if (*q == 0) {
+            for (size_t i = 0; i < slashes * 2; i++) omg_cmd_put(b, '\\');
+            break;
+        }
+        if (*q == '"') {
+            for (size_t i = 0; i < slashes * 2 + 1; i++) omg_cmd_put(b, '\\');
+        } else {
+            for (size_t i = 0; i < slashes; i++) omg_cmd_put(b, '\\');
+        }
+        omg_cmd_put(b, *q);
+    }
+    omg_cmd_put(b, '"');
+}
+
+static Value omg_builtin_subprocess(Value v) {
+    if (v.tag != OMG_LIST) omg_panic("TypeError", "subprocess() expects a list of strings");
+    OmgList *l = v.v.l;
+    if (l->len == 0) omg_panic("ValueError", "subprocess() needs at least the command");
+    for (int i = 0; i < l->len; i++) {
+        if (l->items[i].tag != OMG_STR) omg_panic("TypeError", "subprocess() expects a list of strings");
+    }
+    OmgCmdBuf cmd = {NULL, 0, 0};
+    for (int i = 0; i < l->len; i++) omg_cmd_arg(&cmd, l->items[i].v.s);
+    wchar_t *wcmd = omg_os_wide(cmd.p);
+    free(cmd.p);
+    if (!wcmd) omg_panicf("ValueError", "subprocess: cannot exec '%s': invalid UTF-8", l->items[0].v.s);
+
+    fflush(stdout);
+    fflush(stderr);
+
+    STARTUPINFOW si;
+    PROCESS_INFORMATION pi;
+    memset(&si, 0, sizeof(si));
+    si.cb = sizeof(si);
+    memset(&pi, 0, sizeof(pi));
+    /* A NULL application name makes CreateProcess take the program from
+     * the command line, search PATH for it, and add ".exe" if needed. */
+    if (!CreateProcessW(NULL, wcmd, NULL, NULL, TRUE, 0, NULL, NULL, &si, &pi)) {
+        DWORD err = GetLastError();
+        free(wcmd);
+        /* The system's own wording, as the Rust runtime prints it. */
+        char text[512];
+        text[0] = 0;
+        wchar_t wtext[256];
+        DWORD n = FormatMessageW(FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS,
+                                 NULL, err, 0, wtext, 256, NULL);
+        while (n > 0 && (wtext[n - 1] == L'\r' || wtext[n - 1] == L'\n' || wtext[n - 1] == L' ')) n--;
+        wtext[n] = 0;
+        if (n > 0) {
+            int m = WideCharToMultiByte(CP_UTF8, 0, wtext, -1, text, (int)sizeof(text) - 2, NULL, NULL);
+            if (m <= 0) text[0] = 0;
+            else strcat(text, " ");
+        }
+        omg_panicf("ValueError", "subprocess: cannot exec '%s': %s(os error %lu)",
+                   l->items[0].v.s, text, (unsigned long)err);
+    }
+    free(wcmd);
+    WaitForSingleObject(pi.hProcess, INFINITE);
+    DWORD code = 0;
+    if (!GetExitCodeProcess(pi.hProcess, &code)) code = (DWORD)-1;
+    CloseHandle(pi.hThread);
+    CloseHandle(pi.hProcess);
+    return omg_int((int64_t)(int32_t)code);
+}
+#else
 static Value omg_builtin_subprocess(Value v) {
     if (v.tag != OMG_LIST) omg_panic("TypeError", "subprocess() expects a list of strings");
     OmgList *l = v.v.l;
@@ -2225,24 +2819,61 @@ static Value omg_builtin_subprocess(Value v) {
     fflush(stdout);
     fflush(stderr);
 
+    /* A program that cannot be started is an error the caller can
+     * catch, as on every other backend, not an exit code from a child
+     * that never ran. The child reports a failed exec through a pipe
+     * that a successful exec closes by itself (close-on-exec). */
+    int report[2];
+    if (pipe(report) != 0) {
+        free(argv);
+        omg_panicf("ValueError", "subprocess: pipe failed: %s", strerror(errno));
+    }
+    fcntl(report[0], F_SETFD, FD_CLOEXEC);
+    fcntl(report[1], F_SETFD, FD_CLOEXEC);
+
     pid_t pid = fork();
     if (pid < 0) {
+        int e = errno;
+        close(report[0]);
+        close(report[1]);
         free(argv);
-        omg_panicf("ValueError", "subprocess: fork failed: %s", strerror(errno));
+        omg_panicf("ValueError", "subprocess: fork failed: %s", strerror(e));
     }
     if (pid == 0) {
         /* Child: exec replaces this process. */
+        close(report[0]);
         execvp(argv[0], argv);
-        /* If we get here, exec failed. Mirror Rust's "cannot exec" path. */
-        fprintf(stderr, "subprocess: cannot exec '%s': %s\n", argv[0], strerror(errno));
+        int e = errno;
+        ssize_t w = write(report[1], &e, sizeof(e));
+        (void)w;
         _exit(127);
     }
 
-    /* Parent: wait for child. */
+    /* Parent: learn whether the exec happened, then wait for the child. */
+    close(report[1]);
+    int exec_errno = 0;
+    ssize_t got;
+    do {
+        got = read(report[0], &exec_errno, sizeof(exec_errno));
+    } while (got < 0 && errno == EINTR);
+    close(report[0]);
+    if (got != (ssize_t)sizeof(exec_errno)) exec_errno = 0;
+
     int status = 0;
-    if (waitpid(pid, &status, 0) < 0) {
+    pid_t waited;
+    do {
+        waited = waitpid(pid, &status, 0);
+    } while (waited < 0 && errno == EINTR);
+    if (waited < 0) {
         free(argv);
         omg_panicf("ValueError", "subprocess: waitpid failed: %s", strerror(errno));
+    }
+    if (exec_errno != 0) {
+        /* argv[0] belongs to the caller's list, which outlives this. */
+        const char *prog = argv[0];
+        free(argv);
+        omg_panicf("ValueError", "subprocess: cannot exec '%s': %s (os error %d)",
+                   prog, strerror(exec_errno), exec_errno);
     }
     free(argv);
 
@@ -2252,6 +2883,7 @@ static Value omg_builtin_subprocess(Value v) {
     else                          code = -1;
     return omg_int((int64_t)code);
 }
+#endif /* _WIN32 */
 
 /* === File I/O ============================================================ */
 
@@ -2263,16 +2895,17 @@ static Value omg_builtin_subprocess(Value v) {
  * header has no dynamic link to user globals. */
 static const char *omg_cwd_str = ".";
 
-/* Slash-or-drive-letter detection — keep cheap and ASCII. */
+/* Slash-or-drive-letter detection — keep cheap and ASCII. Either
+ * separator counts, so the same test serves Windows paths. */
 static const char *omg_resolve_path(const char *p) {
     if (p == NULL) return p;
-    int absolute = (p[0] == '/') || (p[0] && p[1] == ':');
+    int absolute = (p[0] == '/') || (p[0] == '\\') || (p[0] && p[1] == ':');
     if (absolute) return p;
     size_t lb = strlen(omg_cwd_str), lp = strlen(p);
     char *buf = (char *)malloc(lb + 2 + lp);
     if (!buf) { fprintf(stderr, "out of memory\n"); exit(1); }
     memcpy(buf, omg_cwd_str, lb);
-    if (lb > 0 && omg_cwd_str[lb - 1] != '/') {
+    if (lb > 0 && omg_cwd_str[lb - 1] != '/' && omg_cwd_str[lb - 1] != '\\') {
         buf[lb] = '/';
         memcpy(buf + lb + 1, p, lp + 1);
     } else {
@@ -2326,7 +2959,7 @@ static Value omg_builtin_file_open(Value path, Value mode) {
     else if (strcmp(m, "wb+") == 0) fm = "wb+";
     else omg_panic("ValueError", "invalid file mode");
     const char *full = omg_resolve_path(path.v.s);
-    FILE *fp = fopen(full, fm);
+    FILE *fp = omg_os_fopen(full, fm);
     if (!fp) {
         omg_panicf("ValueError", "cannot open '%s': %s (os error %d)",
                    full, strerror(errno), errno);
@@ -2427,7 +3060,7 @@ static Value omg_builtin_file_seek(Value h, Value off) {
     if (off.v.i < 0) omg_panic("ValueError", "file_seek() expects a non-negative offset");
     OmgFileEntry *e = omg_file_get((int)h.v.i);
     if (!e) omg_panic("ValueError", "invalid file handle");
-    if (fseek(e->fp, (long)off.v.i, SEEK_SET) != 0) {
+    if (omg_os_seek(e->fp, off.v.i) != 0) {
         omg_panicf("ValueError", "file_seek: %s", strerror(errno));
     }
     return omg_int(off.v.i);
@@ -2438,17 +3071,17 @@ static Value omg_builtin_file_tell(Value h) {
     if (h.tag != OMG_INT) omg_panic("TypeError", "file_tell() expects a handle");
     OmgFileEntry *e = omg_file_get((int)h.v.i);
     if (!e) omg_panic("ValueError", "invalid file handle");
-    long pos = ftell(e->fp);
+    int64_t pos = omg_os_tell(e->fp);
     if (pos < 0) {
         omg_panicf("ValueError", "file_tell: %s", strerror(errno));
     }
-    return omg_int((int64_t)pos);
+    return omg_int(pos);
 }
 
 static Value omg_builtin_read_file(Value path) {
     if (path.tag != OMG_STR) omg_panic("TypeError", "read_file() expects a file path");
     const char *full = omg_resolve_path(path.v.s);
-    FILE *fp = fopen(full, "r");
+    FILE *fp = omg_os_fopen(full, "r");
     if (!fp) {
         omg_panicf("ModuleImportError", "failed to read '%s': %s (os error %d)",
                    full, strerror(errno), errno);
@@ -2463,27 +3096,53 @@ static Value omg_builtin_read_file(Value path) {
 static Value omg_builtin_file_exists(Value path) {
     if (path.tag != OMG_STR) omg_panic("TypeError", "file_exists() expects a path");
     const char *full = omg_resolve_path(path.v.s);
-    struct stat st;
-    return omg_bool(stat(full, &st) == 0);
+    return omg_bool(omg_os_exists(full));
 }
 
 static Value omg_builtin_is_dir(Value path) {
     if (path.tag != OMG_STR) omg_panic("TypeError", "is_dir() expects a path");
     const char *full = omg_resolve_path(path.v.s);
-    struct stat st;
-    if (stat(full, &st) != 0) return omg_bool(0);
-    return omg_bool((st.st_mode & S_IFMT) == S_IFDIR);
+    return omg_bool(omg_os_is_dir(full));
 }
 
 static Value omg_builtin_read_dir(Value path) {
     if (path.tag != OMG_STR) omg_panic("TypeError", "read_dir() expects a directory path");
     const char *full = omg_resolve_path(path.v.s);
+    Value out;
+#ifdef _WIN32
+    /* FindFirstFile wants a pattern: "<dir>\*". */
+    size_t flen = strlen(full);
+    char *pattern = (char *)malloc(flen + 3);
+    if (!pattern) { fprintf(stderr, "out of memory\n"); exit(1); }
+    memcpy(pattern, full, flen);
+    if (flen > 0 && full[flen - 1] != '/' && full[flen - 1] != '\\') pattern[flen++] = '\\';
+    pattern[flen++] = '*';
+    pattern[flen] = 0;
+    wchar_t *wpattern = omg_os_wide(pattern);
+    free(pattern);
+    WIN32_FIND_DATAW fd;
+    HANDLE find = wpattern ? FindFirstFileW(wpattern, &fd) : INVALID_HANDLE_VALUE;
+    free(wpattern);
+    if (find == INVALID_HANDLE_VALUE) {
+        DWORD err = GetLastError();
+        omg_panicf("ValueError", "cannot read directory '%s': (os error %lu)",
+                   full, (unsigned long)err);
+    }
+    out.tag = OMG_LIST;
+    out.v.l = omg_list_alloc(8);
+    do {
+        if (wcscmp(fd.cFileName, L".") == 0 || wcscmp(fd.cFileName, L"..") == 0) continue;
+        char *copy = omg_os_utf8(fd.cFileName);
+        if (!copy) { fprintf(stderr, "out of memory\n"); exit(1); }
+        omg_list_push(out.v.l, omg_str(copy));
+    } while (FindNextFileW(find, &fd));
+    FindClose(find);
+#else
     DIR *dir = opendir(full);
     if (!dir) {
         omg_panicf("ValueError", "cannot read directory '%s': %s (os error %d)",
                    full, strerror(errno), errno);
     }
-    Value out;
     out.tag = OMG_LIST;
     out.v.l = omg_list_alloc(8);
     struct dirent *de;
@@ -2496,6 +3155,7 @@ static Value omg_builtin_read_dir(Value path) {
         omg_list_push(out.v.l, omg_str(copy));
     }
     closedir(dir);
+#endif
     /* Insertion sort lexicographically. Directory listings are small. */
     int n = out.v.l->len;
     for (int i = 1; i < n; i++) {
@@ -2528,7 +3188,7 @@ static Value omg_builtin_make_dir(Value path) {
         if (i == len || buf[i] == '/' || buf[i] == '\\') {
             char saved = buf[i];
             buf[i] = 0;
-            if (mkdir(buf, 0755) != 0 && errno != EEXIST) {
+            if (omg_os_mkdir(buf) != 0) {
                 omg_panicf("ValueError", "cannot create directory '%s': %s (os error %d)",
                            full, strerror(errno), errno);
             }
@@ -2543,8 +3203,44 @@ static Value omg_builtin_make_dir(Value path) {
 /* Two kinds of handle behind one table: a passive listener (the result
  * of tcp_listen) and a connected stream (the result of accept/connect).
  * The kind decides which calls are valid on the handle. */
+#ifdef _WIN32
+typedef SOCKET omg_sock_t;
+#define OMG_SOCK_BAD(fd)            ((fd) == INVALID_SOCKET)
+#define omg_sock_close(fd)          closesocket(fd)
+#define omg_sock_read(fd, buf, n)   recv((fd), (char *)(buf), (int)((n) > 0x40000000 ? 0x40000000 : (n)), 0)
+#define omg_sock_write(fd, buf, n)  send((fd), (const char *)(buf), (int)((n) > 0x40000000 ? 0x40000000 : (n)), 0)
+#define OMG_SOCK_EINTR()            (WSAGetLastError() == WSAEINTR)
+
+/* Winsock keeps its own error code and has no strerror. */
+static const char *omg_sock_errstr(void) {
+    static char buf[64];
+    snprintf(buf, sizeof(buf), "winsock error %d", WSAGetLastError());
+    return buf;
+}
+
+/* Winsock must be started once per process before the first call. */
+static void omg_sock_init(void) {
+    static int started = 0;
+    if (started) return;
+    WSADATA wsa;
+    if (WSAStartup(MAKEWORD(2, 2), &wsa) != 0) {
+        omg_panic("ValueError", "tcp: cannot start Winsock");
+    }
+    started = 1;
+}
+#else
+typedef int omg_sock_t;
+#define OMG_SOCK_BAD(fd)            ((fd) < 0)
+#define omg_sock_close(fd)          close(fd)
+#define omg_sock_read(fd, buf, n)   read((fd), (buf), (n))
+#define omg_sock_write(fd, buf, n)  write((fd), (buf), (n))
+#define OMG_SOCK_EINTR()            (errno == EINTR)
+static const char *omg_sock_errstr(void) { return strerror(errno); }
+static void omg_sock_init(void) {}
+#endif
+
 typedef struct {
-    int fd;        /* OS socket file descriptor, or -1 if unused */
+    omg_sock_t fd; /* OS socket, or 0 if the slot is unused */
     int is_listener;
 } OmgTcpEntry;
 
@@ -2552,7 +3248,7 @@ typedef struct {
 static OmgTcpEntry omg_tcp_table[OMG_MAX_TCP];
 
 /* Allocate a slot. Returns a 1-based handle so 0 is always invalid. */
-static int omg_tcp_alloc(int fd, int is_listener) {
+static int omg_tcp_alloc(omg_sock_t fd, int is_listener) {
     for (int i = 0; i < OMG_MAX_TCP; i++) {
         if (omg_tcp_table[i].fd == 0 && omg_tcp_table[i].is_listener == 0) {
             omg_tcp_table[i].fd = fd;
@@ -2567,7 +3263,7 @@ static int omg_tcp_alloc(int fd, int is_listener) {
 static OmgTcpEntry *omg_tcp_get(int handle) {
     int idx = handle - 1;
     if (idx < 0 || idx >= OMG_MAX_TCP) return NULL;
-    if (omg_tcp_table[idx].fd <= 0) return NULL;
+    if (omg_tcp_table[idx].fd == 0 || OMG_SOCK_BAD(omg_tcp_table[idx].fd)) return NULL;
     return &omg_tcp_table[idx];
 }
 
@@ -2576,6 +3272,7 @@ static OmgTcpEntry *omg_tcp_get(int handle) {
  * and must freeaddrinfo it. Returns NULL on lookup failure (callers
  * panic with the gai_strerror string). */
 static struct addrinfo *omg_resolve_addr(const char *host, int port, int passive) {
+    omg_sock_init();
     struct addrinfo hints, *res = NULL;
     memset(&hints, 0, sizeof(hints));
     hints.ai_family = AF_UNSPEC;
@@ -2600,24 +3297,29 @@ static Value omg_builtin_tcp_listen(Value host, Value port) {
     if (!res) {
         omg_panicf("ValueError", "tcp_listen: cannot resolve '%s'", host.v.s);
     }
-    int fd = socket(res->ai_family, res->ai_socktype, res->ai_protocol);
-    if (fd < 0) {
+    omg_sock_t fd = socket(res->ai_family, res->ai_socktype, res->ai_protocol);
+    if (OMG_SOCK_BAD(fd)) {
         freeaddrinfo(res);
-        omg_panicf("ValueError", "tcp_listen: socket: %s", strerror(errno));
+        omg_panicf("ValueError", "tcp_listen: socket: %s", omg_sock_errstr());
     }
+#ifndef _WIN32
+    /* Let a restarted server rebind its port at once. Not on Windows,
+     * where SO_REUSEADDR means something else (two live listeners on
+     * one port); the Rust runtime leaves it off there too. */
     int one = 1;
     setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &one, sizeof(one));
-    if (bind(fd, res->ai_addr, res->ai_addrlen) != 0) {
-        int saved = errno;
-        close(fd);
+#endif
+    if (bind(fd, res->ai_addr, (int)res->ai_addrlen) != 0) {
+        const char *why = omg_sock_errstr();
+        omg_sock_close(fd);
         freeaddrinfo(res);
-        omg_panicf("ValueError", "tcp_listen: bind: %s", strerror(saved));
+        omg_panicf("ValueError", "tcp_listen: bind: %s", why);
     }
     freeaddrinfo(res);
     if (listen(fd, 16) != 0) {
-        int saved = errno;
-        close(fd);
-        omg_panicf("ValueError", "tcp_listen: listen: %s", strerror(saved));
+        const char *why = omg_sock_errstr();
+        omg_sock_close(fd);
+        omg_panicf("ValueError", "tcp_listen: listen: %s", why);
     }
     return omg_int((int64_t)omg_tcp_alloc(fd, 1));
 }
@@ -2629,9 +3331,9 @@ static Value omg_builtin_tcp_accept(Value h) {
     if (!e->is_listener) omg_panic("ValueError", "tcp_accept: handle is a stream, not a listener");
     struct sockaddr_storage peer;
     socklen_t peer_len = sizeof(peer);
-    int client_fd = accept(e->fd, (struct sockaddr *)&peer, &peer_len);
-    if (client_fd < 0) {
-        omg_panicf("ValueError", "tcp_accept: %s", strerror(errno));
+    omg_sock_t client_fd = accept(e->fd, (struct sockaddr *)&peer, &peer_len);
+    if (OMG_SOCK_BAD(client_fd)) {
+        omg_panicf("ValueError", "tcp_accept: %s", omg_sock_errstr());
     }
     return omg_int((int64_t)omg_tcp_alloc(client_fd, 0));
 }
@@ -2648,18 +3350,20 @@ static Value omg_builtin_tcp_connect(Value host, Value port) {
     if (!res) {
         omg_panicf("ValueError", "tcp_connect: cannot resolve '%s'", host.v.s);
     }
-    int fd = -1;
+    omg_sock_t fd = 0;
+    int connected = 0;
+    const char *why = "no address";
     for (struct addrinfo *p = res; p != NULL; p = p->ai_next) {
         fd = socket(p->ai_family, p->ai_socktype, p->ai_protocol);
-        if (fd < 0) continue;
-        if (connect(fd, p->ai_addr, p->ai_addrlen) == 0) break;
-        close(fd);
-        fd = -1;
+        if (OMG_SOCK_BAD(fd)) { why = omg_sock_errstr(); continue; }
+        if (connect(fd, p->ai_addr, (int)p->ai_addrlen) == 0) { connected = 1; break; }
+        why = omg_sock_errstr();
+        omg_sock_close(fd);
     }
     freeaddrinfo(res);
-    if (fd < 0) {
+    if (!connected) {
         omg_panicf("ValueError", "tcp_connect: cannot connect to '%s': %s",
-                   host.v.s, strerror(errno));
+                   host.v.s, why);
     }
     return omg_int((int64_t)omg_tcp_alloc(fd, 0));
 }
@@ -2678,12 +3382,12 @@ static Value omg_builtin_tcp_read(Value h, Value maxbytes) {
     if (cap == 0) return out;
     unsigned char *buf = (unsigned char *)malloc(cap);
     if (!buf) { fprintf(stderr, "out of memory\n"); exit(1); }
-    ssize_t n = read(e->fd, buf, cap);
+    int64_t n = (int64_t)omg_sock_read(e->fd, buf, cap);
     if (n < 0) {
         free(buf);
-        omg_panicf("ValueError", "tcp_read: %s", strerror(errno));
+        omg_panicf("ValueError", "tcp_read: %s", omg_sock_errstr());
     }
-    for (ssize_t i = 0; i < n; i++) {
+    for (int64_t i = 0; i < n; i++) {
         omg_list_push(out.v.l, omg_int((int64_t)buf[i]));
     }
     free(buf);
@@ -2720,15 +3424,15 @@ static Value omg_builtin_tcp_write(Value h, Value data) {
     } else {
         omg_panic("TypeError", "tcp_write() expects (handle: int, data: str | [int])");
     }
-    /* Loop on partial writes — write(2) on a stream socket can return
-     * fewer bytes than requested under load. */
+    /* Loop on partial writes — a stream socket can accept fewer bytes
+     * than requested under load. */
     size_t total = 0;
     while (total < len) {
-        ssize_t w = write(e->fd, buf + total, len - total);
+        int64_t w = (int64_t)omg_sock_write(e->fd, buf + total, len - total);
         if (w < 0) {
-            if (errno == EINTR) continue;
+            if (OMG_SOCK_EINTR()) continue;
             if (owned) free(owned);
-            omg_panicf("ValueError", "tcp_write: %s", strerror(errno));
+            omg_panicf("ValueError", "tcp_write: %s", omg_sock_errstr());
         }
         total += (size_t)w;
     }
@@ -2740,7 +3444,7 @@ static Value omg_builtin_tcp_close(Value h) {
     if (h.tag != OMG_INT) omg_panic("TypeError", "tcp_close() expects a handle");
     OmgTcpEntry *e = omg_tcp_get((int)h.v.i);
     if (!e) omg_panic("ValueError", "invalid tcp handle");
-    close(e->fd);
+    omg_sock_close(e->fd);
     e->fd = 0;
     e->is_listener = 0;
     return omg_none();
@@ -2753,12 +3457,18 @@ static Value omg_builtin_tcp_close(Value h) {
  * the kernel to auto-reap exiting children, so naive callers don't
  * accumulate zombies. */
 static Value omg_builtin_fork(void) {
+#ifdef _WIN32
+    /* Same message as the Rust runtime on Windows. */
+    omg_panic("ValueError", "fork(): not supported on Windows (there is no fork; use subprocess())");
+    return omg_none();
+#else
     signal(SIGCHLD, SIG_IGN);
     pid_t pid = fork();
     if (pid < 0) {
         omg_panicf("ValueError", "fork: %s", strerror(errno));
     }
     return omg_int((int64_t)pid);
+#endif
 }
 
 /* === Reflective dispatch ================================================== */
@@ -2853,3 +3563,103 @@ static Value omg_call_builtin(Value name, Value args) {
     omg_panicf("TypeError", "unknown builtin: %s", n);
     return omg_none(); /* unreachable */
 }
+
+/* === Program entry ==========================================================
+ * The generated code ends with
+ *
+ *     int main(int argc, char **argv) { return omg_start(argc, argv, omg_main); }
+ *
+ * where omg_main() holds the program's top-level statements.
+ * omg_start() is the per-platform start-up:
+ *
+ *   POSIX    line-buffer stdout, then run omg_main.
+ *   Windows  binary stdio (no "\r\n" translation), a console that
+ *            understands ANSI escapes and UTF-8, the command line as
+ *            UTF-8 (the `argv` Windows hands to main is in the legacy
+ *            code page), and omg_main on a thread with a 64 MiB stack,
+ *            because the main thread's stack size is fixed by the
+ *            linker (1 or 2 MiB) and OMG recursion uses the C stack.
+ */
+typedef int (*OmgEntry)(int argc, char **argv);
+
+#ifdef _WIN32
+static UINT omg_saved_output_cp = 0;
+
+static void omg_os_restore_output_cp(void) {
+    if (omg_saved_output_cp != 0) SetConsoleOutputCP(omg_saved_output_cp);
+}
+
+typedef struct {
+    OmgEntry entry;
+    int argc;
+    char **argv;
+    int rc;
+} OmgMainArgs;
+
+static DWORD WINAPI omg_main_thread(LPVOID p) {
+    OmgMainArgs *a = (OmgMainArgs *)p;
+    a->rc = a->entry(a->argc, a->argv);
+    return 0;
+}
+
+static int omg_start(int argc, char **argv, OmgEntry entry) {
+    _setmode(_fileno(stdin), _O_BINARY);
+    _setmode(_fileno(stdout), _O_BINARY);
+    _setmode(_fileno(stderr), _O_BINARY);
+
+    /* Windows Terminal interprets ANSI escapes already; the classic
+     * console host has to be asked. Fails harmlessly on a pipe. */
+    DWORD which[2] = {STD_OUTPUT_HANDLE, STD_ERROR_HANDLE};
+    for (int i = 0; i < 2; i++) {
+        HANDLE h = GetStdHandle(which[i]);
+        DWORD mode = 0;
+        if (h != NULL && h != INVALID_HANDLE_VALUE && GetConsoleMode(h, &mode)) {
+            SetConsoleMode(h, mode | ENABLE_VIRTUAL_TERMINAL_PROCESSING);
+        }
+    }
+    /* OMG strings are UTF-8 and are written as bytes, so the console
+     * must decode UTF-8. The code page belongs to the console, not to
+     * this process: put the old one back on exit. */
+    UINT cp = GetConsoleOutputCP();
+    if (cp != 0 && cp != CP_UTF8 && SetConsoleOutputCP(CP_UTF8)) {
+        omg_saved_output_cp = cp;
+        atexit(omg_os_restore_output_cp);
+    }
+
+    int wargc = 0;
+    LPWSTR *wargv = CommandLineToArgvW(GetCommandLineW(), &wargc);
+    if (wargv != NULL && wargc > 0) {
+        char **u = (char **)malloc(((size_t)wargc + 1) * sizeof(char *));
+        if (u) {
+            for (int i = 0; i < wargc; i++) {
+                u[i] = omg_os_utf8(wargv[i]);
+                if (!u[i]) u[i] = (char *)"";
+            }
+            u[wargc] = NULL;
+            argc = wargc;
+            argv = u;
+        }
+        LocalFree(wargv);
+    }
+
+    OmgMainArgs a;
+    a.entry = entry;
+    a.argc = argc;
+    a.argv = argv;
+    a.rc = 0;
+    HANDLE t = CreateThread(NULL, (SIZE_T)64 * 1024 * 1024, omg_main_thread, &a,
+                            STACK_SIZE_PARAM_IS_A_RESERVATION, NULL);
+    if (t == NULL) return entry(argc, argv);
+    WaitForSingleObject(t, INFINITE);
+    CloseHandle(t);
+    return a.rc;
+}
+#else
+static int omg_start(int argc, char **argv, OmgEntry entry) {
+    /* Line-buffered even when piped, the way Rust's println! flushes
+     * on "\n". Matters for error tests, where a panic on stderr must
+     * come AFTER the emits before it. */
+    setvbuf(stdout, NULL, _IOLBF, 0);
+    return entry(argc, argv);
+}
+#endif

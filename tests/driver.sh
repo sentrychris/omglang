@@ -4,7 +4,7 @@
 #   omg <file.omg> [args]    → compile and run
 #   omg <file.omgb> [args]   → run precompiled bytecode
 #   omg --compile in out     → just compile
-#   omg --build in [out]     → AOT to native ELF
+#   omg --build in [out]     → AOT to a native executable
 # Plus error/help paths.
 
 set -u
@@ -91,27 +91,35 @@ section "Driver: omg --build"
 # AOT-build the fixture and confirm the binary works.
 assert_exit_code "--build succeeds" 0 \
     "$OMG_NATIVE" --build "$TMPDIR_TEST/fixture.omg" "$TMPDIR_TEST/fixture-aot"
-[ -x "$TMPDIR_TEST/fixture-aot" ] && pass "--build produces an executable" || \
+is_executable "$TMPDIR_TEST/fixture-aot" && pass "--build produces an executable" || \
     fail "--build output not executable"
 
-# The AOT binary should produce the same output as the source.
-expected="args: [$TMPDIR_TEST/fixture-aot, p, q]
-len: 3
-square(7) = 49"
-assert_stdout "AOT binary produces correct output" "$expected" \
-    "$TMPDIR_TEST/fixture-aot" p q
+# The AOT binary should produce the same output as the source. Its
+# first argument is its own path, which Windows spells its own way
+# (see assert_program_path), so that line is checked separately.
+aot_out=$("$TMPDIR_TEST/fixture-aot" p q 2>/dev/null)
+aot_self=$(printf '%s\n' "$aot_out" | sed -n '1s/^args: \[\(.*\), p, q\]$/\1/p')
+assert_program_path "AOT binary sees its own path and arguments" \
+    "$TMPDIR_TEST/fixture-aot" "$aot_self"
+assert_eq "AOT binary produces correct output" \
+    "len: 3
+square(7) = 49" \
+    "$(printf '%s\n' "$aot_out" | sed 1d)"
 
 # AOT binary should be a real native executable (ELF on Linux, Mach-O
-# on macOS), not a shell script.
-file_output=$(file "$TMPDIR_TEST/fixture-aot")
+# on macOS, PE on Windows, where it is named fixture-aot.exe), not a
+# shell script.
+aot_file="$TMPDIR_TEST/fixture-aot"
+[ -f "$aot_file.exe" ] && aot_file="$aot_file.exe"
+file_output=$(file "$aot_file")
 case "$file_output" in
-    *ELF*|*Mach-O*) pass "AOT output is a native executable" ;;
+    *ELF*|*Mach-O*|*PE32*) pass "AOT output is a native executable" ;;
     *) fail "AOT output is not a native executable" "got: $file_output" ;;
 esac
 
 # Default output path: input minus .omg.
 "$OMG_NATIVE" --build "$TMPDIR_TEST/fixture.omg" >/dev/null 2>&1
-[ -x "$TMPDIR_TEST/fixture" ] && pass "--build default output path" || \
+is_executable "$TMPDIR_TEST/fixture" && pass "--build default output path" || \
     fail "--build default output path"
 
 # === Mode 5: --help / no args ==========================================

@@ -21,22 +21,27 @@ mkdir -p "$WEB_OUT"
 WORK=$(mktemp -d)
 trap 'rm -rf "$WORK"' EXIT
 
-# Pick a toolchain. Prefer the native `omg`; if it can't run on this
-# host (the checked-in one is Linux x86-64 — so: macOS, Windows under
-# Git Bash, ARM) fall back to the Rust runtime, which compiles to the
-# same bytecode and runs the same OMG-written JS back end (through the
-# same driver, bootstrap/src/omg.omg), just hosted on the Rust VM.
+# Pick a toolchain. Prefer the native `omg` (omg.exe on Windows); if
+# it can't run on this host (the checked-in ones are for Linux and
+# Windows on x86-64, so: macOS, ARM) fall back to the Rust runtime,
+# which compiles to the same bytecode and runs the same OMG-written JS
+# back end (through the same driver, bootstrap/src/omg.omg), just
+# hosted on the Rust VM.
 can_emit_js() {
     [ -x "$1" ] && "$1" --help 2>/dev/null | grep -q -- '--emit-js'
 }
+NATIVE_OMG=bootstrap/bin/omg
+case "$(uname -s)" in
+    MINGW*|MSYS*) NATIVE_OMG=bootstrap/bin/omg.exe ;;
+esac
 RUST_OMG=runtime/target/release/omg
 if [ ! -x "$RUST_OMG" ] && [ -x "$RUST_OMG.exe" ]; then
     RUST_OMG="$RUST_OMG.exe"
 fi
-if can_emit_js bootstrap/bin/omg; then
-    echo "Using the native toolchain (bootstrap/bin/omg)"
-    omg_compile() { bootstrap/bin/omg --compile "$1" "$2"; }
-    omg_to_js()   { bootstrap/bin/omg --emit-js "$1" "$2"; }
+if can_emit_js "$NATIVE_OMG"; then
+    echo "Using the native toolchain ($NATIVE_OMG)"
+    omg_compile() { "$NATIVE_OMG" --compile "$1" "$2"; }
+    omg_to_js()   { "$NATIVE_OMG" --emit-js "$1" "$2"; }
 elif [ -x "$RUST_OMG" ]; then
     echo "Using the Rust runtime ($RUST_OMG)"
     omg_compile() { "$RUST_OMG" --compile "$1" "$2"; }

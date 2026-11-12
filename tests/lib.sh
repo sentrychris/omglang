@@ -16,15 +16,46 @@ FAIL_COUNT=${FAIL_COUNT:-0}
 FAILED_TESTS=${FAILED_TESTS:-}
 
 # Repo root, derived from this file's location. Sourcing tests can call
-# either binary via $OMG_NATIVE / $OMG_RUST.
+# either binary via $OMG_NATIVE / $OMG_RUST. Both can be set from the
+# environment to test a toolchain that lives somewhere else.
 TESTS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$TESTS_DIR/.." && pwd)"
-OMG_NATIVE="$REPO_ROOT/bootstrap/bin/omg"
-OMG_RUST="$REPO_ROOT/runtime/target/release/omg"
+OMG_NATIVE="${OMG_NATIVE:-$REPO_ROOT/bootstrap/bin/omg}"
+OMG_RUST="${OMG_RUST:-$REPO_ROOT/runtime/target/release/omg}"
+
+# Non-empty on a Windows host (Git Bash), where a few tests have to
+# allow for the way Windows spells the path of a running program.
+case "$(uname -s 2>/dev/null)" in
+    MINGW*|MSYS*) OMG_WINDOWS=1 ;;
+    *) OMG_WINDOWS="${OMG_WINDOWS:-}" ;;
+esac
 
 # Per-suite tempdir. Cleaned up by the runner; tests just write into it.
 TMPDIR_TEST="${TMPDIR_TEST:-/tmp/omg-tests-$$}"
 mkdir -p "$TMPDIR_TEST"
+
+# Git Bash rewrites a POSIX-looking argument ("/tmp/x.omg") into a
+# Windows path before a native program sees it, so a program that
+# prints its own arguments would not print what the test typed. Use
+# the "C:/dir/file" spelling throughout: it is valid in the shell and
+# in Windows, and is passed through unchanged.
+if [ -n "$OMG_WINDOWS" ] && command -v cygpath >/dev/null 2>&1; then
+    REPO_ROOT=$(cygpath -m "$REPO_ROOT")
+    TMPDIR_TEST=$(cygpath -m "$TMPDIR_TEST")
+    case "$OMG_NATIVE" in /*) OMG_NATIVE=$(cygpath -m "$OMG_NATIVE") ;; esac
+    case "$OMG_RUST" in /*) OMG_RUST=$(cygpath -m "$OMG_RUST") ;; esac
+fi
+# The files are omg.exe on Windows. (bootstrap/bin/omg exists there
+# too: it is the Linux binary, which is checked in beside omg.exe.)
+if [ -n "$OMG_WINDOWS" ]; then
+    [ -f "$OMG_NATIVE.exe" ] && OMG_NATIVE="$OMG_NATIVE.exe"
+    [ -f "$OMG_RUST.exe" ] && OMG_RUST="$OMG_RUST.exe"
+fi
+
+# `is_executable <path>`: true if <path>, or <path>.exe, can be run.
+is_executable() {
+    [ -x "$1" ] || [ -x "$1.exe" ]
+}
 
 # `pass` and `fail` update the running counts. Tests should call these
 # rather than printing pass/fail themselves.
@@ -111,6 +142,26 @@ assert_combined() {
     local actual
     actual=$("$@" 2>&1)
     assert_eq "$name" "$expected" "$actual"
+}
+
+# `assert_program_path <name> <expected> <actual>`: the path a built
+# program reports for itself (args[0]). Elsewhere that is exactly the
+# path it was started with. Windows hands a program its path in its own
+# spelling (backslashes, ".exe", sometimes a different prefix), so
+# there only the file name is compared.
+assert_program_path() {
+    local name="$1" expected="$2" actual="$3"
+    if [ -z "$OMG_WINDOWS" ]; then
+        assert_eq "$name" "$expected" "$actual"
+        return
+    fi
+    local base
+    base=$(basename "$expected")
+    case "$actual" in
+        *"$base"|*"$base.exe"|*"$base.EXE") pass "$name" ;;
+        *) fail "$name" "expected a path ending in: $base (or $base.exe)
+      got:      $actual" ;;
+    esac
 }
 
 # `require_native_toolchain` — bail out early if the native `omg`

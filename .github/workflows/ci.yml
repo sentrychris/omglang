@@ -22,8 +22,7 @@ defaults:
     shell: bash
 
 jobs:
-  # The Rust runtime is the part of OMG that has to build everywhere:
-  # it is the only implementation available on Windows, and the seed
+  # The Rust runtime is the reference implementation, and the seed
   # that bootstraps the native toolchain on any host the checked-in
   # binaries don't run on.
   rust:
@@ -113,18 +112,19 @@ jobs:
           msg=$(tail -n 25 build.log | sed 's/%/%25/g' | awk '{printf "%s%%0A", $0}')
           echo "::error title=MSRV build::$msg"
 
-  # The native toolchain (OMG -> bytecode -> C -> machine code) needs a
-  # C compiler and a POSIX libc, so it is built and tested on Linux and
-  # macOS. On Linux this is a *self-rebuild* from the `omg` checked
-  # into bootstrap/bin/; on macOS that binary can't run, so build.sh
-  # bootstraps from the Rust runtime instead.
+  # The native toolchain (OMG -> bytecode -> C -> machine code) needs
+  # only a C compiler, and is built and tested on all three systems.
+  # On Linux and Windows this is a *self-rebuild* from the binary
+  # checked into bootstrap/bin/ (omg, omg.exe); on macOS neither can
+  # run, so build.sh bootstraps from the Rust runtime instead. The
+  # Windows runner's C compiler is the MinGW-w64 GCC on its PATH.
   native:
     name: Native toolchain (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest]
+        os: [ubuntu-latest, macos-latest, windows-latest]
     steps:
       - name: Checkout
         uses: actions/checkout@v5
@@ -154,19 +154,46 @@ jobs:
         if: runner.os == 'Linux'
         run: bootstrap/check-bin.sh 2>&1 | tee check-bin.log
 
+      # The checked-in omg.exe is cross-compiled on Linux. This is the
+      # only place it meets a real Windows before the steps below
+      # replace it: it has to run a program, and build one that runs.
+      - name: Checked-in omg.exe works
+        if: runner.os == 'Windows'
+        run: |
+          set -o pipefail
+          {
+            gcc --version | head -n 1
+            bootstrap/bin/omg.exe --version
+            bootstrap/bin/omg.exe tests/smoke/regressions.omg > checked-in.out 2>&1 || true
+            diff tests/smoke/regressions.expected checked-in.out
+            bootstrap/bin/omg.exe --build tests/smoke/regressions.omg ./checked-in-aot
+            ./checked-in-aot.exe > checked-in-aot.out 2>&1 || true
+            diff tests/smoke/regressions.expected checked-in-aot.out
+          } 2>&1 | tee check-bin.log
+
       # Compiles bootstrap/src/omg.omg (which imports the rest of the
-      # toolchain) → bootstrap/bin/omg. On Linux this validates that
-      # the in-repo binary can rebuild itself from the current OMG
-      # sources, the load-bearing self-hosting invariant for the
-      # native pipeline.
+      # toolchain) → bootstrap/bin/omg (omg.exe on Windows). On Linux
+      # and Windows this validates that the in-repo binary can rebuild
+      # itself from the current OMG sources, the load-bearing
+      # self-hosting invariant for the native pipeline.
       - name: Build native toolchain
         run: bootstrap/build.sh 2>&1 | tee native-build.log
 
       # A second pass always self-rebuilds: the binary from the first
-      # pass was produced by an older compiler (Linux) or by the Rust
-      # runtime (macOS); this one is the toolchain compiling itself.
+      # pass was produced by an older compiler (Linux, Windows) or by
+      # the Rust runtime (macOS); this one is the toolchain compiling
+      # itself.
       - name: Self-rebuild native toolchain
+        if: runner.os != 'Windows'
         run: bootstrap/build.sh 2>&1 | tee native-rebuild.log
+
+      # On Windows the second pass goes through build.ps1, the same
+      # build for people who work in PowerShell, so that both scripts
+      # are exercised.
+      - name: Self-rebuild native toolchain (PowerShell)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: ./bootstrap/build.ps1 *>&1 | Tee-Object -FilePath native-rebuild.log
 
       # tests/run.sh is the comprehensive end-to-end suite. It exercises
       # bootstrap/bin/omg directly:
@@ -196,10 +223,12 @@ jobs:
       - name: Regression program (native interpreter and AOT)
         run: |
           set -o pipefail
+          OMG=bootstrap/bin/omg
+          if [ "$RUNNER_OS" = Windows ]; then OMG=bootstrap/bin/omg.exe; fi
           {
-            bootstrap/bin/omg tests/smoke/regressions.omg > native.out 2>&1 || true
+            "$OMG" tests/smoke/regressions.omg > native.out 2>&1 || true
             diff tests/smoke/regressions.expected native.out
-            bootstrap/bin/omg --build tests/smoke/regressions.omg ./regressions-aot
+            "$OMG" --build tests/smoke/regressions.omg ./regressions-aot
             ./regressions-aot > aot.out 2>&1 || true
             diff tests/smoke/regressions.expected aot.out
           } 2>&1 | tee regressions.log

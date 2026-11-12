@@ -21,6 +21,11 @@ tests/run.sh repl regression
 Exit code is `0` on full success, `1` if anything failed, `2` if the
 prerequisites aren't built.
 
+The scripts are bash. On Windows run them from Git Bash, with `gcc`
+(MinGW-w64) and `node` on `PATH`; they then test `bootstrap/bin/omg.exe`.
+`OMG_NATIVE` and `OMG_RUST` can be set to test binaries that live
+somewhere else.
+
 ## Layout
 
 | File                   | What it tests                                        |

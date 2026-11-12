@@ -3,7 +3,8 @@
 # test outputs into CRLF, which breaks bash and every output comparison.
 * text=auto eol=lf
 
-# Pre-built native toolchain (Linux x86-64 ELF) and anything else that
-# must never be touched by line-ending conversion.
+# Pre-built native toolchain (Linux x86-64 and Windows x86-64) and
+# anything else that must never be touched by line-ending conversion.
 bootstrap/bin/omg   binary
+*.exe binary
 *.omgb binary

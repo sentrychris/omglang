@@ -68,12 +68,13 @@ next to itself (through the `executable_path` builtin).
    binary** so it can do self-hosted compilation without reading any
    external file. This step is only needed when there is no
    `bootstrap/bin/omg` that runs on your machine.
-2. `bootstrap/build.sh` builds `bootstrap/bin/omg` in two commands:
+2. `bootstrap/build.sh` (`bootstrap/build.ps1` in PowerShell) builds
+   `bootstrap/bin/omg` (`omg.exe` on Windows) in two commands:
    - `omg --emit-c bootstrap/src/omg.omg omg.c` — the driver compiles
      its own source, and everything it imports, to bytecode, and puts
      that through the C back end with `omg_rt.h` pasted in at the top.
    - `cc -O3 omg.c -o bootstrap/bin/omg -lm` — the system C compiler
-     produces the ELF. `-O3` inlines the runtime helpers (`omg_eq`,
+     produces the executable (on Windows: `gcc ... -static -lm -lws2_32`). `-O3` inlines the runtime helpers (`omg_eq`,
      `omg_index`, `omg_dict_find` etc.) which compound in the VM's hot
      path; the output is a single translation unit, so `-flto` adds no
      value here.
@@ -88,4 +89,8 @@ next to itself (through the `executable_path` builtin).
 After changing anything in this directory, rebuild and commit
 `bootstrap/bin/` (and `web/` after `bootstrap/build-web.sh`): both are
 checked in, and CI fails when they are stale
-([`bootstrap/check-bin.sh`](../check-bin.sh)).
+([`bootstrap/check-bin.sh`](../check-bin.sh)). `bootstrap/bin/` holds
+two binaries, `omg` for Linux x86-64 and `omg.exe` for Windows x86-64.
+Rebuild on Linux with the MinGW-w64 cross compiler installed
+(`apt install gcc-mingw-w64-x86-64`) and `build.sh` produces both from
+the same generated C.

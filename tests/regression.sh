@@ -85,7 +85,7 @@ assert_eq "args[0] via native = source path (not a tempfile)" \
 # AOT binary: args[0] is the binary's own path.
 "$OMG_NATIVE" --build "$TMPDIR_TEST/argv0.omg" "$TMPDIR_TEST/argv0-aot" >/dev/null
 out=$("$TMPDIR_TEST/argv0-aot")
-assert_eq "args[0] via AOT = binary path" \
+assert_program_path "args[0] via AOT = binary path" \
     "$TMPDIR_TEST/argv0-aot" "$out"
 
 # === Error format: no doubled "RuntimeError:" prefix ==================

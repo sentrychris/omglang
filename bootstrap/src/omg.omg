@@ -314,16 +314,93 @@ proc emit_js(in_path, out_path) {
     write_text(out_path, njs.generate(parsed[0], parsed[1], parsed[2], parsed[3], runtime_js, in_path))
 }
 
-proc build_aot(in_path, out_path) {
-    alloc tmp_c := "/tmp/omg-aot-" + getpid() + ".c"
-    emit_c(in_path, tmp_c)
+# True when the toolchain is running on Windows. The working directory
+# the runtime hands every program starts with a drive letter there
+# ("C:\\Users\\...") or, on a network share, with two backslashes; on
+# every other system it starts with "/".
+proc on_windows() {
+    if length(current_dir) < 2 {
+        return false
+    }
+    return current_dir[1] == ":" or current_dir[0:2] == "\\\\"
+}
 
-    # Final step shells out to cc; that's the only external dependency.
+# `path` with every "/" turned into "\". cmd.exe reads a leading "/" as
+# the start of an option, so paths handed to it must use backslashes.
+proc backslashed(path) {
+    alloc out := ""
+    alloc i := 0
+    alloc n := length(path)
+    loop i < n {
+        if path[i] == "/" {
+            out := out + "\\"
+        } else {
+            out := out + path[i]
+        }
+        i := i + 1
+    }
+    return out
+}
+
+# Run the first C compiler in `names` that can be started, with `flags`
+# after its name. Returns its exit code, or -1 if none could be started.
+# A program that is not there shows up as a raised ValueError. 127 is
+# what a shell wrapper returns for "command not found", so it is taken
+# to mean the same thing.
+proc run_c_compiler(names, flags) {
+    alloc i := 0
+    alloc rc := 127
+    loop i < length(names) {
+        rc := 127
+        try {
+            rc := subprocess([names[i]] + flags)
+        } except err {
+            rc := 127
+        }
+        if rc != 127 {
+            return rc
+        }
+        i := i + 1
+    }
+    return -1
+}
+
+proc build_aot(in_path, out_path) {
+    alloc win := on_windows()
+    alloc tmp_c := "/tmp/omg-aot-" + getpid() + ".c"
+    alloc compilers := ["cc"]
     # -O3 unlocks cross-function inlining of the OMG runtime helpers
     # (omg_eq, omg_index, omg_dict_find, etc.) — these are tiny inline
     # routines that compound when hot.
-    alloc rc := subprocess(["cc", "-O3", "-w", tmp_c, "-o", out_path, "-lm"])
-    subprocess(["rm", "-f", tmp_c])
+    alloc flags := ["-O3", "-w", tmp_c, "-o", out_path, "-lm"]
+    if win {
+        # An executable needs its extension here, and there is no /tmp:
+        # the C file goes next to the output and is removed afterwards.
+        if ends_with(out_path, ".exe") == false and ends_with(out_path, ".EXE") == false {
+            out_path := out_path + ".exe"
+        }
+        tmp_c := out_path + "." + getpid() + ".c"
+        compilers := ["gcc", "clang", "cc"]
+        # -static: no MinGW runtime DLLs to ship beside the result.
+        # ws2_32: Winsock, for the tcp_* builtins.
+        flags := ["-O3", "-w", tmp_c, "-o", out_path, "-static", "-lm", "-lws2_32"]
+    }
+    emit_c(in_path, tmp_c)
+
+    # The last step hands the C to a C compiler; that is the only
+    # external program a build needs.
+    alloc rc := run_c_compiler(compilers, flags)
+    if win {
+        try { subprocess(["cmd", "/c", "del", "/q", backslashed(tmp_c)]) } except err { }
+    } else {
+        subprocess(["rm", "-f", tmp_c])
+    }
+    if rc == -1 {
+        if win {
+            exit_with_error("omg --build needs a C compiler: install GCC or Clang (MinGW-w64) and put gcc or clang on PATH")
+        }
+        exit_with_error("omg --build needs a C compiler: no `cc` on PATH")
+    }
     if rc != 0 {
         exit(rc)
     }
