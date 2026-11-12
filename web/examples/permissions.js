@@ -2,7 +2,7 @@
 // Do not edit by hand.
 
 // omg_rt.js  →  inlined at the top of every .js emitted by
-//               bootstrap/src/native-js.omg (and bootstrap/bin/omgjs).
+//               bootstrap/src/native-js.omg (`omg --emit-js`).
 //
 // Runtime for OMG programs compiled to JavaScript. Mirrors
 // bootstrap/src/omg_rt.h: provides the value coercion, the
