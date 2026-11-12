@@ -160,19 +160,32 @@ assert_stdout "omg runs .omgb in-process" "$expected_vm" \
 [ -f "$TMPDIR_TEST/fixture-direct.c" ] && pass "--emit-c produces .c" || \
     fail "--emit-c didn't produce output"
 
-# The generated C should compile cleanly.
-if cc -O2 -w "$TMPDIR_TEST/fixture-direct.c" -o "$TMPDIR_TEST/fixture-direct" -lm 2>/dev/null; then
+# The generated C should compile cleanly with the system C compiler,
+# using the same link flags as `omg --build` (on Windows: gcc or clang,
+# linked statically with Winsock).
+emit_cc=cc
+emit_link="-lm"
+if [ -n "$OMG_WINDOWS" ]; then
+    command -v gcc >/dev/null 2>&1 && emit_cc=gcc
+    emit_link="-static -lm -lws2_32"
+fi
+# shellcheck disable=SC2086
+if "$emit_cc" -O2 -w "$TMPDIR_TEST/fixture-direct.c" -o "$TMPDIR_TEST/fixture-direct" $emit_link 2>/dev/null; then
     pass "--emit-c output compiles with cc"
 else
     fail "--emit-c output failed to compile"
 fi
 
-# And the resulting binary runs correctly.
-expected_dir="args: [$TMPDIR_TEST/fixture-direct, z]
-len: 2
-square(7) = 49"
-assert_stdout "binary built from --emit-c output runs" "$expected_dir" \
-    "$TMPDIR_TEST/fixture-direct" z
+# And the resulting binary runs correctly. Its own path is checked
+# apart from the rest, as for the --build fixture above.
+direct_out=$("$TMPDIR_TEST/fixture-direct" z 2>/dev/null)
+direct_self=$(printf '%s\n' "$direct_out" | sed -n '1s/^args: \[\(.*\), z\]$/\1/p')
+assert_program_path "binary built from --emit-c output sees its own path" \
+    "$TMPDIR_TEST/fixture-direct" "$direct_self"
+assert_eq "binary built from --emit-c output runs" \
+    "len: 2
+square(7) = 49" \
+    "$(printf '%s\n' "$direct_out" | sed 1d)"
 
 # --emit-c and --emit-js also take source directly, and give the same
 # output as going through a .omgb first (only the first line, which
