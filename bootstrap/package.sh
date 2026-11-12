@@ -119,6 +119,15 @@ for f in run.sh lib.sh builtins.sh driver.sh repl.sh regression.sh parity.sh REA
     fi
 done
 
+# run.sh lists every suite of the parent repo. Keep only the ones that
+# were copied above, or a plain `tests/run.sh` in the distribution ends
+# with "No such suite".
+for suite in $(sed -n '/^SUITES=(/,/^)/p' "$DIST_DIR/tests/run.sh" | grep -E '^    [a-z_]+$'); do
+    if [ ! -f "$DIST_DIR/tests/$suite.sh" ]; then
+        sed_inplace -e "/^    $suite\$/d" "$DIST_DIR/tests/run.sh"
+    fi
+done
+
 # Path rewrites: bootstrap/{bin,src} → {bin,src} (the dist has no
 # bootstrap/ prefix), and bootstrap/build.sh → build.sh.
 for f in "$DIST_DIR/tests"/*.sh "$DIST_DIR/tests/README.md"; do
