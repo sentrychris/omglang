@@ -22,6 +22,9 @@
 #      tests/run.sh, runs the same corpus on the native backends.
 #   6. Malformed programs fail with a clean SyntaxError (exit code 1),
 #      never a crash, and with the same message from both frontends.
+#   7. The HTTP server in tools/ answers a request. It forks per
+#      connection where fork() exists and must still serve where it
+#      does not (Windows).
 #
 # Usage:
 #   tests/smoke.sh            build first with: cargo build --release
@@ -248,6 +251,46 @@ bad_program "nested proc calls a later sibling" \
 bad_program "nested proc called with the wrong argument count" \
     'proc outer() {\n  proc f(a) {\n    return f(1, 2)\n  }\n  return f(1)\n}\n' \
     "function 'f' expects 1 argument, got 2"
+
+# --- 7. The HTTP server answers a request -------------------------------------
+# tools/modules/http.omg forks a child per connection. Windows has no
+# fork(), and the server used to die there on its first request; it now
+# falls back to serving in-process. This check runs on every CI
+# platform, so it covers both paths.
+echo
+echo "== HTTP server (tools/web/http_server.omg) =="
+if command -v curl >/dev/null 2>&1; then
+    HTTP_PORT=19876
+    mkdir -p "$WORK/webroot"
+    echo "hello from omg" > "$WORK/webroot/hello.txt"
+    "$OMG" --rust tools/web/http_server.omg "$WORK/webroot" "$HTTP_PORT" >"$WORK/http.log" 2>&1 &
+    HTTP_PID=$!
+    http_get() { curl -s -m 5 "http://127.0.0.1:$HTTP_PORT$1" 2>/dev/null | norm; }
+    body=""
+    for _ in 1 2 3 4 5 6 7 8 9 10; do
+        body=$(http_get /hello.txt)
+        [ -n "$body" ] && break
+        sleep 1
+    done
+    if [ "$body" = "hello from omg" ]; then
+        pass "serves a static file"
+    else
+        fail "serves a static file" "got: '$body'
+$(cat "$WORK/http.log")"
+    fi
+    # A second request proves the server survived the first one.
+    code=$(curl -s -m 5 -o /dev/null -w '%{http_code}' "http://127.0.0.1:$HTTP_PORT/missing.txt" 2>/dev/null)
+    if [ "$code" = "404" ]; then
+        pass "answers 404 for a missing file, and is still running"
+    else
+        fail "answers 404 for a missing file, and is still running" "status: '$code'
+$(cat "$WORK/http.log")"
+    fi
+    kill "$HTTP_PID" 2>/dev/null
+    wait "$HTTP_PID" 2>/dev/null
+else
+    echo "  skip  HTTP server (curl not installed)"
+fi
 
 echo
 echo "================================================"

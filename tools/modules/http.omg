@@ -2,8 +2,8 @@
 
 # tools/modules/http.omg — a tiny HTTP/1.0 server library for OMG.
 #
-# Wraps the TCP + file + fork builtins into a fork-per-accept loop so
-# callers never have to write socket boilerplate. Two layers:
+# Wraps the TCP + file + fork builtins into an accept loop so callers
+# never have to write socket boilerplate. Two layers:
 #
 #   serve_static(host, port, webroot)
 #       The shortest path to a working static-file server.
@@ -28,10 +28,14 @@
 #     }
 #     http.serve("127.0.0.1", 9876, handle)
 #
-# Concurrency: serve() forks after each accept. The child handles the
-# request and exits; SIGCHLD is set to SIG_IGN inside fork() so children
-# auto-reap. Each request runs in its own address space — there is no
-# shared in-process state between requests.
+# Concurrency: on Linux and macOS serve() forks after each accept. The
+# child handles the request and exits; SIGCHLD is set to SIG_IGN inside
+# fork() so children auto-reap. Each request runs in its own address
+# space — there is no shared in-process state between requests.
+#
+# Windows has no fork(), so there serve() handles requests in the one
+# process, one at a time. Everything else behaves the same; a slow
+# request simply holds up the ones behind it.
 
 # === request parsing ===================================================
 
@@ -210,32 +214,60 @@ proc handle_static(client, method, path, webroot) {
 
 # === accept loop =======================================================
 
-# Generic serve loop. Listens on host:port; for each accepted connection,
-# forks a child that parses the request line and invokes handler(client,
-# method, path). The handler is responsible for writing a response (use
-# the respond_* / serve_file helpers). After the handler returns, the
-# child closes the socket and exits; the parent immediately returns to
-# tcp_accept. Children auto-reap (SIGCHLD = SIG_IGN inside fork()).
+# Read one request from `client` and hand it to `handler`. A failure
+# while reading, parsing or handling is logged and does not take the
+# server down.
+proc handle_connection(client, handler) {
+    try {
+        alloc text := read_request(client)
+        alloc parts := parse_request_line(text)
+        alloc method := parts[0]
+        alloc path := parts[1]
+        emit method + " " + path
+        handler(client, method, path)
+    } except err {
+        emit "request error: " + err
+    }
+}
+
+# Generic serve loop. Listens on host:port; for each accepted connection
+# it parses the request line and invokes handler(client, method, path).
+# The handler is responsible for writing a response (use the respond_* /
+# serve_file helpers).
+#
+# Where the platform has fork() (Linux, macOS), each connection gets its
+# own child process: the child handles the request, closes the socket
+# and exits, while the parent goes straight back to tcp_accept. Children
+# auto-reap (SIGCHLD = SIG_IGN inside fork()).
+#
+# Where it does not (Windows), fork() raises an error. The first time
+# that happens the loop switches to handling each request in this
+# process, one after another, and stays that way.
 proc serve(host, port, handler) {
     alloc server := tcp_listen(host, port)
     emit "listening on http://" + host + ":" + port
+    alloc can_fork := true
     loop true {
         alloc client := tcp_accept(server)
-        alloc pid := fork()
-        if pid == 0 {
-            tcp_close(server)
+        alloc pid := -1
+        if can_fork {
             try {
-                alloc text := read_request(client)
-                alloc parts := parse_request_line(text)
-                alloc method := parts[0]
-                alloc path := parts[1]
-                emit method + " " + path
-                handler(client, method, path)
+                pid := fork()
             } except err {
-                emit "request error: " + err
+                can_fork := false
+                emit "fork() is not available here; serving one request at a time"
             }
+        }
+        if pid == 0 {
+            # Child: serve this one connection and exit.
+            tcp_close(server)
+            handle_connection(client, handler)
             tcp_close(client)
             exit(0)
+        }
+        if pid < 0 {
+            # No fork: serve it here before accepting the next one.
+            handle_connection(client, handler)
         }
         tcp_close(client)
     }

@@ -5,20 +5,21 @@
 # driver: parse args, optionally add custom routes, hand control off.
 #
 # Usage:
-#   omg tools/web/http_server.omg                       # webroot=/var/www/html, port=9876
+#   omg tools/web/http_server.omg                       # webroot=current directory, port=9876
 #   omg tools/web/http_server.omg path/to/webroot
 #   omg tools/web/http_server.omg path/to/webroot 8000
 
 import "../modules/http.omg" as http
 
-alloc webroot := "/var/www/html"
+alloc webroot := "."
 alloc port := 9876
 if length(args) > 1 { webroot := args[1] }
 if length(args) > 2 { port := int(args[2]) }
 
 # Custom handler: serves a built-in /slow route (busy-loops for ~half a
-# second, useful for verifying fork-per-accept concurrency) and falls
-# through to static file serving for everything else.
+# second, useful for verifying fork-per-accept concurrency on Linux and
+# macOS; on Windows requests are served one at a time) and falls through
+# to static file serving for everything else.
 proc handle(client, method, path) {
     if path == "/slow" {
         alloc n := 0
