@@ -109,6 +109,62 @@ proc install_funcs_list(funcs_list) {
     }
 }
 
+# === Compile errors =====================================================
+
+proc starts_with(s, prefix) {
+    alloc lp := length(prefix)
+    if lp > length(s) {
+        return false
+    }
+    return s[0:lp] == prefix
+}
+
+# The compiler reports a problem in the user's program by panicking with
+# a ready-made "Kind: message" string, which arrives here as
+# "RuntimeError: Kind: message". Returns the line the user should see,
+# or false when the failure is not a diagnostic at all (an IndexError
+# inside the compiler, say, which is a compiler bug). Mirrors
+# `clean_compile_error` in runtime/src/main.rs.
+proc compile_diagnostic(err) {
+    alloc msg := err
+    alloc deliberate := starts_with(msg, "RuntimeError: ")
+    if deliberate {
+        msg := msg[14:]
+    }
+    if starts_with(msg, "SyntaxError: ") or starts_with(msg, "ModuleImportError: ") {
+        return msg
+    }
+    if deliberate {
+        return "SyntaxError: " + msg
+    }
+    return false
+}
+
+# Run one compile step, given as a zero-argument proc. A diagnostic
+# about the user's program is printed on its own and ends the process;
+# without this the user would see a traceback through the compiler's
+# source. A compiler bug is run a second time outside the try block so
+# that it keeps its traceback and can be reported.
+proc compile_guarded(step) {
+    alloc result := false
+    alloc failure := ""
+    cc.compile_reset()
+    try {
+        result := step()
+    } except err {
+        failure := "" + err
+    }
+    if failure == "" {
+        return result
+    }
+    alloc clean := compile_diagnostic(failure)
+    if clean != false {
+        exit_with_error(clean)
+    }
+    cc.compile_reset()
+    return step()
+}
+
 # === Run a program (fresh state) =========================================
 
 proc seed_vm_globals(hosted_args, hosted_module_file) {
@@ -142,8 +198,10 @@ proc run_omg_source(file, forward_args) {
         exit_with_error("ModuleImportError: cannot read '" + file + "'")
     }
     alloc abs_file := absolute_normalised(file)
-    cc.compile_reset()
-    alloc compiled := cc.compile_source(src, abs_file)
+    proc step() {
+        return cc.compile_source(src, abs_file)
+    }
+    alloc compiled := compile_guarded(step)
     vm.vm_reset()
     vm.vm_extend_code(compiled[0])
     install_funcs_list(compiled[1])
@@ -180,8 +238,10 @@ proc run_omgb(file, forward_args) {
 # === --compile (compile only, no run) ====================================
 
 proc compile_only(in_path, out_path) {
-    cc.compile_reset()
-    cc.do_compile(absolute_normalised(in_path), out_path)
+    proc step() {
+        return cc.do_compile(absolute_normalised(in_path), out_path)
+    }
+    compile_guarded(step)
 }
 
 # === --build (AOT to native ELF) =========================================
@@ -190,8 +250,10 @@ proc build_aot(in_path, out_path) {
     alloc pid := getpid()
     alloc tmp_omgb := "/tmp/omg-aot-" + pid + ".omgb"
     alloc tmp_c    := "/tmp/omg-aot-" + pid + ".c"
-    cc.compile_reset()
-    cc.do_compile(absolute_normalised(in_path), tmp_omgb)
+    proc step() {
+        return cc.do_compile(absolute_normalised(in_path), tmp_omgb)
+    }
+    compile_guarded(step)
 
     # Read the bytecode, transpile in-process to C.
     alloc fh := file_open(tmp_omgb, "rb")
@@ -400,11 +462,13 @@ proc disasm(file) {
         if src == false {
             exit_with_error("ModuleImportError: cannot read '" + file + "'")
         }
-        cc.compile_reset()
         # compile_source returns [code, funcs_list, src_files, src_lines]
         # where funcs_list is [[name, params, addr, src_file_idx], ...].
         # Reshape to a dict so the rest of disasm can iterate uniformly.
-        alloc compiled := cc.compile_source(src, absolute_normalised(file))
+        proc step() {
+            return cc.compile_source(src, absolute_normalised(file))
+        }
+        alloc compiled := compile_guarded(step)
         code := compiled[0]
         funcs := {}
         alloc i := 0
@@ -542,7 +606,11 @@ proc repl_compile_and_run(source) {
     try {
         compiled := cc.compile_source_with_globals(source, "<repl>", known)
     } except err {
-        emit err
+        alloc clean := compile_diagnostic("" + err)
+        if clean == false {
+            clean := err
+        }
+        emit clean
         return false
     }
     alloc base := repl_accum_len
