@@ -76,14 +76,14 @@ proc depth(n) {
     }
     return 1 + depth(n - 1)
 }
-emit depth(1000)
+emit depth(200)
 emit depth(10000000)
 emit "unreachable"
 OMG
 "$OMG_NATIVE" --build "$CONF_DIR/deep.omg" "$CONF_DIR/deep" >/dev/null 2>&1
 out=$("$CONF_DIR/deep" 2>"$CONF_DIR/deep.err"); rc=$?
 assert_eq "AOT: runaway recursion exits with code 1" "1" "$rc"
-assert_eq "AOT: output before the overflow is kept" "1000" "$out"
+assert_eq "AOT: output before the overflow is kept" "200" "$out"
 assert_eq "AOT: runaway recursion is a RuntimeError" \
     "RuntimeError: maximum recursion depth exceeded" \
     "$(tail -n 1 "$CONF_DIR/deep.err")"
@@ -103,12 +103,12 @@ try {
 } except err {
     emit err
 }
-emit depth(1000)
+emit depth(200)
 OMG
 "$OMG_NATIVE" --build "$CONF_DIR/deep_caught.omg" "$CONF_DIR/deep_caught" >/dev/null 2>&1
 assert_stdout "AOT: runaway recursion can be caught" \
     "RuntimeError: maximum recursion depth exceeded
-1000" \
+200" \
     "$CONF_DIR/deep_caught"
 
 # The interpreter keeps its call stack on the heap, so the same depth

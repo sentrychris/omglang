@@ -28,5 +28,5 @@ raise: RuntimeError: ValueError: bad value
 caught at level 1: IndexError
 RuntimeError: wrapped IndexError
 no binding
-2000
+500
 done

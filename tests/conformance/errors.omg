@@ -226,14 +226,17 @@ try {
     emit "no binding"
 }
 
-# Recursion a few thousand levels deep works everywhere. (Much deeper
-# recursion is where backends differ: the VMs keep going, AOT and JS
-# raise a catchable RuntimeError when the native stack runs out.)
+# Recursion a few hundred levels deep works everywhere. (Deeper
+# recursion is where backends differ: the VMs keep going past 100,000
+# frames, while AOT and JS raise a catchable RuntimeError when the
+# native stack runs out. That is about 15,000 frames for an AOT binary
+# on Linux but under 2,000 on macOS, where the main thread's stack is
+# fixed at 8 MB, so this stays well below that.)
 proc depth(n) {
     if n == 0 {
         return 0
     }
     return 1 + depth(n - 1)
 }
-emit depth(2000)
+emit depth(500)
 emit "done"

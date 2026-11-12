@@ -220,15 +220,15 @@ proc is_odd(k) {
 emit [is_even(10), is_odd(7), is_even(7)]
 
 # A tail call in a loop-shaped proc. Depth is kept modest because the
-# JS backend has no tail-call elimination; the VMs and AOT reuse the
-# frame.
+# JS backend has no tail-call elimination (the VMs reuse the frame, and
+# AOT does when the C compiler turns the call into a jump).
 proc count(k, acc) {
     if k == 0 {
         return acc
     }
     return count(k - 1, acc + 2)
 }
-emit count(3000, 0)
+emit count(1000, 0)
 
 # Parameters are fresh on every call and do not leak.
 proc shadow(xs) {

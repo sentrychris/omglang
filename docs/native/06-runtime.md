@@ -168,7 +168,9 @@ the compiler, but a call through a value is not, and without the check a
 missing argument would be read as whatever happened to be in the slot.
 Then `OMG_STACK_CHECK()` compares the frame address with a limit that
 `omg_stack_init` computed in `main` from `RLIMIT_STACK` (which it first
-raises to 64 MiB where the hard limit allows). Past the limit the proc
+raises to 64 MiB on Linux where the hard limit allows; elsewhere the
+main thread's stack size is fixed when the process starts, 8 MB on
+macOS, so the limit is used as found). Past the limit the proc
 raises `RuntimeError: maximum recursion depth exceeded` instead of
 running off the end of the stack, so runaway recursion is an ordinary,
 catchable error rather than a segfault.

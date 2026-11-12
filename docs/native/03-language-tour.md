@@ -162,9 +162,10 @@ Three cases are ordinary calls instead, and do use a stack frame each:
 
 How deep ordinary recursion can go depends on the backend. The Rust VM
 and the native interpreter keep their call stack on the heap and handle
-hundreds of thousands of frames. An AOT-compiled binary uses the C stack
-(about 10,000 frames; it raises its own soft stack limit to 64 MiB on
-Linux) and JavaScript uses the engine's. Running out is not a crash on
+hundreds of thousands of frames. An AOT-compiled binary uses the C stack:
+about 15,000 frames on Linux, where it raises its own soft stack limit to
+64 MiB, and under 2,000 on macOS, where the main thread's stack is fixed
+at 8 MB. JavaScript uses the engine's. Running out is not a crash on
 either: it raises `RuntimeError: maximum recursion depth exceeded`, which
 `try` / `except` can catch.
 
