@@ -192,50 +192,61 @@ proc emit_str(s) {
 }
 
 # === Source iteration =======================================================
+#
+# The lexer works on the source as a list of UTF-8 bytes, not as a
+# string. Indexing a list is constant time on every runtime; indexing a
+# string by character is not (the C runtime walks the string from its
+# start), and a lexer that asks for `src[i]` once per character was
+# quadratic in the size of the file: nine seconds for this file alone.
+# Everything outside string literals and comments is ASCII, so byte
+# values are all the lexer needs; literal text is cut out of the byte
+# list and turned back into a string with `bytes_to_string`.
 
-proc is_digit(ch) {
-    return ch >= "0" and ch <= "9"
+proc is_digit(c) {
+    return c >= 48 and c <= 57
 }
 
-proc is_alpha(ch) {
-    return (ch >= "a" and ch <= "z") or (ch >= "A" and ch <= "Z") or ch == "_"
+proc is_alpha(c) {
+    return (c >= 97 and c <= 122) or (c >= 65 and c <= 90) or c == 95
 }
 
-proc is_alnum(ch) {
-    return is_alpha(ch) or is_digit(ch)
+proc is_alnum(c) {
+    return is_alpha(c) or is_digit(c)
 }
 
-# Strip the ;;;omg header. Returns [body, start_line].
-proc strip_header(src) {
-    alloc n := length(src)
+# Skip the ;;;omg header. Returns [index of the first byte of the body,
+# line number of that byte].
+proc strip_header(b) {
+    alloc n := length(b)
     alloc i := 0
     alloc line := 1
     # skip blank lines
     loop i < n {
-        if src[i] == "\n" {
+        if b[i] == 10 {
             line := line + 1
             i := i + 1
-        } elif src[i] == " " or src[i] == "\t" or src[i] == "\r" {
+        } elif b[i] == 32 or b[i] == 9 or b[i] == 13 {
             i := i + 1
         } else {
             break
         }
     }
     if i + 6 <= n {
-        if src[i] == ";" and src[i + 1] == ";" and src[i + 2] == ";" and src[i + 3] == "o" and src[i + 4] == "m" and src[i + 5] == "g" {
+        # ";;;omg"
+        if b[i] == 59 and b[i + 1] == 59 and b[i + 2] == 59 and b[i + 3] == 111 and b[i + 4] == 109 and b[i + 5] == 103 {
             i := i + 6
             # consume the rest of the header line
-            loop i < n and src[i] != "\n" {
+            loop i < n and b[i] != 10 {
                 i := i + 1
             }
             if i < n {
                 i := i + 1
                 line := line + 1
             }
-            return [src[i:n], line]
+            return [i, line]
         }
     }
-    return [src, line]
+    return [0, line]
 }
 
 # === Lexer =================================================================
@@ -271,17 +282,37 @@ proc keyword_kind(word) {
     return ""
 }
 
+# The bytes a backslash escape stands for, given the byte after the
+# backslash.
 proc decode_escape(c) {
-    if c == "n"  { return "\n" }
-    if c == "t"  { return "\t" }
-    if c == "r"  { return "\r" }
-    if c == "\\" { return "\\" }
-    if c == "\"" { return "\"" }
-    if c == "0"  { return chr(0) }
-    if c == "'"  { return "'" }
+    if c == 110 { return [10] }     # \n
+    if c == 116 { return [9] }      # \t
+    if c == 114 { return [13] }     # \r
+    if c == 92  { return [92] }     # \\
+    if c == 34  { return [34] }     # \"
+    if c == 48  { return [0] }      # \0
+    if c == 39  { return [39] }     # \'
     # Unknown escape: keep the backslash, exactly as the Rust lexer does
     # (so "\d" stays a backslash followed by `d`).
-    return "\\" + c
+    return [92, c]
+}
+
+# The character that starts at byte `i`, as a string (for error
+# messages: a stray character can be any UTF-8 sequence).
+proc char_at(b, i) {
+    alloc c := b[i]
+    alloc len := 1
+    if c >= 240 {
+        len := 4
+    } elif c >= 224 {
+        len := 3
+    } elif c >= 192 {
+        len := 2
+    }
+    if i + len > length(b) {
+        len := length(b) - i
+    }
+    return bytes_to_string(b[i:i + len])
 }
 
 # Convert the digits of a decimal integer literal to an int. Literals
@@ -311,29 +342,35 @@ proc parse_int_literal(text, line, file) {
 }
 
 proc tokenize(src, file) {
-    alloc res := strip_header(src)
-    alloc body := res[0]
+    alloc b := string_bytes(src)
+    alloc res := strip_header(b)
+    alloc i := res[0]
     alloc line := res[1]
-    alloc n := length(body)
-    alloc i := 0
+    alloc n := length(b)
     alloc tokens := []
     loop i < n {
-        alloc c := body[i]
-        if c == " " or c == "\t" or c == "\r" {
+        alloc c := b[i]
+        alloc d := -1
+        if i + 1 < n {
+            d := b[i + 1]
+        }
+        if c == 32 or c == 9 or c == 13 {
             i := i + 1
-        } elif c == "\n" {
-            tokens := tokens + [["NL", "", line]]
+        } elif c == 10 {
+            append(tokens, ["NL", "", line])
             line := line + 1
             i := i + 1
-        } elif c == "#" {
-            loop i < n and body[i] != "\n" {
+        } elif c == 35 {
+            # `#` comment: to the end of the line.
+            loop i < n and b[i] != 10 {
                 i := i + 1
             }
-        } elif c == "/" and i + 1 < n and body[i + 1] == "*" {
+        } elif c == 47 and d == 42 {
+            # /* block comment */
             alloc comment_line := line
             i := i + 2
-            loop i + 1 < n and (body[i] != "*" or body[i + 1] != "/") {
-                if body[i] == "\n" {
+            loop i + 1 < n and (b[i] != 42 or b[i + 1] != 47) {
+                if b[i] == 10 {
                     line := line + 1
                 }
                 i := i + 1
@@ -346,30 +383,31 @@ proc tokenize(src, file) {
                 # typo into a program that just stops early.
                 panic("SyntaxError: Unterminated block comment starting on line " + comment_line + " in " + file)
             }
-        } elif c == "0" and i + 1 < n and (body[i + 1] == "b" or body[i + 1] == "B") {
+        } elif c == 48 and (d == 98 or d == 66) {
+            # 0b... binary literal
             i := i + 2
             alloc bin_start := i
             alloc bin_num := 0
             # Leading zeros carry no value; after them at most 63 bits
             # fit in a signed 64-bit integer.
             alloc bin_sig := 0
-            loop i < n and (body[i] == "0" or body[i] == "1") {
-                if bin_sig > 0 or body[i] == "1" {
+            loop i < n and (b[i] == 48 or b[i] == 49) {
+                if bin_sig > 0 or b[i] == 49 {
                     bin_sig := bin_sig + 1
                 }
                 if bin_sig > 63 {
                     panic("SyntaxError: Invalid binary literal on line " + line + " in " + file + ": number too large to fit in target type")
                 }
-                bin_num := bin_num * 2 + (ascii(body[i]) - ascii("0"))
+                bin_num := bin_num * 2 + (b[i] - 48)
                 i := i + 1
             }
             if i == bin_start {
                 panic("SyntaxError: Empty binary literal on line " + line + " in " + file)
             }
-            tokens := tokens + [["NUM", bin_num, line]]
+            append(tokens, ["NUM", bin_num, line])
         } elif is_digit(c) {
             alloc start := i
-            loop i < n and is_digit(body[i]) {
+            loop i < n and is_digit(b[i]) {
                 i := i + 1
             }
             alloc int_end := i
@@ -377,53 +415,57 @@ proc tokenize(src, file) {
             # A bare trailing `.` (e.g. `5.`) does NOT promote, so `5.foo`
             # parses as attribute access on int 5.
             alloc is_float_dot := false
-            if i < n and body[i] == "." and i + 1 < n and is_digit(body[i + 1]) {
+            if i < n and b[i] == 46 and i + 1 < n and is_digit(b[i + 1]) {
                 is_float_dot := true
             }
             alloc is_float_exp := false
-            if i < n and (body[i] == "e" or body[i] == "E") {
+            if i < n and (b[i] == 101 or b[i] == 69) {
                 is_float_exp := true
             }
             if is_float_dot or is_float_exp {
                 if is_float_dot {
                     i := i + 1
-                    loop i < n and is_digit(body[i]) {
+                    loop i < n and is_digit(b[i]) {
                         i := i + 1
                     }
                 }
-                if i < n and (body[i] == "e" or body[i] == "E") {
+                if i < n and (b[i] == 101 or b[i] == 69) {
                     i := i + 1
-                    if i < n and (body[i] == "+" or body[i] == "-") {
+                    if i < n and (b[i] == 43 or b[i] == 45) {
                         i := i + 1
                     }
                     alloc exp_start := i
-                    loop i < n and is_digit(body[i]) {
+                    loop i < n and is_digit(b[i]) {
                         i := i + 1
                     }
                     if exp_start == i {
-                        panic("SyntaxError: Float exponent has no digits in '" + body[start:i] + "' on line " + line + " in " + file)
+                        panic("SyntaxError: Float exponent has no digits in '" + bytes_to_string(b[start:i]) + "' on line " + line + " in " + file)
                     }
                 }
                 # Slice the literal text out so the runtime can convert it
                 # to IEEE-754 bits via `float_bits`. The compiler itself
                 # never does float math.
-                alloc lit := body[start:i]
-                tokens := tokens + [["FNUM", lit, line]]
+                append(tokens, ["FNUM", bytes_to_string(b[start:i]), line])
             } else {
-                tokens := tokens + [["NUM", parse_int_literal(body[start:int_end], line, file), line]]
+                append(tokens, ["NUM", parse_int_literal(bytes_to_string(b[start:int_end]), line, file), line])
             }
-        } elif c == "\"" {
+        } elif c == 34 {
+            # "string literal"
             i := i + 1
-            alloc s := ""
-            loop i < n and body[i] != "\"" {
-                if body[i] == "\\" and i + 1 < n {
-                    s := s + decode_escape(body[i + 1])
+            alloc sb := []
+            loop i < n and b[i] != 34 {
+                if b[i] == 92 and i + 1 < n {
+                    alloc esc := decode_escape(b[i + 1])
+                    append(sb, esc[0])
+                    if length(esc) > 1 {
+                        append(sb, esc[1])
+                    }
                     i := i + 2
                 } else {
-                    if body[i] == "\n" {
+                    if b[i] == 10 {
                         line := line + 1
                     }
-                    s := s + body[i]
+                    append(sb, b[i])
                     i := i + 1
                 }
             }
@@ -431,108 +473,73 @@ proc tokenize(src, file) {
                 panic("SyntaxError: Unterminated string starting on line " + line + " in " + file)
             }
             i := i + 1
-            tokens := tokens + [["STR", s, line]]
+            append(tokens, ["STR", bytes_to_string(sb), line])
         } elif is_alpha(c) {
-            alloc word := ""
-            loop i < n and is_alnum(body[i]) {
-                word := word + body[i]
+            alloc start := i
+            loop i < n and is_alnum(b[i]) {
                 i := i + 1
             }
+            alloc word := bytes_to_string(b[start:i])
             alloc kind := keyword_kind(word)
             if kind == "" {
-                tokens := tokens + [["ID", word, line]]
+                append(tokens, ["ID", word, line])
             } else {
-                tokens := tokens + [[kind, word, line]]
+                append(tokens, [kind, word, line])
             }
-        } elif c == ":" and i + 1 < n and body[i + 1] == "=" {
-            tokens := tokens + [["ASSIGN", "", line]]
+        } elif c == 58 and d == 61 {
+            append(tokens, ["ASSIGN", "", line])
             i := i + 2
-        } elif c == "=" and i + 1 < n and body[i + 1] == "=" {
-            tokens := tokens + [["EQ", "", line]]
+        } elif c == 61 and d == 61 {
+            append(tokens, ["EQ", "", line])
             i := i + 2
-        } elif c == "!" and i + 1 < n and body[i + 1] == "=" {
-            tokens := tokens + [["NE", "", line]]
+        } elif c == 33 and d == 61 {
+            append(tokens, ["NE", "", line])
             i := i + 2
-        } elif c == "<" and i + 1 < n and body[i + 1] == "=" {
-            tokens := tokens + [["LE", "", line]]
+        } elif c == 60 and d == 61 {
+            append(tokens, ["LE", "", line])
             i := i + 2
-        } elif c == ">" and i + 1 < n and body[i + 1] == "=" {
-            tokens := tokens + [["GE", "", line]]
+        } elif c == 62 and d == 61 {
+            append(tokens, ["GE", "", line])
             i := i + 2
-        } elif c == "<" and i + 1 < n and body[i + 1] == "<" {
-            tokens := tokens + [["SHL", "", line]]
+        } elif c == 60 and d == 60 {
+            append(tokens, ["SHL", "", line])
             i := i + 2
-        } elif c == ">" and i + 1 < n and body[i + 1] == ">" {
-            tokens := tokens + [["SHR", "", line]]
+        } elif c == 62 and d == 62 {
+            append(tokens, ["SHR", "", line])
             i := i + 2
-        } elif c == "/" and i + 1 < n and body[i + 1] == "/" {
-            tokens := tokens + [["DSLASH", "", line]]
+        } elif c == 47 and d == 47 {
+            append(tokens, ["DSLASH", "", line])
             i := i + 2
-        } elif c == "{" {
-            tokens := tokens + [["LBRACE", "", line]]
-            i := i + 1
-        } elif c == "}" {
-            tokens := tokens + [["RBRACE", "", line]]
-            i := i + 1
-        } elif c == "(" {
-            tokens := tokens + [["LPAREN", "", line]]
-            i := i + 1
-        } elif c == ")" {
-            tokens := tokens + [["RPAREN", "", line]]
-            i := i + 1
-        } elif c == "[" {
-            tokens := tokens + [["LBRACK", "", line]]
-            i := i + 1
-        } elif c == "]" {
-            tokens := tokens + [["RBRACK", "", line]]
-            i := i + 1
-        } elif c == "," {
-            tokens := tokens + [["COMMA", "", line]]
-            i := i + 1
-        } elif c == "." {
-            tokens := tokens + [["DOT", "", line]]
-            i := i + 1
-        } elif c == ":" {
-            tokens := tokens + [["COLON", "", line]]
-            i := i + 1
-        } elif c == "+" {
-            tokens := tokens + [["PLUS", "", line]]
-            i := i + 1
-        } elif c == "-" {
-            tokens := tokens + [["MINUS", "", line]]
-            i := i + 1
-        } elif c == "*" {
-            tokens := tokens + [["STAR", "", line]]
-            i := i + 1
-        } elif c == "/" {
-            tokens := tokens + [["SLASH", "", line]]
-            i := i + 1
-        } elif c == "%" {
-            tokens := tokens + [["PERCENT", "", line]]
-            i := i + 1
-        } elif c == "&" {
-            tokens := tokens + [["AMP", "", line]]
-            i := i + 1
-        } elif c == "|" {
-            tokens := tokens + [["PIPE", "", line]]
-            i := i + 1
-        } elif c == "^" {
-            tokens := tokens + [["CARET", "", line]]
-            i := i + 1
-        } elif c == "~" {
-            tokens := tokens + [["TILDE", "", line]]
-            i := i + 1
-        } elif c == "<" {
-            tokens := tokens + [["LT", "", line]]
-            i := i + 1
-        } elif c == ">" {
-            tokens := tokens + [["GT", "", line]]
-            i := i + 1
         } else {
-            panic("SyntaxError: Unexpected character '" + c + "' on line " + line + " in " + file)
+            alloc kind := ""
+            if c == 123 { kind := "LBRACE" }
+            if c == 125 { kind := "RBRACE" }
+            if c == 40 { kind := "LPAREN" }
+            if c == 41 { kind := "RPAREN" }
+            if c == 91 { kind := "LBRACK" }
+            if c == 93 { kind := "RBRACK" }
+            if c == 44 { kind := "COMMA" }
+            if c == 46 { kind := "DOT" }
+            if c == 58 { kind := "COLON" }
+            if c == 43 { kind := "PLUS" }
+            if c == 45 { kind := "MINUS" }
+            if c == 42 { kind := "STAR" }
+            if c == 47 { kind := "SLASH" }
+            if c == 37 { kind := "PERCENT" }
+            if c == 38 { kind := "AMP" }
+            if c == 124 { kind := "PIPE" }
+            if c == 94 { kind := "CARET" }
+            if c == 126 { kind := "TILDE" }
+            if c == 60 { kind := "LT" }
+            if c == 62 { kind := "GT" }
+            if kind == "" {
+                panic("SyntaxError: Unexpected character '" + char_at(b, i) + "' on line " + line + " in " + file)
+            }
+            append(tokens, [kind, "", line])
+            i := i + 1
         }
     }
-    tokens := tokens + [["EOF", "", line]]
+    append(tokens, ["EOF", "", line])
     return tokens
 }
 

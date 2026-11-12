@@ -625,6 +625,13 @@ function omg_list_repeat(item, count) {
     return out;
 }
 
+// append(list, item): push onto the end of the list, in place.
+function omg_append(list, item) {
+    if (!Array.isArray(list)) omg_panic('TypeError', 'append() expects (list, any)');
+    list.push(item);
+    return null;
+}
+
 function omg_string_bytes(s) {
     if (typeof s !== 'string') omg_panic('TypeError', 'string_bytes() expects a string');
     const enc = new TextEncoder();
@@ -719,6 +726,17 @@ function omg_make_dir(path) {
     _need_fs('make_dir');
     try { _omg_fs.mkdirSync(path, { recursive: true }); return true; }
     catch (_e) { return false; }
+}
+
+// chmod(path, mode): set a file's permission bits.
+function omg_chmod(path, mode) {
+    _need_fs('chmod');
+    if (typeof path !== 'string' || typeof mode !== 'bigint') {
+        omg_panic('TypeError', 'chmod() expects (path, int)');
+    }
+    try { _omg_fs.chmodSync(path, Number(mode)); }
+    catch (e) { omg_panic('ValueError', "cannot chmod '" + path + "': " + e.message); }
+    return true;
 }
 
 // File handles for stream I/O. We implement a tiny in-memory buffer
@@ -918,6 +936,8 @@ const _omg_builtins = {
     dict_keys: omg_dict_keys,
     has_key: omg_has_key,
     list_repeat: omg_list_repeat,
+    append: omg_append,
+    chmod: omg_chmod,
     string_bytes: omg_string_bytes,
     bytes_to_string: omg_bytes_to_string,
     float_bits: omg_float_bits,

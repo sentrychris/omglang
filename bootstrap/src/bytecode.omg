@@ -210,7 +210,7 @@ proc parse_bytecode(bytes) {
     alloc si := 0
     loop si < sf_count {
         alloc sf_pair := read_str_at(bytes, cursor)
-        src_files := src_files + [sf_pair[0]]
+        append(src_files, sf_pair[0])
         cursor := sf_pair[1]
         si := si + 1
     }
@@ -230,7 +230,7 @@ proc parse_bytecode(bytes) {
         alloc p := 0
         loop p < param_count {
             alloc p_pair := read_str_at(bytes, cursor)
-            params := params + [p_pair[0]]
+            append(params, p_pair[0])
             cursor := p_pair[1]
             p := p + 1
         }
@@ -253,7 +253,7 @@ proc parse_bytecode(bytes) {
         alloc op := bytes[cursor]
         cursor := cursor + 1
         alloc instr := decode_one(op, bytes, cursor)
-        code := code + [instr[0]]
+        append(code, instr[0])
         cursor := instr[1]
         k := k + 1
     }
@@ -268,7 +268,7 @@ proc parse_bytecode(bytes) {
         cursor := fi_pair[1]
         alloc ln_pair := read_u32_at(bytes, cursor)
         cursor := ln_pair[1]
-        src_lines := src_lines + [[fi_pair[0], ln_pair[0]]]
+        append(src_lines, [fi_pair[0], ln_pair[0]])
         mi := mi + 1
     }
     return [code, funcs, src_files, src_lines]

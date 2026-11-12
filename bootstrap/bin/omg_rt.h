@@ -1149,6 +1149,18 @@ static Value omg_list_repeat(Value item, Value count) {
     return v;
 }
 
+/* append(list, item) — push `item` onto the end of `list` in place, in
+ * amortised constant time. The builtin protocol borrows its arguments,
+ * so the list takes its own reference to the item. */
+static Value omg_builtin_append(Value list, Value item) {
+    if (list.tag != OMG_LIST) {
+        omg_panic("TypeError", "append() expects (list, any)");
+    }
+    omg_inc(item);
+    omg_list_push(list.v.l, item);
+    return omg_none();
+}
+
 /* By-reference closure cells. A "cell" is a 1-element OMG_LIST that
  * lets a parent and its closures share the same storage slot for a
  * captured local. Mirrors `Rc<RefCell<Value>>` in the Rust runtime
@@ -3198,6 +3210,28 @@ static Value omg_builtin_make_dir(Value path) {
     return omg_bool(1);
 }
 
+/* chmod(path, mode) — set a file's permission bits (0o755 is 493). The
+ * native back end writes executables itself and has to mark them
+ * runnable. Windows has no such bits, so there it only checks that the
+ * file exists. */
+static Value omg_builtin_chmod(Value path, Value mode) {
+    if (path.tag != OMG_STR || mode.tag != OMG_INT) {
+        omg_panic("TypeError", "chmod() expects (path, int)");
+    }
+    const char *full = omg_resolve_path(path.v.s);
+#ifdef _WIN32
+    if (!omg_os_exists(full)) {
+        omg_panicf("ValueError", "cannot chmod '%s': no such file", full);
+    }
+#else
+    if (chmod(full, (mode_t)mode.v.i) != 0) {
+        omg_panicf("ValueError", "cannot chmod '%s': %s (os error %d)",
+                   full, strerror(errno), errno);
+    }
+#endif
+    return omg_bool(1);
+}
+
 /* === TCP networking ====================================================== */
 
 /* Two kinds of handle behind one table: a passive listener (the result
@@ -3547,6 +3581,8 @@ static Value omg_call_builtin(Value name, Value args) {
         if (strcmp(n, "binary") == 0)     return omg_builtin_binary2(a[0], a[1]);
         if (strcmp(n, "has_key") == 0)    return omg_has_key(a[0], a[1]);
         if (strcmp(n, "list_repeat") == 0) return omg_list_repeat(a[0], a[1]);
+        if (strcmp(n, "append") == 0)     return omg_builtin_append(a[0], a[1]);
+        if (strcmp(n, "chmod") == 0)      return omg_builtin_chmod(a[0], a[1]);
         if (strcmp(n, "file_open") == 0)  return omg_builtin_file_open(a[0], a[1]);
         if (strcmp(n, "file_write") == 0) return omg_builtin_file_write(a[0], a[1]);
         if (strcmp(n, "file_seek") == 0)  return omg_builtin_file_seek(a[0], a[1]);
