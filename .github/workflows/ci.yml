@@ -65,6 +65,8 @@ jobs:
       #   * every example prints the same thing through both frontends
       #   * a regression program prints the expected output on the Rust
       #     VM, the OMG-written VM, and the JS transpiler (via node)
+      #   * the conformance corpus (tests/conformance/) behaves the
+      #     same on those same backends
       #   * malformed programs fail with a SyntaxError, never a crash
       - name: Smoke test
         run: tests/smoke.sh 2>&1 | tee smoke.log
@@ -142,6 +144,16 @@ jobs:
       - name: Build Rust runtime (bootstrap seed)
         run: cargo build --release --manifest-path runtime/Cargo.toml 2>&1 | tee build.log
 
+      # The binaries in bootstrap/bin/ are committed so a fresh clone
+      # has a native toolchain without the Rust runtime. Check that
+      # they were built from bootstrap/src/ as it is in this commit
+      # (build.sh stamps them with a hash of their sources) *before*
+      # the steps below rebuild them and hide the answer. Linux only:
+      # the committed binaries are Linux x86-64.
+      - name: Checked-in native binaries are current
+        if: runner.os == 'Linux'
+        run: bootstrap/check-bin.sh 2>&1 | tee check-bin.log
+
       # Compiles bootstrap/src/*.omg → bootstrap/bin/{omg,omgc,omgcc,omgjs}.
       # On Linux this validates that the in-repo binaries can rebuild
       # themselves from the current OMG sources, the load-bearing
@@ -163,6 +175,9 @@ jobs:
       #   * repl       — REPL state, multi-line input, error recovery
       #   * regression — specific bugs we've fixed, each through every
       #                  applicable backend
+      #   * conformance — the corpus in tests/conformance/ on the
+      #                  native interpreter, AOT and omgjs (the smoke
+      #                  test runs it on the portable backends)
       #   * parity     — triple-meta fixed-point + byte-identical
       #                  bytecode (Rust frontend vs omgc) + AOT corpus
       #                  parity (Rust runtime vs `omg --build` vs
@@ -184,6 +199,19 @@ jobs:
             diff tests/smoke/regressions.expected aot.out
           } 2>&1 | tee regressions.log
 
+      # web/ holds generated bundles (the compiler and VM transpiled to
+      # JS, plus the example pairs). The build is deterministic, so a
+      # rebuild that changes anything means they were not regenerated
+      # after a change to their sources.
+      - name: Checked-in web bundles are current
+        if: runner.os == 'Linux'
+        run: |
+          bootstrap/build-web.sh 2>&1 | tee web-build.log
+          git diff --stat --exit-code -- web || {
+            echo "::error title=web bundles are stale::Run bootstrap/build-web.sh and commit web/"
+            exit 1
+          }
+
       # Sanity check: the packaging script produces a working,
       # standalone Rust-free distribution at dist/omglang-native/.
       # We don't run its tests here (that's a strict subset of
@@ -201,7 +229,7 @@ jobs:
       - name: Summarise failure
         if: failure()
         run: |
-          for f in build.log native-build.log native-rebuild.log tests.log regressions.log package.log; do
+          for f in build.log check-bin.log native-build.log native-rebuild.log tests.log regressions.log web-build.log package.log; do
             [ -f "$f" ] || continue
             {
               echo "### ${{ matrix.os }}: tail of $f"

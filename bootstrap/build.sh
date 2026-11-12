@@ -126,6 +126,11 @@ build_binary "$SRC_DIR/native-js.omg" "$BIN_DIR/omgjs"
 echo "[4/4] Building unified driver (omg)"
 build_binary "$SRC_DIR/omg.omg"      "$BIN_DIR/omg"
 
+# Record which sources these binaries were built from, so that
+# check-bin.sh (and CI) can tell when the checked-in binaries have
+# fallen behind bootstrap/src/.
+bootstrap/sources-hash.sh > "$BIN_DIR/SOURCES.sha256"
+
 echo
 echo "Native toolchain in $BIN_DIR:"
 ls -la "$BIN_DIR/"
