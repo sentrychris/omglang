@@ -4,8 +4,13 @@ You'll be running and compiling OMG programs in five minutes.
 
 ## Prerequisites
 
-- A C compiler (`cc` — basically any Linux/macOS box has one)
+- A C compiler (`cc` — basically any Linux/macOS box has one; on
+  Windows, GCC or Clang from MinGW-w64)
 - Rust + Cargo (only for the **first-time** bootstrap; never again after that)
+
+On Windows the commands on this page are `bootstrap\bin\omg.exe ...`
+and the build script is `bootstrap\build.ps1`.
+[08-windows.md](08-windows.md) has the Windows specifics.
 
 ## First-time bootstrap
 
@@ -20,8 +25,9 @@ bootstrap/build.sh
 You'll see three steps print: pick a compiler, install the runtime
 files, build `omg` (OMG source → C → ELF). Takes a couple of minutes,
 most of it the C compiler. After this, `bootstrap/bin/` has everything
-you need. (On Linux x86-64 a working `bootstrap/bin/omg` is already
-checked in, so you can skip both commands.)
+you need. (On Linux x86-64 and Windows x86-64 a working native binary
+is already checked in, `bootstrap/bin/omg` and `bootstrap\bin\omg.exe`,
+so you can skip both commands.)
 
 ## Hello world
 

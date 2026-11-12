@@ -70,21 +70,28 @@ Set-Alias omg "$PWD\runtime\target\release\omg.exe"
 | Rust runtime (`cargo build`): VM, both compilers, REPL | ✓ | ✓ | ✓ |
 | Raw-mode keyboard input (`stdin_set_raw`, `stdin_read_key`), so the games run | ✓ | ✓ | ✓ |
 | Pseudo-terminals and `fork` (`pty_*`, `fork`) | ✓ | ✓ | raise a catchable `ValueError` |
-| Native toolchain (`bootstrap/build.sh`, `omg --build`) | ✓ | ✓ | needs WSL |
+| Native toolchain (`bootstrap/bin/omg`, `omg --build`) | ✓ | ✓ | ✓ (`omg.exe`) |
 
-The runtime needs Rust 1.80 or newer and nothing else. CI builds and
-tests it on all three systems on every push. The native `omg` checked
-into `bootstrap/bin/` is Linux x86-64; on macOS `bootstrap/build.sh`
-notices it can't run and bootstraps a native one from the Rust runtime
-instead.
+The runtime needs Rust 1.80 or newer and nothing else. The native
+toolchain needs nothing to run programs and a C compiler for
+`--build`: `cc` on Linux and macOS, GCC or Clang from MinGW-w64 on
+Windows ([`docs/native/08-windows.md`](docs/native/08-windows.md)). CI
+builds and tests both on all three systems on every push.
+
+A native `omg` is checked into `bootstrap/bin/` for Linux x86-64
+(`omg`) and Windows x86-64 (`omg.exe`), so on those a fresh clone can
+run OMG programs with nothing else installed. On macOS
+`bootstrap/build.sh` notices that neither can run and bootstraps a
+native one from the Rust runtime instead.
 
 There are two `omg` commands in this repo, one written in Rust and one
 written in OMG, plus a C and a JavaScript back end.
 [`docs/toolchain.md`](docs/toolchain.md) is one page that says what
 each part is for and which one you want.
 
-`tests/smoke.sh` is a quick, portable self-check (it needs only the
-Rust runtime, so it also runs under Git Bash on Windows).
+`tests/smoke.sh` is a quick, portable self-check that needs only the
+Rust runtime. Like the rest of the test scripts it is bash; on Windows
+run it from Git Bash.
 
 ### Hello, world
 
@@ -714,7 +721,7 @@ Always available, no import needed.
 | `panic(msg)` / `raise(msg)`    | raise a runtime error (catchable with `try`/`except`) |
 | `exit_with_error(msg)`         | print `msg` to stderr verbatim and exit 1 (uncatchable) |
 | **Process control**            |                                                       |
-| `subprocess([cmd, args...])`   | run a child process; returns its exit code           |
+| `subprocess([cmd, args...])`   | run a child process; returns its exit code (a program that cannot be started raises `ValueError`) |
 | `exit(code)`                   | exit the current process with the given status       |
 | `getpid()`                     | current process ID (useful for unique tempfile names) |
 | `executable_path()`            | path of the native OMG executable running the program, or `false` (always `false` on the Rust runtime) |
@@ -755,13 +762,14 @@ Variables, functions, and imports persist across lines until you `quit`.
 
 ## Compile to a native binary
 
-OMG can also be compiled to standalone native binaries on Linux and
-macOS — no Rust required at runtime. The C back end at
+OMG can also be compiled to standalone native binaries on Linux,
+macOS and Windows — no Rust required at runtime. The C back end at
 [`bootstrap/src/native-c.omg`](bootstrap/src/native-c.omg) emits self-contained
 C, which `cc -O3` turns into a small (~30 KB) executable.
 
-All of it is one program, `bootstrap/bin/omg`: the compiler, a VM and
-the back ends, written in OMG and compiled by themselves.
+All of it is one program, `bootstrap/bin/omg` (`omg.exe` on Windows):
+the compiler, a VM and the back ends, written in OMG and compiled by
+themselves.
 
 ```sh
 # One-time bootstrap (uses the Rust runtime to build the native toolchain)
@@ -778,8 +786,12 @@ bootstrap/bin/omg --emit-c  foo.omg foo.c    # the C that --build compiles
 bootstrap/bin/omg --emit-js foo.omg foo.js   # JavaScript; run it with node or in a page
 ```
 
+On Windows the same commands are `bootstrap\bin\omg.exe ...`, the
+build script is `bootstrap\build.ps1`, and `--build` uses GCC or Clang
+from MinGW-w64; see [`docs/native/08-windows.md`](docs/native/08-windows.md).
+
 The full guide — architecture, language tour, pipeline, extension guide,
-runtime internals, debugging — lives in [`docs/native/`](docs/native/).
+runtime internals, debugging, Windows — lives in [`docs/native/`](docs/native/).
 
 ---
 
@@ -843,8 +855,9 @@ omglang/
 │   │   ├── omg-explorer.omg driver for the in-browser compiler explorer
 │   │   ├── omg_rt.h         C runtime header inlined into native binaries
 │   │   └── omg_rt.js        JS runtime inlined into generated JavaScript
-│   ├── bin/         Rust-free toolchain (one native ELF, omg, + omg_rt.h + omg_rt.js)
+│   ├── bin/         Rust-free toolchain (omg for Linux, omg.exe for Windows, + omg_rt.h + omg_rt.js)
 │   ├── build.sh     builds bootstrap/bin/omg from bootstrap/src/
+│   ├── build.ps1    the same build for Windows PowerShell (builds omg.exe)
 │   └── build-web.sh builds the web/ bundles from bootstrap/src/
 ├── examples/        small standalone programs (one language feature each)
 ├── games/           larger interactive terminal games (snake, tetris)
@@ -926,7 +939,7 @@ bottom.
   on one page. The two `omg` commands, the compiler, the VMs, the C and
   JS back ends, and which of them you need.
 - [`docs/native/`](docs/native/): the **native compilation path** —
-  turning `.omg` source into standalone ELF binaries with no Rust runtime
+  turning `.omg` source into standalone executables with no Rust runtime
   needed. Covers the architecture, language, pipeline, runtime header,
   and how to add new features in lockstep across Rust + OMG + C.
 - [`docs/compilation-pipeline.md`](docs/compilation-pipeline.md): how

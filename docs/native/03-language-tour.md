@@ -164,7 +164,8 @@ How deep ordinary recursion can go depends on the backend. The Rust VM
 and the native interpreter keep their call stack on the heap and handle
 hundreds of thousands of frames. An AOT-compiled binary uses the C stack:
 about 15,000 frames on Linux, where it raises its own soft stack limit to
-64 MiB, and under 2,000 on macOS, where the main thread's stack is fixed
+64 MiB, and on Windows, where the program runs on a thread with a 64 MiB
+stack, and under 2,000 on macOS, where the main thread's stack is fixed
 at 8 MB. JavaScript uses the engine's. Running out is not a crash on
 either: it raises `RuntimeError: maximum recursion depth exceeded`, which
 `try` / `except` can catch.
@@ -290,7 +291,8 @@ The full list, grouped by area. Argument counts in parens.
 `panic(msg)`, `raise(msg)`, `exit_with_error(msg)`
 
 **Process control**
-`subprocess(argv_list)` (run a child, return its exit code),
+`subprocess(argv_list)` (run a child, return its exit code; a program
+that cannot be started raises a catchable `ValueError`),
 `exit(code)`, `getpid()`, `executable_path()` (absolute path of the
 native OMG executable running the program, or `false` when there is
 none: always `false` on the Rust runtime)

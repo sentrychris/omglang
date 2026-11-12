@@ -1,7 +1,10 @@
 # 06 · The C runtime (`omg_rt.h`)
 
 `bootstrap/src/omg_rt.h` is the only piece of non-OMG, non-Rust code that ships
-with native binaries. ~1700 lines of C99, inlined into every AOT output.
+with native binaries. About 3,600 lines of C (C99 plus a few GNU
+extensions that GCC and Clang share), inlined into every AOT output.
+It compiles for Linux, macOS and other Unixes, and for Windows with
+MinGW-w64; the Windows side is described in [08-windows.md](08-windows.md).
 
 This doc covers what's in it and why.
 
@@ -20,6 +23,7 @@ This doc covers what's in it and why.
 | Builtins              | `omg_builtin_int`, `omg_builtin_file_open`, etc. |
 | Process control       | `omg_builtin_subprocess`, `omg_builtin_exit`, `omg_builtin_getpid` |
 | I/O                   | `omg_emit`, file table                    |
+| Platform layer        | `omg_os_fopen`, `omg_os_getcwd`, `omg_os_time_ms`, `omg_start` |
 
 ## The Value type
 
@@ -167,10 +171,12 @@ proc's parameter count (`omg_arity_error`): direct calls are checked by
 the compiler, but a call through a value is not, and without the check a
 missing argument would be read as whatever happened to be in the slot.
 Then `OMG_STACK_CHECK()` compares the frame address with a limit that
-`omg_stack_init` computed in `main` from `RLIMIT_STACK` (which it first
-raises to 64 MiB on Linux where the hard limit allows; elsewhere the
-main thread's stack size is fixed when the process starts, 8 MB on
-macOS, so the limit is used as found). Past the limit the proc
+`omg_stack_init` computed at start-up from `RLIMIT_STACK` (which it first
+raises to 64 MiB on Linux where the hard limit allows; on macOS the
+main thread's stack size is fixed when the process starts, 8 MB, so the
+limit is used as found). On Windows the program runs on a thread
+created with a 64 MiB stack, and the limit comes from asking the system
+where that stack ends (`VirtualQuery`). Past the limit the proc
 raises `RuntimeError: maximum recursion depth exceeded` instead of
 running off the end of the stack, so runaway recursion is an ordinary,
 catchable error rather than a segfault.

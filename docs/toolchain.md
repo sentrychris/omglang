@@ -28,21 +28,28 @@ the territory.
 
 |                                   | Rust `omg`                              | Native `omg`                         |
 | --------------------------------- | --------------------------------------- | ------------------------------------ |
-| Where it is                       | `runtime/target/release/omg`            | `bootstrap/bin/omg`                  |
-| Built by                          | `cargo build --release`                 | `bootstrap/build.sh`                 |
+| Where it is                       | `runtime/target/release/omg`            | `bootstrap/bin/omg` (`omg.exe` on Windows) |
+| Built by                          | `cargo build --release`                 | `bootstrap/build.sh` (`build.ps1` on Windows) |
 | Written in                        | Rust                                    | OMG (compiled to C, then by `cc`)    |
-| Runs on                           | Linux, macOS, Windows                   | Linux, macOS (Windows through WSL)   |
-| Needs installed                   | nothing                                 | nothing to run; `cc` for `--build`   |
+| Runs on                           | Linux, macOS, Windows                   | Linux, macOS, Windows                |
+| Needs installed                   | nothing                                 | nothing to run; a C compiler for `--build` |
 | Run a program, REPL               | yes                                     | yes                                  |
 | `--compile`, `--disasm`           | yes                                     | yes                                  |
 | `--build` (native executable)     | no                                      | yes                                  |
 | `--emit-c`, `--emit-js`           | no                                      | yes                                  |
 | `--verify-self-hosted`, `--verify-omg-vm` | yes                             | no                                   |
 
-Use the Rust one if you are on Windows, or you are working on the
-language itself and want the verification commands. Use the native one
-if you want executables, C or JavaScript out of your programs, or you
-want to use OMG with no Rust anywhere.
+Use the native one if you want executables, C or JavaScript out of
+your programs, or you want to use OMG with no Rust anywhere. Use the
+Rust one if you are working on the language itself and want the
+verification commands.
+
+Both run on all three systems. A native binary is checked in for Linux
+x86-64 and for Windows x86-64, so there a clone is all you need; on
+macOS `bootstrap/build.sh` builds one. The C compiler that `--build`
+calls is `cc` on Linux and macOS and GCC or Clang from MinGW-w64 on
+Windows ([native/08-windows.md](native/08-windows.md) has the details
+and the short list of things that behave differently there).
 
 You never need both to *use* OMG. You need both to *develop* it,
 because each checks the other.
@@ -64,7 +71,8 @@ omg --emit-c bootstrap/src/omg.omg omg.c    # the toolchain compiles itself to C
 cc -O3 omg.c -o omg                          # and a C compiler does the rest
 ```
 
-That is the whole of `bootstrap/build.sh`.
+That is the whole of `bootstrap/build.sh` (and of `bootstrap/build.ps1`,
+the same thing for PowerShell).
 
 ## The parts
 

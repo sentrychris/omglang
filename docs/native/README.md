@@ -2,7 +2,8 @@
 
 OMG is a small dynamically-typed language with a self-hosted compiler. This
 section documents the **native compilation path** — turning `.omg` source
-into standalone ELF binaries with no Rust runtime needed.
+into standalone executables with no Rust runtime needed, on Linux, macOS
+and Windows.
 
 ## Start here
 
@@ -16,6 +17,7 @@ into standalone ELF binaries with no Rust runtime needed.
 | ...add a new builtin, opcode, or syntax form       | [05-extending.md](05-extending.md) |
 | ...understand how `omg_rt.h` works                 | [06-runtime.md](06-runtime.md) |
 | ...debug something that's gone wrong               | [07-debugging.md](07-debugging.md) |
+| ...use it on Windows                               | [08-windows.md](08-windows.md) |
 
 ## TL;DR
 
@@ -26,7 +28,7 @@ bootstrap/build.sh
 
 # After that: no Rust required
 ./bootstrap/bin/omg foo.omg              # compile and run
-./bootstrap/bin/omg --build foo.omg foo  # AOT to a small ELF (~30 KB)
+./bootstrap/bin/omg --build foo.omg foo  # AOT to a small executable (~30 KB)
 ./foo
 ./bootstrap/bin/omg --emit-c  foo.omg foo.c    # stop at the generated C
 ./bootstrap/bin/omg --emit-js foo.omg foo.js   # or generate JavaScript

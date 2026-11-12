@@ -97,10 +97,10 @@ bootstrap/bin/
 └── omg_rt.js   JS runtime        (pasted into every .js omg generates)
 ```
 
-`omg` is a native ELF compiled from OMG source: it is written in OMG
+`omg` is a native executable compiled from OMG source: it is written in OMG
 (see [`bootstrap/src/omg.omg`](../../bootstrap/src/omg.omg)) and runs
 its imports in-process — the compiler, the VM (which is why running a
-precompiled `.omgb` doesn't need a separate ELF) and the two back
+precompiled `.omgb` doesn't need a separate program) and the two back
 ends. `subprocess()` is only invoked for the final `cc` call during
 `--build`.
 
@@ -112,6 +112,13 @@ It is produced by `bootstrap/build.sh`, which:
    its own source (and everything it imports) to bytecode and puts that
    through the C back end.
 3. Runs `cc -O3 omg.c` to produce the new `bootstrap/bin/omg`.
+4. On Linux x86-64, if the MinGW-w64 cross compiler is installed, puts
+   the same `omg.c` through it to produce `bootstrap/bin/omg.exe`. The
+   generated C is the same for every system; what differs is behind
+   `#ifdef _WIN32` in `omg_rt.h`.
+
+On Windows the script (or `bootstrap/build.ps1`, its PowerShell twin)
+does steps 1 to 3 with `omg.exe` and `gcc`.
 
 The `omg` in step 2 is `bootstrap/bin/omg` itself when one that runs
 on this machine is already there. Otherwise it is the Rust runtime

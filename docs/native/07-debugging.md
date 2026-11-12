@@ -49,8 +49,8 @@ omg --emit-c foo.omg /tmp/foo.c     # a .omgb works as input too
 less /tmp/foo.c
 ```
 
-Without a native `omg` (on Windows, say) the Rust runtime can run the
-driver from source and do the same thing:
+Without a native `omg` (on a system that has no binary for it yet, say)
+the Rust runtime can run the driver from source and do the same thing:
 `runtime/target/release/omg --rust bootstrap/src/omg.omg --emit-c foo.omg /tmp/foo.c`.
 
 The runtime header is at the top (~1700 lines) — skip past it. Each
