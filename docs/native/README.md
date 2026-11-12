@@ -16,7 +16,6 @@ into standalone ELF binaries with no Rust runtime needed.
 | ...add a new builtin, opcode, or syntax form       | [05-extending.md](05-extending.md) |
 | ...understand how `omg_rt.h` works                 | [06-runtime.md](06-runtime.md) |
 | ...debug something that's gone wrong               | [07-debugging.md](07-debugging.md) |
-| ...ship a Rust-free dist of just the native bits   | [packaging.md](packaging.md) |
 
 ## TL;DR
 

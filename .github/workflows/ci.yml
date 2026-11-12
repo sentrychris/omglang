@@ -217,27 +217,10 @@ jobs:
             exit 1
           }
 
-      # Sanity check: the packaging script produces a working,
-      # standalone Rust-free distribution at dist/omglang-native/.
-      # We don't run its tests here (that's a strict subset of
-      # tests/run.sh above), but we do verify a smoke-test program
-      # still runs through the dist's `omg`, and that the dist can
-      # rebuild itself with its own build.sh (no Rust runtime).
-      - name: Package native distribution
-        run: bootstrap/package.sh --clean 2>&1 | tee package.log
-
-      - name: Smoke-test packaged distribution
-        run: |
-          dist/omglang-native/bin/omg dist/omglang-native/examples/hello_world.omg
-          dist/omglang-native/bin/omg --build dist/omglang-native/examples/hello_world.omg /tmp/dist-smoke
-          /tmp/dist-smoke
-          dist/omglang-native/build.sh
-          dist/omglang-native/bin/omg dist/omglang-native/examples/hello_world.omg
-
       - name: Summarise failure
         if: failure()
         run: |
-          for f in build.log check-bin.log native-build.log native-rebuild.log tests.log regressions.log web-build.log package.log; do
+          for f in build.log check-bin.log native-build.log native-rebuild.log tests.log regressions.log web-build.log; do
             [ -f "$f" ] || continue
             {
               echo "### ${{ matrix.os }}: tail of $f"
@@ -248,7 +231,7 @@ jobs:
           done
           # Annotate with the tail of the *last* log written — the step
           # that failed.
-          last=$(ls -t build.log native-build.log native-rebuild.log tests.log regressions.log package.log 2>/dev/null | head -n 1 || true)
+          last=$(ls -t build.log native-build.log native-rebuild.log tests.log regressions.log 2>/dev/null | head -n 1 || true)
           if [ -n "$last" ]; then
             msg=$(tail -n 60 "$last" | sed 's/%/%25/g' | awk '{printf "%s%%0A", $0}')
             echo "::error title=${{ matrix.os }} $last::$msg"

@@ -781,12 +781,6 @@ bootstrap/bin/omg --emit-js foo.omg foo.js   # JavaScript; run it with node or i
 The full guide — architecture, language tour, pipeline, extension guide,
 runtime internals, debugging — lives in [`docs/native/`](docs/native/).
 
-To produce a slimmed-down, Rust-free distribution of just the native
-toolchain (matching the layout of the standalone
-[`omglang-native`](https://github.com/sentrychris/omglang-native)
-companion repo), run [`bootstrap/package.sh`](bootstrap/package.sh).
-See [`docs/native/packaging.md`](docs/native/packaging.md).
-
 ---
 
 ## Editor support (VS Code)
@@ -851,8 +845,7 @@ omglang/
 │   │   └── omg_rt.js        JS runtime inlined into generated JavaScript
 │   ├── bin/         Rust-free toolchain (one native ELF, omg, + omg_rt.h + omg_rt.js)
 │   ├── build.sh     builds bootstrap/bin/omg from bootstrap/src/
-│   ├── build-web.sh builds the web/ bundles from bootstrap/src/
-│   └── package.sh   spins out a slim native-only distribution into dist/
+│   └── build-web.sh builds the web/ bundles from bootstrap/src/
 ├── examples/        small standalone programs (one language feature each)
 ├── games/           larger interactive terminal games (snake, tetris)
 ├── tests/           shell-driven test suite (parity, regression, REPL, builtins)
