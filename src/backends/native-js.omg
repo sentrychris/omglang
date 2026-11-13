@@ -206,6 +206,10 @@ proc emit_builtin(name, argc) {
     if name == "tcp_peer"         and argc == 1 { return emit_builtin1("omg_tcp_peer") }
     if name == "tcp_poll"         and argc == 3 { return emit_builtin3("omg_tcp_poll") }
     if name == "interrupted"      and argc == 0 { return emit_builtin0("omg_interrupted") }
+    if name == "window_open"      and argc == 3 { return emit_builtin3("omg_window_open") }
+    if name == "window_draw"      and argc == 3 { return emit_builtin3("omg_window_draw") }
+    if name == "window_poll"      and argc == 1 { return emit_builtin1("omg_window_poll") }
+    if name == "window_close"     and argc == 1 { return emit_builtin1("omg_window_close") }
 
     panic("native-js: builtin '" + name + "' (argc=" + argc + ") not implemented yet")
 }

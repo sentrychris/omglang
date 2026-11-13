@@ -1262,6 +1262,7 @@ alloc cc_builtins := [
     "tcp_read", "tcp_write", "tcp_close",
     "tcp_nonblocking", "tcp_poll", "tcp_peer",
     "file_size", "file_mtime", "interrupted",
+    "window_open", "window_draw", "window_poll", "window_close",
     "fork"
 ]
 

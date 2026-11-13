@@ -1673,6 +1673,219 @@ proc bi_interrupted() {
     return os_interrupts()
 }
 
+# --- a window ----------------------------------------------------------------
+#
+# One window that shows a picture the program hands over as numbers.
+# The system layer (os_win_*) only knows how to open a window, put a
+# block of pixels in it and say what the user did; everything else is
+# here, the same on every system.
+#
+# The pixel block is rt_win_w * rt_win_h entries of four bytes: blue,
+# green, red and one unused, which is the form both X11 and Windows
+# take as it comes.
+
+alloc rt_win_on := 0
+alloc rt_win_w := 0            # size of the inside of the window
+alloc rt_win_h := 0
+alloc rt_win_buf := 0
+alloc rt_win_buf_size := 0
+alloc rt_win_drawn := 0        # the block holds a picture
+alloc rt_win_cell := 0         # two words for os_win_event to fill
+
+proc rt_win_check(t, h, what) {
+    if t != T_INT {
+        return rt_throw("TypeError", rt_str_concat(what, " expects a window"))
+    }
+    if h != 1 or rt_win_on == 0 {
+        return rt_throw("ValueError", rt_str_concat(what, ": no such window"))
+    }
+    return 0
+}
+
+# window_open(title, width, height): open a window whose inside is
+# width x height pixels. Returns the window, a number.
+proc bi_window_open(tt, title, wt, w, ht, h) {
+    if tt != T_STR or wt != T_INT or ht != T_INT {
+        return rt_type_error("window_open() expects (title: str, width: int, height: int)")
+    }
+    if w < 1 or h < 1 or w > 16384 or h > 16384 {
+        return rt_value_error("window_open: the size must be between 1 and 16384 pixels each way")
+    }
+    if rt_win_on {
+        return rt_value_error("window_open: a window is already open (one at a time)")
+    }
+    rt_out_flush()
+    alloc err := os_win_open(title, w, h)
+    if err != 0 {
+        return rt_throw("ValueError", rt_str_concat("window_open: ", err))
+    }
+    if rt_win_cell == 0 {
+        rt_win_cell := rt_alloc(16)
+    }
+    rt_win_on := 1
+    rt_win_w := w
+    rt_win_h := h
+    rt_win_drawn := 0
+    rt_tag := T_INT
+    return 1
+}
+
+# window_draw(win, pixels, width): show a picture. `pixels` is a list
+# of numbers, one per pixel, row after row from the top, each
+# red * 65536 + green * 256 + blue; `width` says how long a row is.
+# The picture is scaled to fit the window, keeping its shape, and
+# centred, with black around it.
+proc bi_window_draw(t, h, pt, pixels, wt, sw) {
+    rt_win_check(t, h, "window_draw()")
+    if pt != T_LIST or wt != T_INT {
+        return rt_type_error("window_draw() expects (window, pixels: [int], width: int)")
+    }
+    alloc n := __peek64(pixels + L_LEN)
+    if sw < 1 or n < sw or n % sw != 0 {
+        return rt_value_error("window_draw: the pixels do not make whole rows of the given width")
+    }
+    alloc sh := n // sw
+    alloc ww := rt_win_w
+    alloc wh := rt_win_h
+    alloc size := ww * wh * 4
+    if rt_win_buf_size != size {
+        if rt_win_buf != 0 {
+            rt_free(rt_win_buf, rt_win_buf_size)
+        }
+        rt_win_buf := rt_alloc(size)
+        rt_win_buf_size := size
+    }
+    # the largest rectangle of the picture's shape that fits
+    alloc dw := ww
+    alloc dh := sh * ww // sw
+    if dh > wh {
+        dh := wh
+        dw := sw * wh // sh
+    }
+    if dw < 1 { dw := 1 }
+    if dh < 1 { dh := 1 }
+    alloc ox := (ww - dw) // 2
+    alloc oy := (wh - dh) // 2
+    if dw != ww or dh != wh {
+        __memset(rt_win_buf, 0, size)
+    }
+    alloc items := __peek64(pixels + L_ITEMS)
+    alloc step := (sw << 16) // dw
+    alloc bad := 0
+    alloc y := 0
+    loop y < dh {
+        alloc src := items + (y * sh // dh) * sw * 16
+        alloc dst := rt_win_buf + ((oy + y) * ww + ox) * 4
+        alloc x := 0
+        if dw == sw {
+            loop x < dw {
+                bad := bad | __peek64(src + 8)
+                __poke32(dst, __peek64(src))
+                src := src + 16
+                dst := dst + 4
+                x := x + 1
+            }
+        } else {
+            alloc fx := 0
+            loop x < dw {
+                alloc it := src + (fx >> 16) * 16
+                bad := bad | __peek64(it + 8)
+                __poke32(dst, __peek64(it))
+                fx := fx + step
+                dst := dst + 4
+                x := x + 1
+            }
+        }
+        y := y + 1
+    }
+    if bad != T_INT {
+        return rt_type_error("window_draw() expects every pixel to be an integer")
+    }
+    rt_win_drawn := 1
+    os_win_blit(rt_win_buf, ww, wh)
+    rt_tag := T_NONE
+    return 0
+}
+
+proc rt_win_key_name(code) {
+    if code == 32 { return "space" }
+    if code < 128 { return rt_char_str(code) }
+    if code == 256 { return "escape" }
+    if code == 257 { return "enter" }
+    if code == 258 { return "left" }
+    if code == 259 { return "right" }
+    if code == 260 { return "up" }
+    if code == 261 { return "down" }
+    if code == 262 { return "tab" }
+    if code == 263 { return "backspace" }
+    if code == 264 { return "delete" }
+    if code == 265 { return "home" }
+    if code == 266 { return "end" }
+    if code == 267 { return "pageup" }
+    if code == 268 { return "pagedown" }
+    if code >= 270 and code <= 281 {
+        alloc b := rt_buf_new()
+        rt_buf_byte(b, 102)
+        rt_buf_int(b, code - 269)
+        return rt_buf_finish(b)
+    }
+    return "unknown"
+}
+
+# window_poll(win): what has happened to the window since the last
+# call, one event at a time, without waiting. false when nothing has;
+# otherwise a list: ["key", name], ["resize", width, height] or
+# ["close"] (the user asked for the window to go away).
+proc bi_window_poll(t, h) {
+    rt_win_check(t, h, "window_poll()")
+    loop true {
+        alloc kind := os_win_event(rt_win_cell)
+        if kind == 0 {
+            rt_tag := T_BOOL
+            return 0
+        }
+        if kind == 4 {
+            # the system wants the window painted again
+            if rt_win_drawn and rt_win_buf_size == rt_win_w * rt_win_h * 4 {
+                os_win_blit(rt_win_buf, rt_win_w, rt_win_h)
+            }
+            continue
+        }
+        alloc ev := rt_list_alloc(3)
+        rt_tag := T_LIST
+        if kind == 1 {
+            rt_list_push(ev, T_STR, "key")
+            rt_list_push(ev, T_STR, rt_win_key_name(__peek64(rt_win_cell)))
+            return ev
+        }
+        if kind == 2 {
+            rt_list_push(ev, T_STR, "close")
+            return ev
+        }
+        rt_win_w := __peek64(rt_win_cell)
+        rt_win_h := __peek64(rt_win_cell + 8)
+        rt_win_drawn := 0
+        rt_list_push(ev, T_STR, "resize")
+        rt_list_push(ev, T_INT, rt_win_w)
+        rt_list_push(ev, T_INT, rt_win_h)
+        return ev
+    }
+    return 0
+}
+
+proc bi_window_close(t, h) {
+    rt_win_check(t, h, "window_close()")
+    os_win_close()
+    if rt_win_buf != 0 {
+        rt_free(rt_win_buf, rt_win_buf_size)
+        rt_win_buf := 0
+        rt_win_buf_size := 0
+    }
+    rt_win_on := 0
+    rt_tag := T_NONE
+    return 0
+}
+
 # --- calling a builtin by name -------------------------------------------------------------
 #
 # call_builtin(name, args) is how a program written in OMG that runs
@@ -1772,6 +1985,10 @@ proc rt_bi_init() {
     rt_bi_add("tcp_peer", bi_tcp_peer, 1)
     rt_bi_add("tcp_poll", bi_tcp_poll, 3)
     rt_bi_add("interrupted", bi_interrupted, 0)
+    rt_bi_add("window_open", bi_window_open, 3)
+    rt_bi_add("window_draw", bi_window_draw, 3)
+    rt_bi_add("window_poll", bi_window_poll, 1)
+    rt_bi_add("window_close", bi_window_close, 1)
     rt_bi_add("call_builtin", bi_call_builtin, 2)
     return 0
 }

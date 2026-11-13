@@ -3,8 +3,9 @@
 #
 # The operating system layer of the runtime for Windows on x86-64: the
 # os_* procs the rest of the runtime is written against, on top of
-# kernel32.dll and, for TCP, ws2_32.dll. Raw mode, the last file of the
-# runtime unit (see core.omg). Nothing here goes through a C library.
+# kernel32.dll and, for TCP, ws2_32.dll; a window adds user32.dll and
+# gdi32.dll. Raw mode, the last file of the runtime unit (see core.omg).
+# Nothing here goes through a C library.
 #
 # __import("dll!Name") is the address of a function the loader bound
 # when the program started; __wincallN calls it with N arguments in the
@@ -1188,6 +1189,177 @@ proc os_poll_got(arr, i) {
     }
     if (got & (POLLWRNORM | POLL_TROUBLE)) != 0 {
         return 2
+    }
+    return 0
+}
+
+# --- a window -------------------------------------------------------------------
+#
+# user32.dll for the window and its messages, gdi32.dll to put pixels
+# in it. The window's procedure is the system's own DefWindowProcW:
+# everything this runtime wants to know about (keys, painting, the
+# window going away) can be seen from the message loop in
+# os_win_event, so no code of ours has to be called back by Windows.
+# The price is that while the user drags or resizes the window, which
+# Windows handles inside one long call, os_win_event does not return.
+
+alloc ow_hwnd := 0
+alloc ow_w := 0
+alloc ow_h := 0
+alloc ow_info := 0             # a BITMAPINFOHEADER for the pixel block
+alloc ow_msg := 0              # a MSG, and room for a RECT after it
+alloc ow_class := 0            # the window class has been registered
+
+# Open the window. Returns 0, or a string that says what went wrong.
+proc os_win_open(title, w, h) {
+    alloc inst := __wincall1(__import("kernel32.dll!GetModuleHandleW"), 0)
+    alloc name := os_wide("OMGWindow" + S_DATA)
+    if ow_class == 0 {
+        # WNDCLASSEXW
+        alloc wc := os_tmp(80)
+        __memset(wc, 0, 80)
+        __poke32(wc, 80)
+        __poke32(wc + 4, 3)                                  # CS_HREDRAW | CS_VREDRAW
+        __poke64(wc + 8, __import("user32.dll!DefWindowProcW"))
+        __poke64(wc + 24, inst)
+        __poke64(wc + 40, __wincall2(__import("user32.dll!LoadCursorW"), 0, 32512))
+        __poke64(wc + 48, __wincall1(__import("gdi32.dll!GetStockObject"), 4))    # BLACK_BRUSH
+        __poke64(wc + 64, name)
+        alloc atom := os_u32(__wincall1(__import("user32.dll!RegisterClassExW"), wc)) & 65535
+        os_tmp_free(wc)
+        if atom == 0 {
+            os_tmp_free(name)
+            return "the system would not register a window class"
+        }
+        ow_class := 1
+    }
+    if ow_msg == 0 {
+        ow_msg := rt_alloc(96)
+        ow_info := rt_alloc(48)
+    }
+    # The size asked for is that of the inside; the frame comes on top.
+    alloc style := 282001408                                 # WS_OVERLAPPEDWINDOW | WS_VISIBLE
+    alloc rect := ow_msg + 64
+    __poke32(rect, 0)
+    __poke32(rect + 4, 0)
+    __poke32(rect + 8, w)
+    __poke32(rect + 12, h)
+    __wincall4(__import("user32.dll!AdjustWindowRectEx"), rect, style, 0, 0)
+    alloc fw := __peek32(rect + 8) - __peek32(rect)
+    alloc fh := __peek32(rect + 12) - __peek32(rect + 4)
+    fw := fw & 4294967295
+    fh := fh & 4294967295
+    alloc wtitle := os_wide(title + S_DATA)
+    # CW_USEDEFAULT (2147483648) lets the system place the window.
+    ow_hwnd := __wincall12(__import("user32.dll!CreateWindowExW"), 0, name, wtitle, style, 2147483648, 2147483648, fw, fh, 0, 0, inst, 0)
+    os_tmp_free(wtitle)
+    os_tmp_free(name)
+    if ow_hwnd == 0 {
+        return "the system would not create a window"
+    }
+    ow_w := w
+    ow_h := h
+    return 0
+}
+
+# Put w x h pixels (4 bytes each, top row first) at the top left of the
+# window.
+proc os_win_blit(buf, w, h) {
+    if ow_hwnd == 0 {
+        return 0
+    }
+    alloc bi := ow_info
+    __memset(bi, 0, 40)
+    __poke32(bi, 40)
+    __poke32(bi + 4, w)
+    __poke32(bi + 8, 0 - h)                                  # negative: the first row is the top one
+    __poke16(bi + 12, 1)
+    __poke16(bi + 14, 32)
+    alloc dc := __wincall1(__import("user32.dll!GetDC"), ow_hwnd)
+    if dc != 0 {
+        __wincall12(__import("gdi32.dll!SetDIBitsToDevice"), dc, 0, 0, w, h, 0, 0, 0, h, buf, bi, 0)
+        __wincall2(__import("user32.dll!ReleaseDC"), ow_hwnd, dc)
+    }
+    return 0
+}
+
+# Which key a virtual-key code is, in the runtime's own numbering (see
+# rt_win_key_name); 0 for a key that is not reported.
+proc ow_key(vk) {
+    if vk == 32 { return 32 }
+    if vk >= 48 and vk <= 57 { return vk }
+    if vk >= 65 and vk <= 90 { return vk + 32 }
+    if vk == 27 { return 256 }
+    if vk == 13 { return 257 }
+    if vk == 37 { return 258 }
+    if vk == 39 { return 259 }
+    if vk == 38 { return 260 }
+    if vk == 40 { return 261 }
+    if vk == 9 { return 262 }
+    if vk == 8 { return 263 }
+    if vk == 46 { return 264 }
+    if vk == 36 { return 265 }
+    if vk == 35 { return 266 }
+    if vk == 33 { return 267 }
+    if vk == 34 { return 268 }
+    if vk >= 112 and vk <= 123 { return 270 + vk - 112 }
+    if vk == 187 or vk == 107 { return 43 }                  # + and =
+    if vk == 189 or vk == 109 { return 45 }                  # -
+    if vk == 188 { return 44 }
+    if vk == 190 { return 46 }
+    return 0
+}
+
+# The next thing that happened, without waiting: 0 nothing, 1 a key
+# (its number in out), 2 the window is to close, 3 it changed size
+# (width and height in out), 4 it needs painting again.
+proc os_win_event(out) {
+    alloc msg := ow_msg
+    alloc rect := ow_msg + 64
+    loop true {
+        if ow_hwnd == 0 {
+            return 0
+        }
+        if os_u32(__wincall5(__import("user32.dll!PeekMessageW"), msg, 0, 0, 0, 1)) == 0 {
+            return 0
+        }
+        alloc what := __peek32(msg + 8)
+        alloc key := 0
+        if what == 256 {                                     # WM_KEYDOWN
+            key := ow_key(__peek64(msg + 16) & 65535)
+        }
+        __wincall1(__import("user32.dll!DispatchMessageW"), msg)
+        if os_u32(__wincall1(__import("user32.dll!IsWindow"), ow_hwnd)) == 0 {
+            # the user closed it, and DefWindowProcW has destroyed it
+            ow_hwnd := 0
+            return 2
+        }
+        if key != 0 {
+            __poke64(out, key)
+            return 1
+        }
+        if os_u32(__wincall2(__import("user32.dll!GetClientRect"), ow_hwnd, rect)) != 0 {
+            alloc nw := __peek32(rect + 8)
+            alloc nh := __peek32(rect + 12)
+            if (nw != ow_w or nh != ow_h) and nw > 0 and nh > 0 and nw < 65536 and nh < 65536 {
+                ow_w := nw
+                ow_h := nh
+                __poke64(out, nw)
+                __poke64(out + 8, nh)
+                return 3
+            }
+        }
+        if what == 15 {                                      # WM_PAINT
+            return 4
+        }
+    }
+    return 0
+}
+
+proc os_win_close() {
+    if ow_hwnd != 0 {
+        __wincall1(__import("user32.dll!DestroyWindow"), ow_hwnd)
+        ow_hwnd := 0
     }
     return 0
 }

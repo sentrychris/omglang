@@ -3754,6 +3754,34 @@ static Value omg_builtin_interrupted(void) {
     return omg_int((int64_t)omg_interrupt_count);
 }
 
+/* window_open / window_draw / window_poll / window_close: a window is
+ * opened by OMG's own runtime, which speaks to the display server
+ * itself. Doing the same here would mean a second copy of that, or a
+ * dependency on a windowing library, so a program built through C has
+ * no windows: the calls raise, and the program can catch that. */
+static Value omg_builtin_window_unavailable(const char *name) {
+    char msg[160];
+    snprintf(msg, sizeof msg, "%s is not available in a program built through C; build it with omg --build (target linux-x64 or windows-x64)", name);
+    omg_panic("ValueError", msg);
+    return omg_none();
+}
+static Value omg_builtin_window_open(Value t, Value w, Value h) {
+    (void)t; (void)w; (void)h;
+    return omg_builtin_window_unavailable("window_open");
+}
+static Value omg_builtin_window_draw(Value win, Value pixels, Value w) {
+    (void)win; (void)pixels; (void)w;
+    return omg_builtin_window_unavailable("window_draw");
+}
+static Value omg_builtin_window_poll(Value win) {
+    (void)win;
+    return omg_builtin_window_unavailable("window_poll");
+}
+static Value omg_builtin_window_close(Value win) {
+    (void)win;
+    return omg_builtin_window_unavailable("window_close");
+}
+
 /* tcp_poll(reads, writes, timeout_ms): wait until a socket in `reads`
  * has something to take (data, the end of the stream, or for a
  * listener a connection), or one in `writes` has room to send, or the
@@ -3936,6 +3964,8 @@ static Value omg_call_builtin(Value name, Value args) {
         if (strcmp(n, "tcp_accept") == 0)      return omg_builtin_tcp_accept(a[0]);
         if (strcmp(n, "tcp_close") == 0)       return omg_builtin_tcp_close(a[0]);
         if (strcmp(n, "tcp_peer") == 0)        return omg_builtin_tcp_peer(a[0]);
+        if (strcmp(n, "window_poll") == 0)     return omg_builtin_window_poll(a[0]);
+        if (strcmp(n, "window_close") == 0)    return omg_builtin_window_close(a[0]);
         if (strcmp(n, "file_size") == 0)       return omg_builtin_file_size(a[0]);
         if (strcmp(n, "file_mtime") == 0)      return omg_builtin_file_mtime(a[0]);
     }
@@ -3981,6 +4011,8 @@ static Value omg_call_builtin(Value name, Value args) {
         if (strcmp(n, "pty_resize") == 0) return omg_builtin_pty_resize(a[0], a[1], a[2]);
         if (strcmp(n, "tcp_write") == 0)  return omg_builtin_tcp_write3(a[0], a[1], a[2]);
         if (strcmp(n, "tcp_poll") == 0)   return omg_builtin_tcp_poll(a[0], a[1], a[2]);
+        if (strcmp(n, "window_open") == 0) return omg_builtin_window_open(a[0], a[1], a[2]);
+        if (strcmp(n, "window_draw") == 0) return omg_builtin_window_draw(a[0], a[1], a[2]);
     }
     omg_panicf("TypeError", "unknown builtin: %s", n);
     return omg_none(); /* unreachable */
