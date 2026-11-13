@@ -1,0 +1,393 @@
+;;;omg
+
+# tools/video/play.omg
+#
+# A video player: opens a window and plays the video of an MP4 file.
+#
+#     omg --build tools/video/play.omg play
+#     ./play clip.mp4
+#
+# Build it: run through `omg play.omg clip.mp4` it works too, but a
+# picture then takes a hundred times as long to decode.
+#
+# Keys, with the window in front:
+#
+#     space          pause, and go on
+#     .              while paused: show the next picture
+#     left, right    jump five seconds back or forward
+#     home           back to the start
+#     q, escape      quit
+#
+# Options, after the file name:
+#
+#     --loop         start again at the end
+#     --scale N      open the window N times the size of the video
+#     --fast         do not wait: show every picture as soon as it is decoded
+#
+# The video must be H.264 as h264.omg decodes it. Sound is not played.
+#
+# When pictures cannot be decoded as fast as the file wants them shown,
+# the player first stops drawing some of them (decoding cannot be
+# skipped: later pictures are built from earlier ones), and if that is
+# not enough it lets the video run slow. What happened is printed at
+# the end.
+
+import "mp4.omg" as mp4
+import "h264.omg" as h264
+
+alloc m := false            # the open file
+alloc win := 0
+alloc rgb := []             # the picture on show, a number per pixel
+alloc vw := 0               # its size
+alloc vh := 0
+alloc ready := []           # per sample: its decoded picture while it waits to be shown
+alloc rank := []            # per sample: its place in the order of showing
+alloc next := 0             # the next sample to decode
+alloc shown := 0            # how many pictures of m.order are behind us
+alloc clock0 := 0           # the time_ms() at which the first picture is due
+alloc paused := false
+alloc paused_at := 0
+alloc step := false         # show one picture although paused
+alloc quit := false
+alloc changed := false      # a key changed what happens next
+alloc have_picture := false
+
+alloc opt_loop := false
+alloc opt_fast := false
+alloc opt_scale := 0
+
+alloc n_drawn := 0
+alloc n_skipped := 0
+alloc n_decoded := 0
+alloc ms_decode := 0
+alloc ms_draw := 0
+alloc ms_slid := 0          # how far the clock was put back because we were late
+
+proc base_name(path) {
+    alloc i := length(path) - 1
+    loop i >= 0 {
+        if path[i] == "/" or path[i] == "\\" {
+            return path[i + 1:]
+        }
+        i := i - 1
+    }
+    return path
+}
+
+proc tenths(n, d) {
+    if d <= 0 {
+        return "?"
+    }
+    alloc t := n * 10 // d
+    return "" + (t // 10) + "." + (t % 10)
+}
+
+# When picture number d (in the order of showing) is due, in
+# milliseconds from the start.
+proc due_ms(d) {
+    return (m.pts[m.order[d]] - m.pts[m.order[0]]) * 1000 // m.timescale
+}
+
+proc drop_ready() {
+    alloc i := 0
+    loop i < m.count {
+        if ready[i] != false {
+            h264.release(ready[i])
+            ready[i] := false
+        }
+        i := i + 1
+    }
+    return false
+}
+
+# Go on from the last picture that decoding can start at and that is
+# shown no later than `ms`.
+proc seek(ms) {
+    alloc best := -1
+    alloc d := 0
+    loop d < m.count {
+        alloc s := m.order[d]
+        if m.sync[s] == 1 {
+            if best >= 0 and due_ms(d) > ms {
+                break
+            }
+            best := s
+        }
+        d := d + 1
+    }
+    if best < 0 {
+        best := 0
+    }
+    drop_ready()
+    next := best
+    shown := rank[best]
+    clock0 := time_ms() - due_ms(shown)
+    if paused {
+        paused_at := time_ms()
+        step := true
+    }
+    changed := true
+    return false
+}
+
+proc redraw() {
+    if have_picture {
+        window_draw(win, rgb, vw)
+    }
+    return false
+}
+
+proc key(name) {
+    if name == "q" or name == "escape" {
+        quit := true
+    } elif name == "space" {
+        if paused {
+            clock0 := clock0 + (time_ms() - paused_at)
+            paused := false
+        } else {
+            paused := true
+            paused_at := time_ms()
+        }
+    } elif name == "." {
+        if paused {
+            step := true
+        }
+    } elif name == "left" or name == "right" or name == "home" {
+        alloc now := 0
+        if shown < m.count {
+            now := due_ms(shown)
+        } elif m.count > 0 {
+            now := due_ms(m.count - 1)
+        }
+        if name == "left" {
+            seek(now - 5000)
+        } elif name == "right" {
+            seek(now + 5000)
+        } else {
+            seek(0)
+        }
+    } else {
+        return false
+    }
+    changed := true
+    return false
+}
+
+proc events() {
+    alloc ev := window_poll(win)
+    loop ev != false {
+        if ev[0] == "close" {
+            quit := true
+            changed := true
+        } elif ev[0] == "key" {
+            key(ev[1])
+        } elif ev[0] == "resize" {
+            redraw()
+        }
+        ev := window_poll(win)
+    }
+    return false
+}
+
+# Decode samples until the picture that is to be shown next is there.
+proc decode_ahead() {
+    alloc want := m.order[shown]
+    loop ready[want] == false and next < m.count {
+        alloc data := mp4.read_sample(m, next)
+        alloc t0 := time_ms()
+        alloc pic := h264.decode(data)
+        ms_decode := ms_decode + (time_ms() - t0)
+        n_decoded := n_decoded + 1
+        if pic != false {
+            ready[next] := pic
+        }
+        next := next + 1
+    }
+    return ready[want]
+}
+
+proc show(pic) {
+    alloc t0 := time_ms()
+    h264.to_rgb(pic, rgb)
+    window_draw(win, rgb, vw)
+    ms_draw := ms_draw + (time_ms() - t0)
+    n_drawn := n_drawn + 1
+    have_picture := true
+    return false
+}
+
+proc play() {
+    alloc frame_ms := 40
+    if m.count > 1 {
+        frame_ms := due_ms(m.count - 1) // (m.count - 1)
+    }
+    alloc skipped_in_a_row := 0
+    clock0 := time_ms()
+    loop quit == false {
+        events()
+        if quit {
+            break
+        }
+        if paused and step == false {
+            sleep_ms(10)
+            continue
+        }
+        if shown >= m.count {
+            if opt_loop == false {
+                break
+            }
+            seek(0)
+            continue
+        }
+        alloc pic := decode_ahead()
+        if pic == false {
+            shown := shown + 1          # a sample without a picture
+            continue
+        }
+        alloc late := 0
+        if opt_fast == false and step == false {
+            # wait until the picture is due, and listen meanwhile
+            alloc due := clock0 + due_ms(shown)
+            alloc now := time_ms()
+            changed := false
+            loop now < due and changed == false {
+                alloc left := due - now
+                if left > 10 {
+                    left := 10
+                }
+                sleep_ms(left)
+                events()
+                now := time_ms()
+            }
+            if changed {
+                continue
+            }
+            late := now - due
+        }
+        if late > 500 {
+            # hopeless: play slower than the file asks
+            clock0 := clock0 + late
+            ms_slid := ms_slid + late
+            late := 0
+        }
+        if late > frame_ms and skipped_in_a_row < 3 {
+            skipped_in_a_row := skipped_in_a_row + 1
+            n_skipped := n_skipped + 1
+        } else {
+            skipped_in_a_row := 0
+            show(pic)
+        }
+        h264.release(pic)
+        ready[m.order[shown]] := false
+        shown := shown + 1
+        step := false
+    }
+    return false
+}
+
+proc report(took) {
+    emit "" + n_drawn + " pictures shown in " + tenths(took, 1000) + " s: " + tenths(n_drawn * 1000, took) + " a second"
+    if n_decoded > 0 {
+        alloc line := "decoding took " + tenths(ms_decode, n_decoded) + " ms a picture"
+        if n_drawn > 0 {
+            line := line + ", drawing " + tenths(ms_draw, n_drawn) + " ms"
+        }
+        emit line
+    }
+    if n_skipped > 0 {
+        emit "" + n_skipped + " pictures were decoded but not drawn, to keep up"
+    }
+    if ms_slid > 0 {
+        emit "the video ran " + tenths(ms_slid, 1000) + " s behind: this machine decodes it too slowly"
+    }
+    return false
+}
+
+proc usage() {
+    emit "usage: play <file.mp4> [--loop] [--scale N] [--fast]"
+    exit(2)
+}
+
+proc main() {
+    alloc path := ""
+    alloc i := 1
+    loop i < length(args) {
+        alloc a := args[i]
+        if a == "--loop" {
+            opt_loop := true
+        } elif a == "--fast" {
+            opt_fast := true
+        } elif a == "--scale" and i + 1 < length(args) {
+            i := i + 1
+            opt_scale := int(args[i])
+        } elif path == "" and length(a) > 0 and a[0] != "-" {
+            path := a
+        } else {
+            usage()
+        }
+        i := i + 1
+    }
+    if path == "" {
+        usage()
+    }
+
+    m := mp4.open(path)
+    if m.codec != "avc1" and m.codec != "avc3" {
+        emit "play: the video in " + path + " is " + m.codec + ", not H.264"
+        exit(1)
+    }
+    if m.count == 0 {
+        emit "play: " + path + " has no pictures"
+        exit(1)
+    }
+    h264.reset()
+    h264.set_config(m.config)
+    alloc info := h264.info()
+    vw := info.width
+    vh := info.height
+    rgb := list_repeat(0, vw * vh)
+    ready := list_repeat(false, m.count)
+    rank := list_repeat(0, m.count)
+    alloc d := 0
+    loop d < m.count {
+        rank[m.order[d]] := d
+        d := d + 1
+    }
+
+    alloc scale := opt_scale
+    if scale < 1 {
+        # small videos get a window twice or three times their size
+        scale := 1
+        loop scale < 3 and vw * (scale + 1) <= 960 and vh * (scale + 1) <= 720 {
+            scale := scale + 1
+        }
+    }
+    alloc line := base_name(path) + ": " + vw + "x" + vh + ", " + m.count + " pictures"
+    if m.duration > 0 {
+        line := line + ", " + tenths(m.count * m.timescale, m.duration) + " a second"
+    }
+    emit line
+    if m.audio != "" {
+        emit "(its sound, " + m.audio + ", is not played)"
+    }
+    win := window_open(base_name(path) + " - OMG", vw * scale, vh * scale)
+
+    alloc t0 := time_ms()
+    alloc problem := ""
+    try {
+        play()
+    } except err {
+        problem := "" + err
+    }
+    alloc took := time_ms() - t0
+    window_close(win)
+    mp4.close(m)
+    if problem != "" {
+        emit "play: " + problem
+        exit(1)
+    }
+    report(took)
+    return false
+}
+
+main()
