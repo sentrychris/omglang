@@ -834,6 +834,20 @@ proc emit_function(name, code, funcs, func_index, func_info, globals, src_lines,
     # this emit context.
     alloc captured_set := info["captured_set"]
 
+    # try/except is setjmp/longjmp, and C only promises that a local
+    # changed after setjmp still has its new value after longjmp when
+    # it is volatile. Without that, an optimising compiler may keep it
+    # in a register and the handler sees what it held when the `try`
+    # began. So a proc with a `try` in it gets volatile variables.
+    alloc vq := ""
+    alloc scan := body_start
+    loop scan < body_end {
+        if code[scan][0] == "SETUP_EXCEPT" {
+            vq := "volatile "
+        }
+        scan := scan + 1
+    }
+
     # The proc signature has to match OmgFn in omg_rt.h — 32 inline
     # Value params (a0..a31). Bumping that cap means updating both this
     # emitter and the typedef in lockstep. See the OmgFn comment for
@@ -874,9 +888,9 @@ proc emit_function(name, code, funcs, func_index, func_info, globals, src_lines,
     alloc p := 0
     loop p < np {
         if has_key(boxed_set, params[p]) {
-            out := out + "    Value " + c_var(params[p]) + " = omg_cell_new(omg_a" + p + ");\n"
+            out := out + "    " + vq + "Value " + c_var(params[p]) + " = omg_cell_new(omg_a" + p + ");\n"
         } else {
-            out := out + "    Value " + c_var(params[p]) + " = omg_a" + p + ";\n"
+            out := out + "    " + vq + "Value " + c_var(params[p]) + " = omg_a" + p + ";\n"
         }
         p := p + 1
     }
@@ -897,9 +911,9 @@ proc emit_function(name, code, funcs, func_index, func_info, globals, src_lines,
             if has_key(boxed_set, nm) {
                 self_expr := "omg_cell_new(" + self_expr + ")"
             }
-            out := out + "    Value " + c_var(nm) + " = " + self_expr + ";\n"
+            out := out + "    " + vq + "Value " + c_var(nm) + " = " + self_expr + ";\n"
         } else {
-            out := out + "    Value " + c_var(nm) + " = omg_unset();\n"
+            out := out + "    " + vq + "Value " + c_var(nm) + " = omg_unset();\n"
         }
         l := l + 1
     }
@@ -912,7 +926,7 @@ proc emit_function(name, code, funcs, func_index, func_info, globals, src_lines,
     alloc nc := length(captured_list)
     alloc c := 0
     loop c < nc {
-        out := out + "    Value " + c_var(captured_list[c]) + " = captured[" + c + "]; omg_inc(" + c_var(captured_list[c]) + ");\n"
+        out := out + "    " + vq + "Value " + c_var(captured_list[c]) + " = captured[" + c + "]; omg_inc(" + c_var(captured_list[c]) + ");\n"
         c := c + 1
     }
 

@@ -40,7 +40,7 @@ omg tools/site/http_server.omg public 8000  # another folder, another port
 
 Ctrl-C stops it, after the requests in flight have been answered.
 
-Built, it is a single file of about 300 KB with nothing to install:
+Built, it is a single file of about 450 KB with nothing to install:
 
 ```sh
 omg --build tools/site/http_server.omg serve

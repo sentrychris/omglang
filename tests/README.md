@@ -58,7 +58,7 @@ take its place:
 | `tests/repl.sh`        | REPL behaviour: state persistence, multi-line input, error recovery, exit/quit/EOF, closures |
 | `tests/syntax.sh`      | Malformed programs: a one-line `SyntaxError`, exit code 1, the same message from run, `--compile` and `--build`, and nothing written |
 | `tests/regression.sh`  | Specific bugs we've fixed: control-flow inside `try`, float-bits decoding in `compile_source`, `args[0]` semantics, doubled `RuntimeError:` prefix, `;;;omg` header is optional, line numbers in a file with no header, stdout/stderr ordering |
-| `tests/conformance.sh` | The conformance corpus every way: interpreter, machine code, through C, JavaScript; plus stack-limit checks that only make sense for an executable |
+| `tests/conformance.sh` | The conformance corpus every way: interpreter, machine code, through C, JavaScript; plus stack-limit checks that only make sense for an executable, and the errors only the machine-code runtime raises (a result that does not fit in 64 bits, a list or nothing in arithmetic, a Bool in an ordering) |
 | `tests/conformance/`   | The corpus itself: `NAME.omg` must print `NAME.expected`; `fail/NAME.omg` must die with the error kind on its `# expect:` line, and with the frames in `NAME.traceback` if there is one |
 | `tests/tools.sh`       | The programs in `tools/`: their own test suite interpreted and built, and the HTTP server answering real requests both ways |
 | `tests/db.sh`          | `omgdb`: SQL results and the on-disk format, with files written by the interpreted database read by the built one and back |

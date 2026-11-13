@@ -1,0 +1,511 @@
+;;;omg
+
+# Conformance: loops over numbers give the same answers whatever turns
+# up in them. A back end that guesses "these are whole numbers" (the
+# x86-64 one does, see docs/04-pipeline.md) has to notice every time the
+# guess is wrong: a float, a string, a list, nothing at all, a divisor
+# of zero, an index off the end. (Results that do not fit in 64 bits
+# are in tests/conformance.sh: back ends differ on those.)
+
+proc kind(err) {
+    alloc s := "" + err
+    alloc i := 0
+    loop i < length(s) {
+        if s[i] == ":" {
+            return s[0:i]
+        }
+        i := i + 1
+    }
+    return s
+}
+
+# The value a proc gives back when it returns nothing.
+proc nothing() {
+}
+alloc nil := nothing()
+
+# --- one loop, many kinds of operand -----------------------------------------
+proc total(xs) {
+    alloc acc := xs[0]
+    alloc i := 1
+    loop i < length(xs) {
+        acc := acc + xs[i]
+        i := i + 1
+    }
+    return acc
+}
+emit total([1, 2, 3, 4])
+emit total([1, 2, 0.5, 4])
+emit total([0.5, 1, 2, 3])
+emit total(["a", "b", "c"])
+emit total([[1], [2, 3], []])
+emit total([1, 2, 3, 4])
+
+proc total_safe(xs) {
+    alloc acc := 0
+    alloc bad := 0
+    alloc i := 0
+    loop i < length(xs) {
+        try {
+            acc := acc + xs[i] * 2
+        } except err {
+            bad := bad + 1
+        }
+        i := i + 1
+    }
+    return [acc, bad]
+}
+emit total_safe([1, 2, 3])
+emit total_safe([1, "x", 3, "y", 5])
+emit total_safe([1, 2.5, 3])
+
+# --- a variable that changes its kind part of the way ------------------------
+proc drift(n) {
+    alloc v := 1
+    alloc seen := []
+    alloc i := 0
+    loop i < n {
+        if i == 3 {
+            v := v + 0.5
+        }
+        if i == 6 {
+            v := "s"
+        }
+        if i < 6 {
+            v := v * 2
+        } else {
+            v := v + "!"
+        }
+        append(seen, v)
+        i := i + 1
+    }
+    return seen
+}
+emit drift(9)
+
+# The variable is a number on the way into the loop and a string on
+# the way round it.
+proc swap_kind(xs) {
+    alloc cur := 0
+    alloc n := 0
+    alloc i := 0
+    loop i < length(xs) {
+        n := n + i
+        cur := xs[i]
+        i := i + 1
+    }
+    return [cur, n]
+}
+emit swap_kind([1, 2, 3])
+emit swap_kind(["x", "y"])
+emit swap_kind([1, "y", 2.5])
+
+# --- nested loops entered again and again with different things --------------
+proc grid(rows) {
+    alloc out := []
+    alloc r := 0
+    loop r < length(rows) {
+        alloc row := rows[r]
+        alloc acc := row[0]
+        alloc c := 1
+        loop c < length(row) {
+            acc := acc + row[c]
+            c := c + 1
+        }
+        append(out, acc)
+        r := r + 1
+    }
+    return out
+}
+emit grid([[1, 2, 3], [0.5, 0.25], ["a", "b"], [4, 5, 6], [[1], [2]], [7, 8]])
+
+# --- division and remainder round down ---------------------------------------
+proc divs(a, b) {
+    return [a // b, a % b]
+}
+proc div_table() {
+    alloc out := []
+    alloc lefts := [7, -7, 8, -8, 0, 1, -1]
+    alloc rights := [2, -2, 3, -3, 7, -7, 1, -1]
+    alloc i := 0
+    loop i < length(lefts) {
+        alloc j := 0
+        loop j < length(rights) {
+            alloc r := divs(lefts[i], rights[j])
+            append(out, r[0])
+            append(out, r[1])
+            j := j + 1
+        }
+        i := i + 1
+    }
+    return out
+}
+emit div_table()
+
+proc const_divs(x) {
+    return [x // 1, x % 1, x // 2, x % 2, x // 16, x % 16, x // 7, x % 7, x // -4, x % -4, x // -1, x % -1]
+}
+emit const_divs(100)
+emit const_divs(-100)
+emit const_divs(-1)
+emit const_divs(0)
+emit const_divs(7.5)
+
+proc div_loop(xs, d) {
+    alloc out := []
+    alloc i := 0
+    loop i < length(xs) {
+        try {
+            append(out, xs[i] // d)
+            append(out, xs[i] % d)
+        } except err {
+            append(out, kind(err))
+        }
+        i := i + 1
+    }
+    return out
+}
+emit div_loop([10, -10, 3], 4)
+emit div_loop([10, -10, 3], 0)
+emit div_loop([10, 2.5, -3], 2)
+emit div_loop([10, "x", -3], 2)
+emit div_loop([9, -9], 2.0)
+
+# --- shifts and masks ---------------------------------------------------------
+proc shifts(x, counts) {
+    alloc out := []
+    alloc i := 0
+    loop i < length(counts) {
+        try {
+            append(out, x << counts[i])
+            append(out, x >> counts[i])
+        } except err {
+            append(out, kind(err))
+        }
+        i := i + 1
+    }
+    return out
+}
+emit shifts(1, [0, 1, 4, 62, 63])
+emit shifts(-256, [0, 1, 4, 62, 63])
+emit shifts(5, [64, -1, 100])
+emit shifts(5, [1.0])
+emit shifts(5, ["1"])
+
+proc bits(a, b) {
+    alloc out := []
+    alloc i := 0
+    loop i < 3 {
+        try {
+            append(out, (a & b) + (a | b) - (a ^ b) + ~a + i)
+        } except err {
+            append(out, kind(err))
+        }
+        i := i + 1
+    }
+    return out
+}
+emit bits(12, 10)
+emit bits(-12, 10)
+emit bits(12, 1.5)
+emit bits("12", 10)
+
+# --- comparisons --------------------------------------------------------------
+proc count_below(xs, limit) {
+    alloc n := 0
+    alloc i := 0
+    loop i < length(xs) {
+        try {
+            if xs[i] < limit {
+                n := n + 1
+            }
+            if xs[i] >= limit {
+                n := n + 100
+            }
+        } except err {
+            n := n + 10000
+        }
+        i := i + 1
+    }
+    return n
+}
+emit count_below([1, 5, 9], 5)
+emit count_below([1, 5.5, 9], 5)
+emit count_below([1, 5, 9], 5.5)
+emit count_below(["a", "m", "z"], "m")
+emit count_below([1, "m", 9], 5)
+
+proc run_until(limit) {
+    alloc i := 0
+    alloc steps := 0
+    loop i < limit {
+        i := i + 1
+        steps := steps + 1
+    }
+    return [i, steps]
+}
+emit run_until(4)
+emit run_until(4.5)
+emit run_until(-1)
+
+# --- reading and writing lists -----------------------------------------------
+proc read_at(xs, places) {
+    alloc out := []
+    alloc i := 0
+    loop i < length(places) {
+        try {
+            append(out, xs[places[i]] + 1)
+        } except err {
+            append(out, kind(err))
+        }
+        i := i + 1
+    }
+    return out
+}
+emit read_at([10, 20, 30], [0, 1, 2, -1, -3, 3, -4])
+emit read_at([10, 2.5, "s"], [0, 1, 2])
+emit read_at({a: 1, b: 2}, ["a", "b", "c"])
+emit read_at("abc", [0, 1])
+emit read_at([10, 20, 30], [1.0, "1"])
+
+proc copy_into(dst, src) {
+    alloc i := 0
+    loop i < length(src) {
+        dst[i] := src[i]
+        i := i + 1
+    }
+    return dst
+}
+emit copy_into([0, 0, 0], [1, 2, 3])
+emit copy_into([0, 0, 0], ["a", [1, 2], 2.5])
+emit copy_into(["x", "y", "z"], [1, "b", nil]) == [1, "b", nil]
+alloc shared := ["keep", "these"]
+alloc holder := copy_into([0, 0], [shared, shared])
+shared[0] := "kept"
+emit holder
+
+proc blur(xs) {
+    alloc out := list_repeat(0, length(xs))
+    alloc i := 1
+    loop i < length(xs) - 1 {
+        out[i] := (xs[i - 1] + 2 * xs[i] + xs[i + 1] + 2) >> 2
+        i := i + 1
+    }
+    return out
+}
+emit blur([0, 4, 8, 100, 8, 4, 0])
+try {
+    emit blur([0, 4, 8.0, 100, 8, 4, 0])
+} except err {
+    emit kind(err)
+}
+
+proc fill_dict(n) {
+    alloc d := {}
+    alloc i := 0
+    loop i < n {
+        d[i % 3] := i * i
+        i := i + 1
+    }
+    return d[0] + d[1] + d[2]
+}
+emit fill_dict(10)
+
+proc text_scan(s) {
+    alloc n := 0
+    alloc out := ""
+    alloc i := 0
+    loop i < length(s) {
+        if s[i] == "a" {
+            n := n + 1
+        }
+        out := s[i] + out
+        i := i + 1
+    }
+    return [n, out]
+}
+emit text_scan("banana")
+
+# --- names that are not set yet -----------------------------------------------
+proc late(n) {
+    alloc i := 0
+    alloc msg := "ok"
+    try {
+        loop i < n {
+            if i == 2 {
+                alloc w := 10
+            }
+            if i >= 1 {
+                msg := "" + (w + i)
+            }
+            i := i + 1
+        }
+    } except err {
+        msg := kind(err)
+    }
+    return msg
+}
+emit late(1)
+emit late(2)
+
+proc late_ok(n) {
+    alloc i := 0
+    alloc out := []
+    loop i < n {
+        if i == 0 {
+            alloc w := 10
+        }
+        w := w + i
+        append(out, w)
+        i := i + 1
+    }
+    return out
+}
+emit late_ok(4)
+
+# --- loops that leave in the middle, and go round early ----------------------
+proc skip_odd(n) {
+    alloc acc := 0
+    alloc i := 0
+    loop i < n {
+        i := i + 1
+        if i % 2 == 1 {
+            continue
+        }
+        if acc > 20 {
+            break
+        }
+        acc := acc + i
+    }
+    return [acc, i]
+}
+emit skip_odd(7)
+emit skip_odd(100)
+
+proc both(a, b) {
+    alloc i := 0
+    alloc j := 10
+    loop i < a and j > b or i == 0 {
+        i := i + 1
+        j := j - 2
+    }
+    return [i, j]
+}
+emit both(5, 3)
+emit both(0, 3)
+emit both(2.5, 3)
+
+proc each_sum(xs) {
+    alloc acc := 0
+    for x in xs {
+        if x == nil {
+            continue
+        }
+        acc := acc + x
+    }
+    return acc
+}
+emit each_sum([1, 2, nil, 3])
+emit each_sum([1, 2.5, nil])
+
+# --- a handler in the same proc sees what the loop left ----------------------
+proc partial(xs) {
+    alloc acc := 0
+    alloc i := 0
+    try {
+        loop i < length(xs) {
+            acc := acc + xs[i]
+            acc := acc * 2
+            i := i + 1
+        }
+    } except err {
+        return ["stopped", i, acc]
+    }
+    return ["done", i, acc]
+}
+emit partial([1, 2, 3])
+emit partial([1, "x"])
+emit partial([1, 2.5, 3])
+
+# --- parameters given a new kind of value inside ------------------------------
+proc reuse(n, label) {
+    alloc out := []
+    alloc i := 0
+    loop i < 3 {
+        n := n + 1
+        if i == 1 {
+            n := "" + n
+            label := 7
+        }
+        if i == 2 {
+            n := length(n) + label
+        }
+        append(out, n)
+        i := i + 1
+    }
+    return out
+}
+emit reuse(41, "l")
+
+# --- a closure that shares a loop's variable ----------------------------------
+proc counter_sum(n) {
+    alloc acc := 0
+    proc bump(by) {
+        acc := acc + by
+        return acc
+    }
+    alloc i := 0
+    loop i < n {
+        bump(i)
+        acc := acc + 1
+        i := i + 1
+    }
+    return acc
+}
+emit counter_sum(5)
+
+# --- recursion with numbers, tail calls included ------------------------------
+proc gcd(a, b) {
+    if b == 0 {
+        return a
+    }
+    return gcd(b, a % b)
+}
+emit [gcd(1071, 462), gcd(-12, 18), gcd(12, -18), gcd(7.5, 2.5)]
+
+proc collatz(n, steps) {
+    if n == 1 {
+        return steps
+    }
+    if n % 2 == 0 {
+        return collatz(n // 2, steps + 1)
+    }
+    return collatz(3 * n + 1, steps + 1)
+}
+emit collatz(27, 0)
+
+# --- a long sum, to see that nothing drifts -----------------------------------
+proc mix(n) {
+    alloc a := 1
+    alloc b := 0
+    alloc t := list_repeat(0, 64)
+    alloc i := 0
+    loop i < n {
+        a := (a * 31 + i) % 65521
+        b := (b + a) & 1048575
+        alloc k := (a ^ (b >> 3)) & 63
+        t[k] := t[k] + (a - b) // 7
+        if t[k] > 100000 or t[k] < -100000 {
+            t[k] := t[k] % 1000
+        }
+        i := i + 1
+    }
+    alloc s := 0
+    i := 0
+    loop i < 64 {
+        s := s * 3 % 1000003 + t[i]
+        i := i + 1
+    }
+    return [a, b, s]
+}
+emit mix(20000)

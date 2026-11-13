@@ -178,6 +178,94 @@ store; a negative index, a dict, a string or an error takes the call.
 Anything bigger (string concatenation, dictionaries, builtins) is
 always a call into the runtime.
 
+**Each proc is compiled twice.** Those checks cost more than the work
+they guard: `acc := acc + xs[i]` in a loop asks, every time round,
+whether `acc` is an Int, whether `i` is, whether `xs` is a list and
+whether the element is an Int. The answers are nearly always the same
+as last time. So the back end writes two versions of every proc. The
+*careful version* is the code described so far. The *fast version* is
+the one a call enters, and it guesses:
+
+- that the operands of arithmetic, shifts, `//`, `%` and the ordering
+  comparisons are Ints;
+- that `xs[i]`, where the element goes straight into arithmetic or
+  into another list, is an Int at a place inside a list.
+
+A guess is tested once and then remembered for as long as it stays
+true. A local variable found to hold an Int is not tested again until
+something of unknown kind is assigned to it, and the result of Int
+arithmetic is an Int without looking. A loop is treated as a whole:
+the variables it computes with but never assigns are tested once on
+the way in, and what is known at the top of the loop is checked on the
+way back round only where the body could have changed it. With the
+kinds known, storing an Int over an Int is one instruction, and `//`
+and `%` by a constant are a shift, a mask or a divide in line.
+
+When a guess is wrong (a Float turns up, an index is off the end, an
+addition does not fit in 64 bits) the fast version jumps into the
+careful version *at the same point of the same instruction*, and the
+careful version does whatever the language says: computes with the
+Float, raises the error. Both versions use the same frame, and the
+fast version keeps every variable in memory exactly as the careful
+one would, so there is nothing to convert on the way. The careful
+version returns to the fast one at the top of the next loop, if what
+that loop takes for granted holds by then.
+
+This is the loop of `total` in the fast version, whole:
+
+```
+proc total(xs) {                 top:  mov  rcx, [xs]          ; length(xs): xs is known
+    alloc acc := 0                     mov  rax, [rcx+8]       ;   to be a list here
+    alloc i := 0                       cmp  [i], rax
+    loop i < length(xs) {              jge  done
+        acc := acc + xs[i]             mov  rcx, [xs]
+        i := i + 1                     mov  rsi, [i]
+    }                                  cmp  rsi, [rcx+8]       ; i inside the list?
+    return acc                         jae  careful
+}                                      mov  rdi, [rcx+24]      ; the elements
+                                       add  rsi, rsi           ; two words each
+                                       cmp  qword [rdi+rsi*8+8], 0
+                                       jne  careful            ; the element is not an Int
+                                       mov  rax, [rdi+rsi*8]
+                                       add  rax, [acc]
+                                       jo   careful            ; does not fit
+                                       mov  [acc], rax
+                                       mov  rax, [i]
+                                       add  rax, 1
+                                       jo   careful
+                                       mov  [i], rax
+                                       jmp  top
+```
+
+That is 17 instructions a turn where the careful version runs 52,
+a call into the runtime for `length` among them. What is left cannot
+go without knowing more than one proc's code can tell: that
+`i` stays inside the list, that every element is an Int, that the sum
+fits.
+
+How much time that saves depends on the program. This loop runs three
+times as fast as it did, a matrix multiplication 1.8 times, and the
+H.264 decoder in `tools/video/` 10 to 25 percent, although four in ten
+of the instructions it used to run are gone: checks that never fail
+cost a modern processor little, and a big program waits mostly for
+memory ([10-video.md](10-video.md#how-fast-it-is)).
+
+Three things follow for anyone writing OMG that has to be quick:
+
+- Put a hot loop in a proc. Code at the top level of a file gets only
+  the careful version, because any proc may assign a global.
+- A variable that holds an Int everywhere in a loop is cheap. One that
+  is sometimes a Float, or a list of Floats, runs the loop in the
+  careful version: correct, and no slower than before, but no faster.
+- Programs are larger, since procs are there twice: `omg` itself went
+  from 1.5 MB to 2.4 MB. Setting `mg_opt := false` in `native-x64.omg`
+  leaves the fast versions out.
+
+The two versions must agree on everything a program can observe, and
+`tests/conformance/numbers.omg` exists to catch them disagreeing: its
+loops are given Floats, strings, lists, nothing, zero divisors and
+indexes off the end, part of the way through.
+
 **2. It compiles the runtime ("raw mode").** The runtime is OMG source
 too ([`src/runtime/x64/`](../src/runtime/x64/)), but in a restricted
 dialect where every value is one untagged machine word and memory and
@@ -209,9 +297,9 @@ part of the runtime that `emit` and integer formatting need.
 
 There is no optimiser in the classical sense: no register allocation
 across statements, no inlining of procs. What makes the code quick is
-the virtual stack, the in-line integer paths, and a pre-pass over the
-bytecode that recognises `and` / `or` / `not` patterns and threads
-jumps. On the project's benchmarks it is several times faster than the
+the virtual stack, the in-line integer paths, the fast version of each
+proc, and a pre-pass over the bytecode that recognises `and` / `or` /
+`not` patterns and threads jumps. On the project's benchmarks it is several times faster than the
 same program through C, largely because its calls and its integer
 paths are cheaper.
 
@@ -270,7 +358,7 @@ For an 80-line program (`examples/maze_solver.omg`):
 | Stage                      | Time    | Output size |
 | -------------------------- | ------- | ----------- |
 | `.omg` → `.omgb`           | ~4 ms   | 4.5 KB      |
-| `omg --build`              | ~0.2 s  | 37 KB       |
+| `omg --build`              | ~0.2 s  | 42 KB       |
 | `omg --build --target c`   | ~1.1 s  | 64 KB       |
 
 For the 3000-line `compiler.omg`:
@@ -278,7 +366,7 @@ For the 3000-line `compiler.omg`:
 | Stage                      | Time    | Output size |
 | -------------------------- | ------- | ----------- |
 | `.omg` → `.omgb`           | ~0.1 s  | 149 KB      |
-| `omg --build`              | ~0.35 s | 268 KB      |
+| `omg --build`              | ~0.35 s | 431 KB      |
 | `--emit-c`, then `cc -O3`  | ~23 s   | 924 KB      |
 
 And for the whole toolchain, `omg --build src/omg.omg`: about 1.4

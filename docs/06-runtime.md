@@ -606,16 +606,19 @@ The same programs, built both ways on Linux:
 | Program                  | `omg --build` | `--target c` |
 | ------------------------ | ------------: | -----------: |
 | Three lines, one `emit`  | 22 KB         | 22 KB (plus libc) |
-| `examples/maze_solver.omg` (80 lines) | 37 KB | 64 KB |
-| `src/compiler.omg` (3000 lines) | 268 KB | 924 KB |
-| `omg.omg` and its imports (the whole toolchain) | 1.3 MB | |
+| `examples/maze_solver.omg` (80 lines) | 42 KB | 64 KB |
+| `src/compiler.omg` (3000 lines) | 431 KB | 924 KB |
+| `omg.omg` and its imports (the whole toolchain) | 2.4 MB | |
 
 A machine-code executable is static and complete: its 22 KB floor is
 the part of the runtime that start-up, `emit` and error reporting
 need, and nothing is loaded at run time. A C-built one is linked
 against the system's C library. Beyond the floor, size scales with how
 much OMG you've got: for `omg` itself almost all of it is generated
-code for the compiler, the VM and the back ends.
+code for the compiler, the VM and the back ends. Every proc is in the
+file twice, a fast version and a careful one
+([04-pipeline.md](04-pipeline.md) says why), which is about a third of
+the size of a large program.
 
 ## Read next
 

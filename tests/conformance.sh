@@ -146,3 +146,148 @@ emit depth(100000)
 OMG
 assert_stdout "native interpreter: 100,000-deep recursion" "100000" \
     "$OMG_NATIVE" "$CONF_DIR/deep_ok.omg"
+
+# === What the x86-64 runtime is stricter about =========================
+# A sum, difference or product that does not fit in 64 bits is a
+# ValueError there (C wraps round, JavaScript goes on as a float), a
+# list or nothing in arithmetic is a TypeError, and so is a Bool in an
+# ordering. The back end guesses that the operands of arithmetic in a
+# loop are whole numbers, so these are also the cases where its guess
+# is right about the kind and the result still has to be refused.
+section "Conformance: x86-64 strictness"
+case "$(omg_default_target)" in
+linux-x64|windows-x64)
+cat > "$CONF_DIR/strict.omg" <<'OMG'
+;;;omg
+proc kind(err) {
+    alloc s := "" + err
+    alloc i := 0
+    loop i < length(s) {
+        if s[i] == ":" {
+            return s[0:i]
+        }
+        i := i + 1
+    }
+    return s
+}
+proc nothing() {
+}
+alloc nil := nothing()
+
+alloc BIG := 9223372036854775807
+
+proc grow(start, step, n) {
+    alloc v := start
+    alloc i := 0
+    alloc msg := "fits"
+    try {
+        loop i < n {
+            v := v + step
+            i := i + 1
+        }
+    } except err {
+        msg := kind(err)
+    }
+    return [v, i, msg]
+}
+emit grow(1, 1, 5)
+emit grow(BIG - 3, 1, 5)
+emit grow(0 - BIG, -1, 5)
+
+proc scale(start, n) {
+    alloc v := start
+    alloc i := 0
+    alloc msg := "fits"
+    try {
+        loop i < n {
+            v := v * 1024
+            i := i + 1
+        }
+    } except err {
+        msg := kind(err)
+    }
+    return [v, i, msg]
+}
+emit scale(3, 4)
+emit scale(3, 9)
+emit scale(-3, 9)
+
+proc negate(x) {
+    try {
+        return 0 - x - 1
+    } except err {
+        return kind(err)
+    }
+}
+emit [negate(5), negate(BIG), negate(0 - BIG), negate(0 - BIG - 1)]
+
+# What only this runtime refuses: a list or nothing in arithmetic, and
+# a Bool in an ordering.
+proc total_safe(xs) {
+    alloc acc := 0
+    alloc bad := 0
+    alloc i := 0
+    loop i < length(xs) {
+        try {
+            acc := acc + xs[i] * 2
+        } except err {
+            bad := bad + 1
+        }
+        i := i + 1
+    }
+    return [acc, bad]
+}
+emit total_safe([1, nil, 3, [4], 5])
+
+proc bump_all(xs) {
+    alloc out := []
+    alloc i := 0
+    loop i < length(xs) {
+        try {
+            append(out, xs[i] + 1)
+        } except err {
+            append(out, kind(err))
+        }
+        i := i + 1
+    }
+    return out
+}
+emit bump_all([10, [1], nil, 2.5])
+
+proc count_below(xs, limit) {
+    alloc n := 0
+    alloc i := 0
+    loop i < length(xs) {
+        try {
+            if xs[i] < limit {
+                n := n + 1
+            }
+        } except err {
+            n := n + 100
+        }
+        i := i + 1
+    }
+    return n
+}
+emit count_below([1, nil, 9, true, 2], 5)
+OMG
+strict_expected="[6, 5, fits]
+[9223372036854775807, 3, ValueError]
+[-9223372036854775808, 1, ValueError]
+[3298534883328, 4, fits]
+[3458764513820540928, 6, ValueError]
+[-3458764513820540928, 6, ValueError]
+[-6, -9223372036854775808, 9223372036854775806, ValueError]
+[18, 2]
+[11, TypeError, TypeError, 3.5]
+202"
+assert_stdout "strict arithmetic (native interpreter)" "$strict_expected" \
+    "$OMG_NATIVE" "$CONF_DIR/strict.omg"
+"$OMG_NATIVE" --build "$CONF_DIR/strict.omg" "$CONF_DIR/strict" >/dev/null 2>&1
+assert_stdout "strict arithmetic (AOT)" "$strict_expected" \
+    "$CONF_DIR/strict"
+;;
+*)
+    echo "  (skipped: --build goes through C here)"
+;;
+esac

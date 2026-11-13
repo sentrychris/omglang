@@ -596,6 +596,14 @@ proc x_store_x(base, index, scale_bits, disp, src) {
     x_sib(src, base, index, scale_bits, disp)
 }
 
+# <op> qword [base + index * 2^scale_bits + disp], imm8
+proc x_alu_xi(op, base, index, scale_bits, disp, imm) {
+    x_rex_sib(0, base, index)
+    append(x_code, 131)
+    x_sib(op, base, index, scale_bits, disp)
+    append(x_code, imm & 255)
+}
+
 proc x_lea_x(dst, base, index, scale_bits, disp) {
     x_rex_sib(dst, base, index)
     append(x_code, 141)
@@ -2469,6 +2477,33 @@ alloc mg_last_line := -1
 alloc mg_ovf := {}
 alloc mg_undef := {}
 
+# A proc is compiled twice. The fast version comes first and is where
+# every call starts. It guesses that the operands of arithmetic are
+# Ints, tests each guess once, and remembers what it has learnt about
+# a local variable (`mg_facts`) until the variable is assigned again,
+# so that a loop over numbers tests almost nothing. When a guess is
+# wrong it jumps into the second, careful version at the same point,
+# which is the code described above and makes no guesses. The careful
+# version goes back to the fast one whenever it falls into a loop. Both
+# use the same frame, and the fast one keeps every tag in memory true,
+# so changing over is a jump.
+alloc mg_opt := true           # make a fast version of every proc at all
+alloc mg_fast := false         # the fast version is being generated
+alloc mg_two := false          # this proc gets both versions
+alloc mg_facts := {}           # fast: slot displacement -> true, the slot holds an Int
+alloc mg_pending := {}         # fast: instruction -> the facts every jump to it agrees on
+alloc mg_reach := true         # can control fall into the instruction being compiled?
+alloc mg_heads := {}           # loop head -> the facts the fast version assumes there
+alloc mg_loop_end := {}        # loop head -> the last instruction that jumps back to it
+alloc mg_loop_kill := {}       # loop head -> slots the loop may leave something else in
+alloc mg_loop_guess := {}      # loop head -> slots worth testing before the loop
+alloc mg_deopts := {}          # instruction -> the changeovers asked for there
+alloc mg_slow_jl := {}         # the careful version's jump labels
+alloc mg_used_slow := false    # did the fast version refer to the careful one?
+alloc mg_fast_jl := {}         # and the fast version's
+alloc mg_jt := -1              # the instruction a conditional jump being compiled goes to
+alloc mg_spec_index := {}      # fast: INDEX instructions whose result feeds arithmetic
+
 proc mg_fail(msg) {
     gen_fail("internal error in " + mg_name + " at instruction " + mg_at + ": " + msg)
 }
@@ -2500,7 +2535,10 @@ proc mg_ty(e) {
     alloc k := e[0]
     if k == VK_INT { return TY_INT }
     if k == VK_BOOL { return TY_BOOL }
-    if k == VK_VAR { return TY_ANY }
+    if k == VK_VAR {
+        if mg_fast and e[1] == RBP and has_key(mg_facts, e[2]) { return TY_INT }
+        return TY_ANY
+    }
     if k == VK_STK or k == VK_ACC { return e[1] }
     return TY_NOHEAP
 }
@@ -2521,6 +2559,7 @@ proc mg_const_tag(e) {
         if e[1] == TY_INT { return TAG_INT }
         if e[1] == TY_BOOL { return TAG_BOOL }
     }
+    if k == VK_VAR and mg_ty(e) == TY_INT { return TAG_INT }
     return -1
 }
 
@@ -2598,9 +2637,378 @@ proc mg_ovf_label(what) {
 # nothing has been stored in it.
 proc mg_check_var(e) {
     if e[0] == VK_VAR and e[4] {
-        x_alu_mi(ALU_CMP, e[1], e[2] + 8, TAG_UNSET)
-        x_jcc(CC_E, mg_undef_label(e[3]))
+        if mg_ty(e) != TY_INT {
+            x_alu_mi(ALU_CMP, e[1], e[2] + 8, TAG_UNSET)
+            x_jcc(CC_E, mg_undef_label(e[3]))
+        }
         e[4] := false
+    }
+    return false
+}
+
+# --- the fast version and the careful one ------------------------------------
+
+# A fact is [displacement of a local's slot, the tag it certainly
+# holds]: Int, or List. A set of them is a dict; the key is the
+# displacement for an Int and one more than it for a List.
+proc mg_copy_facts(f) {
+    alloc c := {}
+    for k in dict_keys(f) {
+        c[k] := f[k]
+    }
+    return c
+}
+
+# The facts that are in both.
+proc mg_both(a, b) {
+    alloc c := {}
+    for k in dict_keys(a) {
+        if has_key(b, k) {
+            c[k] := a[k]
+        }
+    }
+    return c
+}
+
+# An Int test on this entry has just passed in the fast version: if it
+# is a local variable, that holds until the variable is assigned.
+proc mg_learn(e) {
+    if e[0] == VK_VAR and e[1] == RBP {
+        mg_facts[e[2]] := [e[2], TAG_INT]
+    }
+    return false
+}
+
+# Is the entry a local variable known to hold a list?
+proc mg_is_list(e) {
+    return mg_fast and e[0] == VK_VAR and e[1] == RBP and has_key(mg_facts, e[2] + 1)
+}
+
+proc mg_learn_list(e) {
+    if e[0] == VK_VAR and e[1] == RBP {
+        mg_facts[e[2] + 1] := [e[2], TAG_LIST]
+    }
+    return false
+}
+
+proc mg_unlearn(disp) {
+    if has_key(mg_facts, disp) or has_key(mg_facts, disp + 1) {
+        alloc c := {}
+        for k in dict_keys(mg_facts) {
+            if mg_facts[k][0] != disp {
+                c[k] := mg_facts[k]
+            }
+        }
+        mg_facts := c
+    }
+    return false
+}
+
+alloc mg_dl_at := -1
+alloc mg_dl_lab := -1
+
+# Fast version: the label to jump to when a guess made at this point of
+# the instruction proves wrong. Nothing the instruction does may have
+# happened yet: the operands are where the virtual stack says, and only
+# RCX, RSI and RDI may have been used. Every guess of one instruction
+# is tested at the same point, so they share the label.
+proc mg_deopt() {
+    if mg_dl_at == mg_at {
+        return mg_dl_lab
+    }
+    alloc snap := []
+    alloc i := 0
+    loop i < mg_vn {
+        alloc c := []
+        for x in mg_vs[i] {
+            append(c, x)
+        }
+        append(snap, c)
+        i := i + 1
+    }
+    alloc lab := x_new_label()
+    # label, entries, how many on the machine stack, the accumulator's
+    # entry, then filled in by mg_land: where to go, whether the two
+    # versions agree on where everything is, and what to put right.
+    alloc rec := [lab, snap, mg_stk_n, mg_acc, -1, false, []]
+    mg_deopts[mg_at] := rec
+    append(mg_deferred, ["deopt", lab, mg_at, rec])
+    mg_used_slow := true
+    mg_dl_at := mg_at
+    mg_dl_lab := lab
+    return lab
+}
+
+# Can the careful version, in its present state, take over from the
+# fast one in the state `rec` describes? The two keep their operands in
+# the same places; the fast one only knows more about them. What it
+# does not keep because of that (the tag of an Int in RDX) is noted in
+# rec[6] for the changeover to supply.
+proc mg_compat(rec) {
+    alloc snap := rec[1]
+    if length(snap) != mg_vn or rec[2] != mg_stk_n or rec[3] != mg_acc {
+        return false
+    }
+    alloc fix := []
+    alloc i := 0
+    loop i < mg_vn {
+        alloc f := snap[i]
+        alloc g := mg_vs[i]
+        alloc k := f[0]
+        if k != g[0] {
+            return false
+        }
+        if k == VK_INT or k == VK_BOOL or k == VK_FLOAT or k == VK_STR {
+            if f[1] != g[1] { return false }
+        } elif k == VK_VAR {
+            if f[1] != g[1] or f[2] != g[2] { return false }
+            if f[4] and g[4] == false {
+                append(fix, [1, f[1], f[2], f[3]])
+            }
+        } elif k == VK_STK {
+            if f[1] != g[1] {
+                if g[1] == TY_INT or g[1] == TY_BOOL or f[1] == TY_ANY { return false }
+            }
+            if f[2] != g[2] and f[1] == TY_ANY { return false }
+        } elif k == VK_ACC {
+            if f[1] != g[1] {
+                if g[1] == TY_INT or g[1] == TY_BOOL or f[1] == TY_ANY { return false }
+                if f[1] == TY_INT { append(fix, [0, TAG_INT]) }
+                if f[1] == TY_BOOL { append(fix, [0, TAG_BOOL]) }
+            }
+        }
+        i := i + 1
+    }
+    rec[6] := fix
+    return true
+}
+
+# Careful version: the fast version tests its guesses at this point of
+# this instruction, so this is where it comes in when one is wrong.
+proc mg_land() {
+    if mg_fast or mg_two == false or has_key(mg_deopts, mg_at) == false {
+        return false
+    }
+    alloc rec := mg_deopts[mg_at]
+    if rec[4] >= 0 {
+        return false
+    }
+    alloc ok := mg_compat(rec)
+    if ok == false {
+        # Not seen in practice. Both sides can always agree on
+        # "everything on the machine stack".
+        mg_flush_canon(0)
+    }
+    alloc lab := x_new_label()
+    x_bind(lab)
+    rec[4] := lab
+    rec[5] := ok
+    return false
+}
+
+# Fast version, about to jump back to the loop head `t`: test whatever
+# the head takes for granted that is not known here.
+proc mg_back_checks(t) {
+    if has_key(mg_heads, t) == false {
+        return false
+    }
+    alloc head := mg_heads[t]
+    for k in dict_keys(head) {
+        if has_key(mg_facts, k) == false {
+            x_alu_mi(ALU_CMP, RBP, head[k][0] + 8, head[k][1])
+            x_jcc(CC_NE, mg_deopt())
+        }
+    }
+    return false
+}
+
+# Fast version: a jump forward to instruction `t` leaves from here.
+proc mg_edge(t) {
+    if mg_fast == false or t <= mg_at {
+        return false
+    }
+    if has_key(mg_pending, t) {
+        mg_pending[t] := mg_both(mg_pending[t], mg_facts)
+    } else {
+        mg_pending[t] := mg_copy_facts(mg_facts)
+    }
+    return false
+}
+
+# Fast version: the facts that hold at the jump target `i`, which is
+# about to be bound. The operand stack is in its agreed state. At the
+# head of a loop the facts are also a promise every jump back keeps.
+proc mg_label_facts(i) {
+    alloc k := {}
+    alloc joined := has_key(mg_pending, i)
+    if mg_reach and joined {
+        k := mg_both(mg_facts, mg_pending[i])
+    } elif mg_reach {
+        k := mg_copy_facts(mg_facts)
+    } elif joined {
+        k := mg_pending[i]
+    }
+    if has_key(mg_loop_end, i) {
+        # What the loop assigns something other than arithmetic to is
+        # not worth promising.
+        alloc kills := mg_loop_kill[i]
+        alloc k2 := {}
+        for key in dict_keys(k) {
+            if k[key][1] != TAG_INT or has_key(kills, k[key][0]) == false {
+                k2[key] := k[key]
+            }
+        }
+        k := k2
+        # Variables the loop computes with and never assigns: test
+        # them once, here, on the way in.
+        if mg_reach and joined == false {
+            for g in mg_loop_guess[i] {
+                alloc key := g[0]
+                if g[1] == TAG_LIST { key := key + 1 }
+                if has_key(k, key) == false {
+                    x_alu_mi(ALU_CMP, RBP, g[0] + 8, g[1])
+                    x_jcc(CC_NE, mg_slow_jl[i])
+                    mg_used_slow := true
+                    k[key] := g
+                }
+            }
+        }
+        mg_heads[i] := mg_copy_facts(k)
+    }
+    mg_facts := k
+    return false
+}
+
+alloc MG_INTY := {
+    ADD: 1, SUB: 1, MUL: 1, BAND: 1, BOR: 1, BXOR: 1, SHL: 1, SHR: 1,
+    FLOOR_DIV: 1, MOD: 1, NEG: 1, NOT: 1, PUSH_INT: 1
+}
+alloc MG_GUESS := {
+    ADD: 1, SUB: 1, MUL: 1, BAND: 1, BOR: 1, BXOR: 1, SHL: 1, SHR: 1,
+    FLOOR_DIV: 1, MOD: 1, LT: 1, LE: 1, GT: 1, GE: 1
+}
+
+# The slot of the plain local variable `name`, or false.
+proc mg_plain_slot(name) {
+    if has_key(mg_vars, name) and mg_vars[name][0] == MV_PLAIN {
+        return mg_vars[name][1]
+    }
+    return false
+}
+
+# Find the loops of [lo, hi) and, for each, what the fast version
+# should and should not take for granted at its head.
+proc mg_find_loops(lo, hi, targets, cover, depths) {
+    mg_loop_end := {}
+    mg_loop_kill := {}
+    mg_loop_guess := {}
+    alloc i := lo
+    loop i < hi {
+        alloc op := mg_code[i][0]
+        if op == "JUMP" or op == "JUMP_IF_FALSE" or op == "JUMP_IF_TRUE" {
+            if mg_code[i][1] <= i {
+                mg_loop_end[mg_code[i][1]] := i
+            }
+        }
+        i := i + 1
+    }
+    for key in dict_keys(mg_loop_end) {
+        alloc t := int(key)
+        alloc end := mg_loop_end[t]
+        alloc stored := {}
+        alloc kills := {}
+        alloc k := t
+        loop k <= end {
+            alloc op := mg_code[k][0]
+            if op == "STORE" or op == "STORE_LOCAL" or op == "MAKE_FUNC" {
+                alloc nm := mg_code[k][1]
+                if op == "MAKE_FUNC" {
+                    alloc b := be.strip_mod_prefix(nm)
+                    if b != false { nm := b }
+                }
+                alloc disp := mg_plain_slot(nm)
+                if disp != false {
+                    stored[disp] := true
+                    if op == "MAKE_FUNC" or k == lo or has_key(targets, k) or has_key(MG_INTY, mg_code[k - 1][0]) == false {
+                        kills[disp] := true
+                    }
+                }
+            }
+            k := k + 1
+        }
+        alloc guesses := []
+        alloc seen := {}
+        k := t + 1
+        loop k <= end {
+            if has_key(MG_GUESS, mg_code[k][0]) and cover[k - lo] <= cover[end - lo] {
+                alloc names := []
+                alloc a := mg_code[k - 1]
+                if a[0] == "LOAD" {
+                    append(names, a[1])
+                }
+                if (a[0] == "LOAD" or a[0] == "PUSH_INT") and k - 2 >= t and mg_code[k - 2][0] == "LOAD" {
+                    append(names, mg_code[k - 2][1])
+                }
+                for nm in names {
+                    alloc disp := mg_plain_slot(nm)
+                    if disp != false and has_key(stored, disp) == false and has_key(seen, disp) == false {
+                        seen[disp] := true
+                        append(guesses, [disp, TAG_INT])
+                    }
+                }
+            }
+            if has_key(mg_spec_index, k) and cover[k - lo] <= cover[end - lo] {
+                # The list it reads: what was loaded two operands down.
+                alloc want := depths[k - lo] - 2
+                alloc j := k - 1
+                loop j > t and depths[j - lo] != want {
+                    j := j - 1
+                }
+                if j > t and mg_code[j][0] == "LOAD" {
+                    alloc disp := mg_plain_slot(mg_code[j][1])
+                    if disp != false and has_key(stored, disp) == false and has_key(seen, disp + 1) == false {
+                        seen[disp + 1] := true
+                        append(guesses, [disp, TAG_LIST])
+                    }
+                }
+            }
+            k := k + 1
+        }
+        mg_loop_kill[t] := kills
+        mg_loop_guess[t] := guesses
+    }
+    return false
+}
+
+# Does the value the INDEX at `k` leaves go straight into arithmetic?
+# Then the fast version guesses that the element is an Int.
+proc mg_feeds_int(k, lo, hi, depths, targets) {
+    if k + 1 >= hi {
+        return false
+    }
+    alloc dd := depths[k + 1 - lo]
+    alloc j := k + 1
+    loop j < hi and j < k + 16 {
+        alloc d := depths[j - lo]
+        if d < 0 or has_key(targets, j) {
+            return false
+        }
+        alloc op := mg_code[j][0]
+        alloc pops := 0
+        if op == "NEG" or op == "NOT" {
+            pops := 1
+        } elif op == "INDEX" or has_key(MG_GUESS, op) {
+            pops := 2
+        } elif op == "STORE_INDEX" {
+            # as the value stored, not as the index
+            return d == dd
+        } elif op != "LOAD" and op != "PUSH_INT" and op != "NOP" {
+            return false
+        }
+        if d - pops < dd {
+            return op != "INDEX"
+        }
+        j := j + 1
     }
     return false
 }
@@ -2652,6 +3060,10 @@ proc mg_materialise(i, own) {
         x_push_i(TAG_STR)
         x_lea(RCX, DATA, gen_str(e[1]))
         x_push(RCX)
+    } elif k == VK_VAR and mg_ty(e) == TY_INT {
+        x_push_i(TAG_INT)
+        x_push_m(e[1], e[2])
+        ne[1] := TY_INT
     } elif k == VK_VAR {
         mg_check_var(e)
         x_push_m(e[1], e[2] + 8)
@@ -2741,6 +3153,11 @@ proc mg_take_owned() {
         return e[1]
     }
     if k == VK_VAR {
+        if mg_ty(e) == TY_INT {
+            x_load(RAX, e[1], e[2])
+            x_mov_ri(RDX, TAG_INT)
+            return TY_INT
+        }
         mg_check_var(e)
         x_load(RAX, e[1], e[2])
         x_load(RDX, e[1], e[2] + 8)
@@ -2959,6 +3376,7 @@ proc mg_pair_offs(l, r) {
 # ADD SUB MUL BAND BOR BXOR
 proc mg_arith(op) {
     mg_free_acc(2)
+    mg_land()
     alloc l := mg_vs[mg_vn - 2]
     alloc r := mg_vs[mg_vn - 1]
     alloc lt := mg_ty(l)
@@ -2987,6 +3405,12 @@ proc mg_arith(op) {
     alloc need_check := lt != TY_INT or rt != TY_INT
     alloc slow := -1
     alloc back := -1
+    if need_check and mg_fast {
+        mg_int_check2(l, offs[1], r, offs[2], mg_deopt())
+        mg_learn(l)
+        mg_learn(r)
+        need_check := false
+    }
     if need_check {
         slow := x_new_label()
         back := x_new_label()
@@ -3089,6 +3513,7 @@ proc mg_drop_list(e, off) {
 # INDEX: base[idx]
 proc mg_index() {
     mg_free_acc(2)
+    mg_land()
     alloc l := mg_vs[mg_vn - 2]
     alloc r := mg_vs[mg_vn - 1]
     alloc lk := l[0]
@@ -3096,31 +3521,173 @@ proc mg_index() {
         return mg_generic("rt_index", 2, [], TY_ANY)
     }
     alloc offs := mg_pair_offs(l, r)
-    alloc slow := x_new_label()
-    alloc back := x_new_label()
-    mg_tag_cmp(l, offs[1], TAG_LIST)
-    x_jcc(CC_NE, slow)
+    # In the fast version, an element that goes straight into
+    # arithmetic is guessed to be an Int in a list.
+    alloc spec := mg_fast and has_key(mg_spec_index, mg_at)
+    alloc slow := -1
+    alloc back := -1
+    if spec {
+        slow := mg_deopt()
+    } else {
+        slow := x_new_label()
+        back := x_new_label()
+    }
+    if mg_is_list(l) == false {
+        mg_tag_cmp(l, offs[1], TAG_LIST)
+        x_jcc(CC_NE, slow)
+        if spec {
+            mg_learn_list(l)
+        }
+    }
     if mg_ty(r) != TY_INT {
         mg_int_check(r, offs[2], slow)
+        if spec {
+            mg_learn(r)
+        }
     }
     mg_load(RCX, mg_loc(l, offs[1]))
-    mg_load(RSI, mg_loc(r, offs[2]))
-    # unsigned, so a negative index is too large as well
-    x_alu_rm(ALU_CMP, RSI, RCX, 8)
-    x_jcc(CC_AE, slow)
-    x_load(RDI, RCX, 24)
-    x_shl_i(RSI, 4)
-    x_load_x(RDX, RDI, RSI, 0, 8)
-    x_load_x(RAX, RDI, RSI, 0, 0)
-    mg_inc_if_heap(RAX, RDX)
+    # The element is at [RDI + eoff], or at [RDI + RSI * 8] with twice
+    # the index in RSI. The length is compared unsigned, so a negative
+    # index is too large as well.
+    alloc eoff := -1
+    if r[0] == VK_INT and r[1] < 1048576 {
+        x_alu_mi(ALU_CMP, RCX, 8, r[1])
+        x_jcc(CC_BE, slow)
+        x_load(RDI, RCX, 24)
+        eoff := 16 * r[1]
+    } elif r[0] == VK_ACC {
+        x_alu_rm(ALU_CMP, RAX, RCX, 8)
+        x_jcc(CC_AE, slow)
+        x_load(RDI, RCX, 24)
+        x_lea_x(RSI, RAX, RAX, 0, 0)
+    } else {
+        mg_load(RSI, mg_loc(r, offs[2]))
+        x_alu_rm(ALU_CMP, RSI, RCX, 8)
+        x_jcc(CC_AE, slow)
+        x_load(RDI, RCX, 24)
+        x_alu_rr(ALU_ADD, RSI, RSI)
+    }
+    if spec and eoff >= 0 {
+        x_alu_mi(ALU_CMP, RDI, eoff + 8, TAG_INT)
+        x_jcc(CC_NE, slow)
+        x_load(RAX, RDI, eoff)
+    } elif spec {
+        x_alu_xi(ALU_CMP, RDI, RSI, 3, 8, TAG_INT)
+        x_jcc(CC_NE, slow)
+        x_load_x(RAX, RDI, RSI, 3, 0)
+    } elif eoff >= 0 {
+        x_load(RDX, RDI, eoff + 8)
+        x_load(RAX, RDI, eoff)
+        mg_inc_if_heap(RAX, RDX)
+    } else {
+        x_load_x(RDX, RDI, RSI, 3, 8)
+        x_load_x(RAX, RDI, RSI, 3, 0)
+        mg_inc_if_heap(RAX, RDX)
+    }
     mg_drop_list(l, offs[1])
     if offs[0] > 0 {
         x_lea(RSP, RSP, 16 * offs[0])
     }
     mg_forget(2)
+    if spec {
+        mg_push_acc(TY_INT)
+        return false
+    }
     x_bind(back)
     append(mg_deferred, ["helper", slow, mg_at, "rt_index", [l, r], [], TY_ANY, 0, back, -1])
     mg_push_acc(TY_ANY)
+    return false
+}
+
+# FLOOR_DIV and MOD. The careful version asks the runtime. The fast
+# one divides two Ints in line and leaves a zero divisor, and the one
+# quotient that does not fit, to the careful version.
+proc mg_divmod(op) {
+    mg_free_acc(2)
+    mg_land()
+    alloc l := mg_vs[mg_vn - 2]
+    alloc r := mg_vs[mg_vn - 1]
+    alloc lt := mg_ty(l)
+    alloc rt := mg_ty(r)
+    alloc can := mg_fast and mg_intish(lt) and mg_intish(rt)
+    for e in [l, r] {
+        if e[0] == VK_FLOAT or e[0] == VK_NONE or e[0] == VK_STR or e[0] == VK_BOOL {
+            can := false
+        }
+    }
+    if r[0] == VK_INT and (r[1] == 0 or r[1] == -1 or x_fits32(r[1]) == false) {
+        can := false
+    }
+    if l[0] == VK_INT and r[0] == VK_INT {
+        can := false
+    }
+    if can == false {
+        return mg_generic(MG_HELPERS[op], 2, [], TY_NOHEAP)
+    }
+    alloc offs := mg_pair_offs(l, r)
+    if lt != TY_INT or rt != TY_INT {
+        mg_int_check2(l, offs[1], r, offs[2], mg_deopt())
+        mg_learn(l)
+        mg_learn(r)
+    }
+    # A power of two: a shift or a mask, which round the way // and % do.
+    alloc sh := -1
+    if r[0] == VK_INT and r[1] > 0 and (r[1] & (r[1] - 1)) == 0 {
+        sh := 0
+        loop (1 << sh) < r[1] {
+            sh := sh + 1
+        }
+    }
+    if sh >= 0 {
+        if l[0] != VK_ACC {
+            mg_load(RAX, mg_loc(l, offs[1]))
+        }
+        if op == "FLOOR_DIV" {
+            if sh > 0 {
+                x_sar_i(RAX, sh)
+            }
+        } else {
+            x_alu_ri(ALU_AND, RAX, r[1] - 1)
+        }
+    } else {
+        mg_load(RCX, mg_loc(r, offs[2]))
+        if r[0] != VK_INT {
+            alloc slow := mg_deopt()
+            x_test_rr(RCX, RCX)
+            x_jcc(CC_E, slow)
+            x_alu_ri(ALU_CMP, RCX, -1)
+            x_jcc(CC_E, slow)
+        }
+        if l[0] != VK_ACC {
+            mg_load(RAX, mg_loc(l, offs[1]))
+        }
+        x_cqo()
+        x_idiv(RCX)
+        # The machine rounds toward zero; OMG rounds down.
+        if op == "FLOOR_DIV" {
+            x_test_rr(RDX, RDX)
+            alloc p := x_jcc_short(CC_E)
+            x_alu_rr(ALU_XOR, RDX, RCX)
+            alloc q := x_jcc_short(CC_NS)
+            x_alu_ri(ALU_SUB, RAX, 1)
+            x_patch_short(p)
+            x_patch_short(q)
+        } else {
+            x_mov_rr(RAX, RDX)
+            x_test_rr(RDX, RDX)
+            alloc p := x_jcc_short(CC_E)
+            x_alu_rr(ALU_XOR, RDX, RCX)
+            alloc q := x_jcc_short(CC_NS)
+            x_alu_rr(ALU_ADD, RAX, RCX)
+            x_patch_short(p)
+            x_patch_short(q)
+        }
+    }
+    if offs[0] > 0 {
+        x_lea(RSP, RSP, 16 * offs[0])
+    }
+    mg_forget(2)
+    mg_push_acc(TY_INT)
     return false
 }
 
@@ -3133,7 +3700,7 @@ proc mg_plain(e) {
     if k == VK_STK or k == VK_ACC {
         return e[1] != TY_ANY
     }
-    return false
+    return k == VK_VAR and mg_ty(e) == TY_INT
 }
 
 # STORE_INDEX: base[idx] := value, where neither the value nor what it
@@ -3163,8 +3730,10 @@ proc mg_store_index() {
     alloc voff := 0
     alloc slow := x_new_label()
     alloc back := x_new_label()
-    mg_tag_cmp(b, boff, TAG_LIST)
-    x_jcc(CC_NE, slow)
+    if mg_is_list(b) == false {
+        mg_tag_cmp(b, boff, TAG_LIST)
+        x_jcc(CC_NE, slow)
+    }
     if mg_ty(x) != TY_INT {
         mg_int_check(x, xoff, slow)
     }
@@ -3220,6 +3789,7 @@ proc mg_store_index() {
 # SHL and SHR of two Ints, the count from 0 to 63.
 proc mg_shift(op) {
     mg_free_acc(2)
+    mg_land()
     alloc l := mg_vs[mg_vn - 2]
     alloc r := mg_vs[mg_vn - 1]
     alloc helper := MG_HELPERS[op]
@@ -3238,11 +3808,19 @@ proc mg_shift(op) {
     alloc slow := -1
     alloc back := -1
     if need_check or r[0] != VK_INT {
-        slow := x_new_label()
-        back := x_new_label()
+        if mg_fast {
+            slow := mg_deopt()
+        } else {
+            slow := x_new_label()
+            back := x_new_label()
+        }
     }
     if need_check {
         mg_int_check2(l, offs[1], r, offs[2], slow)
+        if mg_fast {
+            mg_learn(l)
+            mg_learn(r)
+        }
     }
     if r[0] == VK_INT {
         if l[0] != VK_ACC {
@@ -3270,7 +3848,7 @@ proc mg_shift(op) {
         x_lea(RSP, RSP, 16 * offs[0])
     }
     mg_forget(2)
-    if slow >= 0 {
+    if back >= 0 {
         x_bind(back)
         append(mg_deferred, ["helper", slow, mg_at, helper, [l, r], [], TY_INT, 0, back, -1])
     }
@@ -3335,15 +3913,29 @@ proc mg_compare(op, jop, target) {
     } else {
         mg_flush_canon(2)
     }
+    mg_land()
     alloc l := mg_vs[mg_vn - 2]
     alloc r := mg_vs[mg_vn - 1]
-    alloc lt := mg_ty(l)
-    alloc rt := mg_ty(r)
     alloc helper := MG_HELPERS[op]
     alloc offs := mg_pair_offs(l, r)
     alloc nstk := offs[0]
     alloc cc := mg_cc_for(op)
     alloc is_eq := op == "EQ" or op == "NE"
+    alloc sure := false
+    if mg_fast {
+        if jop != "" and mg_jt <= mg_at {
+            mg_back_checks(mg_jt)
+        }
+        # An ordering of two things that may be Ints: guess that they are.
+        if is_eq == false and (mg_ty(l) != TY_INT or mg_ty(r) != TY_INT) and mg_intish(mg_ty(l)) and mg_intish(mg_ty(r)) and l[0] != VK_FLOAT and r[0] != VK_FLOAT and l[0] != VK_NONE and r[0] != VK_NONE and l[0] != VK_STR and r[0] != VK_STR {
+            mg_int_check2(l, offs[1], r, offs[2], mg_deopt())
+            mg_learn(l)
+            mg_learn(r)
+            sure := true
+        }
+    }
+    alloc lt := mg_ty(l)
+    alloc rt := mg_ty(r)
 
     # x == true / x == false: a Bool on one side.
     if is_eq and (l[0] == VK_BOOL or r[0] == VK_BOOL) and l[0] != r[0] {
@@ -3401,7 +3993,7 @@ proc mg_compare(op, jop, target) {
     }
     alloc slow := -1
     alloc back := -1
-    if lt != TY_INT or rt != TY_INT {
+    if sure == false and (lt != TY_INT or rt != TY_INT) {
         slow := x_new_label()
         back := x_new_label()
         mg_int_check2(l, offs[1], r, offs[2], slow)
@@ -3469,6 +4061,10 @@ proc mg_is_const(e) {
 # JUMP_IF_FALSE / JUMP_IF_TRUE on the top entry.
 proc mg_cond_jump(jop, target) {
     mg_flush_canon(1)
+    mg_land()
+    if mg_fast and mg_jt <= mg_at {
+        mg_back_checks(mg_jt)
+    }
     alloc e := mg_vs[mg_vn - 1]
     alloc want := jop == "JUMP_IF_TRUE"
     if mg_is_const(e) {
@@ -3549,6 +4145,8 @@ proc mg_truth(negate) {
 
 # NEG and NOT (bitwise).
 proc mg_unary(op) {
+    mg_free_acc(1)
+    mg_land()
     alloc e := mg_vs[mg_vn - 1]
     if e[0] == VK_INT and mg_small(e[1]) {
         mg_forget(1)
@@ -3569,10 +4167,12 @@ proc mg_unary(op) {
     if mg_intish(ty) == false or mg_is_const(e) {
         return mg_generic(helper, 1, [], rty)
     }
-    mg_free_acc(1)
     alloc slow := -1
     alloc back := -1
-    if ty != TY_INT {
+    if ty != TY_INT and mg_fast {
+        mg_int_check(e, 0, mg_deopt())
+        mg_learn(e)
+    } elif ty != TY_INT {
         slow := x_new_label()
         back := x_new_label()
         mg_int_check(e, 0, slow)
@@ -3679,6 +4279,40 @@ proc mg_store_slot(base, disp) {
     return false
 }
 
+# Fast version: store the top entry into the local slot at `disp` and
+# keep the facts in step. An Int stored over an Int gives nothing back
+# and leaves the tag as it is.
+proc mg_store_fast(disp) {
+    alloc e := mg_vs[mg_vn - 1]
+    if mg_ty(e) != TY_INT {
+        mg_store_slot(RBP, disp)
+        mg_unlearn(disp)
+        return false
+    }
+    if has_key(mg_facts, disp) == false {
+        mg_store_slot(RBP, disp)
+        mg_unlearn(disp)
+        mg_facts[disp] := [disp, TAG_INT]
+        return false
+    }
+    alloc k := e[0]
+    mg_forget(1)
+    if k == VK_INT and x_fits32(e[1]) {
+        x_store_i(RBP, disp, e[1])
+        return false
+    }
+    if k == VK_INT {
+        x_mov_ri(RAX, e[1])
+    } elif k == VK_STK {
+        x_pop(RAX)
+        x_alu_ri(ALU_ADD, RSP, 8)
+    } elif k == VK_VAR {
+        x_load(RAX, e[1], e[2])
+    }
+    x_store(RBP, disp, RAX)
+    return false
+}
+
 # Wrap the top entry in a new cell: RAX:RDX becomes the cell.
 proc mg_box_top() {
     mg_free_acc(1)
@@ -3715,12 +4349,17 @@ proc mg_store_var(name, is_local, i) {
     if has_key(mg_vars, name) {
         alloc v := mg_vars[name]
         if v[0] == MV_PLAIN {
-            if is_local == false and mg_needs_check(name, i, false) {
+            alloc known := mg_fast and has_key(mg_facts, v[1])
+            if is_local == false and known == false and mg_needs_check(name, i, false) {
                 x_alu_mi(ALU_CMP, RBP, v[1] + 8, TAG_UNSET)
                 x_jcc(CC_E, mg_undef_label(name))
             }
             mg_settle_var(RBP, v[1])
-            mg_store_slot(RBP, v[1])
+            if mg_fast {
+                mg_store_fast(v[1])
+            } else {
+                mg_store_slot(RBP, v[1])
+            }
             return false
         }
         if is_local {
@@ -3854,11 +4493,39 @@ proc mg_builtin(name, argc) {
         mg_push([VK_NONE])
         return false
     }
+    if name == "length" and argc == 1 and mg_vs[mg_vn - 1][0] == VK_VAR and mg_ty(mg_vs[mg_vn - 1]) == TY_ANY {
+        return mg_length()
+    }
     alloc rty := TY_ANY
     if has_key(MG_BUILTIN_TY, name) {
         rty := MG_BUILTIN_TY[name]
     }
     mg_generic(helper, argc, [], rty)
+    return false
+}
+
+# length(xs) of a variable that holds a list is one load, which is
+# what the condition of most loops is made of. Anything else asks the
+# runtime and comes back.
+proc mg_length() {
+    mg_free_acc(1)
+    alloc e := mg_vs[mg_vn - 1]
+    alloc slow := -1
+    alloc back := -1
+    if mg_is_list(e) == false {
+        slow := x_new_label()
+        back := x_new_label()
+        mg_tag_cmp(e, 0, TAG_LIST)
+        x_jcc(CC_NE, slow)
+    }
+    mg_load(RCX, mg_loc(e, 0))
+    x_load(RAX, RCX, 8)
+    mg_forget(1)
+    if slow >= 0 {
+        x_bind(back)
+        append(mg_deferred, ["helper", slow, mg_at, "bi_length", [e], [], TY_INT, 0, back, -1])
+    }
+    mg_push_acc(TY_INT)
     return false
 }
 
@@ -3981,6 +4648,44 @@ proc mg_emit_deferred() {
             x_push(RDX)
             x_push(RAX)
             x_jmp(d[3])
+        } elif kind == "deopt" {
+            alloc rec := d[3]
+            if rec[4] < 0 {
+                mg_fail("the careful version has no way in here")
+            }
+            if rec[5] {
+                for f in rec[6] {
+                    if f[0] == 0 {
+                        x_mov_ri(RDX, f[1])
+                    } else {
+                        x_alu_mi(ALU_CMP, f[1], f[2] + 8, TAG_UNSET)
+                        x_jcc(CC_E, mg_undef_label(f[3]))
+                    }
+                }
+            } else {
+                mg_vn := 0
+                for e in rec[1] {
+                    mg_vs[mg_vn] := e
+                    mg_vn := mg_vn + 1
+                }
+                mg_stk_n := rec[2]
+                mg_acc := rec[3]
+                mg_flush_canon(0)
+                mg_reset_vs(0)
+            }
+            x_jmp(rec[4])
+        } elif kind == "reenter" {
+            # The careful version falls into a loop: if what the fast
+            # version takes for granted at its head holds, go there.
+            alloc t := d[2]
+            if has_key(mg_heads, t) {
+                alloc head := mg_heads[t]
+                for k in dict_keys(head) {
+                    x_alu_mi(ALU_CMP, RBP, head[k][0] + 8, head[k][1])
+                    x_jcc(CC_NE, mg_slow_jl[t])
+                }
+            }
+            x_jmp(mg_fast_jl[t])
         } elif kind == "callv" {
             alloc n := d[3]
             x_push_m(RSP, 16 * n + 8)
@@ -4016,6 +4721,216 @@ proc mg_reset_vs(depth) {
     }
     mg_stk_n := depth
     mg_acc := -1
+}
+
+# One pass over the instructions [lo, hi): the fast version of a proc
+# when mg_fast is set, otherwise the careful one. `jl` holds this
+# version's label for every jump target.
+proc mg_run(lo, hi, depths, jl) {
+    mg_reach := true
+    alloc i := lo
+    loop i < hi {
+        alloc d := depths[i - lo]
+        if d < 0 {
+            i := i + 1
+            continue
+        }
+        mg_at := i
+        if has_key(jl, i) {
+            mg_flush_canon(0)
+            if mg_fast {
+                mg_label_facts(i)
+            } elif mg_two and mg_reach and has_key(mg_loop_end, i) {
+                alloc re := x_new_label()
+                x_jmp(re)
+                append(mg_deferred, ["reenter", re, i])
+            }
+            x_bind(jl[i])
+            mg_reset_vs(d)
+            mg_reach := true
+        }
+        if mg_vn != d {
+            mg_fail("operand stack depth " + mg_vn + " where " + d + " was expected")
+        }
+        mg_note_line(i)
+        alloc instr := mg_code[i]
+        alloc op := instr[0]
+        alloc arg := instr[1]
+        alloc jop := ""
+        if i + 1 < hi and has_key(jl, i + 1) == false {
+            alloc nop := mg_code[i + 1][0]
+            if nop == "JUMP_IF_FALSE" or nop == "JUMP_IF_TRUE" {
+                jop := nop
+            }
+        }
+        if op == "NOP" {
+            i := i + 1
+            continue
+        }
+        if op == "LOAD" {
+            mg_load_var(arg, i)
+        } elif op == "PUSH_INT" {
+            mg_push([VK_INT, arg])
+        } elif op == "PUSH_STR" {
+            mg_push([VK_STR, arg])
+        } elif op == "STORE" {
+            mg_store_var(arg, false, i)
+        } elif op == "STORE_LOCAL" {
+            mg_store_var(arg, true, i)
+        } elif op == "CALL" {
+            if has_key(mg_funcs, arg) {
+                mg_call(arg)
+            } else {
+                mg_undefined_call(arg)
+                mg_reset_vs(0)
+                mg_reach := false
+            }
+        } elif op == "JUMP_IF_FALSE" or op == "JUMP_IF_TRUE" {
+            mg_jt := arg
+            mg_cond_jump(op, jl[arg])
+            mg_edge(arg)
+        } elif op == "JUMP" {
+            mg_land()
+            if mg_fast {
+                if arg <= i {
+                    mg_back_checks(arg)
+                } else {
+                    mg_edge(arg)
+                }
+            }
+            mg_flush_canon(0)
+            # A jump to the very next live instruction is no jump.
+            alloc k := i + 1
+            loop k < arg and (depths[k - lo] < 0 or mg_code[k][0] == "NOP") {
+                k := k + 1
+            }
+            if k != arg {
+                x_jmp(jl[arg])
+                mg_reach := false
+            }
+        } elif op == "EQ" or op == "NE" or op == "LT" or op == "LE" or op == "GT" or op == "GE" {
+            if jop != "" {
+                mg_jt := mg_code[i + 1][1]
+                mg_compare(op, jop, jl[mg_jt])
+                mg_edge(mg_jt)
+                i := i + 1
+            } else {
+                mg_compare(op, "", -1)
+            }
+        } elif op == "ADD" or op == "SUB" or op == "MUL" or op == "BAND" or op == "BOR" or op == "BXOR" {
+            mg_arith(op)
+        } elif op == "INDEX" {
+            mg_index()
+        } elif op == "BUILTIN" {
+            mg_builtin(arg[0], arg[1])
+        } elif op == "CALL_VALUE" {
+            mg_call_value(arg)
+        } elif op == "ATTR" {
+            mg_generic("rt_attr", 1, [[1, arg]], TY_ANY)
+        } elif op == "RET" {
+            mg_free_acc(1)
+            mg_take_owned()
+            alloc k := i + 1
+            loop k < hi and depths[k - lo] < 0 {
+                k := k + 1
+            }
+            if k < hi {
+                x_jmp(mg_ret_label)
+            }
+            mg_reset_vs(0)
+            mg_reach := false
+        } elif op == "TCALL" {
+            if has_key(mg_funcs, arg) {
+                mg_tcall(arg)
+            } else {
+                mg_undefined_call(arg)
+            }
+            mg_reset_vs(0)
+            mg_reach := false
+        } elif op == "PUSH_BOOL" {
+            if arg {
+                mg_push([VK_BOOL, 1])
+            } else {
+                mg_push([VK_BOOL, 0])
+            }
+        } elif op == "PUSH_NONE" {
+            mg_push([VK_NONE])
+        } elif op == "PUSH_FLOAT_BITS" {
+            mg_push([VK_FLOAT, arg])
+        } elif op == "POP" {
+            alloc e := mg_vs[mg_vn - 1]
+            if e[0] == VK_STK {
+                if mg_needs_drop(e) {
+                    mg_release(RSP, 0)
+                }
+                x_alu_ri(ALU_ADD, RSP, 16)
+            } elif e[0] == VK_ACC and e[1] == TY_ANY {
+                x_call(mg_stub_drop_acc)
+            }
+            mg_forget(1)
+        } elif op == "STORE_INDEX" {
+            mg_store_index()
+        } elif op == "STORE_ATTR" {
+            mg_generic("rt_store_attr", 2, [[1, arg]], -1)
+        } elif op == "SLICE" {
+            mg_generic("rt_slice", 3, [], TY_ANY)
+        } elif op == "BUILD_LIST" {
+            mg_build(arg, "rt_list_build", "rt_list_new", TAG_LIST)
+        } elif op == "BUILD_DICT" {
+            mg_build(2 * arg, "rt_dict_build", "rt_dict_new", TAG_DICT)
+        } elif op == "DIV" {
+            mg_generic(MG_HELPERS[op], 2, [], TY_NOHEAP)
+        } elif op == "FLOOR_DIV" or op == "MOD" {
+            mg_divmod(op)
+        } elif op == "SHL" or op == "SHR" {
+            mg_shift(op)
+        } elif op == "AND" or op == "OR" {
+            mg_generic(MG_HELPERS[op], 2, [], TY_BOOL)
+        } elif op == "NEG" or op == "NOT" {
+            mg_unary(op)
+        } elif op == "TRUTHY" {
+            mg_truth(false)
+        } elif op == "LNOT" {
+            mg_truth(true)
+        } elif op == "EMIT" {
+            mg_generic("rt_emit", 1, [], -1)
+        } elif op == "ASSERT" {
+            mg_generic("rt_assert", 1, [], -1)
+        } elif op == "MAKE_FUNC" {
+            mg_make_func(arg, i)
+        } elif op == "SETUP_EXCEPT" {
+            if mg_fast {
+                # Control can arrive at the handler from anywhere in the body.
+                mg_pending[arg] := {}
+            }
+            mg_flush_canon(0)
+            alloc entry := x_new_label()
+            x_lea_label(RAX, entry)
+            x_push(RAX)
+            x_lea(RAX, RSP, 8)
+            x_push(RAX)
+            x_push(RBP)
+            x_call(rw_need("rt_try_push"))
+            x_alu_ri(ALU_ADD, RSP, 24)
+            append(mg_deferred, ["handler", entry, i, jl[arg]])
+        } elif op == "POP_BLOCK" {
+            mg_free_acc(0)
+            x_call(rw_need("rt_try_pop"))
+        } elif op == "RAISE" {
+            mg_generic("rt_raise", 1, [[0, arg]], -1)
+            mg_reset_vs(0)
+            mg_reach := false
+        } elif op == "HALT" {
+            x_mov_ri(RAX, 0)
+            x_leave()
+            x_ret()
+            mg_reach := false
+        } else {
+            mg_fail("opcode " + op + " is not implemented")
+        }
+        i := i + 1
+    }
+    return false
 }
 
 # Compile instructions [lo, hi): a proc's body, or the top-level code
@@ -4173,181 +5088,51 @@ proc mg_body(name, lo, hi, label) {
         }
     }
 
-    alloc i := lo
-    loop i < hi {
-        alloc d := depths[i - lo]
-        if d < 0 {
-            i := i + 1
-            continue
+    mg_dl_at := -1
+    mg_deopts := {}
+    mg_heads := {}
+    mg_pending := {}
+    mg_facts := {}
+    mg_slow_jl := {}
+    mg_spec_index := {}
+    mg_loop_end := {}
+    mg_used_slow := false
+    mg_two := false
+    mg_fast := false
+    if name != "" and mg_opt {
+        mg_two := true
+        mg_fast := true
+        for key in dict_keys(targets) {
+            mg_slow_jl[key] := x_new_label()
         }
-        mg_at := i
-        if has_key(jl, i) {
-            mg_flush_canon(0)
-            x_bind(jl[i])
-            mg_reset_vs(d)
+        alloc ii := lo
+        loop ii < hi {
+            if mg_code[ii][0] == "INDEX" and depths[ii - lo] >= 0 and mg_feeds_int(ii, lo, hi, depths, targets) {
+                mg_spec_index[ii] := true
+            }
+            ii := ii + 1
         }
-        if mg_vn != d {
-            mg_fail("operand stack depth " + mg_vn + " where " + d + " was expected")
-        }
-        mg_note_line(i)
-        alloc instr := mg_code[i]
-        alloc op := instr[0]
-        alloc arg := instr[1]
-        alloc jop := ""
-        if i + 1 < hi and has_key(jl, i + 1) == false {
-            alloc nop := mg_code[i + 1][0]
-            if nop == "JUMP_IF_FALSE" or nop == "JUMP_IF_TRUE" {
-                jop := nop
-            }
-        }
-        if op == "NOP" {
-            i := i + 1
-            continue
-        }
-        if op == "LOAD" {
-            mg_load_var(arg, i)
-        } elif op == "PUSH_INT" {
-            mg_push([VK_INT, arg])
-        } elif op == "PUSH_STR" {
-            mg_push([VK_STR, arg])
-        } elif op == "STORE" {
-            mg_store_var(arg, false, i)
-        } elif op == "STORE_LOCAL" {
-            mg_store_var(arg, true, i)
-        } elif op == "CALL" {
-            if has_key(mg_funcs, arg) {
-                mg_call(arg)
-            } else {
-                mg_undefined_call(arg)
-                mg_reset_vs(0)
-            }
-        } elif op == "JUMP_IF_FALSE" or op == "JUMP_IF_TRUE" {
-            mg_cond_jump(op, jl[arg])
-        } elif op == "JUMP" {
-            mg_flush_canon(0)
-            # A jump to the very next live instruction is no jump.
-            alloc k := i + 1
-            loop k < arg and (depths[k - lo] < 0 or mg_code[k][0] == "NOP") {
-                k := k + 1
-            }
-            if k != arg {
-                x_jmp(jl[arg])
-            }
-        } elif op == "EQ" or op == "NE" or op == "LT" or op == "LE" or op == "GT" or op == "GE" {
-            if jop != "" {
-                mg_compare(op, jop, jl[mg_code[i + 1][1]])
-                i := i + 1
-            } else {
-                mg_compare(op, "", -1)
-            }
-        } elif op == "ADD" or op == "SUB" or op == "MUL" or op == "BAND" or op == "BOR" or op == "BXOR" {
-            mg_arith(op)
-        } elif op == "INDEX" {
-            mg_index()
-        } elif op == "BUILTIN" {
-            mg_builtin(arg[0], arg[1])
-        } elif op == "CALL_VALUE" {
-            mg_call_value(arg)
-        } elif op == "ATTR" {
-            mg_generic("rt_attr", 1, [[1, arg]], TY_ANY)
-        } elif op == "RET" {
-            mg_free_acc(1)
-            mg_take_owned()
-            alloc k := i + 1
-            loop k < hi and depths[k - lo] < 0 {
-                k := k + 1
-            }
-            if k < hi {
-                x_jmp(mg_ret_label)
-            }
-            mg_reset_vs(0)
-        } elif op == "TCALL" {
-            if has_key(mg_funcs, arg) {
-                mg_tcall(arg)
-            } else {
-                mg_undefined_call(arg)
-            }
-            mg_reset_vs(0)
-        } elif op == "PUSH_BOOL" {
-            if arg {
-                mg_push([VK_BOOL, 1])
-            } else {
-                mg_push([VK_BOOL, 0])
-            }
-        } elif op == "PUSH_NONE" {
-            mg_push([VK_NONE])
-        } elif op == "PUSH_FLOAT_BITS" {
-            mg_push([VK_FLOAT, arg])
-        } elif op == "POP" {
-            alloc e := mg_vs[mg_vn - 1]
-            if e[0] == VK_STK {
-                if mg_needs_drop(e) {
-                    mg_release(RSP, 0)
-                }
-                x_alu_ri(ALU_ADD, RSP, 16)
-            } elif e[0] == VK_ACC and e[1] == TY_ANY {
-                x_call(mg_stub_drop_acc)
-            }
-            mg_forget(1)
-        } elif op == "STORE_INDEX" {
-            mg_store_index()
-        } elif op == "STORE_ATTR" {
-            mg_generic("rt_store_attr", 2, [[1, arg]], -1)
-        } elif op == "SLICE" {
-            mg_generic("rt_slice", 3, [], TY_ANY)
-        } elif op == "BUILD_LIST" {
-            mg_build(arg, "rt_list_build", "rt_list_new", TAG_LIST)
-        } elif op == "BUILD_DICT" {
-            mg_build(2 * arg, "rt_dict_build", "rt_dict_new", TAG_DICT)
-        } elif op == "DIV" or op == "FLOOR_DIV" or op == "MOD" {
-            mg_generic(MG_HELPERS[op], 2, [], TY_NOHEAP)
-        } elif op == "SHL" or op == "SHR" {
-            mg_shift(op)
-        } elif op == "AND" or op == "OR" {
-            mg_generic(MG_HELPERS[op], 2, [], TY_BOOL)
-        } elif op == "NEG" or op == "NOT" {
-            mg_unary(op)
-        } elif op == "TRUTHY" {
-            mg_truth(false)
-        } elif op == "LNOT" {
-            mg_truth(true)
-        } elif op == "EMIT" {
-            mg_generic("rt_emit", 1, [], -1)
-        } elif op == "ASSERT" {
-            mg_generic("rt_assert", 1, [], -1)
-        } elif op == "MAKE_FUNC" {
-            mg_make_func(arg, i)
-        } elif op == "SETUP_EXCEPT" {
-            mg_flush_canon(0)
-            alloc entry := x_new_label()
-            x_lea_label(RAX, entry)
-            x_push(RAX)
-            x_lea(RAX, RSP, 8)
-            x_push(RAX)
-            x_push(RBP)
-            x_call(rw_need("rt_try_push"))
-            x_alu_ri(ALU_ADD, RSP, 24)
-            append(mg_deferred, ["handler", entry, i, jl[arg]])
-        } elif op == "POP_BLOCK" {
-            mg_free_acc(0)
-            x_call(rw_need("rt_try_pop"))
-        } elif op == "RAISE" {
-            mg_generic("rt_raise", 1, [[0, arg]], -1)
-            mg_reset_vs(0)
-        } elif op == "HALT" {
-            x_mov_ri(RAX, 0)
-            x_leave()
-            x_ret()
-        } else {
-            mg_fail("opcode " + op + " is not implemented")
-        }
-        i := i + 1
+        mg_find_loops(lo, hi, targets, cover, depths)
     }
+    mg_run(lo, hi, depths, jl)
     if name != "" {
         x_bind(mg_ret_label)
         mg_release_slots()
         x_leave()
         x_ret_n(16 * mg_nparams)
+    }
+    if mg_fast {
+        mg_fast := false
+        if mg_used_slow {
+            # The careful version: same frame, same way out.
+            mg_fast_jl := jl
+            mg_last_line := -1
+            mg_dl_at := -1
+            mg_reset_vs(0)
+            mg_run(lo, hi, depths, mg_slow_jl)
+            x_jmp(mg_ret_label)
+        }
+        mg_two := false
     }
     mg_emit_deferred()
     return false
