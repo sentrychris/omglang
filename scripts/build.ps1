@@ -13,8 +13,9 @@
 #
 # The only question is which `omg` does the building:
 #   1. Self-rebuild: bin\omg.exe builds its own source.
-#   2. Bootstrap: there is no usable omg.exe yet, so the Rust runtime
-#      at rust\target\release\omg.exe runs omg.omg from source.
+#   2. Bootstrap: there is no usable omg.exe, and someone has built
+#      the frozen Rust runtime (see rust\README.md), so
+#      rust\target\release\omg.exe runs omg.omg from source.
 #
 # bin\omg.exe is checked in (scripts/build.sh writes it on Linux,
 # together with the Linux binary), so a fresh clone takes path 1.
@@ -84,8 +85,9 @@ if (Test-CanDo $OmgExe $Needs) {
     # compile of the toolchain itself is still done by compiler.omg.
     $Omg = @($RustOmg, '--rust', "$SrcDir/omg.omg")
 } else {
-    Write-Host "Need either a working $OmgExe or the Rust runtime at $RustOmg."
-    Write-Host 'First-time build: cargo build --release --manifest-path rust/Cargo.toml'
+    Write-Host "There is no working $OmgExe. It is checked in: restore it with"
+    Write-Host '    git checkout HEAD -- bin'
+    Write-Host '(or build the frozen Rust runtime: see rust\README.md).'
     exit 1
 }
 

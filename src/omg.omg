@@ -36,9 +36,9 @@ import "backends/native-c.omg" as ncc
 import "backends/native-js.omg" as njs
 import "backends/native-x64.omg" as nx
 
-# Human-facing version string. This is the only copy on the OMG side;
-# it has to match rust/Cargo.toml, and `cargo test` fails when it
-# does not (see the tests in rust/src/bytecode.rs).
+# Human-facing version string, printed by --version and the REPL
+# banner. (The frozen Rust runtime has its own copy in rust/Cargo.toml,
+# which stays at the version it was frozen at.)
 alloc VERSION := "0.2.0"
 
 # === Path / string helpers ================================================

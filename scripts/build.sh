@@ -2,8 +2,6 @@
 # Build the OMG native toolchain into bin/. The toolchain is one
 # program, `omg`, plus the runtime files it adds to what it generates:
 # x64/*.omg for machine code, omg_rt.h for C, omg_rt.js for JavaScript.
-# After this completes, the Rust runtime is not needed to compile or
-# run OMG programs.
 #
 # On Linux and Windows (x86-64) nothing but OMG takes part: `omg`
 # writes executables itself, its own included.
@@ -29,8 +27,10 @@
 # The only question is which `omg` does the building:
 #   1. Self-rebuild: bin/omg already runs here, so it builds its own
 #      source.
-#   2. Bootstrap: there is no usable bin/omg yet, so the Rust runtime
-#      at rust/target/release/omg runs omg.omg from source.
+#   2. Bootstrap: there is no usable bin/omg, and someone has built
+#      the frozen Rust runtime (see rust/README.md), so
+#      rust/target/release/omg runs omg.omg from source. This is the
+#      route from source alone, and nothing in daily use takes it.
 #
 # src/omg.omg imports the compiler, the VM and the three back ends
 # (compiler.omg, vm.omg, native-x64.omg, native-c.omg, native-js.omg,
@@ -131,9 +131,10 @@ elif [ -x "$RUST_OMG" ]; then
     # compile of the toolchain itself is still done by compiler.omg.
     OMG=("$RUST_OMG" --rust "$SRC_DIR/omg.omg")
 else
-    echo "Need either a $OMG_BIN that runs on this host ($(uname -sm)),"
-    echo "or the Rust runtime at $RUST_OMG."
-    echo "First-time build: cd rust && cargo build --release"
+    echo "There is no $OMG_BIN that runs on this host ($(uname -sm))."
+    echo "On a system other than Linux or Windows x86-64, make a first one"
+    echo "from generated C: docs/01-quickstart.md, \"Other systems\"."
+    echo "(Or build the frozen Rust runtime: rust/README.md.)"
     exit 1
 fi
 

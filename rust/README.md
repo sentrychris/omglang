@@ -1,4 +1,79 @@
-# OMG Runtime
+# OMG Runtime (Rust) — frozen
+
+> **This runtime is frozen.** It is where OMG started, and OMG no
+> longer needs it: the toolchain in [`src/`](../src/) is written in
+> OMG and builds itself into `bin/omg` with no other compiler
+> involved. Nothing in the repository builds this crate, CI does not
+> test it, and new language features are not added to it.
+>
+> **Frozen at:** the commit that added this notice. The last commit on
+> which CI built this runtime on Linux, macOS and Windows and compared
+> it with the OMG toolchain, byte for byte, is `7ce4162`; at the
+> freeze, `cargo test`, `tests/smoke.sh` and the bootstrap below all
+> passed, and the `omg` it bootstrapped was identical to the
+> checked-in `bin/omg`.
+
+## Why it is still here
+
+Two reasons, and only these:
+
+1. **OMG can be rebuilt from source alone.** A compiler that builds
+   itself always raises the question of where the first one came
+   from. The answer is in this folder: a stock Rust toolchain builds
+   this runtime, this runtime builds `omg`, and from then on each
+   `omg` builds the next.
+2. **A way onto a new system.** Where there is no `omg` binary and no
+   other machine to generate C on, this runtime can run the OMG
+   toolchain from source.
+
+## Bootstrapping OMG from source alone
+
+At the freeze commit (or any later commit whose `src/` still keeps to
+the language this runtime knows):
+
+```sh
+cargo build --release --manifest-path rust/Cargo.toml
+tests/smoke.sh                 # optional: this runtime's own self-check
+rm bin/omg bin/omg.exe         # so that nothing checked in takes part
+scripts/build.sh               # "[1/3] Bootstrapping from the Rust runtime"
+```
+
+`build.sh` uses this runtime only when there is no `bin/omg` that
+runs. It has the runtime execute the toolchain's driver from source
+(`omg --rust src/omg.omg --build src/omg.omg ...`), which writes a
+first native `omg`; that one then builds the `omg` that is installed.
+On Linux and Windows x86-64 no C compiler is involved at any point.
+The result is byte-for-byte the binary that the checked-in `omg`
+produces for the same source.
+
+Later commits may use language features this runtime never learned.
+To reach one of those from source, bootstrap at the freeze commit and
+walk forward: with the `omg` you have, take the next commit's sources
+(`git checkout <commit> -- src scripts`) and run `scripts/build.sh`.
+The project's rule makes every such step possible: a feature is not
+used inside `src/` until an `omg` that understands it has been
+committed ([docs/05-extending.md](../docs/05-extending.md#the-bootstrap-rule)).
+
+## What "frozen" means in practice
+
+- Do not change `rust/src/` to follow the language. A change to the
+  compiler, the bytecode or the builtins belongs in `src/`.
+- `tests/smoke.sh` is this runtime's own check. It is run by hand,
+  not by CI, and is expected to pass at the freeze commit; later it
+  may fail simply because the language has moved on.
+- The verification commands described below (`--verify-self-hosted`,
+  `--verify-omg-vm`) compare this runtime's Rust-written compiler with
+  `src/compiler.omg`. They held at the freeze and are no longer part
+  of how OMG is tested; the OMG toolchain checks itself instead (see
+  [tests/README.md](../tests/README.md)).
+
+**Everything below describes this runtime as it was frozen.** Where it
+says `omg`, it means `rust/target/release/omg`, not the native
+`bin/omg`.
+
+---
+
+# The runtime
 
 The **OMG Runtime** is the execution engine for the OMG language.
 

@@ -3,7 +3,7 @@
 # the sources in src/ as they are now.
 #
 # The binaries are committed so that a fresh clone has a working native
-# toolchain without needing the Rust runtime: `omg` for Linux x86-64
+# toolchain with nothing else installed: `omg` for Linux x86-64
 # and `omg.exe` for Windows x86-64. That only holds if they are rebuilt
 # whenever their sources change, and nothing used to check it: they
 # could (and did) fall several fixes behind the sources.

@@ -1,39 +1,39 @@
 ;;;omg
 
-# vm.omg  →  library: embedded in rust/target/release/omg (as vm.omgb)
-#                     and imported in-process by bin/omg
+# vm.omg  →  library: imported in-process by bin/omg and by the web
+#                     drivers in browser/
 #
-# Execute `.omgb` bytecode files using a VM written in OMG.
+# Execute `.omgb` bytecode using a VM written in OMG.
 #
-# Not compiled to its own standalone ELF — `bin/omg` imports this
-# module so `omg foo.omgb` already handles the bytecode-runner case.
+# Not compiled to its own standalone executable — `bin/omg` imports
+# this module, and it is what `omg foo.omg`, `omg foo.omgb` and the
+# REPL run programs on.
 #
-# This is the third leg of the self-hosting story:
+# The three parts of the language's implementation, all in OMG:
 #
-#   1. The Rust runtime that ships with the project (the substrate VM).
-#   2. The OMG-written compiler at `src/compiler.omg` that produces
-#      byte-identical `.omgb` output to the Rust frontend.
-#   3. THIS FILE — an OMG-written *executor* for the bytecode the OMG
-#      compiler emits. Together with #2 it means every act of language-
-#      level interpretation can happen inside OMG; the Rust runtime is
-#      just the substrate at the bottom.
+#   1. The compiler at `src/compiler.omg`, which produces bytecode.
+#   2. THIS FILE — an executor for that bytecode.
+#   3. The back ends in `src/backends/`, which turn the same bytecode
+#      into machine code, C or JavaScript instead.
 #
-# Used by:
-#   * `omg --verify-omg-vm <file>` (the triple-meta fixed-point check)
-#   * Direct invocation:
+# Builtins are not implemented here: a BUILTIN instruction is passed
+# on with call_builtin() to the runtime this VM itself is running on.
+#
+# The frozen Rust runtime in rust/ embeds a copy of this file too (as
+# vm.omgb, built by `cargo build`) for its own verification commands:
+#         omg --verify-omg-vm <file>
 #         omg --rust src/vm.omg ./hello.omgb
 #
-# `cargo build` compiles this source to `src/vm.omgb` and embeds
-# the bytecode in the runtime binary alongside `src/compiler.omgb`.
+# Because that runtime has to be able to compile this file, and
+# because bin/omg is built by the bin/omg before it, the source below
+# keeps to long-established parts of the language.
 #
-# The Rust frontend is recommended for compiling this file directly:
-# the OMG-on-VM compile path would otherwise run on top of this VM,
-# which is slow squared.
+#
 
 # === Opcode constants =====================================================
 #
-# Mirror of `mod opcode` in rust/src/bytecode.rs, which is the ground
-# truth; `cargo test` fails if this table disagrees with it. They are
+# The same numbers as in compiler.omg and bytecode.omg (and as `mod
+# opcode` in the frozen rust/src/bytecode.rs). They are
 # plain globals here (rather than imported from bytecode.omg) because
 # the dispatch loop compares against them on every instruction.
 

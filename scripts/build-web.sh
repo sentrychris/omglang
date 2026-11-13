@@ -22,12 +22,12 @@ mkdir -p "$WEB_OUT"
 WORK=$(mktemp -d)
 trap 'rm -rf "$WORK"' EXIT
 
-# Pick a toolchain. Prefer the native `omg` (omg.exe on Windows); if
-# it can't run on this host (the checked-in ones are for Linux and
-# Windows on x86-64, so: macOS, ARM) fall back to the Rust runtime,
-# which compiles to the same bytecode and runs the same OMG-written JS
-# back end (through the same driver, src/omg.omg), just
-# hosted on the Rust VM.
+# Pick a toolchain: the native `omg` (omg.exe on Windows). If none
+# runs on this host (the checked-in ones are for Linux and Windows on
+# x86-64; on macOS or ARM, scripts/build.sh makes one) and someone has
+# built the frozen Rust runtime by hand, that works as well: it
+# compiles to the same bytecode and runs the same OMG-written JS back
+# end through the same driver, src/omg.omg.
 can_emit_js() {
     [ -x "$1" ] && "$1" --help 2>/dev/null | grep -q -- '--emit-js'
 }
@@ -48,8 +48,8 @@ elif [ -x "$RUST_OMG" ]; then
     omg_compile() { "$RUST_OMG" --compile "$1" "$2"; }
     omg_to_js()   { "$RUST_OMG" --rust src/omg.omg --emit-js "$1" "$2"; }
 else
-    echo "Need either a bin/omg that runs on this host (scripts/build.sh)"
-    echo "or the Rust runtime (cargo build --release --manifest-path rust/Cargo.toml)."
+    echo "Need a bin/omg that runs on this host: see scripts/build.sh, and"
+    echo "docs/01-quickstart.md (\"Other systems\") if there is none yet."
     exit 1
 fi
 

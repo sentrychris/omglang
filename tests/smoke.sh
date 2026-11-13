@@ -1,10 +1,16 @@
 #!/bin/bash
-# Portable smoke test for the Rust runtime.
+# Self-check of the frozen Rust runtime in rust/.
 #
-# Unlike tests/run.sh (which needs the native toolchain and therefore a
-# Unix host with a C compiler), this script needs nothing but the Rust
-# runtime — so it runs the same way on Linux, macOS and Windows (Git
-# Bash). CI runs it on all three.
+# The Rust runtime is where OMG started and is no longer part of the
+# toolchain: nothing builds it, CI does not run this script, and
+# tests/run.sh does not use it. This is the check to run by hand after
+# building it, for instance before bootstrapping OMG from source alone
+# (see rust/README.md). It needs nothing but that runtime, and runs the
+# same way on Linux, macOS and Windows (Git Bash).
+#
+# It passed on the commit the runtime was frozen at. Later commits may
+# use language features the runtime never learned, and parts of this
+# script will then fail for that reason alone.
 #
 # What it checks:
 #   1. Both self-hosting fixed points (the OMG-written compiler, and the

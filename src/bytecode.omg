@@ -15,17 +15,17 @@
 #     #   src_files  list of source paths
 #     #   src_lines  list of [file_idx, line], one per instruction
 #
-# The container layout is documented in rust/src/bytecode.rs, which
-# is the ground truth for the format.
+# The container layout is written by write_bytecode in compiler.omg
+# (and documented in the frozen rust/src/bytecode.rs).
 #
 # vm.omg does not use this reader. It has its own, which keeps opcodes
 # as integers so that its dispatch loop compares ints, not strings.
 
 # === Opcode constants =====================================================
 #
-# Mirror of `rust/src/bytecode.rs`. The same numbers appear in
-# compiler.omg (which writes them) and vm.omg (which dispatches on
-# them); `cargo test` fails if any of the copies disagrees.
+# The same numbers appear in compiler.omg (which writes them) and
+# vm.omg (which dispatches on them); the three tables must agree, and
+# tests/driver.sh fails when they do not.
 
 alloc OP_PUSH_INT       := 0
 alloc OP_PUSH_STR       := 1

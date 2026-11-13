@@ -5,19 +5,19 @@
 # OMG compiler written in OMG.
 #
 # This program reads an OMG source file, compiles it to .omgb bytecode, and
-# writes the result. Together with the Rust VM it forms the self-hosting
-# implementation:
+# writes the result. `omg` (src/omg.omg) imports this file as a library
+# and calls compile_file / compile_source directly; so do the two web
+# drivers in browser/. It compiles itself: `omg` is built by `omg`, and
+# compiling this file with the compiler compiled, or with the compiler
+# interpreted by vm.omg, gives the same bytes (tests/parity.sh).
 #
-#     Rust(compiler.omg)            -> compiler.omgb (bootstrap)
-#     compiler.omgb(compiler.omg)   -> compiler.omgb (fixed point)
+# The frozen Rust runtime in rust/ embeds a copy as compiler.omgb and
+# was, until it was frozen, required to produce identical bytecode with
+# its own Rust-written frontend. Comments below that say "matches the
+# Rust compiler" record that history.
 #
-# The Rust runtime ships compiler.omgb embedded; running `omg foo.omg`
-# invokes the embedded compiler to produce foo's bytecode, then runs it.
-# The native `omg` (src/omg.omg) imports this file as a
-# library and calls compile_file / compile_source directly.
-#
-# Restrictions that compiler.omg itself observes (so it stays inside the
-# subset of OMG it supports):
+# Restrictions that compiler.omg itself observes (so that the Rust
+# frontend can still compile it, and every older `omg` can build it):
 #   - no `try`/`except`
 #   - no nested procs / closures (top-level procs only)
 #   - no `import` (single file)
@@ -28,9 +28,9 @@
 
 # === Bytecode opcode table =================================================
 #
-# Mirror of `mod opcode` in rust/src/bytecode.rs, which is the ground
-# truth. `cargo test` fails if this table (or the copy in vm.omg or
-# bytecode.omg) disagrees with it.
+# The same table is in vm.omg and bytecode.omg, and the three must
+# agree. (It began as a mirror of `mod opcode` in the frozen
+# rust/src/bytecode.rs, whose `cargo test` still compares them.)
 
 alloc OP_PUSH_INT       := 0
 alloc OP_PUSH_STR       := 1
