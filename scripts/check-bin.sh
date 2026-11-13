@@ -39,7 +39,7 @@ check() {
 check omg     bin/SOURCES.sha256
 check omg.exe bin/SOURCES-windows.sha256
 
-for f in omg_rt.h omg_rt.js; do
+for f in omg_rt.h omg_rt.js x64/core.omg x64/float.omg x64/builtins.omg x64/linux.omg x64/windows.omg; do
     if ! cmp -s "src/runtime/$f" "bin/$f"; then
         echo "bin/$f differs from src/runtime/$f"
         stale=1
@@ -48,12 +48,9 @@ done
 
 if [ "$stale" != 0 ]; then
     echo
-    echo "Rebuild and commit the result. On Linux x86-64, with the MinGW-w64"
-    echo "cross compiler installed so that omg.exe is rebuilt too, and twice,"
-    echo "so that the committed binaries are the toolchain compiling itself:"
-    echo "  sudo apt install gcc-mingw-w64-x86-64"
-    echo "  cargo build --release --manifest-path rust/Cargo.toml"
-    echo "  scripts/build.sh && scripts/build.sh"
+    echo "Rebuild and commit the result, on Linux x86-64 (that builds omg.exe"
+    echo "too, and needs nothing installed):"
+    echo "  scripts/build.sh"
     echo "  git add bin"
     exit 1
 fi

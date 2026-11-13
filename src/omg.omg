@@ -890,6 +890,7 @@ proc usage() {
     emit "  omg --build <in.omg> [<out>]        Build a native executable"
     emit "      [--target <t>]                  for linux-x64 or windows-x64, or"
     emit "                                      through a C compiler with c"
+    emit "                                      (default here: " + default_target() + ")"
     emit "  omg --emit-c <in> <out.c>           Write the program as C source"
     emit "  omg --emit-js <in> <out.js>         Write the program as JavaScript"
     emit "                                      (<in> is a .omg or a .omgb)"

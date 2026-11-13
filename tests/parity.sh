@@ -145,5 +145,18 @@ if [ -s "$TMPDIR_TEST/self-before.c" ] && cmp -s "$TMPDIR_TEST/self-before.c" "$
     pass "self-rebuild is a fixed point (omg writes the same C for itself)"
 else
     fail "self-rebuild is not a fixed point" \
-         "bin/omg was built from older sources; run scripts/build.sh twice and commit"
+         "bin/omg was built from older sources; run scripts/build.sh and commit"
 fi
+
+# Where omg writes the executable itself there is a stronger statement:
+# rebuilding again gives the same file, byte for byte.
+case "$(omg_default_target)" in
+    linux-x64|windows-x64)
+        cp "$OMG_NATIVE" "$TMPDIR_TEST/omg-rebuilt-once"
+        "$REPO_ROOT/scripts/build.sh" >/dev/null 2>&1
+        if cmp -s "$OMG_NATIVE" "$TMPDIR_TEST/omg-rebuilt-once"; then
+            pass "a second rebuild is byte-identical"
+        else
+            fail "a second rebuild is byte-identical"
+        fi ;;
+esac

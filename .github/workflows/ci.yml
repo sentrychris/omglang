@@ -112,12 +112,14 @@ jobs:
           msg=$(tail -n 25 build.log | sed 's/%/%25/g' | awk '{printf "%s%%0A", $0}')
           echo "::error title=MSRV build::$msg"
 
-  # The native toolchain (OMG -> bytecode -> C -> machine code) needs
-  # only a C compiler, and is built and tested on all three systems.
-  # On Linux and Windows this is a *self-rebuild* from the binary
-  # checked into bin/ (omg, omg.exe); on macOS neither can
-  # run, so build.sh bootstraps from the Rust runtime instead. The
-  # Windows runner's C compiler is the MinGW-w64 GCC on its PATH.
+  # The native toolchain, built and tested on all three systems. On
+  # Linux and Windows it writes machine code itself (OMG -> bytecode ->
+  # x86-64) and this is a *self-rebuild* from the binary checked into
+  # bin/ (omg, omg.exe). On macOS neither can run and the back end does
+  # not cover it, so build.sh bootstraps from the Rust runtime and goes
+  # through C (OMG -> bytecode -> C -> cc), which keeps that route
+  # tested end to end. The suite also puts the conformance corpus
+  # through `--build --target c` wherever a C compiler is installed.
   native:
     name: Native toolchain (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
@@ -154,7 +156,7 @@ jobs:
         if: runner.os == 'Linux'
         run: scripts/check-bin.sh 2>&1 | tee check-bin.log
 
-      # The checked-in omg.exe is cross-compiled on Linux. This is the
+      # The checked-in omg.exe is written on Linux. This is the
       # only place it meets a real Windows before the steps below
       # replace it: it has to run a program, and build one that runs.
       - name: Checked-in omg.exe works
@@ -162,7 +164,6 @@ jobs:
         run: |
           set -o pipefail
           {
-            gcc --version | head -n 1
             bin/omg.exe --version
             bin/omg.exe tests/smoke/regressions.omg > checked-in.out 2>&1 || true
             diff tests/smoke/regressions.expected checked-in.out
@@ -179,10 +180,10 @@ jobs:
       - name: Build native toolchain
         run: scripts/build.sh 2>&1 | tee native-build.log
 
-      # A second pass always self-rebuilds: the binary from the first
-      # pass was produced by an older compiler (Linux, Windows) or by
-      # the Rust runtime (macOS); this one is the toolchain compiling
-      # itself.
+      # A second pass always self-rebuilds. On macOS the binary from
+      # the first pass was produced by the Rust runtime and this one is
+      # the toolchain compiling itself; on Linux it must simply come
+      # out the same again.
       - name: Self-rebuild native toolchain
         if: runner.os != 'Windows'
         run: scripts/build.sh 2>&1 | tee native-rebuild.log
@@ -212,8 +213,7 @@ jobs:
       #                  bytecode (Rust frontend vs native omg) + AOT
       #                  corpus parity (Rust runtime vs `omg --build`
       #                  vs `omg <file.omg>`) + native self-rebuild,
-      #                  after which omg must write the same C for
-      #                  itself as it did before
+      #                  which must write the same binary again
       - name: Run end-to-end test suite
         run: tests/run.sh 2>&1 | tee tests.log
 
@@ -265,3 +265,54 @@ jobs:
             msg=$(tail -n 60 "$last" | sed 's/%/%25/g' | awk '{printf "%s%%0A", $0}')
             echo "::error title=${{ matrix.os }} $last::$msg"
           fi
+
+  # The point of the x86-64 back end: on Linux and Windows the
+  # toolchain needs nothing else. These two jobs run where there is no
+  # C compiler and no Rust: the checked-in binary rebuilds itself, the
+  # rebuild is byte-identical when repeated, and the conformance corpus
+  # passes interpreted and built to machine code.
+  standalone-linux:
+    name: Standalone (Linux, nothing installed)
+    runs-on: ubuntu-latest
+    # A bare image: no gcc, no cargo, no node, not even git.
+    container: ubuntu:24.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Rebuild and test with nothing but omg
+        run: OMG_STANDALONE_STRICT=1 tests/standalone.sh 2>&1 | tee standalone.log
+
+      - name: Summarise failure
+        if: failure()
+        run: |
+          {
+            echo "### standalone (Linux): tail of standalone.log"
+            echo '```'
+            tail -n 60 standalone.log
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  standalone-windows:
+    name: Standalone (Windows, nothing on PATH)
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      # The hosted runner has compilers installed; a PATH of only Git
+      # Bash's own tools takes them out of reach.
+      - name: Rebuild and test with nothing but omg
+        run: |
+          export PATH="/usr/bin:/bin"
+          OMG_STANDALONE_STRICT=1 tests/standalone.sh 2>&1 | tee standalone.log
+
+      - name: Summarise failure
+        if: failure()
+        run: |
+          {
+            echo "### standalone (Windows): tail of standalone.log"
+            echo '```'
+            tail -n 60 standalone.log
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"

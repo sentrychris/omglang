@@ -122,6 +122,60 @@ esac
 is_executable "$TMPDIR_TEST/fixture" && pass "--build default output path" || \
     fail "--build default output path"
 
+# === omg --build --target ==============================================
+section "Driver: omg --build --target"
+
+default_target=$(omg_default_target)
+case "$default_target" in
+    linux-x64|windows-x64|c) pass "--help names the default target ($default_target)" ;;
+    *) fail "--help names the default target" "got: '$default_target'" ;;
+esac
+
+# Machine code for either system, from whichever system this is.
+"$OMG_NATIVE" --build "$TMPDIR_TEST/fixture.omg" "$TMPDIR_TEST/fixture-lin" --target linux-x64 >/dev/null 2>&1
+assert_eq "--target linux-x64 writes an ELF file" "7f454c46" "$(file_magic "$TMPDIR_TEST/fixture-lin")"
+"$OMG_NATIVE" --build "$TMPDIR_TEST/fixture.omg" "$TMPDIR_TEST/fixture-win" --target windows-x64 >/dev/null 2>&1
+case "$(file_magic "$TMPDIR_TEST/fixture-win.exe")" in
+    4d5a*) pass "--target windows-x64 writes a PE file and adds .exe" ;;
+    *) fail "--target windows-x64 writes a PE file and adds .exe" ;;
+esac
+
+# The same input gives the same bytes, wherever --target is written.
+"$OMG_NATIVE" --build --target linux-x64 "$TMPDIR_TEST/fixture.omg" "$TMPDIR_TEST/fixture-lin2" >/dev/null 2>&1
+if [ -s "$TMPDIR_TEST/fixture-lin" ] && cmp -s "$TMPDIR_TEST/fixture-lin" "$TMPDIR_TEST/fixture-lin2"; then
+    pass "--build is reproducible (byte-identical across runs)"
+else
+    fail "--build is NOT reproducible"
+fi
+
+# Nothing else is started: the build works with an empty PATH.
+if [ "$default_target" != c ] && [ -z "${OMG_NATIVE_WRAPPED:-}" ]; then
+    if (PATH=/nonexistent "$OMG_NATIVE" --build "$TMPDIR_TEST/fixture.omg" "$TMPDIR_TEST/fixture-nopath" >/dev/null 2>&1) \
+        && is_executable "$TMPDIR_TEST/fixture-nopath"; then
+        pass "--build needs no other program (empty PATH)"
+    else
+        fail "--build needs no other program (empty PATH)"
+    fi
+fi
+
+# The route through a C compiler is still there when asked for.
+if [ -n "$(omg_c_compiler)" ]; then
+    "$OMG_NATIVE" --build "$TMPDIR_TEST/fixture.omg" "$TMPDIR_TEST/fixture-viac" --target c >/dev/null 2>&1
+    viac_out=$("$TMPDIR_TEST/fixture-viac" p q 2>/dev/null)
+    assert_eq "--target c builds through the C compiler" \
+        "len: 3
+square(7) = 49" \
+        "$(printf '%s\n' "$viac_out" | sed 1d)"
+else
+    echo "  (--target c skipped: no C compiler installed)"
+fi
+
+bad_target=$("$OMG_NATIVE" --build "$TMPDIR_TEST/fixture.omg" "$TMPDIR_TEST/fixture-bad" --target sparc 2>&1) && bad_target_rc=0 || bad_target_rc=$?
+assert_contains "unknown --target is named in the error" "unknown target 'sparc'" "$bad_target"
+assert_eq "unknown --target exits 1" "1" "$bad_target_rc"
+assert_exit_code "--target with no name exits 1" 1 \
+    "$OMG_NATIVE" --build "$TMPDIR_TEST/fixture.omg" --target
+
 # === Mode 5: --help / no args ==========================================
 section "Driver: --help / unknown args"
 
@@ -163,12 +217,14 @@ assert_stdout "omg runs .omgb in-process" "$expected_vm" \
 # The generated C should compile cleanly with the system C compiler,
 # using the same link flags as `omg --build` (on Windows: gcc or clang,
 # linked statically with Winsock).
-emit_cc=cc
+emit_cc=$(omg_c_compiler)
 emit_link="-lm"
 if [ -n "$OMG_WINDOWS" ]; then
-    command -v gcc >/dev/null 2>&1 && emit_cc=gcc
     emit_link="-static -lm -lws2_32"
 fi
+if [ -z "$emit_cc" ]; then
+    echo "  (compiling the --emit-c output skipped: no C compiler installed)"
+else
 # shellcheck disable=SC2086
 if "$emit_cc" -O2 -w "$TMPDIR_TEST/fixture-direct.c" -o "$TMPDIR_TEST/fixture-direct" $emit_link 2>/dev/null; then
     pass "--emit-c output compiles with cc"
@@ -186,6 +242,7 @@ assert_eq "binary built from --emit-c output runs" \
     "len: 2
 square(7) = 49" \
     "$(printf '%s\n' "$direct_out" | sed 1d)"
+fi
 
 # --emit-c and --emit-js also take source directly, and give the same
 # output as going through a .omgb first (only the first line, which

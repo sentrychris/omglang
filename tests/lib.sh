@@ -52,6 +52,32 @@ if [ -n "$OMG_WINDOWS" ]; then
     [ -f "$OMG_RUST.exe" ] && OMG_RUST="$OMG_RUST.exe"
 fi
 
+# What `omg --build` writes when no --target is given: linux-x64 or
+# windows-x64 where omg writes machine code itself, c where it goes
+# through a C compiler (macOS, and any omg that was itself built
+# through C). Its help text says which.
+omg_default_target() {
+    "$OMG_NATIVE" --help 2>/dev/null | sed -n 's/.*(default here: \(.*\)).*/\1/p' | tr -d '\r'
+}
+
+# The C compiler `omg --build --target c` would find, or nothing.
+omg_c_compiler() {
+    local c
+    if [ -n "$OMG_WINDOWS" ]; then
+        for c in gcc clang cc; do
+            command -v "$c" >/dev/null 2>&1 && { echo "$c"; return; }
+        done
+    else
+        command -v cc >/dev/null 2>&1 && echo cc
+    fi
+}
+
+# The first four bytes of a file, in hex: 7f454c46 for ELF, 4d5a.... for
+# a Windows executable.
+file_magic() {
+    od -An -tx1 -N4 "$1" 2>/dev/null | tr -d ' \n'
+}
+
 # `is_executable <path>`: true if <path>, or <path>.exe, can be run.
 is_executable() {
     [ -x "$1" ] || [ -x "$1.exe" ]

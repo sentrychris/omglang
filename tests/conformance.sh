@@ -3,6 +3,9 @@
 #
 #   - the native interpreter   bin/omg prog.omg
 #   - ahead-of-time compiled   bin/omg --build prog.omg out
+#   - the same through C       bin/omg --build prog.omg out --target c
+#                              (where --build does not already mean
+#                              that, and a C compiler is installed)
 #   - compiled to JavaScript   bin/omg --emit-js prog.omg out.js, run under node
 #
 # tests/smoke.sh runs the same corpus on the backends that need nothing
@@ -11,7 +14,7 @@
 # every way of running an OMG program executes every program in it.
 #
 # The last section holds the few checks that only make sense for a
-# native executable, such as running out of C stack.
+# native executable, such as running out of machine stack.
 
 set -u
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
@@ -38,6 +41,14 @@ conf_run() {
             else
                 CONF_RC=9
             fi ;;
+        aot_c)
+            rm -f "$CONF_DIR/prog"
+            if "$OMG_NATIVE" --build "$f" "$CONF_DIR/prog" --target c >"$CONF_DIR/err" 2>&1; then
+                "$CONF_DIR/prog" >"$CONF_DIR/out" 2>"$CONF_DIR/err"
+                CONF_RC=$?
+            else
+                CONF_RC=9
+            fi ;;
         js)
             if "$OMG_NATIVE" --emit-js "$f" "$CONF_DIR/p.js" >"$CONF_DIR/err" 2>&1; then
                 node "$CONF_DIR/p.js" >"$CONF_DIR/out" 2>"$CONF_DIR/err"
@@ -54,6 +65,17 @@ conformance_backend native "native interpreter"
 section "Conformance: AOT"
 conformance_backend aot "AOT"
 
+# The C back end is the route to every system the x86-64 one does not
+# cover, and a second opinion on it where it does.
+section "Conformance: AOT through C"
+if [ "$(omg_default_target)" = c ]; then
+    echo "  (same as the section above: --build goes through C here)"
+elif [ -z "$(omg_c_compiler)" ]; then
+    echo "  (skipped: no C compiler installed)"
+else
+    conformance_backend aot_c "AOT through C"
+fi
+
 section "Conformance: native JS back end"
 if command -v node >/dev/null 2>&1; then
     conformance_backend js "omg --emit-js"
@@ -64,7 +86,7 @@ fi
 # === Native-only behaviour ============================================
 section "Conformance: native stack limits"
 
-# Recursion deep enough to exhaust the C stack used to kill an AOT
+# Recursion deep enough to exhaust the machine stack used to kill an AOT
 # binary with a segfault and no message. It is now an ordinary
 # RuntimeError: reported with exit code 1 when nothing catches it...
 cat > "$CONF_DIR/deep.omg" <<'OMG'
