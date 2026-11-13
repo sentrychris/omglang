@@ -11,10 +11,13 @@
 #     ...
 #     h264.release(pic)
 #
-# What it decodes: progressive 8-bit 4:2:0 streams of the Baseline
-# profile: I and P slices, CAVLC, any number of reference frames and
-# slices per picture, the in-loop deblocking filter. Anything else is
-# refused with an error that says what was met.
+# What it decodes: progressive 8-bit 4:2:0 streams of the Baseline, Main
+# and High profiles: I, P and B slices, CAVLC and CABAC, any number of
+# reference frames and slices per picture, weighted prediction, the 8x8
+# transform and 8x8 intra prediction, scaling lists, the in-loop
+# deblocking filter. Anything else (interlaced video, more bits a
+# sample, 4:2:2 and 4:4:4, slice groups) is refused with an error that
+# says what was met.
 #
 # A picture is three flat lists of numbers, one per plane, in pic.y,
 # pic.u and pic.v; the sizes are in info().
@@ -1040,6 +1043,7 @@ alloc mb_cbp := []             # which of its blocks have a residual
 alloc mb_cmode := []           # intra chroma prediction mode
 alloc mb_dc := []              # has a DC block: 1 luma, 2 Cb, 4 Cr
 alloc mb_t8 := []              # 1: its luma is transformed in 8x8 blocks
+alloc mb_whole := []           # 1: predicted in one piece, with one motion
 # One entry per 4x4 luma block of the picture.
 alloc nz := []                 # coefficients coded in it
 alloc ipm := []                # intra 4x4 prediction mode
@@ -1202,6 +1206,7 @@ proc activate_sps(s) {
         mb_cmode := list_repeat(0, mb_count)
         mb_dc := list_repeat(0, mb_count)
         mb_t8 := list_repeat(0, mb_count)
+        mb_whole := list_repeat(0, mb_count)
         mvdx := list_repeat(0, mb_count * 16)
         mvdy := list_repeat(0, mb_count * 16)
         mvdx1 := list_repeat(0, mb_count * 16)
@@ -2021,6 +2026,7 @@ proc mb_setup(addr) {
     mb_skip[addr] := 0
     mb_dc[addr] := 0
     mb_t8[addr] := 0
+    mb_whole[addr] := 0
     b4 := mb_y * 4 * s4 + mb_x * 4
     c2 := mb_y * 2 * s2 + mb_x * 2
     py := mb_y * 16 * ystride + mb_x * 16
@@ -3799,7 +3805,20 @@ proc mc_luma(ref, d, dp, ds, x, y, w, h, mx, my) {
     alloc s := ref
     alloc ss := ystride
     alloc so := iy * ystride + ix
-    if ix < 2 or iy < 2 or ix + w + 3 > ystride or iy + h + 3 > pic_h {
+    # the six-tap filter reaches two samples before and three after
+    alloc bx := 0
+    alloc ax := 0
+    if fx != 0 {
+        bx := 2
+        ax := 3
+    }
+    alloc bfy := 0
+    alloc afy := 0
+    if fy != 0 {
+        bfy := 2
+        afy := 3
+    }
+    if ix < bx or iy < bfy or ix + w + ax > ystride or iy + h + afy > pic_h {
         mc_edge_fill(ref, ix - 2, iy - 2, w + 5, h + 5, ystride, ystride, pic_h)
         s := mc_edge
         ss := 32
@@ -3873,7 +3892,15 @@ proc mc_chroma(ref, d, dp, ds, x, y, w, h, mx, my) {
     alloc ss := cstride
     alloc so := iy * cstride + ix
     alloc ch := pic_h >> 1
-    if ix < 0 or iy < 0 or ix + w + 1 > cstride or iy + h + 1 > ch {
+    alloc ax := 0
+    if fx != 0 {
+        ax := 1
+    }
+    alloc ay := 0
+    if fy != 0 {
+        ay := 1
+    }
+    if ix < 0 or iy < 0 or ix + w + ax > cstride or iy + h + ay > ch {
         mc_edge_fill(ref, ix, iy, w + 1, h + 1, cstride, cstride, ch)
         s := mc_edge
         ss := 32
@@ -3881,6 +3908,29 @@ proc mc_chroma(ref, d, dp, ds, x, y, w, h, mx, my) {
     }
     if fx == 0 and fy == 0 {
         mc_copy(s, so, ss, d, dp, ds, w, h)
+        return false
+    }
+    if fx == 0 or fy == 0 {
+        # between two samples only
+        alloc step := 1
+        alloc f := fx
+        if fx == 0 {
+            step := ss
+            f := fy
+        }
+        alloc g := 8 - f
+        alloc j := 0
+        loop j < h {
+            alloc i := 0
+            loop i < w {
+                alloc k := so + i
+                d[dp + i] := (g * s[k] + f * s[k + step] + 4) >> 3
+                i := i + 1
+            }
+            so := so + ss
+            dp := dp + ds
+            j := j + 1
+        }
         return false
     }
     alloc ca := (8 - fx) * (8 - fy)
@@ -3919,9 +3969,10 @@ proc median3(a, b, c) {
 
 # Predict the motion vector of the partition whose first 4x4 block is
 # (bx, by) of the macroblock and which is w4 blocks wide, for reference
-# `ref`. dir: 0 the median rule; 1, 2, 3 prefer the neighbour above, to
-# the left, above right when it uses the same reference (the rules for
-# 16x8 and 8x16 partitions). The result is left in pmx and pmy.
+# `ref` of reference list `list`. dir: 0 the median rule; 1, 2, 3 prefer
+# the neighbour above, to the left, above right when it uses the same
+# reference (the rules for 16x8 and 8x16 partitions). The result is left
+# in pmx and pmy.
 proc mv_pred(bx, by, w4, ref, dir, list) {
     alloc rr := refi
     alloc xx := mvx
@@ -4287,6 +4338,9 @@ proc pred_piece(bx, by, w4, h4) {
     alloc cw := w >> 1
     alloc ch := h >> 1
     alloc co := cy * cstride + cx
+    if w4 + h4 == 8 {
+        mb_whole[mb_addr] := 1
+    }
     if r1 < 0 {
         if r0 < 0 {
             fail("damaged data (a block with no reference)")
@@ -5551,12 +5605,6 @@ proc nz_any8(i) {
     return nz[base] != 0 or nz[base + 1] != 0 or nz[base + s4] != 0 or nz[base + s4 + 1] != 0
 }
 
-proc mv_far(ax, ay, bx, by) {
-    alloc dx := ax - bx
-    alloc dy := ay - by
-    return dx >= 4 or dx <= -4 or dy >= 4 or dy <= -4
-}
-
 # The strength of the edge between two blocks without coefficients, in
 # a picture that has blocks predicted from two pictures: 1 when they
 # are predicted from different pictures or with motion a sample apart.
@@ -5565,24 +5613,45 @@ proc bs_two(p, q) {
     alloc a1 := refid1[p]
     alloc b0 := refid[q]
     alloc b1 := refid1[q]
-    alloc straight := a0 == b0 and a1 == b1
-    alloc crossed := a0 == b1 and a1 == b0
-    if straight == false and crossed == false {
-        return 1
-    }
-    alloc far_s := mv_far(mvx[p], mvy[p], mvx[q], mvy[q]) or mv_far(mvx1[p], mvy1[p], mvx1[q], mvy1[q])
-    alloc far_c := mv_far(mvx[p], mvy[p], mvx1[q], mvy1[q]) or mv_far(mvx1[p], mvy1[p], mvx[q], mvy[q])
-    if a0 != a1 {
-        if straight {
+    alloc far_s := true
+    alloc far_c := true
+    if a0 == b0 and a1 == b1 {
+        alloc d := mvx[p] - mvx[q]
+        if d < 4 and d > -4 {
+            d := mvy[p] - mvy[q]
+            if d < 4 and d > -4 {
+                d := mvx1[p] - mvx1[q]
+                if d < 4 and d > -4 {
+                    d := mvy1[p] - mvy1[q]
+                    far_s := d >= 4 or d <= -4
+                }
+            }
+        }
+        if a0 != a1 {
             if far_s { return 1 }
             return 0
         }
-        if far_c { return 1 }
-        return 0
-    }
-    if far_s and far_c {
+        if far_s == false {
+            return 0
+        }
+    } elif a0 != b1 or a1 != b0 {
         return 1
     }
+    # the same two pictures, the other way round
+    if a0 == b1 and a1 == b0 {
+        alloc d := mvx[p] - mvx1[q]
+        if d < 4 and d > -4 {
+            d := mvy[p] - mvy1[q]
+            if d < 4 and d > -4 {
+                d := mvx1[p] - mvx[q]
+                if d < 4 and d > -4 {
+                    d := mvy1[p] - mvy[q]
+                    far_c := d >= 4 or d <= -4
+                }
+            }
+        }
+    }
+    if far_c { return 1 }
     return 0
 }
 
@@ -5603,6 +5672,8 @@ proc deblock_mb(addr) {
     alloc co := my * 8 * cstride + mx * 8
     alloc b := bsv
     alloc t8 := mb_t8[addr] == 1
+    # one motion and no luma residual: nothing to filter inside it
+    alloc calm := intra == false and mb_whole[addr] == 1 and (mb_cbp[addr] & 15) == 0
     alloc two := cur_pic.used1
     alloc dir := 0
     loop dir < 2 {
@@ -5635,6 +5706,8 @@ proc deblock_mb(addr) {
                 }
             } elif t8 and (e & 1) == 1 {
                 # no block ends here
+                go := false
+            } elif calm {
                 go := false
             }
             if go {
@@ -6014,6 +6087,38 @@ proc decode_stream(data) {
         i := i + 1
     }
     return out
+}
+
+# Is this sample a picture that no other picture is built from? Such a
+# sample can be left undecoded without harm to the ones after it.
+proc droppable(data) {
+    alloc n := length(data)
+    alloc pos := 0
+    alloc slices := 0
+    loop pos + nal_len_size < n {
+        alloc size := 0
+        alloc k := 0
+        loop k < nal_len_size {
+            size := (size << 8) | data[pos + k]
+            k := k + 1
+        }
+        pos := pos + nal_len_size
+        if size <= 0 or pos + size > n {
+            break
+        }
+        alloc nt := data[pos] & 31
+        if nt == 5 or nt == 7 or nt == 8 {
+            return false
+        }
+        if nt == 1 {
+            if ((data[pos] >> 5) & 3) != 0 {
+                return false
+            }
+            slices := slices + 1
+        }
+        pos := pos + size
+    }
+    return slices > 0
 }
 
 proc release(pic) {
