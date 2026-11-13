@@ -8,10 +8,9 @@
 #                              that, and a C compiler is installed)
 #   - compiled to JavaScript   bin/omg --emit-js prog.omg out.js, run under node
 #
-# tests/smoke.sh runs the same corpus on the backends that need nothing
-# but the Rust runtime (the Rust VM through both frontends, the
-# OMG-written VM, and the JS transpiler), so between the two scripts
-# every way of running an OMG program executes every program in it.
+# Every program in the corpus states what it must print, so each back
+# end is judged against the same answer and, through it, against the
+# others.
 #
 # The last section holds the few checks that only make sense for a
 # native executable, such as running out of machine stack.
@@ -147,5 +146,3 @@ emit depth(100000)
 OMG
 assert_stdout "native interpreter: 100,000-deep recursion" "100000" \
     "$OMG_NATIVE" "$CONF_DIR/deep_ok.omg"
-assert_stdout "Rust VM: 100,000-deep recursion" "100000" \
-    "$OMG_RUST" "$CONF_DIR/deep_ok.omg"

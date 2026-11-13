@@ -1,0 +1,10 @@
+true
+false
+caught: RuntimeError: real error
+i after break: 2
+caught: RuntimeError: after break
+0
+caught: RuntimeError: after tail call
+14
+caught: RuntimeError: after nested
+all clean

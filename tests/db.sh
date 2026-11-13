@@ -3,7 +3,7 @@
 #   * Round-trip: create / insert / select via the OMG API
 #   * Multi-page: enough rows to force a second-leaf allocation
 #   * Persistence: changes survive close + reopen
-#   * Cross-backend parity (Rust runtime vs native interpreted vs AOT)
+#   * Cross-backend parity (interpreted vs built)
 #
 # These are storage-layer tests; SQL parsing arrives in Day 3.
 
@@ -40,9 +40,6 @@ EOF
 expected="n=2
 1:1/Alice/30
 2:2/Bob/25"
-
-actual=$("$OMG_RUST" "$REPO_ROOT/tools/db/_test_basic.omg" "$TMPDIR_TEST/basic_rust.db" 2>&1)
-assert_eq "API round-trip: Rust runtime" "$expected" "$actual"
 
 actual=$("$OMG_NATIVE" "$REPO_ROOT/tools/db/_test_basic.omg" "$TMPDIR_TEST/basic_native.db" 2>&1)
 assert_eq "API round-trip: native interpreted" "$expected" "$actual"
@@ -81,21 +78,26 @@ EOF
 
 DB="$TMPDIR_TEST/persist.db"
 rm -f "$DB"
-"$OMG_RUST" "$REPO_ROOT/tools/db/_test_write.omg" "$DB"
-actual=$("$OMG_RUST" "$REPO_ROOT/tools/db/_test_read.omg" "$DB")
-assert_eq "Rust → Rust round trip across processes" "alpha=1
+"$OMG_NATIVE" "$REPO_ROOT/tools/db/_test_write.omg" "$DB"
+actual=$("$OMG_NATIVE" "$REPO_ROOT/tools/db/_test_read.omg" "$DB")
+assert_eq "round trip across processes (interpreted)" "alpha=1
 beta=2" "$actual"
 
-rm -f "$DB"
-"$OMG_RUST" "$REPO_ROOT/tools/db/_test_write.omg" "$DB"
-actual=$("$OMG_NATIVE" "$REPO_ROOT/tools/db/_test_read.omg" "$DB")
-assert_eq "Rust write → native read (cross-backend persistence)" "alpha=1
-beta=2" "$actual"
+# The file format must not depend on how the program that wrote it was
+# run: one side interpreted, the other a built executable.
+"$OMG_NATIVE" --build "$REPO_ROOT/tools/db/_test_write.omg" "$TMPDIR_TEST/db_write_aot" >/dev/null
+"$OMG_NATIVE" --build "$REPO_ROOT/tools/db/_test_read.omg" "$TMPDIR_TEST/db_read_aot" >/dev/null
 
 rm -f "$DB"
 "$OMG_NATIVE" "$REPO_ROOT/tools/db/_test_write.omg" "$DB"
-actual=$("$OMG_RUST" "$REPO_ROOT/tools/db/_test_read.omg" "$DB")
-assert_eq "Native write → Rust read (cross-backend persistence)" "alpha=1
+actual=$("$TMPDIR_TEST/db_read_aot" "$DB")
+assert_eq "interpreted write → built read (cross-backend persistence)" "alpha=1
+beta=2" "$actual"
+
+rm -f "$DB"
+"$TMPDIR_TEST/db_write_aot" "$DB"
+actual=$("$OMG_NATIVE" "$REPO_ROOT/tools/db/_test_read.omg" "$DB")
+assert_eq "built write → interpreted read (cross-backend persistence)" "alpha=1
 beta=2" "$actual"
 
 rm -f "$REPO_ROOT/tools/db/_test_write.omg" \
@@ -124,11 +126,11 @@ exec.close_db(db)
 EOF
 DB="$TMPDIR_TEST/bulk.db"
 rm -f "$DB"
-actual=$("$OMG_RUST" "$REPO_ROOT/tools/db/_test_bulk.omg" "$DB" 2>&1)
+actual=$("$OMG_NATIVE" "$REPO_ROOT/tools/db/_test_bulk.omg" "$DB" 2>&1)
 expected="count=400
 first=1
 last=400"
-assert_eq "400 rows round-trip (Rust)" "$expected" "$actual"
+assert_eq "400 rows round-trip" "$expected" "$actual"
 
 # File should have at least 3 pages (meta + 2 leaf).
 # `wc -c` rather than `stat -c%s`: stat's flags differ between GNU and BSD.
@@ -172,7 +174,7 @@ rm -f "$DB"
 # OMG dict_keys() iteration order isn't stable across implementations
 # (despite the README claim), so sort the per-table lines before
 # comparing. The header line stays put.
-raw=$("$OMG_RUST" "$REPO_ROOT/tools/db/_test_catalog.omg" "$DB" 2>&1)
+raw=$("$OMG_NATIVE" "$REPO_ROOT/tools/db/_test_catalog.omg" "$DB" 2>&1)
 sorted=$(printf '%s\n' "$raw" | { read -r head; printf '%s\n' "$head"; sort; })
 expected="tables=2
 posts:id,title,body
@@ -199,8 +201,8 @@ exec.close_db(db)
 EOF
 DB="$TMPDIR_TEST/dup.db"
 rm -f "$DB"
-actual=$("$OMG_RUST" "$REPO_ROOT/tools/db/_test_dup.omg" "$DB" 2>&1)
-assert_eq "duplicate table name rejected (Rust)" "caught" "$actual"
+actual=$("$OMG_NATIVE" "$REPO_ROOT/tools/db/_test_dup.omg" "$DB" 2>&1)
+assert_eq "duplicate table name rejected" "caught" "$actual"
 
 cat > "$REPO_ROOT/tools/db/_test_missing.omg" <<EOF
 ;;;omg
@@ -216,8 +218,8 @@ exec.close_db(db)
 EOF
 DB="$TMPDIR_TEST/missing.db"
 rm -f "$DB"
-actual=$("$OMG_RUST" "$REPO_ROOT/tools/db/_test_missing.omg" "$DB" 2>&1)
-assert_eq "missing table rejected (Rust)" "caught" "$actual"
+actual=$("$OMG_NATIVE" "$REPO_ROOT/tools/db/_test_missing.omg" "$DB" 2>&1)
+assert_eq "missing table rejected" "caught" "$actual"
 
 rm -f "$REPO_ROOT/tools/db/_test_dup.omg" \
       "$REPO_ROOT/tools/db/_test_missing.omg"
@@ -247,7 +249,7 @@ insert
 select
 delete
 drop_table"
-actual=$("$OMG_RUST" "$REPO_ROOT/tools/db/_test_parse.omg" 2>&1)
+actual=$("$OMG_NATIVE" "$REPO_ROOT/tools/db/_test_parse.omg" 2>&1)
 assert_eq "parse_all: 5 statement kinds" "$expected" "$actual"
 rm -f "$REPO_ROOT/tools/db/_test_parse.omg"
 
@@ -262,7 +264,7 @@ emit stmts[0].values[0]
 EOF
 # Bash heredoc swallows one \, so \\\\n in the heredoc -> \\n in the
 # OMG source -> \n at lex time -> a single newline in the value.
-actual=$("$OMG_RUST" "$REPO_ROOT/tools/db/_test_escape.omg" 2>&1)
+actual=$("$OMG_NATIVE" "$REPO_ROOT/tools/db/_test_escape.omg" 2>&1)
 assert_eq "string-escape \\\\n becomes newline" "3
 a
 b" "$actual"
@@ -275,7 +277,7 @@ DB="$TMPDIR_TEST/sql.db"
 rm -f "$DB"
 
 # Multi-statement batch: create + insert + select + filter + sort.
-actual=$("$OMG_RUST" tools/db/omgdb.omg "$DB" -e "
+actual=$("$OMG_NATIVE" tools/db/omgdb.omg "$DB" -e "
 CREATE TABLE users (id INT, name TEXT, age INT);
 INSERT INTO users VALUES (1, 'Alice', 30);
 INSERT INTO users VALUES (2, 'Bob', 25);
@@ -290,10 +292,10 @@ name    | age
 'Alice' | 30
 'Carol' | 42
 (2 rows)"
-assert_eq "CREATE + INSERT + filtered SELECT (Rust)" "$expected" "$actual"
+assert_eq "CREATE + INSERT + filtered SELECT" "$expected" "$actual"
 
 # DELETE then SELECT should drop the matching rows.
-actual=$("$OMG_RUST" tools/db/omgdb.omg "$DB" -e "
+actual=$("$OMG_NATIVE" tools/db/omgdb.omg "$DB" -e "
 DELETE FROM users WHERE id = 2;
 SELECT * FROM users ORDER BY id;" 2>&1)
 expected="OK (1 row deleted)
@@ -302,14 +304,14 @@ id | name    | age
 1  | 'Alice' | 30
 3  | 'Carol' | 42
 (2 rows)"
-assert_eq "DELETE WHERE then SELECT (Rust)" "$expected" "$actual"
+assert_eq "DELETE WHERE then SELECT" "$expected" "$actual"
 
 # DELETE matching nothing reports 0 deletes.
-actual=$("$OMG_RUST" tools/db/omgdb.omg "$DB" -e "DELETE FROM users WHERE id = 999;" 2>&1)
+actual=$("$OMG_NATIVE" tools/db/omgdb.omg "$DB" -e "DELETE FROM users WHERE id = 999;" 2>&1)
 assert_eq "DELETE matching nothing → 0" "OK (0 rows deleted)" "$actual"
 
 # DROP TABLE removes from catalog; subsequent SELECT errors.
-actual=$("$OMG_RUST" tools/db/omgdb.omg "$DB" -e "DROP TABLE users; SELECT * FROM users;" 2>&1)
+actual=$("$OMG_NATIVE" tools/db/omgdb.omg "$DB" -e "DROP TABLE users; SELECT * FROM users;" 2>&1)
 assert_contains "DROP then SELECT errors with 'no such table'" \
     "no such table: users" "$actual"
 
@@ -320,7 +322,7 @@ section "SQL: stdin pipeline (omgdb db -)"
 
 DB="$TMPDIR_TEST/stdin.db"
 rm -f "$DB"
-actual=$(printf "CREATE TABLE k (n INT, s TEXT);\nINSERT INTO k VALUES (1, 'one');\nINSERT INTO k VALUES (2, 'two');\nSELECT * FROM k ORDER BY s;" | "$OMG_RUST" tools/db/omgdb.omg "$DB" - 2>&1)
+actual=$(printf "CREATE TABLE k (n INT, s TEXT);\nINSERT INTO k VALUES (1, 'one');\nINSERT INTO k VALUES (2, 'two');\nSELECT * FROM k ORDER BY s;" | "$OMG_NATIVE" tools/db/omgdb.omg "$DB" - 2>&1)
 expected="OK
 OK (rowid=1)
 OK (rowid=2)
@@ -333,12 +335,11 @@ assert_eq "stdin pipeline: schema + data + ordered select" "$expected" "$actual"
 rm -f "$DB"
 
 # === SQL: native + AOT parity =============================================
-section "SQL: native + AOT parity vs Rust"
+section "SQL: interpreted and built agree"
 
-DB_RUST="$TMPDIR_TEST/parity_rust.db"
 DB_NATIVE="$TMPDIR_TEST/parity_native.db"
 DB_AOT="$TMPDIR_TEST/parity_aot.db"
-rm -f "$DB_RUST" "$DB_NATIVE" "$DB_AOT"
+rm -f "$DB_NATIVE" "$DB_AOT"
 SQL="
 CREATE TABLE t (id INT, label TEXT, score INT);
 INSERT INTO t VALUES (1, 'a', 10);
@@ -348,10 +349,9 @@ SELECT * FROM t WHERE score > 10 ORDER BY label;
 DELETE FROM t WHERE score = 20;
 SELECT * FROM t ORDER BY id;"
 
-rust_out=$("$OMG_RUST"   tools/db/omgdb.omg "$DB_RUST"   -e "$SQL" 2>&1)
 native_out=$("$OMG_NATIVE" tools/db/omgdb.omg "$DB_NATIVE" -e "$SQL" 2>&1)
 "$OMG_NATIVE" --build tools/db/omgdb.omg "$TMPDIR_TEST/omgdb_aot" >/dev/null
 aot_out=$("$TMPDIR_TEST/omgdb_aot" "$DB_AOT" -e "$SQL" 2>&1)
 
-assert_eq "SQL output: Rust == native interpreted" "$rust_out" "$native_out"
-assert_eq "SQL output: Rust == AOT"                 "$rust_out" "$aot_out"
+assert_contains "SQL output: the batch ran" "(2 rows)" "$native_out"
+assert_eq "SQL output: interpreted == built" "$native_out" "$aot_out"

@@ -10,7 +10,7 @@
 # Exit codes:
 #   0  all tests passed
 #   1  one or more tests failed
-#   2  prerequisite missing (native toolchain or Rust runtime)
+#   2  prerequisite missing (the native toolchain)
 
 set -u
 cd "$(dirname "$0")/.."
@@ -21,8 +21,10 @@ SUITES=(
     builtins
     driver
     repl
+    syntax
     regression
     conformance
+    tools
     db
     parity
 )

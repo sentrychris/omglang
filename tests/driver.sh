@@ -73,13 +73,6 @@ else
     fail "--compile is NOT reproducible"
 fi
 
-# native --compile output matches Rust frontend's output.
-"$OMG_RUST" --compile "$TMPDIR_TEST/fixture.omg" "$TMPDIR_TEST/fixture-rust.omgb" >/dev/null
-if cmp -s "$TMPDIR_TEST/fixture-c1.omgb" "$TMPDIR_TEST/fixture-rust.omgb"; then
-    pass "--compile byte-identical to Rust frontend"
-else
-    fail "--compile differs from Rust frontend"
-fi
 
 # Bad usage: missing args → exit 1.
 assert_exit_code "--compile with no args → exit 1" 1 \
@@ -282,8 +275,9 @@ dis_src=$("$OMG_NATIVE" --disasm "$TMPDIR_TEST/fixture.omg")
 dis_bc=$("$OMG_NATIVE" --disasm "$TMPDIR_TEST/fixture-direct.omgb")
 assert_eq "--disasm of .omgb == --disasm of .omg" "$dis_src" "$dis_bc"
 
-# And both match the Rust runtime's disassembler line for line, including
-# the operands that are easy to get wrong (false, 0, floats).
+# The exact listing, including the operands that are easy to get wrong
+# (false, 0, floats). This is the format the Rust runtime's
+# disassembler set; the two matched line for line when it was frozen.
 cat > "$TMPDIR_TEST/disasm.omg" <<'EOF'
 ;;;omg
 proc half(x) { return x / 2.0 }
@@ -292,7 +286,46 @@ alloc on := true
 emit half(0)
 EOF
 "$OMG_NATIVE" --compile "$TMPDIR_TEST/disasm.omg" "$TMPDIR_TEST/disasm.omgb" >/dev/null
-assert_eq "--disasm of .omg == Rust runtime's" \
-    "$("$OMG_RUST" --disasm "$TMPDIR_TEST/disasm.omg")" "$("$OMG_NATIVE" --disasm "$TMPDIR_TEST/disasm.omg")"
-assert_eq "--disasm of .omgb == Rust runtime's" \
-    "$("$OMG_RUST" --disasm "$TMPDIR_TEST/disasm.omgb")" "$("$OMG_NATIVE" --disasm "$TMPDIR_TEST/disasm.omgb")"
+disasm_expected='# functions
+FUNC half (x) @ 9
+# code
+0000  MakeFunc("half")
+0001  PushBool(false)
+0002  StoreLocal("off")
+0003  PushBool(true)
+0004  StoreLocal("on")
+0005  PushInt(0)
+0006  Call("half")
+0007  Emit
+0008  Halt
+0009  Load("x")
+0010  PushFloat(2.0)
+0011  Div
+0012  Ret
+0013  PushNone
+0014  Ret'
+assert_eq "--disasm of .omg prints the expected listing" \
+    "$disasm_expected" "$("$OMG_NATIVE" --disasm "$TMPDIR_TEST/disasm.omg" | tr -d '\r')"
+assert_eq "--disasm of .omgb prints the expected listing" \
+    "$disasm_expected" "$("$OMG_NATIVE" --disasm "$TMPDIR_TEST/disasm.omgb" | tr -d '\r')"
+
+# === The opcode tables agree =============================================
+# compiler.omg writes opcodes, vm.omg dispatches on them, and
+# bytecode.omg reads them back for the back ends. Each keeps its own
+# copy of the table and of the format version (the reasons are in the
+# files), so nothing but this check stops one of them drifting. The
+# Rust runtime's unit tests used to do this job.
+section "Driver: opcode tables"
+opcode_table() {
+    grep -E '^alloc (OP_[A-Z_0-9]+|BC_VERSION) +:=' "$1" \
+        | tr -d '\r' | sed -E 's/ +/ /g; s/ *#.*$//' | sort
+}
+table_compiler=$(opcode_table "$REPO_ROOT/src/compiler.omg")
+case "$table_compiler" in
+    *"alloc BC_VERSION := "*"alloc OP_ADD := "*) pass "compiler.omg has an opcode table and a format version" ;;
+    *) fail "compiler.omg has an opcode table and a format version" ;;
+esac
+assert_eq "vm.omg has the same opcodes and format version as compiler.omg" \
+    "$table_compiler" "$(opcode_table "$REPO_ROOT/src/vm.omg")"
+assert_eq "bytecode.omg has the same opcodes and format version as compiler.omg" \
+    "$table_compiler" "$(opcode_table "$REPO_ROOT/src/bytecode.omg")"

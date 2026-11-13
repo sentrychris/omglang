@@ -15,13 +15,12 @@ PASS_COUNT=${PASS_COUNT:-0}
 FAIL_COUNT=${FAIL_COUNT:-0}
 FAILED_TESTS=${FAILED_TESTS:-}
 
-# Repo root, derived from this file's location. Sourcing tests can call
-# either binary via $OMG_NATIVE / $OMG_RUST. Both can be set from the
-# environment to test a toolchain that lives somewhere else.
+# Repo root, derived from this file's location. Sourcing tests call
+# the toolchain as $OMG_NATIVE, which can be set from the environment
+# to test one that lives somewhere else.
 TESTS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$TESTS_DIR/.." && pwd)"
 OMG_NATIVE="${OMG_NATIVE:-$REPO_ROOT/bin/omg}"
-OMG_RUST="${OMG_RUST:-$REPO_ROOT/rust/target/release/omg}"
 
 # Non-empty on a Windows host (Git Bash), where a few tests have to
 # allow for the way Windows spells the path of a running program.
@@ -43,13 +42,11 @@ if [ -n "$OMG_WINDOWS" ] && command -v cygpath >/dev/null 2>&1; then
     REPO_ROOT=$(cygpath -m "$REPO_ROOT")
     TMPDIR_TEST=$(cygpath -m "$TMPDIR_TEST")
     case "$OMG_NATIVE" in /*) OMG_NATIVE=$(cygpath -m "$OMG_NATIVE") ;; esac
-    case "$OMG_RUST" in /*) OMG_RUST=$(cygpath -m "$OMG_RUST") ;; esac
 fi
 # The files are omg.exe on Windows. (bin/omg exists there
 # too: it is the Linux binary, which is checked in beside omg.exe.)
 if [ -n "$OMG_WINDOWS" ]; then
     [ -f "$OMG_NATIVE.exe" ] && OMG_NATIVE="$OMG_NATIVE.exe"
-    [ -f "$OMG_RUST.exe" ] && OMG_RUST="$OMG_RUST.exe"
 fi
 
 # What `omg --build` writes when no --target is given: linux-x64 or
@@ -196,11 +193,6 @@ require_native_toolchain() {
     if [ ! -x "$OMG_NATIVE" ]; then
         echo -e "${RED}Native toolchain missing.${NC} Run:"
         echo "  scripts/build.sh"
-        exit 2
-    fi
-    if [ ! -x "$OMG_RUST" ]; then
-        echo -e "${RED}Rust runtime missing.${NC} Run:"
-        echo "  cd rust && cargo build --release"
         exit 2
     fi
 }

@@ -1,8 +1,9 @@
 #!/bin/bash
 # Tests for the new process-control & I/O builtins added alongside the
 # native toolchain: subprocess, exit, getpid, stdin_readline, print.
-# Each builtin is exercised through both the Rust runtime and a native
-# AOT binary, so a divergence between the two surfaces immediately.
+# Each builtin is exercised two ways: interpreted (`omg prog.omg`,
+# bytecode on the OMG-written VM) and as a built executable, so a
+# divergence between the two surfaces immediately.
 
 set -u
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
@@ -16,23 +17,23 @@ build_aot() {
     echo "$out"
 }
 
-# Run an OMG program two ways (Rust VM and native AOT) and assert the
+# Run an OMG program two ways (interpreted and built) and assert the
 # stdout matches. Useful for tests that don't need fancy stdin/stderr.
 assert_both_paths() {
     local name="$1" src="$2" expected="$3"
     shift 3
-    local rust_out native_out aot_bin
-    rust_out=$("$OMG_RUST" "$src" "$@" 2>&1) && rust_rc=0 || rust_rc=$?
+    local interp_out native_out aot_bin
+    interp_out=$("$OMG_NATIVE" "$src" "$@" 2>&1) && interp_rc=0 || interp_rc=$?
 
     aot_bin="$TMPDIR_TEST/$(basename "$src" .omg)-aot"
     "$OMG_NATIVE" --build "$src" "$aot_bin" >/dev/null 2>&1
     native_out=$("$aot_bin" "$@" 2>&1) && native_rc=0 || native_rc=$?
 
-    if [ "$rust_out" = "$expected" ] && [ "$native_out" = "$expected" ]; then
+    if [ "$interp_out" = "$expected" ] && [ "$native_out" = "$expected" ]; then
         pass "$name"
     else
-        fail "$name" "rust output: $(printf '%q' "$rust_out")
-      native output: $(printf '%q' "$native_out")
+        fail "$name" "interpreted:   $(printf '%q' "$interp_out")
+      built:         $(printf '%q' "$native_out")
       expected:      $(printf '%q' "$expected")"
     fi
 }
@@ -104,7 +105,7 @@ exit(0)
 EOF
 build_aot "$TMPDIR_TEST/exit_zero.omg" "$TMPDIR_TEST/exit_zero" >/dev/null
 assert_exit_code "exit(0) → status 0" 0  "$TMPDIR_TEST/exit_zero"
-assert_exit_code "exit(0) via Rust → 0" 0  "$OMG_RUST" "$TMPDIR_TEST/exit_zero.omg"
+assert_exit_code "exit(0) interpreted → 0" 0  "$OMG_NATIVE" "$TMPDIR_TEST/exit_zero.omg"
 
 cat > "$TMPDIR_TEST/exit_seven.omg" <<'EOF'
 ;;;omg
@@ -112,7 +113,7 @@ exit(7)
 EOF
 build_aot "$TMPDIR_TEST/exit_seven.omg" "$TMPDIR_TEST/exit_seven" >/dev/null
 assert_exit_code "exit(7) → status 7" 7  "$TMPDIR_TEST/exit_seven"
-assert_exit_code "exit(7) via Rust → 7" 7  "$OMG_RUST" "$TMPDIR_TEST/exit_seven.omg"
+assert_exit_code "exit(7) interpreted → 7" 7  "$OMG_NATIVE" "$TMPDIR_TEST/exit_seven.omg"
 
 # exit(code) doesn't return — emits after it never run.
 cat > "$TMPDIR_TEST/exit_terminates.omg" <<'EOF'
@@ -184,14 +185,14 @@ got: !"
 actual=$(printf 'hello\nworld\n!\n' | "$TMPDIR_TEST/readline_echo")
 assert_eq "stdin_readline: native binary" "$expected" "$actual"
 
-actual=$(printf 'hello\nworld\n!\n' | "$OMG_RUST" "$TMPDIR_TEST/readline_echo.omg")
-assert_eq "stdin_readline: Rust runtime"  "$expected" "$actual"
+actual=$(printf 'hello\nworld\n!\n' | "$OMG_NATIVE" "$TMPDIR_TEST/readline_echo.omg")
+assert_eq "stdin_readline: interpreted"   "$expected" "$actual"
 
 # Empty stdin (immediate EOF) — should produce no output, clean exit 0.
 assert_exit_code "stdin_readline: EOF clean exit (native)" 0 \
     bash -c "echo -n '' | '$TMPDIR_TEST/readline_echo'"
-assert_exit_code "stdin_readline: EOF clean exit (rust)" 0 \
-    bash -c "echo -n '' | '$OMG_RUST' '$TMPDIR_TEST/readline_echo.omg'"
+assert_exit_code "stdin_readline: EOF clean exit (interpreted)" 0 \
+    bash -c "echo -n '' | '$OMG_NATIVE' '$TMPDIR_TEST/readline_echo.omg'"
 
 # A line containing CR shouldn't include the CR in the result (Windows
 # line ending stripping).
@@ -224,8 +225,6 @@ first=hello
 last=orld"
 actual=$(printf 'hello world' | "$TMPDIR_TEST/stdin_read_text")
 assert_eq "stdin_read: AOT binary"      "$expected" "$actual"
-actual=$(printf 'hello world' | "$OMG_RUST" "$TMPDIR_TEST/stdin_read_text.omg")
-assert_eq "stdin_read: Rust runtime"    "$expected" "$actual"
 actual=$(printf 'hello world' | "$OMG_NATIVE" "$TMPDIR_TEST/stdin_read_text.omg")
 assert_eq "stdin_read: native interpreted" "$expected" "$actual"
 
@@ -239,8 +238,8 @@ EOF
 build_aot "$TMPDIR_TEST/stdin_read_empty.omg" "$TMPDIR_TEST/stdin_read_empty" >/dev/null
 actual=$(echo -n '' | "$TMPDIR_TEST/stdin_read_empty")
 assert_eq "stdin_read: empty stdin → empty string (native)" "len=0" "$actual"
-actual=$(echo -n '' | "$OMG_RUST" "$TMPDIR_TEST/stdin_read_empty.omg")
-assert_eq "stdin_read: empty stdin → empty string (Rust)"   "len=0" "$actual"
+actual=$(echo -n '' | "$OMG_NATIVE" "$TMPDIR_TEST/stdin_read_empty.omg")
+assert_eq "stdin_read: empty stdin → empty string (interpreted)" "len=0" "$actual"
 
 # Multi-line input is preserved verbatim, including the trailing
 # newline (read_file behaves the same way).
@@ -276,8 +275,8 @@ b2=255
 b3=0"
 actual=$(printf '\x41\x42\xff\x00' | "$TMPDIR_TEST/stdin_read_bytes")
 assert_eq "stdin_read_bytes: AOT preserves 0x00 / 0xff" "$expected" "$actual"
-actual=$(printf '\x41\x42\xff\x00' | "$OMG_RUST" "$TMPDIR_TEST/stdin_read_bytes.omg")
-assert_eq "stdin_read_bytes: Rust preserves 0x00 / 0xff" "$expected" "$actual"
+actual=$(printf '\x41\x42\xff\x00' | "$OMG_NATIVE" "$TMPDIR_TEST/stdin_read_bytes.omg")
+assert_eq "stdin_read_bytes: interpreted preserves 0x00 / 0xff" "$expected" "$actual"
 
 # Empty stdin → empty list.
 cat > "$TMPDIR_TEST/stdin_read_bytes_empty.omg" <<'EOF'
@@ -288,8 +287,8 @@ EOF
 build_aot "$TMPDIR_TEST/stdin_read_bytes_empty.omg" "$TMPDIR_TEST/stdin_read_bytes_empty" >/dev/null
 actual=$(echo -n '' | "$TMPDIR_TEST/stdin_read_bytes_empty")
 assert_eq "stdin_read_bytes: empty stdin → empty list (native)" "0" "$actual"
-actual=$(echo -n '' | "$OMG_RUST" "$TMPDIR_TEST/stdin_read_bytes_empty.omg")
-assert_eq "stdin_read_bytes: empty stdin → empty list (Rust)"   "0" "$actual"
+actual=$(echo -n '' | "$OMG_NATIVE" "$TMPDIR_TEST/stdin_read_bytes_empty.omg")
+assert_eq "stdin_read_bytes: empty stdin → empty list (interpreted)" "0" "$actual"
 
 # Round-trip: read text via stdin_read_bytes, reassemble with
 # bytes_to_string. Confirms the byte-list shape is identical to what
@@ -342,8 +341,8 @@ b6=122
 b7=72
 b8=73
 b9=74"
-actual=$("$OMG_RUST" "$TMPDIR_TEST/seek_overwrite.omg" "$TMPDIR_TEST/seek_a.bin")
-assert_eq "wb+/seek/tell: Rust runtime" "$expected" "$actual"
+actual=$("$OMG_NATIVE" "$TMPDIR_TEST/seek_overwrite.omg" "$TMPDIR_TEST/seek_a.bin")
+assert_eq "wb+/seek/tell: interpreted" "$expected" "$actual"
 actual=$("$TMPDIR_TEST/seek_overwrite" "$TMPDIR_TEST/seek_b.bin")
 assert_eq "wb+/seek/tell: AOT binary"   "$expected" "$actual"
 actual=$("$OMG_NATIVE" "$TMPDIR_TEST/seek_overwrite.omg" "$TMPDIR_TEST/seek_c.bin")
@@ -385,8 +384,8 @@ b6=6
 b7=7
 b8=8
 b9=9"
-actual=$("$OMG_RUST" "$TMPDIR_TEST/rb_plus.omg" "$TMPDIR_TEST/rbplus_a.bin")
-assert_eq "rb+ preserves contents (Rust)" "$expected" "$actual"
+actual=$("$OMG_NATIVE" "$TMPDIR_TEST/rb_plus.omg" "$TMPDIR_TEST/rbplus_a.bin")
+assert_eq "rb+ preserves contents (interpreted)" "$expected" "$actual"
 actual=$("$TMPDIR_TEST/rb_plus" "$TMPDIR_TEST/rbplus_b.bin")
 assert_eq "rb+ preserves contents (AOT)"  "$expected" "$actual"
 
@@ -403,8 +402,8 @@ try {
 }
 file_close(h)
 EOF
-actual=$("$OMG_RUST" "$TMPDIR_TEST/seek_neg.omg" "$TMPDIR_TEST/neg_a.bin" 2>&1)
-assert_eq "file_seek negative offset rejected (Rust)" "caught" "$actual"
+actual=$("$OMG_NATIVE" "$TMPDIR_TEST/seek_neg.omg" "$TMPDIR_TEST/neg_a.bin" 2>&1)
+assert_eq "file_seek negative offset rejected (interpreted)" "caught" "$actual"
 build_aot "$TMPDIR_TEST/seek_neg.omg" "$TMPDIR_TEST/seek_neg" >/dev/null
 actual=$("$TMPDIR_TEST/seek_neg" "$TMPDIR_TEST/neg_b.bin" 2>&1)
 assert_eq "file_seek negative offset rejected (AOT)" "caught" "$actual"
@@ -419,8 +418,11 @@ try {
     emit "caught"
 }
 EOF
-actual=$("$OMG_RUST" "$TMPDIR_TEST/bad_mode.omg" "$TMPDIR_TEST/bad.bin" 2>&1)
-assert_eq "file_open invalid mode rejected (Rust)" "caught" "$actual"
+actual=$("$OMG_NATIVE" "$TMPDIR_TEST/bad_mode.omg" "$TMPDIR_TEST/bad.bin" 2>&1)
+assert_eq "file_open invalid mode rejected (interpreted)" "caught" "$actual"
+build_aot "$TMPDIR_TEST/bad_mode.omg" "$TMPDIR_TEST/bad_mode" >/dev/null
+actual=$("$TMPDIR_TEST/bad_mode" "$TMPDIR_TEST/bad_b.bin" 2>&1)
+assert_eq "file_open invalid mode rejected (built)" "caught" "$actual"
 
 section "Builtins: print"
 

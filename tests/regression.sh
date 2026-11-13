@@ -19,10 +19,7 @@ require_native_toolchain
 section "Regression: control flow inside try"
 
 CFT="$REPO_ROOT/tests/regression/control_flow_in_try.omg"
-expected_cft=$("$OMG_RUST" "$CFT" 2>&1)
-
-assert_stdout "control_flow_in_try via Rust VM" "$expected_cft" \
-    "$OMG_RUST" "$CFT"
+expected_cft=$(tr -d '\r' < "$REPO_ROOT/tests/regression/control_flow_in_try.expected")
 
 assert_stdout "control_flow_in_try via native interpreted" "$expected_cft" \
     "$OMG_NATIVE" "$CFT"
@@ -49,8 +46,10 @@ emit sqrt(2)
 emit 10 / 3.0
 EOF
 
-# Run via every path; must agree with Rust.
-expected=$("$OMG_RUST" "$TMPDIR_TEST/floats_smoke.omg" 2>&1)
+# Run via every path.
+expected="4.0
+1.4142135623730951
+3.3333333333333335"
 
 assert_stdout "floats: native interpreted" "$expected" \
     "$OMG_NATIVE" "$TMPDIR_TEST/floats_smoke.omg"
@@ -60,8 +59,8 @@ assert_stdout "floats: AOT binary" "$expected" \
     "$TMPDIR_TEST/floats_aot"
 
 # === args[0] semantics across all paths ===============================
-# Documented behaviour: args[0] is the user-typed path on Rust runtime
-# and the unified `omg` driver, and the binary's own path for AOT.
+# Documented behaviour: args[0] is the user-typed path when `omg` runs
+# a program, and the binary's own path for a built one.
 # Earlier the native subprocess driver leaked tempfile paths through
 # args[0], breaking programs that printed "usage: " + args[0].
 
@@ -71,11 +70,6 @@ cat > "$TMPDIR_TEST/argv0.omg" <<'EOF'
 ;;;omg
 emit args[0]
 EOF
-
-# Rust runtime: args[0] = the script path the user typed.
-out=$("$OMG_RUST" "$TMPDIR_TEST/argv0.omg")
-assert_eq "args[0] via Rust = source path" \
-    "$TMPDIR_TEST/argv0.omg" "$out"
 
 # Native unified omg: same — source path the user typed (NOT a tempfile).
 out=$("$OMG_NATIVE" "$TMPDIR_TEST/argv0.omg")
@@ -107,7 +101,7 @@ EOF
 
 # Should emit a SINGLE prefix: "UndefinedIdentError: undefined_xyz".
 # The fix lives in vm.omg's step() handler; only the bytecode-VM paths
-# (Rust runtime, native interpreted) exercise it. The AOT path uses
+# (native interpreted, a .omgb run) exercise it. The AOT path uses
 # omg_rt.h's setjmp/longjmp directly without that wrapper, so it has
 # no doubled-prefix issue to begin with — and currently doesn't error
 # at all on undefined globals (a separate, pre-existing limitation
@@ -115,9 +109,6 @@ EOF
 expected="caught: UndefinedIdentError: undefined_xyz"
 assert_stdout "no doubled prefix: native interpreted" "$expected" \
     "$OMG_NATIVE" "$TMPDIR_TEST/undef_caught.omg"
-
-assert_stdout "no doubled prefix: Rust runtime" "$expected" \
-    "$OMG_RUST" "$TMPDIR_TEST/undef_caught.omg"
 
 # === ;;;omg header is optional ========================================
 # Bug: the README and several docs claimed the `;;;omg` header was
@@ -129,9 +120,6 @@ section "Regression: ;;;omg header is optional"
 cat > "$TMPDIR_TEST/no_header.omg" <<'EOF'
 emit "no header here"
 EOF
-
-assert_stdout "no header via Rust" "no header here" \
-    "$OMG_RUST" "$TMPDIR_TEST/no_header.omg"
 
 assert_stdout "no header via native" "no header here" \
     "$OMG_NATIVE" "$TMPDIR_TEST/no_header.omg"
@@ -168,19 +156,19 @@ RuntimeError: boom"
 assert_eq "AOT stdout flushes before stderr" "$expected" "$actual"
 
 # === Self-host: compiler.omg compiles itself byte-identically =========
-# A core invariant: every iteration of compiler.omgb produces the same
-# bytes when handed compiler.omg again. Drift here means we've broken
-# self-hosting.
+# A core invariant: the compiler gives the same bytes for its own
+# source every time it is asked. (tests/parity.sh has the stronger
+# check, the compiler running on the OMG-written VM.)
 
 section "Regression: compiler.omg fixed point"
 
-"$OMG_RUST"   --compile src/compiler.omg "$TMPDIR_TEST/cmp-rust.omgb"
-"$OMG_NATIVE" --compile src/compiler.omg "$TMPDIR_TEST/cmp-native.omgb"
-if cmp -s "$TMPDIR_TEST/cmp-rust.omgb" "$TMPDIR_TEST/cmp-native.omgb"; then
-    pass "compiler.omg via Rust == via native omg"
+"$OMG_NATIVE" --compile src/compiler.omg "$TMPDIR_TEST/cmp-1.omgb"
+"$OMG_NATIVE" --compile src/compiler.omg "$TMPDIR_TEST/cmp-2.omgb"
+if [ -s "$TMPDIR_TEST/cmp-1.omgb" ] && cmp -s "$TMPDIR_TEST/cmp-1.omgb" "$TMPDIR_TEST/cmp-2.omgb"; then
+    pass "compiler.omg compiles to the same bytes twice"
 else
     fail "compiler.omg byte-identical" \
-         "Rust frontend and native omg produced different bytecode"
+         "two compiles of compiler.omg produced different bytecode"
 fi
 
 # === Compile-source uses no ambient state =============================
@@ -210,7 +198,7 @@ emit "len_a: " + length(a[0])
 emit "len_b: " + length(b[0])
 EOF
 
-actual=$("$OMG_RUST" "$REPO_ROOT/src/_two_progs_test.omg" 2>&1)
+actual=$("$OMG_NATIVE" "$REPO_ROOT/src/_two_progs_test.omg" 2>&1)
 rm -f "$REPO_ROOT/src/_two_progs_test.omg"
 # The two programs are structurally identical, so their bytecode
 # lengths must match. Specific lengths can change with compiler
@@ -248,7 +236,7 @@ fi
 #       "cannot call non-function value".
 #
 # Both halves are fixed; this regression locks them down across
-# Rust runtime, native interpreter, AND AOT.
+# native interpreter AND AOT.
 
 section "Regression: nested-closure-as-arg across module boundary"
 
@@ -275,9 +263,6 @@ emit lib.apply_with_closure(41)
 MAIN_EOF
 
 # All three paths must produce 42 (41 + 1 with `seed` correctly captured).
-actual=$("$OMG_RUST" "$TMPDIR_TEST/closure_mod_main.omg" 2>&1)
-assert_eq "Rust runtime: closure-as-arg across module" "42" "$actual"
-
 actual=$("$OMG_NATIVE" "$TMPDIR_TEST/closure_mod_main.omg" 2>&1)
 assert_eq "Native interp: closure-as-arg across module" "42" "$actual"
 
@@ -304,7 +289,7 @@ rm -f "$REPO_ROOT/src/_closure_mod_lib.omg"
 #   3. Two-closure shared state: two closures returned together share
 #      the same cell — a get/set pair.
 #
-# Verified across all four backends: Rust runtime, OMG VM, native
+# Verified across the backends: OMG VM, native
 # interp, AOT, and (if node is available) native-js.
 
 section "Regression: closures capture by reference"
@@ -349,9 +334,6 @@ OMG_EOF
 
 EXPECTED=$'1\n2\n3\n1\n2\n4\n100\n7\n8'
 
-actual=$("$OMG_RUST" "$TMPDIR_TEST/closure_byref.omg" 2>&1)
-assert_eq "Rust runtime: closures by reference" "$EXPECTED" "$actual"
-
 actual=$("$OMG_NATIVE" "$TMPDIR_TEST/closure_byref.omg" 2>&1)
 assert_eq "Native interp: closures by reference" "$EXPECTED" "$actual"
 
@@ -375,16 +357,11 @@ fi
 section "Regression: line numbers without a header"
 
 # A file that starts with blank lines and has no header had every line
-# counted one too high by the self-hosted compiler (the Rust frontend
-# had it right): the blank lines before the first statement were
-# counted twice.
-printf '\n\n# no header here\nemit 1\nemit 1 / 0\n' > "$TMPDIR_TEST/no_header.omg"
-"$OMG_RUST" --rust --compile "$TMPDIR_TEST/no_header.omg" "$TMPDIR_TEST/no_header.rust.omgb" >/dev/null 2>&1
-"$OMG_NATIVE" --compile "$TMPDIR_TEST/no_header.omg" "$TMPDIR_TEST/no_header.native.omgb" >/dev/null 2>&1
-if [ -s "$TMPDIR_TEST/no_header.rust.omgb" ] && cmp -s "$TMPDIR_TEST/no_header.rust.omgb" "$TMPDIR_TEST/no_header.native.omgb"; then
-    pass "no header: both frontends write the same bytecode"
-else
-    fail "no header: both frontends write the same bytecode"
-fi
-actual=$("$OMG_NATIVE" "$TMPDIR_TEST/no_header.omg" 2>&1 | grep -c 'no_header.omg", line 5,')
-assert_eq "no header: the error is reported on line 5" "1" "$actual"
+# counted one too high: the blank lines before the first statement
+# were counted twice.
+printf '\n\n# no header here\nemit 1\nemit 1 / 0\n' > "$TMPDIR_TEST/no_header_lines.omg"
+actual=$("$OMG_NATIVE" "$TMPDIR_TEST/no_header_lines.omg" 2>&1 | grep -c 'no_header_lines.omg", line 5,')
+assert_eq "no header: the error is reported on line 5 (interpreted)" "1" "$actual"
+"$OMG_NATIVE" --build "$TMPDIR_TEST/no_header_lines.omg" "$TMPDIR_TEST/no_header_lines" >/dev/null 2>&1
+actual=$("$TMPDIR_TEST/no_header_lines" 2>&1 | grep -c 'no_header_lines.omg", line 5,')
+assert_eq "no header: the error is reported on line 5 (built)" "1" "$actual"

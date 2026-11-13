@@ -1,30 +1,51 @@
 # OMG test suite
 
-End-to-end tests for the native toolchain, the unified `omg` driver,
-the REPL, and the cross-implementation parity invariants.
+End-to-end tests for the toolchain: the `omg` command, the REPL, the
+back ends, and the checks that hold the different ways of running a
+program to the same answers.
 
 ## Running
 
 ```sh
-# Build prerequisites first
-cd rust && cargo build --release && cd ..
-scripts/build.sh
-
-# Run everything
+# Run everything (bin/omg is checked in; nothing to build first)
 tests/run.sh
 
 # Or just one suite
 tests/run.sh builtins
 tests/run.sh repl regression
+
+# The toolchain on its own: no compiler of any kind needed
+tests/standalone.sh
 ```
 
-Exit code is `0` on full success, `1` if anything failed, `2` if the
-prerequisites aren't built.
+Exit code is `0` on full success, `1` if anything failed, `2` if there
+is no `omg` that runs here.
 
-The scripts are bash. On Windows run them from Git Bash, with `gcc`
-(MinGW-w64) and `node` on `PATH`; they then test `bin/omg.exe`.
-`OMG_NATIVE` and `OMG_RUST` can be set to test binaries that live
-somewhere else.
+After changing anything under `src/`, run `scripts/build.sh` first:
+the tests exercise `bin/omg`.
+
+Nothing has to be installed. Two optional tools widen the coverage,
+and their checks are skipped without them: `node` (everything about
+`--emit-js`) and a C compiler (everything about `--target c`).
+
+The scripts are bash. On Windows run them from Git Bash; they then
+test `bin/omg.exe`. `OMG_NATIVE` can be set to test a binary that
+lives somewhere else.
+
+## Who is the referee?
+
+There is no second implementation to compare against. Three things
+take its place:
+
+- **Stated answers.** Every program in `tests/conformance/` comes with
+  the output it must print, and is run interpreted, built to machine
+  code, built through C, and as JavaScript.
+- **The back ends against each other.** For the examples, the tools
+  and many individual checks, what a built program prints must equal
+  what the interpreter prints.
+- **Fixed points.** The compiler, compiled and interpreted, must emit
+  the same bytecode for its own source; and `omg` rebuilding itself
+  twice must give the same file.
 
 ## Layout
 
@@ -32,13 +53,18 @@ somewhere else.
 | ---------------------- | ---------------------------------------------------- |
 | `tests/run.sh`         | Top-level runner; sources each suite in turn         |
 | `tests/lib.sh`         | Shared assertions (`assert_eq`, `assert_stdout`, …)  |
-| `tests/builtins.sh`    | New process & I/O builtins: `subprocess`, `exit`, `getpid`, `stdin_readline`, `print` |
-| `tests/driver.sh`      | Every `omg` mode: run `.omg` / run `.omgb` / `--compile` / `--build` / `--emit-c` / `--emit-js` / `--disasm` / `--help` |
+| `tests/builtins.sh`    | Process & I/O builtins: `subprocess`, `exit`, `getpid`, `stdin_readline`, `stdin_read`, file seeking, `print`; interpreted and built |
+| `tests/driver.sh`      | Every `omg` mode: run `.omg` / run `.omgb` / `--compile` / `--build` and its `--target`s / `--emit-c` / `--emit-js` / `--disasm` / `--help` |
 | `tests/repl.sh`        | REPL behaviour: state persistence, multi-line input, error recovery, exit/quit/EOF, closures |
-| `tests/parity.sh`      | Triple-meta fixed-point, byte-identical bytecode (Rust frontend vs native `omg`), AOT/native-interpreted corpus parity, self-rebuild (after which `omg` must write the same C for itself as before) |
-| `tests/conformance.sh` | The conformance corpus on the native backends (native interpreter, AOT, `omg --emit-js`), plus native-only stack-limit checks |
-| `tests/conformance/`   | The corpus itself: `NAME.omg` must print `NAME.expected`; `fail/NAME.omg` must die with the error kind on its `# expect:` line. `tests/smoke.sh` runs it on the Rust VM (both frontends), the OMG-written VM and the JS transpiler |
-| `tests/regression.sh`  | Specific bugs we've fixed: control-flow inside `try`, float-bits decoding in `compile_source`, `args[0]` semantics, doubled `RuntimeError:` prefix, `;;;omg` header is optional, stdout/stderr ordering |
+| `tests/syntax.sh`      | Malformed programs: a one-line `SyntaxError`, exit code 1, the same message from run, `--compile` and `--build`, and nothing written |
+| `tests/regression.sh`  | Specific bugs we've fixed: control-flow inside `try`, float-bits decoding in `compile_source`, `args[0]` semantics, doubled `RuntimeError:` prefix, `;;;omg` header is optional, line numbers in a file with no header, stdout/stderr ordering |
+| `tests/conformance.sh` | The conformance corpus every way: interpreter, machine code, through C, JavaScript; plus stack-limit checks that only make sense for an executable |
+| `tests/conformance/`   | The corpus itself: `NAME.omg` must print `NAME.expected`; `fail/NAME.omg` must die with the error kind on its `# expect:` line |
+| `tests/tools.sh`       | The programs in `tools/`: their own test suite interpreted and built, and the HTTP server answering real requests both ways |
+| `tests/db.sh`          | `omgdb`: SQL results and the on-disk format, with files written by the interpreted database read by the built one and back |
+| `tests/parity.sh`      | The compiler compiled vs interpreted (same bytecode for its own source); every example built vs interpreted, through C, and as JS; the self-rebuild, and a second one that must be byte-identical |
+| `tests/standalone.sh`  | Not part of `run.sh`. The toolchain with nothing else installed: self-rebuild, byte-identical second rebuild, the corpus interpreted and built, executables for the other system. CI runs it in a bare container and on a Windows machine with compilers taken off `PATH` |
+| `tests/smoke.sh`       | Not part of `run.sh` or CI. The frozen Rust runtime's own self-check, for use after building it by hand (see `rust/README.md`) |
 
 ## Adding a test
 
@@ -74,8 +100,10 @@ cat > "$TMPDIR_TEST/myfeature.omg" <<'EOF'
 emit "hello"
 EOF
 
-assert_stdout "feature works via Rust"   "hello" "$OMG_RUST"    "$TMPDIR_TEST/myfeature.omg"
-assert_stdout "feature works via native" "hello" "$OMG_NATIVE"  "$TMPDIR_TEST/myfeature.omg"
+assert_stdout "feature works interpreted" "hello" "$OMG_NATIVE" "$TMPDIR_TEST/myfeature.omg"
+
+"$OMG_NATIVE" --build "$TMPDIR_TEST/myfeature.omg" "$TMPDIR_TEST/myfeature" >/dev/null
+assert_stdout "feature works built"       "hello" "$TMPDIR_TEST/myfeature"
 ```
 
 `$TMPDIR_TEST` is created and cleaned up by the runner — drop your
@@ -86,10 +114,12 @@ fixtures there.
 - **Use real builtins / real binaries.** Tests should exercise the
   shipped tools, not mocks.
 - **Test through every applicable path** for behavioural tests
-  (Rust runtime, native interpreted, native AOT) — divergences between
-  paths are exactly the bugs we want to catch early.
+  (interpreted and built, at least) — divergences between paths are
+  exactly the bugs we want to catch early. If the behaviour belongs to
+  the language rather than to one tool, put it in `tests/conformance/`
+  instead: it then runs every way automatically.
 - **Keep tests deterministic.** No timing-dependent checks; no
-  network; no system state outside `$TMPDIR_TEST`.
+  network beyond localhost; no system state outside `$TMPDIR_TEST`.
 - **Name tests for what they assert**, not what they do
   (`"persistent state survives turns"` not `"defines proc on turn 1
   then calls it on turn 2"`).

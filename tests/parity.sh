@@ -1,9 +1,9 @@
 #!/bin/bash
-# Cross-implementation parity tests: the Rust runtime, the OMG-in-OMG
-# compiler running on the Rust VM, the OMG-in-OMG VM, the native AOT
-# path, and the native interpreted path should all produce the same
-# output for the same inputs. These are the load-bearing tests for
-# self-hosting correctness.
+# Cross-implementation parity tests: the interpreter (bytecode on the
+# OMG-written VM), a built executable, the same through C, and
+# JavaScript should all produce the same output for the same inputs,
+# and the compiler must be the same compiler whichever of them runs
+# it. These are the load-bearing tests for self-hosting correctness.
 
 set -u
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
@@ -33,36 +33,29 @@ EXAMPLES=(
 
 cd "$REPO_ROOT"
 
-# === Triple-meta fixed-point check ====================================
-section "Parity: triple-meta fixed-point"
+# === The compiler on two engines ======================================
+section "Parity: the compiler as machine code and on the OMG VM"
 
-# Compile src/compiler.omg via three paths and confirm the bytes
-# match. This is the load-bearing self-hosting check.
-fp_out=$("$OMG_RUST" --verify-omg-vm src/compiler.omg 2>&1)
-if echo "$fp_out" | grep -q "OMG-on-OMG-VM output matches Rust output"; then
-    pass "compiler.omg: Rust frontend == OMG-on-Rust-VM == OMG-on-OMG-VM"
+# Compile src/compiler.omg twice: by `omg` itself, and by omg.omg run
+# from source, which puts the same compiler on the OMG-written VM
+# (vm.omg) instead. The bytes must match. This is the load-bearing
+# self-hosting check: two different ways of executing the compiler
+# agree on what the compiler is.
+"$OMG_NATIVE" --compile src/compiler.omg "$TMPDIR_TEST/compiler-direct.omgb" >/dev/null 2>&1
+"$OMG_NATIVE" src/omg.omg --compile src/compiler.omg "$TMPDIR_TEST/compiler-on-vm.omgb" >/dev/null 2>&1
+if [ -s "$TMPDIR_TEST/compiler-direct.omgb" ] && cmp -s "$TMPDIR_TEST/compiler-direct.omgb" "$TMPDIR_TEST/compiler-on-vm.omgb"; then
+    pass "compiler.omg: built omg == omg.omg on the OMG VM"
 else
-    fail "triple-meta fixed-point" "$fp_out"
+    fail "compiler.omg: built omg == omg.omg on the OMG VM" \
+         "the two produced different bytecode"
 fi
 
-# === native compiler vs Rust frontend ==================================
-section "Parity: native omg vs Rust frontend bytecode"
-
-for src in "${EXAMPLES[@]}"; do
-    local_omgb="$TMPDIR_TEST/$(basename "$src" .omg)-rust.omgb"
-    native_omgb="$TMPDIR_TEST/$(basename "$src" .omg)-native.omgb"
-    "$OMG_RUST" --compile "$src" "$local_omgb"
-    "$OMG_NATIVE" --compile "$src" "$native_omgb"
-    if cmp -s "$local_omgb" "$native_omgb"; then
-        pass "byte-identical: $(basename "$src")"
-    else
-        fail "byte-identical: $(basename "$src")" \
-             "Rust frontend and native omg produced different bytecode"
-    fi
-done
-
-# === AOT corpus parity ================================================
-section "Parity: AOT (omg --build) vs Rust runtime"
+# === Every way of running a program agrees ============================
+# The examples carry no expected output of their own, so the back ends
+# referee each other: the interpreter (bytecode on the OMG VM), a
+# built executable, the same through C where a C compiler is
+# installed, and JavaScript under node.
+section "Parity: omg --build vs omg <file.omg>"
 
 for src in "${EXAMPLES[@]}"; do
     name=$(basename "$src" .omg)
@@ -72,48 +65,53 @@ for src in "${EXAMPLES[@]}"; do
         continue
     fi
     # Run the example from the repo root so relative paths in the
-    # source resolve the same way the Rust runtime sees them.
-    rust_out=$("$OMG_RUST" "$src" 2>&1)
-    aot_out=$("$bin" 2>&1)
-    if [ "$rust_out" = "$aot_out" ]; then
-        pass "AOT == Rust: $name"
-    else
-        fail "AOT == Rust: $name" "stdout differs (truncated)"
-    fi
-done
-
-# === Native interpreted parity ========================================
-section "Parity: native interpreted (omg <file.omg>) vs Rust runtime"
-
-for src in "${EXAMPLES[@]}"; do
-    name=$(basename "$src" .omg)
-    rust_out=$("$OMG_RUST" "$src" 2>&1)
+    # source resolve the same way for both.
     nat_out=$("$OMG_NATIVE" "$src" 2>&1)
-    if [ "$rust_out" = "$nat_out" ]; then
-        pass "native == Rust: $name"
+    aot_out=$("$bin" 2>&1)
+    if [ "$nat_out" = "$aot_out" ]; then
+        pass "built == interpreted: $name"
     else
-        fail "native == Rust: $name" "stdout differs"
+        fail "built == interpreted: $name" "stdout differs (truncated)"
     fi
 done
+
+if [ "$(omg_default_target)" != c ] && [ -n "$(omg_c_compiler)" ]; then
+    section "Parity: omg --build --target c vs omg <file.omg>"
+    for src in "${EXAMPLES[@]}"; do
+        name=$(basename "$src" .omg)
+        bin="$TMPDIR_TEST/aotc-$name"
+        if ! "$OMG_NATIVE" --build "$src" "$bin" --target c >/dev/null 2>&1; then
+            fail "build through C: $name"
+            continue
+        fi
+        nat_out=$("$OMG_NATIVE" "$src" 2>&1)
+        aot_out=$("$bin" 2>&1)
+        if [ "$nat_out" = "$aot_out" ]; then
+            pass "built through C == interpreted: $name"
+        else
+            fail "built through C == interpreted: $name" "stdout differs (truncated)"
+        fi
+    done
+fi
 
 # === native-js (OMG → JS, run via node) parity ========================
 # Skipped if `node` isn't installed — the JS backend is opt-in.
 
 if command -v node >/dev/null 2>&1; then
-    section "Parity: native-js (node) vs Rust runtime"
+    section "Parity: native-js (node) vs omg <file.omg>"
     for src in "${EXAMPLES[@]}"; do
         name=$(basename "$src" .omg)
         jsfile="$TMPDIR_TEST/$name.js"
         if ! "$OMG_NATIVE" --emit-js "$src" "$jsfile" >/dev/null 2>&1; then
-            fail "JS == Rust: $name (--emit-js)"
+            fail "JS == interpreted: $name (--emit-js)"
             continue
         fi
-        rust_out=$("$OMG_RUST" "$src" 2>&1)
+        nat_out=$("$OMG_NATIVE" "$src" 2>&1)
         js_out=$(node "$jsfile" 2>&1)
-        if [ "$rust_out" = "$js_out" ]; then
-            pass "JS == Rust: $name"
+        if [ "$nat_out" = "$js_out" ]; then
+            pass "JS == interpreted: $name"
         else
-            fail "JS == Rust: $name" "stdout differs"
+            fail "JS == interpreted: $name" "stdout differs"
         fi
     done
 fi
@@ -121,7 +119,7 @@ fi
 # === Toolchain self-rebuild ===========================================
 section "Parity: native toolchain self-rebuild"
 
-# The toolchain should be able to rebuild itself with no Rust runtime
+# The toolchain should be able to rebuild itself with nothing else
 # involved. We trigger a fresh build and check the resulting binary
 # runs, and that it is at its fixed point: the C that `omg` writes for
 # its own source must be the same before and after the rebuild. (The C
