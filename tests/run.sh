@@ -27,6 +27,7 @@ SUITES=(
     tools
     http
     db
+    video
     parity
 )
 

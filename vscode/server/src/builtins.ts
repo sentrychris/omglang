@@ -1022,6 +1022,69 @@ export const BUILTINS: readonly BuiltinDoc[] = [
         see: ['tcp_nonblocking', 'interrupted']
     }),
 
+    // --- A window -----------------------------------------------------------
+    b({
+        name: 'window_open',
+        category: 'A window',
+        signatures: ['window_open(title, width, height)'],
+        params: [
+            { name: 'title', doc: 'What the title bar says.' },
+            { name: 'width', doc: 'Width of the inside of the window, in pixels.' },
+            { name: 'height', doc: 'Its height.' }
+        ],
+        minArgs: 3, maxArgs: 3,
+        summary: 'Opens a window to draw pictures in.',
+        details: 'A program has one window at a time. On Linux the runtime speaks to the X server that `DISPLAY` names; on Windows it asks user32. Nothing is linked in for either. Only in a program run by `omg` or built to machine code: built through C or as JavaScript, it raises a `ValueError`, as it does when there is no display.',
+        returns: 'A handle for the other `window_` builtins.',
+        returnType: 'int',
+        example: 'alloc win := window_open("hello", 320, 240)\nalloc pixels := list_repeat(255 * 65536, 320 * 240)\nwindow_draw(win, pixels, 320)\nsleep_ms(2000)\nwindow_close(win)',
+        runnable: false,
+        see: ['window_draw', 'window_poll', 'window_close']
+    }),
+    b({
+        name: 'window_draw',
+        category: 'A window',
+        signatures: ['window_draw(window, pixels, width)'],
+        params: [
+            { name: 'window', doc: 'A handle from `window_open`.' },
+            { name: 'pixels', doc: 'A list with one int per pixel, `red * 65536 + green * 256 + blue`, row after row from the top.' },
+            { name: 'width', doc: 'How many pixels make a row. The height follows from the length of the list.' }
+        ],
+        minArgs: 3, maxArgs: 3,
+        summary: 'Shows a picture in the window.',
+        details: 'The picture does not have to be the size of the window: it is scaled to fit, keeping its shape, with black bars where the shapes differ. The window keeps the picture and repaints it by itself when it has been covered.',
+        returns: 'Nothing.',
+        example: 'alloc win := window_open("stripes", 256, 100)\nalloc pixels := []\nalloc y := 0\nloop y < 100 {\n    alloc x := 0\n    loop x < 256 {\n        append(pixels, x * 65536 + (255 - x))\n        x := x + 1\n    }\n    y := y + 1\n}\nwindow_draw(win, pixels, 256)',
+        runnable: false,
+        see: ['window_open', 'window_poll']
+    }),
+    b({
+        name: 'window_poll',
+        category: 'A window',
+        signatures: ['window_poll(window)'],
+        params: [{ name: 'window', doc: 'A handle from `window_open`.' }],
+        minArgs: 1, maxArgs: 1,
+        summary: 'The next thing that happened to the window, without waiting.',
+        details: 'Call it until it returns `false`, every few milliseconds: it is also what keeps the window alive. Keys are named by their character (`"a"`, `"A"`, `"."`), or `"space"`, `"enter"`, `"escape"`, `"tab"`, `"backspace"`, `"delete"`, `"left"`, `"right"`, `"up"`, `"down"`, `"home"`, `"end"`, `"pageup"`, `"pagedown"`, `"f1"` to `"f12"`.',
+        returns: '`false` when nothing happened, or a list: `["key", name]`, `["resize", width, height]`, or `["close"]` when the user closed the window.',
+        example: 'alloc win := window_open("press q", 200, 100)\nalloc open := true\nloop open {\n    alloc ev := window_poll(win)\n    loop ev != false {\n        if ev[0] == "close" or (ev[0] == "key" and ev[1] == "q") {\n            open := false\n        }\n        ev := window_poll(win)\n    }\n    sleep_ms(10)\n}\nwindow_close(win)',
+        runnable: false,
+        see: ['window_open', 'window_draw']
+    }),
+    b({
+        name: 'window_close',
+        category: 'A window',
+        signatures: ['window_close(window)'],
+        params: [{ name: 'window', doc: 'A handle from `window_open`.' }],
+        minArgs: 1, maxArgs: 1,
+        summary: 'Closes the window.',
+        details: 'After it another window can be opened. A window still open when the program ends goes with it.',
+        returns: 'Nothing.',
+        example: 'alloc win := window_open("gone in a second", 200, 100)\nsleep_ms(1000)\nwindow_close(win)',
+        runnable: false,
+        see: ['window_open']
+    }),
+
     // --- Reflection ---------------------------------------------------------
     b({
         name: 'call_builtin',

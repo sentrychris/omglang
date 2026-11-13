@@ -151,6 +151,10 @@ jobs:
       #   * tools      — the programs in tools/, and the HTTP server
       #                  answering requests
       #   * db         — the database in tools/db
+      #   * video      — the H.264 decoder in tools/video against
+      #                  checksums from ffmpeg; a window opened,
+      #                  drawn in and closed, and the player run
+      #                  (Linux: on Xvfb; Windows: on the desktop)
       #   * parity     — the compiler gives the same bytes as machine
       #                  code and on the OMG VM; every example prints
       #                  the same interpreted, built, through C and as

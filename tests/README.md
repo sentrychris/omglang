@@ -62,6 +62,7 @@ take its place:
 | `tests/conformance/`   | The corpus itself: `NAME.omg` must print `NAME.expected`; `fail/NAME.omg` must die with the error kind on its `# expect:` line, and with the frames in `NAME.traceback` if there is one |
 | `tests/tools.sh`       | The programs in `tools/`: their own test suite interpreted and built, and the HTTP server answering real requests both ways |
 | `tests/db.sh`          | `omgdb`: SQL results and the on-disk format, with files written by the interpreted database read by the built one and back |
+| `tests/video.sh`       | The video tools: the H.264 decoder against checksums from ffmpeg (interpreted and built), and the `window_` builtins and the player on a display (Xvfb on Linux, when installed) |
 | `tests/parity.sh`      | The compiler compiled vs interpreted (same bytecode for its own source); every example built vs interpreted, through C, and as JS; the self-rebuild, and a second one that must be byte-identical |
 | `tests/standalone.sh`  | Not part of `run.sh`. The toolchain with nothing else installed: self-rebuild, byte-identical second rebuild, the corpus interpreted and built, executables for the other system. CI runs it in a bare container and on a Windows machine with compilers taken off `PATH` |
 | `tests/smoke.sh`       | Not part of `run.sh` or CI. The frozen Rust runtime's own self-check, for use after building it by hand (see `rust/README.md`) |
