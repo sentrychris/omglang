@@ -317,6 +317,15 @@ several sockets; returns `[readable, writable]`).
 [09-http-server.md](09-http-server.md) has the details, and a web
 server built on them.
 
+**A window**
+`window_open(title, width, height)`, `window_draw(win, pixels, width)`
+(one int per pixel, `red * 65536 + green * 256 + blue`, scaled to fit),
+`window_poll(win)` (`false`, or `["key", name]`, `["resize", w, h]`,
+`["close"]`), `window_close(win)`. On Linux and Windows, in programs
+run by `omg` or built to machine code.
+[10-video.md](10-video.md) has the details, and a video player built
+on them.
+
 **Process control**
 `interrupted()` (how many times the program has been asked to stop by
 Ctrl-C or SIGTERM; from the first call on they are counted instead of

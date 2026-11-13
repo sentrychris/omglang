@@ -774,6 +774,11 @@ Always available, no import needed.
 | `tcp_peer(h)`                  | the other end's address, as `"203.0.113.9:53012"`     |
 | `tcp_nonblocking(h, on)`       | with it on, `tcp_accept` and `tcp_read` return `false` rather than wait, and `tcp_write` sends what fits |
 | `tcp_poll(reads, writes, ms)`  | wait until one of these sockets can be read or written, or `ms` pass; returns `[readable, writable]` |
+| **A window**                   | (programs run by `omg` or built to machine code, on Linux and Windows; see [docs/10-video.md](docs/10-video.md)) |
+| `window_open(title, w, h)`     | open a window `w` x `h` pixels inside; returns a handle |
+| `window_draw(win, pixels, width)` | show a picture: a list with one int per pixel (`red * 65536 + green * 256 + blue`), in rows of `width`; scaled to fit the window |
+| `window_poll(win)`             | what happened to the window: `false`, `["key", name]`, `["resize", w, h]` or `["close"]`; never waits |
+| `window_close(win)`            | close the window                                      |
 | **Process control**            |                                                       |
 | `subprocess([cmd, args...])`   | run a child process; returns its exit code (a program that cannot be started raises `ValueError`) |
 | `exit(code)`                   | exit the current process with the given status       |
@@ -937,7 +942,7 @@ omglang/
 ├── examples/        programs to read and run: one language feature each
 │   └── games/           interactive terminal games (snake, pong, tetris, rogue)
 ├── tests/           shell-driven test suite (conformance, parity, regression, REPL, builtins)
-├── tools/           programs written in OMG (wc, grep, sort, omgdb, an editor, a web server)
+├── tools/           programs written in OMG (wc, grep, sort, omgdb, an editor, a web server, a video player)
 ├── web/             browser playground + compiler explorer (static site)
 ├── docs/            the manual: quickstart, language tour, architecture, extending, Windows
 └── vscode/          VS Code extension (highlighting, themes, language server)
@@ -967,6 +972,10 @@ Some interesting starting points:
 - [`tools/db/`](tools/db/): **omgdb**, a small SQL database written in OMG —
   a paged on-disk format, a recursive-descent SQL parser, and a SQLite-style
   REPL. See [`tools/db/README.md`](tools/db/README.md).
+- [`tools/video/`](tools/video/): a **video player** written in OMG: an MP4
+  reader, an H.264 decoder that matches ffmpeg bit for bit, and a window
+  opened by speaking X11 (Linux) or calling user32 (Windows) directly,
+  with no library in between. See [`docs/10-video.md`](docs/10-video.md).
 
 ---
 

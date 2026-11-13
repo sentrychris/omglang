@@ -8,7 +8,7 @@
 #     ./play clip.mp4
 #
 # Build it: run through `omg play.omg clip.mp4` it works too, but a
-# picture then takes a hundred times as long to decode.
+# picture then takes a few hundred times as long to decode.
 #
 # Keys, with the window in front:
 #

@@ -28,7 +28,7 @@ ffmpeg -f lavfi -i "mandelbrot=size=64x48:rate=10" -frames:v 8 \
 
 # the checksums: the sixth column of framecrc, as a decimal number
 ffmpeg -i clip.mp4 -f framecrc - | grep -v '^#' |
-    awk -F, '{ printf "%d %d\n", NR - 1, strtonum($6) }' > clip.mp4.frames
+    gawk -F, '{ printf "%d %d\n", NR - 1, strtonum($6) }' > clip.mp4.frames
 ```
 
 To check a clip of your own the same way:
