@@ -853,7 +853,7 @@ proc rt_buf_to_list(b) {
     return l
 }
 
-proc bi_file_read(t, h) {
+proc bi_file_read_1(t, h) {
     alloc e := rt_file_entry(t, h, "file_read()")
     alloc b := rt_read_all(__peek64(e) - 1)
     if __peek64(e + 8) {
@@ -862,6 +862,67 @@ proc bi_file_read(t, h) {
     }
     rt_tag := T_STR
     return rt_buf_finish(b)
+}
+
+# file_read(h, max): at most max bytes from where the handle stands;
+# fewer only when the file ends first.
+proc bi_file_read_2(t, h, mt, max) {
+    alloc e := rt_file_entry(t, h, "file_read()")
+    if mt != T_INT {
+        return rt_type_error("file_read() expects (handle: int, max_bytes: int)")
+    }
+    if max < 0 {
+        return rt_value_error("file_read: max_bytes must be non-negative")
+    }
+    alloc fd := __peek64(e) - 1
+    alloc b := rt_buf_new()
+    alloc left := max
+    loop left > 0 {
+        alloc step := left
+        if step > 65536 {
+            step := 65536
+        }
+        rt_buf_reserve(b, step)
+        alloc got := os_read(fd, __peek64(b) + __peek64(b + 8), step)
+        if got <= 0 {
+            break
+        }
+        __poke64(b + 8, __peek64(b + 8) + got)
+        left := left - got
+    }
+    if __peek64(e + 8) {
+        rt_tag := T_LIST
+        return rt_buf_to_list(b)
+    }
+    rt_tag := T_STR
+    return rt_buf_finish(b)
+}
+
+# What the system knows about a path: field 0 is its size in bytes,
+# field 1 the time it was last written, in milliseconds since 1970.
+proc rt_file_stat(t, path, field, what) {
+    if t != T_STR {
+        return rt_throw("TypeError", rt_str_concat(what, " expects a path"))
+    }
+    alloc full := rt_resolve(path)
+    alloc cell := rt_alloc(16)
+    alloc r := os_stat(full, cell)
+    alloc v := __peek64(cell + field * 8)
+    rt_free(cell, 16)
+    if r < 0 {
+        return rt_os_error("cannot stat", full, 0 - r)
+    }
+    rt_drop(T_STR, full)
+    rt_tag := T_INT
+    return v
+}
+
+proc bi_file_size(t, path) {
+    return rt_file_stat(t, path, 0, "file_size()")
+}
+
+proc bi_file_mtime(t, path) {
+    return rt_file_stat(t, path, 1, "file_mtime()")
 }
 
 proc bi_file_write(t, h, dt, data) {
@@ -1234,9 +1295,16 @@ proc bi_pty_resize(t, fd, rt, rows, ct, cols) {
 #
 # Handle h (1 and up) is entry h - 1 of 16 bytes: the system's socket
 # + 1 (0 when free) and 1 for a listener, 0 for a connection.
+#
+# A socket starts out blocking: a call on it waits until it can be
+# done. tcp_nonblocking(h, true) changes that for one socket. From
+# then on tcp_accept and tcp_read return false when there is nothing
+# to take yet, and tcp_write sends what the system has room for and
+# says how much that was. tcp_poll is how a program then waits for
+# many sockets at once.
 
 alloc rt_socks := 0
-alloc SOCKS_MAX := 1024
+alloc SOCKS_MAX := 4096
 
 proc rt_sock_new(sock, listener) {
     if rt_socks == 0 {
@@ -1256,13 +1324,21 @@ proc rt_sock_new(sock, listener) {
     return h + 1
 }
 
+# The entry of an open handle of either kind, or 0.
+proc rt_sock_find(h) {
+    if rt_socks == 0 or h < 1 or h > SOCKS_MAX or __peek64(rt_socks + (h - 1) * 16) == 0 {
+        return 0
+    }
+    return rt_socks + (h - 1) * 16
+}
+
 # The entry of a handle that must be a listener (1) or a connection
 # (0); `what` names the builtin.
 proc rt_sock_entry(h, listener, what) {
-    if rt_socks == 0 or h < 1 or h > SOCKS_MAX or __peek64(rt_socks + (h - 1) * 16) == 0 {
+    alloc e := rt_sock_find(h)
+    if e == 0 {
         return rt_throw("ValueError", rt_str_concat(what, ": invalid tcp handle"))
     }
-    alloc e := rt_socks + (h - 1) * 16
     if __peek64(e + 8) != listener {
         if listener {
             return rt_throw("ValueError", rt_str_concat(what, ": handle is a stream, not a listener"))
@@ -1297,6 +1373,8 @@ proc bi_tcp_listen(ht, host, pt, port) {
     return rt_sock_new(s, 1)
 }
 
+# tcp_accept(h): the next connection; false when the listener is
+# non-blocking and nobody is waiting.
 proc bi_tcp_accept(t, h) {
     if t != T_INT {
         return rt_type_error("tcp_accept() expects a listener handle")
@@ -1305,6 +1383,10 @@ proc bi_tcp_accept(t, h) {
     rt_out_flush()
     alloc s := os_tcp_accept(__peek64(e) - 1)
     if s < 0 {
+        if os_would_block(s) {
+            rt_tag := T_BOOL
+            return 0
+        }
         return rt_os_error("tcp_accept", 0, 0 - s)
     }
     rt_tag := T_INT
@@ -1325,7 +1407,8 @@ proc bi_tcp_connect(ht, host, pt, port) {
 }
 
 # tcp_read(h, max): up to max bytes as a list; an empty list once the
-# other side has closed.
+# other side has closed; false when the socket is non-blocking and
+# nothing has arrived yet.
 proc bi_tcp_read(t, h, mt, max) {
     if t != T_INT or mt != T_INT {
         return rt_type_error("tcp_read() expects (handle: int, max_bytes: int)")
@@ -1340,6 +1423,10 @@ proc bi_tcp_read(t, h, mt, max) {
     if got < 0 {
         rt_free(__peek64(b), __peek64(b + 16))
         rt_free(b, 24)
+        if os_would_block(got) {
+            rt_tag := T_BOOL
+            return 0
+        }
         return rt_os_error("tcp_read", 0, 0 - got)
     }
     __poke64(b + 8, got)
@@ -1347,40 +1434,243 @@ proc bi_tcp_read(t, h, mt, max) {
     return rt_buf_to_list(b)
 }
 
-# tcp_write(h, data): data is a string or a list of bytes.
-proc bi_tcp_write(t, h, dt, data) {
+# tcp_write(h, data) and tcp_write(h, data, offset): send the bytes of
+# data (a string or a list of bytes) from byte `offset` on. Returns how
+# many were sent: all of them on a blocking socket, as many as the
+# system had room for (possibly none) on a non-blocking one.
+proc rt_tcp_write(t, h, dt, data, off) {
     if t != T_INT or (dt != T_STR and dt != T_LIST) {
         return rt_type_error("tcp_write() expects (handle: int, data: str | [int])")
     }
     alloc e := rt_sock_entry(h, 0, "tcp_write")
-    alloc s := data
-    if dt == T_LIST {
-        s := rt_list_bytes(data, "tcp_write()")
-    }
-    alloc n := __peek64(s + S_BYTES)
-    alloc r := os_tcp_write(__peek64(e) - 1, s + S_DATA, n)
-    if dt == T_LIST {
-        rt_drop(T_STR, s)
+    alloc r := 0
+    if dt == T_STR {
+        alloc total := __peek64(data + S_BYTES)
+        if off < 0 or off > total {
+            return rt_value_error("tcp_write: offset is outside the data")
+        }
+        r := os_tcp_write(__peek64(e) - 1, data + S_DATA + off, total - off)
+    } else {
+        alloc n := __peek64(data + L_LEN)
+        if off < 0 or off > n {
+            return rt_value_error("tcp_write: offset is outside the data")
+        }
+        alloc items := __peek64(data + L_ITEMS)
+        alloc size := n - off + 1
+        alloc buf := rt_alloc(size)
+        alloc i := off
+        loop i < n {
+            alloc b := __peek64(items + i * 16)
+            if __peek64(items + i * 16 + 8) != T_INT or b < 0 or b > 255 {
+                rt_free(buf, size)
+                return rt_type_error("tcp_write() expects a list of bytes (0-255)")
+            }
+            __poke8(buf + i - off, b)
+            i := i + 1
+        }
+        r := os_tcp_write(__peek64(e) - 1, buf, n - off)
+        rt_free(buf, size)
     }
     if r < 0 {
         return rt_os_error("tcp_write", 0, 0 - r)
     }
     rt_tag := T_INT
-    return n
+    return r
+}
+
+proc bi_tcp_write_2(t, h, dt, data) {
+    return rt_tcp_write(t, h, dt, data, 0)
+}
+
+proc bi_tcp_write_3(t, h, dt, data, ot, off) {
+    if ot != T_INT {
+        return rt_type_error("tcp_write() expects (handle: int, data: str | [int], offset: int)")
+    }
+    return rt_tcp_write(t, h, dt, data, off)
 }
 
 proc bi_tcp_close(t, h) {
     if t != T_INT {
         return rt_type_error("tcp_close() expects a handle")
     }
-    if rt_socks == 0 or h < 1 or h > SOCKS_MAX or __peek64(rt_socks + (h - 1) * 16) == 0 {
+    alloc e := rt_sock_find(h)
+    if e == 0 {
         return rt_value_error("invalid tcp handle")
     }
-    alloc e := rt_socks + (h - 1) * 16
     os_tcp_close(__peek64(e) - 1)
     __poke64(e, 0)
     rt_tag := T_NONE
     return 0
+}
+
+# tcp_nonblocking(h, on): choose whether calls on this socket (a
+# listener or a connection) wait.
+proc bi_tcp_nonblocking(t, h, ot, on) {
+    if t != T_INT {
+        return rt_type_error("tcp_nonblocking() expects (handle: int, on: bool)")
+    }
+    alloc e := rt_sock_find(h)
+    if e == 0 {
+        return rt_value_error("tcp_nonblocking: invalid tcp handle")
+    }
+    alloc r := os_tcp_nonblocking(__peek64(e) - 1, rt_truthy(ot, on))
+    if r < 0 {
+        return rt_os_error("tcp_nonblocking", 0, 0 - r)
+    }
+    rt_tag := T_NONE
+    return 0
+}
+
+# tcp_peer(h): who is at the other end of a connection, as
+# "address:port".
+proc bi_tcp_peer(t, h) {
+    if t != T_INT {
+        return rt_type_error("tcp_peer() expects a handle")
+    }
+    alloc e := rt_sock_entry(h, 0, "tcp_peer")
+    alloc s := os_tcp_peer(__peek64(e) - 1)
+    if s == 0 {
+        return rt_value_error("tcp_peer: the connection has no peer")
+    }
+    rt_tag := T_STR
+    return s
+}
+
+# "a.b.c.d:port" for the 4 address bytes at p. Owned.
+proc rt_peer_v4(p, port) {
+    alloc b := rt_buf_new()
+    alloc i := 0
+    loop i < 4 {
+        if i > 0 {
+            rt_buf_byte(b, 46)
+        }
+        rt_buf_int(b, __peek8(p + i))
+        i := i + 1
+    }
+    rt_buf_byte(b, 58)
+    rt_buf_int(b, port)
+    return rt_buf_finish(b)
+}
+
+# "[x:x:x:x:x:x:x:x]:port" for the 16 address bytes at p, groups in
+# hex without leading zeros; an IPv4 address carried inside IPv6
+# (::ffff:a.b.c.d) is shown as the IPv4 address it is. Owned.
+proc rt_peer_v6(p, port) {
+    alloc mapped := __peek16(p + 10) == 65535
+    alloc i := 0
+    loop i < 10 {
+        if __peek8(p + i) != 0 {
+            mapped := 0
+        }
+        i := i + 1
+    }
+    if mapped {
+        return rt_peer_v4(p + 12, port)
+    }
+    alloc b := rt_buf_new()
+    rt_buf_byte(b, 91)
+    i := 0
+    loop i < 8 {
+        if i > 0 {
+            rt_buf_byte(b, 58)
+        }
+        alloc group := __peek8(p + i * 2) * 256 + __peek8(p + i * 2 + 1)
+        alloc started := 0
+        alloc shift := 12
+        loop shift >= 0 {
+            alloc digit := (group >> shift) & 15
+            if digit != 0 or started or shift == 0 {
+                started := 1
+                if digit < 10 {
+                    rt_buf_byte(b, 48 + digit)
+                } else {
+                    rt_buf_byte(b, 87 + digit)
+                }
+            }
+            shift := shift - 4
+        }
+        i := i + 1
+    }
+    rt_buf_byte(b, 93)
+    rt_buf_byte(b, 58)
+    rt_buf_int(b, port)
+    return rt_buf_finish(b)
+}
+
+# tcp_poll(reads, writes, timeout_ms): wait until one of the sockets in
+# `reads` has something to take (data, the end of the stream, or for a
+# listener a connection), or one in `writes` has room to send, or the
+# time is up. A negative timeout waits without limit; 0 only looks.
+# Returns [readable, writable]: the handles that are ready, in the
+# order they were given. A socket in trouble is reported as ready, so
+# that the read or write that follows finds out. Returns early, with
+# whatever is ready, when the program is interrupted (see
+# interrupted()).
+proc bi_tcp_poll(rt, reads, wt, writes, tt, timeout) {
+    if rt != T_LIST or wt != T_LIST or tt != T_INT {
+        return rt_type_error("tcp_poll() expects (reads: [int], writes: [int], timeout_ms: int)")
+    }
+    alloc nr := __peek64(reads + L_LEN)
+    alloc nw := __peek64(writes + L_LEN)
+    alloc n := nr + nw
+    alloc size := os_poll_size(n)
+    alloc arr := rt_alloc(size)
+    alloc i := 0
+    loop i < n {
+        alloc it := __peek64(reads + L_ITEMS) + i * 16
+        if i >= nr {
+            it := __peek64(writes + L_ITEMS) + (i - nr) * 16
+        }
+        alloc e := 0
+        if __peek64(it + 8) == T_INT {
+            e := rt_sock_find(__peek64(it))
+        }
+        if e == 0 {
+            rt_free(arr, size)
+            return rt_value_error("tcp_poll: invalid tcp handle")
+        }
+        if i < nr {
+            os_poll_set(arr, i, __peek64(e) - 1, 1)
+        } else {
+            os_poll_set(arr, i, __peek64(e) - 1, 2)
+        }
+        i := i + 1
+    }
+    rt_out_flush()
+    alloc r := os_poll_wait(arr, n, timeout)
+    if r < 0 {
+        rt_free(arr, size)
+        return rt_os_error("tcp_poll", 0, 0 - r)
+    }
+    alloc readable := rt_list_new()
+    alloc writable := rt_list_new()
+    i := 0
+    loop i < n {
+        alloc got := os_poll_got(arr, i)
+        if i < nr {
+            if got & 1 {
+                rt_list_push(readable, T_INT, __peek64(__peek64(reads + L_ITEMS) + i * 16))
+            }
+        } elif got & 2 {
+            rt_list_push(writable, T_INT, __peek64(__peek64(writes + L_ITEMS) + (i - nr) * 16))
+        }
+        i := i + 1
+    }
+    rt_free(arr, size)
+    alloc result := rt_list_alloc(2)
+    rt_list_push(result, T_LIST, readable)
+    rt_list_push(result, T_LIST, writable)
+    rt_tag := T_LIST
+    return result
+}
+
+# interrupted(): how many times the program has been asked to stop
+# (Ctrl-C, or a request to terminate) since it first called this. The
+# first call takes these requests over: from then on they no longer end
+# the program, they are counted here for it to act on.
+proc bi_interrupted() {
+    rt_tag := T_INT
+    return os_interrupts()
 }
 
 # --- calling a builtin by name -------------------------------------------------------------
@@ -1447,7 +1737,10 @@ proc rt_bi_init() {
     rt_bi_add("fork", bi_fork, 0)
     rt_bi_add("subprocess", bi_subprocess, 1)
     rt_bi_add("file_open", bi_file_open, 2)
-    rt_bi_add("file_read", bi_file_read, 1)
+    rt_bi_add("file_read", bi_file_read_1, 1)
+    rt_bi_add("file_read", bi_file_read_2, 2)
+    rt_bi_add("file_size", bi_file_size, 1)
+    rt_bi_add("file_mtime", bi_file_mtime, 1)
     rt_bi_add("file_write", bi_file_write, 2)
     rt_bi_add("file_close", bi_file_close, 1)
     rt_bi_add("file_seek", bi_file_seek, 2)
@@ -1472,8 +1765,13 @@ proc rt_bi_init() {
     rt_bi_add("tcp_accept", bi_tcp_accept, 1)
     rt_bi_add("tcp_connect", bi_tcp_connect, 2)
     rt_bi_add("tcp_read", bi_tcp_read, 2)
-    rt_bi_add("tcp_write", bi_tcp_write, 2)
+    rt_bi_add("tcp_write", bi_tcp_write_2, 2)
+    rt_bi_add("tcp_write", bi_tcp_write_3, 3)
     rt_bi_add("tcp_close", bi_tcp_close, 1)
+    rt_bi_add("tcp_nonblocking", bi_tcp_nonblocking, 2)
+    rt_bi_add("tcp_peer", bi_tcp_peer, 1)
+    rt_bi_add("tcp_poll", bi_tcp_poll, 3)
+    rt_bi_add("interrupted", bi_interrupted, 0)
     rt_bi_add("call_builtin", bi_call_builtin, 2)
     return 0
 }
