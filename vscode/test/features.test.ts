@@ -111,7 +111,8 @@ function hoverText(needle: string, delta = 0, nth = 1): string {
 function cursor(text: string): { file: FileAnalysis; pos: { line: number; character: number }; uri: string } {
     const uri = pathToUri(path.join(dir, 'scratch.omg'));
     const i = text.indexOf('|');
-    ws.open(uri, text.replace('|', ''));
+    // Without a marker the cursor is not used: the text goes in as it is.
+    ws.open(uri, i < 0 ? text : text.slice(0, i) + text.slice(i + 1));
     const file = ws.get(uri) as FileAnalysis;
     return { file, pos: positionAt(file.lex.lineStarts, i), uri };
 }
@@ -136,6 +137,12 @@ test('hover: a proc from another file shows the comment written above it', () =>
     assert.match(text, /Area of a circle\./);
     assert.match(text, /`r`: the radius/);
     assert.match(text, /\*\*Returns\*\* the area, as a float/);
+});
+
+test('hover: a comment keeps its angle brackets', () => {
+    const c = cursor(';;;omg\n# Runs in <top-level> when `a < b`, not \\<here>.\nproc f|() {\n    return 1\n}\n');
+    const text = (hover(ws, c.file, c.pos)?.contents as { value: string }).value;
+    assert.match(text, /Runs in &lt;top-level> when `a < b`, not \\&lt;here>\./);
 });
 
 test('hover: modules, variables, closures, dict entries, keywords, operators, numbers', () => {

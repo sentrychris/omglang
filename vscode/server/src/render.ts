@@ -12,11 +12,18 @@ export function omg(src: string): string {
     return '```omg\n' + src + '\n```';
 }
 
-/** Markdown reads `<top-level>` as a tag and drops it. */
+/**
+ * Markdown reads `<top-level>` as a tag and drops it, so a `<` in
+ * someone's comment is written as an entity. Not inside a code span or
+ * an indented block, where it is already literal.
+ */
 function prose(text: string): string {
     return text
         .split('\n')
-        .map((l) => (/^( {4}|\t)/.test(l) ? l : l.replace(/</g, '\\<')))
+        .map((l) => {
+            if (/^( {4}|\t)/.test(l)) return l;
+            return l.split(/(`[^`]*`)/).map((part, i) => (i % 2 === 1 ? part : part.replace(/</g, '&lt;'))).join('');
+        })
         .join('\n');
 }
 
