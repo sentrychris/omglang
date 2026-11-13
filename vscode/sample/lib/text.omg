@@ -1,0 +1,59 @@
+;;;omg
+# Text helpers for the word count example.
+
+alloc UPPER_A := 65
+alloc UPPER_Z := 90
+
+proc is_letter(ch) {
+    alloc c := ascii(ch)
+    return (c >= 65 and c <= 90) or (c >= 97 and c <= 122)
+}
+
+# Splits text into its words: runs of letters.
+# @param s any text
+# @return a list of strings
+proc words(s) {
+    alloc out := []
+    alloc word := ""
+    for ch in s {
+        if is_letter(ch) {
+            word := word + ch
+        } elif word != "" {
+            append(out, word)
+            word := ""
+        }
+    }
+    if word != "" {
+        append(out, word)
+    }
+    return out
+}
+
+# The same text in lower case (ASCII letters only).
+proc lower(s) {
+    alloc out := ""
+    for ch in s {
+        alloc c := ascii(ch)
+        if c >= UPPER_A and c <= UPPER_Z {
+            out := out + chr(c + 32)
+        } else {
+            out := out + ch
+        }
+    }
+    return out
+}
+
+# Sorts names by their count, largest first.
+# @param names the keys to sort
+# @param counts a dict from name to count
+proc by_count(names, counts) {
+    alloc sorted := []
+    for name in names {
+        alloc i := 0
+        loop i < length(sorted) and counts[sorted[i]] >= counts[name] {
+            i := i + 1
+        }
+        sorted := sorted[0:i] + [name] + sorted[i:length(sorted)]
+    }
+    return sorted
+}

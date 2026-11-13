@@ -1,25 +1,54 @@
 {
   "name": "omg-language-support",
-  "displayName": "OMG Language Support",
-  "description": "Syntax highlighting and language server (completion, hover, go-to-definition) for the OMG programming language.",
-  "version": "0.2.0",
+  "displayName": "OMG Language",
+  "description": "OMG language support: rich syntax highlighting, two themes, snippets, and a language server with hover docs, completion, signature help, go to definition, rename, formatting and the compiler's own errors as you type.",
+  "version": "0.3.0",
   "publisher": "chris-rowles",
+  "license": "MIT",
+  "icon": "icons/icon.png",
+  "galleryBanner": {
+    "color": "#1e1e2e",
+    "theme": "dark"
+  },
+  "homepage": "https://versyx.digital/omglang/",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/sentrychris/omglang.git",
+    "directory": "vscode"
+  },
+  "bugs": {
+    "url": "https://github.com/sentrychris/omglang/issues"
+  },
   "engines": {
     "vscode": "^1.85.0"
   },
   "categories": [
-    "Programming Languages"
+    "Programming Languages",
+    "Linters",
+    "Formatters",
+    "Snippets",
+    "Themes"
   ],
-  "main": "./client/out/extension.js",
-  "activationEvents": [
-    "onLanguage:omg"
+  "keywords": [
+    "omg",
+    "omglang",
+    "language server",
+    "syntax highlighting",
+    "theme"
   ],
+  "main": "./out/extension.js",
   "contributes": {
     "languages": [
       {
         "id": "omg",
-        "aliases": ["OMG", "omg"],
-        "extensions": [".omg"],
+        "aliases": [
+          "OMG",
+          "omg"
+        ],
+        "extensions": [
+          ".omg"
+        ],
+        "firstLine": "^;;;omg\\b",
         "configuration": "./language-configuration.json",
         "icon": {
           "light": "./icons/omg.svg",
@@ -28,8 +57,12 @@
       },
       {
         "id": "omg-bytecode",
-        "aliases": ["OMG Bytecode"],
-        "extensions": [".omgb"],
+        "aliases": [
+          "OMG Bytecode"
+        ],
+        "extensions": [
+          ".omgb"
+        ],
         "icon": {
           "light": "./icons/omgb.svg",
           "dark": "./icons/omgb.svg"
@@ -41,37 +74,290 @@
         "language": "omg",
         "scopeName": "source.omg",
         "path": "./syntaxes/omg.tmLanguage.json"
+      },
+      {
+        "scopeName": "markdown.omg.codeblock",
+        "path": "./syntaxes/omg.markdown-injection.tmLanguage.json",
+        "injectTo": [
+          "text.html.markdown"
+        ],
+        "embeddedLanguages": {
+          "meta.embedded.block.omg": "omg"
+        }
       }
     ],
-    "iconThemes": [
+    "snippets": [
       {
-        "id": "omg-icons",
-        "label": "OMG Icons",
-        "path": "./icons/omg-icon-theme.json"
+        "language": "omg",
+        "path": "./snippets/omg.json"
+      }
+    ],
+    "themes": [
+      {
+        "label": "OMG Dark",
+        "uiTheme": "vs-dark",
+        "path": "./themes/omg-dark-color-theme.json"
+      },
+      {
+        "label": "OMG Light",
+        "uiTheme": "vs",
+        "path": "./themes/omg-light-color-theme.json"
+      }
+    ],
+    "commands": [
+      {
+        "command": "omg.run",
+        "title": "Run File",
+        "category": "OMG",
+        "icon": "$(play)"
+      },
+      {
+        "command": "omg.build",
+        "title": "Build Native Executable",
+        "category": "OMG",
+        "icon": "$(tools)"
+      },
+      {
+        "command": "omg.disassemble",
+        "title": "Show Bytecode",
+        "category": "OMG",
+        "icon": "$(file-binary)"
+      },
+      {
+        "command": "omg.repl",
+        "title": "Open REPL",
+        "category": "OMG",
+        "icon": "$(terminal)"
+      },
+      {
+        "command": "omg.restartServer",
+        "title": "Restart Language Server",
+        "category": "OMG",
+        "icon": "$(refresh)"
+      }
+    ],
+    "menus": {
+      "editor/title/run": [
+        {
+          "command": "omg.run",
+          "when": "resourceLangId == omg",
+          "group": "navigation@1"
+        },
+        {
+          "command": "omg.build",
+          "when": "resourceLangId == omg",
+          "group": "navigation@2"
+        },
+        {
+          "command": "omg.disassemble",
+          "when": "resourceLangId == omg",
+          "group": "navigation@3"
+        }
+      ],
+      "editor/context": [
+        {
+          "command": "omg.run",
+          "when": "resourceLangId == omg",
+          "group": "omg@1"
+        },
+        {
+          "command": "omg.disassemble",
+          "when": "resourceLangId == omg",
+          "group": "omg@2"
+        }
+      ],
+      "explorer/context": [
+        {
+          "command": "omg.run",
+          "when": "resourceLangId == omg",
+          "group": "omg@1"
+        },
+        {
+          "command": "omg.build",
+          "when": "resourceLangId == omg",
+          "group": "omg@2"
+        },
+        {
+          "command": "omg.disassemble",
+          "when": "resourceLangId == omg || resourceExtname == .omgb",
+          "group": "omg@3"
+        }
+      ],
+      "commandPalette": [
+        {
+          "command": "omg.run",
+          "when": "editorLangId == omg"
+        },
+        {
+          "command": "omg.build",
+          "when": "editorLangId == omg"
+        },
+        {
+          "command": "omg.disassemble",
+          "when": "editorLangId == omg"
+        }
+      ]
+    },
+    "keybindings": [
+      {
+        "command": "omg.run",
+        "key": "ctrl+f5",
+        "when": "editorTextFocus && editorLangId == omg"
+      }
+    ],
+    "taskDefinitions": [
+      {
+        "type": "omg",
+        "required": [
+          "label"
+        ],
+        "properties": {
+          "label": {
+            "type": "string",
+            "description": "What the task does, as shown in the terminal tab."
+          }
+        }
+      }
+    ],
+    "problemMatchers": [
+      {
+        "name": "omg",
+        "owner": "omg",
+        "source": "omg",
+        "fileLocation": [
+          "autoDetect",
+          "${cwd}"
+        ],
+        "pattern": {
+          "regexp": "^(SyntaxError: .*) on line (\\d+) in (.+)$",
+          "message": 1,
+          "line": 2,
+          "file": 3
+        }
       }
     ],
     "configuration": {
       "type": "object",
       "title": "OMG",
       "properties": {
+        "omg.path": {
+          "scope": "machine-overridable",
+          "type": "string",
+          "default": "",
+          "markdownDescription": "Path to the `omg` binary, used by **Run File**, **Build** and **Show Bytecode**. Leave empty to look for `bin/omg` in the workspace and then on your `PATH`. The language server does not need it."
+        },
+        "omg.run.args": {
+          "scope": "resource",
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "markdownDescription": "Arguments passed to the program by **OMG: Run File**. They arrive in `args`."
+        },
+        "omg.diagnostics.enabled": {
+          "scope": "window",
+          "type": "boolean",
+          "default": true,
+          "description": "Check OMG files as you type: syntax errors exactly as the compiler reports them, plus the mistakes it would only catch at run time."
+        },
+        "omg.diagnostics.unused": {
+          "scope": "window",
+          "type": "boolean",
+          "default": true,
+          "description": "Fade names that are never used and code that can never run."
+        },
+        "omg.diagnostics.undefinedNames": {
+          "scope": "window",
+          "type": "boolean",
+          "default": true,
+          "description": "Warn about names that are not defined anywhere the file can see."
+        },
         "omg.trace.server": {
           "scope": "window",
           "type": "string",
-          "enum": ["off", "messages", "verbose"],
+          "enum": [
+            "off",
+            "messages",
+            "verbose"
+          ],
           "default": "off",
-          "description": "Trace LSP traffic between VS Code and the OMG language server."
+          "description": "Log the messages between VS Code and the OMG language server, for debugging the extension."
         }
       }
-    }
+    },
+    "configurationDefaults": {
+      "[omg]": {
+        "editor.tabSize": 4,
+        "editor.insertSpaces": true,
+        "editor.semanticHighlighting.enabled": true,
+        "editor.wordBasedSuggestions": "off"
+      }
+    },
+    "semanticTokenModifiers": [
+      {
+        "id": "global",
+        "description": "Declared at the top level of a file."
+      }
+    ],
+    "semanticTokenScopes": [
+      {
+        "language": "omg",
+        "scopes": {
+          "namespace": [
+            "entity.name.namespace.omg"
+          ],
+          "function": [
+            "entity.name.function.omg"
+          ],
+          "method": [
+            "entity.name.function.member.omg"
+          ],
+          "function.defaultLibrary": [
+            "support.function.builtin.omg"
+          ],
+          "variable": [
+            "variable.other.readwrite.omg"
+          ],
+          "variable.readonly": [
+            "variable.other.constant.omg"
+          ],
+          "variable.defaultLibrary": [
+            "variable.language.omg"
+          ],
+          "variable.defaultLibrary.readonly": [
+            "variable.language.omg"
+          ],
+          "parameter": [
+            "variable.parameter.omg"
+          ],
+          "property": [
+            "variable.other.property.omg"
+          ]
+        }
+      }
+    ]
   },
   "scripts": {
-    "vscode:prepublish": "npm run compile",
-    "compile": "tsc -b",
-    "watch": "tsc -b -w",
-    "postinstall": "cd client && npm install && cd ../server && npm install"
+    "build": "node scripts/build.mjs",
+    "watch": "node scripts/build.mjs --watch",
+    "typecheck": "tsc --noEmit -p .",
+    "test": "npm run typecheck && node scripts/build.mjs --tests && node --test out/test/*.test.js",
+    "themes": "node scripts/themes.mjs",
+    "package": "vsce package --no-dependencies --no-rewrite-relative-links -o omg-language-support.vsix",
+    "vscode:prepublish": "node scripts/build.mjs --production"
   },
   "devDependencies": {
     "@types/node": "^20.0.0",
-    "typescript": "^5.4.0"
+    "@types/vscode": "^1.85.0",
+    "@vscode/vsce": "^3.0.0",
+    "esbuild": "^0.25.0",
+    "typescript": "^5.4.0",
+    "vscode-languageclient": "^9.0.1",
+    "vscode-languageserver": "^9.0.1",
+    "vscode-languageserver-textdocument": "^1.0.11",
+    "vscode-oniguruma": "^2.0.1",
+    "vscode-textmate": "^9.0.0",
+    "vscode-uri": "^3.0.8"
   }
 }
