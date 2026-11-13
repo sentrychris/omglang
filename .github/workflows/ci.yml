@@ -273,6 +273,10 @@ jobs:
   editor:
     name: VS Code extension
     runs-on: ubuntu-latest
+    # It only reads the repository; the artifact upload does not go
+    # through this token.
+    permissions:
+      contents: read
     steps:
       - name: Checkout
         uses: actions/checkout@v5
