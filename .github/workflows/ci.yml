@@ -11,117 +11,53 @@ concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
-env:
-  CARGO_TERM_COLOR: always
-  RUSTFLAGS: "-D warnings"
-
 # Every `run:` step uses bash, including on Windows (Git Bash ships on
 # the hosted runners), so the same commands work on all three systems.
 defaults:
   run:
     shell: bash
 
+# Nothing here installs Rust or builds rust/: that runtime is frozen
+# (see rust/README.md) and the toolchain no longer needs it. Nothing
+# installs a C compiler either; the macOS job and the cross-checks use
+# the one the hosted runners come with.
+
 jobs:
-  # The Rust runtime is the reference implementation, and the seed
-  # that bootstraps the native toolchain on any host the checked-in
-  # binaries don't run on.
-  rust:
-    name: Rust runtime (${{ matrix.os }})
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v5
-
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Cache cargo registry & target
-        uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: rust -> target
-
-      # Building also runs `rust/build.rs`, which bootstraps
-      # `src/compiler.omgb` from `src/compiler.omg`
-      # using the Rust frontend. If the bootstrap is broken, the build
-      # fails here.
-      - name: Build (release)
-        run: cargo build --release --manifest-path rust/Cargo.toml 2>&1 | tee build.log
-
-      - name: Run unit tests
-        run: cargo test --manifest-path rust/Cargo.toml 2>&1 | tee test.log
-
-      # Portable end-to-end check (no C compiler needed):
-      #   * self-hosting fixed point: the OMG-in-OMG compiler (running on
-      #     the VM) produces byte-identical output to the Rust frontend
-      #     when compiling its own source
-      #   * triple-meta fixed point: the same, with the OMG compiler
-      #     running on the OMG-written VM (src/vm.omg)
-      #   * both frontends agree on every .omg file in the repo
-      #   * every example prints the same thing through both frontends
-      #   * a regression program prints the expected output on the Rust
-      #     VM, the OMG-written VM, and the JS transpiler (via node)
-      #   * the conformance corpus (tests/conformance/) behaves the
-      #     same on those same backends
-      #   * malformed programs fail with a SyntaxError, never a crash
-      - name: Smoke test
-        run: tests/smoke.sh 2>&1 | tee smoke.log
-
-      # The checked-in browser bundle (compiler + VM + both transpilers,
-      # transpiled to JS) must still drive every explorer stage.
-      - name: Web explorer bundle
-        run: node web/test-explorer.mjs 2>&1 | tee explorer.log
-
-      # Put the tail of whichever step failed on the run summary, so a
-      # red matrix cell explains itself without opening the full log.
-      - name: Summarise failure
-        if: failure()
-        run: |
-          for f in build.log test.log smoke.log explorer.log; do
-            [ -f "$f" ] || continue
-            {
-              echo "### ${{ matrix.os }}: tail of $f"
-              echo '```'
-              tail -n 60 "$f"
-              echo '```'
-            } >> "$GITHUB_STEP_SUMMARY"
-            msg=$(tail -n 25 "$f" | sed 's/%/%25/g' | awk '{printf "%s%%0A", $0}')
-            echo "::error title=${{ matrix.os }} $f::$msg"
-          done
-
-  # Guards the `rust-version` promise in rust/Cargo.toml.
-  msrv:
-    name: Rust runtime (MSRV 1.80)
+  # omg's own source as one C file, written by the checked-in Linux
+  # binary. This is how omg reaches a system its checked-in binaries do
+  # not run on: the macOS job below compiles this file with `cc` to get
+  # its first omg.
+  seed-c:
+    name: omg as C (seed for other systems)
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v5
 
-      - name: Install Rust 1.80
-        uses: dtolnay/rust-toolchain@1.80.0
-
-      - name: Build
-        run: cargo build --manifest-path rust/Cargo.toml 2>&1 | tee build.log
-
-      - name: Summarise failure
-        if: failure()
+      - name: Write omg.c
         run: |
-          msg=$(tail -n 25 build.log | sed 's/%/%25/g' | awk '{printf "%s%%0A", $0}')
-          echo "::error title=MSRV build::$msg"
+          bin/omg --emit-c src/omg.omg omg.c
+          wc -c omg.c
+
+      - name: Upload omg.c
+        uses: actions/upload-artifact@v4
+        with:
+          name: omg-c
+          path: omg.c
+          retention-days: 3
 
   # The native toolchain, built and tested on all three systems. On
   # Linux and Windows it writes machine code itself (OMG -> bytecode ->
   # x86-64) and this is a *self-rebuild* from the binary checked into
   # bin/ (omg, omg.exe). On macOS neither can run and the back end does
-  # not cover it, so build.sh bootstraps from the Rust runtime and goes
-  # through C (OMG -> bytecode -> C -> cc), which keeps that route
-  # tested end to end. The suite also puts the conformance corpus
-  # through `--build --target c` wherever a C compiler is installed.
+  # not cover it, so the first omg there comes from the generated C
+  # above, and from then on it rebuilds itself through C (OMG ->
+  # bytecode -> C -> cc), which keeps that route tested end to end.
+  # The suite also puts the conformance corpus and the examples through
+  # `--build --target c` wherever a C compiler is installed.
   native:
     name: Native toolchain (${{ matrix.os }})
+    needs: seed-c
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -131,23 +67,8 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v5
 
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Cache cargo registry & target
-        uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: rust -> target
-
-      # The Rust runtime is the bootstrap seed for build.rs (which
-      # produces `src/{compiler,vm}.omgb`) and the reference
-      # implementation the test suite compares the native `omg`
-      # against.
-      - name: Build Rust runtime (bootstrap seed)
-        run: cargo build --release --manifest-path rust/Cargo.toml 2>&1 | tee build.log
-
       # bin/omg is committed so a fresh clone has a native
-      # toolchain without the Rust runtime. Check that it was built
+      # toolchain with nothing installed. Check that it was built
       # from src/ as it is in this commit (build.sh stamps
       # it with a hash of its sources) *before* the steps below
       # rebuild it and hide the answer. Linux only: the committed
@@ -172,17 +93,35 @@ jobs:
             diff tests/smoke/regressions.expected checked-in-aot.out
           } 2>&1 | tee check-bin.log
 
-      # Compiles src/omg.omg (which imports the rest of the
-      # toolchain) → bin/omg (omg.exe on Windows). On Linux
-      # and Windows this validates that the in-repo binary can rebuild
+      - name: Download omg.c
+        if: runner.os == 'macOS'
+        uses: actions/download-artifact@v4
+        with:
+          name: omg-c
+          path: seed
+
+      # The whole bootstrap on a system with no omg yet: one C file,
+      # one compiler command.
+      - name: First omg from generated C
+        if: runner.os == 'macOS'
+        run: |
+          set -o pipefail
+          {
+            cc -O3 -w seed/omg.c -o bin/omg -lm
+            bin/omg --version
+          } 2>&1 | tee native-build.log
+
+      # Builds src/omg.omg (which imports the rest of the toolchain)
+      # into bin/omg (omg.exe on Windows) with the omg that is already
+      # there. This validates that the in-repo binary can rebuild
       # itself from the current OMG sources, the load-bearing
       # self-hosting invariant for the native pipeline.
       - name: Build native toolchain
-        run: scripts/build.sh 2>&1 | tee native-build.log
+        run: scripts/build.sh 2>&1 | tee -a native-build.log
 
-      # A second pass always self-rebuilds. On macOS the binary from
-      # the first pass was produced by the Rust runtime and this one is
-      # the toolchain compiling itself; on Linux it must simply come
+      # A second pass. On macOS the first pass was built by the omg
+      # that came from the Linux-written C and this one is the
+      # toolchain compiling itself there; on Linux it must simply come
       # out the same again.
       - name: Self-rebuild native toolchain
         if: runner.os != 'Windows'
@@ -198,28 +137,30 @@ jobs:
 
       # tests/run.sh is the comprehensive end-to-end suite. It exercises
       # bin/omg directly:
-      #   * builtins   — process & I/O builtins via Rust + native AOT
+      #   * builtins   — process & I/O builtins, interpreted and built
       #   * driver     — every omg invocation form (interpret / --build
-      #                  / --compile / --emit-c / --emit-js / --disasm
-      #                  / REPL)
+      #                  and its targets / --compile / --emit-c /
+      #                  --emit-js / --disasm / REPL)
       #   * repl       — REPL state, multi-line input, error recovery
+      #   * syntax     — malformed programs fail with a clean SyntaxError
       #   * regression — specific bugs we've fixed, each through every
       #                  applicable backend
       #   * conformance — the corpus in tests/conformance/ on the
-      #                  native interpreter, AOT and `omg --emit-js`
-      #                  (the smoke test runs it on the portable
-      #                  backends)
-      #   * parity     — triple-meta fixed-point + byte-identical
-      #                  bytecode (Rust frontend vs native omg) + AOT
-      #                  corpus parity (Rust runtime vs `omg --build`
-      #                  vs `omg <file.omg>`) + native self-rebuild,
-      #                  which must write the same binary again
+      #                  interpreter, built executables (machine code
+      #                  and through C) and `omg --emit-js`
+      #   * tools      — the programs in tools/, and the HTTP server
+      #                  answering requests
+      #   * db         — the database in tools/db
+      #   * parity     — the compiler gives the same bytes as machine
+      #                  code and on the OMG VM; every example prints
+      #                  the same interpreted, built, through C and as
+      #                  JavaScript; the toolchain rebuilds itself and
+      #                  writes the same binary again
       - name: Run end-to-end test suite
         run: tests/run.sh 2>&1 | tee tests.log
 
-      # The cross-backend regression program, through the two native
-      # paths the smoke test can't reach: interpreted by the native
-      # driver, and AOT-compiled to machine code.
+      # The cross-backend regression program, interpreted by the
+      # native driver and built to an executable.
       - name: Regression program (native interpreter and AOT)
         run: |
           set -o pipefail
@@ -233,10 +174,15 @@ jobs:
             diff tests/smoke/regressions.expected aot.out
           } 2>&1 | tee regressions.log
 
+      # The checked-in browser bundle (compiler + VM + both transpilers,
+      # transpiled to JS) must still drive every explorer stage.
+      - name: Web explorer bundle
+        run: node web/test-explorer.mjs 2>&1 | tee explorer.log
+
       # web/ holds generated bundles (the compiler and VM transpiled to
-      # JS, plus copies of a few examples). The build is deterministic, so a
-      # rebuild that changes anything means they were not regenerated
-      # after a change to their sources.
+      # JS). The build is deterministic, so a rebuild that changes
+      # anything means they were not regenerated after a change to
+      # their sources.
       - name: Checked-in web bundles are current
         if: runner.os == 'Linux'
         run: |
@@ -249,7 +195,7 @@ jobs:
       - name: Summarise failure
         if: failure()
         run: |
-          for f in build.log check-bin.log native-build.log native-rebuild.log tests.log regressions.log web-build.log; do
+          for f in check-bin.log native-build.log native-rebuild.log tests.log regressions.log explorer.log web-build.log; do
             [ -f "$f" ] || continue
             {
               echo "### ${{ matrix.os }}: tail of $f"
@@ -260,7 +206,7 @@ jobs:
           done
           # Annotate with the tail of the *last* log written — the step
           # that failed.
-          last=$(ls -t build.log native-build.log native-rebuild.log tests.log regressions.log 2>/dev/null | head -n 1 || true)
+          last=$(ls -t native-build.log native-rebuild.log tests.log regressions.log explorer.log 2>/dev/null | head -n 1 || true)
           if [ -n "$last" ]; then
             msg=$(tail -n 60 "$last" | sed 's/%/%25/g' | awk '{printf "%s%%0A", $0}')
             echo "::error title=${{ matrix.os }} $last::$msg"
