@@ -18,7 +18,7 @@
 #   q         quit
 #
 # AOT-compile for crisp single-keystroke input:
-#     omg --build games/rogue.omg rogue && ./rogue
+#     omg --build examples/games/rogue.omg rogue && ./rogue
 
 alloc W := 70
 alloc H := 20

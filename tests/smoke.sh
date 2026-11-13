@@ -92,7 +92,7 @@ while IFS= read -r f; do
         bad=$((bad + 1))
         fail "bytecode parity: $f" "$out"
     fi
-done < <(find src examples games tools tests/smoke tests/conformance -name '*.omg' | sort)
+done < <(find src examples tools tests/smoke tests/conformance -name '*.omg' | sort)
 if [ "$bad" -eq 0 ]; then pass "identical bytecode for all $count .omg files"; fi
 
 # --- 3. Examples: same output through both frontends -------------------------

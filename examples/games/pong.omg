@@ -11,7 +11,7 @@
 # it can be beaten by hitting steep angles.
 #
 # AOT-compile for crisper input:
-#     omg --build games/pong.omg pong && ./pong
+#     omg --build examples/games/pong.omg pong && ./pong
 
 alloc W := 60        # court width
 alloc H := 20        # court height

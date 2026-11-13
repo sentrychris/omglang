@@ -153,4 +153,4 @@ tests/run.sh
 One thing the automated tests cannot reach is the raw-mode keyboard
 (`stdin_set_raw`, `stdin_read_key`), which needs a real console and a
 person pressing keys. It is the same logic as the Rust runtime's
-Windows implementation; the games in `examples/` are the test.
+Windows implementation; the games in `examples/games/` are the test.

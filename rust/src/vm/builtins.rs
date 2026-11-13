@@ -434,7 +434,7 @@ pub fn call_builtin(
         // Pairs of (time_ms, sleep_ms) for frame pacing and
         // (stdin_set_raw, stdin_read_key) for non-blocking keyboard
         // input. Together they unlock interactive terminal programs —
-        // see games/snake.omg.
+        // see examples/games/snake.omg.
 
         // time_ms() -> int. Monotonic-ish millisecond clock based on
         // SystemTime. Suitable for elapsed-time measurements; not for

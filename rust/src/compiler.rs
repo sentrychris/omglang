@@ -104,7 +104,7 @@ fn builtin_names() -> &'static [&'static str] {
         "stdin_read_bytes",
         // Real-time terminal I/O: monotonic clock, sleep, raw-mode
         // toggle, and non-blocking single-keypress read. Lets pure-OMG
-        // code do interactive animation (see games/snake.omg).
+        // code do interactive animation (see examples/games/snake.omg).
         "time_ms",
         "sleep_ms",
         "stdin_set_raw",

@@ -19,11 +19,11 @@ not run them (no controlling terminal).
 Both games AOT-compile cleanly. Build once, run from a terminal:
 
 ```sh
-omg --build games/snake.omg snake && ./snake
-omg --build games/tetris.omg tetris && ./tetris
+omg --build examples/games/snake.omg snake && ./snake
+omg --build examples/games/tetris.omg tetris && ./tetris
 ```
 
-The interpreter path (`omg games/snake.omg`) works too, the inner
+The interpreter path (`omg examples/games/snake.omg`) works too, the inner
 loop is cheap, so the tick rate is fine either way. AOT gives slightly
 crisper input feedback at high tick rates.
 

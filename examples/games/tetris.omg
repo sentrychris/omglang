@@ -18,7 +18,7 @@
 # work with than 4x4 grids and avoids fiddly empty-row trimming.
 #
 # AOT-compile for snappier input:
-#     omg --build games/tetris.omg tetris && ./tetris
+#     omg --build examples/games/tetris.omg tetris && ./tetris
 
 alloc W := 10
 alloc H := 20

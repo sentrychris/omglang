@@ -904,8 +904,8 @@ omglang/
 │   └── build-web.sh     builds the web/ bundles from src/
 ├── rust/            the Rust implementation: lexer, parser, compiler, VM, REPL.
 │                    The seed that builds OMG from nothing, and the reference the tests compare against
-├── examples/        small standalone programs (one language feature each)
-├── games/           larger interactive terminal games (snake, tetris)
+├── examples/        programs to read and run: one language feature each
+│   └── games/           interactive terminal games (snake, pong, tetris, rogue)
 ├── tests/           shell-driven test suite (parity, regression, REPL, builtins)
 ├── tools/           programs written in OMG (wc, grep, sort, omgdb, an editor, a site generator)
 ├── web/             browser playground + compiler explorer (static site)
@@ -921,10 +921,10 @@ Some interesting starting points:
 - [`examples/donut.omg`](examples/donut.omg): Andy Sloane's spinning 3D
   ASCII donut, ported to OMG. Exercises the float kit and ANSI-escape
   animation — AOT-compile it for a smooth ~90 FPS spin.
-- [`games/`](games/): interactive terminal games (Snake, Pong, Tetris,
+- [`examples/games/`](examples/games/): interactive terminal games (Snake, Pong, Tetris,
   a small roguelike) driven by `time_ms` / `sleep_ms` /
   `stdin_set_raw` / `stdin_read_key`. See
-  [`games/README.md`](games/README.md).
+  [`examples/games/README.md`](examples/games/README.md).
 - [`tools/unix/wc.omg`](tools/unix/wc.omg), [`tools/unix/grep.omg`](tools/unix/grep.omg),
   [`tools/json.omg`](tools/json.omg): Unix-style utilities,
   written in OMG. See [`tools/README.md`](tools/README.md) for the

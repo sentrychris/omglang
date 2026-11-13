@@ -12,7 +12,7 @@
 #   q              quit
 #
 # AOT-compile it for snappier input:
-#     omg --build games/snake.omg snake && ./snake
+#     omg --build examples/games/snake.omg snake && ./snake
 # The interpreter path works too — it's just CPU-cheap so the tick
 # rate is fine either way.
 

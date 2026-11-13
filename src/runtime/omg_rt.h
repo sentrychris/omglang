@@ -2323,7 +2323,7 @@ static Value omg_builtin_print(Value v) {
 /* === Real-time terminal I/O ============================================
  * time_ms / sleep_ms / stdin_set_raw / stdin_read_key form the platform
  * primitives needed by interactive terminal programs (see
- * games/snake.omg). They mirror the Rust runtime's builtins of the
+ * examples/games/snake.omg). They mirror the Rust runtime's builtins of the
  * same names.
  */
 
