@@ -11,7 +11,7 @@ Everything between the file and the screen is OMG. The MP4 reader and
 the H.264 decoder are OMG programs, and the window is opened by the
 runtime, itself OMG, speaking to the system directly. No library is
 linked in and no other program is started: `play` is one executable of
-about 600 KB, and `--target windows-x64` gives the same thing for
+under 1 MB, and `--target windows-x64` gives the same thing for
 Windows from Linux.
 
 This page covers the four builtins that give a program a window, then
@@ -163,22 +163,32 @@ the size of the video (small videos get 2 or 3 by default). `--fast`
 does not wait for each picture's time, which measures how fast the
 machine can go.
 
-Pictures are shown at the times the file gives them. When the machine
-cannot decode that fast, the player first stops drawing some pictures
-(decoding cannot be skipped: each picture is built from earlier ones),
-and if that is not enough it lets the video run slow rather than
-freeze. At the end it prints what happened:
+Pictures are shown at the times the file gives them. A file stores
+them in the order they are needed for decoding, which is not always the
+order they are shown in, so the player decodes a few ahead of the one
+on show, in the time it would otherwise spend waiting.
+
+When the machine cannot decode as fast as the file asks, the player
+leaves out what it can. Most pictures are needed to build later ones
+and must be decoded, but many files also hold pictures that nothing is
+built from (`h264.droppable(sample)` tells): those are not decoded at
+all. Where drawing takes long next to decoding, some pictures are
+decoded but not drawn. If all that is not enough, the video runs slow
+rather than freezes. At the end the player prints what happened:
 
 ```
-mandel.mp4: 320x240, 50 pictures, 25.0 a second
-50 pictures shown in 1.9 s: 25.3 a second
-decoding took 15.5 ms a picture, drawing 11.9 ms
+flower.mp4: 960x540, 150 pictures, 29.9 a second
+(its sound, mp4a, is not played)
+84 pictures shown in 5.9 s: 14.2 a second
+decoding took 57.5 ms a picture, drawing 11.9 ms
+66 pictures were left out, to keep up
+the video ran 0.5 s behind: this machine decodes it too slowly
 ```
 
 Run interpreted (`omg tools/video/play.omg clip.mp4`) it works, but
 far too slowly for anything larger than a postage stamp: build it.
 
-The player is 300 lines. It is three modules put together:
+The player is 450 lines. It is three modules put together:
 
 ```omg
 import "mp4.omg" as mp4
@@ -242,16 +252,19 @@ $ omg tools/video/mp4info.omg tests/video/clip.mp4
 
 ## Decoding H.264
 
-`tools/video/h264.omg`, 3,500 lines, is a decoder for the Baseline
-profile of H.264: the subset meant for simple devices, and what
-`ffmpeg -profile:v baseline` writes.
+`tools/video/h264.omg`, 6,300 lines, decodes the three profiles of
+H.264 that video is usually made in: Baseline, Main and High. That
+covers what cameras, phones, screen recorders and `ffmpeg` write by
+default, as long as it is progressive (not interlaced) and 8 bits a
+sample in 4:2:0, which is nearly always.
 
 | Proc | Does |
 | ---- | ---- |
 | `reset()` | Forget everything, to start on another stream. |
 | `set_config(bytes)` | Take the `avcC` configuration of an MP4 file. |
 | `decode(sample)` | Decode one sample of an MP4 file. Returns a picture, or `false`. |
-| `decode_stream(bytes)` | Decode a raw `.h264` stream. Returns a list of pictures. |
+| `decode_stream(bytes)` | Decode a raw `.h264` stream. Returns a list of pictures, in the order they are shown. |
+| `droppable(sample)` | `true` when no other picture is built from this one, so a player in a hurry may skip it. |
 | `info()` | `{width, height, coded_width, coded_height, crop_left, crop_top, profile, level}` |
 | `to_rgb(pic, out)` | Fill `out` with the picture as `window_draw` takes it. |
 | `checksum(pic)` | The number `ffmpeg -f framecrc` prints for the same picture. |
@@ -261,28 +274,44 @@ What happens to a picture on its way through, in the order of the file's
 sections:
 
 1. **Bits.** The stream is cut into units, the escape bytes are taken
-   out, and values are read a bit at a time, most of them in a
-   variable-length code where small numbers are short.
+   out, and values are read a bit at a time. There are two ways the
+   values are written. In the simpler one (CAVLC) each has a
+   variable-length code where small numbers are short. In the other
+   (CABAC, an arithmetic coder) every yes-or-no decision is coded in a
+   fraction of a bit, according to how likely it is; the likelihoods
+   are kept per kind of decision, 460 of them, and adjusted after every
+   one. Both sides must adjust them identically, to the bit.
 2. **Parameters.** Two kinds of unit describe the stream (its size, how
    pictures are numbered) and are remembered. Every picture then starts
    with a header that refers to them.
 3. **Macroblocks.** A picture is a grid of 16x16 blocks. Each is
    *predicted*, either from its neighbours above and to the left in the
-   same picture (17 ways of continuing edges into the block), or from
-   an earlier picture, displaced by a motion vector with quarter-pixel
-   precision (the in-between positions come from a six-tap filter).
-   Blocks can be split down to 4x4, each part with its own vector.
-4. **What prediction got wrong.** The difference between the prediction
-   and the real picture is stored as the coefficients of a 4x4
-   transform, scaled down so that most are zero, and coded with tables
-   that adapt to the blocks around (CAVLC). The decoder reads them,
-   scales them back up, runs the inverse transform and adds the result
-   to the prediction.
-5. **Deblocking.** Working in blocks leaves visible edges. A filter runs
+   same picture (26 ways of continuing edges into blocks of 4x4, 8x8 or
+   16x16), or from another picture, displaced by a motion vector with
+   quarter-pixel precision (the in-between positions come from a
+   six-tap filter). Blocks can be split down to 4x4, each part with its
+   own vector.
+4. **Two pictures at once.** In a B picture a block may be predicted
+   from two pictures, usually one shown before it and one shown after,
+   as their mean. The mean can be weighted, by weights the stream gives
+   (which is how a fade is coded cheaply) or by how far away in time
+   the two pictures are. A B picture may also send no motion at all for
+   a block and have the decoder derive it, from the blocks around or
+   from what the same block did in the later picture.
+5. **What prediction got wrong.** The difference between the prediction
+   and the real picture is stored as the coefficients of a 4x4 or 8x8
+   transform, scaled down so that most are zero. The decoder reads
+   them, scales them back up, runs the inverse transform and adds the
+   result to the prediction.
+6. **Deblocking.** Working in blocks leaves visible edges. A filter runs
    over every block edge of the finished picture and smooths it by an
    amount that depends on how the two sides were coded.
-6. **Remembering.** Finished pictures are kept for later ones to predict
-   from; the stream says how many, and can order them about.
+7. **Remembering.** Finished pictures are kept for later ones to predict
+   from; the stream says how many, and can order them about. Since a B
+   picture needs a picture that is shown after it, pictures arrive out
+   of order: `decode` returns them as they come and leaves the order to
+   the caller (an MP4 file says when each is shown), `decode_stream`
+   sorts them.
 
 All of it is integer arithmetic, and the standard pins down every
 step, so there is one right answer for every pixel.
@@ -300,14 +329,26 @@ milliseconds a picture (`play --fast` prints these):
 | 640x480 | 11 | 7 | 55 |
 | 1280x720 | 31 | 20 | 19 |
 
-Video is usually 25 or 30 pictures a second, so up to 640x480 plays at
-its proper speed with time to spare. At 1280x720 decoding alone just
-fits, and decoding and drawing together do not: the player keeps time
-by drawing about one picture in three. Full HD (1920x1080) is beyond
-it.
+Those are clips made for the purpose, in the Baseline profile. Files
+from the web are harder work: more of each picture moves, and a B
+picture is predicted twice. Five such files, all High profile at 30
+pictures a second:
 
-For scale: ffmpeg decodes the same files 15 to 30 times faster, with
-inner loops written by hand in assembly. The OMG decoder is ordinary
+| Video | Decoding | Converting and drawing | Pictures a second |
+| ----- | -------- | ---------------------- | ----------------- |
+| 640x360 | 12 | 4 | 60 |
+| 640x360, an animated film | 18 | 4 | 45 |
+| 960x540 | 51 | 11 | 16 |
+| 1280x720 | 78 | 20 | 10 |
+| 1920x1080 | 214 | 46 | 3.8 |
+
+So video up to about 640x360 plays at its proper speed, every picture
+shown. At 960x540 the player keeps time by leaving out the pictures
+nothing depends on and shows about half; at 1280x720 it shows a third
+and falls behind as well. Full HD is beyond it.
+
+For scale: ffmpeg decodes the same files 20 to 40 times faster on one
+core, with inner loops written by hand in assembly. The OMG decoder is ordinary
 OMG; nothing in it is special to the compiler. Two things in the back
 end made it this fast, and they help every OMG program that loops over
 lists of numbers: reading and writing list elements, and shifts, are
@@ -324,14 +365,24 @@ slower.
 H.264 decoding is exact, so the referee is another decoder. For every
 test clip, `ffmpeg -f framecrc` gives a checksum of each decoded
 picture, and `mp4info --frames` must print the same numbers.
-`tests/video.sh` does this for a clip and a raw stream that are checked
-in with their expected checksums (ffmpeg is not needed to run the
-tests), both interpreted and built. While the decoder was written the
-same comparison ran over a dozen clips made to exercise one feature
-each: several reference pictures, several slices, every block size,
-cropped sizes, very low and very high quality, the deblocking filter
-off and with its settings changed, intra refresh. All matched ffmpeg
-on every picture.
+`tests/video.sh` does this for five small clips that are checked in
+with their expected checksums (ffmpeg is not needed to run the tests):
+Baseline, Main and High profile, both ways of coding the bits, files
+and raw streams. While the decoder was written the same comparison ran
+over sixty clips: some fifty made to exercise one feature each (several
+reference pictures, several slices, every block size, cropped sizes,
+very low and very high quality, the deblocking filter off and with its
+settings changed, intra refresh, B pictures with and without others
+built from them, fades, both ways of deriving motion, the encoder's
+alternative quantisation weights, every speed setting of the encoder
+from `ultrafast` to `placebo`), and five files from the web, 640x360 to
+1920x1080. All matched ffmpeg on every picture.
+
+All of those came from one encoder, x264. Three things it never writes
+are therefore decoded by code that has not met a stream: weights sent
+for a prediction from two pictures, motion derived per 4x4 block
+(streams that say so in their header), and macroblocks sent as plain
+samples under CABAC.
 
 The window is tested on Linux with Xvfb, an X server that draws into
 memory, when it is installed: a program opens a window, draws, polls
@@ -340,19 +391,21 @@ same checks run against the real desktop.
 
 ## What is not there
 
-- **Other profiles of H.264.** Most MP4 files from cameras, phones and
-  the web use the Main or High profile, which add a second way of
-  coding the bits (CABAC), pictures predicted from two others (B
-  pictures) and an 8x8 transform. The decoder says which of these it
-  met and stops: `h264: CABAC entropy coding (Main and High profile) is
-  not supported`. To try the player on such a file, convert it first:
-  `ffmpeg -i in.mp4 -c:v libx264 -profile:v baseline -an out.mp4`.
+- **The rarer kinds of H.264.** Interlaced video (television formats),
+  more than 8 bits a sample, and colour at full resolution (4:2:2 and
+  4:4:4) are refused by name: `h264: interlaced video is not
+  supported`. So are a few features of the Baseline and Extended
+  profiles that hardly any encoder uses (slice groups, data
+  partitioning, switching slices).
+- **Speed for large pictures.** See [above](#how-fast-it-is): beyond
+  about 640x360 the player cannot show every picture. To watch a
+  larger file smoothly, make it smaller first:
+  `ffmpeg -i in.mp4 -vf scale=640:-2 -an out.mp4`.
 - **Other codecs** (H.265, AV1, VP9). `mp4.open` reads the file and
   names the codec; nothing decodes it.
 - **Sound.** The player says when a file has a sound track and does
   not play it.
-- **Interlaced video, and fragmented MP4 files** (the kind streaming
-  sites send in pieces).
+- **Fragmented MP4 files** (the kind streaming sites send in pieces).
 - **macOS.** `omg` goes through C there, and the window builtins exist
   only in the machine-code runtime.
 - On Windows the video stops while the window is being dragged or
