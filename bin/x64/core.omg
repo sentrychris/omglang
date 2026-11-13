@@ -10,7 +10,7 @@
 # native-x64.omg for the rules). It cannot be run by the VMs or built
 # by the other back ends.
 #
-# The files of rt/ are joined into one compilation unit, this one
+# The files of this folder are joined into one compilation unit, this one
 # first, then the float and builtin files, then one of linux.omg and
 # windows.omg, which provide the os_* procs.
 #
