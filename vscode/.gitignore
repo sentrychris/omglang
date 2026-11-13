@@ -1,7 +1,9 @@
 node_modules/
+out/
 .vscode-test/
 *.vsix
-.env
-client/out/
-server/out/
 *.tsbuildinfo
+.env
+# The repository ignores .vscode/ everywhere else; this one holds the
+# launch configuration for trying the extension out.
+!.vscode/

@@ -1,0 +1,17 @@
+# The packaged extension is the two bundles in out/ plus the static
+# files VS Code reads directly. Everything else stays out.
+**
+!package.json
+!README.md
+!CHANGELOG.md
+!LICENSE
+!language-configuration.json
+!out/extension.js
+!out/server.js
+!syntaxes/*.json
+!snippets/*.json
+!themes/*.json
+!icons/icon.png
+!icons/omg.svg
+!icons/omgb.svg
+!images/*.png

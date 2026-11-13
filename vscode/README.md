@@ -1,106 +1,203 @@
-# OMG Language Support for VS Code
+# OMG for VS Code
 
-Syntax highlighting and a Language Server Protocol (LSP) server for the OMG
-programming language. The whole extension is **TypeScript / Node** — no
-Python dependency.
+Everything for writing [OMG](https://versyx.digital/omglang/) in VS Code:
+colouring that knows what each name is, documentation on hover, completion,
+go to definition, rename, formatting, and the compiler's own errors as you
+type. It needs nothing installed: the language server is part of the
+extension, and it understands OMG by itself.
 
-## Features
+![An OMG file in the OMG Dark theme, with the hover for has_key open](images/preview-dark.png)
 
-- **Syntax highlighting** for `.omg` files, including:
-  - The conventional `;;;omg` header
-  - Keywords (`alloc`, `proc`, `if/elif/else`, `loop`, `break`, `try`,
-    `except`, `import`, `as`, `emit`, `facts`, `return`, `and`, `or`)
-  - Built-in functions (`length`, `chr`, `ascii`, `hex`, `binary`,
-    `freeze`, `panic`, `raise`, `read_file`, file I/O, etc.) highlighted
-    distinctly from user functions
-  - Numeric literals including binary (`0b1010`) and decimal
-  - String escapes
-  - Single-line `#` comments and `/** ... */` doc-blocks
-  - Reserved globals (`args`, `module_file`, `current_dir`)
+<sub>The pictures on this page are drawn by `scripts/preview.mjs` from the
+extension's own grammar, themes and language server, so they change when
+those do. The frame around the code is only an illustration.</sub>
 
-- **Completion**:
-  - Keywords and built-ins
-  - Top-level `proc`s and `alloc`s from the current file
-  - Parameters of the enclosing `proc`
-  - Member completion after `.` for imported namespaces
-    (e.g. typing `math.` lists `math`'s exported procs/allocs)
+## What you get
 
-- **Hover**: signature, inline detail, and `/** ... */` doc-block (if any).
+### Documentation on hover
 
-- **Go-to-definition**: jumps to the `proc`, `alloc`, or `import as ...`
-  line for the symbol under the cursor — including across imports.
+Point at anything and it explains itself.
 
-- **Document outline**: top-level procs and allocs in the file.
+- **Builtins**: all 70, each with its signature, what every parameter is,
+  what comes back, which errors it raises, and an example. The examples are
+  run through `omg` by the test suite, so the output shown is the real
+  output.
+- **Keywords and operators**: what `alloc`, `loop`, `facts`, `:=`, `//` and
+  the rest do, with the rules that catch people out (no block scope, `for`
+  walks lists and strings but not dicts, which values count as false).
+- **Your own code**: a proc shows its signature and the comment above it.
+  `# @param name ...` and `# @return ...` lines are picked out. A variable
+  shows where it was declared and what it holds; an imported module lists
+  what it exports; a dict entry shows its value.
+- **Numbers**: an integer literal in decimal, hex and binary.
 
-- **File icon**: a violet "OMG" badge on `.omg` files. Visible on tabs
-  unconditionally, and in the file explorer either:
-  - automatically, if your active file-icon theme delegates unknown
-    extensions to the language-defined icon (most don't); or
-  - by selecting **OMG Icons** under
-    *File → Preferences → Theme → File Icon Theme…*. This bundled icon
-    theme just covers `.omg` (source) and `.omgb` (compiled bytecode);
-    everything else falls back to your previous theme's defaults.
+### Completion and signature help
 
-## Layout
+- After a dot: the procs and variables of an imported module, or the keys
+  of a dict, including a dict returned by a proc in another file.
+- Everywhere else: what fits. Statement keywords at the start of a line,
+  only values inside an expression, `as` after an import path, `in` after
+  `for x`, file names inside an import string, and nothing at all when you
+  are naming a new variable.
+- Inside a call: the parameters, with the one you are typing marked, for
+  builtins and for your own procs.
+
+### Problems, as you type
+
+Syntax errors appear with the same message and on the same line as
+`omg` would report them, because the language server runs a port of the
+compiler's own lexer and parser. The test suite checks this by breaking
+real files in hundreds of ways and comparing the two.
+
+It also reports what the compiler would only tell you at run time, or
+never:
+
+| | |
+|---|---|
+| Wrong number of arguments | to a proc, to a builtin, or through a module |
+| A name that does not exist | with a "did you mean" and a quick fix |
+| Assigning without `alloc` | with a quick fix that adds it |
+| `alloc` of the same name twice | with a quick fix that turns it into an assignment |
+| A proc named like a builtin | calls would run the builtin, never your proc |
+| `return`, `break`, `continue` in the wrong place | |
+| Imports that cannot be found, or import each other in a circle | |
+| Writing to an imported module, or reading something it does not export | |
+| Words from other languages (`while`, `def`, `null`, ...) | with the OMG way to say it |
+| Unused variables, parameters and imports; code after a `return` | faded, not underlined |
+
+![The same file in OMG Light with two mistakes and the problems reported for them](images/preview-light.png)
+
+### Getting around
+
+- **Go to definition** and **find all references**, across files and into
+  dict literals. Ctrl+click an import path to open the file.
+- **Rename** a proc, variable, parameter or dict key everywhere it is
+  used, in every file that imports it. A rename that would collide with
+  another name is refused.
+- **Outline**, breadcrumbs and workspace symbol search (Ctrl+T).
+- **Folding** for blocks, comment runs and import groups.
+
+### Colour
+
+- A TextMate grammar for the whole language: floats and binary literals,
+  `//`, every escape, dict keys, properties and method calls, doc tags in
+  comments. Things OMG does not have (`=`, `'single quotes'`, `&&`, `!`,
+  `0xff`) are marked as you type them.
+- **Semantic highlighting** on top: parameters, locals, globals, constants,
+  modules, builtins and dict keys each get their own colour, which a
+  grammar alone cannot tell apart.
+- Two themes, **OMG Dark** and **OMG Light**, in the colours of the
+  [web playground](https://versyx.digital/omglang/playground/). Pick one
+  with *Preferences: Color Theme*. The highlighting works in any theme.
+- OMG code inside Markdown is highlighted too: start a fence with
+  <code>```omg</code>.
+- File icons for `.omg` and `.omgb`.
+
+### Running code
+
+These need the `omg` binary. The extension looks for `bin/omg` in the
+workspace (the layout of the OMG repository) and then on your `PATH`; set
+`omg.path` if it lives somewhere else.
+
+| Command | |
+|---|---|
+| **OMG: Run File** | Ctrl+F5, or the ▷ button at the top of the editor |
+| **OMG: Build Native Executable** | for this machine, Linux, Windows, or through C |
+| **OMG: Show Bytecode** | the disassembly, in a tab beside the source |
+| **OMG: Open REPL** | |
+| **OMG: Restart Language Server** | |
+
+### And the small things
+
+- **Format Document**: fixes indentation and trailing spaces and touches
+  nothing else. Lines you aligned by hand stay aligned.
+- Snippets for every statement (`proc`, `if`, `ifelse`, `loop`, `for`,
+  `try`, `import`, `main`, ...).
+- Typing `/**` and Enter continues a comment block; brackets and quotes
+  close themselves.
+
+## Settings
+
+| Setting | Default | |
+|---|---|---|
+| `omg.path` | empty | Where the `omg` binary is. Empty means look in the workspace, then on `PATH`. |
+| `omg.run.args` | `[]` | Arguments for **OMG: Run File**. |
+| `omg.diagnostics.enabled` | `true` | Check files as you type. |
+| `omg.diagnostics.unused` | `true` | Fade unused names and unreachable code. |
+| `omg.diagnostics.undefinedNames` | `true` | Warn about names that are not defined. |
+| `omg.trace.server` | `off` | Log the traffic with the language server. |
+
+## Install
+
+The extension is not on the marketplace. Build the `.vsix` from this
+folder and install it:
+
+```sh
+cd vscode
+npm install
+npm run package
+code --install-extension omg-language-support.vsix --force
+```
+
+Then reload the window. Every push to `main` also builds the `.vsix` in
+CI; it is attached to the run of the *VS Code extension* job.
+
+## Working on it
 
 ```
 vscode/
-├── package.json                 # extension manifest
-├── tsconfig.json                # project references → client + server
-├── language-configuration.json  # comments, brackets, indentation
-├── syntaxes/omg.tmLanguage.json # TextMate grammar
-├── icons/
-│   ├── omg.svg                  # `.omg` source-file icon
-│   ├── omgb.svg                 # `.omgb` bytecode-file icon
-│   └── omg-icon-theme.json      # opt-in "OMG Icons" file-icon theme
-├── client/                      # extension entry point (loads the server)
-│   ├── package.json
-│   ├── tsconfig.json
-│   └── src/extension.ts
-├── server/                      # LSP server (Node, vscode-languageserver)
-│   ├── package.json
-│   ├── tsconfig.json
-│   └── src/
-│       ├── server.ts            # LSP wiring (completion, hover, def, …)
-│       ├── analyzer.ts          # OMG-aware document analysis
-│       └── builtins.ts          # keyword / built-in tables
-└── README.md
+├── package.json                 the manifest: languages, grammars, themes, commands, settings
+├── language-configuration.json  brackets, comments, indentation
+├── syntaxes/                    the TextMate grammar, and the one for Markdown fences
+├── themes/                      OMG Dark and OMG Light (generated by scripts/themes.mjs)
+├── snippets/  icons/  images/
+├── client/src/extension.ts      starts the server; the run, build and REPL commands
+├── server/src/
+│   ├── lexer.ts  parser.ts  ast.ts    a port of the lexer and parser in src/compiler.omg
+│   ├── analysis.ts                    scopes, names and checks, following the compiler's rules
+│   ├── infer.ts  workspace.ts         what a name holds; imports across files
+│   ├── builtins.ts  language.ts       the reference text behind every hover
+│   ├── features.ts  navigation.ts     hover, completion, signature help; definition, rename, outline
+│   ├── semantic.ts  format.ts  diagnostics.ts  render.ts
+│   └── server.ts                      the LSP wiring
+├── test/                        see below
+├── sample/                      the small project in the pictures above
+└── scripts/                     build (esbuild), themes, the pictures, a grammar token dump
 ```
 
-## Build
+| | |
+|---|---|
+| `npm run build` | bundle the client and the server into `out/` |
+| `npm run watch` | the same, on every change |
+| `npm test` | type-check, then run the tests |
+| `npm run package` | build the `.vsix` |
+| `npm run themes` | regenerate both themes from `scripts/themes.mjs` |
+| `node scripts/tokens.mjs file.omg` | print the scopes the grammar gives each token |
+| `node scripts/preview.mjs` | redraw the pictures in this README |
 
-```bash
-cd vscode
-npm install              # installs root + client + server (postinstall)
-npm run compile          # tsc -b: builds client/out and server/out
-```
+To try a change, open this folder in VS Code and press F5: a second window
+opens with the extension loaded from source.
 
-For development, `npm run watch` keeps both projects compiling on save.
+### Keeping it in step with the language
 
-## Install locally
+The language server follows the compiler by hand, so the tests compare the
+two, using the `omg` binary in `bin/`:
 
-```bash
-cd vscode
-npm install -g @vscode/vsce      # one-time
-vsce package                     # produces omg-language-support-*.vsix
-code --install-extension omg-language-support-*.vsix
-```
+- the builtin list in `server/src/builtins.ts` must equal `cc_builtins` in
+  `src/compiler.omg`, and the grammar must colour exactly those names;
+- every keyword the lexer knows must have a hover;
+- every example in a hover must print what it says it prints;
+- 600 files broken at random must get the same first syntax error, message
+  and line, from the language server as from `omg --compile`;
+- no `.omg` file in the repository may get an error, a warning, or a token
+  marked invalid.
 
-Or run the **Extensions: Install from VSIX...** command in VS Code.
+So after adding a builtin or a piece of syntax to the compiler, `npm test`
+says what is missing here: usually an entry in `builtins.ts`, the name in
+the grammar's builtin list, and for new syntax the matching change in
+`lexer.ts` and `parser.ts`.
 
-For interactive development, open this `vscode/` folder in VS Code and hit
-F5 — the launch profile starts the **Extension Development Host**, where
-the extension is loaded and you can edit/test against any `.omg` file.
+## Credits
 
-## Notes
-
-- Only files whose first non-empty line is `;;;omg` are treated as OMG by
-  the language server. (The header is conventional, not strictly required
-  by the compiler — but the LSP keys off it to avoid analysing unrelated
-  files.)
-- The server uses a line-based scanner (regex over each line) rather than
-  hooking into the actual compiler. That keeps the LSP fast and
-  decouples it from the runtime — at the cost of less precise diagnostics.
-  Real syntax errors still surface when you run the file with `omg`.
-- The previous Python-based server (using `pygls`) has been removed; the
-  extension is now pure Node so it works without Python on PATH.
+The themes use the [Catppuccin](https://catppuccin.com) Mocha and Latte
+palettes (MIT).

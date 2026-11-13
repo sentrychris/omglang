@@ -21,6 +21,7 @@ a missed one fails the tests.
 | What an opcode does      | `vm.omg` (`step_inner`), `native-x64.omg` (`mg_body`, and `pp_depths` for its effect on the stack), `native-c.omg` (`emit_c_for_instr`), `native-js.omg` (`emit_js_for_instr`) |
 | A builtin's name         | the `cc_builtins` list in `compiler.omg` |
 | A builtin's behaviour    | `runtime/x64/builtins.omg` (a `bi_` proc and a line in `rt_bi_init`); `omg_rt.h` (the function, `omg_call_builtin`) with `emit_builtin` in `native-c.omg`; `omg_rt.js` with `emit_builtin` in `native-js.omg` |
+| What the editor says about a builtin | `vscode/server/src/builtins.ts` (its hover text and argument counts) and the builtin name list in `vscode/syntaxes/omg.tmLanguage.json`; `npm test` in `vscode/` fails until both match `cc_builtins` |
 
 Two things are *not* duplicated and need changing in one place only:
 how names resolve in generated code (`backend.omg`, shared by the back
@@ -164,6 +165,11 @@ bin/omg --emit-js /tmp/sq.omg /tmp/sq.js && node /tmp/sq.js
 Then give it a place in the conformance corpus: a line in one of the
 programs under `tests/conformance/` (or a new `NAME.omg` with its
 `NAME.expected`). From then on every way of running OMG is held to it.
+
+Last, the editor: add an entry to `vscode/server/src/builtins.ts` (the
+text shown on hover, with an example) and the name to the builtin list
+in `vscode/syntaxes/omg.tmLanguage.json`. The *VS Code extension* job in
+CI fails until the two match `cc_builtins`.
 
 ### Common mistakes
 
@@ -333,10 +339,19 @@ existing opcodes over inventing one.
 
 ### Step D — The editor and the web
 
-Syntax has two more homes outside the toolchain: the VS Code grammar
-in `vscode/syntaxes/`, and the playground's keyword reference in
+Syntax has two more homes outside the toolchain: the VS Code extension
+in `vscode/`, and the playground's keyword reference in
 `web/reference.js`. And `scripts/build-web.sh` rebuilds the web
 bundles, which contain the compiler.
+
+The extension's language server carries a port of the lexer and the
+parser (`vscode/server/src/lexer.ts`, `parser.ts`), the scope rules
+(`analysis.ts`), the builtin reference (`builtins.ts`) and the keyword
+reference (`language.ts`); the grammar in `vscode/syntaxes/` has its own
+list of builtin names. `npm test` in `vscode/` says what is out of
+step: it compares the builtin list with `cc_builtins`, runs every
+documented example, and checks that broken programs get the same first
+syntax error from the language server as from `omg --compile`.
 
 ### Step E — Verify
 

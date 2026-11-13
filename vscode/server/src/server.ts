@@ -1,453 +1,266 @@
-// OMG Language Server.
+// The OMG language server.
 //
-// Provides:
-//   - Completion: keywords, built-ins, top-level user symbols (procs,
-//     allocs, import aliases), per-proc parameters, and member completion
-//     after `alias.` for imported namespaces.
-//   - Hover: shows the signature / detail / doc-comment of the symbol
-//     under the cursor.
-//   - Go-to-definition: jumps to the originating `proc`, `alloc`, or
-//     `import as ...` line.
-//   - Document symbols: outline of top-level procs and allocs.
-//
-// The server keeps a per-file index of `OMGSymbol`s, refreshed on
-// open/change/save and on filesystem-watcher events forwarded by the
-// client. Imports are resolved transitively so cross-file references work
-// without opening every file manually.
+// Everything it knows comes from a port of the compiler's own lexer and
+// parser (lexer.ts, parser.ts) and a scope analysis that follows the
+// compiler's name rules (analysis.ts), so what it reports is what
+// `omg` would say, as you type and without running anything.
 
-import * as fs from 'fs';
 import {
-    createConnection,
-    TextDocuments,
-    ProposedFeatures,
-    InitializeParams,
-    TextDocumentSyncKind,
-    InitializeResult,
-    CompletionItem,
-    CompletionItemKind,
-    Hover,
-    MarkupKind,
-    Location,
-    Range,
-    Position,
-    DocumentSymbol,
-    SymbolKind,
-    TextDocumentPositionParams,
-    DocumentSymbolParams,
-    DefinitionParams,
-    CompletionParams,
-    HoverParams
+    CodeAction, CodeActionKind, CompletionItem, Diagnostic, DidChangeConfigurationNotification,
+    DocumentHighlight, DocumentLink, DocumentSymbol, FoldingRange, Hover, InitializeParams,
+    InitializeResult, Location, ProposedFeatures, ResponseError, SemanticTokens, SignatureHelp,
+    SymbolInformation, TextDocumentSyncKind, TextDocuments, TextEdit, WorkspaceEdit,
+    createConnection
 } from 'vscode-languageserver/node';
 import { TextDocument } from 'vscode-languageserver-textdocument';
-import { URI } from 'vscode-uri';
 
+import { FileAnalysis, registerBuiltinNames } from './analysis';
+import { BUILTINS } from './builtins';
+import { DEFAULT_DIAGNOSTICS, DiagnosticSettings, codeActions, diagnose } from './diagnostics';
+import { completion, hover, signatureHelp } from './features';
+import { formatLines } from './format';
 import {
-    BUILTINS,
-    BUILTIN_NAMES,
-    KEYWORDS,
-    RESERVED_GLOBALS
-} from './builtins';
-import {
-    analyzeText,
-    OMGDocumentInfo,
-    OMGSymbol,
-    resolveImportUri
-} from './analyzer';
+    definition, documentLinks, documentSymbols, foldingRanges, highlights, prepareRename,
+    references, rename, workspaceSymbols
+} from './navigation';
+import { TOKEN_MODIFIERS, TOKEN_TYPES, semanticTokens } from './semantic';
+import { Workspace, canonicalUri, uriToPath } from './workspace';
 
-// --- Connection / document tracking --------------------------------------
+registerBuiltinNames(BUILTINS.map((b) => b.name));
 
 const connection = createConnection(ProposedFeatures.all);
-const documents: TextDocuments<TextDocument> = new TextDocuments(TextDocument);
+const documents = new TextDocuments(TextDocument);
+const ws = new Workspace();
 
-/** Per-URI analysis cache, including content read from disk for imports. */
-const indexByUri = new Map<string, OMGDocumentInfo>();
-/** Source text per URI (we read imports from disk if not already open). */
-const textByUri = new Map<string, string>();
+let settings: DiagnosticSettings = { ...DEFAULT_DIAGNOSTICS };
+let canConfigure = false;
 
-// --- Lifecycle -----------------------------------------------------------
+connection.onInitialize((params: InitializeParams): InitializeResult => {
+    const roots: string[] = [];
+    for (const f of params.workspaceFolders ?? []) {
+        const p = uriToPath(f.uri);
+        if (p) roots.push(p);
+    }
+    if (roots.length === 0 && params.rootUri) {
+        const p = uriToPath(params.rootUri);
+        if (p) roots.push(p);
+    }
+    ws.setRoots(roots);
+    canConfigure = params.capabilities.workspace?.configuration === true;
 
-connection.onInitialize((_params: InitializeParams): InitializeResult => {
     return {
+        serverInfo: { name: 'omg-language-server', version: '0.3.0' },
         capabilities: {
             textDocumentSync: TextDocumentSyncKind.Incremental,
-            completionProvider: {
-                resolveProvider: false,
-                triggerCharacters: ['.']
-            },
+            completionProvider: { triggerCharacters: ['.', '"', '/'] },
             hoverProvider: true,
+            signatureHelpProvider: { triggerCharacters: ['(', ','], retriggerCharacters: [','] },
             definitionProvider: true,
-            documentSymbolProvider: true
+            referencesProvider: true,
+            documentHighlightProvider: true,
+            renameProvider: { prepareProvider: true },
+            documentSymbolProvider: true,
+            workspaceSymbolProvider: true,
+            foldingRangeProvider: true,
+            documentLinkProvider: {},
+            documentFormattingProvider: true,
+            documentRangeFormattingProvider: true,
+            codeActionProvider: { codeActionKinds: [CodeActionKind.QuickFix] },
+            semanticTokensProvider: {
+                legend: { tokenTypes: [...TOKEN_TYPES], tokenModifiers: [...TOKEN_MODIFIERS] },
+                full: true
+            }
         }
     };
 });
 
-documents.onDidOpen((e) => {
-    indexDocument(e.document.uri, e.document.getText());
+connection.onInitialized(() => {
+    if (canConfigure) {
+        void connection.client.register(DidChangeConfigurationNotification.type, { section: 'omg' });
+        void loadSettings();
+    }
 });
+
+async function loadSettings(): Promise<void> {
+    if (!canConfigure) return;
+    try {
+        const cfg = (await connection.workspace.getConfiguration('omg')) as { diagnostics?: Partial<DiagnosticSettings> } | null;
+        settings = { ...DEFAULT_DIAGNOSTICS, ...(cfg?.diagnostics ?? {}) };
+    } catch {
+        settings = { ...DEFAULT_DIAGNOSTICS };
+    }
+    publishAll();
+}
+
+connection.onDidChangeConfiguration(() => {
+    void loadSettings();
+});
+
+// ---- Documents and diagnostics -----------------------------------------------
+
+/** The client's spelling of each open document's URI. */
+const clientUri = new Map<string, string>();
+let pending: ReturnType<typeof setTimeout> | undefined;
+
+function publish(uri: string): void {
+    const file = ws.get(uri);
+    const target = clientUri.get(canonicalUri(uri)) ?? uri;
+    let diagnostics: Diagnostic[] = [];
+    if (file) {
+        try {
+            diagnostics = diagnose(ws, file, settings);
+        } catch (e) {
+            connection.console.error('diagnostics failed for ' + uri + ': ' + String(e));
+        }
+    }
+    void connection.sendDiagnostics({ uri: target, diagnostics });
+}
+
+function publishAll(): void {
+    for (const uri of ws.openUris()) publish(uri);
+}
+
+/** A change in one file can change what is true of the files that import it. */
+function schedulePublishAll(): void {
+    if (pending) clearTimeout(pending);
+    pending = setTimeout(() => {
+        pending = undefined;
+        publishAll();
+    }, 150);
+}
+
+documents.onDidOpen((e) => {
+    clientUri.set(canonicalUri(e.document.uri), e.document.uri);
+});
+
 documents.onDidChangeContent((e) => {
-    indexDocument(e.document.uri, e.document.getText());
+    clientUri.set(canonicalUri(e.document.uri), e.document.uri);
+    ws.open(e.document.uri, e.document.getText());
+    publish(e.document.uri);
+    schedulePublishAll();
+});
+
+documents.onDidClose((e) => {
+    ws.close(e.document.uri);
+    clientUri.delete(canonicalUri(e.document.uri));
+    void connection.sendDiagnostics({ uri: e.document.uri, diagnostics: [] });
+    schedulePublishAll();
 });
 
 connection.onDidChangeWatchedFiles((change) => {
-    // Files modified outside the editor (or imported targets the user
-    // hasn't opened) — re-index from disk so cross-file go-to-def stays
-    // accurate.
-    for (const event of change.changes) {
-        const uri = event.uri;
-        if (!uri.endsWith('.omg')) continue;
-        const fsPath = URI.parse(uri).fsPath;
-        try {
-            const text = fs.readFileSync(fsPath, 'utf8');
-            indexDocument(uri, text);
-        } catch {
-            indexByUri.delete(uri);
-            textByUri.delete(uri);
-        }
+    for (const ev of change.changes) {
+        if (!ws.isOpen(ev.uri)) ws.invalidate(ev.uri);
+    }
+    schedulePublishAll();
+});
+
+function fileFor(uri: string): FileAnalysis | undefined {
+    return ws.get(uri);
+}
+
+/** A request must never take the server down with it. */
+function guard<T>(what: string, fallback: T, run: () => T): T {
+    try {
+        return run();
+    } catch (e) {
+        connection.console.error(what + ' failed: ' + (e instanceof Error ? e.stack ?? e.message : String(e)));
+        return fallback;
+    }
+}
+
+// ---- Requests -----------------------------------------------------------------
+
+connection.onHover((p): Hover | null => guard('hover', null, () => {
+    const f = fileFor(p.textDocument.uri);
+    return f ? hover(ws, f, p.position) : null;
+}));
+
+connection.onCompletion((p): CompletionItem[] => guard('completion', [], () => {
+    const f = fileFor(p.textDocument.uri);
+    return f ? completion(ws, f, p.position) : [];
+}));
+
+connection.onSignatureHelp((p): SignatureHelp | null => guard('signature help', null, () => {
+    const f = fileFor(p.textDocument.uri);
+    return f ? signatureHelp(ws, f, p.position) : null;
+}));
+
+connection.onDefinition((p): Location | null => guard('definition', null, () => {
+    const f = fileFor(p.textDocument.uri);
+    return f ? definition(ws, f, p.position) : null;
+}));
+
+connection.onReferences((p): Location[] => guard('references', [], () => {
+    const f = fileFor(p.textDocument.uri);
+    return f ? references(ws, f, p.position, p.context.includeDeclaration) : [];
+}));
+
+connection.onDocumentHighlight((p): DocumentHighlight[] => guard('highlight', [], () => {
+    const f = fileFor(p.textDocument.uri);
+    return f ? highlights(ws, f, p.position) : [];
+}));
+
+connection.onPrepareRename((p) => guard('prepare rename', null, () => {
+    const f = fileFor(p.textDocument.uri);
+    return f ? prepareRename(ws, f, p.position) : null;
+}));
+
+connection.onRenameRequest((p): WorkspaceEdit | ResponseError<void> | null => {
+    const f = fileFor(p.textDocument.uri);
+    if (!f) return null;
+    try {
+        const result = rename(ws, f, p.position, p.newName);
+        if (typeof result === 'string') return new ResponseError(-32602, result);
+        return result;
+    } catch (e) {
+        connection.console.error('rename failed: ' + String(e));
+        return null;
     }
 });
+
+connection.onDocumentSymbol((p): DocumentSymbol[] => guard('document symbols', [], () => {
+    const f = fileFor(p.textDocument.uri);
+    return f ? documentSymbols(f) : [];
+}));
+
+connection.onWorkspaceSymbol((p): SymbolInformation[] => guard('workspace symbols', [], () => workspaceSymbols(ws, p.query)));
+
+connection.onFoldingRanges((p): FoldingRange[] => guard('folding', [], () => {
+    const f = fileFor(p.textDocument.uri);
+    return f ? foldingRanges(f) : [];
+}));
+
+connection.onDocumentLinks((p): DocumentLink[] => guard('links', [], () => {
+    const f = fileFor(p.textDocument.uri);
+    return f ? documentLinks(ws, f) : [];
+}));
+
+connection.onCodeAction((p): CodeAction[] => guard('code actions', [], () => {
+    const f = fileFor(p.textDocument.uri);
+    return f ? codeActions(f, p.textDocument.uri, p.range, p.context.diagnostics) : [];
+}));
+
+connection.languages.semanticTokens.on((p): SemanticTokens => guard('semantic tokens', { data: [] }, () => {
+    const f = fileFor(p.textDocument.uri);
+    return { data: f ? semanticTokens(f) : [] };
+}));
+
+function formatEdits(uri: string, tabSize: number, insertSpaces: boolean, first?: number, last?: number): TextEdit[] {
+    const f = fileFor(uri);
+    if (!f) return [];
+    return formatLines(f, tabSize, insertSpaces, first, last).map((e) =>
+        TextEdit.replace({ start: { line: e.line, character: e.from }, end: { line: e.line, character: e.to } }, e.text)
+    );
+}
+
+connection.onDocumentFormatting((p): TextEdit[] => guard('formatting', [], () =>
+    formatEdits(p.textDocument.uri, p.options.tabSize, p.options.insertSpaces)));
+
+connection.onDocumentRangeFormatting((p): TextEdit[] => guard('formatting', [], () => {
+    // A range that ends at the start of a line does not include that line.
+    const last = p.range.end.character === 0 && p.range.end.line > p.range.start.line ? p.range.end.line - 1 : p.range.end.line;
+    return formatEdits(p.textDocument.uri, p.options.tabSize, p.options.insertSpaces, p.range.start.line, last);
+}));
 
 documents.listen(connection);
 connection.listen();
-
-// --- Indexing ------------------------------------------------------------
-
-function indexDocument(uri: string, text: string): void {
-    textByUri.set(uri, text);
-    const info = analyzeText(uri, text);
-    indexByUri.set(uri, info);
-    // Eagerly index transitive imports so member completion works without
-    // the user having to open every imported file.
-    for (const imp of info.imports) {
-        const target = resolveImportUri(uri, imp.rawPath);
-        if (!target || indexByUri.has(target)) continue;
-        try {
-            const text = fs.readFileSync(URI.parse(target).fsPath, 'utf8');
-            indexDocument(target, text);
-        } catch {
-            // ignore — the user gets a diagnostic at runtime
-        }
-    }
-}
-
-function getInfo(uri: string): OMGDocumentInfo | undefined {
-    return indexByUri.get(uri);
-}
-
-// --- Completion ----------------------------------------------------------
-
-connection.onCompletion((params: CompletionParams): CompletionItem[] => {
-    const doc = documents.get(params.textDocument.uri);
-    if (!doc) return [];
-    const text = doc.getText();
-    const offset = doc.offsetAt(params.position);
-
-    // Member completion: did the user just type `alias.` ?
-    const dotMatch = matchDotPrefix(text, offset);
-    if (dotMatch) {
-        const items = completeMembers(params.textDocument.uri, dotMatch);
-        if (items.length > 0) return items;
-    }
-
-    return completeGlobal(params.textDocument.uri, params.position);
-});
-
-/**
- * Return everything visible at `pos` — keywords, builtins, reserved globals,
- * top-level user symbols, plus parameters of the enclosing proc.
- */
-function completeGlobal(uri: string, pos: Position): CompletionItem[] {
-    const out: CompletionItem[] = [];
-
-    for (const kw of KEYWORDS) {
-        out.push({
-            label: kw,
-            kind: CompletionItemKind.Keyword,
-            sortText: '3_' + kw
-        });
-    }
-    for (const b of BUILTINS) {
-        out.push({
-            label: b.name,
-            kind: CompletionItemKind.Function,
-            detail: b.signature,
-            documentation: { kind: MarkupKind.Markdown, value: b.detail },
-            sortText: '2_' + b.name
-        });
-    }
-    for (const g of RESERVED_GLOBALS) {
-        out.push({
-            label: g.name,
-            kind: CompletionItemKind.Variable,
-            detail: '(global)',
-            documentation: { kind: MarkupKind.Markdown, value: g.detail },
-            sortText: '2_' + g.name
-        });
-    }
-
-    const info = getInfo(uri);
-    if (info) {
-        for (const sym of info.topLevel) {
-            out.push(symbolToCompletionItem(sym, '1_'));
-        }
-        // Parameters of the enclosing proc, if any.
-        for (const [, paramSyms] of info.paramsByProc) {
-            for (const p of paramSyms) {
-                if (
-                    p.scopeStart !== undefined &&
-                    p.scopeEnd !== undefined &&
-                    pos.line >= p.scopeStart &&
-                    pos.line <= p.scopeEnd
-                ) {
-                    out.push(symbolToCompletionItem(p, '0_'));
-                }
-            }
-        }
-    }
-    return out;
-}
-
-/**
- * Member completion: the user typed `OMGI.` and we return the imported
- * module's exported symbols.
- */
-function completeMembers(
-    importingUri: string,
-    aliasName: string
-): CompletionItem[] {
-    const importing = getInfo(importingUri);
-    if (!importing) return [];
-    const imp = importing.imports.find((i) => i.alias === aliasName);
-    if (!imp) return [];
-    const targetUri = resolveImportUri(importingUri, imp.rawPath);
-    if (!targetUri) return [];
-    const target = getInfo(targetUri);
-    if (!target) return [];
-    return target.topLevel
-        .filter((s) => s.kind === 'proc' || s.kind === 'alloc')
-        .map((s) => symbolToCompletionItem(s, '0_'));
-}
-
-function symbolToCompletionItem(sym: OMGSymbol, sortPrefix: string): CompletionItem {
-    let kind: CompletionItemKind;
-    switch (sym.kind) {
-        case 'proc':
-            kind = CompletionItemKind.Function;
-            break;
-        case 'alloc':
-            kind = CompletionItemKind.Variable;
-            break;
-        case 'param':
-            kind = CompletionItemKind.Variable;
-            break;
-        case 'import':
-            kind = CompletionItemKind.Module;
-            break;
-        default:
-            kind = CompletionItemKind.Text;
-    }
-    const item: CompletionItem = {
-        label: sym.name,
-        kind,
-        detail: sym.detail,
-        sortText: sortPrefix + sym.name
-    };
-    if (sym.docComment) {
-        item.documentation = {
-            kind: MarkupKind.Markdown,
-            value: sym.docComment
-        };
-    }
-    return item;
-}
-
-/**
- * Walk back from `offset` past an identifier to see if the immediately
- * preceding character is `.`. If so, return the identifier *before* the
- * dot — that's the alias the user wants to complete members of.
- */
-function matchDotPrefix(text: string, offset: number): string | undefined {
-    // Skip back over the partial identifier the user is typing now.
-    let i = offset;
-    while (i > 0 && /[A-Za-z0-9_]/.test(text[i - 1])) {
-        i--;
-    }
-    if (i === 0 || text[i - 1] !== '.') return undefined;
-    let j = i - 1;
-    while (j > 0 && /[A-Za-z0-9_]/.test(text[j - 1])) {
-        j--;
-    }
-    return text.slice(j, i - 1);
-}
-
-// --- Hover ---------------------------------------------------------------
-
-connection.onHover((params: HoverParams): Hover | null => {
-    const sym = symbolAtPosition(params);
-    if (!sym) return null;
-    const lines: string[] = ['```omg', sym.detail, '```'];
-    if (sym.docComment) {
-        lines.push('', sym.docComment);
-    }
-    return {
-        contents: { kind: MarkupKind.Markdown, value: lines.join('\n') }
-    };
-});
-
-// --- Definition ----------------------------------------------------------
-
-connection.onDefinition((params: DefinitionParams): Location | null => {
-    const sym = symbolAtPosition(params);
-    if (!sym) return null;
-    const range = Range.create(
-        Position.create(sym.line, sym.col),
-        Position.create(sym.line, sym.col + sym.name.length)
-    );
-    return Location.create(sym.uri, range);
-});
-
-// --- Document symbols ----------------------------------------------------
-
-connection.onDocumentSymbol(
-    (params: DocumentSymbolParams): DocumentSymbol[] => {
-        const info = getInfo(params.textDocument.uri);
-        if (!info) return [];
-        return info.topLevel.map((sym) => {
-            const range = Range.create(
-                Position.create(sym.line, sym.col),
-                Position.create(sym.line, sym.col + sym.name.length)
-            );
-            const kind =
-                sym.kind === 'proc'
-                    ? SymbolKind.Function
-                    : sym.kind === 'import'
-                    ? SymbolKind.Module
-                    : SymbolKind.Variable;
-            return DocumentSymbol.create(
-                sym.name,
-                sym.detail,
-                kind,
-                range,
-                range
-            );
-        });
-    }
-);
-
-// --- Symbol resolution helper -------------------------------------------
-
-/**
- * Find the OMGSymbol the cursor is on. Handles three cases:
- *   - bare identifier  → top-level symbol or in-scope param
- *   - `alias.member`   → member of an imported module
- *   - keyword/builtin  → synthesised symbol for hover only
- */
-function symbolAtPosition(
-    params: TextDocumentPositionParams
-): OMGSymbol | undefined {
-    const doc = documents.get(params.textDocument.uri);
-    if (!doc) return undefined;
-    const text = doc.getText();
-    const offset = doc.offsetAt(params.position);
-    const word = wordAt(text, offset);
-    if (!word) return undefined;
-
-    // Detect alias.member by checking the character preceding the word.
-    let memberOf: string | undefined;
-    {
-        const wordStart = offset - findIdentLeft(text, offset);
-        if (wordStart > 0 && text[wordStart - 1] === '.') {
-            let j = wordStart - 1;
-            while (j > 0 && /[A-Za-z0-9_]/.test(text[j - 1])) j--;
-            memberOf = text.slice(j, wordStart - 1);
-        }
-    }
-    if (memberOf) {
-        const importing = getInfo(params.textDocument.uri);
-        const imp = importing?.imports.find((i) => i.alias === memberOf);
-        if (imp) {
-            const targetUri = resolveImportUri(params.textDocument.uri, imp.rawPath);
-            if (targetUri) {
-                const target = getInfo(targetUri);
-                const found = target?.topLevel.find((s) => s.name === word);
-                if (found) return found;
-            }
-        }
-    }
-
-    const info = getInfo(params.textDocument.uri);
-    if (info) {
-        // Parameters in scope at the cursor.
-        for (const [, paramSyms] of info.paramsByProc) {
-            for (const p of paramSyms) {
-                if (
-                    p.name === word &&
-                    p.scopeStart !== undefined &&
-                    p.scopeEnd !== undefined &&
-                    params.position.line >= p.scopeStart &&
-                    params.position.line <= p.scopeEnd
-                ) {
-                    return p;
-                }
-            }
-        }
-        const top = info.topLevel.find((s) => s.name === word);
-        if (top) return top;
-    }
-
-    // Built-ins
-    const builtin = BUILTINS.find((b) => b.name === word);
-    if (builtin) {
-        return {
-            name: builtin.name,
-            kind: 'proc',
-            detail: builtin.signature,
-            uri: params.textDocument.uri,
-            line: params.position.line,
-            col: params.position.character,
-            docComment: builtin.detail
-        };
-    }
-    const reserved = RESERVED_GLOBALS.find((g) => g.name === word);
-    if (reserved) {
-        return {
-            name: reserved.name,
-            kind: 'alloc',
-            detail: `${reserved.name} (built-in global)`,
-            uri: params.textDocument.uri,
-            line: params.position.line,
-            col: params.position.character,
-            docComment: reserved.detail
-        };
-    }
-    if (KEYWORDS.includes(word)) {
-        return {
-            name: word,
-            kind: 'alloc',
-            detail: `${word} (keyword)`,
-            uri: params.textDocument.uri,
-            line: params.position.line,
-            col: params.position.character
-        };
-    }
-    return undefined;
-}
-
-function wordAt(text: string, offset: number): string | undefined {
-    let start = offset;
-    while (start > 0 && /[A-Za-z0-9_]/.test(text[start - 1])) start--;
-    let end = offset;
-    while (end < text.length && /[A-Za-z0-9_]/.test(text[end])) end++;
-    if (start === end) return undefined;
-    const w = text.slice(start, end);
-    if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(w)) return undefined;
-    return w;
-}
-
-function findIdentLeft(text: string, offset: number): number {
-    let n = 0;
-    while (offset - n > 0 && /[A-Za-z0-9_]/.test(text[offset - n - 1])) n++;
-    return n;
-}
-
-// Ensure builtins module is reachable for IDE go-to-def.
-void BUILTIN_NAMES;

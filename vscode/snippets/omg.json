@@ -1,0 +1,119 @@
+{
+  "File header": {
+    "prefix": ["omg", "header", ";;;"],
+    "body": [";;;omg", "", "$0"],
+    "description": "The header every OMG file starts with"
+  },
+  "Variable": {
+    "prefix": "alloc",
+    "body": "alloc ${1:name} := ${2:value}",
+    "description": "Declare a variable"
+  },
+  "Proc": {
+    "prefix": ["proc", "func", "def", "fn"],
+    "body": ["proc ${1:name}(${2:params}) {", "\t$0", "}"],
+    "description": "Define a proc"
+  },
+  "Documented proc": {
+    "prefix": "procdoc",
+    "body": [
+      "# ${3:What it does.}",
+      "# @param ${2:x} ${4:what it is}",
+      "# @return ${5:what comes back}",
+      "proc ${1:name}(${2:x}) {",
+      "\t$0",
+      "}"
+    ],
+    "description": "A proc with a comment the editor shows on hover"
+  },
+  "If": {
+    "prefix": "if",
+    "body": ["if ${1:condition} {", "\t$0", "}"],
+    "description": "if"
+  },
+  "If, else": {
+    "prefix": "ifelse",
+    "body": ["if ${1:condition} {", "\t$2", "} else {", "\t$0", "}"],
+    "description": "if / else"
+  },
+  "If, elif, else": {
+    "prefix": "ifelif",
+    "body": ["if ${1:condition} {", "\t$2", "} elif ${3:other} {", "\t$4", "} else {", "\t$0", "}"],
+    "description": "if / elif / else"
+  },
+  "Elif": {
+    "prefix": "elif",
+    "body": ["elif ${1:condition} {", "\t$0", "}"],
+    "description": "elif branch"
+  },
+  "Else": {
+    "prefix": "else",
+    "body": ["else {", "\t$0", "}"],
+    "description": "else branch"
+  },
+  "Loop": {
+    "prefix": ["loop", "while"],
+    "body": ["loop ${1:condition} {", "\t$0", "}"],
+    "description": "Repeat while a condition holds"
+  },
+  "Counting loop": {
+    "prefix": ["loopi", "fori"],
+    "body": ["alloc ${1:i} := 0", "loop ${1:i} < ${2:n} {", "\t$0", "\t${1:i} := ${1:i} + 1", "}"],
+    "description": "Count from 0 up to n"
+  },
+  "For": {
+    "prefix": ["for", "foreach"],
+    "body": ["for ${1:item} in ${2:items} {", "\t$0", "}"],
+    "description": "Walk a list, or the characters of a string"
+  },
+  "For over dict keys": {
+    "prefix": "forkeys",
+    "body": ["for ${1:key} in dict_keys(${2:d}) {", "\talloc ${3:value} := ${2:d}[${1:key}]", "\t$0", "}"],
+    "description": "Walk the keys of a dict"
+  },
+  "Try, except": {
+    "prefix": ["try", "catch"],
+    "body": ["try {", "\t$1", "} except ${2:err} {", "\t$0", "}"],
+    "description": "Catch a runtime error"
+  },
+  "Emit": {
+    "prefix": ["emit", "echo", "println"],
+    "body": "emit ${1:value}",
+    "description": "Print a value and a newline"
+  },
+  "Facts": {
+    "prefix": ["facts", "assert"],
+    "body": "facts ${1:condition}",
+    "description": "Assert that a condition holds"
+  },
+  "Import": {
+    "prefix": "import",
+    "body": "import \"${1:./module.omg}\" as ${2:name}",
+    "description": "Import another file as a module"
+  },
+  "Return": {
+    "prefix": "return",
+    "body": "return ${1:value}",
+    "description": "Return a value from a proc"
+  },
+  "Dict": {
+    "prefix": "dict",
+    "body": ["alloc ${1:name} := {", "\t${2:key}: ${3:value}", "}"],
+    "description": "Declare a dict"
+  },
+  "List": {
+    "prefix": "list",
+    "body": "alloc ${1:name} := [${2:items}]",
+    "description": "Declare a list"
+  },
+  "Main": {
+    "prefix": "main",
+    "body": ["proc main() {", "\t$0", "}", "", "main()"],
+    "description": "A main proc and the call that starts it"
+  },
+  "Read a file": {
+    "prefix": "readfile",
+    "body": ["try {", "\talloc ${1:text} := read_file(${2:path})", "\t$0", "} except ${3:err} {", "\temit \"cannot read \" + ${2:path}", "}"],
+    "description": "Read a whole file, handling the case where it is missing"
+  }
+}

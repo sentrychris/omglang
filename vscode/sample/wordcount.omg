@@ -1,0 +1,32 @@
+;;;omg
+# Word counts for a text file, most frequent first.
+import "./lib/text.omg" as text
+
+alloc TOP := 5
+alloc counts := {}
+
+# Counts one word.
+# @param word a word in lower case
+proc tally(word) {
+    if has_key(counts, word) {
+        counts[word] := counts[word] + 1
+    } else {
+        counts[word] := 1
+    }
+}
+
+proc main(path) {
+    try {
+        for word in text.words(read_file(path)) {
+            tally(text.lower(word))
+        }
+    } except err {
+        exit_with_error("cannot read " + path + ": " + err)
+    }
+    alloc ranked := text.by_count(dict_keys(counts), counts)
+    for word in ranked[0:TOP] {
+        emit word + "\t" + counts[word]
+    }
+}
+
+main(args[1])
