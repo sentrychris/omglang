@@ -1,12 +1,218 @@
-# 06 · The C runtime (`omg_rt.h`)
+# 06 · The runtimes
 
-`src/runtime/omg_rt.h` is the only piece of non-OMG, non-Rust code that ships
-with native binaries. About 3,600 lines of C (C99 plus a few GNU
-extensions that GCC and Clang share), inlined into every AOT output.
-It compiles for Linux, macOS and other Unixes, and for Windows with
-MinGW-w64; the Windows side is described in [08-windows.md](08-windows.md).
+A built program carries a runtime: the code for values, memory,
+strings, lists, dictionaries, builtins and errors. OMG has three, one
+per back end.
 
-This doc covers what's in it and why.
+| Back end | Runtime | Written in |
+| -------- | ------- | ---------- |
+| x86-64 (`omg --build`) | `src/runtime/x64/*.omg` | OMG |
+| C (`--target c`, `--emit-c`) | `src/runtime/omg_rt.h` | C |
+| JavaScript (`--emit-js`) | `src/runtime/omg_rt.js` | JavaScript |
+
+They implement the same language and are held to the same answers by
+the conformance corpus. This page covers the first two: the
+machine-code runtime, which is the one you are using on Linux and
+Windows, and then the C runtime in detail.
+
+# Part 1: the machine-code runtime
+
+## The files
+
+| File | Lines | What is in it |
+| ---- | ----: | ------------- |
+| `core.omg`     | ~1900 | Memory, reference counts, strings, output, errors and tracebacks, closures, lists, dicts, equality, arithmetic, indexing, start-up |
+| `float.omg`    | ~750  | Floats to text and back, exactly, using its own big-number arithmetic |
+| `builtins.omg` | ~1500 | Every builtin, one `bi_` proc each, and the table `call_builtin` uses |
+| `linux.omg`    | ~850  | The `os_*` procs on Linux system calls |
+| `windows.omg`  | ~1000 | The same `os_*` procs on `kernel32.dll` and `ws2_32.dll` |
+
+`omg` joins `core`, `float`, `builtins` and one of the system files
+into a single unit, compiles it with the ordinary compiler, and hands
+the bytecode to the back end along with your program. Only the procs
+your program can reach end up in the executable.
+
+## Raw mode
+
+The runtime cannot be written in ordinary OMG, because ordinary OMG
+*needs* the runtime: you cannot implement lists with lists. So the
+back end compiles these files under different rules, called raw mode:
+
+- Every value is one 64-bit word with no tag: an integer, a pointer,
+  or the bits of a float. `true` is 1; `false` and `none` are 0.
+- `+ - *` wrap around; `//` and `%` are the machine's signed division.
+- A string literal is the address of a static string object.
+- A top-level `alloc NAME := 123` in capitals is a compile-time
+  constant; any other top-level name is a 64-bit global.
+- The name of a proc, used as a value, is its address.
+- Memory, the operating system and float arithmetic are reached
+  through reserved names: `__peek8/16/32/64`, `__poke8/16/32/64`,
+  `__memcpy`, `__syscall`, `__fadd`, `__i2f`, and so on. On Windows,
+  `__import("kernel32.dll!WriteFile")` names a system function and
+  `__wincallN` calls it.
+- Lists, dicts, indexing, builtins, closures, `emit`, `try` and
+  `raise` do not exist and are refused at build time.
+
+So the syntax is OMG and the meaning is close to C without types:
+
+```omg
+# Append a value; the list takes over its count.
+proc rt_list_push(l, tag, v) {
+    alloc n := __peek64(l + L_LEN)
+    alloc cap := __peek64(l + L_CAP)
+    if n == cap {
+        alloc ncap := cap * 2
+        if ncap < 4 { ncap := 4 }
+        alloc ni := rt_alloc(ncap * 16)
+        if cap > 0 {
+            __memcpy(ni, __peek64(l + L_ITEMS), n * 16)
+            rt_free(__peek64(l + L_ITEMS), cap * 16)
+        }
+        __poke64(l + L_ITEMS, ni)
+        __poke64(l + L_CAP, ncap)
+    }
+    alloc it := __peek64(l + L_ITEMS) + n * 16
+    __poke64(it, v)
+    __poke64(it + 8, tag)
+    __poke64(l + L_LEN, n + 1)
+    return 0
+}
+```
+
+The full rules are at the top of part 3 of
+[`native-x64.omg`](../src/backends/native-x64.omg). These files cannot
+be run by the VM or built by the other back ends.
+
+## Values
+
+A value of your program is two words: a tag and a payload.
+
+| Tag | Type | Payload |
+| --: | ---- | ------- |
+| 0 | Int | the integer |
+| 1 | Float | the bits of the double |
+| 2 | Bool | 0 or 1 |
+| 3 | None | 0 |
+| 4 | (unset) | a variable nothing has been stored into |
+| 8 | Str | pointer to the object |
+| 9, 10, 11 | List, Dict, Closure | pointer to the object |
+| 12 | Cell | a captured variable |
+
+Tags of 8 and above are heap objects, and every heap object starts
+with its reference count. The layouts (offsets in bytes) are at the
+top of `core.omg`:
+
+- **String**: count, length in characters, length in bytes, cached
+  hash, then the UTF-8 data and a NUL.
+- **List**: count, length, capacity, pointer to the items (16 bytes
+  each: payload, tag).
+- **Dict**: count, length, capacity, entries (key, hash, value), and
+  an index of 32-bit slots for hashing. Small dicts are scanned and
+  have no index. Entries keep insertion order.
+- **Closure**: count, code address, name, number of parameters, and
+  one cell pointer per captured variable.
+
+Runtime procs take a value as two arguments (`t, v`) and return a
+payload in RAX, leaving the tag in the global `rt_tag` when the type
+of the result is not fixed.
+
+## Memory
+
+There is no `malloc`. `rt_alloc(size)` hands out blocks in size
+classes (multiples of 16 up to 1024 bytes, powers of two above) and
+`rt_free(p, size)` takes them back by size, so no block carries a
+header. Small classes are carved from chunks obtained from the system
+(`mmap` on Linux, `VirtualAlloc` on Windows); a block of 256 KiB or
+more is mapped and unmapped on its own.
+
+Memory is reclaimed by reference counting, strings included. A value
+in a variable or on the operand stack owns one count; moving a value
+moves the count, copying takes a new one, and the count reaching zero
+frees the object and releases what it holds (`rt_destroy`). Literals
+are static and marked immortal. As in any reference-counted system, a
+cycle (a list that contains itself) is never freed.
+
+## Errors and tracebacks
+
+An error is a string, `"Kind: message"`. `try` pushes a handler
+(address, stack pointer, frame pointer) onto a small stack;
+raising pops the top handler, resets the two registers and jumps. With
+no handler left, the runtime prints a traceback and exits with 1.
+
+Nothing is recorded while the program runs to make tracebacks
+possible. When an error goes uncaught, the runtime walks the chain of
+saved frame pointers and looks each return address up in tables the
+back end wrote into the executable: which proc, which file, which
+line. The output is the same Python-style trace as everywhere else:
+
+```
+Traceback (most recent call last):
+  File "/path/to/foo.omg", line 12, in <module>
+  File "/path/to/foo.omg", line 7, in helper
+ValueError: something went wrong
+```
+
+Recursion is bounded by the machine stack. Every proc compares the
+stack pointer with a limit on entry, and running out is an ordinary
+`RuntimeError: maximum recursion depth exceeded` that `try` can catch,
+not a crash. The stack is 64 MiB on both systems.
+
+## Output and files
+
+`emit` collects its text in a buffer and writes it at the end of each
+call, so a line is one write and stays in order with standard error.
+File reads and writes go straight to the system; there is no buffering
+layer in between.
+
+## Floats
+
+Arithmetic is SSE2; `sin`, `cos`, `tan`, `log` and `pow` use the x87
+instructions. Printing gives the shortest decimal that reads back as
+the same double, and parsing is correctly rounded. `float.omg` does
+both with whole-number arithmetic of arbitrary size, which is slow
+next to the published fast algorithms but short and easy to check.
+
+## The system layer
+
+Everything above is written against about sixty procs named `os_*`:
+`os_open`, `os_read`, `os_write_all`, `os_alloc`, `os_getcwd`,
+`os_subprocess`, `os_tcp_connect`, `os_read_key` and so on.
+`linux.omg` implements them with system calls made directly
+(`__syscall`), `windows.omg` with calls into `kernel32.dll` and
+`ws2_32.dll`. Porting the runtime to another x86-64 system means
+writing a third file like these, and teaching the back end that
+system's executable format.
+
+## Start-up
+
+The entry point of an executable is a few instructions written by the
+back end: save the initial stack pointer, call `rt_start`, run the
+program's top-level code, flush output, exit. `rt_start` initialises
+the system layer and the heap, marks every global as unset, and fills
+in `args`, `module_file` and `current_dir`.
+
+## Known limits
+
+- TCP on Linux takes a dotted IPv4 address, `localhost`, or a name
+  listed in `/etc/hosts`; there is no DNS client. (Windows uses the
+  system resolver.)
+- `pow` and the trigonometric functions come from x87 and can differ
+  from a C library in the last digit.
+- A float literal with more than 19 significant digits may be off by
+  one unit in the last place.
+- A traceback for very deep recursion shows the outermost 1024 frames
+  and the innermost 8.
+- `bytes_to_string` does not check that its input is valid UTF-8.
+- The executable records the full paths of its source files, for
+  tracebacks.
+
+# Part 2: the C runtime (`omg_rt.h`)
+
+`src/runtime/omg_rt.h` is what a program built with `--target c`
+carries. About 3,700 lines of C (C99 plus a few GNU extensions that
+GCC and Clang share), inlined into every generated C file. It compiles
+for Linux, macOS and other Unixes, and for Windows with MinGW-w64; the
+Windows side is described in [08-windows.md](08-windows.md).
 
 ## What it provides
 
@@ -190,9 +396,8 @@ closure that owned a reference to itself would never be freed.
 Args are passed inline rather than as an array, so cc -O3 can sibling-call
 optimize tail calls. `OMG_MAX_ARITY = 32`; bump it (everywhere) if you need
 more parameters. The cap *only* applies to the C-AOT path
-(`omg --build foo.omg`); the Rust runtime, the OMG-on-OMG VM, and the
-transpiled-JS path all take args via variadic structures and have no
-limit. Most OMG procs use ≤9 — the headroom is just so the constraint
+(`omg --build foo.omg --target c`); the VM, machine code and the
+JavaScript path have no such limit. Most OMG procs use ≤9 — the headroom is just so the constraint
 stays invisible.
 
 ## Exception handling and tracebacks
@@ -295,7 +500,8 @@ by zero, index out of range, type mismatch in arithmetic, etc. So
 ### The traceback format
 
 `omg_emit_traceback(fullmsg)` walks `omg_frame_stack` and prints a
-Python-style trace identical to what the Rust VM produces:
+Python-style trace identical to what the VM and the machine-code
+runtime produce:
 
 ```
 Traceback (most recent call last):
@@ -366,11 +572,11 @@ frees the slot.
 `main()` calls `setvbuf(stdout, NULL, _IOLBF, 0)` to force line-buffering
 on stdout. Without this, stdout would be block-buffered when piped, causing
 stderr (unbuffered) to "jump" ahead of stdout in merged output and diverge
-from the Rust VM's behavior (`println!` line-buffers natively).
+from every other way of running the program.
 
 ## Float formatting
 
-Both Rust and OMG specify "shortest round-trippable" formatting for floats
+OMG specifies "shortest round-trippable" formatting for floats
 (e.g. `0.1` should print as `0.1`, not `0.10000000000000000555`). C's
 `printf` doesn't ship this primitive, so we walk precision 1-17:
 
@@ -388,26 +594,27 @@ where decimal would be unwieldy, falls back to `%.17g` scientific notation.
 
 ## How big is everything?
 
-```
-$ wc -l src/runtime/omg_rt.h
-2855 src/runtime/omg_rt.h
-```
+The same programs, built both ways on Linux:
 
-| Program                  | Source size | AOT binary |
-| ------------------------ | ----------- | ---------- |
-| Hello world (1 emit)     | 22 B        | 16 KB      |
-| Calculator (~25 lines)   | 1 KB        | 35 KB      |
-| `omg.omg` and its imports (the whole toolchain) | 291 KB | 2.4 MB |
+| Program                  | `omg --build` | `--target c` |
+| ------------------------ | ------------: | -----------: |
+| Three lines, one `emit`  | 22 KB         | 22 KB (plus libc) |
+| `examples/maze_solver.omg` (80 lines) | 37 KB | 64 KB |
+| `src/compiler.omg` (3000 lines) | 268 KB | 924 KB |
+| `omg.omg` and its imports (the whole toolchain) | 1.3 MB | |
 
-The constant overhead is small (~16 KB for trivial programs, mostly libc);
-the rest scales with how much OMG you've got. For `omg` itself, almost
-all the size is generated code for the compiler, the VM and the two
-back ends — the runtime is a few percent.
+A machine-code executable is static and complete: its 22 KB floor is
+the part of the runtime that start-up, `emit` and error reporting
+need, and nothing is loaded at run time. A C-built one is linked
+against the system's C library. Beyond the floor, size scales with how
+much OMG you've got: for `omg` itself almost all of it is generated
+code for the compiler, the VM and the back ends.
 
 ## Read next
 
 - [05-extending.md](05-extending.md) — practical guide to adding new opcodes
   and builtins
 - [07-debugging.md](07-debugging.md) — diagnosing problems
-- The source: [src/runtime/omg_rt.h](../src/runtime/omg_rt.h) is well-commented
+- The source: [src/runtime/x64/core.omg](../src/runtime/x64/core.omg) and
+  [src/runtime/omg_rt.h](../src/runtime/omg_rt.h) are well-commented
   and worth reading directly.

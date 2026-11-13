@@ -1,188 +1,167 @@
 # 02 · Architecture
 
-OMG runs on three substrates. Knowing which is which prevents most confusion.
-(For a one-page list of every part and what it is for, see
-[../toolchain.md](toolchain.md).)
+OMG is one language implemented in itself. Knowing which piece does
+what prevents most confusion. (For a one-page list of every part and
+what it is for, see [toolchain.md](toolchain.md).)
 
-## The three substrates
+## The picture
 
 ```
        ┌──────────────────────────────────────────────────┐
-       │  OMG: the language. Source files are .omg        │
-       │  Bytecode files are .omgb                        │
-       │  All "interesting" logic — compiler, parser,     │
-       │  back ends, meta-circular VM — is OMG.           │
+       │  OMG: the language. Source files are .omg,       │
+       │  bytecode files are .omgb.                       │
+       │  The compiler, the VM, the back ends and the     │
+       │  runtime of built programs are all OMG.          │
        └──────────────────────────────────────────────────┘
                             │
-                            │ runs on
+                            │ compiled to bytecode, which is then
                             ▼
        ┌────────────────────────────────────┐
-       │  Rust: the production VM.          │     Two ways to
-       │  rust/src/vm.rs interprets      │ ◄── execute OMG
-       │  bytecode at full speed.           │     bytecode.
+       │  interpreted: src/vm.omg           │     Two ways to
+       │  runs it straight away             │ ◄── execute OMG
+       │  (`omg foo.omg`, the REPL)         │     bytecode.
        └────────────────────────────────────┘     Pick one.
-                            │
+                            or
        ┌────────────────────────────────────┐
-       │  C: the native target.             │     The other way:
-       │  src/backends/native-c.omg generates  │ ◄── compile to C,
-       │  C source from bytecode; cc        │     then ELF.
-       │  produces an ELF.                  │
+       │  built: a back end turns it into   │     The other way:
+       │  x86-64 machine code and writes    │ ◄── an executable
+       │  the executable (`omg --build`)    │     with no VM in it.
        └────────────────────────────────────┘
 ```
 
-That's it. Rust and C don't both exist at runtime — they're two **alternative**
-ways to run OMG bytecode. Rust hosts the VM if you stay on the bytecode path;
-C compiles to native and disappears once `cc` finishes.
+Both live in the same program, `omg`. And `omg` is itself an OMG
+program that went down the second path: `omg --build src/omg.omg`.
 
-## Who hosts what
+## Who does what
 
-| Phase                    | Substrate | What's running                |
-| ------------------------ | --------- | ----------------------------- |
-| Editing source           | (none)    | A `.omg` text file            |
-| `.omg` → `.omgb`         | OMG-on-VM | `compiler.omg` running on the VM |
-| Picked the VM path: run  | Rust      | `vm.rs` interpreting bytecode |
-| Picked the AOT path: build | OMG + cc | `native-c.omg` (inside `omg`) emits C; cc compiles |
-| AOT path: run            | OS + CPU  | Native ELF, no VM, no Rust    |
+| Phase                    | What's running                |
+| ------------------------ | ----------------------------- |
+| Editing source           | A `.omg` text file            |
+| `.omg` → `.omgb`         | `compiler.omg` (inside `omg`, as machine code) |
+| Run: `omg foo.omg`       | `vm.omg` (inside `omg`, as machine code) interpreting the bytecode |
+| Build: `omg --build`     | `native-x64.omg` (inside `omg`) turning the bytecode, plus the runtime, into an executable |
+| Running what was built   | Your program as machine code, with the OMG runtime. No VM, no `omg`. |
 
-The "running on the VM" rows can use either the Rust VM (`rust/src/vm.rs`)
-or the OMG-in-OMG VM (`src/vm.omg`) — but the OMG-in-OMG VM is itself
-bytecode that runs on a host VM, so something Rust-or-C-shaped is always at
-the bottom.
+On systems the machine-code back end does not cover (macOS, ARM) the
+build row reads: `native-c.omg` writes C, and `cc` compiles it. There
+`omg` itself was built the same way.
 
-## The bootstrap chain
+## The three back ends
 
-```
-src/compiler.omg          (OMG source — the compiler)
-        │
-        │ compiled by
-        ▼
-src/compiler.omgb          (bytecode — what the runtime executes)
-        │
-        │ produced by
-        ▼
-the previous compiler.omgb (or the Rust frontend the very first time)
-```
+| Back end | File | Output | Used for |
+| -------- | ---- | ------ | -------- |
+| x86-64   | `src/backends/native-x64.omg` | a Linux ELF or Windows PE executable, written directly | `omg --build` on Linux and Windows; the toolchain itself |
+| C        | `src/backends/native-c.omg`   | one C file, for `cc` | `--target c`, `--emit-c`; every other system |
+| JavaScript | `src/backends/native-js.omg` | one JavaScript file | `--emit-js`; the browser playground and explorer |
 
-It's a fixed point: each `compiler.omgb` was produced by an earlier
-`compiler.omgb` (or originally by the Rust frontend) compiling
-`compiler.omg`. The build is reproducible — given source, the output is
-byte-identical no matter which historical iteration you started from.
+Each has a runtime: the code a built program needs for values, memory,
+strings, dictionaries, builtins and errors.
 
-## What the Rust runtime *is* exactly
+| Runtime | Written in | Where |
+| ------- | ---------- | ----- |
+| for machine code | OMG | `src/runtime/x64/` (`core`, `float`, `builtins`, and `linux` or `windows`) |
+| for C            | C   | `src/runtime/omg_rt.h` |
+| for JavaScript   | JavaScript | `src/runtime/omg_rt.js` |
 
-`rust/target/release/omg` is a single binary that bundles three things:
-
-1. **A frontend** — Rust code that parses `.omg` directly. Used by `--compile`
-   for speed; otherwise the OMG-in-OMG compiler is used.
-2. **A bytecode VM** — `vm.rs` plus `vm/ops_*.rs`. This is what runs the OMG
-   compiler, the OMG transpiler, and any `.omgb` you give it.
-3. **Embedded `compiler.omgb` and `vm.omgb`** — the OMG-in-OMG compiler and
-   VM are shipped inside the binary as bytecode (via Rust's `include_bytes!`),
-   so the very first run can compile and execute `.omg` sources without the
-   user already having either.
-
-The native toolchain (`bin/omg`) is the same three things
-with no Rust: the OMG compiler and the OMG VM, compiled to C and fused
-into one binary together with the C and JS back ends. `bin/omg`
-imports `compiler.omg` and `vm.omg` in-process, so `omg foo.omg` and
-`omg foo.omgb` need nothing else.
+The machine-code runtime is the unusual one. It is OMG source, but in
+a restricted dialect ("raw mode") in which every value is one machine
+word and memory and the operating system are reached through a few
+reserved names (`__peek64`, `__poke64`, `__syscall`, ...). The back
+end compiles it with a simpler code generator than the one it uses for
+your program, and links the two together. Nothing in an OMG executable
+comes from anywhere else: no libc, no startup files, no linker.
+[06-runtime.md](06-runtime.md) describes it.
 
 ## Native toolchain inventory
 
 ```
 bin/
-├── omg         the toolchain: run / REPL / --compile / --build /
-│               --emit-c / --emit-js / --disasm, all in-process
+├── omg         the toolchain for Linux x86-64: run / REPL / --compile /
+│               --build / --emit-c / --emit-js / --disasm, all in-process
+├── omg.exe     the same, for Windows x86-64
+├── x64/        the machine-code runtime, as OMG source
 ├── omg_rt.h    C runtime header  (pasted into every .c omg generates)
 └── omg_rt.js   JS runtime        (pasted into every .js omg generates)
 ```
 
-`omg` is a native executable compiled from OMG source: it is written in OMG
-(see [`src/omg.omg`](../src/omg.omg)) and runs
-its imports in-process — the compiler, the VM (which is why running a
-precompiled `.omgb` doesn't need a separate program) and the two back
-ends. `subprocess()` is only invoked for the final `cc` call during
-`--build`.
+`omg` reads the runtime files from the folder it lives in. For a
+machine-code build it compiles `x64/*.omg` to bytecode in memory
+(about a tenth of a second) and hands the back end two programs: yours
+and the runtime.
 
 It is produced by `scripts/build.sh`, which:
 
-1. Copies `omg_rt.h` and `omg_rt.js` into `bin/` so generated
-   code is built on the current runtime.
-2. Runs `omg --emit-c src/omg.omg omg.c`: the driver compiles
-   its own source (and everything it imports) to bytecode and puts that
-   through the C back end.
-3. Runs `cc -O3 omg.c` to produce the new `bin/omg`.
-4. On Linux x86-64, if the MinGW-w64 cross compiler is installed, puts
-   the same `omg.c` through it to produce `bin/omg.exe`. The
-   generated C is the same for every system; what differs is behind
-   `#ifdef _WIN32` in `omg_rt.h`.
+1. Copies the runtime files from `src/runtime/` into `bin/`, so that
+   what is generated next is built on the current runtime.
+2. Runs `omg --build src/omg.omg` into a temporary folder: the driver
+   compiles its own source (and everything it imports) to bytecode and
+   puts that through the x86-64 back end. This is "stage 1": the new
+   source, built by the old `omg`.
+3. Runs stage 1 on the same source. This is the new source built by
+   itself, and it is what goes into `bin/`.
+4. On Linux, has stage 1 write `bin/omg.exe` as well, with
+   `--target windows-x64`.
 
 On Windows the script (or `scripts/build.ps1`, its PowerShell twin)
-does steps 1 to 3 with `omg.exe` and `gcc`.
+does steps 1 to 3 for `omg.exe`. On other systems steps 2 and 3 are
+`omg --emit-c src/omg.omg omg.c` and `cc -O3 omg.c`.
 
-The `omg` in step 2 is `bin/omg` itself when one that runs
-on this machine is already there. Otherwise it is the Rust runtime
-running `omg.omg` from source.
+The `omg` that starts step 2 is `bin/omg` itself when one that runs on
+this machine is already there. Otherwise it is the frozen Rust runtime
+running `omg.omg` from source, if you have built it.
 
-**The script is idempotent.** Run it again and `omg` rebuilds itself
-with no Rust involvement, and the result is byte-for-byte the same
-binary: `omg` compiling `omg.omg` reproduces `omg`. (In the same
+## The fixed point
+
+Run the script again and `omg` rebuilds itself to byte-for-byte the
+same binary: `omg` building `omg.omg` reproduces `omg`. (In the same
 checkout, that is. The binary records the full paths of its sources
 for tracebacks, so a build in another directory differs in those
 strings and nothing else.)
 
-## The fixed-point check
+That equality is the strongest single check the project has. For the
+output to come out the same, the compiler has to compile itself
+correctly, the back end has to translate the compiler and itself
+correctly, and the runtime has to behave while they do it. A mistake
+in any of them almost always shows up as a different file, or as no
+file at all. `tests/parity.sh` and `tests/standalone.sh` both rebuild
+twice and compare.
 
-```
-rust/target/release/omg --verify-omg-vm src/compiler.omg
-```
-
-This compiles `compiler.omg` three different ways:
-
-1. **Rust frontend** parsing `.omg` → bytecode
-2. **OMG compiler** running on **Rust VM** → bytecode
-3. **OMG compiler** running on **OMG VM** running on **Rust VM** → bytecode
-
-…and asserts all three produce **byte-identical** output. That proves:
-
-- The OMG compiler (`compiler.omg`) is a faithful re-implementation of the
-  Rust frontend — they agree on every byte of every program.
-- The OMG-in-OMG VM (`vm.omg`) executes bytecode with the same observable
-  behavior as the Rust VM.
-- Therefore the chain is self-consistent: changes to the language don't
-  introduce drift between the three.
-
-If you change `compiler.rs`, you almost always need a corresponding change
-in `compiler.omg`, or this check will fail. See [05-extending.md](05-extending.md).
+A smaller version of the same idea covers the compiler alone:
+`omg --compile src/compiler.omg` (the compiler as machine code) and
+`omg src/omg.omg --compile src/compiler.omg` (the compiler interpreted
+by `vm.omg`) must write the same bytecode.
 
 ## What's *not* OMG
 
-- `rust/src/` — Rust. Production VM, parser, frontend, CLI.
-- `src/runtime/omg_rt.h` — C. Value representation, refcounting, builtins,
-  setjmp-based exception handling, call-frame stack + traceback formatter.
-  ~2200 lines. Linked into every AOT binary.
+- `src/runtime/omg_rt.h` — C. The runtime for `--target c`: value
+  representation, refcounting, builtins, setjmp-based exception
+  handling, tracebacks.
 - `src/runtime/omg_rt.js` — JavaScript. The same job for programs
   generated by `omg --emit-js`, and for the browser playground.
+- `rust/` — Rust. The runtime OMG was first built with: a lexer,
+  parser, compiler and VM. Frozen; nothing above depends on it.
 
-That's the whole non-OMG surface. Everything else is `.omg`.
+That's the whole non-OMG surface, and on Linux and Windows none of it
+takes part in running, building or rebuilding anything.
 
-## Why bother with all three?
+## Where it came from
 
-- **Rust is the seed.** You need *something* to bootstrap from when there's
-  no compiler yet. Rust is fast, well-tested, and gives us a rigorous
-  reference implementation.
-- **OMG is the home.** Once we have a compiler, everything moves to OMG.
-  Self-hosting means the language can evolve without dragging Rust along.
-- **C is the exit ramp.** OMG bytecode in a VM is portable but always pays
-  dispatch cost. C lets us emit straight-line native code with zero runtime
-  overhead beyond a small refcount runtime.
+- **Rust was the seed.** You need *something* to start from when there
+  is no compiler yet. The Rust runtime ran `compiler.omg` until
+  `compiler.omg` could compile itself, and then refereed: for a long
+  time every change had to produce the same bytes from both.
+- **C was the first exit.** The C back end made `omg` an ordinary
+  executable with no Rust in it, at the price of needing a C compiler
+  for every build.
+- **x86-64 is home.** With its own back end and a runtime written in
+  OMG, the toolchain needs nothing but itself.
 
-You don't have to use all three — pick whichever fits your task. Need a
-30 KB CLI tool? `omg --build`. Need to iterate fast? `omg foo.omg`. Want
-to embed OMG in a Rust app? Use the runtime crate directly.
+The Rust runtime is kept, frozen, as the documented way to rebuild
+everything from source alone, and the C back end as the way onto
+systems the machine-code one does not reach.
 
 ## Read next
 
 - [03-language-tour.md](03-language-tour.md) — write OMG programs
 - [04-pipeline.md](04-pipeline.md) — what each compilation stage does
-- [05-extending.md](05-extending.md) — add features in lockstep across all three
+- [05-extending.md](05-extending.md) — add features everywhere they have to go

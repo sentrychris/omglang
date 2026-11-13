@@ -4,40 +4,59 @@ Three kinds of changes, in increasing difficulty:
 
 1. **New builtin** — easiest. Pure addition.
 2. **New opcode** — medium. Touches every layer but the surface is small.
-3. **New syntax form** — biggest. Parser + compiler + opcode + runtime.
+3. **New syntax form** — biggest. Parser + compiler, and often an opcode.
 
-The golden rule: **anything in the Rust toolchain has a counterpart in the
-OMG toolchain**. Touch one, touch the other. Otherwise the fixed-point
-check fails.
+The golden rule: **a feature exists once per way of running a
+program**. There is one compiler, but four things execute what it
+produces (the VM, machine code, C, JavaScript), and each has to learn
+the feature. The conformance corpus runs every program every way, so
+a missed one fails the tests.
 
 ## The lockstep rule
 
-| Rust layer             | OMG layer               | C and JS layers (for native and the web) |
-| ---------------------- | ----------------------- | ---------------------------- |
-| `lexer.rs`             | first half of `compiler.omg` | (n/a — pre-bytecode)    |
-| `parser.rs`            | second half `compiler.omg`   | (n/a — pre-bytecode)    |
-| `compiler.rs`          | rest of `compiler.omg`  | (n/a — pre-bytecode)         |
-| `bytecode.rs` (opcodes) | constants in `compiler.omg` + `vm.omg` + `bytecode.omg` | constants in `omg_rt.h` if user-visible |
-| `vm.rs` + `vm/ops_*.rs`| `vm.omg`                | inline emission in `native-c.omg` and `native-js.omg`, helpers in `omg_rt.h` and `omg_rt.js` |
-| `vm/builtins.rs`       | `cc_builtins` list in `compiler.omg` | `omg_call_builtin` switch in `omg_rt.h`, `emit_builtin` in `native-c.omg` and `native-js.omg`, the function itself in `omg_rt.h` and `omg_rt.js` |
+| What                     | Where it has to go |
+| ------------------------ | ------------------ |
+| Syntax (lexer, parser, code generation) | `compiler.omg` only |
+| Opcode numbers, format version | the tables in `compiler.omg`, `vm.omg` and `bytecode.omg` |
+| What an opcode does      | `vm.omg` (`step_inner`), `native-x64.omg` (`mg_body`, and `pp_depths` for its effect on the stack), `native-c.omg` (`emit_c_for_instr`), `native-js.omg` (`emit_js_for_instr`) |
+| A builtin's name         | the `cc_builtins` list in `compiler.omg` |
+| A builtin's behaviour    | `runtime/x64/builtins.omg` (a `bi_` proc and a line in `rt_bi_init`); `omg_rt.h` (the function, `omg_call_builtin`) with `emit_builtin` in `native-c.omg`; `omg_rt.js` with `emit_builtin` in `native-js.omg` |
 
 Two things are *not* duplicated and need changing in one place only:
-how names resolve in generated code (`backend.omg`, shared by both
-back ends) and how a `.omgb` is read back for them (`bytecode.omg`).
+how names resolve in generated code (`backend.omg`, shared by the back
+ends) and how a `.omgb` is read back for them (`bytecode.omg`).
 
-`cargo test` compares the opcode tables and the format version in the
-three OMG files with `bytecode.rs`, so a missed or mistyped constant
-fails there before it can produce bad bytecode.
+The VM has no builtins of its own. `vm.omg` passes a builtin call on
+with `call_builtin(name, args)` to the runtime of whatever is running
+it, so `omg foo.omg` gets a new builtin as soon as `omg` has been
+rebuilt on a runtime that has it.
 
 After any change, run:
 
 ```sh
-cd rust && cargo build --release && cd ..
-rust/target/release/omg --verify-omg-vm src/compiler.omg
 scripts/build.sh
+tests/run.sh
 ```
 
-If the fixed-point check passes and the toolchain rebuilds, you're aligned.
+`build.sh` builds the toolchain twice, the second time with the result
+of the first, so a change that breaks the compiler or a back end
+usually stops right there. `tests/run.sh` then runs the conformance
+corpus every way.
+
+### The bootstrap rule
+
+`omg` is built by the `omg` that is already in `bin/`. So the
+toolchain's own source (`src/*.omg`, `src/backends/`, `src/runtime/x64/`)
+may only use what that existing binary understands. Adding a feature
+and using it inside the compiler are therefore two steps:
+
+1. Add the feature, rebuild, run the tests, commit `src/` and the
+   rebuilt `bin/`.
+2. Now the checked-in `omg` knows it, and the toolchain's source may
+   use it.
+
+The frozen Rust runtime in `rust/` is not part of the lockstep. It
+does not learn new features.
 
 ---
 
@@ -45,32 +64,7 @@ If the fixed-point check passes and the toolchain rebuilds, you're aligned.
 
 We'll add `square(x)` — returns `x * x`.
 
-### Step A — Rust runtime
-
-Add a match arm in [rust/src/vm/builtins.rs](../rust/src/vm/builtins.rs):
-
-```rust
-"square" => match args {
-    [Value::Int(i)] => Ok(Value::Int(i * i)),
-    [Value::Float(f)] => Ok(Value::Float(f * f)),
-    _ => Err(RuntimeError::TypeError(
-        "square() expects one number".to_string(),
-    )),
-},
-```
-
-### Step B — Rust compiler allowlist
-
-Add to [rust/src/compiler.rs](../rust/src/compiler.rs), in `builtin_names()`:
-
-```rust
-"square",
-```
-
-This tells the compiler that calls to `square(...)` should compile to
-`OP_BUILTIN("square", argc)` rather than a regular function call.
-
-### Step C — OMG compiler allowlist
+### Step A — Compiler allowlist
 
 Add to the `cc_builtins` list in [src/compiler.omg](../src/compiler.omg)
 (don't forget the comma if it's not the last element):
@@ -83,7 +77,47 @@ alloc cc_builtins := [
 ]
 ```
 
-### Step D — C runtime
+This tells the compiler that calls to `square(...)` should compile to
+`BUILTIN("square", argc)` rather than a regular function call.
+
+### Step B — The machine-code runtime
+
+Add the implementation to
+[src/runtime/x64/builtins.omg](../src/runtime/x64/builtins.omg). This
+file is raw-mode OMG ([06-runtime.md](06-runtime.md)): each argument
+arrives as two words, its tag and its payload, and the proc returns a
+payload after putting the result's tag in `rt_tag`:
+
+```omg
+proc bi_square(t, v) {
+    if t == T_INT {
+        rt_tag := T_INT
+        return v * v
+    }
+    if t == T_FLOAT {
+        rt_tag := T_FLOAT
+        return __fmul(v, v)
+    }
+    return rt_type_error("square() expects one number")
+}
+```
+
+The name is the contract: for `BUILTIN("square", 1)` the back end
+looks for a proc called `bi_square` (or `bi_square_1`, when a builtin
+takes a varying number of arguments). Nothing needs adding to
+`native-x64.omg`.
+
+Then register it in `rt_bi_init`, in the same file, so that
+`call_builtin("square", ...)` finds it. That is how the VM reaches it:
+
+```omg
+rt_bi_add("square", bi_square, 1)
+```
+
+(Raw-mode `*` wraps on overflow. A real `square` would check for it
+the way `rt_mul` does; this one keeps the example short.)
+
+### Step C — The C runtime
 
 Add the implementation to [src/runtime/omg_rt.h](../src/runtime/omg_rt.h):
 
@@ -102,99 +136,74 @@ Also add it to `omg_call_builtin`'s switch (used by reflective dispatch):
 if (strcmp(n, "square") == 0)         return omg_builtin_square(a[0]);
 ```
 
-### Step E — Native-c.omg dispatch
-
-Add a case to `emit_builtin` in [src/backends/native-c.omg](../src/backends/native-c.omg):
+And a case in `emit_builtin` in [src/backends/native-c.omg](../src/backends/native-c.omg):
 
 ```omg
 if name == "square" and argc == 1 { return emit_builtin1("omg_builtin_square") }
 ```
 
-The JS back end needs the same two things, or the builtin will be
-missing in the playground and from `omg --emit-js`: a function in
+### Step D — The JS runtime
+
+The same two things, or the builtin will be missing in the playground
+and from `omg --emit-js`: a function in
 [src/runtime/omg_rt.js](../src/runtime/omg_rt.js) and a case in
 `emit_builtin` in [src/backends/native-js.omg](../src/backends/native-js.omg).
 
-### Step F — Rebuild and verify
+### Step E — Rebuild and verify
 
 ```sh
-cd rust && cargo build --release && cd ..
-rust/target/release/omg --verify-omg-vm src/compiler.omg
 scripts/build.sh
 
 echo ';;;omg
 emit square(7)' > /tmp/sq.omg
-bin/omg /tmp/sq.omg          # 49
-bin/omg --build /tmp/sq.omg /tmp/sq && /tmp/sq    # 49
+bin/omg /tmp/sq.omg                               # 49, interpreted
+bin/omg --build /tmp/sq.omg /tmp/sq && /tmp/sq    # 49, built
+bin/omg --emit-js /tmp/sq.omg /tmp/sq.js && node /tmp/sq.js
 ```
 
-Both paths should print `49`.
+Then give it a place in the conformance corpus: a line in one of the
+programs under `tests/conformance/` (or a new `NAME.omg` with its
+`NAME.expected`). From then on every way of running OMG is held to it.
 
 ### Common mistakes
 
-- Forgetting the OMG allowlist (Step C): the OMG compiler will compile
-  `square` as a regular function call, fail to find it, and you'll see
-  `UndefinedIdentError: square` — but only on the OMG-compiled path. The
-  Rust frontend will work fine, masking the bug.
-- Forgetting `omg_call_builtin` (Step D second part): `call_builtin("square", ...)`
-  will fail in native binaries even though direct calls work.
-- Forgetting `--verify-omg-vm`: silent bytecode drift.
+- Forgetting the allowlist (Step A): `square` compiles as a regular
+  function call and you'll see `UndefinedIdentError: square`.
+- Forgetting `rt_bi_add` (Step B): a built executable works, and
+  `omg foo.omg` says the builtin does not exist, because the VM goes
+  through `call_builtin`.
+- Forgetting `omg_call_builtin` (Step C): the mirror image on the C
+  route. Direct calls work; `call_builtin("square", ...)` fails.
+- Using `square` inside the toolchain's own source in the same change:
+  see [the bootstrap rule](#the-bootstrap-rule).
 
 ---
 
 ## 2. Adding a new opcode
 
-Opcodes live in five places. Adding one is more work but each spot is small.
+Opcodes live in every layer. Adding one is more work but each spot is small.
 
 We'll add `OP_DUP` — pushes a copy of the stack top.
 
-### Step A — Bytecode definition
+### Step A — Opcode constants
 
-[rust/src/bytecode.rs](../rust/src/bytecode.rs):
-
-```rust
-pub enum Instr {
-    // ... existing variants ...
-    Dup,
-}
-
-// Pick a free numeric tag — bump the existing high-water mark
-pub const OP_DUP: u8 = 56;
-
-// Add to (de)serialization tables
-```
-
-### Step B — Rust VM dispatch
-
-[rust/src/vm.rs](../rust/src/vm.rs):
-
-```rust
-Instr::Dup => {
-    if let Some(top) = stack.last() {
-        stack.push(top.clone());
-    } else {
-        break Err(RuntimeError::VmInvariant("stack underflow on Dup".into()));
-    }
-}
-```
-
-### Step C — Rust compiler emission
-
-If `Dup` is going to be emitted by the parser/compiler, add the emit calls
-in [compiler.rs](../rust/src/compiler.rs). If it's only used by
-`native-c.omg`, you can skip this.
-
-### Step D — OMG-side opcode constants
-
-In each of these files, add `alloc OP_DUP := 56`:
+Pick a free number (bump the existing high-water mark) and add
+`alloc OP_DUP := 56` to each of:
 
 - [src/compiler.omg](../src/compiler.omg) (it writes the opcode)
 - [src/vm.omg](../src/vm.omg) (it dispatches on it)
-- [src/bytecode.omg](../src/bytecode.omg) (it reads it back for the C and JS back ends)
+- [src/bytecode.omg](../src/bytecode.omg) (it reads it back for the back ends)
 
-`cargo test` fails until all three match `bytecode.rs`.
+The three tables must agree, and `tests/driver.sh` fails when they do
+not.
 
-### Step E — OMG VM dispatch
+### Step B — Compiler emission
+
+Emit the instruction where the code generator in `compiler.omg` needs
+it, and give it a case in `encode_instr`, which turns instructions
+into bytes.
+
+### Step C — VM dispatch
 
 In [vm.omg](../src/vm.omg)'s `step_inner` switch. `step_inner`
 pre-advances `vm_pc` before dispatching, so a normal-flow opcode skips
@@ -210,21 +219,18 @@ if op == OP_DUP {
 ```
 
 Opcodes are dispatched on integer tags (the `OP_*` constants at the top
-of vm.omg) — the OMG-in-OMG compiler emits string-tagged tuples and
+of vm.omg) — the compiler emits string-tagged tuples and
 `vm_extend_code` normalises them to ints on ingest, so step_inner only
-ever sees ints. Also register a new entry in vm.omg's `OPNAME_TO_INT`
-table if the OMG compiler emits this opcode.
+ever sees ints. Register the new name in vm.omg's `OPNAME_TO_INT`
+table.
 
-### Step F — OMG VM decoder
+### Step D — Decoders
 
 In [vm.omg](../src/vm.omg)'s `decode_one`:
 
 ```omg
 if op == OP_DUP { return tagged0(OP_DUP, cursor) }
 ```
-
-(Plus the matching encoder in [compiler.omg](../src/compiler.omg)
-if the OMG compiler emits `Dup`.)
 
 The back ends read bytecode through a second decoder, `decode_one` in
 [bytecode.omg](../src/bytecode.omg), which keeps opcode
@@ -234,7 +240,29 @@ names as strings. Add the opcode there as well:
 if op == OP_DUP { return tagged0("DUP", cursor) }
 ```
 
-### Step G — Native-c emit handler
+and its name in `disasm_op_name` in [omg.omg](../src/omg.omg), so
+`--disasm` can print it.
+
+### Step E — The x86-64 back end
+
+Two places in [native-x64.omg](../src/backends/native-x64.omg):
+
+- `pp_depths`, the pre-pass that works out how many values are on the
+  operand stack at every instruction. Add `DUP` to the group with the
+  same effect (one more value), or the back end will refuse the
+  program.
+- `mg_body`, the loop that generates code for a proc of your program.
+  Add a branch that updates the virtual stack: for `DUP`, push a
+  second entry describing the same value, taking a reference count if
+  it is (or may be) a heap object. The helpers around it (`mg_push`,
+  `mg_flush`, `mg_generic` for "call this runtime proc with the top n
+  values") cover most new opcodes; read the neighbouring branches
+  first.
+
+If the runtime's own source will use the opcode too, `rw_body` (raw
+mode) needs it as well. Most new opcodes do not get that far.
+
+### Step F — The C and JS back ends
 
 In [native-c.omg](../src/backends/native-c.omg)'s `emit_c_for_instr`:
 
@@ -250,16 +278,19 @@ slots own a reference.
 And the same opcode in [native-js.omg](../src/backends/native-js.omg)'s
 `emit_js_for_instr`, where there is no reference counting to do.
 
-### Step H — Rebuild and verify
+### Step G — Rebuild and verify
 
 ```sh
-cd rust && cargo build --release && cd ..
-rust/target/release/omg --verify-omg-vm src/compiler.omg
 scripts/build.sh
+tests/run.sh
 ```
 
-The fixed-point check is your safety net: if the OMG-side decoder doesn't
-match the Rust-side serialization, this will fail.
+Remember [the bootstrap rule](#the-bootstrap-rule): the compiler may
+not *emit* the new opcode for constructs the toolchain's own source
+already uses until a binary whose VM and back ends understand it is in
+`bin/`. If it must (a change to how `if` compiles, say), do it in two
+commits: first teach the VM and the back ends the opcode, rebuild and
+commit; then switch the compiler over.
 
 ---
 
@@ -271,33 +302,21 @@ Suppose we want to add `unless cond { ... }` — the inverse of `if`.
 
 ### Step A — Lexer (if needed)
 
-If `unless` is a new keyword, register it as such in:
-
-- [rust/src/lexer.rs](../rust/src/lexer.rs) — Rust lexer
-- The token-class lookup in [src/compiler.omg](../src/compiler.omg)
+If `unless` is a new keyword, register it in `keyword_kind` in
+[src/compiler.omg](../src/compiler.omg).
 
 If it's a soft keyword (just an identifier with special meaning to the
 parser), you can skip this — but soft keywords are usually a mistake.
 
 ### Step B — Parser
 
-Add an `Unless(cond, body)` AST node. In each parser, recognize the
-keyword and produce that node.
-
-- Rust: [rust/src/parser.rs](../rust/src/parser.rs)
-- OMG: [src/compiler.omg](../src/compiler.omg)
+Add an `Unless(cond, body)` AST node, and have the statement parser in
+`compiler.omg` recognise the keyword and produce that node.
 
 ### Step C — Compiler
 
 Lower `Unless` to existing bytecode. `unless cond { body }` is just
-`if !cond { body }` so we can emit:
-
-```
-<compile cond>
-JumpIfFalse end_label   ; jump over body if cond is FALSE — wait, that's wrong
-```
-
-Inverted, so use `Not` first:
+`if !cond { body }`, so emit:
 
 ```
 <compile cond>
@@ -307,76 +326,96 @@ JumpIfFalse end_label
 end_label:
 ```
 
-Or implement a `JumpIfTrue` opcode if it's worth optimizing.
+Because this uses only opcodes that already exist, nothing downstream
+changes: the VM and all three back ends run it as it is. That is the
+payoff of the bytecode layer, and the reason to prefer lowering to
+existing opcodes over inventing one.
 
-Lockstep this in both `compiler.rs` and `compiler.omg`.
+### Step D — The editor and the web
 
-### Step D — Verify
+Syntax has two more homes outside the toolchain: the VS Code grammar
+in `vscode/syntaxes/`, and the playground's keyword reference in
+`web/reference.js`. And `scripts/build-web.sh` rebuilds the web
+bundles, which contain the compiler.
 
-The fixed-point check covers it: compile `src/compiler.omg` (which
-hopefully now uses `unless` for some test) three ways and ensure they
-match.
+### Step E — Verify
+
+```sh
+scripts/build.sh
+tests/run.sh
+```
+
+Add a program that uses `unless` to `tests/conformance/`. Do not use
+it in the toolchain's own source until the rebuilt `bin/` is committed
+([the bootstrap rule](#the-bootstrap-rule)).
 
 ---
 
 ## Common pitfalls across all three
 
-### Forgetting `vm.omg`
-
-If you only update Rust + native-c, the OMG-in-OMG VM falls behind. The
-fixed-point check is `--verify-omg-vm` — it runs `compiler.omg` *on*
-`vm.omg`, so an out-of-date `vm.omg` will fail to interpret new opcodes.
-
 ### Bytecode versioning
 
 `src/compiler.omg` has `BC_VERSION := 512` (`0x000200` —
-`(MAJOR<<16)|(MINOR<<8)|PATCH`), matching `BC_VERSION` in
-`rust/src/bytecode.rs` and the same constant in
-`src/{vm,bytecode}.omg`. If you change the
-bytecode format incompatibly, bump this in **all four** places
-(`cargo test` fails if you miss one). Old
-`.omgb` files are rejected at load time with a clear "recompile your
-.omgb" SyntaxError — there's no silent breakage, but also no fallback
-to v1.
+`(MAJOR<<16)|(MINOR<<8)|PATCH`), and the same constant is in
+`src/vm.omg` and `src/bytecode.omg`. If you change the bytecode format
+incompatibly, bump this in **all three** places (`tests/driver.sh`
+compares them). Old `.omgb` files are
+rejected at load time with a clear "recompile your .omgb" SyntaxError
+— there's no silent breakage, but also no fallback to v1.
 
 The current format carries a source-file table and a per-instruction
-source map (parallel to the code blob) that the VMs use to render
-Python-style tracebacks. Both new sections were added at the v1 → v2
-bump.
+source map (parallel to the code blob) that the VM and the back ends
+use to render Python-style tracebacks. Both sections were added at the
+v1 → v2 bump.
 
 ### Refcount discipline
 
-When emitting C for a new opcode, follow the established pattern:
+The machine-code and C runtimes both count references, and the rules
+are the same in spirit:
 
-- Pop with `--sp` (no `omg_dec`) when transferring ownership downstream.
-- Pop with `omg_dec(stack[--sp])` when discarding.
-- Push fresh values (rc=1) directly; push existing values with `omg_inc`.
-- Binary ops dec both operands after computing.
+- A value on the operand stack or in a variable owns one count.
+- Moving a value transfers the count; copying it takes a new one.
+- Whoever discards a value gives its count back.
+- A runtime proc never keeps what it is passed without taking a count
+  of its own, and returns a value its caller owns.
 
+In C that is `omg_inc` / `omg_dec` around `stack[sp]`; in
+`native-x64.omg` the virtual-stack entries record whether they are
+owned, and `mg_release` / the `mg_stub_drop` helpers give counts back.
 See [06-runtime.md](06-runtime.md) for the full protocol.
 
-### Don't skip `--verify-omg-vm`
+### Raw mode is not OMG as you know it
 
-Seriously. It's the single check that catches most lockstep bugs. CI should
-run it.
+`src/runtime/x64/*.omg` looks like OMG but is compiled with different
+rules: one untagged word per value, wrapping arithmetic, no lists, no
+dicts, no `try`. A proc there with 500 or more locals is refused. The
+rules are at the top of part 3 of `native-x64.omg`, and
+[06-runtime.md](06-runtime.md) summarises them.
+
+### Checked-in artefacts
+
+`bin/` and the `web/*.js` bundles are generated and checked in. After
+a change under `src/`, rebuild both (`scripts/build.sh`,
+`scripts/build-web.sh`) and commit them, in a commit of their own. CI
+fails when either has fallen behind its sources.
 
 ---
 
 ## A worked example
 
-There's a regression test for an actual compiler bug we fixed earlier:
+There's a regression test for an actual compiler bug:
 
 - The bug: `return` / `break` / tail-call inside `try` didn't pop the
   exception-handler block, leaving a stale handler that caught later panics.
-- The fix lived in *both* `compiler.rs` and `compiler.omg`, because both
-  emit `PopBlock` instructions.
-- The test: [tests/regression/control_flow_in_try.omg](../tests/regression/control_flow_in_try.omg)
+- The fix was in how `compiler.omg` emits `PopBlock` instructions.
+- The test: [tests/regression/control_flow_in_try.omg](../tests/regression/control_flow_in_try.omg),
+  with the output it must produce next to it.
 
-That test exercises four leak paths and should always pass on every
-runtime. Use it as a template for adding regression tests when you fix
+That test exercises four leak paths and must pass interpreted and
+built. Use it as a template for adding regression tests when you fix
 similar bugs.
 
 ## Read next
 
-- [06-runtime.md](06-runtime.md) — the C runtime header in detail
+- [06-runtime.md](06-runtime.md) — the runtimes in detail
 - [07-debugging.md](07-debugging.md) — diagnosing what went wrong

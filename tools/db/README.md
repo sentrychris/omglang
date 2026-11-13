@@ -60,8 +60,7 @@ omgdb> quit
 ```
 
 Reopen `people.db` later and the rows are still there. Files written by
-the Rust runtime read fine on the native interpreter and AOT binaries,
-and vice-versa.
+the interpreted `omgdb` read fine in a built one, and vice-versa.
 
 ## SQL surface
 
@@ -137,9 +136,9 @@ so a script next to `exec.omg` works without extra wiring.
 
 `tests/db.sh` exercises the storage layer (programmatic round-trips,
 multi-page allocation, catalog metadata, error paths) and the SQL
-surface (lexer/parser, `-e` and stdin pipelines, native + AOT parity
-with the Rust runtime). Run it from the repo root after building the
-native toolchain:
+surface (lexer/parser, `-e` and stdin pipelines, and that the
+interpreted and the built database agree and read each other's files).
+Run it from the repo root:
 
 ```sh
 bash tests/db.sh

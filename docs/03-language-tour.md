@@ -13,8 +13,8 @@ OMG files conventionally start with:
 ```
 
 It's stripped by the lexer if present. The header isn't required — every
-way of running a file (`omg`, `omg --rust`, `--compile`, `--build`,
-`--disasm`) accepts a file without it — but it's the canonical way to mark
+way of running a file (`omg`, `--compile`, `--build`, `--disasm`)
+accepts a file without it — but it's the canonical way to mark
 a file as OMG source (so editors and tools can recognize it).
 
 ## Types
@@ -169,15 +169,16 @@ Three cases are ordinary calls instead, and do use a stack frame each:
 - Any tail call in a program transpiled to JavaScript, which has no
   tail-call elimination.
 
-How deep ordinary recursion can go depends on the backend. The Rust VM
-and the native interpreter keep their call stack on the heap and handle
-hundreds of thousands of frames. An AOT-compiled binary uses the C stack:
-about 15,000 frames on Linux, where it raises its own soft stack limit to
-64 MiB, and on Windows, where the program runs on a thread with a 64 MiB
-stack, and under 2,000 on macOS, where the main thread's stack is fixed
-at 8 MB. JavaScript uses the engine's. Running out is not a crash on
-either: it raises `RuntimeError: maximum recursion depth exceeded`, which
-`try` / `except` can catch.
+How deep ordinary recursion can go depends on how the program is run.
+The interpreter (`omg foo.omg`) keeps its call stack on the heap and is
+limited only by memory. A built executable uses the machine stack,
+64 MiB of it on Linux and Windows: several hundred thousand frames
+when built to machine code, about 15,000 when built through C (whose
+frames are much larger), and under 2,000 through C on macOS, where the
+main thread's stack is fixed at 8 MB. JavaScript uses the engine's.
+Running out is not a crash anywhere: it raises
+`RuntimeError: maximum recursion depth exceeded`, which `try` /
+`except` can catch.
 
 ## Strings
 
@@ -308,7 +309,7 @@ Windows it only checks that the file exists)
 that cannot be started raises a catchable `ValueError`),
 `exit(code)`, `getpid()`, `executable_path()` (absolute path of the
 native OMG executable running the program, or `false` when there is
-none: always `false` on the Rust runtime)
+none, as in the browser)
 
 **Reflection**
 `call_builtin(name, args_list)` — dispatches to another builtin. Used by

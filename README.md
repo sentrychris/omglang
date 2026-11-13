@@ -41,57 +41,56 @@ or industrial about it. It exists so I could see what it takes to build a workin
 
 ## Get it running
 
-You need [Rust](https://rustup.rs/) installed. Then:
+On Linux and Windows (x86-64) you need nothing installed. `omg` is
+checked into the repository, and it is the whole toolchain:
 
 ```sh
 git clone https://github.com/sentrychris/omglang
 cd omglang
-cargo build --release --manifest-path rust/Cargo.toml
+bin/omg examples/hello_world.omg        # Windows: bin\omg.exe examples\hello_world.omg
 ```
 
-That builds the OMG runtime as `rust/target/release/omg`
-(`omg.exe` on Windows). From here on this README assumes you have it on
-your `PATH` as `omg`. Either copy/symlink the binary somewhere on your
-`PATH`, or alias it:
+From here on this README assumes you have it on your `PATH` as `omg`.
+The simplest way is an alias:
 
 ```sh
-alias omg=$(pwd)/rust/target/release/omg
+alias omg=$(pwd)/bin/omg
 ```
 
 ```powershell
 # Windows (PowerShell)
-Set-Alias omg "$PWD\rust\target\release\omg.exe"
+Set-Alias omg "$PWD\bin\omg.exe"
 ```
+
+`omg` is written in OMG and builds itself. It runs programs, turns
+them into executables and rebuilds itself from its own source, with no
+C compiler, no linker and no other language involved.
 
 ### Platform support
 
-|                                              | Linux | macOS | Windows |
+|                                              | Linux x86-64 | Windows x86-64 | macOS, Linux on ARM |
 | -------------------------------------------- | :---: | :---: | :-----: |
-| Rust runtime (`cargo build`): VM, both compilers, REPL | ✓ | ✓ | ✓ |
+| `omg` ready to run after a clone             | ✓ (`bin/omg`) | ✓ (`bin\omg.exe`) | build it once, see below |
+| Run programs, REPL, `--compile`, `--emit-c`, `--emit-js` | ✓ | ✓ | ✓ |
+| `omg --build` (make an executable)           | ✓, nothing needed | ✓, nothing needed | ✓, through a C compiler |
+| Build for the other system (`--target`)      | ✓ | ✓ | ✓ |
 | Raw-mode keyboard input (`stdin_set_raw`, `stdin_read_key`), so the games run | ✓ | ✓ | ✓ |
-| Pseudo-terminals and `fork` (`pty_*`, `fork`) | ✓ | ✓ | raise a catchable `ValueError` |
-| Native toolchain (`bin/omg`, `omg --build`) | ✓ | ✓ | ✓ (`omg.exe`) |
+| Pseudo-terminals and `fork` (`pty_*`, `fork`) | ✓ | raise a catchable `ValueError` | ✓ |
 
-The runtime needs Rust 1.80 or newer and nothing else. The native
-toolchain needs nothing to run programs and a C compiler for
-`--build`: `cc` on Linux and macOS, GCC or Clang from MinGW-w64 on
-Windows ([`docs/08-windows.md`](docs/08-windows.md)). CI
-builds and tests both on all three systems on every push.
+OMG writes x86-64 machine code for Linux and Windows itself. Anywhere
+else it goes through C: `omg` there is built from one generated C file
+with `cc`, and `--build` hands its output to `cc` too.
+[`docs/01-quickstart.md`](docs/01-quickstart.md#other-systems) has the
+three commands, and [`docs/08-windows.md`](docs/08-windows.md) the
+Windows specifics. CI builds and tests all three systems on every
+push, and on Linux and Windows it does so on machines with no compiler
+installed at all.
 
-A native `omg` is checked into `bin/` for Linux x86-64
-(`omg`) and Windows x86-64 (`omg.exe`), so on those a fresh clone can
-run OMG programs with nothing else installed. On macOS
-`scripts/build.sh` notices that neither can run and bootstraps a
-native one from the Rust runtime instead.
-
-There are two `omg` commands in this repo, one written in Rust and one
-written in OMG, plus a C and a JavaScript back end.
 [`docs/toolchain.md`](docs/toolchain.md) is one page that says what
-each part is for and which one you want.
+each part of the toolchain is for.
 
-`tests/smoke.sh` is a quick, portable self-check that needs only the
-Rust runtime. Like the rest of the test scripts it is bash; on Windows
-run it from Git Bash.
+The tests are bash scripts (`tests/run.sh`); on Windows run them from
+Git Bash.
 
 ### Hello, world
 
@@ -766,7 +765,7 @@ Always available, no import needed.
 | `subprocess([cmd, args...])`   | run a child process; returns its exit code (a program that cannot be started raises `ValueError`) |
 | `exit(code)`                   | exit the current process with the given status       |
 | `getpid()`                     | current process ID (useful for unique tempfile names) |
-| `executable_path()`            | path of the native OMG executable running the program, or `false` (always `false` on the Rust runtime) |
+| `executable_path()`            | path of the native OMG executable running the program, or `false` where there is none (in the browser) |
 | **Reflection**                 |                                                       |
 | `call_builtin(name, args)`     | call a builtin by name (advanced)                     |
 
@@ -804,33 +803,48 @@ Variables, functions, and imports persist across lines until you `quit`.
 
 ## Compile to a native binary
 
-OMG can also be compiled to standalone native binaries on Linux,
-macOS and Windows — no Rust required at runtime. The C back end at
-[`src/backends/native-c.omg`](src/backends/native-c.omg) emits self-contained
-C, which `cc -O3` turns into a small (~30 KB) executable.
-
-All of it is one program, `bin/omg` (`omg.exe` on Windows):
-the compiler, a VM and the back ends, written in OMG and compiled by
-themselves.
+`omg --build` turns a program into a standalone executable:
 
 ```sh
-# One-time bootstrap (uses the Rust runtime to build the native toolchain)
-cargo build --release --manifest-path rust/Cargo.toml
-scripts/build.sh
-
-# After that: no Rust required to compile or run OMG
-bin/omg foo.omg              # compile and run
-bin/omg --build foo.omg foo  # AOT to a native executable
+omg --build foo.omg foo      # a native executable
 ./foo
-
-# Or stop at the generated source
-bin/omg --emit-c  foo.omg foo.c    # the C that --build compiles
-bin/omg --emit-js foo.omg foo.js   # JavaScript; run it with node or in a page
 ```
 
-On Windows the same commands are `bin\omg.exe ...`, the
-build script is `scripts\build.ps1`, and `--build` uses GCC or Clang
-from MinGW-w64; see [`docs/08-windows.md`](docs/08-windows.md).
+On Linux and Windows (x86-64) `omg` writes the executable itself. The
+machine-code back end at
+[`src/backends/native-x64.omg`](src/backends/native-x64.omg) turns
+bytecode into x86-64 and wraps it, with a runtime that is also written
+in OMG ([`src/runtime/x64/`](src/runtime/x64/)), as an ELF or a PE
+file. No C compiler, assembler or linker takes part. The result is one
+small file (about 23 KB for hello world) that depends on nothing: no
+libc on Linux, only `kernel32.dll` on Windows.
+
+Any `omg` can build for either system:
+
+```sh
+omg --build foo.omg foo --target windows-x64   # foo.exe, from Linux
+omg --build foo.omg foo --target linux-x64     # an ELF, from Windows
+omg --build foo.omg foo --target c             # through a C compiler instead
+```
+
+`--target c` uses the C back end
+([`src/backends/native-c.omg`](src/backends/native-c.omg)) and `cc`.
+It is how OMG reaches macOS and ARM, where it is the default.
+
+You can also stop at the generated source:
+
+```sh
+omg --emit-c  foo.omg foo.c    # the C that --target c compiles
+omg --emit-js foo.omg foo.js   # JavaScript; run it with node or in a page
+```
+
+All of this is one program, `bin/omg` (`omg.exe` on Windows): the
+compiler, a VM and the three back ends, written in OMG and built by
+themselves. After changing anything under `src/`, rebuild it with:
+
+```sh
+scripts/build.sh               # Windows PowerShell: scripts\build.ps1
+```
 
 The full guide — architecture, language tour, pipeline, extension guide,
 runtime internals, debugging, Windows — lives in [`docs/`](docs/).
@@ -886,27 +900,31 @@ omglang/
 │   ├── omg.omg          the `omg` command; imports the modules below
 │   ├── compiler.omg     the compiler: source to bytecode
 │   ├── bytecode.omg     reads a .omgb file back in
-│   ├── vm.omg           the bytecode interpreter (runs programs in the native `omg`)
+│   ├── vm.omg           the bytecode interpreter (`omg foo.omg`, the REPL)
 │   ├── backends/        bytecode to something that runs without the VM
 │   │   ├── backend.omg      what the back ends share (scope analysis)
-│   │   ├── native-c.omg     C back end (`omg --build`, `omg --emit-c`)
+│   │   ├── native-x64.omg   x86-64 back end: machine code, ELF and PE files (`omg --build`)
+│   │   ├── native-c.omg     C back end (`omg --build --target c`, `omg --emit-c`)
 │   │   └── native-js.omg    JS back end (`omg --emit-js`, the browser builds)
 │   ├── runtime/         what a built program carries with it
+│   │   ├── x64/             the runtime for machine code, written in OMG
+│   │   │                    (core, float, builtins, and linux / windows)
 │   │   ├── omg_rt.h         C runtime, pasted into generated C
 │   │   └── omg_rt.js        JS runtime, pasted into generated JavaScript
 │   └── browser/         entry points of the two web bundles
 │       ├── omg-web.omg      the playground: compiler + VM
-│       └── omg-explorer.omg the compiler explorer: + both back ends
-├── bin/             the built toolchain, checked in (omg for Linux, omg.exe for Windows, + omg_rt.h + omg_rt.js)
+│       └── omg-explorer.omg the compiler explorer: + the C and JS back ends
+├── bin/             the built toolchain, checked in: omg (Linux), omg.exe (Windows),
+│                    and the runtime files they read (x64/, omg_rt.h, omg_rt.js)
 ├── scripts/         build and check scripts
-│   ├── build.sh         builds bin/omg from src/
+│   ├── build.sh         builds bin/omg and bin/omg.exe from src/
 │   ├── build.ps1        the same build for Windows PowerShell (builds omg.exe)
 │   └── build-web.sh     builds the web/ bundles from src/
-├── rust/            the Rust implementation: lexer, parser, compiler, VM, REPL.
-│                    The seed that builds OMG from nothing, and the reference the tests compare against
+├── rust/            the Rust runtime OMG started from. Frozen: kept as the way to
+│                    rebuild OMG from source alone, no longer built or needed
 ├── examples/        programs to read and run: one language feature each
 │   └── games/           interactive terminal games (snake, pong, tetris, rogue)
-├── tests/           shell-driven test suite (parity, regression, REPL, builtins)
+├── tests/           shell-driven test suite (conformance, parity, regression, REPL, builtins)
 ├── tools/           programs written in OMG (wc, grep, sort, omgdb, an editor, a site generator)
 ├── web/             browser playground + compiler explorer (static site)
 ├── docs/            the manual: quickstart, language tour, architecture, extending, Windows
@@ -937,60 +955,46 @@ Some interesting starting points:
 
 ## A small piece of trivia
 
-OMG's compiler is itself written in OMG. The file
-[`src/compiler.omg`](src/compiler.omg) reads OMG source
-code and produces the bytecode the runtime executes, which is exactly
-what the Rust frontend in `rust/` does.
+OMG is written in OMG, all the way down.
 
-By default, `omg <script>` runs your code through that OMG-written
-compiler — the language compiles itself end-to-end on every run. If you
-want the faster Rust frontend (e.g. while iterating, or to avoid the
-~1 second compile overhead on larger programs), pass `--rust`:
+It started the usual way: a runtime in another language (Rust, still
+in [`rust/`](rust/), now frozen), and on top of it a compiler written
+in OMG, [`src/compiler.omg`](src/compiler.omg), that could compile
+itself. Then a VM in OMG, then a back end that wrote C, so that the
+whole thing could become an ordinary program with a C compiler's help.
 
-```sh
-omg foo.omg              # self-hosted (default)
-omg --rust foo.omg       # Rust frontend
-```
-
-To verify both compilers agree byte-for-byte on the compiler's own
-source — the fixed-point check — run:
+The last step removed the help. `omg` now writes machine code itself
+([`src/backends/native-x64.omg`](src/backends/native-x64.omg)): its
+own instruction encoder, its own linker, its own ELF and PE writers.
+The runtime every program needs (memory, strings, floats, dictionaries,
+files, sockets) is OMG as well, down to the system calls. So when
+`omg` builds itself, nothing but OMG is running, and nothing but OMG
+is in the result:
 
 ```sh
-omg --verify-self-hosted src/compiler.omg
+bin/omg  --build src/omg.omg bin/omg2    # omg builds its own source (about 1.5 s)
+bin/omg2 --build src/omg.omg bin/omg3    # and what it built does it again
+cmp bin/omg2 bin/omg3                    # the same file, byte for byte
 ```
 
-The runtime compiles `compiler.omg` two different ways, once with the
-Rust frontend, once with the OMG-written compiler running on the VM,
-and confirms the two byte streams are identical.
-
-There's a stronger version too. The runtime ships an *OMG-written VM*
-at [`src/vm.omg`](src/vm.omg) that interprets `.omgb`
-bytecode. With it, you can run the OMG compiler *on the OMG VM* — three
-levels of meta — and ask whether *that* still produces the same bytes:
-
-```sh
-omg --verify-omg-vm src/compiler.omg
-```
-
-If it passes, every act of language-level interpretation in the chain
-happened inside OMG; the Rust runtime is just the substrate at the
-bottom.
+That fixed point is checked on every push, on Linux and on Windows, on
+machines with no compiler installed. It works across systems too: the
+Windows `omg.exe` that is checked in was written by the Linux `omg`.
 
 ---
 
 ## More reading
 
 - [`docs/toolchain.md`](docs/toolchain.md): **what each part is for**,
-  on one page. The two `omg` commands, the compiler, the VMs, the C and
-  JS back ends, and which of them you need.
-- [`docs/`](docs/): the **native compilation path** —
-  turning `.omg` source into standalone executables with no Rust runtime
-  needed. Covers the architecture, language, pipeline, runtime header,
-  and how to add new features in lockstep across Rust + OMG + C.
+  on one page. The `omg` command, the compiler, the VM, the three back
+  ends, and where the Rust runtime went.
+- [`docs/`](docs/): the manual. Quickstart, architecture, language
+  tour, the pipeline from source to executable, the runtimes, how to
+  add a feature in every place it has to go, debugging, Windows.
 - [`docs/compilation-pipeline.md`](docs/compilation-pipeline.md): how
-  `omg foo.omg` actually runs your script — the two-stage compiler, the
-  VM-on-VM dance, what `--rust` does, and the fixed-point check.
-- [`rust/README.md`](rust/README.md): runtime architecture and CLI flags.
+  `omg foo.omg` actually runs your script, step by step.
+- [`rust/README.md`](rust/README.md): the frozen Rust runtime, and how
+  to bootstrap OMG from it.
 - [`tools/README.md`](tools/README.md): the OMG-in-OMG tools.
 - [`web/README.md`](web/README.md): the browser playground and compiler explorer.
 - [`vscode/README.md`](vscode/README.md): VS Code extension.

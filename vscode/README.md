@@ -99,7 +99,7 @@ the extension is loaded and you can edit/test against any `.omg` file.
   by the compiler — but the LSP keys off it to avoid analysing unrelated
   files.)
 - The server uses a line-based scanner (regex over each line) rather than
-  hooking into the actual Rust compiler. That keeps the LSP fast and
+  hooking into the actual compiler. That keeps the LSP fast and
   decouples it from the runtime — at the cost of less precise diagnostics.
   Real syntax errors still surface when you run the file with `omg`.
 - The previous Python-based server (using `pygls`) has been removed; the

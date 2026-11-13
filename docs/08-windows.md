@@ -1,20 +1,24 @@
 # 08 · Windows
 
 The native `omg` runs on Windows as an ordinary program, `omg.exe`. It
-is the same toolchain as on Linux and macOS (the same OMG source, put
-through the same C back end), with every command: run, REPL,
-`--compile`, `--build`, `--emit-c`, `--emit-js`, `--disasm`. No WSL, no
-Cygwin, no Rust.
+is the same toolchain as on Linux (the same OMG source, built by its
+own x86-64 back end), with every command: run, REPL, `--compile`,
+`--build`, `--emit-c`, `--emit-js`, `--disasm`. No WSL, no Cygwin, no
+C compiler, no Rust.
 
 ## What you need
 
 | To do this                                  | You need |
 | ------------------------------------------- | -------- |
 | Run programs, use the REPL, `--compile`, `--disasm`, `--emit-c`, `--emit-js` | nothing: `bin\omg.exe` is checked in |
-| `--build` (make an `.exe` out of a program) | a C compiler: GCC or Clang from MinGW-w64, on `PATH` |
-| Rebuild `omg.exe` itself                    | the same C compiler |
+| `--build` (make an `.exe` out of a program) | nothing: `omg.exe` writes the executable itself |
+| Rebuild `omg.exe` itself                    | nothing |
+| `--build --target c` (go through C instead) | a C compiler: GCC or Clang from MinGW-w64, on `PATH` |
 
-Any MinGW-w64 distribution works. Two easy ones:
+The last row is optional. `--target c` is the route OMG takes on
+systems its machine-code back end does not cover, and it is there on
+Windows as a second opinion. If you want it, any MinGW-w64
+distribution works:
 
 ```powershell
 # WinLibs (a standalone GCC)
@@ -24,12 +28,9 @@ winget install BrechtSanders.WinLibs.POSIX.UCRT
 pacman -S mingw-w64-ucrt-x86_64-gcc
 ```
 
-Open a new terminal afterwards and check with `gcc --version`. `omg`
-looks for `gcc`, then `clang`, then `cc`.
-
-Microsoft's `cl.exe` is not supported: the C runtime uses GNU C
-(`__builtin_frame_address`, `__attribute__`), which GCC and Clang share
-and MSVC does not have.
+`omg` looks for `gcc`, then `clang`, then `cc`. Microsoft's `cl.exe`
+is not supported: the C runtime uses GNU C (`__builtin_frame_address`,
+`__attribute__`), which GCC and Clang share and MSVC does not have.
 
 ## Using it
 
@@ -41,6 +42,7 @@ bin\omg.exe examples\prime_sieve.omg      # run
 bin\omg.exe                               # REPL
 bin\omg.exe --build hello.omg             # writes hello.exe
 .\hello.exe
+bin\omg.exe --build hello.omg hello --target linux-x64   # a Linux program, from Windows
 bin\omg.exe --emit-js hello.omg hello.js  # then: node hello.js
 ```
 
@@ -48,18 +50,20 @@ Say `omg.exe`, not `omg`, when you run it from the repository:
 `bin\omg` with no extension is the Linux binary, which sits
 in the same folder.
 
-To have `omg` on your `PATH`, copy three files into one folder that is
-on it: `omg.exe`, `omg_rt.h` and `omg_rt.js`. `omg` reads the two
-runtime files from the folder it lives in and pastes them into the C
-and JavaScript it generates, so they travel together.
+To have `omg` on your `PATH`, copy `omg.exe` and the `x64` folder
+beside it into one folder that is on it (and `omg_rt.h` and
+`omg_rt.js` too, if you use `--target c`, `--emit-c` or `--emit-js`).
+`omg` reads these runtime files from the folder it lives in and builds
+them into what it generates, so they travel together.
 
 ```powershell
 Set-Alias omg "$PWD\bin\omg.exe"   # or just an alias, for this session
 ```
 
-An executable made by `--build` is statically linked. It needs no DLLs
-beyond the ones that are part of Windows, and no OMG, so you can copy it
-to another machine as it is.
+An executable made by `--build` is one file of a few tens of
+kilobytes. It imports from `kernel32.dll` (and `ws2_32.dll` if it uses
+TCP), which are part of Windows, and from nothing else: no C runtime
+DLL, no OMG. You can copy it to another machine as it is.
 
 ## Rebuilding the toolchain
 
@@ -70,25 +74,26 @@ powershell -ExecutionPolicy Bypass -File scripts\build.ps1
 ```
 
 or, from Git Bash, `scripts/build.sh`, which is the same build. Both
-are two commands underneath:
+are one command underneath, run twice so that the `omg.exe` that ends
+up in `bin\` is the new source built by itself:
 
 ```powershell
-bin\omg.exe --emit-c src\omg.omg omg.c
-gcc -O3 -w omg.c -o bin\omg.exe -static -lm -lws2_32
+bin\omg.exe --build src\omg.omg bin\omg.exe
 ```
 
-The `omg.exe` that is checked in is not built on Windows. `build.sh` on
-Linux produces it next to the Linux binary by putting the same `omg.c`
-through the MinGW-w64 cross compiler, because the C that `omg` writes
-does not depend on the system it was written on: every difference
-between systems is an `#ifdef _WIN32` inside `omg_rt.h`.
+It takes a few seconds. A third run would write the same bytes.
+
+The `omg.exe` that is checked in is not built on Windows. `build.sh`
+on Linux writes it next to the Linux binary with
+`--target windows-x64`, because the back end does not depend on the
+system it runs on. CI checks on a real Windows machine that the
+checked-in `omg.exe` runs and builds programs, and that it rebuilds
+itself there, twice, to the same bytes.
 
 ## What is different on Windows
 
 OMG programs are meant to behave the same everywhere. These are the
-places where Windows shows through. The builtins that cannot work there
-(`fork`, `pty_*`) fail the same way, with the same message, as they do
-in the Rust runtime on Windows.
+places where Windows shows through.
 
 | Area | On Windows |
 | ---- | ---------- |
@@ -98,59 +103,68 @@ in the Rust runtime on Windows.
 | Files | Always bytes. Nothing turns `\n` into `\r\n` on the way out or back on the way in, for files or for standard input and output. |
 | Text | Strings are UTF-8. Paths, command lines and arguments are converted to and from UTF-16 where they meet Windows, so non-ASCII file names and arguments work. |
 | Console | Output is UTF-8 and ANSI escape sequences are switched on, so colours and cursor movement work in the classic console as well as in Windows Terminal. The console's previous code page is put back when the program ends. |
-| `emit` | Flushed after every call. (Elsewhere standard output is line-buffered, which the Windows C library does not offer.) |
 | `subprocess(argv)` | The program is looked up on `PATH`, with `.exe` added if needed. Arguments are quoted the way Windows programs expect to parse them. A batch file needs `["cmd", "/c", "script.bat"]`. |
 | `--build` | Adds `.exe` to the output name if it is missing. |
-| Recursion in a built executable | The program runs on its own thread with a 64 MiB stack, which is good for about 15,000 nested calls, as on Linux. Past that it raises `RuntimeError: maximum recursion depth exceeded`. |
+| Recursion in a built executable | The executable asks Windows for a 64 MiB stack, which is good for several hundred thousand nested calls, as on Linux. Past that it raises `RuntimeError: maximum recursion depth exceeded`. |
 
 A program that cannot be started by `subprocess()` raises a catchable
 `ValueError` on every system.
 
 ## How the port is put together
 
-Everything is in [`src/runtime/omg_rt.h`](../src/runtime/omg_rt.h),
-the C runtime that is pasted into every generated program:
+Two pieces, both OMG:
 
-- A small **platform layer** (`omg_os_*`: open, exists, mkdir, seek,
-  current directory, clock, sleep) that the builtins call instead of
-  the C library directly. On Windows these go through the wide-character
-  APIs.
-- Windows versions of the builtins that are system calls at heart:
-  `subprocess` (`CreateProcessW`), `read_dir` (`FindFirstFileW`), the
-  raw-mode keyboard (`ReadConsoleInputW`, translated to the same escape
-  sequences a Unix terminal sends), `executable_path`, `getpid`, and
-  TCP on Winsock.
-- `omg_start()`, the per-system start-up that the generated `main`
-  hands the program to. On Windows it sets binary standard streams and
-  the console, converts the command line to UTF-8, and runs the program
-  on the 64 MiB thread.
-- `try` / `except` is `setjmp` / `longjmp`. On 64-bit Windows the
-  default `longjmp` walks the stack with the system unwinder, which is
-  not reliable through generated code, so the runtime asks MinGW for
-  the plain register-restoring kind (`__USE_MINGW_SETJMP_NON_SEH`).
+- [`src/backends/native-x64.omg`](../src/backends/native-x64.omg)
+  writes the file. The machine code for your program is the same on
+  both systems; for Windows it is wrapped as a PE image with one code
+  section, one data section and an import table listing exactly the
+  system functions the program reaches.
+- [`src/runtime/x64/windows.omg`](../src/runtime/x64/windows.omg) is
+  the system layer of the runtime: about sixty `os_*` procedures
+  (open, read, write, directory listing, clock, sleep, subprocess,
+  sockets, console) written against `kernel32.dll` and, for TCP,
+  `ws2_32.dll`. [`linux.omg`](../src/runtime/x64/linux.omg) next to it
+  is the same interface on Linux system calls. The rest of the runtime
+  (values, memory, strings, builtins, errors) is shared and knows
+  nothing about either system.
 
-The driver ([`omg.omg`](../src/omg.omg)) has one Windows
-branch, in `--build`: which compiler names to try, the `.exe` suffix,
-the static link, and where the temporary C file goes. It tells Windows
-from the others by looking at `current_dir`.
+What the Windows layer does that Linux has no need of: converts
+between UTF-8 and UTF-16 at every call that takes a name, switches the
+console to UTF-8 and ANSI at start-up and puts it back at exit, splits
+the command line into arguments itself, and translates console key
+events into the escape sequences a Unix terminal sends, so that
+raw-mode programs (the games) see the same bytes on both.
+
+The driver ([`omg.omg`](../src/omg.omg)) asks the runtime it was built
+with which system it is on (`linux-x64` or `windows-x64`) and builds
+for that unless `--target` says otherwise.
+
+`--target c` still has its own Windows port, inside
+[`src/runtime/omg_rt.h`](../src/runtime/omg_rt.h): a platform layer of
+`omg_os_*` functions on the wide-character APIs, `setjmp`/`longjmp`
+of the plain register-restoring kind (`__USE_MINGW_SETJMP_NON_SEH`),
+and the program run on a 64 MiB thread.
 
 ## Testing
 
-CI builds the toolchain on `windows-latest` on every push and runs the
-whole of `tests/run.sh` against `omg.exe` under Git Bash: it first
-checks that the checked-in `omg.exe` runs and builds a program, then
-rebuilds it from its own source with `build.sh` and again with
-`build.ps1`.
+CI runs two jobs on `windows-latest` on every push. One runs the whole
+of `tests/run.sh` against `omg.exe` under Git Bash: it first checks
+that the checked-in `omg.exe` runs and builds a program, then rebuilds
+it from its own source with `build.sh` and again with `build.ps1`. The
+other takes every compiler off `PATH` and runs `tests/standalone.sh`:
+the self-rebuild, byte for byte, and the conformance corpus,
+interpreted and built.
 
-To run the suite yourself, use Git Bash with `gcc` and `node` on `PATH`:
+To run the suite yourself, use Git Bash:
 
 ```sh
-cargo build --release --manifest-path rust/Cargo.toml
 scripts/build.sh
 tests/run.sh
 ```
 
+`node` on `PATH` adds the JavaScript checks, and `gcc` adds the ones
+for `--target c`; both are skipped without them.
+
 One thing the automated tests cannot reach is the raw-mode keyboard
 (`stdin_set_raw`, `stdin_read_key`), which needs a real console and a
-person pressing keys. It is the same logic as the Rust runtime's
-Windows implementation; the games in `examples/games/` are the test.
+person pressing keys. The games in `examples/games/` are the test.
