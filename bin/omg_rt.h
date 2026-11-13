@@ -61,7 +61,9 @@
 #include <dirent.h>
 #include <unistd.h>
 #include <sys/socket.h>
+#include <poll.h>
 #include <netinet/in.h>
+#include <netinet/tcp.h>
 #include <termios.h>
 /* forkpty lives in a different header on each Unix family. */
 #if defined(__APPLE__) || defined(__OpenBSD__) || defined(__NetBSD__)
@@ -2119,6 +2121,33 @@ static int omg_os_is_dir(const char *path) {
 #endif
 }
 
+/* Size in bytes and time of the last write (ms since 1970) of `path`.
+ * 0 on success; -1 with errno set otherwise. */
+static int omg_os_stat(const char *path, int64_t *size, int64_t *mtime_ms) {
+#ifdef _WIN32
+    wchar_t *w = omg_os_wide(path);
+    if (!w) { errno = EINVAL; return -1; }
+    WIN32_FILE_ATTRIBUTE_DATA d;
+    BOOL ok = GetFileAttributesExW(w, GetFileExInfoStandard, &d);
+    free(w);
+    if (!ok) { errno = ENOENT; return -1; }
+    *size = (int64_t)(((uint64_t)d.nFileSizeHigh << 32) | (uint64_t)d.nFileSizeLow);
+    uint64_t t = ((uint64_t)d.ftLastWriteTime.dwHighDateTime << 32) | (uint64_t)d.ftLastWriteTime.dwLowDateTime;
+    *mtime_ms = (int64_t)((t - 116444736000000000ULL) / 10000ULL);
+    return 0;
+#else
+    struct stat st;
+    if (stat(path, &st) != 0) return -1;
+    *size = (int64_t)st.st_size;
+#ifdef __APPLE__
+    *mtime_ms = (int64_t)st.st_mtimespec.tv_sec * 1000 + (int64_t)(st.st_mtimespec.tv_nsec / 1000000);
+#else
+    *mtime_ms = (int64_t)st.st_mtim.tv_sec * 1000 + (int64_t)(st.st_mtim.tv_nsec / 1000000);
+#endif
+    return 0;
+#endif
+}
+
 /* Create one directory. 0 on success or if it is already there. */
 static int omg_os_mkdir(const char *path) {
 #ifdef _WIN32
@@ -3024,6 +3053,68 @@ static Value omg_builtin_file_read(Value h) {
     return omg_str(buf);
 }
 
+/* file_read(h, max): at most max bytes from where the handle stands;
+ * fewer only when the file ends first. */
+static Value omg_builtin_file_read2(Value h, Value maxbytes) {
+    if (h.tag != OMG_INT || maxbytes.tag != OMG_INT) {
+        omg_panic("TypeError", "file_read() expects (handle: int, max_bytes: int)");
+    }
+    if (maxbytes.v.i < 0) omg_panic("ValueError", "file_read: max_bytes must be non-negative");
+    OmgFileEntry *e = omg_file_get((int)h.v.i);
+    if (!e) omg_panic("ValueError", "invalid file handle");
+    size_t want = (size_t)maxbytes.v.i, cap = 0, len = 0;
+    char *buf = NULL;
+    while (len < want) {
+        size_t step = want - len;
+        if (step > 65536) step = 65536;
+        if (len + step + 1 > cap) {
+            cap = (len + step + 1) * 2;
+            char *nb = (char *)realloc(buf, cap);
+            if (!nb) { fprintf(stderr, "out of memory\n"); exit(1); }
+            buf = nb;
+        }
+        size_t got = fread(buf + len, 1, step, e->fp);
+        len += got;
+        if (got < step) break;
+    }
+    if (e->binary) {
+        Value out;
+        out.tag = OMG_LIST;
+        out.v.l = omg_list_alloc(len > 0 ? (int)len : 1);
+        for (size_t i = 0; i < len; i++) {
+            omg_list_push(out.v.l, omg_int((unsigned char)buf[i]));
+        }
+        free(buf);
+        return out;
+    }
+    if (!buf) {
+        buf = (char *)malloc(1);
+        if (!buf) { fprintf(stderr, "out of memory\n"); exit(1); }
+    }
+    buf[len] = 0;
+    return omg_str(buf);
+}
+
+static Value omg_builtin_file_size(Value path) {
+    if (path.tag != OMG_STR) omg_panic("TypeError", "file_size() expects a path");
+    const char *full = omg_resolve_path(path.v.s);
+    int64_t size = 0, mtime = 0;
+    if (omg_os_stat(full, &size, &mtime) != 0) {
+        omg_panicf("ValueError", "cannot stat '%s': %s (os error %d)", full, strerror(errno), errno);
+    }
+    return omg_int(size);
+}
+
+static Value omg_builtin_file_mtime(Value path) {
+    if (path.tag != OMG_STR) omg_panic("TypeError", "file_mtime() expects a path");
+    const char *full = omg_resolve_path(path.v.s);
+    int64_t size = 0, mtime = 0;
+    if (omg_os_stat(full, &size, &mtime) != 0) {
+        omg_panicf("ValueError", "cannot stat '%s': %s (os error %d)", full, strerror(errno), errno);
+    }
+    return omg_int(mtime);
+}
+
 static Value omg_builtin_file_write(Value h, Value data) {
     if (h.tag != OMG_INT) omg_panic("TypeError", "file_write() expects a handle");
     OmgFileEntry *e = omg_file_get((int)h.v.i);
@@ -3236,7 +3327,12 @@ static Value omg_builtin_chmod(Value path, Value mode) {
 
 /* Two kinds of handle behind one table: a passive listener (the result
  * of tcp_listen) and a connected stream (the result of accept/connect).
- * The kind decides which calls are valid on the handle. */
+ * The kind decides which calls are valid on the handle.
+ *
+ * A socket starts out blocking. tcp_nonblocking(h, true) changes that
+ * for one socket: tcp_accept and tcp_read then return false when there
+ * is nothing to take yet, and tcp_write sends what there is room for.
+ * tcp_poll waits for many sockets at once. */
 #ifdef _WIN32
 typedef SOCKET omg_sock_t;
 #define OMG_SOCK_BAD(fd)            ((fd) == INVALID_SOCKET)
@@ -3244,6 +3340,7 @@ typedef SOCKET omg_sock_t;
 #define omg_sock_read(fd, buf, n)   recv((fd), (char *)(buf), (int)((n) > 0x40000000 ? 0x40000000 : (n)), 0)
 #define omg_sock_write(fd, buf, n)  send((fd), (const char *)(buf), (int)((n) > 0x40000000 ? 0x40000000 : (n)), 0)
 #define OMG_SOCK_EINTR()            (WSAGetLastError() == WSAEINTR)
+#define OMG_SOCK_WOULD_BLOCK()      (WSAGetLastError() == WSAEWOULDBLOCK)
 
 /* Winsock keeps its own error code and has no strerror. */
 static const char *omg_sock_errstr(void) {
@@ -3267,8 +3364,17 @@ typedef int omg_sock_t;
 #define OMG_SOCK_BAD(fd)            ((fd) < 0)
 #define omg_sock_close(fd)          close(fd)
 #define omg_sock_read(fd, buf, n)   read((fd), (buf), (n))
-#define omg_sock_write(fd, buf, n)  write((fd), (buf), (n))
+/* send, not write: a connection the other side has closed must be an
+ * error to report, not a SIGPIPE that ends the program. Where the flag
+ * does not exist (macOS) the socket is marked instead, in
+ * omg_sock_prepare. */
+#ifdef MSG_NOSIGNAL
+#define omg_sock_write(fd, buf, n)  send((fd), (buf), (n), MSG_NOSIGNAL)
+#else
+#define omg_sock_write(fd, buf, n)  send((fd), (buf), (n), 0)
+#endif
 #define OMG_SOCK_EINTR()            (errno == EINTR)
+#define OMG_SOCK_WOULD_BLOCK()      (errno == EAGAIN || errno == EWOULDBLOCK)
 static const char *omg_sock_errstr(void) { return strerror(errno); }
 static void omg_sock_init(void) {}
 #endif
@@ -3278,7 +3384,7 @@ typedef struct {
     int is_listener;
 } OmgTcpEntry;
 
-#define OMG_MAX_TCP 64
+#define OMG_MAX_TCP 4096
 static OmgTcpEntry omg_tcp_table[OMG_MAX_TCP];
 
 /* Allocate a slot. Returns a 1-based handle so 0 is always invalid. */
@@ -3299,6 +3405,31 @@ static OmgTcpEntry *omg_tcp_get(int handle) {
     if (idx < 0 || idx >= OMG_MAX_TCP) return NULL;
     if (omg_tcp_table[idx].fd == 0 || OMG_SOCK_BAD(omg_tcp_table[idx].fd)) return NULL;
     return &omg_tcp_table[idx];
+}
+
+/* Switch a socket between waiting and not waiting. 0 on success. */
+static int omg_sock_set_nonblocking(omg_sock_t fd, int on) {
+#ifdef _WIN32
+    u_long mode = on ? 1 : 0;
+    return ioctlsocket(fd, FIONBIO, &mode) == 0 ? 0 : -1;
+#else
+    int fl = fcntl(fd, F_GETFL, 0);
+    if (fl < 0) return -1;
+    fl = on ? (fl | O_NONBLOCK) : (fl & ~O_NONBLOCK);
+    return fcntl(fd, F_SETFL, fl) == 0 ? 0 : -1;
+#endif
+}
+
+/* A connection fresh from accept or connect: send what is written at
+ * once (TCP_NODELAY). A program that writes a reply in two pieces would
+ * otherwise have the second held back until the first is acknowledged,
+ * which the other side may put off for 40 ms. */
+static void omg_sock_prepare(omg_sock_t fd) {
+    int one = 1;
+    setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, (const char *)&one, sizeof(one));
+#if !defined(_WIN32) && !defined(MSG_NOSIGNAL) && defined(SO_NOSIGPIPE)
+    setsockopt(fd, SOL_SOCKET, SO_NOSIGPIPE, &one, sizeof(one));
+#endif
 }
 
 /* Resolve "host:port" via getaddrinfo, suitable for either AI_PASSIVE
@@ -3350,7 +3481,7 @@ static Value omg_builtin_tcp_listen(Value host, Value port) {
         omg_panicf("ValueError", "tcp_listen: bind: %s", why);
     }
     freeaddrinfo(res);
-    if (listen(fd, 16) != 0) {
+    if (listen(fd, 511) != 0) {
         const char *why = omg_sock_errstr();
         omg_sock_close(fd);
         omg_panicf("ValueError", "tcp_listen: listen: %s", why);
@@ -3365,10 +3496,21 @@ static Value omg_builtin_tcp_accept(Value h) {
     if (!e->is_listener) omg_panic("ValueError", "tcp_accept: handle is a stream, not a listener");
     struct sockaddr_storage peer;
     socklen_t peer_len = sizeof(peer);
-    omg_sock_t client_fd = accept(e->fd, (struct sockaddr *)&peer, &peer_len);
+    fflush(stdout);
+    omg_sock_t client_fd;
+    for (;;) {
+        client_fd = accept(e->fd, (struct sockaddr *)&peer, &peer_len);
+        if (!OMG_SOCK_BAD(client_fd) || !OMG_SOCK_EINTR()) break;
+    }
     if (OMG_SOCK_BAD(client_fd)) {
+        /* A non-blocking listener with nobody waiting. */
+        if (OMG_SOCK_WOULD_BLOCK()) return omg_bool(0);
         omg_panicf("ValueError", "tcp_accept: %s", omg_sock_errstr());
     }
+    /* Some systems hand a connection the listener's mode. Every socket
+     * starts out blocking, whatever it came from. */
+    omg_sock_set_nonblocking(client_fd, 0);
+    omg_sock_prepare(client_fd);
     return omg_int((int64_t)omg_tcp_alloc(client_fd, 0));
 }
 
@@ -3399,6 +3541,7 @@ static Value omg_builtin_tcp_connect(Value host, Value port) {
         omg_panicf("ValueError", "tcp_connect: cannot connect to '%s': %s",
                    host.v.s, why);
     }
+    omg_sock_prepare(fd);
     return omg_int((int64_t)omg_tcp_alloc(fd, 0));
 }
 
@@ -3416,9 +3559,15 @@ static Value omg_builtin_tcp_read(Value h, Value maxbytes) {
     if (cap == 0) return out;
     unsigned char *buf = (unsigned char *)malloc(cap);
     if (!buf) { fprintf(stderr, "out of memory\n"); exit(1); }
-    int64_t n = (int64_t)omg_sock_read(e->fd, buf, cap);
+    int64_t n;
+    for (;;) {
+        n = (int64_t)omg_sock_read(e->fd, buf, cap);
+        if (n >= 0 || !OMG_SOCK_EINTR()) break;
+    }
     if (n < 0) {
         free(buf);
+        /* A non-blocking socket with nothing to read yet. */
+        if (OMG_SOCK_WOULD_BLOCK()) return omg_bool(0);
         omg_panicf("ValueError", "tcp_read: %s", omg_sock_errstr());
     }
     for (int64_t i = 0; i < n; i++) {
@@ -3428,8 +3577,15 @@ static Value omg_builtin_tcp_read(Value h, Value maxbytes) {
     return out;
 }
 
-static Value omg_builtin_tcp_write(Value h, Value data) {
+/* tcp_write(h, data, offset): send the bytes of data (a string or a
+ * list of bytes) from byte `offset` on. Returns how many were sent:
+ * all of them on a blocking socket, as many as there was room for
+ * (possibly none) on a non-blocking one. */
+static Value omg_builtin_tcp_write3(Value h, Value data, Value offset) {
     if (h.tag != OMG_INT) omg_panic("TypeError", "tcp_write() expects a handle");
+    if (offset.tag != OMG_INT) {
+        omg_panic("TypeError", "tcp_write() expects (handle: int, data: str | [int], offset: int)");
+    }
     OmgTcpEntry *e = omg_tcp_get((int)h.v.i);
     if (!e) omg_panic("ValueError", "tcp_write: invalid tcp handle");
     if (e->is_listener) omg_panic("ValueError", "tcp_write: handle is a listener, not a stream");
@@ -3437,34 +3593,40 @@ static Value omg_builtin_tcp_write(Value h, Value data) {
     const unsigned char *buf = NULL;
     size_t len = 0;
     unsigned char *owned = NULL;
+    int64_t off = offset.v.i;
     if (data.tag == OMG_STR) {
-        buf = (const unsigned char *)data.v.s;
-        len = strlen(data.v.s);
+        size_t all = strlen(data.v.s);
+        if (off < 0 || (size_t)off > all) omg_panic("ValueError", "tcp_write: offset is outside the data");
+        buf = (const unsigned char *)data.v.s + off;
+        len = all - (size_t)off;
     } else if (data.tag == OMG_LIST) {
         OmgList *l = data.v.l;
-        len = (size_t)l->len;
+        if (off < 0 || off > (int64_t)l->len) omg_panic("ValueError", "tcp_write: offset is outside the data");
+        len = (size_t)l->len - (size_t)off;
         if (len > 0) {
             owned = (unsigned char *)malloc(len);
             if (!owned) { fprintf(stderr, "out of memory\n"); exit(1); }
-            for (int i = 0; i < l->len; i++) {
+            for (int64_t i = off; i < (int64_t)l->len; i++) {
                 if (l->items[i].tag != OMG_INT || l->items[i].v.i < 0 || l->items[i].v.i > 255) {
                     free(owned);
                     omg_panic("TypeError", "tcp_write() expects bytes 0-255");
                 }
-                owned[i] = (unsigned char)l->items[i].v.i;
+                owned[i - off] = (unsigned char)l->items[i].v.i;
             }
             buf = owned;
         }
     } else {
         omg_panic("TypeError", "tcp_write() expects (handle: int, data: str | [int])");
     }
-    /* Loop on partial writes — a stream socket can accept fewer bytes
-     * than requested under load. */
+    /* Loop on partial writes: a stream socket can accept fewer bytes
+     * than requested under load. A non-blocking one stops when it is
+     * full, and the caller is told how far it got. */
     size_t total = 0;
     while (total < len) {
         int64_t w = (int64_t)omg_sock_write(e->fd, buf + total, len - total);
         if (w < 0) {
             if (OMG_SOCK_EINTR()) continue;
+            if (OMG_SOCK_WOULD_BLOCK()) break;
             if (owned) free(owned);
             omg_panicf("ValueError", "tcp_write: %s", omg_sock_errstr());
         }
@@ -3472,6 +3634,10 @@ static Value omg_builtin_tcp_write(Value h, Value data) {
     }
     if (owned) free(owned);
     return omg_int((int64_t)total);
+}
+
+static Value omg_builtin_tcp_write(Value h, Value data) {
+    return omg_builtin_tcp_write3(h, data, omg_int(0));
 }
 
 static Value omg_builtin_tcp_close(Value h) {
@@ -3482,6 +3648,218 @@ static Value omg_builtin_tcp_close(Value h) {
     e->fd = 0;
     e->is_listener = 0;
     return omg_none();
+}
+
+/* tcp_nonblocking(h, on): choose whether calls on this socket (a
+ * listener or a connection) wait. */
+static Value omg_builtin_tcp_nonblocking(Value h, Value on) {
+    if (h.tag != OMG_INT) omg_panic("TypeError", "tcp_nonblocking() expects (handle: int, on: bool)");
+    OmgTcpEntry *e = omg_tcp_get((int)h.v.i);
+    if (!e) omg_panic("ValueError", "tcp_nonblocking: invalid tcp handle");
+    if (omg_sock_set_nonblocking(e->fd, omg_truthy(on)) != 0) {
+        omg_panicf("ValueError", "tcp_nonblocking: %s", omg_sock_errstr());
+    }
+    return omg_none();
+}
+
+/* tcp_peer(h): who is at the other end, as "address:port". An IPv6
+ * address is written "[x:x:x:x:x:x:x:x]:port", every group in hex
+ * without leading zeros, as the x86-64 runtime writes it. */
+static Value omg_builtin_tcp_peer(Value h) {
+    if (h.tag != OMG_INT) omg_panic("TypeError", "tcp_peer() expects a handle");
+    OmgTcpEntry *e = omg_tcp_get((int)h.v.i);
+    if (!e) omg_panic("ValueError", "tcp_peer: invalid tcp handle");
+    if (e->is_listener) omg_panic("ValueError", "tcp_peer: handle is a listener, not a stream");
+    struct sockaddr_storage ss;
+    socklen_t len = sizeof(ss);
+    memset(&ss, 0, sizeof(ss));
+    if (getpeername(e->fd, (struct sockaddr *)&ss, &len) != 0) {
+        omg_panic("ValueError", "tcp_peer: the connection has no peer");
+    }
+    char *out = (char *)malloc(64);
+    if (!out) { fprintf(stderr, "out of memory\n"); exit(1); }
+    const unsigned char *v4 = NULL;
+    int port = 0;
+    if (ss.ss_family == AF_INET) {
+        struct sockaddr_in *a = (struct sockaddr_in *)&ss;
+        v4 = (const unsigned char *)&a->sin_addr;
+        port = ntohs(a->sin_port);
+    } else if (ss.ss_family == AF_INET6) {
+        struct sockaddr_in6 *a = (struct sockaddr_in6 *)&ss;
+        const unsigned char *b = (const unsigned char *)&a->sin6_addr;
+        port = ntohs(a->sin6_port);
+        int mapped = b[10] == 255 && b[11] == 255;
+        for (int i = 0; i < 10; i++) if (b[i] != 0) mapped = 0;
+        if (mapped) {
+            v4 = b + 12;
+        } else {
+            int at = snprintf(out, 64, "[");
+            for (int i = 0; i < 8; i++) {
+                at += snprintf(out + at, 64 - (size_t)at, "%s%x", i > 0 ? ":" : "",
+                               (unsigned)(b[i * 2] * 256 + b[i * 2 + 1]));
+            }
+            snprintf(out + at, 64 - (size_t)at, "]:%d", port);
+            return omg_str(out);
+        }
+    } else {
+        free(out);
+        omg_panic("ValueError", "tcp_peer: the connection has no peer");
+    }
+    snprintf(out, 64, "%d.%d.%d.%d:%d", v4[0], v4[1], v4[2], v4[3], port);
+    return omg_str(out);
+}
+
+/* --- requests to stop ----------------------------------------------------
+ *
+ * interrupted(): how many times the program has been asked to stop
+ * (Ctrl-C, or a request to terminate) since it first called this. The
+ * first call takes these requests over: from then on they no longer
+ * end the program, they are counted for it to act on. */
+#ifdef _WIN32
+typedef LONG omg_interrupt_t;           /* counted on a thread of its own */
+#else
+typedef sig_atomic_t omg_interrupt_t;
+#endif
+static volatile omg_interrupt_t omg_interrupt_count = 0;
+static int omg_interrupt_armed = 0;
+
+#ifdef _WIN32
+static BOOL WINAPI omg_on_ctrl(DWORD kind) {
+    (void)kind;
+    InterlockedIncrement(&omg_interrupt_count);
+    return TRUE;
+}
+#else
+static void omg_on_signal(int sig) {
+    (void)sig;
+    omg_interrupt_count++;
+}
+#endif
+
+static Value omg_builtin_interrupted(void) {
+    if (!omg_interrupt_armed) {
+        omg_interrupt_armed = 1;
+#ifdef _WIN32
+        SetConsoleCtrlHandler(omg_on_ctrl, TRUE);
+#else
+        /* No SA_RESTART: a wait in tcp_poll must end when one arrives. */
+        struct sigaction sa;
+        memset(&sa, 0, sizeof(sa));
+        sa.sa_handler = omg_on_signal;
+        sigemptyset(&sa.sa_mask);
+        sigaction(SIGINT, &sa, NULL);
+        sigaction(SIGTERM, &sa, NULL);
+#endif
+    }
+    return omg_int((int64_t)omg_interrupt_count);
+}
+
+/* tcp_poll(reads, writes, timeout_ms): wait until a socket in `reads`
+ * has something to take (data, the end of the stream, or for a
+ * listener a connection), or one in `writes` has room to send, or the
+ * time is up. A negative timeout waits without limit; 0 only looks.
+ * Returns [readable, writable], the handles that are ready in the
+ * order given. A socket in trouble counts as ready, so that the read
+ * or write that follows finds out. Ends early when the program is
+ * interrupted (see interrupted()). */
+static Value omg_builtin_tcp_poll(Value reads, Value writes, Value timeout) {
+    if (reads.tag != OMG_LIST || writes.tag != OMG_LIST || timeout.tag != OMG_INT) {
+        omg_panic("TypeError", "tcp_poll() expects (reads: [int], writes: [int], timeout_ms: int)");
+    }
+    int nr = (int)reads.v.l->len, nw = (int)writes.v.l->len, n = nr + nw;
+    omg_sock_t *socks = (omg_sock_t *)malloc(sizeof(omg_sock_t) * (size_t)(n + 1));
+    char *ready = (char *)calloc((size_t)n + 1, 1);
+    if (!socks || !ready) { fprintf(stderr, "out of memory\n"); exit(1); }
+    for (int i = 0; i < n; i++) {
+        Value v = i < nr ? reads.v.l->items[i] : writes.v.l->items[i - nr];
+        OmgTcpEntry *e = v.tag == OMG_INT ? omg_tcp_get((int)v.v.i) : NULL;
+        if (!e) {
+            free(socks); free(ready);
+            omg_panic("ValueError", "tcp_poll: invalid tcp handle");
+        }
+        socks[i] = e->fd;
+    }
+    fflush(stdout);
+    int64_t left = timeout.v.i;
+    if (left > 2147483647) left = 2147483647;
+#ifdef _WIN32
+    /* select() with sets sized for this call: an fd_set is a count and
+     * an array, and Winsock reads as many entries as the count says. */
+    size_t set_bytes = sizeof(u_int) * 2 + sizeof(SOCKET) * (size_t)(n + 1);
+    fd_set *rs = (fd_set *)malloc(set_bytes), *ws = (fd_set *)malloc(set_bytes), *es = (fd_set *)malloc(set_bytes);
+    if (!rs || !ws || !es) { fprintf(stderr, "out of memory\n"); exit(1); }
+    omg_interrupt_t seen = omg_interrupt_count;
+    for (;;) {
+        /* Nothing wakes select when the user presses Ctrl-C, so once
+         * the program listens for that the wait goes in short steps. */
+        int64_t step = left;
+        if (omg_interrupt_armed && (step < 0 || step > 100)) step = 100;
+        int got = 0;
+        if (n == 0) {
+            Sleep((DWORD)(step < 0 ? 3600000 : step));
+        } else {
+            rs->fd_count = 0; ws->fd_count = 0; es->fd_count = 0;
+            for (int i = 0; i < n; i++) {
+                if (i < nr) rs->fd_array[rs->fd_count++] = socks[i];
+                else ws->fd_array[ws->fd_count++] = socks[i];
+                es->fd_array[es->fd_count++] = socks[i];
+            }
+            struct timeval tv;
+            tv.tv_sec = (long)(step / 1000);
+            tv.tv_usec = (long)((step % 1000) * 1000);
+            got = select(0, rs, ws, es, step < 0 ? NULL : &tv);
+            if (got < 0) {
+                free(rs); free(ws); free(es); free(socks); free(ready);
+                omg_panicf("ValueError", "tcp_poll: %s", omg_sock_errstr());
+            }
+            if (got > 0) {
+                for (int i = 0; i < n; i++) {
+                    fd_set *set = i < nr ? rs : ws;
+                    for (u_int k = 0; k < set->fd_count; k++) if (set->fd_array[k] == socks[i]) ready[i] = 1;
+                    for (u_int k = 0; k < es->fd_count; k++) if (es->fd_array[k] == socks[i]) ready[i] = 1;
+                }
+                break;
+            }
+        }
+        if (omg_interrupt_count != seen) break;
+        if (left >= 0) {
+            left -= step;
+            if (left <= 0) break;
+        }
+    }
+    free(rs); free(ws); free(es);
+#else
+    struct pollfd *fds = (struct pollfd *)calloc((size_t)n + 1, sizeof(struct pollfd));
+    if (!fds) { fprintf(stderr, "out of memory\n"); exit(1); }
+    for (int i = 0; i < n; i++) {
+        fds[i].fd = socks[i];
+        fds[i].events = i < nr ? POLLIN : POLLOUT;
+    }
+    int got = poll(fds, (nfds_t)n, left < 0 ? -1 : (int)left);
+    if (got < 0 && errno != EINTR) {
+        free(fds); free(socks); free(ready);
+        omg_panicf("ValueError", "tcp_poll: %s", strerror(errno));
+    }
+    if (got > 0) {
+        for (int i = 0; i < n; i++) {
+            if (fds[i].revents & (fds[i].events | POLLERR | POLLHUP | POLLNVAL)) ready[i] = 1;
+        }
+    }
+    free(fds);
+#endif
+    Value readable, writable, out;
+    readable.tag = OMG_LIST; readable.v.l = omg_list_alloc(4);
+    writable.tag = OMG_LIST; writable.v.l = omg_list_alloc(4);
+    for (int i = 0; i < n; i++) {
+        if (!ready[i]) continue;
+        if (i < nr) omg_list_push(readable.v.l, reads.v.l->items[i]);
+        else omg_list_push(writable.v.l, writes.v.l->items[i - nr]);
+    }
+    free(socks); free(ready);
+    out.tag = OMG_LIST; out.v.l = omg_list_alloc(2);
+    omg_list_push(out.v.l, readable);
+    omg_list_push(out.v.l, writable);
+    return out;
 }
 
 /* === Process control: fork() ============================================= */
@@ -3557,6 +3935,9 @@ static Value omg_call_builtin(Value name, Value args) {
         if (strcmp(n, "subprocess") == 0)      return omg_builtin_subprocess(a[0]);
         if (strcmp(n, "tcp_accept") == 0)      return omg_builtin_tcp_accept(a[0]);
         if (strcmp(n, "tcp_close") == 0)       return omg_builtin_tcp_close(a[0]);
+        if (strcmp(n, "tcp_peer") == 0)        return omg_builtin_tcp_peer(a[0]);
+        if (strcmp(n, "file_size") == 0)       return omg_builtin_file_size(a[0]);
+        if (strcmp(n, "file_mtime") == 0)      return omg_builtin_file_mtime(a[0]);
     }
     if (argc == 0) {
         if (strcmp(n, "getpid") == 0)            return omg_builtin_getpid();
@@ -3567,6 +3948,7 @@ static Value omg_call_builtin(Value name, Value args) {
         if (strcmp(n, "time_ms") == 0)           return omg_builtin_time_ms();
         if (strcmp(n, "executable_path") == 0)   return omg_builtin_executable_path();
         if (strcmp(n, "fork") == 0)              return omg_builtin_fork();
+        if (strcmp(n, "interrupted") == 0)       return omg_builtin_interrupted();
     }
     if (argc == 1) {
         if (strcmp(n, "print") == 0)           return omg_builtin_print(a[0]);
@@ -3591,10 +3973,14 @@ static Value omg_call_builtin(Value name, Value args) {
         if (strcmp(n, "tcp_connect") == 0) return omg_builtin_tcp_connect(a[0], a[1]);
         if (strcmp(n, "tcp_read") == 0)    return omg_builtin_tcp_read(a[0], a[1]);
         if (strcmp(n, "tcp_write") == 0)   return omg_builtin_tcp_write(a[0], a[1]);
+        if (strcmp(n, "tcp_nonblocking") == 0) return omg_builtin_tcp_nonblocking(a[0], a[1]);
+        if (strcmp(n, "file_read") == 0)   return omg_builtin_file_read2(a[0], a[1]);
         if (strcmp(n, "pty_write") == 0)   return omg_builtin_pty_write(a[0], a[1]);
     }
     if (argc == 3) {
         if (strcmp(n, "pty_resize") == 0) return omg_builtin_pty_resize(a[0], a[1], a[2]);
+        if (strcmp(n, "tcp_write") == 0)  return omg_builtin_tcp_write3(a[0], a[1], a[2]);
+        if (strcmp(n, "tcp_poll") == 0)   return omg_builtin_tcp_poll(a[0], a[1], a[2]);
     }
     omg_panicf("TypeError", "unknown builtin: %s", n);
     return omg_none(); /* unreachable */
