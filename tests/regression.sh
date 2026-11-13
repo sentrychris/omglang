@@ -370,3 +370,21 @@ if command -v node >/dev/null 2>&1; then
     actual=$(node "$TMPDIR_TEST/closure_byref.js" 2>&1)
     assert_eq "native-js: closures by reference" "$EXPECTED" "$actual"
 fi
+
+# === Line numbers in a file with no ;;;omg header =========================
+section "Regression: line numbers without a header"
+
+# A file that starts with blank lines and has no header had every line
+# counted one too high by the self-hosted compiler (the Rust frontend
+# had it right): the blank lines before the first statement were
+# counted twice.
+printf '\n\n# no header here\nemit 1\nemit 1 / 0\n' > "$TMPDIR_TEST/no_header.omg"
+"$OMG_RUST" --rust --compile "$TMPDIR_TEST/no_header.omg" "$TMPDIR_TEST/no_header.rust.omgb" >/dev/null 2>&1
+"$OMG_NATIVE" --compile "$TMPDIR_TEST/no_header.omg" "$TMPDIR_TEST/no_header.native.omgb" >/dev/null 2>&1
+if [ -s "$TMPDIR_TEST/no_header.rust.omgb" ] && cmp -s "$TMPDIR_TEST/no_header.rust.omgb" "$TMPDIR_TEST/no_header.native.omgb"; then
+    pass "no header: both frontends write the same bytecode"
+else
+    fail "no header: both frontends write the same bytecode"
+fi
+actual=$("$OMG_NATIVE" "$TMPDIR_TEST/no_header.omg" 2>&1 | grep -c 'no_header.omg", line 5,')
+assert_eq "no header: the error is reported on line 5" "1" "$actual"

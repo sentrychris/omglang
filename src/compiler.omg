@@ -246,7 +246,8 @@ proc strip_header(b) {
             return [i, line]
         }
     }
-    return [0, line]
+    # No header: the body is the whole file, blank lines and all.
+    return [0, 1]
 }
 
 # === Lexer =================================================================
