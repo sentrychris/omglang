@@ -1018,6 +1018,10 @@ const _omg_builtins = {
     tcp_peer: omg_tcp_peer,
     tcp_poll: omg_tcp_poll,
     interrupted: omg_interrupted,
+    window_open: omg_window_open,
+    window_draw: omg_window_draw,
+    window_poll: omg_window_poll,
+    window_close: omg_window_close,
 };
 
 // === Real-time terminal I/O (Node) =======================================
@@ -1107,6 +1111,21 @@ function omg_tcp_poll(_reads, _writes, _timeout) {
 // so the count stays 0 and Ctrl-C ends the program as it always did.
 function omg_interrupted() {
     return 0n;
+}
+
+// A window is opened by OMG's own native runtime; a program run as
+// JavaScript has none, and the calls raise.
+function omg_window_open(_title, _w, _h) {
+    omg_panic('ValueError', 'window_open is not supported in the JS runtime');
+}
+function omg_window_draw(_win, _pixels, _w) {
+    omg_panic('ValueError', 'window_draw is not supported in the JS runtime');
+}
+function omg_window_poll(_win) {
+    omg_panic('ValueError', 'window_poll is not supported in the JS runtime');
+}
+function omg_window_close(_win) {
+    omg_panic('ValueError', 'window_close is not supported in the JS runtime');
 }
 
 function omg_pty_spawn(_argv) {

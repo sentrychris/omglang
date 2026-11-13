@@ -1040,3 +1040,572 @@ proc os_poll_got(arr, i) {
     }
     return 2
 }
+
+# --- a window -------------------------------------------------------------------
+#
+# A window is opened by speaking the X11 protocol to the display server
+# over a socket, with no library in between. What is here is the least
+# that shows pictures and hears keys: connect and authenticate, create
+# and map one window, PutImage for the pixels, and the four kinds of
+# event the runtime cares about. Requests and events are little-endian
+# records whose layouts are in the protocol specification ("X Window
+# System Protocol", X.Org); the numbers below are from there.
+
+alloc xw_fd := -1
+alloc xw_lost := 0             # the server went away and nobody has been told yet
+alloc xw_wid := 0
+alloc xw_gc := 0
+alloc xw_depth := 0
+alloc xw_maxreq := 0           # longest request the server takes, in 4-byte units
+alloc xw_kmin := 0             # first key code
+alloc xw_kcount := 0
+alloc xw_kper := 0             # key symbols per key code
+alloc xw_keys := 0             # the keyboard mapping: 4 bytes per symbol
+alloc xw_keys_size := 0
+alloc xw_proto := 0            # the atom WM_PROTOCOLS
+alloc xw_delete := 0           # the atom WM_DELETE_WINDOW
+alloc xw_w := 0
+alloc xw_h := 0
+alloc xw_q := 0                # a page for building requests and reading events
+alloc xw_extra := 0            # the tail of the last reply
+alloc xw_extra_size := 0
+
+proc xw_pad(n) {
+    return (n + 3) & -4
+}
+
+proc xw_drop() {
+    if xw_fd >= 0 {
+        os_close(xw_fd)
+    }
+    xw_fd := -1
+    return 0
+}
+
+# Read exactly n bytes. 0, or -1 when the server has gone.
+proc xw_read(p, n) {
+    loop n > 0 {
+        alloc r := os_read(xw_fd, p, n)
+        if r <= 0 {
+            return -1
+        }
+        p := p + r
+        n := n - r
+    }
+    return 0
+}
+
+proc xw_send(p, n) {
+    if xw_fd < 0 {
+        return -1
+    }
+    if os_tcp_write(xw_fd, p, n) < 0 {
+        xw_drop()
+        xw_lost := 1
+        return -1
+    }
+    return 0
+}
+
+# Wait for the reply to the request just sent: its first 32 bytes go to
+# p, the rest to xw_extra. Events that arrive first are let go. 0, or
+# -1 when the server answered with an error or went away.
+proc xw_reply(p) {
+    loop true {
+        if xw_read(p, 32) < 0 {
+            return -1
+        }
+        alloc kind := __peek8(p)
+        if kind == 0 {
+            return -1
+        }
+        if kind == 1 {
+            alloc more := __peek32(p + 4) * 4
+            if xw_extra != 0 {
+                rt_free(xw_extra, xw_extra_size)
+                xw_extra := 0
+            }
+            if more > 0 {
+                xw_extra := rt_alloc(more)
+                xw_extra_size := more
+                if xw_read(xw_extra, more) < 0 {
+                    return -1
+                }
+            }
+            return 0
+        }
+    }
+    return -1
+}
+
+# The number the server knows a name by.
+proc xw_atom(name) {
+    alloc n := __peek64(name + S_BYTES)
+    alloc q := xw_q
+    __memset(q, 0, 8 + xw_pad(n))
+    __poke8(q, 16)                               # InternAtom
+    __poke16(q + 2, 2 + xw_pad(n) // 4)
+    __poke16(q + 4, n)
+    __memcpy(q + 8, name + S_DATA, n)
+    xw_send(q, 8 + xw_pad(n))
+    if xw_reply(q) < 0 {
+        return 0
+    }
+    return __peek32(q + 8)
+}
+
+# Set a property of the window: `n` items of `format` bits each at p.
+proc xw_property(prop, type, format, p, n) {
+    alloc bytes := n * (format // 8)
+    alloc q := xw_q
+    __memset(q, 0, 24 + xw_pad(bytes))
+    __poke8(q, 18)                               # ChangeProperty, mode Replace
+    __poke16(q + 2, 6 + xw_pad(bytes) // 4)
+    __poke32(q + 4, xw_wid)
+    __poke32(q + 8, prop)
+    __poke32(q + 12, type)
+    __poke8(q + 16, format)
+    __poke32(q + 20, n)
+    __memcpy(q + 24, p, bytes)
+    return xw_send(q, 24 + xw_pad(bytes))
+}
+
+# Connect to display number `num` on this machine: the socket is a file
+# in /tmp/.X11-unix, or (second try) the same name in the abstract
+# namespace, which is spelt with a leading NUL.
+proc xw_connect_local(num) {
+    alloc b := rt_buf_new()
+    rt_buf_str(b, "/tmp/.X11-unix/X")
+    rt_buf_int(b, num)
+    alloc path := rt_buf_finish(b)
+    alloc n := __peek64(path + S_BYTES)
+    alloc sa := rt_alloc(128)
+    alloc s := -1
+    alloc pass := 0
+    loop pass < 2 and s < 0 {
+        __memset(sa, 0, 128)
+        __poke16(sa, 1)                          # AF_UNIX
+        __memcpy(sa + 2 + pass, path + S_DATA, n)
+        s := os_sys3(SYS_SOCKET, 1, 524289, 0)   # SOCK_STREAM | SOCK_CLOEXEC
+        if s >= 0 {
+            if os_sys3(SYS_CONNECT, s, sa, 3 + n) < 0 {
+                os_close(s)
+                s := -1
+            }
+        }
+        pass := pass + 1
+    }
+    rt_free(sa, 128)
+    rt_drop(T_STR, path)
+    return s
+}
+
+# Look in the X authority file for the secret ("cookie") that lets a
+# program use display `num`. The file is a run of records: a 16-bit
+# family, then four fields led by their 16-bit length (address, display
+# number, method name, secret), all big-endian. Returns the address of
+# the secret's length field, or 0; `file` gets the buffer to free.
+proc xw_cookie(num, file) {
+    alloc path := 0
+    alloc env := os_getenv("XAUTHORITY=")
+    if env != 0 and __peek8(env) != 0 {
+        path := rt_str_from_c(env)
+    } else {
+        alloc home := os_getenv("HOME=")
+        if home == 0 {
+            return 0
+        }
+        alloc b := rt_buf_new()
+        rt_buf_add(b, home, os_cstr_len(home))
+        rt_buf_str(b, "/.Xauthority")
+        path := rt_buf_finish(b)
+    }
+    alloc fd := os_open(path, 0)
+    rt_drop(T_STR, path)
+    if fd < 0 {
+        return 0
+    }
+    alloc data := rt_read_all(fd)
+    os_close(fd)
+    __poke64(file, data)
+    alloc want := rt_buf_new()
+    rt_buf_int(want, num)
+    alloc wn := __peek64(want + 8)
+    alloc p := __peek64(data)
+    alloc end := p + __peek64(data + 8)
+    alloc found := 0
+    loop found == 0 and p + 10 <= end {
+        alloc q := p + 2
+        alloc alen := __peek8(q) * 256 + __peek8(q + 1)
+        q := q + 2 + alen
+        if q + 2 > end { break }
+        alloc nlen := __peek8(q) * 256 + __peek8(q + 1)
+        alloc number := q + 2
+        q := number + nlen
+        if q + 2 > end { break }
+        alloc mlen := __peek8(q) * 256 + __peek8(q + 1)
+        alloc method := q + 2
+        q := method + mlen
+        if q + 2 > end { break }
+        alloc slen := __peek8(q) * 256 + __peek8(q + 1)
+        if q + 2 + slen > end { break }
+        alloc number_ok := nlen == 0
+        if nlen == wn {
+            number_ok := __memcmp(number, __peek64(want), wn) == 0
+        }
+        if number_ok and mlen == 18 {
+            if __memcmp(method, "MIT-MAGIC-COOKIE-1" + S_DATA, 18) == 0 {
+                found := q
+            }
+        }
+        p := q + 2 + slen
+    }
+    rt_free(__peek64(want), __peek64(want + 16))
+    rt_free(want, 24)
+    return found
+}
+
+# Which key a key symbol is, in the runtime's own numbering (see
+# rt_win_key_name): the character for the printable ones, 256 and up
+# for the rest, 0 for a key that is not reported.
+proc xw_key(sym) {
+    if sym >= 32 and sym < 127 { return sym }
+    if sym == 65307 { return 256 }               # Escape
+    if sym == 65293 or sym == 65421 { return 257 }
+    if sym == 65361 { return 258 }
+    if sym == 65363 { return 259 }
+    if sym == 65362 { return 260 }
+    if sym == 65364 { return 261 }
+    if sym == 65289 { return 262 }
+    if sym == 65288 { return 263 }
+    if sym == 65535 { return 264 }
+    if sym == 65360 { return 265 }
+    if sym == 65367 { return 266 }
+    if sym == 65365 { return 267 }
+    if sym == 65366 { return 268 }
+    if sym >= 65470 and sym <= 65481 { return 270 + sym - 65470 }
+    return 0
+}
+
+# Open the window. Returns 0, or a string that says what went wrong.
+proc os_win_open(title, w, h) {
+    alloc d := os_getenv("DISPLAY=")
+    if d == 0 {
+        return "DISPLAY is not set, so there is no X server to show a window on"
+    }
+    alloc dn := os_cstr_len(d)
+    alloc colon := -1
+    alloc i := 0
+    loop i < dn {
+        if __peek8(d + i) == 58 {
+            colon := i
+        }
+        i := i + 1
+    }
+    if colon < 0 or colon + 1 >= dn {
+        return "DISPLAY is not of the form host:number"
+    }
+    alloc num := 0
+    i := colon + 1
+    loop i < dn and __peek8(d + i) >= 48 and __peek8(d + i) <= 57 {
+        num := num * 10 + __peek8(d + i) - 48
+        i := i + 1
+    }
+    alloc s := -1
+    if colon == 0 or (colon == 4 and __memcmp(d, "unix" + S_DATA, 4) == 0) {
+        s := xw_connect_local(num)
+    } else {
+        alloc host := rt_str_from(d, colon)
+        s := os_tcp_connect(host, 6000 + num)
+        rt_drop(T_STR, host)
+    }
+    if s < 0 {
+        return "cannot reach the X server that DISPLAY names"
+    }
+    xw_fd := s
+    xw_lost := 0
+    if xw_q == 0 {
+        xw_q := os_alloc(4096)
+    }
+    alloc q := xw_q
+
+    # Say hello: byte order, protocol 11.0, and the secret if there is one.
+    alloc file := rt_alloc(16)
+    __poke64(file, 0)
+    alloc cookie := xw_cookie(num, file)
+    alloc clen := 0
+    __memset(q, 0, 64)
+    __poke8(q, 108)                              # "l": least significant byte first
+    __poke16(q + 2, 11)
+    alloc hello := 12
+    if cookie != 0 {
+        clen := __peek8(cookie) * 256 + __peek8(cookie + 1)
+        if clen > 256 {
+            clen := 0
+        }
+    }
+    if clen > 0 {
+        __poke16(q + 6, 18)
+        __poke16(q + 8, clen)
+        __memcpy(q + 12, "MIT-MAGIC-COOKIE-1" + S_DATA, 18)
+        __memset(q + 32, 0, xw_pad(clen))
+        __memcpy(q + 32, cookie + 2, clen)
+        hello := 32 + xw_pad(clen)
+    }
+    alloc data := __peek64(file)
+    if data != 0 {
+        rt_free(__peek64(data), __peek64(data + 16))
+        rt_free(data, 24)
+    }
+    rt_free(file, 16)
+    xw_send(q, hello)
+    if xw_read(q, 8) < 0 {
+        xw_drop()
+        return "the X server closed the connection"
+    }
+    alloc status := __peek8(q)
+    alloc reason_len := __peek8(q + 1)
+    alloc more := __peek16(q + 6) * 4
+    alloc rep := rt_alloc(more + 8)
+    if xw_read(rep, more) < 0 {
+        xw_drop()
+        return "the X server closed the connection"
+    }
+    if status != 1 {
+        alloc why := "the X server refused the connection"
+        if status == 0 and reason_len > 0 and reason_len <= more {
+            alloc text := rt_str_from(rep, reason_len)
+            why := rt_str_concat("the X server refused the connection: ", text)
+        }
+        rt_free(rep, more + 8)
+        xw_drop()
+        return why
+    }
+    # Offsets below are those of the whole reply, of which rep holds
+    # everything after the first 8 bytes.
+    alloc r := rep - 8
+    alloc id_base := __peek32(r + 12)
+    alloc vendor := __peek16(r + 24)
+    xw_maxreq := __peek16(r + 26)
+    alloc nformats := __peek8(r + 29)
+    alloc msb_first := __peek8(r + 30)
+    xw_kmin := __peek8(r + 34)
+    xw_kcount := __peek8(r + 35) - xw_kmin + 1
+    alloc formats := r + 40 + xw_pad(vendor)
+    alloc screen := formats + nformats * 8
+    alloc root := __peek32(screen)
+    xw_depth := __peek8(screen + 38)
+    alloc bpp := 0
+    i := 0
+    loop i < nformats {
+        if __peek8(formats + i * 8) == xw_depth {
+            bpp := __peek8(formats + i * 8 + 1)
+        }
+        i := i + 1
+    }
+    rt_free(rep, more + 8)
+    if bpp != 32 or msb_first != 0 or xw_depth < 24 {
+        xw_drop()
+        return "the display is not one of 24-bit colour, which is all this knows how to draw on"
+    }
+    xw_wid := id_base + 1
+    xw_gc := id_base + 2
+
+    # Names the window manager goes by.
+    xw_proto := xw_atom("WM_PROTOCOLS")
+    xw_delete := xw_atom("WM_DELETE_WINDOW")
+    alloc net_name := xw_atom("_NET_WM_NAME")
+    alloc utf8 := xw_atom("UTF8_STRING")
+
+    # The keyboard: which symbols each key code stands for.
+    __memset(q, 0, 8)
+    __poke8(q, 101)                              # GetKeyboardMapping
+    __poke16(q + 2, 2)
+    __poke8(q + 4, xw_kmin)
+    __poke8(q + 5, xw_kcount)
+    xw_send(q, 8)
+    xw_kper := 0
+    if xw_reply(q) == 0 {
+        xw_kper := __peek8(q + 1)
+        if xw_keys != 0 {
+            rt_free(xw_keys, xw_keys_size)
+        }
+        xw_keys := xw_extra
+        xw_keys_size := xw_extra_size
+        xw_extra := 0
+        if xw_keys_size < xw_kcount * xw_kper * 4 {
+            xw_kper := 0
+        }
+    }
+
+    __memset(q, 0, 40)
+    __poke8(q, 1)                                # CreateWindow, depth as the parent's
+    __poke16(q + 2, 10)
+    __poke32(q + 4, xw_wid)
+    __poke32(q + 8, root)
+    __poke16(q + 16, w)
+    __poke16(q + 18, h)
+    __poke16(q + 22, 1)                          # InputOutput
+    __poke32(q + 28, 2050)                       # values: background pixel, event mask
+    __poke32(q + 32, 0)                          # black
+    __poke32(q + 36, 163841)                     # KeyPress | Exposure | StructureNotify
+    xw_send(q, 40)
+
+    alloc tn := __peek64(title + S_BYTES)
+    if tn > 1024 {
+        tn := 1024
+    }
+    xw_property(39, 31, 8, title + S_DATA, tn)   # WM_NAME, of type STRING
+    if net_name != 0 and utf8 != 0 {
+        xw_property(net_name, utf8, 8, title + S_DATA, tn)
+    }
+    if xw_proto != 0 and xw_delete != 0 {
+        # ask to be told, not killed, when the user closes the window
+        alloc cell := rt_alloc(16)
+        __poke32(cell, xw_delete)
+        xw_property(xw_proto, 4, 32, cell, 1)    # of type ATOM
+        rt_free(cell, 16)
+    }
+
+    __memset(q, 0, 16)
+    __poke8(q, 55)                               # CreateGC
+    __poke16(q + 2, 4)
+    __poke32(q + 4, xw_gc)
+    __poke32(q + 8, xw_wid)
+    xw_send(q, 16)
+
+    __memset(q, 0, 8)
+    __poke8(q, 8)                                # MapWindow
+    __poke16(q + 2, 2)
+    __poke32(q + 4, xw_wid)
+    xw_send(q, 8)
+    xw_w := w
+    xw_h := h
+    if xw_fd < 0 {
+        return "the X server closed the connection"
+    }
+    return 0
+}
+
+# Put w x h pixels (4 bytes each) at the top left of the window. One
+# request cannot carry more than xw_maxreq words, so a large picture
+# goes in bands.
+proc os_win_blit(buf, w, h) {
+    alloc q := xw_q
+    alloc band := (xw_maxreq - 6) // w
+    if band < 1 {
+        return 0
+    }
+    alloc y := 0
+    loop y < h and xw_fd >= 0 {
+        alloc rows := h - y
+        if rows > band {
+            rows := band
+        }
+        __poke8(q, 72)                           # PutImage
+        __poke8(q + 1, 2)                        # ZPixmap
+        __poke16(q + 2, 6 + rows * w)
+        __poke32(q + 4, xw_wid)
+        __poke32(q + 8, xw_gc)
+        __poke16(q + 12, w)
+        __poke16(q + 14, rows)
+        __poke16(q + 16, 0)
+        __poke16(q + 18, y)
+        __poke8(q + 20, 0)
+        __poke8(q + 21, xw_depth)
+        __poke16(q + 22, 0)
+        xw_send(q, 24)
+        xw_send(buf + y * w * 4, rows * w * 4)
+        y := y + rows
+    }
+    return 0
+}
+
+# The next thing that happened, without waiting: 0 nothing, 1 a key
+# (its number in out), 2 the window is to close, 3 it changed size
+# (width and height in out), 4 it needs painting again.
+proc os_win_event(out) {
+    alloc q := xw_q
+    loop true {
+        if xw_fd < 0 {
+            if xw_lost {
+                xw_lost := 0
+                return 2
+            }
+            return 0
+        }
+        __poke32(q, xw_fd)
+        __poke16(q + 4, POLLIN)
+        __poke16(q + 6, 0)
+        if os_sys3(SYS_POLL, q, 1, 0) <= 0 {
+            return 0
+        }
+        if xw_read(q, 32) < 0 {
+            xw_drop()
+            return 2
+        }
+        alloc code := __peek8(q) & 127
+        if code == 1 {
+            # a reply nobody waits for: skip its tail
+            alloc more := __peek32(q + 4) * 4
+            loop more > 0 {
+                alloc step := more
+                if step > 4096 {
+                    step := 4096
+                }
+                if xw_read(q, step) < 0 {
+                    xw_drop()
+                    return 2
+                }
+                more := more - step
+            }
+        } elif code == 2 {                       # KeyPress
+            alloc at := __peek8(q + 1) - xw_kmin
+            if xw_kper > 0 and at >= 0 and at < xw_kcount {
+                alloc sym := __peek32(xw_keys + at * xw_kper * 4)
+                if (__peek16(q + 28) & 1) != 0 and xw_kper > 1 {
+                    # Shift is down: the second symbol, when it is a character
+                    alloc upper := __peek32(xw_keys + (at * xw_kper + 1) * 4)
+                    if upper >= 32 and upper < 127 {
+                        sym := upper
+                    }
+                }
+                alloc key := xw_key(sym)
+                if key != 0 {
+                    __poke64(out, key)
+                    return 1
+                }
+            }
+        } elif code == 12 {                      # Expose
+            if __peek16(q + 16) == 0 {
+                return 4
+            }
+        } elif code == 22 {                      # ConfigureNotify
+            alloc nw := __peek16(q + 20)
+            alloc nh := __peek16(q + 22)
+            if (nw != xw_w or nh != xw_h) and nw > 0 and nh > 0 {
+                xw_w := nw
+                xw_h := nh
+                __poke64(out, nw)
+                __poke64(out + 8, nh)
+                return 3
+            }
+        } elif code == 33 {                      # ClientMessage
+            if __peek32(q + 8) == xw_proto and __peek32(q + 12) == xw_delete {
+                return 2
+            }
+        } elif code == 17 {                      # DestroyNotify: someone else closed it
+            if __peek32(q + 8) == xw_wid {
+                xw_drop()
+                return 2
+            }
+        }
+    }
+    return 0
+}
+
+proc os_win_close() {
+    xw_drop()
+    xw_lost := 0
+    return 0
+}
