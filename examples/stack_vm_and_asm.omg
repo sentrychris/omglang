@@ -16,16 +16,6 @@ alloc OP_HALT  := 12
 alloc OP_DUP   := 13
 
 
-# === Helper ===
-proc has_key(d, k) {
-    try {
-        alloc probe := d[k]
-        return true
-    } except err {
-        return false
-    }
-}
-
 # === Two-pass assembler ===
 proc assemble(asm) {
     alloc labels := {}

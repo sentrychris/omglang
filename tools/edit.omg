@@ -60,6 +60,7 @@ alloc CLEAR := ESC + "[2J"
 alloc HOME  := ESC + "[H"
 alloc INVERSE := ESC + "[7m"
 alloc RESET := ESC + "[0m"
+alloc DIM := ESC + "[2m"
 alloc HIDE_CURSOR := ESC + "[?25l"
 alloc SHOW_CURSOR := ESC + "[?25h"
 # Alternate screen buffer: the same DEC private mode that nano,
