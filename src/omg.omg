@@ -10,29 +10,31 @@
 #   omg <file.omgb> [args...]          Run precompiled bytecode
 #   omg --compile <in.omg> <out.omgb>  Compile to bytecode (no run)
 #   omg --build <in.omg> [<out>]       Build a native executable
+#       [--target linux-x64 | windows-x64 | c]
 #   omg --emit-c <in> <out.c>          Write the program as C source
 #   omg --emit-js <in> <out.js>        Write the program as JavaScript
 #   omg --disasm <file>                Disassemble .omg or .omgb
 #
 # Each part is a module imported below, and all of it runs in this
-# process. The only thing ever started is `cc`, as the last step of
-# --build.
+# process. --build writes the executable itself for Linux and Windows
+# on x86-64; only `--build --target c` starts another program, `cc`.
 #
-#   compiler.omg    source -> bytecode
-#   vm.omg          runs bytecode (what `omg file.omg` uses)
-#   bytecode.omg    reads a .omgb file back in
-#   native-c.omg    bytecode -> C     (--build, --emit-c)
-#   native-js.omg   bytecode -> JS    (--emit-js)
+#   compiler.omg     source -> bytecode
+#   vm.omg           runs bytecode (what `omg file.omg` uses)
+#   bytecode.omg     reads a .omgb file back in
+#   native-x64.omg   bytecode -> x86-64 executable  (--build)
+#   native-c.omg     bytecode -> C     (--emit-c, --build --target c)
+#   native-js.omg    bytecode -> JS    (--emit-js)
 #
 # This file is also the toolchain's own build step: scripts/build.sh
-# runs `omg --emit-c omg.omg` and hands the result to `cc`, which is
-# how bin/omg rebuilds itself.
+# runs `omg --build src/omg.omg`, which is how bin/omg rebuilds itself.
 
 import "compiler.omg" as cc
 import "vm.omg" as vm
 import "bytecode.omg" as bc
 import "backends/native-c.omg" as ncc
 import "backends/native-js.omg" as njs
+import "backends/native-x64.omg" as nx
 
 # Human-facing version string. This is the only copy on the OMG side;
 # it has to match rust/Cargo.toml, and `cargo test` fails when it
@@ -283,8 +285,8 @@ proc bytecode_for(flag, in_path) {
     return bc.parse_bytecode(compile_guarded(step))
 }
 
-# The runtime a back end pastes at the top of its output (omg_rt.h for
-# C, omg_rt.js for JS). It sits next to the binary. When this file is
+# The runtime a back end adds to its output (omg_rt.h for C, omg_rt.js
+# for JS, x64/*.omg for machine code). It sits next to the binary. When this file is
 # run from source instead (`omg src/omg.omg ...`, which is how the
 # toolchain is bootstrapped), "next to the binary" is src/, and the
 # originals are one folder down, in src/runtime/.
@@ -374,7 +376,73 @@ proc run_c_compiler(names, flags) {
     return -1
 }
 
-proc build_aot(in_path, out_path) {
+# What this very program was built for, when the x86-64 back end built
+# it: "linux-x64" or "windows-x64". Anything else (a build through C,
+# a run on the Rust runtime or in a browser) gives "".
+proc own_platform() {
+    try {
+        return call_builtin("platform", [])
+    } except err {
+        return ""
+    }
+}
+
+# The target --build uses when none is named: the system this program
+# runs on if the x86-64 back end covers it, otherwise C.
+proc default_target() {
+    alloc p := own_platform()
+    if p == "linux-x64" or p == "windows-x64" {
+        return p
+    }
+    return "c"
+}
+
+# The x86-64 runtime for `os` as parsed bytecode. It is OMG source in
+# four files, compiled here as one unit each time: that takes about a
+# tenth of a second and leaves no second copy to fall out of date.
+proc x64_runtime(os) {
+    alloc text := ""
+    for part in ["core", "float", "builtins", os] {
+        text := text + read_runtime("x64/" + part + ".omg")
+    }
+    alloc name := "<x64 runtime>"
+    proc step() {
+        alloc ast := cc.parse_program(name, cc.tokenize(text, name))
+        alloc compiled := cc.compile_program_node(ast, name)
+        return cc.write_bytecode(compiled[0], compiled[1], compiled[2], compiled[3])
+    }
+    return bc.parse_bytecode(compile_guarded(step))
+}
+
+# --build for linux-x64 and windows-x64: bytecode straight to machine
+# code and from there to an ELF or PE file, all in this process.
+proc build_x64(in_path, out_path, target) {
+    alloc os := "linux"
+    if target == "windows-x64" {
+        os := "windows"
+        if ends_with(out_path, ".exe") == false and ends_with(out_path, ".EXE") == false {
+            out_path := out_path + ".exe"
+        }
+    }
+    alloc parsed := bytecode_for("--build", in_path)
+    alloc runtime := x64_runtime(os)
+    alloc image := nx.generate(parsed, runtime, os, in_path)
+    alloc out_h := file_open(out_path, "wb")
+    file_write(out_h, image)
+    file_close(out_h)
+    # rwxr-xr-x, for both systems: Wine and WSL want it on an .exe as
+    # well. Nothing to do when the file is written on Windows.
+    try { chmod(out_path, 493) } except err { }
+    emit "built: " + out_path
+}
+
+proc build_aot(in_path, out_path, target) {
+    if target == "linux-x64" or target == "windows-x64" {
+        return build_x64(in_path, out_path, target)
+    }
+    if target != "c" {
+        exit_with_error("omg --build: unknown target '" + target + "' (linux-x64, windows-x64 or c)")
+    }
     alloc win := on_windows()
     alloc tmp_c := "/tmp/omg-aot-" + getpid() + ".c"
     alloc compilers := ["cc"]
@@ -406,9 +474,9 @@ proc build_aot(in_path, out_path) {
     }
     if rc == -1 {
         if win {
-            exit_with_error("omg --build needs a C compiler: install GCC or Clang (MinGW-w64) and put gcc or clang on PATH")
+            exit_with_error("omg --build --target c needs a C compiler: install GCC or Clang (MinGW-w64) and put gcc or clang on PATH")
         }
-        exit_with_error("omg --build needs a C compiler: no `cc` on PATH")
+        exit_with_error("omg --build --target c needs a C compiler: no `cc` on PATH")
     }
     if rc != 0 {
         exit(rc)
@@ -820,6 +888,8 @@ proc usage() {
     emit "  omg <file.omgb> [args...]           Run precompiled bytecode"
     emit "  omg --compile <in.omg> <out.omgb>   Compile to bytecode (no run)"
     emit "  omg --build <in.omg> [<out>]        Build a native executable"
+    emit "      [--target <t>]                  for linux-x64 or windows-x64, or"
+    emit "                                      through a C compiler with c"
     emit "  omg --emit-c <in> <out.c>           Write the program as C source"
     emit "  omg --emit-js <in> <out.js>         Write the program as JavaScript"
     emit "                                      (<in> is a .omg or a .omgb)"
@@ -853,15 +923,34 @@ if cmd == "-h" or cmd == "--help" {
     }
     compile_only(args[2], args[3])
 } elif cmd == "--build" {
-    if length(args) < 3 {
-        exit_with_error("usage: omg --build <in.omg> [<out>]")
+    # --target may come anywhere after --build; the rest are the paths.
+    alloc paths := []
+    alloc target := ""
+    alloc ai := 2
+    loop ai < length(args) {
+        if args[ai] == "--target" {
+            if ai + 1 >= length(args) {
+                exit_with_error("omg --build: --target needs a name (linux-x64, windows-x64 or c)")
+            }
+            target := args[ai + 1]
+            ai := ai + 2
+        } else {
+            append(paths, args[ai])
+            ai := ai + 1
+        }
     }
-    alloc in_path := args[2]
+    if length(paths) < 1 or length(paths) > 2 {
+        exit_with_error("usage: omg --build <in.omg> [<out>] [--target linux-x64 | windows-x64 | c]")
+    }
+    if target == "" {
+        target := default_target()
+    }
+    alloc in_path := paths[0]
     alloc out_path := strip_omg(in_path)
-    if length(args) >= 4 {
-        out_path := args[3]
+    if length(paths) == 2 {
+        out_path := paths[1]
     }
-    build_aot(in_path, out_path)
+    build_aot(in_path, out_path, target)
 } elif cmd == "--emit-c" {
     if length(args) < 4 {
         exit_with_error("usage: omg --emit-c <in.omg | in.omgb> <out.c>")
