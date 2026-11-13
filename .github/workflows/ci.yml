@@ -262,3 +262,54 @@ jobs:
             tail -n 60 standalone.log
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
+
+  # The VS Code extension in vscode/. Its language server follows the
+  # compiler by hand (a port of the lexer and parser, the builtin list,
+  # the scope rules), so its tests hold it to the checked-in omg: same
+  # builtins, same first syntax error on broken files, and every
+  # documented example prints what it says. They also run the checks
+  # over every .omg file in the repository, which must come out clean.
+  # The packaged extension is kept with the run.
+  editor:
+    name: VS Code extension
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: vscode/package-lock.json
+
+      - name: Install
+        working-directory: vscode
+        run: npm ci
+
+      - name: Test
+        working-directory: vscode
+        run: |
+          set -o pipefail
+          npm test 2>&1 | tee test.log
+
+      - name: Package
+        working-directory: vscode
+        run: npm run package
+
+      - name: Upload the .vsix
+        uses: actions/upload-artifact@v4
+        with:
+          name: omg-language-support
+          path: vscode/omg-language-support.vsix
+
+      - name: Summarise failure
+        if: failure()
+        run: |
+          {
+            echo "### VS Code extension: failing tests"
+            echo '```'
+            grep -A 25 '^not ok' vscode/test.log | head -n 120 || tail -n 60 vscode/test.log
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
