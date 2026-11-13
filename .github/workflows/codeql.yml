@@ -9,7 +9,7 @@ on:
     - cron: '38 11 * * 0'
 
 # C/C++ is intentionally excluded from the matrix. The only C in the
-# repo is `bootstrap/src/omg_rt.h`, a header-only runtime that's
+# repo is `src/runtime/omg_rt.h`, a header-only runtime that's
 # spliced into generated C output at AOT build time. CodeQL's C/C++
 # extractor needs at least one `.c` translation unit to run, so its
 # autobuilder fails with "No source files found." The header is

@@ -1,0 +1,685 @@
+//! # Stack-Based Bytecode Virtual Machine (Runtime)
+//!
+//! Compact stack VM that executes a sequence of [`Instr`] produced by the
+//! Rust [`crate::compiler`].
+//!
+//! ## High-level model
+//! - **Operand stack (`stack`)**: holds `Value`s consumed/produced by ops.
+//! - **Global env (`globals`)**: persists across function frames.
+//! - **Local env (`env`)**: the current function's locals.
+//! - **Env stack (`env_stack`)**: saved local frames for nested calls.
+//! - **Return stack (`ret_stack`)**: saved program counters.
+//! - **Block stack (`block_stack`)**: exception-handling frames.
+//! - **Program counter (`pc`)**: index into `code`.
+//! - **Advance flag (`advance_pc`)**: lets control-flow ops manage the PC.
+//!
+//! Two surfaces are exposed:
+//! - [`run`] — one-shot: build a fresh VM state from scratch and execute
+//!   a complete program. Used by `main.rs` for normal script execution.
+//! - [`run_program`] — resident: execute a chunk of bytecode against a
+//!   caller-owned `globals` and `funcs` table. Used by [`crate::repl`] so
+//!   state survives across REPL turns.
+
+use std::cell::RefCell;
+use std::collections::HashMap;
+use std::rc::Rc;
+
+use crate::bytecode::{Function, Instr, SourceMap};
+use crate::error::RuntimeError;
+use crate::value::{new_cell, Env, Value};
+
+/// If `name` looks like a module-mangled identifier (`__mod_N__bare`),
+/// return the bare suffix. Otherwise None. Used by `MakeFunc` to bind
+/// nested-proc closures under both their mangled funcs-table key and
+/// the bare source name that `Load` instructions reference, and by
+/// `CallValue` to bind a closure's own name in the frame it runs in.
+pub(super) fn strip_mod_prefix(name: &str) -> Option<&str> {
+    let rest = name.strip_prefix("__mod_")?;
+    let end_idx = rest.find("__")?;
+    let digits = &rest[..end_idx];
+    if digits.is_empty() || !digits.bytes().all(|b| b.is_ascii_digit()) {
+        return None;
+    }
+    let bare = &rest[end_idx + 2..];
+    if bare.is_empty() {
+        None
+    } else {
+        Some(bare)
+    }
+}
+
+mod builtins;
+mod ops_arith;
+mod ops_control;
+mod ops_struct;
+pub mod sys;
+
+/// Exception-handling frame.
+///
+/// Pushed by `SetupExcept`, popped by `PopBlock`. On `Raise`, the VM unwinds
+/// to the most-recent block: restoring stack height, env-stack depth, and
+/// return-stack depth that were current when the block was set up, then
+/// transferring control to its `handler` PC.
+pub(super) struct Block {
+    handler: usize,
+    stack_size: usize,
+    env_depth: usize,
+    ret_depth: usize,
+    /// Number of call frames on the call-frame stack when this block was
+    /// set up. On unwind, we drop frames until we reach this depth.
+    frame_depth: usize,
+}
+
+/// One entry in the user-visible call-frame stack. Used purely for
+/// traceback rendering — the VM's actual control flow rides on
+/// `env_stack` + `ret_stack`. We track frames here so an error can
+/// describe which function it's in and where each caller is.
+///
+/// `name` is the called function's name (mangled by the compiler — we
+/// strip module prefixes only when printing). `call_pc` is the bytecode
+/// offset of the `CALL` / `CALL_VALUE` instruction in the *caller*, so
+/// `src_map.lookup(call_pc)` gives the call site for the traceback.
+pub(super) struct CallFrame {
+    name: String,
+    call_pc: usize,
+}
+
+/// Strip a module-mangling prefix for display in tracebacks. Mirrors
+/// `strip_mod_prefix` above but always returns a `String`.
+fn display_fn_name(mangled: &str) -> String {
+    match strip_mod_prefix(mangled) {
+        Some(bare) => bare.to_string(),
+        None => mangled.to_string(),
+    }
+}
+
+/// Build a Python-style traceback for an unhandled runtime error.
+///
+/// Output shape (frames listed innermost-last, matching Python):
+/// ```text
+/// Traceback (most recent call last):
+///   File "main.omg", line 5, in <top-level>
+///   File "main.omg", line 12, in make_counter
+///   File "main.omg", line 17, in tick
+/// UndefinedIdentError: undefined_var
+/// ```
+///
+/// When the source map has no entry for a pc (compiler-synthesised
+/// instruction, or a REPL-eval'd chunk with no map), the line shows
+/// `File "<unknown>", line 0` so the trace stays well-formed.
+fn format_traceback(
+    err_pc: usize,
+    frames: &[CallFrame],
+    src_map: &SourceMap,
+    err: &RuntimeError,
+) -> String {
+    let mut out = String::from("Traceback (most recent call last):\n");
+    let push_line = |out: &mut String, pc: usize, fn_name: &str| {
+        match src_map.lookup(pc) {
+            Some((file, line)) => out.push_str(&format!(
+                "  File \"{}\", line {}, in {}\n",
+                file, line, fn_name
+            )),
+            None => out.push_str(&format!(
+                "  File \"<unknown>\", line 0, in {}\n",
+                fn_name
+            )),
+        }
+    };
+    // First line: where top-level made its outermost call (or the
+    // error site itself if no calls were active).
+    if let Some(first) = frames.first() {
+        push_line(&mut out, first.call_pc, "<top-level>");
+    }
+    // Each subsequent frame's call site lives inside the previous
+    // frame's function — name it accordingly.
+    for i in 1..frames.len() {
+        let caller_name = display_fn_name(&frames[i - 1].name);
+        push_line(&mut out, frames[i].call_pc, &caller_name);
+    }
+    // The error site itself: pc is `err_pc`, function is whichever
+    // frame we're currently inside (or top-level for zero-frame errors).
+    let cur_fn = frames
+        .last()
+        .map(|f| display_fn_name(&f.name))
+        .unwrap_or_else(|| "<top-level>".to_string());
+    push_line(&mut out, err_pc, &cur_fn);
+    // Final line: the underlying error (already formats as "Kind: msg").
+    out.push_str(&err.to_string());
+    out
+}
+
+/// Pop one [`Value`] from the operand stack with an underflow check.
+pub(super) fn pop(stack: &mut Vec<Value>) -> Result<Value, RuntimeError> {
+    stack
+        .pop()
+        .ok_or_else(|| RuntimeError::VmInvariant("stack underflow".to_string()))
+}
+
+/// Seed a globals map with `args`, `module_file`, and `current_dir`. Useful
+/// from both the entry-point runner and the REPL.
+pub fn seed_program_globals(globals: &mut HashMap<String, Value>, program_args: &[String]) {
+    let arg_values: Vec<Value> = program_args.iter().map(|s| Value::Str(s.clone())).collect();
+    globals.insert(
+        "args".to_string(),
+        Value::List(Rc::new(RefCell::new(arg_values))),
+    );
+    // `module_file` is the script path, kept for diagnostics.  Falls back
+    // to "<stdin>" when there is no script (e.g. REPL).
+    let module_file = program_args
+        .first()
+        .map(|s| s.replace("\\", "/"))
+        .unwrap_or_else(|| "<stdin>".to_string());
+    globals.insert("module_file".to_string(), Value::Str(module_file));
+
+    // `current_dir` is the *shell's* current working directory, not the
+    // script's parent.  This matches every other CLI tool — `omg
+    // tools/wc.omg foo.txt` resolves `foo.txt` against where the user is
+    // standing, the way `wc foo.txt` would.  Imports don't read this
+    // global (they're resolved at compile time using `current_file`), so
+    // no part of the language relies on the older script-dir-based value.
+    let cwd = std::env::current_dir()
+        .ok()
+        .map(|p| p.to_string_lossy().replace("\\", "/"))
+        .unwrap_or_else(|| ".".to_string());
+    globals.insert("current_dir".to_string(), Value::Str(cwd));
+}
+
+/// One-shot execution of a complete program.
+///
+/// Builds a fresh globals map (via [`seed_program_globals`]) and a fresh
+/// function table from `funcs`, then runs the program to completion.
+pub fn run(
+    code: &[Instr],
+    funcs: &HashMap<String, Function>,
+    src_map: &SourceMap,
+    program_args: &[String],
+) -> Result<(), RuntimeError> {
+    let mut globals: HashMap<String, Value> = HashMap::new();
+    seed_program_globals(&mut globals, program_args);
+    let mut funcs_owned: HashMap<String, Function> = funcs.clone();
+    run_program(code, funcs, src_map, &mut globals, &mut funcs_owned)
+}
+
+/// Resident execution against caller-owned globals and a function table.
+///
+/// `funcs_in` is the function table baked into the bytecode being executed
+/// right now (e.g. just compiled by the REPL). `funcs_persistent` is the
+/// caller's accumulated table from prior turns; on entry we merge `funcs_in`
+/// into it so newly defined procs become visible to subsequent invocations.
+pub fn run_program(
+    code: &[Instr],
+    funcs_in: &HashMap<String, Function>,
+    src_map: &SourceMap,
+    globals: &mut HashMap<String, Value>,
+    funcs_persistent: &mut HashMap<String, Function>,
+) -> Result<(), RuntimeError> {
+    for (name, f) in funcs_in {
+        funcs_persistent.insert(name.clone(), f.clone());
+    }
+    // The caller passes the full bytecode each turn (REPL) or once (one-shot
+    // run). Function addresses are absolute indexes into `code`, so the same
+    // table works for both call paths.
+    execute(code, funcs_persistent, src_map, globals, 0)
+}
+
+/// Execute `code` against caller-owned `globals` and `funcs`, starting at
+/// the given program counter. Used by the REPL to run only the freshly
+/// appended chunk of an accumulated bytecode buffer.
+pub fn run_program_from(
+    code: &[Instr],
+    funcs: &HashMap<String, Function>,
+    src_map: &SourceMap,
+    globals: &mut HashMap<String, Value>,
+    start_pc: usize,
+) -> Result<(), RuntimeError> {
+    execute(code, funcs, src_map, globals, start_pc)
+}
+
+fn execute(
+    code: &[Instr],
+    funcs: &HashMap<String, Function>,
+    src_map: &SourceMap,
+    globals: &mut HashMap<String, Value>,
+    start_pc: usize,
+) -> Result<(), RuntimeError> {
+    let mut stack: Vec<Value> = Vec::new();
+    let mut env: Env = HashMap::new();
+    let mut env_stack: Vec<Env> = Vec::new();
+    let mut ret_stack: Vec<usize> = Vec::new();
+    let mut block_stack: Vec<Block> = Vec::new();
+    let mut frames: Vec<CallFrame> = Vec::new();
+    let mut error_flag: Option<RuntimeError> = None;
+    let mut pc: usize = start_pc;
+    // The pc where execution failed. We capture this *before* unwinding
+    // any frames, since the traceback formatter needs the original site.
+    let mut err_pc: usize = start_pc;
+
+    while pc < code.len() {
+        let mut advance_pc = true;
+
+        let instr_res: Result<(), RuntimeError> = loop {
+            match &code[pc] {
+                Instr::PushInt(v) => stack.push(Value::Int(*v)),
+                Instr::PushFloat(v) => stack.push(Value::Float(*v)),
+                Instr::PushStr(s) => stack.push(Value::Str(s.clone())),
+                Instr::PushBool(b) => stack.push(Value::Bool(*b)),
+                Instr::BuildList(n) => {
+                    if let Err(e) = ops_struct::handle_build_list(*n, &mut stack) {
+                        break Err(e);
+                    }
+                }
+                Instr::BuildDict(n) => {
+                    if let Err(e) = ops_struct::handle_build_dict(*n, &mut stack) {
+                        break Err(e);
+                    }
+                }
+                Instr::Load(name) => {
+                    // Read through the cell so closures see live state.
+                    if let Some(cell) = env.get(name) {
+                        stack.push(cell.borrow().clone());
+                    } else if let Some(v) = globals.get(name) {
+                        stack.push(v.clone());
+                    } else {
+                        break Err(RuntimeError::UndefinedIdentError(name.clone()));
+                    }
+                }
+                Instr::Store(name) => {
+                    if let Some(v) = stack.pop() {
+                        // `:=` is *re-assignment only*: the name must already
+                        // be bound somewhere. Use `alloc x := v` to introduce
+                        // a new binding. This catches typos like `cont := 5`
+                        // that would otherwise silently shadow / clobber.
+                        //
+                        // For local bindings, mutate the cell *in place* so
+                        // closures that captured this name see the update.
+                        if env_stack.is_empty() {
+                            if globals.contains_key(name) {
+                                globals.insert(name.clone(), v);
+                            } else {
+                                break Err(RuntimeError::UndefinedIdentError(
+                                    name.clone(),
+                                ));
+                            }
+                        } else if let Some(cell) = env.get(name) {
+                            *cell.borrow_mut() = v;
+                        } else if globals.contains_key(name) {
+                            globals.insert(name.clone(), v);
+                        } else {
+                            break Err(RuntimeError::UndefinedIdentError(name.clone()));
+                        }
+                    }
+                }
+                Instr::Add => {
+                    if let Err(e) = ops_arith::handle_add(&mut stack) {
+                        break Err(e);
+                    }
+                }
+                Instr::Sub => {
+                    if let Err(e) = ops_arith::handle_sub(&mut stack) {
+                        break Err(e);
+                    }
+                }
+                Instr::Mul => {
+                    if let Err(e) = ops_arith::handle_mul(&mut stack) {
+                        break Err(e);
+                    }
+                }
+                Instr::Div => {
+                    if let Err(e) = ops_arith::handle_div(&mut stack) {
+                        break Err(e);
+                    }
+                }
+                Instr::FloorDiv => {
+                    if let Err(e) = ops_arith::handle_floor_div(&mut stack) {
+                        break Err(e);
+                    }
+                }
+                Instr::Mod => {
+                    if let Err(e) = ops_arith::handle_mod(&mut stack) {
+                        break Err(e);
+                    }
+                }
+                Instr::Eq => {
+                    if let Err(e) = ops_arith::handle_eq(&mut stack) {
+                        break Err(e);
+                    }
+                }
+                Instr::Ne => {
+                    if let Err(e) = ops_arith::handle_ne(&mut stack) {
+                        break Err(e);
+                    }
+                }
+                Instr::Lt => {
+                    if let Err(e) = ops_arith::handle_lt(&mut stack) {
+                        break Err(e);
+                    }
+                }
+                Instr::Le => {
+                    if let Err(e) = ops_arith::handle_le(&mut stack) {
+                        break Err(e);
+                    }
+                }
+                Instr::Gt => {
+                    if let Err(e) = ops_arith::handle_gt(&mut stack) {
+                        break Err(e);
+                    }
+                }
+                Instr::Ge => {
+                    if let Err(e) = ops_arith::handle_ge(&mut stack) {
+                        break Err(e);
+                    }
+                }
+                Instr::BAnd => {
+                    if let Err(e) = ops_arith::handle_band(&mut stack) {
+                        break Err(e);
+                    }
+                }
+                Instr::BOr => {
+                    if let Err(e) = ops_arith::handle_bor(&mut stack) {
+                        break Err(e);
+                    }
+                }
+                Instr::BXor => {
+                    if let Err(e) = ops_arith::handle_bxor(&mut stack) {
+                        break Err(e);
+                    }
+                }
+                Instr::Shl => {
+                    if let Err(e) = ops_arith::handle_shl(&mut stack) {
+                        break Err(e);
+                    }
+                }
+                Instr::Shr => {
+                    if let Err(e) = ops_arith::handle_shr(&mut stack) {
+                        break Err(e);
+                    }
+                }
+                Instr::And => {
+                    if let Err(e) = ops_arith::handle_and(&mut stack) {
+                        break Err(e);
+                    }
+                }
+                Instr::Or => {
+                    if let Err(e) = ops_arith::handle_or(&mut stack) {
+                        break Err(e);
+                    }
+                }
+                Instr::Not => {
+                    if let Err(e) = ops_arith::handle_not(&mut stack) {
+                        break Err(e);
+                    }
+                }
+                Instr::Neg => {
+                    if let Err(e) = ops_arith::handle_neg(&mut stack) {
+                        break Err(e);
+                    }
+                }
+                Instr::Index => {
+                    if let Err(e) = ops_struct::handle_index(&mut stack) {
+                        break Err(e);
+                    }
+                }
+                Instr::Slice => {
+                    if let Err(e) = ops_struct::handle_slice(&mut stack) {
+                        break Err(e);
+                    }
+                }
+                Instr::StoreIndex => {
+                    if let Err(e) = ops_struct::handle_store_index(&mut stack) {
+                        break Err(e);
+                    }
+                }
+                Instr::Attr(attr) => {
+                    if let Err(e) = ops_struct::handle_attr(attr, &mut stack) {
+                        break Err(e);
+                    }
+                }
+                Instr::StoreAttr(attr) => {
+                    if let Err(e) = ops_struct::handle_store_attr(attr, &mut stack) {
+                        break Err(e);
+                    }
+                }
+                Instr::Assert => {
+                    if let Err(e) = ops_control::handle_assert(&mut stack) {
+                        break Err(e);
+                    }
+                }
+                Instr::CallValue(argc) => {
+                    let call_pc = pc;
+                    // Peek the callee (sits just below the args on the
+                    // operand stack) so we can record its name for the
+                    // traceback. Cheap and lets us avoid threading
+                    // `frames` through the call handler.
+                    let callee_name = if stack.len() > *argc {
+                        match &stack[stack.len() - argc - 1] {
+                            Value::Str(s) => Some(s.clone()),
+                            Value::Closure { name, .. } => Some(name.clone()),
+                            _ => None,
+                        }
+                    } else {
+                        None
+                    };
+                    if let Err(e) = ops_control::handle_call_value(
+                        *argc,
+                        &mut stack,
+                        funcs,
+                        &mut env,
+                        &mut env_stack,
+                        &mut ret_stack,
+                        &mut pc,
+                        &mut advance_pc,
+                    ) {
+                        break Err(e);
+                    }
+                    if let Some(name) = callee_name {
+                        frames.push(CallFrame { name, call_pc });
+                    }
+                }
+                Instr::PushNone => {
+                    stack.push(Value::None);
+                }
+                Instr::Jump(target) => {
+                    ops_control::handle_jump(*target, &mut pc, &mut advance_pc);
+                }
+                Instr::JumpIfFalse(target) => {
+                    if let Err(e) = ops_control::handle_jump_if_false(
+                        *target,
+                        &mut stack,
+                        &mut pc,
+                        &mut advance_pc,
+                    ) {
+                        break Err(e);
+                    }
+                }
+                Instr::Call(name) => {
+                    let call_pc = pc;
+                    if let Err(e) = ops_control::handle_call(
+                        name,
+                        funcs,
+                        &mut stack,
+                        &mut env,
+                        &mut env_stack,
+                        &mut ret_stack,
+                        &mut pc,
+                        &mut advance_pc,
+                    ) {
+                        break Err(e);
+                    }
+                    frames.push(CallFrame {
+                        name: name.clone(),
+                        call_pc,
+                    });
+                }
+                Instr::TailCall(name) => {
+                    if let Err(e) = ops_control::handle_tail_call(
+                        name,
+                        funcs,
+                        &mut stack,
+                        &mut env,
+                        &mut pc,
+                        &mut advance_pc,
+                    ) {
+                        break Err(e);
+                    }
+                    // Tail calls reuse the caller's frame slot, so we
+                    // overwrite the name and leave call_pc alone. The
+                    // compiler only emits TCALL from inside a function
+                    // body — frames is therefore guaranteed non-empty.
+                    if let Some(top) = frames.last_mut() {
+                        top.name = name.clone();
+                    }
+                }
+                Instr::CallBuiltin(name, argc) => {
+                    if let Err(e) = ops_control::handle_call_builtin(
+                        name,
+                        *argc,
+                        &mut stack,
+                        &env,
+                        globals,
+                    ) {
+                        break Err(e);
+                    }
+                }
+                Instr::Pop => ops_control::handle_pop(&mut stack),
+                Instr::Ret => {
+                    if let Err(e) = ops_control::handle_ret(
+                        &mut stack,
+                        &mut pc,
+                        &mut env,
+                        &mut env_stack,
+                        &mut ret_stack,
+                        &mut advance_pc,
+                    ) {
+                        break Err(e);
+                    }
+                    frames.pop();
+                }
+                Instr::Emit => ops_control::handle_emit(&mut stack),
+                Instr::Halt => {
+                    ops_control::handle_halt(code.len(), &mut pc, &mut advance_pc);
+                }
+                Instr::SetupExcept(target) => ops_control::handle_setup_except(
+                    *target,
+                    &stack,
+                    &env_stack,
+                    &ret_stack,
+                    &mut block_stack,
+                    frames.len(),
+                ),
+                Instr::PopBlock => ops_control::handle_pop_block(&mut block_stack),
+                Instr::Raise(kind) => {
+                    break ops_control::handle_raise(kind, &mut stack);
+                }
+                Instr::StoreLocal(name) => {
+                    // `alloc` semantics: always create a binding in the
+                    // innermost scope without consulting outer scopes — so
+                    // a local can shadow a global of the same name.
+                    //
+                    // Same-scope re-declaration is rejected at *compile
+                    // time* (see compiler.rs / src/compiler.omg);
+                    // at runtime an `alloc` inside a loop body legitimately
+                    // re-runs every iteration. We always install a *fresh*
+                    // cell so the new binding doesn't reach back into any
+                    // closure that captured the previous value.
+                    if let Some(v) = stack.pop() {
+                        if env_stack.is_empty() {
+                            globals.insert(name.clone(), v);
+                        } else {
+                            env.insert(name.clone(), new_cell(v));
+                        }
+                    }
+                }
+                Instr::MakeFunc(name) => {
+                    if env_stack.is_empty() {
+                        // Top-level: bind a non-capturing reference. We store
+                        // a `Closure` (with empty captures) so callers always
+                        // see the same value type whether they reference a
+                        // top-level proc or a nested closure.
+                        globals.insert(
+                            name.clone(),
+                            Value::Closure {
+                                name: name.clone(),
+                                captured: std::rc::Rc::new(HashMap::new()),
+                            },
+                        );
+                    } else {
+                        // Inside a function: capture the *cells* of the
+                        // current local env, not their contents. Cloning a
+                        // HashMap of Rcs just clones the Rcs — the closure
+                        // and the enclosing scope end up referencing the
+                        // same RefCells, so mutations flow both ways
+                        // (Python/JS-style by-reference capture).
+                        let captured: Rc<Env> = Rc::new(env.clone());
+                        let closure = Value::Closure {
+                            name: name.clone(),
+                            captured,
+                        };
+                        env.insert(name.clone(), new_cell(closure.clone()));
+                        // The compiler mangles names in imported modules
+                        // with `__mod_N__` for module isolation, but
+                        // source-level `Load` references the bare name.
+                        // Bind both so a closure value passed across an
+                        // import boundary resolves correctly.
+                        if let Some(bare) = strip_mod_prefix(name) {
+                            env.insert(bare.to_string(), new_cell(closure));
+                        }
+                    }
+                }
+            }
+            break Ok(());
+        };
+
+        if let Err(e) = instr_res {
+            // Capture the pc *before* any unwinding so the traceback's
+            // last frame reports the actual fault site, not whatever
+            // handler we end up jumping to.
+            err_pc = pc;
+            error_flag = Some(e);
+        }
+
+        if let Some(err) = error_flag.take() {
+            let mut handled = false;
+            while let Some(block) = block_stack.pop() {
+                while env_stack.len() > block.env_depth {
+                    env = env_stack.pop().unwrap_or_default();
+                    ret_stack.pop();
+                }
+                ret_stack.truncate(block.ret_depth);
+                stack.truncate(block.stack_size);
+                frames.truncate(block.frame_depth);
+                pc = block.handler;
+                stack.push(Value::Str(err.to_string()));
+                handled = true;
+                break;
+            }
+            if !handled {
+                // VmInvariant errors are internal bugs and already
+                // include enough detail; wrapping them in a traceback
+                // muddles the message. Pass them through unchanged.
+                if matches!(err, RuntimeError::VmInvariant(_)) {
+                    return Err(err);
+                }
+                // Skip the wrapper when there is no source-map info to
+                // build a useful traceback from — handwritten test
+                // programs and bare REPL chunks both fall through here
+                // and stay readable as raw `Kind: msg`.
+                if src_map.lines.is_empty() {
+                    return Err(err);
+                }
+                let trace = format_traceback(err_pc, &frames, src_map, &err);
+                return Err(RuntimeError::Traced(trace));
+            } else {
+                continue;
+            }
+        }
+
+        if advance_pc {
+            pc += 1;
+        }
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests;

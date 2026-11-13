@@ -174,8 +174,8 @@ assert_eq "AOT stdout flushes before stderr" "$expected" "$actual"
 
 section "Regression: compiler.omg fixed point"
 
-"$OMG_RUST"   --compile bootstrap/src/compiler.omg "$TMPDIR_TEST/cmp-rust.omgb"
-"$OMG_NATIVE" --compile bootstrap/src/compiler.omg "$TMPDIR_TEST/cmp-native.omgb"
+"$OMG_RUST"   --compile src/compiler.omg "$TMPDIR_TEST/cmp-rust.omgb"
+"$OMG_NATIVE" --compile src/compiler.omg "$TMPDIR_TEST/cmp-native.omgb"
 if cmp -s "$TMPDIR_TEST/cmp-rust.omgb" "$TMPDIR_TEST/cmp-native.omgb"; then
     pass "compiler.omg via Rust == via native omg"
 else
@@ -191,9 +191,9 @@ fi
 
 section "Regression: compile_source isolates state"
 
-# Place the test program in bootstrap/src/ so the relative `import
-# "compiler.omg"` resolves against bootstrap/src/compiler.omg.
-cat > "$REPO_ROOT/bootstrap/src/_two_progs_test.omg" <<'EOF'
+# Place the test program in src/ so the relative `import
+# "compiler.omg"` resolves against src/compiler.omg.
+cat > "$REPO_ROOT/src/_two_progs_test.omg" <<'EOF'
 ;;;omg
 import "compiler.omg" as cc
 
@@ -210,8 +210,8 @@ emit "len_a: " + length(a[0])
 emit "len_b: " + length(b[0])
 EOF
 
-actual=$("$OMG_RUST" "$REPO_ROOT/bootstrap/src/_two_progs_test.omg" 2>&1)
-rm -f "$REPO_ROOT/bootstrap/src/_two_progs_test.omg"
+actual=$("$OMG_RUST" "$REPO_ROOT/src/_two_progs_test.omg" 2>&1)
+rm -f "$REPO_ROOT/src/_two_progs_test.omg"
 # The two programs are structurally identical, so their bytecode
 # lengths must match. Specific lengths can change with compiler
 # tweaks; we only assert equality.
@@ -252,7 +252,7 @@ fi
 
 section "Regression: nested-closure-as-arg across module boundary"
 
-cat > "$REPO_ROOT/bootstrap/src/_closure_mod_lib.omg" <<'OMG_LIB'
+cat > "$REPO_ROOT/src/_closure_mod_lib.omg" <<'OMG_LIB'
 ;;;omg
 proc invoke_zero_arg(f) {
     return f()
@@ -270,7 +270,7 @@ OMG_LIB
 
 cat > "$TMPDIR_TEST/closure_mod_main.omg" <<MAIN_EOF
 ;;;omg
-import "$REPO_ROOT/bootstrap/src/_closure_mod_lib.omg" as lib
+import "$REPO_ROOT/src/_closure_mod_lib.omg" as lib
 emit lib.apply_with_closure(41)
 MAIN_EOF
 
@@ -285,7 +285,7 @@ assert_eq "Native interp: closure-as-arg across module" "42" "$actual"
 actual=$("$TMPDIR_TEST/closure_aot" 2>&1)
 assert_eq "AOT binary: closure-as-arg across module" "42" "$actual"
 
-rm -f "$REPO_ROOT/bootstrap/src/_closure_mod_lib.omg"
+rm -f "$REPO_ROOT/src/_closure_mod_lib.omg"
 
 # === Regression: closures capture by reference ============================
 #

@@ -20,8 +20,8 @@ omg-web.js  (compiler.omg + vm.omg + driver, all transpiled to JS)
 emit output → page <pre>
 ```
 
-The bundle is built by `bootstrap/build-web.sh`, which puts
-`bootstrap/src/omg-web.omg` (a stripped-down driver that takes the
+The bundle is built by `scripts/build-web.sh`, which puts
+`src/browser/omg-web.omg` (a stripped-down driver that takes the
 user source from `args[1]` instead of reading a file) through the JS
 back end: `omg --compile`, then `omg --emit-js`. Every Run
 click re-evaluates the bundle so OMG-side globals start fresh.
@@ -29,7 +29,7 @@ click re-evaluates the bundle so OMG-side globals start fresh.
 ## Running locally
 
 ```sh
-bootstrap/build-web.sh                    # builds web/omg-web.js + web/examples/
+scripts/build-web.sh                    # builds web/omg-web.js + web/examples/
 cd web && python3 -m http.server          # any static server works
 open http://localhost:8000
 ```

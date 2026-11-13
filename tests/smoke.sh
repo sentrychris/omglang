@@ -28,20 +28,20 @@
 #
 # Usage:
 #   tests/smoke.sh            build first with: cargo build --release
-#                             --manifest-path runtime/Cargo.toml
+#                             --manifest-path rust/Cargo.toml
 #
 # Exit codes: 0 all passed, 1 something failed, 2 runtime not built.
 
 set -u
 cd "$(dirname "$0")/.."
 
-OMG=runtime/target/release/omg
+OMG=rust/target/release/omg
 if [ ! -x "$OMG" ] && [ -x "$OMG.exe" ]; then
     OMG="$OMG.exe"
 fi
 if [ ! -x "$OMG" ]; then
     echo "Rust runtime missing. Run:"
-    echo "  cargo build --release --manifest-path runtime/Cargo.toml"
+    echo "  cargo build --release --manifest-path rust/Cargo.toml"
     exit 2
 fi
 
@@ -73,7 +73,7 @@ echo "OMG smoke test ($("$OMG" --version))"
 # --- 1. Fixed points ---------------------------------------------------------
 echo
 echo "== Self-hosting fixed points =="
-for check in "--verify-self-hosted bootstrap/src/compiler.omg" \
+for check in "--verify-self-hosted src/compiler.omg" \
              "--verify-omg-vm examples/prime_sieve.omg"; do
     # shellcheck disable=SC2086
     out=$("$OMG" $check 2>&1)
@@ -92,7 +92,7 @@ while IFS= read -r f; do
         bad=$((bad + 1))
         fail "bytecode parity: $f" "$out"
     fi
-done < <(find bootstrap/src examples games tools tests/smoke tests/conformance -name '*.omg' | sort)
+done < <(find src examples games tools tests/smoke tests/conformance -name '*.omg' | sort)
 if [ "$bad" -eq 0 ]; then pass "identical bytecode for all $count .omg files"; fi
 
 # --- 3. Examples: same output through both frontends -------------------------
@@ -136,11 +136,11 @@ check_backend "Rust VM, self-hosted compiler" "$("$OMG" "$REG" 2>&1 | norm)"
 "$OMG" --compile "$REG" "$WORK/reg.omgb" 2>"$WORK/compile.err"
 if [ $? -eq 0 ]; then
     check_backend "OMG-written VM (vm.omg)" \
-        "$("$OMG" --rust bootstrap/src/vm.omg "$WORK/reg.omgb" 2>&1 | norm)"
+        "$("$OMG" --rust src/vm.omg "$WORK/reg.omgb" 2>&1 | norm)"
     if command -v node >/dev/null 2>&1; then
         # The driver, run from source, reads the JS runtime (omg_rt.js)
-        # from next to itself in bootstrap/src/.
-        "$OMG" --rust bootstrap/src/omg.omg --emit-js "$WORK/reg.omgb" "$WORK/reg.js" \
+        # from next to itself in src/.
+        "$OMG" --rust src/omg.omg --emit-js "$WORK/reg.omgb" "$WORK/reg.js" \
             >"$WORK/js.log" 2>&1
         if [ $? -eq 0 ]; then
             check_backend "JS transpiler (node)" "$(node "$WORK/reg.js" 2>&1 | norm)"
@@ -168,13 +168,13 @@ conf_run() {
         self) "$OMG" "$f" >"$CONF_DIR/out" 2>"$CONF_DIR/err"; CONF_RC=$? ;;
         vm)
             "$OMG" --compile "$f" "$CONF_DIR/p.omgb" 2>"$CONF_DIR/err" &&
-                "$OMG" --rust bootstrap/src/vm.omg "$CONF_DIR/p.omgb" \
+                "$OMG" --rust src/vm.omg "$CONF_DIR/p.omgb" \
                     >"$CONF_DIR/out" 2>"$CONF_DIR/err"
             CONF_RC=$? ;;
         js)
             # A build failure leaves its log where the caller looks.
             if "$OMG" --compile "$f" "$CONF_DIR/p.omgb" 2>"$CONF_DIR/err" &&
-               "$OMG" --rust bootstrap/src/omg.omg --emit-js "$CONF_DIR/p.omgb" \
+               "$OMG" --rust src/omg.omg --emit-js "$CONF_DIR/p.omgb" \
                     "$CONF_DIR/p.js" >"$CONF_DIR/err" 2>&1; then
                 node "$CONF_DIR/p.js" >"$CONF_DIR/out" 2>"$CONF_DIR/err"
                 CONF_RC=$?

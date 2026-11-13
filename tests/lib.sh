@@ -20,8 +20,8 @@ FAILED_TESTS=${FAILED_TESTS:-}
 # environment to test a toolchain that lives somewhere else.
 TESTS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$TESTS_DIR/.." && pwd)"
-OMG_NATIVE="${OMG_NATIVE:-$REPO_ROOT/bootstrap/bin/omg}"
-OMG_RUST="${OMG_RUST:-$REPO_ROOT/runtime/target/release/omg}"
+OMG_NATIVE="${OMG_NATIVE:-$REPO_ROOT/bin/omg}"
+OMG_RUST="${OMG_RUST:-$REPO_ROOT/rust/target/release/omg}"
 
 # Non-empty on a Windows host (Git Bash), where a few tests have to
 # allow for the way Windows spells the path of a running program.
@@ -45,7 +45,7 @@ if [ -n "$OMG_WINDOWS" ] && command -v cygpath >/dev/null 2>&1; then
     case "$OMG_NATIVE" in /*) OMG_NATIVE=$(cygpath -m "$OMG_NATIVE") ;; esac
     case "$OMG_RUST" in /*) OMG_RUST=$(cygpath -m "$OMG_RUST") ;; esac
 fi
-# The files are omg.exe on Windows. (bootstrap/bin/omg exists there
+# The files are omg.exe on Windows. (bin/omg exists there
 # too: it is the Linux binary, which is checked in beside omg.exe.)
 if [ -n "$OMG_WINDOWS" ]; then
     [ -f "$OMG_NATIVE.exe" ] && OMG_NATIVE="$OMG_NATIVE.exe"
@@ -169,12 +169,12 @@ assert_program_path() {
 require_native_toolchain() {
     if [ ! -x "$OMG_NATIVE" ]; then
         echo -e "${RED}Native toolchain missing.${NC} Run:"
-        echo "  bootstrap/build.sh"
+        echo "  scripts/build.sh"
         exit 2
     fi
     if [ ! -x "$OMG_RUST" ]; then
         echo -e "${RED}Rust runtime missing.${NC} Run:"
-        echo "  cd runtime && cargo build --release"
+        echo "  cd rust && cargo build --release"
         exit 2
     fi
 }

@@ -7,8 +7,8 @@ the REPL, and the cross-implementation parity invariants.
 
 ```sh
 # Build prerequisites first
-cd runtime && cargo build --release && cd ..
-bootstrap/build.sh
+cd rust && cargo build --release && cd ..
+scripts/build.sh
 
 # Run everything
 tests/run.sh
@@ -22,7 +22,7 @@ Exit code is `0` on full success, `1` if anything failed, `2` if the
 prerequisites aren't built.
 
 The scripts are bash. On Windows run them from Git Bash, with `gcc`
-(MinGW-w64) and `node` on `PATH`; they then test `bootstrap/bin/omg.exe`.
+(MinGW-w64) and `node` on `PATH`; they then test `bin/omg.exe`.
 `OMG_NATIVE` and `OMG_RUST` can be set to test binaries that live
 somewhere else.
 

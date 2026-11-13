@@ -1,0 +1,2987 @@
+;;;omg
+
+# compiler.omg
+#
+# OMG compiler written in OMG.
+#
+# This program reads an OMG source file, compiles it to .omgb bytecode, and
+# writes the result. Together with the Rust VM it forms the self-hosting
+# implementation:
+#
+#     Rust(compiler.omg)            -> compiler.omgb (bootstrap)
+#     compiler.omgb(compiler.omg)   -> compiler.omgb (fixed point)
+#
+# The Rust runtime ships compiler.omgb embedded; running `omg foo.omg`
+# invokes the embedded compiler to produce foo's bytecode, then runs it.
+# The native `omg` (src/omg.omg) imports this file as a
+# library and calls compile_file / compile_source directly.
+#
+# Restrictions that compiler.omg itself observes (so it stays inside the
+# subset of OMG it supports):
+#   - no `try`/`except`
+#   - no nested procs / closures (top-level procs only)
+#   - no `import` (single file)
+#   - no negative-index slicing  (positive bounds only)
+#
+# The compiler ITSELF supports the full language for user programs — the
+# above are restrictions on this file's own use of OMG.
+
+# === Bytecode opcode table =================================================
+#
+# Mirror of `mod opcode` in rust/src/bytecode.rs, which is the ground
+# truth. `cargo test` fails if this table (or the copy in vm.omg or
+# bytecode.omg) disagrees with it.
+
+alloc OP_PUSH_INT       := 0
+alloc OP_PUSH_STR       := 1
+alloc OP_PUSH_BOOL      := 2
+alloc OP_BUILD_LIST     := 3
+alloc OP_BUILD_DICT     := 4
+alloc OP_LOAD           := 5
+alloc OP_STORE          := 6
+alloc OP_ADD            := 7
+alloc OP_SUB            := 8
+alloc OP_MUL            := 9
+alloc OP_DIV            := 10
+alloc OP_MOD            := 11
+alloc OP_EQ             := 12
+alloc OP_NE             := 13
+alloc OP_LT             := 14
+alloc OP_LE             := 15
+alloc OP_GT             := 16
+alloc OP_GE             := 17
+alloc OP_BAND           := 18
+alloc OP_BOR            := 19
+alloc OP_BXOR           := 20
+alloc OP_SHL            := 21
+alloc OP_SHR            := 22
+alloc OP_AND            := 23
+alloc OP_OR             := 24
+alloc OP_NOT            := 25
+alloc OP_NEG            := 26
+alloc OP_INDEX          := 27
+alloc OP_SLICE          := 28
+alloc OP_JUMP           := 29
+alloc OP_JUMP_IF_FALSE  := 30
+alloc OP_CALL           := 31
+alloc OP_TCALL          := 32
+alloc OP_BUILTIN        := 33
+alloc OP_POP            := 34
+alloc OP_PUSH_NONE      := 35
+alloc OP_RET            := 36
+alloc OP_EMIT           := 37
+alloc OP_HALT           := 38
+alloc OP_STORE_INDEX    := 39
+alloc OP_ATTR           := 40
+alloc OP_STORE_ATTR     := 41
+alloc OP_ASSERT         := 42
+alloc OP_CALL_VALUE     := 43
+alloc OP_SETUP_EXCEPT   := 44
+alloc OP_POP_BLOCK      := 45
+alloc OP_RAISE          := 46
+alloc OP_MAKE_FUNC      := 52
+alloc OP_STORE_LOCAL    := 53
+alloc OP_PUSH_FLOAT     := 54
+alloc OP_FLOOR_DIV      := 55
+
+# Error kinds for the RAISE instruction's payload byte.
+alloc EK_GENERIC        := 0
+alloc EK_SYNTAX         := 1
+alloc EK_TYPE           := 2
+alloc EK_UNDEF_IDENT    := 3
+alloc EK_VALUE          := 4
+alloc EK_MODULE_IMPORT  := 5
+
+# Bytecode version: same packed layout as the Rust runtime
+# (MAJOR<<16) | (MINOR<<8) | PATCH = 0.2.0. Bumped from 0.1.1 when
+# the source-file table + per-instruction source map were added so
+# runtime errors can show file/line tracebacks.
+alloc BC_VERSION := 512
+
+# === Byte-buffer writer =====================================================
+#
+# The .omgb writer uses a globally-tracked byte buffer with amortised-
+# doubling growth instead of `buf := buf + [b]` per byte. The old
+# functional style was O(n²) total: each call allocated a fresh list
+# and copied all existing bytes. The new style is O(1) amortised per
+# byte — the buffer grows by doubling its capacity on demand, and
+# every grow is followed by enough writes to pay for it.
+#
+# `wb_buf` is the backing list (pre-filled with zero sentinels);
+# `wb_buf_top` is the live byte count. `bytes_append` overwrites the
+# slot at the top, growing the buffer when full via `list_repeat`
+# (the runtime builtin that pre-allocates a list in O(n)).
+# `write_bytecode` calls `wb_reset()` at entry and returns
+# `wb_buf[0:wb_buf_top]` to discard the unused tail.
+#
+# Building a ~50 KB .omgb used to dominate compiling compiler.omg — it
+# was ~60% of total compile time. The new approach makes it
+# proportional to output size.
+
+alloc wb_buf := []
+alloc wb_buf_top := 0
+
+proc wb_reset() {
+    # Drop the backing buffer between distinct compiles so a long-
+    # running process (REPL, in-process driver) doesn't permanently
+    # hold onto the largest output ever produced.
+    wb_buf := []
+    wb_buf_top := 0
+}
+
+# Grow wb_buf in place by allocating a fresh, zero-filled list of
+# `new_cap` size and copying the live prefix. Called by bytes_append
+# when the buffer is full. `new_cap` is chosen by the caller —
+# typically max(16, 2 * current capacity) for amortised O(1).
+proc wb_grow(new_cap) {
+    alloc fresh := list_repeat(0, new_cap)
+    alloc i := 0
+    loop i < wb_buf_top {
+        fresh[i] := wb_buf[i]
+        i := i + 1
+    }
+    wb_buf := fresh
+}
+
+proc bytes_append(b) {
+    if wb_buf_top >= length(wb_buf) {
+        alloc cur := length(wb_buf)
+        alloc nc := cur * 2
+        if nc < 16 { nc := 16 }
+        wb_grow(nc)
+    }
+    wb_buf[wb_buf_top] := b
+    wb_buf_top := wb_buf_top + 1
+}
+
+# Write a u32 in little-endian order.
+proc emit_u32(n) {
+    bytes_append(n & 255)
+    bytes_append((n >> 8) & 255)
+    bytes_append((n >> 16) & 255)
+    bytes_append((n >> 24) & 255)
+}
+
+# Write an i64 in little-endian order. Negative values use two's complement
+# implicitly: `x & 255` and `x >> 8` work uniformly because OMG ints are
+# signed 64-bit and `>>` is arithmetic shift.
+proc emit_i64(n) {
+    alloc x := n
+    alloc i := 0
+    loop i < 8 {
+        bytes_append(x & 255)
+        x := x >> 8
+        i := i + 1
+    }
+}
+
+# Length-prefixed UTF-8 string.  We delegate the encoding to the runtime
+# `string_bytes` builtin so non-ASCII characters serialize as the same
+# UTF-8 byte sequence the Rust frontend produces — preserves byte-for-byte
+# parity with `omg --compile` even when the source contains glyphs like
+# `└──` or `╳`.
+proc emit_str(s) {
+    alloc bytes := string_bytes(s)
+    emit_u32(length(bytes))
+    alloc i := 0
+    alloc n := length(bytes)
+    loop i < n {
+        bytes_append(bytes[i])
+        i := i + 1
+    }
+}
+
+# === Source iteration =======================================================
+#
+# The lexer works on the source as a list of UTF-8 bytes, not as a
+# string. Indexing a list is constant time on every runtime; indexing a
+# string by character is not (the C runtime walks the string from its
+# start), and a lexer that asks for `src[i]` once per character was
+# quadratic in the size of the file: nine seconds for this file alone.
+# Everything outside string literals and comments is ASCII, so byte
+# values are all the lexer needs; literal text is cut out of the byte
+# list and turned back into a string with `bytes_to_string`.
+
+proc is_digit(c) {
+    return c >= 48 and c <= 57
+}
+
+proc is_alpha(c) {
+    return (c >= 97 and c <= 122) or (c >= 65 and c <= 90) or c == 95
+}
+
+proc is_alnum(c) {
+    return is_alpha(c) or is_digit(c)
+}
+
+# Skip the ;;;omg header. Returns [index of the first byte of the body,
+# line number of that byte].
+proc strip_header(b) {
+    alloc n := length(b)
+    alloc i := 0
+    alloc line := 1
+    # skip blank lines
+    loop i < n {
+        if b[i] == 10 {
+            line := line + 1
+            i := i + 1
+        } elif b[i] == 32 or b[i] == 9 or b[i] == 13 {
+            i := i + 1
+        } else {
+            break
+        }
+    }
+    if i + 6 <= n {
+        # ";;;omg"
+        if b[i] == 59 and b[i + 1] == 59 and b[i + 2] == 59 and b[i + 3] == 111 and b[i + 4] == 109 and b[i + 5] == 103 {
+            i := i + 6
+            # consume the rest of the header line
+            loop i < n and b[i] != 10 {
+                i := i + 1
+            }
+            if i < n {
+                i := i + 1
+                line := line + 1
+            }
+            return [i, line]
+        }
+    }
+    return [0, line]
+}
+
+# === Lexer =================================================================
+#
+# Returns a list of tokens; each token is a 3-list: ["KIND", value, line].
+# `value` is the integer for numbers, the decoded string for strings, the
+# identifier text for identifiers, "" for everything else. Final token is
+# ["EOF", "", line].
+
+proc keyword_kind(word) {
+    if word == "if"     { return "IF"     }
+    if word == "elif"   { return "ELIF"   }
+    if word == "else"   { return "ELSE"   }
+    if word == "loop"   { return "LOOP"   }
+    if word == "break"  { return "BREAK"  }
+    if word == "for"    { return "FOR"    }
+    if word == "in"     { return "IN"     }
+    if word == "continue" { return "CONTINUE" }
+    if word == "not"    { return "NOT"    }
+    if word == "emit"   { return "EMIT"   }
+    if word == "import" { return "IMPORT" }
+    if word == "as"     { return "AS"     }
+    if word == "facts"  { return "FACTS"  }
+    if word == "proc"   { return "FUNC"   }
+    if word == "return" { return "RETURN" }
+    if word == "and"    { return "AND"    }
+    if word == "or"     { return "OR"     }
+    if word == "alloc"  { return "ALLOC"  }
+    if word == "try"    { return "TRY"    }
+    if word == "except" { return "EXCEPT" }
+    if word == "true"   { return "TRUE"   }
+    if word == "false"  { return "FALSE"  }
+    return ""
+}
+
+# The bytes a backslash escape stands for, given the byte after the
+# backslash.
+proc decode_escape(c) {
+    if c == 110 { return [10] }     # \n
+    if c == 116 { return [9] }      # \t
+    if c == 114 { return [13] }     # \r
+    if c == 92  { return [92] }     # \\
+    if c == 34  { return [34] }     # \"
+    if c == 48  { return [0] }      # \0
+    if c == 39  { return [39] }     # \'
+    # Unknown escape: keep the backslash, exactly as the Rust lexer does
+    # (so "\d" stays a backslash followed by `d`).
+    return [92, c]
+}
+
+# The character that starts at byte `i`, as a string (for error
+# messages: a stray character can be any UTF-8 sequence).
+proc char_at(b, i) {
+    alloc c := b[i]
+    alloc len := 1
+    if c >= 240 {
+        len := 4
+    } elif c >= 224 {
+        len := 3
+    } elif c >= 192 {
+        len := 2
+    }
+    if i + len > length(b) {
+        len := length(b) - i
+    }
+    return bytes_to_string(b[i:i + len])
+}
+
+# Convert the digits of a decimal integer literal to an int. Literals
+# that don't fit in a signed 64-bit integer are a SyntaxError here —
+# accumulating digit by digit would instead trip the VM's overflow
+# check and surface as an internal error inside the compiler.
+proc parse_int_literal(text, line, file) {
+    alloc k := 0
+    alloc m := length(text)
+    loop k < m - 1 and text[k] == "0" {
+        k := k + 1
+    }
+    alloc digits := text[k:]
+    alloc nd := length(digits)
+    if nd > 19 or (nd == 19 and digits > "9223372036854775807") {
+        panic("SyntaxError: Invalid integer literal '" + text + "' on line " + line + " in " + file)
+    }
+    alloc num := 0
+    alloc j := 0
+    loop j < nd {
+        # Parenthesised so the largest literal (9223372036854775807) does
+        # not overflow in the intermediate `num * 10 + <char code>`.
+        num := num * 10 + (ascii(digits[j]) - ascii("0"))
+        j := j + 1
+    }
+    return num
+}
+
+proc tokenize(src, file) {
+    alloc b := string_bytes(src)
+    alloc res := strip_header(b)
+    alloc i := res[0]
+    alloc line := res[1]
+    alloc n := length(b)
+    alloc tokens := []
+    loop i < n {
+        alloc c := b[i]
+        alloc d := -1
+        if i + 1 < n {
+            d := b[i + 1]
+        }
+        if c == 32 or c == 9 or c == 13 {
+            i := i + 1
+        } elif c == 10 {
+            append(tokens, ["NL", "", line])
+            line := line + 1
+            i := i + 1
+        } elif c == 35 {
+            # `#` comment: to the end of the line.
+            loop i < n and b[i] != 10 {
+                i := i + 1
+            }
+        } elif c == 47 and d == 42 {
+            # /* block comment */
+            alloc comment_line := line
+            i := i + 2
+            loop i + 1 < n and (b[i] != 42 or b[i + 1] != 47) {
+                if b[i] == 10 {
+                    line := line + 1
+                }
+                i := i + 1
+            }
+            if i + 1 < n {
+                i := i + 2
+            } else {
+                # Ran off the end without finding the closing marker.
+                # Swallowing the rest of the file silently would turn a
+                # typo into a program that just stops early.
+                panic("SyntaxError: Unterminated block comment starting on line " + comment_line + " in " + file)
+            }
+        } elif c == 48 and (d == 98 or d == 66) {
+            # 0b... binary literal
+            i := i + 2
+            alloc bin_start := i
+            alloc bin_num := 0
+            # Leading zeros carry no value; after them at most 63 bits
+            # fit in a signed 64-bit integer.
+            alloc bin_sig := 0
+            loop i < n and (b[i] == 48 or b[i] == 49) {
+                if bin_sig > 0 or b[i] == 49 {
+                    bin_sig := bin_sig + 1
+                }
+                if bin_sig > 63 {
+                    panic("SyntaxError: Invalid binary literal on line " + line + " in " + file + ": number too large to fit in target type")
+                }
+                bin_num := bin_num * 2 + (b[i] - 48)
+                i := i + 1
+            }
+            if i == bin_start {
+                panic("SyntaxError: Empty binary literal on line " + line + " in " + file)
+            }
+            append(tokens, ["NUM", bin_num, line])
+        } elif is_digit(c) {
+            alloc start := i
+            loop i < n and is_digit(b[i]) {
+                i := i + 1
+            }
+            alloc int_end := i
+            # Promote to float if followed by `.<digit>` or `[eE][+-]?<digit>`.
+            # A bare trailing `.` (e.g. `5.`) does NOT promote, so `5.foo`
+            # parses as attribute access on int 5.
+            alloc is_float_dot := false
+            if i < n and b[i] == 46 and i + 1 < n and is_digit(b[i + 1]) {
+                is_float_dot := true
+            }
+            alloc is_float_exp := false
+            if i < n and (b[i] == 101 or b[i] == 69) {
+                is_float_exp := true
+            }
+            if is_float_dot or is_float_exp {
+                if is_float_dot {
+                    i := i + 1
+                    loop i < n and is_digit(b[i]) {
+                        i := i + 1
+                    }
+                }
+                if i < n and (b[i] == 101 or b[i] == 69) {
+                    i := i + 1
+                    if i < n and (b[i] == 43 or b[i] == 45) {
+                        i := i + 1
+                    }
+                    alloc exp_start := i
+                    loop i < n and is_digit(b[i]) {
+                        i := i + 1
+                    }
+                    if exp_start == i {
+                        panic("SyntaxError: Float exponent has no digits in '" + bytes_to_string(b[start:i]) + "' on line " + line + " in " + file)
+                    }
+                }
+                # Slice the literal text out so the runtime can convert it
+                # to IEEE-754 bits via `float_bits`. The compiler itself
+                # never does float math.
+                append(tokens, ["FNUM", bytes_to_string(b[start:i]), line])
+            } else {
+                append(tokens, ["NUM", parse_int_literal(bytes_to_string(b[start:int_end]), line, file), line])
+            }
+        } elif c == 34 {
+            # "string literal"
+            i := i + 1
+            alloc sb := []
+            loop i < n and b[i] != 34 {
+                if b[i] == 92 and i + 1 < n {
+                    alloc esc := decode_escape(b[i + 1])
+                    append(sb, esc[0])
+                    if length(esc) > 1 {
+                        append(sb, esc[1])
+                    }
+                    i := i + 2
+                } else {
+                    if b[i] == 10 {
+                        line := line + 1
+                    }
+                    append(sb, b[i])
+                    i := i + 1
+                }
+            }
+            if i >= n {
+                panic("SyntaxError: Unterminated string starting on line " + line + " in " + file)
+            }
+            i := i + 1
+            append(tokens, ["STR", bytes_to_string(sb), line])
+        } elif is_alpha(c) {
+            alloc start := i
+            loop i < n and is_alnum(b[i]) {
+                i := i + 1
+            }
+            alloc word := bytes_to_string(b[start:i])
+            alloc kind := keyword_kind(word)
+            if kind == "" {
+                append(tokens, ["ID", word, line])
+            } else {
+                append(tokens, [kind, word, line])
+            }
+        } elif c == 58 and d == 61 {
+            append(tokens, ["ASSIGN", "", line])
+            i := i + 2
+        } elif c == 61 and d == 61 {
+            append(tokens, ["EQ", "", line])
+            i := i + 2
+        } elif c == 33 and d == 61 {
+            append(tokens, ["NE", "", line])
+            i := i + 2
+        } elif c == 60 and d == 61 {
+            append(tokens, ["LE", "", line])
+            i := i + 2
+        } elif c == 62 and d == 61 {
+            append(tokens, ["GE", "", line])
+            i := i + 2
+        } elif c == 60 and d == 60 {
+            append(tokens, ["SHL", "", line])
+            i := i + 2
+        } elif c == 62 and d == 62 {
+            append(tokens, ["SHR", "", line])
+            i := i + 2
+        } elif c == 47 and d == 47 {
+            append(tokens, ["DSLASH", "", line])
+            i := i + 2
+        } else {
+            alloc kind := ""
+            if c == 123 { kind := "LBRACE" }
+            if c == 125 { kind := "RBRACE" }
+            if c == 40 { kind := "LPAREN" }
+            if c == 41 { kind := "RPAREN" }
+            if c == 91 { kind := "LBRACK" }
+            if c == 93 { kind := "RBRACK" }
+            if c == 44 { kind := "COMMA" }
+            if c == 46 { kind := "DOT" }
+            if c == 58 { kind := "COLON" }
+            if c == 43 { kind := "PLUS" }
+            if c == 45 { kind := "MINUS" }
+            if c == 42 { kind := "STAR" }
+            if c == 47 { kind := "SLASH" }
+            if c == 37 { kind := "PERCENT" }
+            if c == 38 { kind := "AMP" }
+            if c == 124 { kind := "PIPE" }
+            if c == 94 { kind := "CARET" }
+            if c == 126 { kind := "TILDE" }
+            if c == 60 { kind := "LT" }
+            if c == 62 { kind := "GT" }
+            if kind == "" {
+                panic("SyntaxError: Unexpected character '" + char_at(b, i) + "' on line " + line + " in " + file)
+            }
+            append(tokens, [kind, "", line])
+            i := i + 1
+        }
+    }
+    append(tokens, ["EOF", "", line])
+    return tokens
+}
+
+# === Parser ================================================================
+#
+# All parser routines take (tokens, position) and return [node, new_position].
+# AST nodes are lists tagged by their first element.
+
+# Mutable parser state held in the global `parse_state` so individual parser
+# routines don't need to thread the source-file path through every call.
+alloc parse_state := ["", []]
+
+proc set_parse_state(file, tokens) {
+    parse_state := [file, tokens]
+}
+
+proc parse_file() {
+    return parse_state[0]
+}
+
+proc parse_tokens() {
+    return parse_state[1]
+}
+
+proc tok_at(i) {
+    alloc ts := parse_state[1]
+    return ts[i]
+}
+
+proc tok_kind(i) {
+    return tok_at(i)[0]
+}
+
+proc tok_val(i) {
+    return tok_at(i)[1]
+}
+
+proc tok_line(i) {
+    return tok_at(i)[2]
+}
+
+proc syntax_error(msg, i) {
+    alloc t := tok_at(i)
+    panic("SyntaxError: " + msg + " on line " + t[2] + " in " + parse_file())
+}
+
+proc skip_newlines(i) {
+    loop tok_kind(i) == "NL" {
+        i := i + 1
+    }
+    return i
+}
+
+# How a token kind is spelled in an error message. Same table as
+# `TokKind::describe` in rust/src/lexer.rs, so both frontends report
+# a syntax error in the same words.
+alloc TOK_DESCRIPTIONS := freeze({
+    NUM: "number", FNUM: "float", STR: "string", ID: "identifier",
+    TRUE: "true", FALSE: "false", IF: "if", ELIF: "elif", ELSE: "else",
+    LOOP: "loop", BREAK: "break", EMIT: "emit", IMPORT: "import",
+    FOR: "for", IN: "in", CONTINUE: "continue", NOT: "not",
+    AS: "as", FACTS: "facts", FUNC: "proc", RETURN: "return",
+    AND: "and", OR: "or", ALLOC: "alloc", TRY: "try", EXCEPT: "except",
+    ASSIGN: ":=", LBRACE: "{", RBRACE: "}", LPAREN: "(", RPAREN: ")",
+    LBRACK: "[", RBRACK: "]", COMMA: ",", DOT: ".", COLON: ":",
+    PLUS: "+", MINUS: "-", STAR: "*", PERCENT: "%", SLASH: "/",
+    DSLASH: "//", SHL: "<<", SHR: ">>", AMP: "&", PIPE: "|",
+    CARET: "^", TILDE: "~", GE: ">=", LE: "<=", EQ: "==", NE: "!=",
+    GT: ">", LT: "<", NL: "newline", EOF: "<eof>"
+})
+
+proc tok_describe(kind) {
+    if has_key(TOK_DESCRIPTIONS, kind) {
+        return TOK_DESCRIPTIONS[kind]
+    }
+    return kind
+}
+
+proc expect(kind, i) {
+    if tok_kind(i) != kind {
+        syntax_error("Expected '" + tok_describe(kind) + "' but got '" + tok_describe(tok_kind(i)) + "'", i)
+    }
+    return i + 1
+}
+
+# ---- Expressions ----------------------------------------------------------
+
+proc parse_expr(i) {
+    return parse_or(i)
+}
+
+proc parse_or(i) {
+    alloc r := parse_and(i)
+    loop tok_kind(r[1]) == "OR" {
+        alloc line := tok_line(r[1])
+        alloc rhs := parse_and(r[1] + 1)
+        r := [["bin", "or", r[0], rhs[0], line], rhs[1]]
+    }
+    return r
+}
+
+proc parse_and(i) {
+    alloc r := parse_not(i)
+    loop tok_kind(r[1]) == "AND" {
+        alloc line := tok_line(r[1])
+        alloc rhs := parse_not(r[1] + 1)
+        r := [["bin", "and", r[0], rhs[0], line], rhs[1]]
+    }
+    return r
+}
+
+# `not` binds looser than a comparison and tighter than `and`, so
+# `not a == b and c` reads as `(not (a == b)) and c`.
+proc parse_not(i) {
+    if tok_kind(i) == "NOT" {
+        alloc line := tok_line(i)
+        alloc r := parse_not(i + 1)
+        return [["unary", "not", r[0], line], r[1]]
+    }
+    return parse_cmp(i)
+}
+
+proc parse_cmp(i) {
+    alloc r := parse_bor(i)
+    loop true {
+        alloc k := tok_kind(r[1])
+        alloc op := ""
+        if k == "EQ" { op := "eq" }
+        if k == "NE" { op := "ne" }
+        if k == "LT" { op := "lt" }
+        if k == "LE" { op := "le" }
+        if k == "GT" { op := "gt" }
+        if k == "GE" { op := "ge" }
+        if op == "" {
+            return r
+        }
+        alloc line := tok_line(r[1])
+        alloc rhs := parse_bor(r[1] + 1)
+        r := [["bin", op, r[0], rhs[0], line], rhs[1]]
+    }
+    return r
+}
+
+proc parse_bor(i) {
+    alloc r := parse_bxor(i)
+    loop tok_kind(r[1]) == "PIPE" {
+        alloc line := tok_line(r[1])
+        alloc rhs := parse_bxor(r[1] + 1)
+        r := [["bin", "bor", r[0], rhs[0], line], rhs[1]]
+    }
+    return r
+}
+
+proc parse_bxor(i) {
+    alloc r := parse_band(i)
+    loop tok_kind(r[1]) == "CARET" {
+        alloc line := tok_line(r[1])
+        alloc rhs := parse_band(r[1] + 1)
+        r := [["bin", "bxor", r[0], rhs[0], line], rhs[1]]
+    }
+    return r
+}
+
+proc parse_band(i) {
+    alloc r := parse_shift(i)
+    loop tok_kind(r[1]) == "AMP" {
+        alloc line := tok_line(r[1])
+        alloc rhs := parse_shift(r[1] + 1)
+        r := [["bin", "band", r[0], rhs[0], line], rhs[1]]
+    }
+    return r
+}
+
+proc parse_shift(i) {
+    alloc r := parse_add(i)
+    loop true {
+        alloc k := tok_kind(r[1])
+        alloc op := ""
+        if k == "SHL" { op := "shl" }
+        if k == "SHR" { op := "shr" }
+        if op == "" {
+            return r
+        }
+        alloc line := tok_line(r[1])
+        alloc rhs := parse_add(r[1] + 1)
+        r := [["bin", op, r[0], rhs[0], line], rhs[1]]
+    }
+    return r
+}
+
+proc parse_add(i) {
+    alloc r := parse_mul(i)
+    loop true {
+        alloc k := tok_kind(r[1])
+        alloc op := ""
+        if k == "PLUS"  { op := "add" }
+        if k == "MINUS" { op := "sub" }
+        if op == "" {
+            return r
+        }
+        alloc line := tok_line(r[1])
+        alloc rhs := parse_mul(r[1] + 1)
+        r := [["bin", op, r[0], rhs[0], line], rhs[1]]
+    }
+    return r
+}
+
+proc parse_mul(i) {
+    alloc r := parse_unary(i)
+    loop true {
+        alloc k := tok_kind(r[1])
+        alloc op := ""
+        if k == "STAR"    { op := "mul" }
+        if k == "SLASH"   { op := "div" }
+        if k == "DSLASH"  { op := "floor_div" }
+        if k == "PERCENT" { op := "mod" }
+        if op == "" {
+            return r
+        }
+        alloc line := tok_line(r[1])
+        alloc rhs := parse_unary(r[1] + 1)
+        r := [["bin", op, r[0], rhs[0], line], rhs[1]]
+    }
+    return r
+}
+
+proc parse_unary(i) {
+    alloc k := tok_kind(i)
+    if k == "TILDE" {
+        alloc line := tok_line(i)
+        alloc r := parse_unary(i + 1)
+        return [["unary", "bnot", r[0], line], r[1]]
+    }
+    if k == "MINUS" {
+        alloc line := tok_line(i)
+        alloc r := parse_unary(i + 1)
+        return [["unary", "neg", r[0], line], r[1]]
+    }
+    if k == "PLUS" {
+        alloc line := tok_line(i)
+        alloc r := parse_unary(i + 1)
+        return [["unary", "plus", r[0], line], r[1]]
+    }
+    return parse_postfix(i)
+}
+
+proc parse_postfix(i) {
+    alloc r := parse_primary(i)
+    loop true {
+        alloc k := tok_kind(r[1])
+        if k == "LPAREN" {
+            alloc line := tok_line(r[1])
+            alloc j := skip_newlines(r[1] + 1)
+            alloc args := []
+            if tok_kind(j) != "RPAREN" {
+                alloc a := parse_expr(j)
+                args := args + [a[0]]
+                j := skip_newlines(a[1])
+                loop tok_kind(j) == "COMMA" {
+                    j := skip_newlines(j + 1)
+                    a := parse_expr(j)
+                    args := args + [a[0]]
+                    j := skip_newlines(a[1])
+                }
+            }
+            j := expect("RPAREN", j)
+            r := [["call", r[0], args, line], j]
+        } elif k == "LBRACK" {
+            alloc line := tok_line(r[1])
+            alloc j := r[1] + 1
+            alloc start := parse_expr(j)
+            if tok_kind(start[1]) == "COLON" {
+                alloc end_idx := start[1] + 1
+                if tok_kind(end_idx) == "RBRACK" {
+                    end_idx := end_idx + 1
+                    r := [["slice", r[0], start[0], false, line], end_idx]
+                } else {
+                    alloc e := parse_expr(end_idx)
+                    end_idx := expect("RBRACK", e[1])
+                    r := [["slice", r[0], start[0], e[0], line], end_idx]
+                }
+            } else {
+                j := expect("RBRACK", start[1])
+                r := [["index", r[0], start[0], line], j]
+            }
+        } elif k == "DOT" {
+            alloc line := tok_line(r[1])
+            if tok_kind(r[1] + 1) != "ID" {
+                syntax_error("Expected identifier after '.'", r[1] + 1)
+            }
+            alloc name := tok_val(r[1] + 1)
+            r := [["dot", r[0], name, line], r[1] + 2]
+        } else {
+            return r
+        }
+    }
+    return r
+}
+
+proc parse_primary(i) {
+    alloc k := tok_kind(i)
+    alloc line := tok_line(i)
+    if k == "NUM" {
+        return [["num", tok_val(i), line], i + 1]
+    }
+    if k == "FNUM" {
+        return [["fnum", tok_val(i), line], i + 1]
+    }
+    if k == "STR" {
+        return [["str", tok_val(i), line], i + 1]
+    }
+    if k == "TRUE" {
+        return [["bool", true, line], i + 1]
+    }
+    if k == "FALSE" {
+        return [["bool", false, line], i + 1]
+    }
+    if k == "ID" {
+        return [["id", tok_val(i), line], i + 1]
+    }
+    if k == "LPAREN" {
+        alloc r := parse_expr(i + 1)
+        return [r[0], expect("RPAREN", r[1])]
+    }
+    if k == "LBRACK" {
+        alloc j := skip_newlines(i + 1)
+        alloc elems := []
+        loop tok_kind(j) != "RBRACK" {
+            alloc r := parse_expr(j)
+            elems := elems + [r[0]]
+            j := skip_newlines(r[1])
+            if tok_kind(j) == "COMMA" {
+                j := skip_newlines(j + 1)
+            } elif tok_kind(j) != "RBRACK" {
+                # No comma, so this has to be the end of the list.
+                # (Elements used to be accepted without separators,
+                # which the Rust parser rejects.)
+                expect("RBRACK", j)
+            }
+        }
+        return [["list", elems, line], j + 1]
+    }
+    if k == "LBRACE" {
+        alloc j := skip_newlines(i + 1)
+        alloc pairs := []
+        loop tok_kind(j) != "RBRACE" {
+            alloc key := ""
+            if tok_kind(j) == "STR" {
+                key := tok_val(j)
+                j := j + 1
+            } elif tok_kind(j) == "ID" {
+                key := tok_val(j)
+                j := j + 1
+            } else {
+                syntax_error("Invalid dict key", j)
+            }
+            j := expect("COLON", j)
+            j := skip_newlines(j)
+            alloc v := parse_expr(j)
+            pairs := pairs + [[key, v[0]]]
+            j := skip_newlines(v[1])
+            if tok_kind(j) == "COMMA" {
+                j := skip_newlines(j + 1)
+            } elif tok_kind(j) != "RBRACE" {
+                # No comma, so this has to be the end of the dict.
+                expect("RBRACE", j)
+            }
+        }
+        return [["dict", pairs, line], j + 1]
+    }
+    syntax_error("Unexpected token '" + tok_describe(k) + "'", i)
+    return [false, i]
+}
+
+# ---- Statements -----------------------------------------------------------
+
+proc parse_block(i) {
+    alloc line := tok_line(i)
+    alloc j := expect("LBRACE", i)
+    j := skip_newlines(j)
+    alloc stmts := []
+    loop tok_kind(j) != "RBRACE" {
+        alloc r := parse_stmt(j)
+        stmts := stmts + [r[0]]
+        j := skip_newlines(r[1])
+    }
+    return [["block", stmts, line], j + 1]
+}
+
+proc parse_lvalue(i) {
+    if tok_kind(i) != "ID" {
+        syntax_error("Expected identifier", i)
+    }
+    alloc node := ["id", tok_val(i), tok_line(i)]
+    alloc j := i + 1
+    loop true {
+        alloc k := tok_kind(j)
+        if k == "DOT" {
+            if tok_kind(j + 1) != "ID" {
+                syntax_error("Expected identifier after '.'", j + 1)
+            }
+            alloc attr := tok_val(j + 1)
+            node := ["dot", node, attr, tok_line(j + 1)]
+            j := j + 2
+        } elif k == "LBRACK" {
+            alloc line := tok_line(j)
+            alloc r := parse_expr(j + 1)
+            j := expect("RBRACK", r[1])
+            node := ["index", node, r[0], line]
+        } else {
+            return [node, j]
+        }
+    }
+    return [node, j]
+}
+
+proc parse_stmt(i) {
+    alloc k := tok_kind(i)
+    alloc line := tok_line(i)
+    if k == "ALLOC" {
+        alloc j := i + 1
+        if tok_kind(j) != "ID" {
+            syntax_error("Expected identifier after 'alloc'", j)
+        }
+        alloc name := tok_val(j)
+        j := expect("ASSIGN", j + 1)
+        alloc r := parse_expr(j)
+        return [["decl", name, r[0], line], r[1]]
+    }
+    if k == "EMIT" {
+        alloc r := parse_expr(i + 1)
+        return [["emit", r[0], line], r[1]]
+    }
+    if k == "FACTS" {
+        alloc r := parse_expr(i + 1)
+        return [["facts", r[0], line], r[1]]
+    }
+    if k == "IMPORT" {
+        if tok_kind(i + 1) != "STR" {
+            syntax_error("Expected string literal after 'import'", i + 1)
+        }
+        alloc path := tok_val(i + 1)
+        alloc j := expect("AS", i + 2)
+        if tok_kind(j) != "ID" {
+            syntax_error("Expected identifier after 'as'", j)
+        }
+        alloc alias := tok_val(j)
+        return [["import", path, alias, line], j + 1]
+    }
+    if k == "IF" {
+        alloc r := parse_expr(i + 1)
+        alloc cond := r[0]
+        alloc bb := parse_block(r[1])
+        alloc elif_cases := []
+        alloc else_block := false
+        alloc j := bb[1]
+        loop tok_kind(j) == "ELIF" {
+            alloc e_line := tok_line(j)
+            alloc ec := parse_expr(j + 1)
+            alloc eb := parse_block(ec[1])
+            elif_cases := elif_cases + [[ec[0], eb[0], e_line]]
+            j := eb[1]
+        }
+        if tok_kind(j) == "ELSE" {
+            alloc eb := parse_block(j + 1)
+            else_block := eb[0]
+            j := eb[1]
+        }
+        # Fold elif chain into nested if/else.
+        alloc tail := else_block
+        alloc idx := length(elif_cases) - 1
+        loop idx >= 0 {
+            alloc ec := elif_cases[idx]
+            tail := ["if", ec[0], ec[1], tail, ec[2]]
+            idx := idx - 1
+        }
+        return [["if", cond, bb[0], tail, line], j]
+    }
+    if k == "LOOP" {
+        alloc r := parse_expr(i + 1)
+        alloc body := parse_block(r[1])
+        return [["loop", r[0], body[0], line], body[1]]
+    }
+    if k == "FOR" {
+        alloc j := i + 1
+        if tok_kind(j) != "ID" {
+            syntax_error("Expected identifier after 'for'", j)
+        }
+        alloc name := tok_val(j)
+        j := expect("IN", j + 1)
+        alloc r := parse_expr(j)
+        alloc body := parse_block(r[1])
+        return [["for", name, r[0], body[0], line], body[1]]
+    }
+    if k == "BREAK" {
+        return [["break", line], i + 1]
+    }
+    if k == "CONTINUE" {
+        return [["continue", line], i + 1]
+    }
+    if k == "FUNC" {
+        alloc j := i + 1
+        if tok_kind(j) != "ID" {
+            syntax_error("Expected function name after 'proc'", j)
+        }
+        alloc name := tok_val(j)
+        j := expect("LPAREN", j + 1)
+        j := skip_newlines(j)
+        alloc params := []
+        if tok_kind(j) != "RPAREN" {
+            if tok_kind(j) != "ID" {
+                syntax_error("Expected parameter name", j)
+            }
+            params := params + [tok_val(j)]
+            j := skip_newlines(j + 1)
+            loop tok_kind(j) == "COMMA" {
+                j := skip_newlines(j + 1)
+                if tok_kind(j) != "ID" {
+                    syntax_error("Expected parameter name", j)
+                }
+                params := params + [tok_val(j)]
+                j := skip_newlines(j + 1)
+            }
+        }
+        j := expect("RPAREN", j)
+        alloc body := parse_block(j)
+        return [["func", name, params, body[0], line], body[1]]
+    }
+    if k == "RETURN" {
+        alloc r := parse_expr(i + 1)
+        return [["return", r[0], line], r[1]]
+    }
+    if k == "TRY" {
+        alloc tb := parse_block(i + 1)
+        alloc j := expect("EXCEPT", tb[1])
+        alloc exc_name := false
+        if tok_kind(j) == "ID" {
+            exc_name := tok_val(j)
+            j := j + 1
+        }
+        alloc eb := parse_block(j)
+        return [["try", tb[0], exc_name, eb[0], line], eb[1]]
+    }
+    if k == "ID" {
+        # Reassignment fast path: ID := expr
+        if tok_kind(i + 1) == "ASSIGN" {
+            alloc name := tok_val(i)
+            alloc r := parse_expr(i + 2)
+            return [["assign", name, r[0], line], r[1]]
+        }
+        # lvalue := expr (attr or index assign), or expression statement.
+        alloc lv := parse_lvalue(i)
+        if tok_kind(lv[1]) == "ASSIGN" {
+            alloc r := parse_expr(lv[1] + 1)
+            alloc target := lv[0]
+            if target[0] == "dot" {
+                return [["attr_assign", target[1], target[2], r[0], line], r[1]]
+            }
+            if target[0] == "index" {
+                return [["index_assign", target[1], target[2], r[0], line], r[1]]
+            }
+            return [["expr_stmt", target, line], lv[1]]
+        }
+        # Expression statement.
+        alloc r := parse_postfix(i)
+        return [["expr_stmt", r[0], line], r[1]]
+    }
+    syntax_error("Unexpected token '" + tok_describe(k) + "'", i)
+    return [false, i]
+}
+
+proc parse_program(file, tokens) {
+    set_parse_state(file, tokens)
+    alloc i := skip_newlines(0)
+    alloc stmts := []
+    loop tok_kind(i) != "EOF" {
+        alloc r := parse_stmt(i)
+        stmts := stmts + [r[0]]
+        i := skip_newlines(r[1])
+    }
+    return stmts
+}
+
+# === Compiler ==============================================================
+#
+# Lowers the AST to a flat list of bytecode instructions plus a list of
+# function entries [name, params, address]. The output mirrors what the
+# Rust compiler produces, byte-for-byte.
+
+# Compiler state (no closures so we keep this in globals).
+alloc cc_code := []
+# Parallel to cc_code: per-instruction [file_idx, line]. Updated by
+# every cc_emit / cc_placeholder call from cc_current_file_idx +
+# cc_current_line. compile_stmt / compile_expr refresh the line at
+# their top so all subsequent emits tag their instruction with the
+# originating source line. Mirrors `Compiler::lines` in compiler.rs.
+alloc cc_lines := []
+# All source files ever loaded by this compile, in the order they
+# were first seen. Entry-point is always index 0.
+alloc cc_src_files := []
+# Path index of the file currently being compiled. Swapped when
+# entering / leaving an imported module body so traceback frames
+# inside an import resolve to the imported file's path, not the entry's.
+alloc cc_current_file_idx := 0
+# Line of the AST node currently being compiled. Refreshed at the top
+# of every compile_stmt / compile_expr; compiler-synthesised
+# instructions (e.g. the implicit PushNone+Ret after a function body)
+# inherit whatever the last refresh set.
+alloc cc_current_line := 0
+alloc cc_pending_funcs := []   # list of [name, params, body_code, body_lines, source_file_idx]
+alloc cc_funcs := []           # list of [name, params, address, source_file_idx]
+alloc cc_break_stack := []     # list of (list of patch indices)
+# Number of `SETUP_EXCEPT` blocks currently open in the function being
+# compiled. `return` / `break` / tail-call sites must emit a matching
+# number of `POP_BLOCK` instructions so a later `RAISE` doesn't unwind
+# into a stale handler.
+alloc cc_try_depth := 0
+# Saved cc_try_depth at the start of each currently-open loop, in
+# parallel with cc_break_stack. `break` uses this to know how many
+# tries are nested between it and its target loop.
+alloc cc_loop_try_depth := []
+# Address of the test of each currently-open loop, in parallel with
+# cc_break_stack: where `continue` jumps to.
+alloc cc_loop_starts := []
+# How many `for` loops enclose the statement being compiled, in the
+# current proc. Numbers each loop's hidden variables.
+alloc cc_for_depth := 0
+alloc cc_local_scopes := [[]]  # stack of name lists
+alloc cc_module_counter := 0
+alloc cc_current_prefix := ""
+alloc cc_current_file := ""
+
+# Mangled names that have been alloc'd at the top level. Tracked
+# separately from `cc_local_scopes[0]` (which holds *unmangled* names)
+# so two imported modules with `alloc i := ...` don't falsely collide
+# on the bare name — they get distinct prefixes (`__mod_3__i`,
+# `__mod_4__i`, ...) and only a real same-module duplicate trips the
+# check.
+alloc cc_top_level_declared := []
+
+# Cache of compiled imports: each entry is [resolved_path, prefix, exports]
+# where `exports` is a list of [name, kind] pairs.  Subsequent imports of
+# the same module reuse the cached prefix and exports without re-inlining
+# the module body — matching the Rust compiler's behaviour and keeping
+# bytecode size proportional to the number of *distinct* modules rather
+# than the number of import sites.
+alloc cc_loaded_modules := []
+
+# Direct-call arity table: list of [mangled_name, param_count] pairs.
+# Populated by a pre-pass over each AST's top-level statements before the
+# bodies are compiled, so forward references (caller above callee in
+# source) can still be checked.  Direct `Call`/`TCALL` emit sites consult
+# this to reject mismatched argument counts at compile time — preventing
+# operand-stack leaks at the cost of catching the bug where it lives.
+alloc cc_proc_arity := []
+
+# Stack of paths currently being inlined.  Used to reject cyclic imports
+# before they recurse infinitely.
+alloc cc_loading := []
+
+# Lexical stack of the nested procs whose bodies are currently being
+# compiled, innermost last: [source name, function-table key].
+#
+# The function table is one flat, program-wide namespace, so a nested
+# proc can't be registered under its source name — two procs each
+# defining a local `helper` would overwrite one another (and a nested
+# `helper` would replace a top-level `helper` for the whole program).
+# Each nested proc therefore gets a unique key of the form
+# `__mod_<n>__<name>`. That is the shape the VMs already strip back to
+# the bare name when binding MAKE_FUNC inside a function and when
+# printing tracebacks, so no backend needs to know about it.
+#
+# A nested proc is a closure, so a call to it from inside its own body
+# (recursion) compiles like any other closure call: LOAD of the bare
+# name + CALL_VALUE. The runtimes bind a closure's own name in the
+# frame they build for it, which is what makes the LOAD resolve. This
+# stack only exists so that such a call can still have its argument
+# count checked at compile time. The third element is the index in
+# cc_local_scopes of the proc's own scope: a parameter or local
+# declared at or below it shadows the proc. Mirrors `nested_procs` in
+# rust/src/compiler.rs.
+alloc cc_nested_procs := []
+
+# For each function body currently being compiled (innermost last),
+# every name that body declares anywhere at its own level: allocs,
+# nested procs, import aliases and except-bindings, including ones
+# further down than the statement being compiled. A closure captures
+# the enclosing locals that exist when it is *defined*, so a nested
+# proc that names one of these before its declaration can never see
+# it; cc_check_not_declared_later turns that into a compile error.
+# Mirrors `later_decls` in rust/src/compiler.rs.
+alloc cc_later_decls := []
+
+# Names declared at the top level of the file being compiled (the entry
+# file, or the module currently being inlined). A nested proc may
+# legitimately mean one of these even when an enclosing proc declares
+# the same name further down. Mirrors `file_top_names`.
+alloc cc_file_top_names := []
+
+# Builtin names: calls to these become BUILTIN.
+alloc cc_builtins := [
+    "chr", "ascii", "hex", "binary", "length", "read_file",
+    "freeze", "call_builtin", "file_open", "file_read",
+    "file_write", "file_close", "file_seek", "file_tell",
+    "file_exists",
+    "is_dir", "read_dir", "make_dir", "string_bytes",
+    "int", "float", "floor", "ceil", "round", "abs",
+    "sqrt", "pow", "log", "sin", "cos", "tan",
+    "float_bits", "bits_to_float", "bytes_to_string", "dict_keys",
+    "has_key",
+    "list_repeat",
+    "append", "chmod",
+    "exit_with_error", "exit", "getpid", "subprocess",
+    "stdin_readline", "stdin_read", "stdin_read_bytes",
+    "time_ms", "sleep_ms", "stdin_set_raw", "stdin_read_key",
+    "pty_spawn", "pty_read", "pty_write", "pty_close", "pty_resize",
+    "print", "executable_path",
+    "tcp_listen", "tcp_accept", "tcp_connect",
+    "tcp_read", "tcp_write", "tcp_close",
+    "fork"
+]
+
+proc cc_is_builtin(name) {
+    alloc i := 0
+    alloc n := length(cc_builtins)
+    loop i < n {
+        if cc_builtins[i] == name {
+            return true
+        }
+        i := i + 1
+    }
+    return false
+}
+
+# RAISE-helper names map to ErrorKind codes.
+proc cc_raise_kind(name) {
+    if name == "panic" or name == "raise" {
+        return EK_GENERIC
+    }
+    if name == "_omg_vm_syntax_error_handle"        { return EK_SYNTAX        }
+    if name == "_omg_vm_type_error_handle"          { return EK_TYPE          }
+    if name == "_omg_vm_undef_ident_error_handle"   { return EK_UNDEF_IDENT   }
+    if name == "_omg_vm_value_error_handle"         { return EK_VALUE         }
+    if name == "_omg_vm_module_import_error_handle" { return EK_MODULE_IMPORT }
+    return -1
+}
+
+proc cc_is_reserved(name) {
+    return name == "args" or name == "module_file" or name == "current_dir"
+}
+
+proc cc_mangle(name) {
+    if cc_current_prefix == "" {
+        return name
+    }
+    return cc_current_prefix + name
+}
+
+# Function-table key for a direct CALL/TCALL of `name`: a top-level
+# proc of the current module. (Calls to nested procs never get here;
+# they are value bindings and go through LOAD + CALL_VALUE.)
+proc cc_resolve_call_name(name) {
+    return cc_mangle(name)
+}
+
+# The function-table key of the enclosing nested proc called `name`, or
+# false when there is none or a parameter/local inside that proc
+# shadows it.
+proc cc_enclosing_nested_key(name) {
+    alloc i := length(cc_nested_procs) - 1
+    loop i >= 0 {
+        if cc_nested_procs[i][0] == name {
+            alloc depth := cc_nested_procs[i][2]
+            alloc n := length(cc_local_scopes)
+            loop depth < n {
+                if list_contains_name(cc_local_scopes[depth], name) {
+                    return false
+                }
+                depth := depth + 1
+            }
+            return cc_nested_procs[i][1]
+        }
+        i := i - 1
+    }
+    return false
+}
+
+# Add to `acc` every name that `node` declares at its own function
+# level, and return the result. Descends into blocks and if/loop/try
+# bodies, but not into nested proc bodies (those are a different scope).
+proc cc_collect_declared(node, acc) {
+    alloc kind := node[0]
+    if kind == "decl" or kind == "func" {
+        return acc + [node[1]]
+    }
+    if kind == "import" {
+        return acc + [node[2]]
+    }
+    if kind == "block" {
+        alloc stmts := node[1]
+        alloc i := 0
+        alloc n := length(stmts)
+        loop i < n {
+            acc := cc_collect_declared(stmts[i], acc)
+            i := i + 1
+        }
+        return acc
+    }
+    if kind == "if" {
+        acc := cc_collect_declared(node[2], acc)
+        if node[3] != false {
+            acc := cc_collect_declared(node[3], acc)
+        }
+        return acc
+    }
+    if kind == "loop" {
+        return cc_collect_declared(node[2], acc)
+    }
+    if kind == "for" {
+        return cc_collect_declared(node[3], acc + [node[1]])
+    }
+    if kind == "try" {
+        acc := cc_collect_declared(node[1], acc)
+        if node[2] != false {
+            acc := acc + [node[2]]
+        }
+        return cc_collect_declared(node[3], acc)
+    }
+    return acc
+}
+
+# Reject a nested proc's use of a name that an *enclosing* proc only
+# declares further down. Called for names that did not resolve to a
+# local, i.e. that are about to be treated as globals.
+#
+# A closure captures the enclosing locals that exist at the point where
+# it is defined, so such a name can never be reached: it used to fail at
+# run time with an UndefinedIdentError (and crash an AOT binary). A name
+# the file also declares at the top level is left alone, because then
+# the reference means that global.
+proc cc_check_not_declared_later(name) {
+    alloc n := length(cc_later_decls)
+    if n < 2 or cc_is_reserved(name) {
+        return false
+    }
+    if list_contains_name(cc_file_top_names, name) or list_contains_name(cc_local_scopes[0], name) {
+        return false
+    }
+    alloc i := 0
+    loop i < n - 1 {
+        if list_contains_name(cc_later_decls[i], name) {
+            panic("SyntaxError: '" + name + "' is used in a nested proc before the enclosing proc declares it on line " + cc_current_line + " in " + cc_current_file)
+        }
+        i := i + 1
+    }
+    return false
+}
+
+proc cc_in_function_scope(name) {
+    if length(cc_local_scopes) <= 1 {
+        return false
+    }
+    alloc i := 1
+    alloc n := length(cc_local_scopes)
+    loop i < n {
+        alloc scope := cc_local_scopes[i]
+        alloc j := 0
+        alloc m := length(scope)
+        loop j < m {
+            if scope[j] == name {
+                return true
+            }
+            j := j + 1
+        }
+        i := i + 1
+    }
+    return false
+}
+
+proc cc_is_value_binding(name) {
+    alloc i := 0
+    alloc n := length(cc_local_scopes)
+    loop i < n {
+        alloc scope := cc_local_scopes[i]
+        alloc j := 0
+        alloc m := length(scope)
+        loop j < m {
+            if scope[j] == name {
+                return true
+            }
+            j := j + 1
+        }
+        i := i + 1
+    }
+    return false
+}
+
+proc cc_declare_local(name) {
+    alloc top := length(cc_local_scopes) - 1
+    alloc scope := cc_local_scopes[top]
+    cc_local_scopes[top] := scope + [name]
+}
+
+# Linear scan: is `name` in the list of names? Used by the alloc
+# duplicate-declaration check.
+proc list_contains_name(xs, name) {
+    alloc i := 0
+    alloc n := length(xs)
+    loop i < n {
+        if xs[i] == name {
+            return true
+        }
+        i := i + 1
+    }
+    return false
+}
+
+proc cc_resolve_load(name) {
+    if cc_in_function_scope(name) {
+        return name
+    }
+    if cc_is_reserved(name) {
+        return name
+    }
+    return cc_mangle(name)
+}
+
+proc cc_resolve_store(name) {
+    # Reserved globals always pass through unprefixed.
+    if cc_is_reserved(name) {
+        return name
+    }
+    # Inside a function body: only function-scope locals stay unprefixed.
+    # Writes to names declared at the module's top level get mangled so they
+    # update the module's actual global slot — without this, `tok_len := n`
+    # inside an imported module would create a stray function-local instead
+    # of mutating the module's `tok_len` global.
+    if length(cc_local_scopes) > 1 {
+        if cc_in_function_scope(name) {
+            return name
+        }
+        return cc_mangle(name)
+    }
+    return cc_mangle(name)
+}
+
+# --- Instruction emission -------------------------------------------------
+#
+# Instructions are 2-element lists ["KIND", payload].
+
+proc cc_emit(instr) {
+    cc_code := cc_code + [instr]
+    cc_lines := cc_lines + [[cc_current_file_idx, cc_current_line]]
+}
+
+proc cc_emit_simple(opname) {
+    cc_emit([opname, false])
+}
+
+# Intern a source-file path into cc_src_files, returning its index.
+# Used by the entry-point setup and by import handling.
+proc cc_intern_file(path) {
+    alloc i := 0
+    alloc n := length(cc_src_files)
+    loop i < n {
+        if cc_src_files[i] == path {
+            return i
+        }
+        i := i + 1
+    }
+    cc_src_files := cc_src_files + [path]
+    return n
+}
+
+# Every AST node carries its originating source line as its last element.
+# Refresh cc_current_line before emitting any bytecode for a node so the
+# parallel cc_lines array tags the instruction with the right source span.
+proc cc_node_line(node) {
+    return node[length(node) - 1]
+}
+
+# Emit `n` POP_BLOCK instructions. Used by return / break / tail-call
+# sites to drain open SETUP_EXCEPT blocks before transferring control
+# out of their lexical scope.
+proc cc_emit_pop_blocks(n) {
+    alloc i := 0
+    loop i < n {
+        cc_emit_simple("POP_BLOCK")
+        i := i + 1
+    }
+}
+
+proc cc_placeholder(opname) {
+    alloc idx := length(cc_code)
+    cc_emit([opname, 0])
+    return idx
+}
+
+proc cc_patch(idx, target) {
+    cc_code[idx] := [cc_code[idx][0], target]
+}
+
+# Walk over the AST node and emit code; expressions push exactly one value.
+
+proc compile_expr(node) {
+    cc_current_line := cc_node_line(node)
+    alloc kind := node[0]
+    if kind == "num"  {
+        cc_emit(["PUSH_INT",  node[1]])
+        return false
+    }
+    if kind == "fnum" {
+        # `node[1]` is the literal text from the source; convert to bits and
+        # emit. The bit pattern survives a round-trip through emit_i64 →
+        # f64::from_bits in the VM.
+        cc_emit(["PUSH_FLOAT", float_bits(node[1])])
+        return false
+    }
+    if kind == "str"  {
+        cc_emit(["PUSH_STR",  node[1]])
+        return false
+    }
+    if kind == "bool" {
+        cc_emit(["PUSH_BOOL", node[1]])
+        return false
+    }
+    if kind == "id" {
+        if cc_in_function_scope(node[1]) == false {
+            cc_check_not_declared_later(node[1])
+        }
+        cc_emit(["LOAD", cc_resolve_load(node[1])])
+        return false
+    }
+    if kind == "list" {
+        alloc elems := node[1]
+        alloc i := 0
+        alloc n := length(elems)
+        loop i < n {
+            compile_expr(elems[i])
+            i := i + 1
+        }
+        cc_emit(["BUILD_LIST", n])
+        return false
+    }
+    if kind == "dict" {
+        alloc pairs := node[1]
+        alloc i := 0
+        alloc n := length(pairs)
+        loop i < n {
+            cc_emit(["PUSH_STR", pairs[i][0]])
+            compile_expr(pairs[i][1])
+            i := i + 1
+        }
+        cc_emit(["BUILD_DICT", n])
+        return false
+    }
+    if kind == "index" {
+        compile_expr(node[1])
+        compile_expr(node[2])
+        cc_emit_simple("INDEX")
+        return false
+    }
+    if kind == "slice" {
+        compile_expr(node[1])
+        compile_expr(node[2])
+        if node[3] == false {
+            cc_emit_simple("PUSH_NONE")
+        } else {
+            compile_expr(node[3])
+        }
+        cc_emit_simple("SLICE")
+        return false
+    }
+    if kind == "dot" {
+        compile_expr(node[1])
+        cc_emit(["ATTR", node[2]])
+        return false
+    }
+    if kind == "call" {
+        alloc callee := node[1]
+        alloc args := node[2]
+        if callee[0] == "id" {
+            alloc cname := callee[1]
+            alloc rk := cc_raise_kind(cname)
+            if rk != -1 {
+                if length(args) > 0 {
+                    compile_expr(args[0])
+                } else {
+                    cc_emit(["PUSH_STR", ""])
+                }
+                cc_emit(["RAISE", rk])
+                # RAISE always unwinds, so no follow-up bytecode runs.  We
+                # match the Rust compiler exactly and leave the stack
+                # logically unbalanced — the unwind code path doesn't care.
+                return false
+            }
+            if cc_is_builtin(cname) {
+                alloc i := 0
+                alloc n := length(args)
+                loop i < n {
+                    compile_expr(args[i])
+                    i := i + 1
+                }
+                cc_emit(["BUILTIN", [cname, n]])
+                return false
+            }
+            if cc_is_value_binding(cname) {
+                # A call to an enclosing nested proc (usually recursion)
+                # is one of these; its argument count is known, so check
+                # it here.
+                alloc nested_key := cc_enclosing_nested_key(cname)
+                if nested_key != false {
+                    cc_check_direct_call_arity(cname, nested_key, length(args), cc_current_line)
+                }
+                cc_emit(["LOAD", cc_resolve_load(cname)])
+                alloc i := 0
+                alloc n := length(args)
+                loop i < n {
+                    compile_expr(args[i])
+                    i := i + 1
+                }
+                cc_emit(["CALL_VALUE", n])
+                return false
+            }
+            cc_check_not_declared_later(cname)
+            alloc resolved_call_name := cc_resolve_call_name(cname)
+            cc_check_direct_call_arity(cname, resolved_call_name, length(args), cc_current_line)
+            alloc i := 0
+            alloc n := length(args)
+            loop i < n {
+                compile_expr(args[i])
+                i := i + 1
+            }
+            cc_emit(["CALL", resolved_call_name])
+            return false
+        }
+        compile_expr(callee)
+        alloc i := 0
+        alloc n := length(args)
+        loop i < n {
+            compile_expr(args[i])
+            i := i + 1
+        }
+        cc_emit(["CALL_VALUE", n])
+        return false
+    }
+    if kind == "unary" {
+        compile_expr(node[2])
+        if node[1] == "neg"  {
+            cc_emit_simple("NEG")
+            return false
+        }
+        if node[1] == "bnot" {
+            cc_emit_simple("NOT")
+            return false
+        }
+        if node[1] == "plus" { return false }
+        if node[1] == "not" {
+            # `x or false` is the truth of x as a bool, and comparing
+            # that with false flips it.
+            cc_emit(["PUSH_BOOL", false])
+            cc_emit_simple("OR")
+            cc_emit(["PUSH_BOOL", false])
+            cc_emit_simple("EQ")
+            return false
+        }
+        panic("unknown unary op " + node[1])
+    }
+    if kind == "bin" {
+        alloc op := node[1]
+        if op == "and" {
+            compile_expr(node[2])
+            alloc jf := cc_placeholder("JUMP_IF_FALSE")
+            compile_expr(node[3])
+            cc_emit(["PUSH_BOOL", true])
+            cc_emit_simple("AND")
+            alloc jend := cc_placeholder("JUMP")
+            cc_patch(jf, length(cc_code))
+            cc_emit(["PUSH_BOOL", false])
+            cc_patch(jend, length(cc_code))
+            return false
+        }
+        if op == "or" {
+            compile_expr(node[2])
+            alloc jf := cc_placeholder("JUMP_IF_FALSE")
+            cc_emit(["PUSH_BOOL", true])
+            alloc jend := cc_placeholder("JUMP")
+            cc_patch(jf, length(cc_code))
+            compile_expr(node[3])
+            cc_emit(["PUSH_BOOL", false])
+            cc_emit_simple("OR")
+            cc_patch(jend, length(cc_code))
+            return false
+        }
+        compile_expr(node[2])
+        compile_expr(node[3])
+        if op == "add"  {
+            cc_emit_simple("ADD")
+             return false
+        }
+        if op == "sub"  {
+            cc_emit_simple("SUB")
+             return false
+        }
+        if op == "mul"  {
+            cc_emit_simple("MUL")
+             return false
+        }
+        if op == "div"  {
+            cc_emit_simple("DIV")
+             return false
+        }
+        if op == "floor_div" {
+            cc_emit_simple("FLOOR_DIV")
+            return false
+        }
+        if op == "mod"  {
+            cc_emit_simple("MOD")
+             return false
+        }
+        if op == "eq"   {
+            cc_emit_simple("EQ")
+              return false
+        }
+        if op == "ne"   {
+            cc_emit_simple("NE")
+              return false
+        }
+        if op == "lt"   {
+            cc_emit_simple("LT")
+              return false
+        }
+        if op == "le"   {
+            cc_emit_simple("LE")
+              return false
+        }
+        if op == "gt"   {
+            cc_emit_simple("GT")
+              return false
+        }
+        if op == "ge"   {
+            cc_emit_simple("GE")
+              return false
+        }
+        if op == "band" {
+            cc_emit_simple("BAND")
+            return false
+        }
+        if op == "bor"  {
+            cc_emit_simple("BOR")
+             return false
+        }
+        if op == "bxor" {
+            cc_emit_simple("BXOR")
+            return false
+        }
+        if op == "shl"  {
+            cc_emit_simple("SHL")
+             return false
+        }
+        if op == "shr"  {
+            cc_emit_simple("SHR")
+             return false
+        }
+        panic("unknown binary op " + op)
+    }
+    panic("unknown expression kind: " + kind)
+}
+
+proc compile_block_node(block) {
+    if block[0] == "block" {
+        alloc stmts := block[1]
+        alloc i := 0
+        alloc n := length(stmts)
+        loop i < n {
+            compile_stmt(stmts[i])
+            i := i + 1
+        }
+        return false
+    }
+    compile_stmt(block)
+    return false
+}
+
+# === Path helpers ===========================================================
+#
+# Plain string functions, mirrored one-for-one by `path_*` in
+# rust/src/compiler.rs. Both frontends must store byte-identical
+# paths in the source-file table (that is what `--verify-self-hosted`
+# and `--verify-omg-vm` compare), so both implement the same algorithm
+# on every platform — including Windows, where paths arrive with a
+# drive prefix (`C:/Users/...`) and either kind of slash. Keep the two
+# in lockstep.
+
+proc path_is_sep(ch) {
+    return ch == "/" or ch == "\\"
+}
+
+# True for `C:` / `c:` style drive prefixes.
+proc path_has_drive(p) {
+    if length(p) < 2 {
+        return false
+    }
+    alloc d := p[0]
+    return ((d >= "a" and d <= "z") or (d >= "A" and d <= "Z")) and p[1] == ":"
+}
+
+# A path is absolute when it starts with a separator (`/usr`,
+# `\\server`) or with a Windows drive prefix (`C:/Users`, `C:\Users`).
+proc path_is_absolute(p) {
+    if length(p) > 0 and path_is_sep(p[0]) {
+        return true
+    }
+    return path_has_drive(p)
+}
+
+# Everything before the last separator. "/a/b.omg" -> "/a",
+# "/b.omg" -> "/", "b.omg" -> "".
+proc path_dirname(p) {
+    alloc i := length(p) - 1
+    loop i >= 0 {
+        if path_is_sep(p[i]) {
+            if i == 0 {
+                return "/"
+            }
+            return p[0:i]
+        }
+        i := i - 1
+    }
+    return ""
+}
+
+# Join `rel` onto `base` and normalise. An absolute `rel` replaces
+# `base` entirely; an empty `base` leaves `rel` relative.
+proc path_join(base, rel) {
+    if path_is_absolute(rel) or length(base) == 0 {
+        return path_normalize(rel)
+    }
+    # Don't double the separator when `base` already ends in one (the
+    # filesystem root, or `C:/`): a leading `//` means "UNC path" to
+    # path_normalize.
+    if path_is_sep(base[length(base) - 1]) {
+        return path_normalize(base + rel)
+    }
+    return path_normalize(base + "/" + rel)
+}
+
+# Collapse `.` and `..` segments, repeated separators, and backslashes,
+# always producing forward slashes. Purely lexical — symlinks are not
+# resolved. The root of an absolute path is preserved and can't be
+# `..`-ed away:
+#
+#   /a/./b/../c            ->  /a/c
+#   a/../../b              ->  ../b
+#   C:\Users\me\..\x.omg   ->  C:/Users/x.omg
+#   \\server\share\a\..    ->  //server/share
+proc path_normalize(p) {
+    alloc n := length(p)
+    if n == 0 {
+        return p
+    }
+    # Split off the root, if any.
+    alloc root := ""
+    alloc i := 0
+    if path_is_sep(p[0]) {
+        if n >= 3 and path_is_sep(p[1]) and path_is_sep(p[2]) == false {
+            # Exactly two leading separators: a UNC path (\\server\share).
+            root := "//"
+            i := 2
+        } else {
+            root := "/"
+            i := 1
+        }
+    } elif path_has_drive(p) {
+        if n >= 3 and path_is_sep(p[2]) {
+            root := p[0:2] + "/"
+            i := 3
+        } else {
+            # Drive-relative (C:foo): keep the drive, nothing more.
+            root := p[0:2]
+            i := 2
+        }
+    }
+    alloc rooted := length(root) > 0
+    # Split the remainder into segments. Consecutive separators collapse
+    # (the empty segments between them are skipped).
+    alloc parts := []
+    alloc cur := ""
+    loop i < n {
+        alloc ch := p[i]
+        if path_is_sep(ch) {
+            if length(cur) > 0 {
+                parts := parts + [cur]
+            }
+            cur := ""
+        } else {
+            cur := cur + ch
+        }
+        i := i + 1
+    }
+    if length(cur) > 0 {
+        parts := parts + [cur]
+    }
+    # Walk segments: `.` drops; `..` pops a prior non-`..` segment if
+    # there is one. With nothing left to pop, a rooted path stays at
+    # its root (there is nowhere above it) and a relative one keeps
+    # the `..`.
+    alloc stack := []
+    alloc j := 0
+    alloc np := length(parts)
+    loop j < np {
+        alloc seg := parts[j]
+        if seg == "." {
+            # drop
+        } elif seg == ".." {
+            alloc top := length(stack) - 1
+            if top >= 0 and stack[top] != ".." {
+                stack := stack[0:top]
+            } elif rooted == false {
+                stack := stack + [seg]
+            }
+        } else {
+            stack := stack + [seg]
+        }
+        j := j + 1
+    }
+    # Rebuild the path.
+    alloc out := root
+    alloc k := 0
+    alloc ns := length(stack)
+    loop k < ns {
+        if k > 0 {
+            out := out + "/"
+        }
+        out := out + stack[k]
+        k := k + 1
+    }
+    if length(out) == 0 {
+        return "."
+    }
+    return out
+}
+
+# Make `path` absolute by joining it onto `cwd` when it is relative,
+# then normalise.
+proc path_absolute_normalised(path, cwd) {
+    if path_is_absolute(path) or length(cwd) == 0 {
+        return path_normalize(path)
+    }
+    if path_is_sep(cwd[length(cwd) - 1]) {
+        return path_normalize(cwd + path)
+    }
+    return path_normalize(cwd + "/" + path)
+}
+
+# Look up a previously-compiled module by its resolved path.  Returns the
+# cached entry [path, prefix, exports] or false.
+# Every name the top-level statements of `ast` declare.
+proc cc_collect_top_names(ast) {
+    alloc names := []
+    alloc i := 0
+    alloc n := length(ast)
+    loop i < n {
+        names := cc_collect_declared(ast[i], names)
+        i := i + 1
+    }
+    return names
+}
+
+# Pre-pass: walk an AST's top-level statements and record every proc's
+# parameter count into cc_proc_arity, mangled with cc_current_prefix.
+# Must run before compile_stmt visits the bodies so direct-call sites
+# can verify forward references.
+proc cc_collect_proc_arity(ast) {
+    alloc i := 0
+    alloc n := length(ast)
+    loop i < n {
+        alloc s := ast[i]
+        if s[0] == "func" {
+            cc_proc_arity := cc_proc_arity + [[cc_mangle(s[1]), length(s[2])]]
+        }
+        i := i + 1
+    }
+}
+
+# Linear-search lookup. Returns the parameter count, or -1 if `mangled`
+# isn't a known top-level proc (e.g. the call is a builtin or value
+# binding, both of which are handled before the direct-Call path).
+proc cc_lookup_proc_arity(mangled) {
+    alloc i := 0
+    alloc n := length(cc_proc_arity)
+    loop i < n {
+        if cc_proc_arity[i][0] == mangled {
+            return cc_proc_arity[i][1]
+        }
+        i := i + 1
+    }
+    return -1
+}
+
+# Reject a direct CALL/TCALL whose argument count doesn't match the
+# callee's declared parameter count. Mirrors the Rust compiler's
+# `check_direct_call_arity` so both frontends produce identical errors.
+proc cc_check_direct_call_arity(bare_name, resolved, got, line) {
+    alloc expected := cc_lookup_proc_arity(resolved)
+    if expected == -1 { return false }
+    if got == expected { return false }
+    alloc plural := "s"
+    if expected == 1 { plural := "" }
+    panic("SyntaxError: function '" + bare_name + "' expects " + expected + " argument" + plural + ", got " + got + " on line " + line + " in " + cc_current_file)
+}
+
+proc cc_find_loaded(resolved) {
+    alloc i := 0
+    alloc n := length(cc_loaded_modules)
+    loop i < n {
+        if cc_loaded_modules[i][0] == resolved {
+            return cc_loaded_modules[i]
+        }
+        i := i + 1
+    }
+    return false
+}
+
+# True iff `resolved` is currently on the import-loading stack.
+proc cc_is_loading(resolved) {
+    alloc i := 0
+    alloc n := length(cc_loading)
+    loop i < n {
+        if cc_loading[i] == resolved {
+            return true
+        }
+        i := i + 1
+    }
+    return false
+}
+
+# Compile an `import "path" as alias`.  Each distinct module is inlined
+# at most once across the whole compilation; subsequent imports of the
+# same path reuse the cached prefix and exports to emit only the
+# alias-binding namespace dict.
+proc compile_import(path, alias, line) {
+    alloc resolved := path_join(path_dirname(cc_current_file), path)
+
+    if cc_is_loading(resolved) {
+        panic("ModuleImportError: recursive import of '" + resolved + "'")
+    }
+
+    alloc prefix := ""
+    alloc exports := []
+    alloc cached := cc_find_loaded(resolved)
+    if cached != false {
+        # Reuse the cached prefix + export list.  No re-inlining: the
+        # module's procs are already in the function table and its
+        # `alloc`s already executed at the original import site.
+        prefix := cached[1]
+        exports := cached[2]
+    } else {
+        cc_module_counter := cc_module_counter + 1
+        prefix := "__mod_" + cc_module_counter + "__"
+        alloc src := read_file(resolved)
+        if src == false {
+            panic("ModuleImportError: cannot read '" + resolved + "'")
+        }
+        alloc tokens := tokenize(src, resolved)
+        alloc ast := parse_program(resolved, tokens)
+        # Collect exports first so we can emit them in declaration order.
+        alloc i := 0
+        alloc n := length(ast)
+        loop i < n {
+            alloc s := ast[i]
+            if s[0] == "decl" {
+                exports := exports + [[s[1], "value"]]
+            }
+            if s[0] == "func" {
+                exports := exports + [[s[1], "func"]]
+            }
+            i := i + 1
+        }
+        # Insert into the cache *before* recursing so a cycle sees the
+        # partially-built entry rather than re-inlining.
+        cc_loaded_modules := cc_loaded_modules + [[resolved, prefix, exports]]
+        cc_loading := cc_loading + [resolved]
+        # Compile the imported module's top-level statements inline at
+        # this import site, with all globals prefixed. The file_idx swap
+        # is what lets traceback frames inside this module's body show
+        # the imported file's path, not the entry's.
+        alloc saved_prefix := cc_current_prefix
+        alloc saved_file   := cc_current_file
+        alloc saved_file_idx := cc_current_file_idx
+        cc_current_prefix := prefix
+        cc_current_file   := resolved
+        cc_current_file_idx := cc_intern_file(resolved)
+        # The module is its own lexical world: a call inside it must
+        # never resolve to a nested proc of whoever is importing it.
+        alloc saved_nested := cc_nested_procs
+        cc_nested_procs := []
+        alloc saved_later := cc_later_decls
+        cc_later_decls := []
+        alloc saved_top_names := cc_file_top_names
+        cc_file_top_names := cc_collect_top_names(ast)
+        cc_collect_proc_arity(ast)
+        i := 0
+        loop i < n {
+            compile_stmt(ast[i])
+            i := i + 1
+        }
+        cc_nested_procs := saved_nested
+        cc_later_decls := saved_later
+        cc_file_top_names := saved_top_names
+        cc_current_prefix := saved_prefix
+        cc_current_file   := saved_file
+        cc_current_file_idx := saved_file_idx
+        # Pop the loading stack.
+        alloc top := length(cc_loading) - 1
+        cc_loading := cc_loading[0:top]
+    }
+
+    # Build the namespace dict using the prefix + exports we either
+    # cached or just produced.  The dict-build is emitted at every
+    # import site so each alias gets its own frozen-dict binding.
+    alloc i := 0
+    alloc ne := length(exports)
+    loop i < ne {
+        alloc ex := exports[i]
+        cc_emit(["PUSH_STR", ex[0]])
+        if ex[1] == "func" {
+            cc_emit(["PUSH_STR", prefix + ex[0]])
+        } else {
+            if cc_is_reserved(ex[0]) {
+                cc_emit(["LOAD", ex[0]])
+            } else {
+                cc_emit(["LOAD", prefix + ex[0]])
+            }
+        }
+        i := i + 1
+    }
+    cc_emit(["BUILD_DICT", ne])
+    cc_emit(["BUILTIN", ["freeze", 1]])
+    cc_declare_local(alias)
+    cc_emit(["STORE_LOCAL", cc_resolve_store(alias)])
+}
+
+proc compile_stmt(stmt) {
+    cc_current_line := cc_node_line(stmt)
+    alloc kind := stmt[0]
+    if kind == "emit" {
+        compile_expr(stmt[1])
+        cc_emit_simple("EMIT")
+        return false
+    }
+    if kind == "decl" {
+        # Top-level same-scope re-declaration is a compile-time error: it's
+        # almost always a typo or accidental copy/paste. We track top-level
+        # allocs by their *mangled* name so two imported modules with
+        # `alloc i := ...` don't falsely collide. Inside a proc we don't
+        # enforce this yet — OMG is proc-scoped (no block scoping), so the
+        # "alloc-per-branch" idiom in parser-style code would be forced
+        # into ugly hoists. Block scoping is a future change that would
+        # extend the rule into procs.
+        if length(cc_local_scopes) == 1 {
+            alloc dn_mangled := cc_resolve_store(stmt[1])
+            if list_contains_name(cc_top_level_declared, dn_mangled) {
+                panic("SyntaxError: '" + stmt[1] + "' is already declared at the top level on line " + stmt[3] + " in " + cc_current_file)
+            }
+            cc_top_level_declared := cc_top_level_declared + [dn_mangled]
+        }
+        compile_expr(stmt[2])
+        # Declare before resolving the storage name so resolve_store sees
+        # the new local in scope and emits the unmangled name.  The RHS
+        # was already compiled against the old scope.
+        cc_declare_local(stmt[1])
+        cc_emit(["STORE_LOCAL", cc_resolve_store(stmt[1])])
+        return false
+    }
+    if kind == "assign" {
+        compile_expr(stmt[2])
+        if cc_in_function_scope(stmt[1]) == false {
+            cc_check_not_declared_later(stmt[1])
+        }
+        cc_emit(["STORE", cc_resolve_store(stmt[1])])
+        return false
+    }
+    if kind == "attr_assign" {
+        compile_expr(stmt[1])
+        compile_expr(stmt[3])
+        cc_emit(["STORE_ATTR", stmt[2]])
+        return false
+    }
+    if kind == "index_assign" {
+        compile_expr(stmt[1])
+        compile_expr(stmt[2])
+        compile_expr(stmt[3])
+        cc_emit_simple("STORE_INDEX")
+        return false
+    }
+    if kind == "expr_stmt" {
+        compile_expr(stmt[1])
+        cc_emit_simple("POP")
+        return false
+    }
+    if kind == "import" {
+        compile_import(stmt[1], stmt[2], stmt[3])
+        return false
+    }
+    if kind == "facts" {
+        compile_expr(stmt[1])
+        cc_emit_simple("ASSERT")
+        return false
+    }
+    if kind == "if" {
+        # Unroll any elif chain produced by the parser.  Use a sentinel
+        # (`done`) instead of `break` to avoid relying on a nested loop
+        # break-frame inside compile_stmt's own bytecode.
+        alloc cases := [[stmt[1], stmt[2]]]
+        alloc else_block := false
+        alloc cur_tail := stmt[3]
+        alloc done := false
+        loop done == false {
+            if cur_tail == false {
+                done := true
+            } elif cur_tail[0] == "if" {
+                cases := cases + [[cur_tail[1], cur_tail[2]]]
+                cur_tail := cur_tail[3]
+            } else {
+                else_block := cur_tail
+                done := true
+            }
+        }
+        alloc end_jumps := []
+        alloc i := 0
+        alloc n := length(cases)
+        loop i < n {
+            alloc c := cases[i]
+            compile_expr(c[0])
+            alloc jf := cc_placeholder("JUMP_IF_FALSE")
+            compile_block_node(c[1])
+            alloc tmp_jp := cc_placeholder("JUMP")
+            end_jumps := end_jumps + [tmp_jp]
+            cc_patch(jf, length(cc_code))
+            i := i + 1
+        }
+        if else_block != false {
+            compile_block_node(else_block)
+        }
+        alloc here := length(cc_code)
+        i := 0
+        alloc m := length(end_jumps)
+        loop i < m {
+            cc_patch(end_jumps[i], here)
+            i := i + 1
+        }
+        return false
+    }
+    if kind == "loop" {
+        alloc start := length(cc_code)
+        compile_expr(stmt[1])
+        alloc jf := cc_placeholder("JUMP_IF_FALSE")
+        cc_compile_loop_body(stmt[2], start, jf)
+        return false
+    }
+    if kind == "for" {
+        # `for x in xs { body }` is sugar for a counted loop over two
+        # hidden variables, numbered by how deeply `for` loops are
+        # nested in this proc:
+        #
+        #     __for_seq_N := xs
+        #     __for_idx_N := 0
+        #     loop __for_idx_N < length(__for_seq_N) {
+        #         alloc x := __for_seq_N[__for_idx_N]
+        #         __for_idx_N := __for_idx_N + 1
+        #         body
+        #     }
+        #
+        # The index moves on before the body runs, so `continue` can
+        # jump straight back to the test.
+        alloc seq_name := "__for_seq_" + cc_for_depth
+        alloc idx_name := "__for_idx_" + cc_for_depth
+        compile_expr(stmt[2])
+        cc_declare_local(seq_name)
+        cc_emit(["STORE_LOCAL", cc_resolve_store(seq_name)])
+        cc_emit(["PUSH_INT", 0])
+        cc_declare_local(idx_name)
+        cc_emit(["STORE_LOCAL", cc_resolve_store(idx_name)])
+        alloc start := length(cc_code)
+        cc_emit(["LOAD", cc_resolve_load(idx_name)])
+        cc_emit(["LOAD", cc_resolve_load(seq_name)])
+        cc_emit(["BUILTIN", ["length", 1]])
+        cc_emit_simple("LT")
+        alloc jf := cc_placeholder("JUMP_IF_FALSE")
+        cc_emit(["LOAD", cc_resolve_load(seq_name)])
+        cc_emit(["LOAD", cc_resolve_load(idx_name)])
+        cc_emit_simple("INDEX")
+        cc_declare_local(stmt[1])
+        cc_emit(["STORE_LOCAL", cc_resolve_store(stmt[1])])
+        cc_emit(["LOAD", cc_resolve_load(idx_name)])
+        cc_emit(["PUSH_INT", 1])
+        cc_emit_simple("ADD")
+        cc_emit(["STORE", cc_resolve_store(idx_name)])
+        cc_for_depth := cc_for_depth + 1
+        cc_compile_loop_body(stmt[3], start, jf)
+        cc_for_depth := cc_for_depth - 1
+        return false
+    }
+    if kind == "try" {
+        alloc handler_idx := cc_placeholder("SETUP_EXCEPT")
+        # Track open SETUP_EXCEPT so any return/break/tail-call in the
+        # try body emits the matching POP_BLOCK before transferring
+        # control. The except body sees the original try_depth.
+        cc_try_depth := cc_try_depth + 1
+        compile_block_node(stmt[1])
+        cc_try_depth := cc_try_depth - 1
+        cc_emit_simple("POP_BLOCK")
+        alloc jend := cc_placeholder("JUMP")
+        alloc handler_pc := length(cc_code)
+        cc_patch(handler_idx, handler_pc)
+        alloc exc_name := stmt[2]
+        if exc_name == false {
+            cc_emit_simple("POP")
+        } else {
+            cc_declare_local(exc_name)
+            cc_emit(["STORE_LOCAL", cc_resolve_store(exc_name)])
+        }
+        compile_block_node(stmt[3])
+        cc_patch(jend, length(cc_code))
+        return false
+    }
+    if kind == "func" {
+        alloc name := stmt[1]
+        alloc params := stmt[2]
+        alloc body := stmt[3]
+        # A proc defined inside another proc gets a unique function-table
+        # key (see cc_nested_procs); a top-level proc keeps its
+        # module-mangled source name. The key is chosen *before*
+        # compiling the body so both frontends number nested procs in
+        # the same order.
+        alloc nested := length(cc_local_scopes) > 1
+        alloc mangled := cc_mangle(name)
+        if nested {
+            cc_module_counter := cc_module_counter + 1
+            mangled := "__mod_" + cc_module_counter + "__" + name
+            cc_proc_arity := cc_proc_arity + [[mangled, length(params)]]
+            # Declared in the enclosing scope *before* the body is
+            # compiled, so the proc's own name is a value binding inside
+            # its body: a recursive call becomes LOAD + CALL_VALUE and
+            # goes through the closure (keeping its captured variables),
+            # not a direct CALL that would start from an empty frame.
+            cc_declare_local(name)
+            cc_nested_procs := cc_nested_procs + [[name, mangled, length(cc_local_scopes)]]
+        }
+        alloc body_pair := compile_function_body(params, body)
+        if nested {
+            cc_nested_procs := cc_nested_procs[0:length(cc_nested_procs) - 1]
+        }
+        alloc body_code := body_pair[0]
+        alloc body_lines := body_pair[1]
+        alloc fn_file_idx := cc_current_file_idx
+        cc_pending_funcs := cc_pending_funcs + [[mangled, params, body_code, body_lines, fn_file_idx]]
+        cc_emit(["MAKE_FUNC", mangled])
+        return false
+    }
+    if kind == "return" {
+        # `return` only means something inside a proc. At top level
+        # there is no frame to return to; this used to compile anyway
+        # and die at run time with an internal "RET with empty return
+        # stack" error.
+        if length(cc_local_scopes) <= 1 {
+            panic("SyntaxError: 'return' outside of a proc on line " + stmt[2] + " in " + cc_current_file)
+        }
+        alloc expr := stmt[1]
+        if expr[0] == "call" and expr[1][0] == "id" {
+            alloc cname := expr[1][1]
+            alloc rk := cc_raise_kind(cname)
+            if rk != -1 {
+                if length(expr[2]) > 0 {
+                    compile_expr(expr[2][0])
+                } else {
+                    cc_emit(["PUSH_STR", ""])
+                }
+                cc_emit(["RAISE", rk])
+                return false
+            }
+            if cc_is_builtin(cname) == false and cc_is_value_binding(cname) == false and cc_try_depth == 0 {
+                # Direct tail call of a top-level proc. Not inside a
+                # `try` block: a tail call gives up the current frame,
+                # and with it the handler, so an error raised by the
+                # callee would escape the `except` written around it.
+                alloc args := expr[2]
+                cc_check_not_declared_later(cname)
+                alloc resolved_tcall_name := cc_resolve_call_name(cname)
+                cc_check_direct_call_arity(cname, resolved_tcall_name, length(args), cc_current_line)
+                alloc i := 0
+                alloc n := length(args)
+                loop i < n {
+                    compile_expr(args[i])
+                    i := i + 1
+                }
+                # Drain any open SETUP_EXCEPT blocks before transferring
+                # control out of this function.
+                cc_emit_pop_blocks(cc_try_depth)
+                cc_emit(["TCALL", resolved_tcall_name])
+                return false
+            }
+        }
+        compile_expr(expr)
+        cc_emit_pop_blocks(cc_try_depth)
+        cc_emit_simple("RET")
+        return false
+    }
+    if kind == "break" {
+        # Drain SETUP_EXCEPT blocks opened *between* the enclosing loop
+        # and this break. cc_loop_try_depth records cc_try_depth as it
+        # was when the loop started.
+        if length(cc_break_stack) == 0 {
+            panic("SyntaxError: 'break' outside of loop in " + cc_current_file)
+        }
+        alloc ltd_top := length(cc_loop_try_depth) - 1
+        alloc saved := cc_loop_try_depth[ltd_top]
+        cc_emit_pop_blocks(cc_try_depth - saved)
+        alloc top := length(cc_break_stack) - 1
+        alloc j := cc_placeholder("JUMP")
+        cc_break_stack[top] := cc_break_stack[top] + [j]
+        return false
+    }
+    if kind == "continue" {
+        if length(cc_loop_starts) == 0 {
+            panic("SyntaxError: 'continue' outside of loop in " + cc_current_file)
+        }
+        # Like `break`: leave the try blocks opened inside the loop,
+        # then go back to the loop's test.
+        alloc ltd_top := length(cc_loop_try_depth) - 1
+        cc_emit_pop_blocks(cc_try_depth - cc_loop_try_depth[ltd_top])
+        cc_emit(["JUMP", cc_loop_starts[length(cc_loop_starts) - 1]])
+        return false
+    }
+    if kind == "block" {
+        compile_block_node(stmt)
+        return false
+    }
+    panic("unknown statement: " + kind)
+}
+
+# The part `loop` and `for` share: compile the body of a loop whose
+# test starts at `start` and leaves through the JUMP_IF_FALSE at `jf`,
+# then close the loop and patch every `break` in it.
+proc cc_compile_loop_body(body, start, jf) {
+    cc_break_stack := cc_break_stack + [[]]
+    cc_loop_try_depth := cc_loop_try_depth + [cc_try_depth]
+    cc_loop_starts := cc_loop_starts + [start]
+    compile_block_node(body)
+    cc_emit(["JUMP", start])
+    alloc here := length(cc_code)
+    cc_patch(jf, here)
+    alloc top := length(cc_break_stack) - 1
+    alloc breaks := cc_break_stack[top]
+    cc_break_stack := cc_break_stack[0:top]
+    cc_loop_try_depth := cc_loop_try_depth[0:top]
+    cc_loop_starts := cc_loop_starts[0:top]
+    alloc i := 0
+    loop i < length(breaks) {
+        cc_patch(breaks[i], here)
+        i := i + 1
+    }
+    return false
+}
+
+proc compile_function_body(params, body) {
+    alloc saved_code   := cc_code
+    alloc saved_lines  := cc_lines
+    alloc saved_breaks := cc_break_stack
+    # Each function tracks its own try-block depth, independent of the
+    # enclosing scope's. (Outer try/except blocks don't carry through a
+    # function call boundary.)
+    alloc saved_try_depth := cc_try_depth
+    alloc saved_loop_try := cc_loop_try_depth
+    alloc saved_loop_starts := cc_loop_starts
+    alloc saved_for_depth := cc_for_depth
+    cc_loop_starts := []
+    cc_for_depth := 0
+    cc_code := []
+    cc_lines := []
+    cc_break_stack := []
+    cc_try_depth := 0
+    cc_loop_try_depth := []
+    alloc new_scope := []
+    alloc i := 0
+    alloc n := length(params)
+    loop i < n {
+        new_scope := new_scope + [params[i]]
+        i := i + 1
+    }
+    cc_local_scopes := cc_local_scopes + [new_scope]
+    cc_later_decls := cc_later_decls + [cc_collect_declared(body, [])]
+    compile_block_node(body)
+    cc_later_decls := cc_later_decls[0:length(cc_later_decls) - 1]
+    # Implicit return for procs that fall off the end. PUSH_NONE ensures
+    # RET pops a real value rather than consuming whatever the caller
+    # left on the operand stack (e.g. `xs + [void_proc()]` would have
+    # RET consume `xs`).
+    cc_emit_simple("PUSH_NONE")
+    cc_emit_simple("RET")
+    alloc popped := cc_local_scopes[0:length(cc_local_scopes) - 1]
+    cc_local_scopes := popped
+    alloc out_code := cc_code
+    alloc out_lines := cc_lines
+    cc_code := saved_code
+    cc_lines := saved_lines
+    cc_break_stack := saved_breaks
+    cc_try_depth := saved_try_depth
+    cc_loop_try_depth := saved_loop_try
+    cc_loop_starts := saved_loop_starts
+    cc_for_depth := saved_for_depth
+    return [out_code, out_lines]
+}
+
+# Rebase a function body's jump targets so they land at absolute PCs after
+# the function table is appended.
+proc cc_rebase(body, base) {
+    alloc out := []
+    alloc i := 0
+    alloc n := length(body)
+    loop i < n {
+        alloc instr := body[i]
+        alloc op := instr[0]
+        if op == "JUMP" or op == "JUMP_IF_FALSE" or op == "SETUP_EXCEPT" {
+            out := out + [[op, instr[1] + base]]
+        } else {
+            out := out + [instr]
+        }
+        i := i + 1
+    }
+    return out
+}
+
+# Drive a full program compilation. Returns [final_code, funcs_list], where
+# funcs_list is a list of [name, params, address] sorted by name.
+proc compile_program_node(ast, file) {
+    return compile_program_node_seeded(ast, file, [])
+}
+
+# Same as compile_program_node, but seeds the outermost scope with
+# `known_globals` after the state reset. Used by the REPL so calls to
+# names declared in previous turns compile to LOAD + CALL_VALUE
+# (closure path) instead of CALL (direct function-table lookup).
+proc compile_program_node_seeded(ast, file, known_globals) {
+    cc_code := []
+    cc_lines := []
+    cc_pending_funcs := []
+    cc_funcs := []
+    cc_break_stack := []
+    # Copy the seed list so subsequent mutations of cc_local_scopes
+    # don't bleed back to the caller's `known_globals`.
+    cc_local_scopes := [known_globals[0:length(known_globals)]]
+    cc_module_counter := 0
+    cc_current_prefix := ""
+    cc_current_file := file
+    cc_src_files := [file]
+    cc_current_file_idx := 0
+    cc_current_line := 0
+    cc_loaded_modules := []
+    cc_loading := []
+    cc_proc_arity := []
+    # Everything below is per-compilation state too. Leaving it set
+    # leaked one compile into the next when the compiler is used as a
+    # library (the REPL): `alloc x` in a second turn was rejected as
+    # "already declared".
+    cc_top_level_declared := []
+    cc_nested_procs := []
+    cc_later_decls := []
+    cc_file_top_names := cc_collect_top_names(ast)
+    cc_try_depth := 0
+    cc_loop_try_depth := []
+    cc_loop_starts := []
+    cc_for_depth := 0
+    cc_collect_proc_arity(ast)
+    alloc i := 0
+    alloc n := length(ast)
+    loop i < n {
+        compile_stmt(ast[i])
+        i := i + 1
+    }
+    cc_emit_simple("HALT")
+    alloc final_code := cc_code
+    alloc final_lines := cc_lines
+    alloc pf := cc_pending_funcs
+    i := 0
+    n := length(pf)
+    loop i < n {
+        alloc f := pf[i]
+        alloc addr := length(final_code)
+        cc_funcs := cc_funcs + [[f[0], f[1], addr, f[4]]]
+        final_code := final_code + cc_rebase(f[2], addr)
+        final_lines := final_lines + f[3]
+        i := i + 1
+    }
+    return [final_code, cc_funcs, cc_src_files, final_lines]
+}
+
+# === Bytecode writer =======================================================
+
+# Encode one compiled instruction tuple ["KIND", payload] into the
+# global wb_buf via the mutation-style emit_* helpers.
+proc encode_instr(instr) {
+    alloc op := instr[0]
+    alloc arg := instr[1]
+    if op == "PUSH_INT"        { bytes_append(OP_PUSH_INT)        emit_i64(arg) return false }
+    if op == "PUSH_FLOAT"      {
+        # `arg` is already the IEEE-754 bit pattern as an i64.
+        bytes_append(OP_PUSH_FLOAT)
+        emit_i64(arg)
+        return false
+    }
+    if op == "PUSH_STR"        { bytes_append(OP_PUSH_STR)        emit_str(arg) return false }
+    if op == "PUSH_BOOL" {
+        bytes_append(OP_PUSH_BOOL)
+        if arg == true { bytes_append(1) } else { bytes_append(0) }
+        return false
+    }
+    if op == "BUILD_LIST"      { bytes_append(OP_BUILD_LIST)      emit_u32(arg) return false }
+    if op == "BUILD_DICT"      { bytes_append(OP_BUILD_DICT)      emit_u32(arg) return false }
+    if op == "LOAD"            { bytes_append(OP_LOAD)            emit_str(arg) return false }
+    if op == "STORE"           { bytes_append(OP_STORE)           emit_str(arg) return false }
+    if op == "ADD"             { bytes_append(OP_ADD)             return false }
+    if op == "SUB"             { bytes_append(OP_SUB)             return false }
+    if op == "MUL"             { bytes_append(OP_MUL)             return false }
+    if op == "DIV"             { bytes_append(OP_DIV)             return false }
+    if op == "FLOOR_DIV"       { bytes_append(OP_FLOOR_DIV)       return false }
+    if op == "MOD"             { bytes_append(OP_MOD)             return false }
+    if op == "EQ"              { bytes_append(OP_EQ)              return false }
+    if op == "NE"              { bytes_append(OP_NE)              return false }
+    if op == "LT"              { bytes_append(OP_LT)              return false }
+    if op == "LE"              { bytes_append(OP_LE)              return false }
+    if op == "GT"              { bytes_append(OP_GT)              return false }
+    if op == "GE"              { bytes_append(OP_GE)              return false }
+    if op == "BAND"            { bytes_append(OP_BAND)            return false }
+    if op == "BOR"             { bytes_append(OP_BOR)             return false }
+    if op == "BXOR"            { bytes_append(OP_BXOR)            return false }
+    if op == "SHL"             { bytes_append(OP_SHL)             return false }
+    if op == "SHR"             { bytes_append(OP_SHR)             return false }
+    if op == "AND"             { bytes_append(OP_AND)             return false }
+    if op == "OR"              { bytes_append(OP_OR)              return false }
+    if op == "NOT"             { bytes_append(OP_NOT)             return false }
+    if op == "NEG"             { bytes_append(OP_NEG)             return false }
+    if op == "INDEX"           { bytes_append(OP_INDEX)           return false }
+    if op == "SLICE"           { bytes_append(OP_SLICE)           return false }
+    if op == "JUMP"            { bytes_append(OP_JUMP)            emit_u32(arg) return false }
+    if op == "JUMP_IF_FALSE"   { bytes_append(OP_JUMP_IF_FALSE)   emit_u32(arg) return false }
+    if op == "CALL"            { bytes_append(OP_CALL)            emit_str(arg) return false }
+    if op == "TCALL"           { bytes_append(OP_TCALL)           emit_str(arg) return false }
+    if op == "BUILTIN" {
+        bytes_append(OP_BUILTIN)
+        emit_str(arg[0])
+        emit_u32(arg[1])
+        return false
+    }
+    if op == "POP"             { bytes_append(OP_POP)             return false }
+    if op == "PUSH_NONE"       { bytes_append(OP_PUSH_NONE)       return false }
+    if op == "RET"             { bytes_append(OP_RET)             return false }
+    if op == "EMIT"            { bytes_append(OP_EMIT)            return false }
+    if op == "HALT"            { bytes_append(OP_HALT)            return false }
+    if op == "STORE_INDEX"     { bytes_append(OP_STORE_INDEX)     return false }
+    if op == "ATTR"            { bytes_append(OP_ATTR)            emit_str(arg) return false }
+    if op == "STORE_ATTR"      { bytes_append(OP_STORE_ATTR)      emit_str(arg) return false }
+    if op == "ASSERT"          { bytes_append(OP_ASSERT)          return false }
+    if op == "CALL_VALUE"      { bytes_append(OP_CALL_VALUE)      emit_u32(arg) return false }
+    if op == "SETUP_EXCEPT"    { bytes_append(OP_SETUP_EXCEPT)    emit_u32(arg) return false }
+    if op == "POP_BLOCK"       { bytes_append(OP_POP_BLOCK)       return false }
+    if op == "RAISE" {
+        bytes_append(OP_RAISE)
+        bytes_append(arg)
+        return false
+    }
+    if op == "MAKE_FUNC"       { bytes_append(OP_MAKE_FUNC)       emit_str(arg) return false }
+    if op == "STORE_LOCAL"     { bytes_append(OP_STORE_LOCAL)     emit_str(arg) return false }
+    panic("unknown instruction: " + op)
+}
+
+# Sort the function table by name so the emitted bytes are deterministic
+# regardless of declaration order. Insertion sort — N is small (a few
+# hundred entries at most for realistic programs).
+proc sort_funcs(funcs) {
+    alloc out := []
+    alloc i := 0
+    alloc n := length(funcs)
+    loop i < n {
+        alloc cur := funcs[i]
+        alloc j := length(out) - 1
+        loop j >= 0 and out[j][0] > cur[0] {
+            j := j - 1
+        }
+        alloc head := out[0:j + 1]
+        alloc tail := out[j + 1:length(out)]
+        out := head + [cur] + tail
+        i := i + 1
+    }
+    return out
+}
+
+# Build the full .omgb byte string. The v2 layout adds two sections:
+# a source-file table (right after the version) and a per-instruction
+# source map (right after the code blob). Both are what give runtime
+# errors their `File "foo.omg", line N, in <fn>` traceback context.
+# Layout mirrors `write_bytecode` in rust/src/bytecode.rs exactly
+# so the triple-meta fixed-point check stays byte-for-byte identical.
+proc write_bytecode(code, funcs, src_files, src_lines) {
+    # Reset the global write buffer at entry — we may be called
+    # multiple times across a process lifetime (each `--compile`
+    # invocation, REPL turns that AOT-build, etc).
+    wb_reset()
+    bytes_append(ascii("O"))
+    bytes_append(ascii("M"))
+    bytes_append(ascii("G"))
+    bytes_append(ascii("B"))
+    emit_u32(BC_VERSION)
+    # Source-file table.
+    emit_u32(length(src_files))
+    alloc fi := 0
+    alloc fn := length(src_files)
+    loop fi < fn {
+        emit_str(src_files[fi])
+        fi := fi + 1
+    }
+    alloc sorted := sort_funcs(funcs)
+    emit_u32(length(sorted))
+    alloc i := 0
+    alloc n := length(sorted)
+    loop i < n {
+        alloc f := sorted[i]
+        emit_str(f[0])
+        alloc params := f[1]
+        emit_u32(length(params))
+        alloc j := 0
+        alloc m := length(params)
+        loop j < m {
+            emit_str(params[j])
+            j := j + 1
+        }
+        emit_u32(f[2])
+        emit_u32(f[3])
+        i := i + 1
+    }
+    emit_u32(length(code))
+    i := 0
+    n := length(code)
+    loop i < n {
+        encode_instr(code[i])
+        i := i + 1
+    }
+    # Per-instruction source map, parallel to the code blob. Each
+    # entry is [file_idx, line]; we trust the compiler kept it the
+    # same length as `code` (debug-asserted in the Rust side via
+    # `debug_assert_eq!`).
+    emit_u32(length(src_lines))
+    i := 0
+    n := length(src_lines)
+    loop i < n {
+        emit_u32(src_lines[i][0])
+        emit_u32(src_lines[i][1])
+        i := i + 1
+    }
+    # Slice down to the live portion of wb_buf — the backing buffer
+    # is grown to a power of two via doubling and has stale zeros
+    # past wb_buf_top that the caller must not see.
+    return wb_buf[0:wb_buf_top]
+}
+
+# === Entry point ===========================================================
+
+# Compile the file at `in_path` and return the `.omgb` image as a list
+# of bytes. Nothing is written to disk.
+proc compile_file(in_path) {
+    alloc src := read_file(in_path)
+    if src == false {
+        panic("ModuleImportError: cannot read '" + in_path + "'")
+    }
+    # Absolute-normalise the entry path so the resulting .omgb's
+    # source-file table stays consistent regardless of which CWD the
+    # compiler was invoked from. Mirrors `absolute_normalised` in
+    # src/omg.omg + rust/src/main.rs.
+    alloc abs_path := cc_absolute_normalised(in_path)
+    alloc tokens := tokenize(src, abs_path)
+    alloc ast := parse_program(abs_path, tokens)
+    alloc compiled := compile_program_node(ast, abs_path)
+    return write_bytecode(compiled[0], compiled[1], compiled[2], compiled[3])
+}
+
+# Compile the file at `in_path` and write the image to `out_path`.
+proc do_compile(in_path, out_path) {
+    alloc bytes := compile_file(in_path)
+    alloc h := file_open(out_path, "wb")
+    file_write(h, bytes)
+    file_close(h)
+}
+
+# Make `path` absolute (join against current_dir when relative) and
+# collapse `./` / `..` segments. Symlinks NOT resolved — keeping
+# parity with how every other implementation produces the same path.
+proc cc_absolute_normalised(path) {
+    return path_absolute_normalised(path, current_dir)
+}
+
+# Library entry point: compile a source string in-memory and return
+# [code, funcs]. Used by the OMG-native REPL and the unified `omg`
+# driver, which runs each turn / each program through this rather
+# than the file-based do_compile path.
+#
+# The compiler emits PUSH_FLOAT with the f64's i64 bit pattern as the
+# payload, intending the bytecode reader to convert via bits_to_float
+# at decode time (see vm.omg's decode_one). When we skip the
+# serialise→parse round-trip and feed compile_program_node's output
+# straight into the VM, that conversion never happens — so we do it
+# here, leaving the in-memory `code` indistinguishable from what
+# parse_bytecode would have produced.
+proc compile_source(text, file_path) {
+    return compile_source_with_globals(text, file_path, [])
+}
+
+# REPL entry point: like compile_source but pre-seeds the outermost
+# scope with names known to be globals (e.g. names declared in
+# previous REPL turns). Mirrors `compile_source_with_globals` in
+# rust/src/compiler.rs. With the seed, the compiler emits LOAD +
+# CALL_VALUE for `add5(10)` even when `add5` was declared in an
+# earlier turn — the closure path through the function table.
+proc compile_source_with_globals(text, file_path, known_globals) {
+    alloc tokens := tokenize(text, file_path)
+    alloc ast := parse_program(file_path, tokens)
+    alloc compiled := compile_program_node_seeded(ast, file_path, known_globals)
+    # Pass the source-file table + per-instruction line map through to
+    # the caller alongside the code/funcs so the OMG-native driver
+    # can build the same traceback the Rust runtime does.
+    return [cc_decode_floats(compiled[0]), compiled[1], compiled[2], compiled[3]]
+}
+
+proc cc_decode_floats(code) {
+    alloc out := []
+    alloc i := 0
+    alloc n := length(code)
+    loop i < n {
+        alloc instr := code[i]
+        if instr[0] == "PUSH_FLOAT" {
+            out := out + [["PUSH_FLOAT", bits_to_float(instr[1])]]
+        } else {
+            out := out + [instr]
+        }
+        i := i + 1
+    }
+    return out
+}
+
+# Reset module-level compiler state. The REPL calls this between turns
+# so each turn compiles in a clean compiler context (the persistent
+# state lives in the VM's globals/funcs, not here).
+proc compile_reset() {
+    cc_code := []
+    cc_lines := []
+    cc_src_files := []
+    cc_current_file_idx := 0
+    cc_current_line := 0
+    cc_pending_funcs := []
+    cc_funcs := []
+    cc_break_stack := []
+    cc_local_scopes := [[]]
+    cc_module_counter := 0
+    cc_current_prefix := ""
+    cc_current_file := ""
+    cc_loaded_modules := []
+    cc_loading := []
+    cc_try_depth := 0
+    cc_loop_try_depth := []
+    cc_loop_starts := []
+    cc_for_depth := 0
+    cc_top_level_declared := []
+    cc_proc_arity := []
+    cc_nested_procs := []
+    cc_later_decls := []
+    cc_file_top_names := []
+}
+
+# Seed the outermost scope with names that exist in the VM's globals
+# from prior REPL turns. Without this, a call like `add5(10)` in turn 3
+# (where add5 was defined in turn 2 as a closure) would compile to
+# `CALL("add5")` (direct function-table lookup) and fail at runtime,
+# because add5 is a closure value in vm_globals — not a function. With
+# the seed, cc_is_value_binding("add5") returns true and the compiler
+# emits `LOAD + CALL_VALUE` instead, which works through both the
+# function-table and the closure paths.
+#
+# Mirror of `compile_source_with_globals` in rust/src/compiler.rs.
+proc cc_seed_globals(names) {
+    alloc i := 0
+    alloc n := length(names)
+    loop i < n {
+        cc_local_scopes[0] := cc_local_scopes[0] + [names[i]]
+        i := i + 1
+    }
+}
+
+# Small helper for the gate below. Avoids needing to expose cc_ends_with
+# to importers — keeps the library surface minimal.
+proc cc_path_ends_with(s, suffix) {
+    alloc ls := length(s)
+    alloc lp := length(suffix)
+    if lp > ls {
+        return false
+    }
+    return s[ls - lp:] == suffix
+}
+
+# Extract the basename of args[0]. Used to detect "am I being run
+# directly as the compiler" vs. "I've been imported as a library".
+proc cc_argv0_basename() {
+    alloc p := args[0]
+    alloc i := length(p) - 1
+    loop i >= 0 {
+        if p[i] == "/" or p[i] == "\\" {
+            return p[i + 1:]
+        }
+        i := i - 1
+    }
+    return p
+}
+
+proc cc_is_main_invocation() {
+    alloc bn := cc_argv0_basename()
+    # `<embedded>` is what rust/src/main.rs sets argv[0] to when it
+    # invokes the embedded compiler.omgb on a user's source.
+    if bn == "compiler.omg" or bn == "compiler.omgb" or bn == "<embedded>" {
+        return true
+    }
+    # `--verify-omg-vm` runs the compiler under vm.omg, which forwards
+    # its own args[1] (a tempfile path ending in .omgb) as the inner
+    # program's args[0]. Treat any .omgb argv[0] as "we're being run
+    # as a compiler bytecode", since that's the only case it happens.
+    if cc_path_ends_with(bn, ".omgb") {
+        return true
+    }
+    return false
+}
+
+# Script-main dispatch — runs only when this file is the top-level
+# program. When imported by another OMG program (e.g. the unified
+# `omg` driver), args[0] is the importer's binary and main is a no-op.
+if cc_is_main_invocation() and length(args) >= 3 and cc_path_ends_with(args[1], ".omg") {
+    do_compile(args[1], args[2])
+}

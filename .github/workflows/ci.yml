@@ -42,24 +42,24 @@ jobs:
       - name: Cache cargo registry & target
         uses: Swatinem/rust-cache@v2
         with:
-          workspaces: runtime -> target
+          workspaces: rust -> target
 
-      # Building also runs `runtime/build.rs`, which bootstraps
-      # `bootstrap/src/compiler.omgb` from `bootstrap/src/compiler.omg`
+      # Building also runs `rust/build.rs`, which bootstraps
+      # `src/compiler.omgb` from `src/compiler.omg`
       # using the Rust frontend. If the bootstrap is broken, the build
       # fails here.
       - name: Build (release)
-        run: cargo build --release --manifest-path runtime/Cargo.toml 2>&1 | tee build.log
+        run: cargo build --release --manifest-path rust/Cargo.toml 2>&1 | tee build.log
 
       - name: Run unit tests
-        run: cargo test --manifest-path runtime/Cargo.toml 2>&1 | tee test.log
+        run: cargo test --manifest-path rust/Cargo.toml 2>&1 | tee test.log
 
       # Portable end-to-end check (no C compiler needed):
       #   * self-hosting fixed point: the OMG-in-OMG compiler (running on
       #     the VM) produces byte-identical output to the Rust frontend
       #     when compiling its own source
       #   * triple-meta fixed point: the same, with the OMG compiler
-      #     running on the OMG-written VM (bootstrap/src/vm.omg)
+      #     running on the OMG-written VM (src/vm.omg)
       #   * both frontends agree on every .omg file in the repo
       #   * every example prints the same thing through both frontends
       #   * a regression program prints the expected output on the Rust
@@ -92,7 +92,7 @@ jobs:
             echo "::error title=${{ matrix.os }} $f::$msg"
           done
 
-  # Guards the `rust-version` promise in runtime/Cargo.toml.
+  # Guards the `rust-version` promise in rust/Cargo.toml.
   msrv:
     name: Rust runtime (MSRV 1.80)
     runs-on: ubuntu-latest
@@ -104,7 +104,7 @@ jobs:
         uses: dtolnay/rust-toolchain@1.80.0
 
       - name: Build
-        run: cargo build --manifest-path runtime/Cargo.toml 2>&1 | tee build.log
+        run: cargo build --manifest-path rust/Cargo.toml 2>&1 | tee build.log
 
       - name: Summarise failure
         if: failure()
@@ -115,7 +115,7 @@ jobs:
   # The native toolchain (OMG -> bytecode -> C -> machine code) needs
   # only a C compiler, and is built and tested on all three systems.
   # On Linux and Windows this is a *self-rebuild* from the binary
-  # checked into bootstrap/bin/ (omg, omg.exe); on macOS neither can
+  # checked into bin/ (omg, omg.exe); on macOS neither can
   # run, so build.sh bootstraps from the Rust runtime instead. The
   # Windows runner's C compiler is the MinGW-w64 GCC on its PATH.
   native:
@@ -135,24 +135,24 @@ jobs:
       - name: Cache cargo registry & target
         uses: Swatinem/rust-cache@v2
         with:
-          workspaces: runtime -> target
+          workspaces: rust -> target
 
       # The Rust runtime is the bootstrap seed for build.rs (which
-      # produces `bootstrap/src/{compiler,vm}.omgb`) and the reference
+      # produces `src/{compiler,vm}.omgb`) and the reference
       # implementation the test suite compares the native `omg`
       # against.
       - name: Build Rust runtime (bootstrap seed)
-        run: cargo build --release --manifest-path runtime/Cargo.toml 2>&1 | tee build.log
+        run: cargo build --release --manifest-path rust/Cargo.toml 2>&1 | tee build.log
 
-      # bootstrap/bin/omg is committed so a fresh clone has a native
+      # bin/omg is committed so a fresh clone has a native
       # toolchain without the Rust runtime. Check that it was built
-      # from bootstrap/src/ as it is in this commit (build.sh stamps
+      # from src/ as it is in this commit (build.sh stamps
       # it with a hash of its sources) *before* the steps below
       # rebuild it and hide the answer. Linux only: the committed
       # binary is Linux x86-64.
       - name: Checked-in native binary is current
         if: runner.os == 'Linux'
-        run: bootstrap/check-bin.sh 2>&1 | tee check-bin.log
+        run: scripts/check-bin.sh 2>&1 | tee check-bin.log
 
       # The checked-in omg.exe is cross-compiled on Linux. This is the
       # only place it meets a real Windows before the steps below
@@ -163,21 +163,21 @@ jobs:
           set -o pipefail
           {
             gcc --version | head -n 1
-            bootstrap/bin/omg.exe --version
-            bootstrap/bin/omg.exe tests/smoke/regressions.omg > checked-in.out 2>&1 || true
+            bin/omg.exe --version
+            bin/omg.exe tests/smoke/regressions.omg > checked-in.out 2>&1 || true
             diff tests/smoke/regressions.expected checked-in.out
-            bootstrap/bin/omg.exe --build tests/smoke/regressions.omg ./checked-in-aot
+            bin/omg.exe --build tests/smoke/regressions.omg ./checked-in-aot
             ./checked-in-aot.exe > checked-in-aot.out 2>&1 || true
             diff tests/smoke/regressions.expected checked-in-aot.out
           } 2>&1 | tee check-bin.log
 
-      # Compiles bootstrap/src/omg.omg (which imports the rest of the
-      # toolchain) → bootstrap/bin/omg (omg.exe on Windows). On Linux
+      # Compiles src/omg.omg (which imports the rest of the
+      # toolchain) → bin/omg (omg.exe on Windows). On Linux
       # and Windows this validates that the in-repo binary can rebuild
       # itself from the current OMG sources, the load-bearing
       # self-hosting invariant for the native pipeline.
       - name: Build native toolchain
-        run: bootstrap/build.sh 2>&1 | tee native-build.log
+        run: scripts/build.sh 2>&1 | tee native-build.log
 
       # A second pass always self-rebuilds: the binary from the first
       # pass was produced by an older compiler (Linux, Windows) or by
@@ -185,7 +185,7 @@ jobs:
       # itself.
       - name: Self-rebuild native toolchain
         if: runner.os != 'Windows'
-        run: bootstrap/build.sh 2>&1 | tee native-rebuild.log
+        run: scripts/build.sh 2>&1 | tee native-rebuild.log
 
       # On Windows the second pass goes through build.ps1, the same
       # build for people who work in PowerShell, so that both scripts
@@ -193,10 +193,10 @@ jobs:
       - name: Self-rebuild native toolchain (PowerShell)
         if: runner.os == 'Windows'
         shell: pwsh
-        run: ./bootstrap/build.ps1 *>&1 | Tee-Object -FilePath native-rebuild.log
+        run: ./scripts/build.ps1 *>&1 | Tee-Object -FilePath native-rebuild.log
 
       # tests/run.sh is the comprehensive end-to-end suite. It exercises
-      # bootstrap/bin/omg directly:
+      # bin/omg directly:
       #   * builtins   — process & I/O builtins via Rust + native AOT
       #   * driver     — every omg invocation form (interpret / --build
       #                  / --compile / --emit-c / --emit-js / --disasm
@@ -223,8 +223,8 @@ jobs:
       - name: Regression program (native interpreter and AOT)
         run: |
           set -o pipefail
-          OMG=bootstrap/bin/omg
-          if [ "$RUNNER_OS" = Windows ]; then OMG=bootstrap/bin/omg.exe; fi
+          OMG=bin/omg
+          if [ "$RUNNER_OS" = Windows ]; then OMG=bin/omg.exe; fi
           {
             "$OMG" tests/smoke/regressions.omg > native.out 2>&1 || true
             diff tests/smoke/regressions.expected native.out
@@ -240,9 +240,9 @@ jobs:
       - name: Checked-in web bundles are current
         if: runner.os == 'Linux'
         run: |
-          bootstrap/build-web.sh 2>&1 | tee web-build.log
+          scripts/build-web.sh 2>&1 | tee web-build.log
           git diff --stat --exit-code -- web || {
-            echo "::error title=web bundles are stale::Run bootstrap/build-web.sh and commit web/"
+            echo "::error title=web bundles are stale::Run scripts/build-web.sh and commit web/"
             exit 1
           }
 

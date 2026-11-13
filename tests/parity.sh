@@ -36,9 +36,9 @@ cd "$REPO_ROOT"
 # === Triple-meta fixed-point check ====================================
 section "Parity: triple-meta fixed-point"
 
-# Compile bootstrap/src/compiler.omg via three paths and confirm the bytes
+# Compile src/compiler.omg via three paths and confirm the bytes
 # match. This is the load-bearing self-hosting check.
-fp_out=$("$OMG_RUST" --verify-omg-vm bootstrap/src/compiler.omg 2>&1)
+fp_out=$("$OMG_RUST" --verify-omg-vm src/compiler.omg 2>&1)
 if echo "$fp_out" | grep -q "OMG-on-OMG-VM output matches Rust output"; then
     pass "compiler.omg: Rust frontend == OMG-on-Rust-VM == OMG-on-OMG-VM"
 else
@@ -127,8 +127,8 @@ section "Parity: native toolchain self-rebuild"
 # its own source must be the same before and after the rebuild. (The C
 # is compared, not the binary, because the binary records the absolute
 # paths of its sources and so differs from one checkout to the next.)
-"$OMG_NATIVE" --emit-c "$REPO_ROOT/bootstrap/src/omg.omg" "$TMPDIR_TEST/self-before.c" >/dev/null 2>&1
-build_out=$("$REPO_ROOT/bootstrap/build.sh" 2>&1)
+"$OMG_NATIVE" --emit-c "$REPO_ROOT/src/omg.omg" "$TMPDIR_TEST/self-before.c" >/dev/null 2>&1
+build_out=$("$REPO_ROOT/scripts/build.sh" 2>&1)
 if echo "$build_out" | grep -q "Self-rebuild"; then
     pass "build script chose self-rebuild path"
 else
@@ -140,10 +140,10 @@ if "$OMG_NATIVE" --help >/dev/null 2>&1; then
 else
     fail "rebuilt omg is broken"
 fi
-"$OMG_NATIVE" --emit-c "$REPO_ROOT/bootstrap/src/omg.omg" "$TMPDIR_TEST/self-after.c" >/dev/null 2>&1
+"$OMG_NATIVE" --emit-c "$REPO_ROOT/src/omg.omg" "$TMPDIR_TEST/self-after.c" >/dev/null 2>&1
 if [ -s "$TMPDIR_TEST/self-before.c" ] && cmp -s "$TMPDIR_TEST/self-before.c" "$TMPDIR_TEST/self-after.c"; then
     pass "self-rebuild is a fixed point (omg writes the same C for itself)"
 else
     fail "self-rebuild is not a fixed point" \
-         "bootstrap/bin/omg was built from older sources; run bootstrap/build.sh twice and commit"
+         "bin/omg was built from older sources; run scripts/build.sh twice and commit"
 fi

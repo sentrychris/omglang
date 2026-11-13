@@ -1,0 +1,275 @@
+;;;omg
+
+# bytecode.omg
+#
+# Reads a `.omgb` image into the form the tools work on. Imported by
+# the drivers (omg.omg, omg-explorer.omg), which hand the result to the
+# C and JS back ends and to the disassembler.
+#
+#     import "bytecode.omg" as bc
+#     alloc parsed := bc.parse_bytecode(bytes)
+#     # parsed is [code, funcs, src_files, src_lines]
+#     #   code       list of ["OPNAME", payload], the same shape
+#     #              compiler.omg builds before it writes a file
+#     #   funcs      dict: name -> [params, address, source_file_idx]
+#     #   src_files  list of source paths
+#     #   src_lines  list of [file_idx, line], one per instruction
+#
+# The container layout is documented in rust/src/bytecode.rs, which
+# is the ground truth for the format.
+#
+# vm.omg does not use this reader. It has its own, which keeps opcodes
+# as integers so that its dispatch loop compares ints, not strings.
+
+# === Opcode constants =====================================================
+#
+# Mirror of `rust/src/bytecode.rs`. The same numbers appear in
+# compiler.omg (which writes them) and vm.omg (which dispatches on
+# them); `cargo test` fails if any of the copies disagrees.
+
+alloc OP_PUSH_INT       := 0
+alloc OP_PUSH_STR       := 1
+alloc OP_PUSH_BOOL      := 2
+alloc OP_BUILD_LIST     := 3
+alloc OP_BUILD_DICT     := 4
+alloc OP_LOAD           := 5
+alloc OP_STORE          := 6
+alloc OP_ADD            := 7
+alloc OP_SUB            := 8
+alloc OP_MUL            := 9
+alloc OP_DIV            := 10
+alloc OP_MOD            := 11
+alloc OP_EQ             := 12
+alloc OP_NE             := 13
+alloc OP_LT             := 14
+alloc OP_LE             := 15
+alloc OP_GT             := 16
+alloc OP_GE             := 17
+alloc OP_BAND           := 18
+alloc OP_BOR            := 19
+alloc OP_BXOR           := 20
+alloc OP_SHL            := 21
+alloc OP_SHR            := 22
+alloc OP_AND            := 23
+alloc OP_OR             := 24
+alloc OP_NOT            := 25
+alloc OP_NEG            := 26
+alloc OP_INDEX          := 27
+alloc OP_SLICE          := 28
+alloc OP_JUMP           := 29
+alloc OP_JUMP_IF_FALSE  := 30
+alloc OP_CALL           := 31
+alloc OP_TCALL          := 32
+alloc OP_BUILTIN        := 33
+alloc OP_POP            := 34
+alloc OP_PUSH_NONE      := 35
+alloc OP_RET            := 36
+alloc OP_EMIT           := 37
+alloc OP_HALT           := 38
+alloc OP_STORE_INDEX    := 39
+alloc OP_ATTR           := 40
+alloc OP_STORE_ATTR     := 41
+alloc OP_ASSERT         := 42
+alloc OP_CALL_VALUE     := 43
+alloc OP_SETUP_EXCEPT   := 44
+alloc OP_POP_BLOCK      := 45
+alloc OP_RAISE          := 46
+alloc OP_MAKE_FUNC      := 52
+alloc OP_STORE_LOCAL    := 53
+alloc OP_PUSH_FLOAT     := 54
+alloc OP_FLOOR_DIV      := 55
+
+alloc BC_VERSION := 512
+
+# === Bytecode reader ======================================================
+#
+# `.omgb` is little-endian. The host hands over the file as a list of
+# byte ints (0-255); each helper returns [value, new_cursor].
+
+proc read_u32_at(bytes, i) {
+    alloc v := bytes[i] | (bytes[i + 1] << 8) | (bytes[i + 2] << 16) | (bytes[i + 3] << 24)
+    return [v, i + 4]
+}
+
+proc read_i64_at(bytes, i) {
+    alloc lo_pair := read_u32_at(bytes, i)
+    alloc hi_pair := read_u32_at(bytes, i + 4)
+    alloc v := (hi_pair[0] << 32) | lo_pair[0]
+    return [v, i + 8]
+}
+
+proc read_str_at(bytes, i) {
+    alloc len_pair := read_u32_at(bytes, i)
+    alloc len := len_pair[0]
+    alloc start := len_pair[1]
+    alloc s := bytes_to_string(bytes[start:start + len])
+    return [s, start + len]
+}
+
+proc tagged(tag, value, cur) {
+    return [[tag, value], cur]
+}
+
+proc tagged0(tag, cur) {
+    return [[tag, false], cur]
+}
+
+# Decode one instruction; returns [["NAME", payload], new_cursor].
+proc decode_one(op, bytes, cursor) {
+    if op == OP_PUSH_INT {
+        alloc r := read_i64_at(bytes, cursor)
+        return tagged("PUSH_INT", r[0], r[1])
+    }
+    if op == OP_PUSH_STR {
+        alloc r := read_str_at(bytes, cursor)
+        return tagged("PUSH_STR", r[0], r[1])
+    }
+    if op == OP_PUSH_BOOL {
+        alloc v := bytes[cursor] != 0
+        return tagged("PUSH_BOOL", v, cursor + 1)
+    }
+    if op == OP_PUSH_FLOAT {
+        # The payload stays as the raw 64-bit pattern: the back ends
+        # print it as a C or JS literal themselves.
+        alloc r := read_i64_at(bytes, cursor)
+        return tagged("PUSH_FLOAT_BITS", r[0], r[1])
+    }
+    if op == OP_PUSH_NONE   { return tagged0("PUSH_NONE",   cursor) }
+    if op == OP_EMIT        { return tagged0("EMIT",        cursor) }
+    if op == OP_HALT        { return tagged0("HALT",        cursor) }
+    if op == OP_POP         { return tagged0("POP",         cursor) }
+    if op == OP_BUILD_LIST   { alloc r := read_u32_at(bytes, cursor) return tagged("BUILD_LIST",  r[0], r[1]) }
+    if op == OP_BUILD_DICT   { alloc r := read_u32_at(bytes, cursor) return tagged("BUILD_DICT",  r[0], r[1]) }
+    if op == OP_LOAD         { alloc r := read_str_at(bytes, cursor) return tagged("LOAD",        r[0], r[1]) }
+    if op == OP_STORE        { alloc r := read_str_at(bytes, cursor) return tagged("STORE",       r[0], r[1]) }
+    if op == OP_STORE_LOCAL  { alloc r := read_str_at(bytes, cursor) return tagged("STORE_LOCAL", r[0], r[1]) }
+    if op == OP_ADD          { return tagged0("ADD",        cursor) }
+    if op == OP_SUB          { return tagged0("SUB",        cursor) }
+    if op == OP_MUL          { return tagged0("MUL",        cursor) }
+    if op == OP_DIV          { return tagged0("DIV",        cursor) }
+    if op == OP_FLOOR_DIV    { return tagged0("FLOOR_DIV",  cursor) }
+    if op == OP_MOD          { return tagged0("MOD",        cursor) }
+    if op == OP_NEG          { return tagged0("NEG",        cursor) }
+    if op == OP_EQ           { return tagged0("EQ",         cursor) }
+    if op == OP_NE           { return tagged0("NE",         cursor) }
+    if op == OP_LT           { return tagged0("LT",         cursor) }
+    if op == OP_LE           { return tagged0("LE",         cursor) }
+    if op == OP_GT           { return tagged0("GT",         cursor) }
+    if op == OP_GE           { return tagged0("GE",         cursor) }
+    if op == OP_BAND         { return tagged0("BAND",       cursor) }
+    if op == OP_BOR          { return tagged0("BOR",        cursor) }
+    if op == OP_BXOR         { return tagged0("BXOR",       cursor) }
+    if op == OP_SHL          { return tagged0("SHL",        cursor) }
+    if op == OP_SHR          { return tagged0("SHR",        cursor) }
+    if op == OP_AND          { return tagged0("AND",        cursor) }
+    if op == OP_OR           { return tagged0("OR",         cursor) }
+    if op == OP_NOT          { return tagged0("NOT",        cursor) }
+    if op == OP_INDEX        { return tagged0("INDEX",      cursor) }
+    if op == OP_SLICE        { return tagged0("SLICE",      cursor) }
+    if op == OP_STORE_INDEX  { return tagged0("STORE_INDEX",cursor) }
+    if op == OP_ASSERT       { return tagged0("ASSERT",     cursor) }
+    if op == OP_POP_BLOCK    { return tagged0("POP_BLOCK",  cursor) }
+    if op == OP_JUMP         { alloc r := read_u32_at(bytes, cursor) return tagged("JUMP",         r[0], r[1]) }
+    if op == OP_JUMP_IF_FALSE { alloc r := read_u32_at(bytes, cursor) return tagged("JUMP_IF_FALSE", r[0], r[1]) }
+    if op == OP_CALL         { alloc r := read_str_at(bytes, cursor) return tagged("CALL",         r[0], r[1]) }
+    if op == OP_TCALL        { alloc r := read_str_at(bytes, cursor) return tagged("TCALL",        r[0], r[1]) }
+    if op == OP_BUILTIN {
+        alloc nm := read_str_at(bytes, cursor)
+        alloc ac := read_u32_at(bytes, nm[1])
+        return tagged("BUILTIN", [nm[0], ac[0]], ac[1])
+    }
+    if op == OP_ATTR         { alloc r := read_str_at(bytes, cursor) return tagged("ATTR",         r[0], r[1]) }
+    if op == OP_STORE_ATTR   { alloc r := read_str_at(bytes, cursor) return tagged("STORE_ATTR",   r[0], r[1]) }
+    if op == OP_CALL_VALUE   { alloc r := read_u32_at(bytes, cursor) return tagged("CALL_VALUE",   r[0], r[1]) }
+    if op == OP_SETUP_EXCEPT { alloc r := read_u32_at(bytes, cursor) return tagged("SETUP_EXCEPT", r[0], r[1]) }
+    if op == OP_RAISE        { alloc kind := bytes[cursor] return tagged("RAISE", kind, cursor + 1) }
+    if op == OP_RET          { return tagged0("RET",        cursor) }
+    if op == OP_MAKE_FUNC    { alloc r := read_str_at(bytes, cursor) return tagged("MAKE_FUNC",    r[0], r[1]) }
+    panic("bytecode: unknown opcode 0x" + hex(op))
+}
+
+proc parse_bytecode(bytes) {
+    alloc n := length(bytes)
+    if n < 8 {
+        panic("bytecode: bytecode too short")
+    }
+    if bytes[0] != ascii("O") or bytes[1] != ascii("M") or bytes[2] != ascii("G") or bytes[3] != ascii("B") {
+        panic("bytecode: bad magic in header")
+    }
+    alloc cursor := 4
+    alloc ver_pair := read_u32_at(bytes, cursor)
+    cursor := ver_pair[1]
+    if ver_pair[0] != BC_VERSION {
+        panic("bytecode: unsupported bytecode version " + ver_pair[0])
+    }
+    # v2: source-file table.
+    alloc sfc_pair := read_u32_at(bytes, cursor)
+    alloc sf_count := sfc_pair[0]
+    cursor := sfc_pair[1]
+    alloc src_files := []
+    alloc si := 0
+    loop si < sf_count {
+        alloc sf_pair := read_str_at(bytes, cursor)
+        append(src_files, sf_pair[0])
+        cursor := sf_pair[1]
+        si := si + 1
+    }
+    alloc fc_pair := read_u32_at(bytes, cursor)
+    alloc func_count := fc_pair[0]
+    cursor := fc_pair[1]
+    alloc funcs := {}
+    alloc f := 0
+    loop f < func_count {
+        alloc name_pair := read_str_at(bytes, cursor)
+        alloc name := name_pair[0]
+        cursor := name_pair[1]
+        alloc pc_pair := read_u32_at(bytes, cursor)
+        alloc param_count := pc_pair[0]
+        cursor := pc_pair[1]
+        alloc params := []
+        alloc p := 0
+        loop p < param_count {
+            alloc p_pair := read_str_at(bytes, cursor)
+            append(params, p_pair[0])
+            cursor := p_pair[1]
+            p := p + 1
+        }
+        alloc addr_pair := read_u32_at(bytes, cursor)
+        cursor := addr_pair[1]
+        alloc sfi_pair := read_u32_at(bytes, cursor)
+        cursor := sfi_pair[1]
+        funcs[name] := [params, addr_pair[0], sfi_pair[0]]
+        f := f + 1
+    }
+    alloc cl_pair := read_u32_at(bytes, cursor)
+    alloc code_len := cl_pair[0]
+    cursor := cl_pair[1]
+    alloc code := []
+    alloc k := 0
+    loop k < code_len {
+        if cursor >= n {
+            panic("bytecode: truncated instruction stream at instruction " + k)
+        }
+        alloc op := bytes[cursor]
+        cursor := cursor + 1
+        alloc instr := decode_one(op, bytes, cursor)
+        append(code, instr[0])
+        cursor := instr[1]
+        k := k + 1
+    }
+    # v2: per-instruction source map.
+    alloc ml_pair := read_u32_at(bytes, cursor)
+    alloc map_len := ml_pair[0]
+    cursor := ml_pair[1]
+    alloc src_lines := []
+    alloc mi := 0
+    loop mi < map_len {
+        alloc fi_pair := read_u32_at(bytes, cursor)
+        cursor := fi_pair[1]
+        alloc ln_pair := read_u32_at(bytes, cursor)
+        cursor := ln_pair[1]
+        append(src_lines, [fi_pair[0], ln_pair[0]])
+        mi := mi + 1
+    }
+    return [code, funcs, src_files, src_lines]
+}

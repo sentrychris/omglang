@@ -7,7 +7,7 @@ compiler, or the bootstrap.
 
 > This doc covers the **bytecode-VM path** — how the Rust runtime
 > compiles and executes OMG. There's also a **native-compilation path**
-> ([`docs/native/`](native/)) that turns OMG into standalone ELF
+> ([`docs/`](README.md)) that turns OMG into standalone ELF
 > binaries with no Rust runtime. Both paths share the same compiler
 > and bytecode format; they're alternative backends. For a one-page
 > map of every part, see [`toolchain.md`](toolchain.md).
@@ -19,9 +19,9 @@ and run at different times:
 
 | Piece                       | Lives in                          | Written in | Runs on  |
 | --------------------------- | --------------------------------- | ---------- | -------- |
-| **Rust frontend** (stage-0) | [`runtime/src/{lexer,parser,compiler}.rs`](../runtime/src/) | Rust       | Host CPU |
-| **OMG compiler**  (stage-1) | [`bootstrap/src/compiler.omg`](../bootstrap/src/compiler.omg)   | OMG        | OMG VM   |
-| **OMG VM**                  | [`runtime/src/vm.rs`](../runtime/src/vm.rs) and friends | Rust       | Host CPU |
+| **Rust frontend** (stage-0) | [`rust/src/{lexer,parser,compiler}.rs`](../rust/src/) | Rust       | Host CPU |
+| **OMG compiler**  (stage-1) | [`src/compiler.omg`](../src/compiler.omg)   | OMG        | OMG VM   |
+| **OMG VM**                  | [`rust/src/vm.rs`](../rust/src/vm.rs) and friends | Rust       | Host CPU |
 
 The VM only knows how to execute `.omgb` bytecode. Both compilers exist
 to *produce* `.omgb` bytecode — one in Rust, one in OMG. They produce
@@ -31,10 +31,10 @@ them is purely a matter of cost.
 
 ## Build time: the bootstrap
 
-When you `cargo build` the runtime, this happens in [build.rs](../runtime/build.rs):
+When you `cargo build` the runtime, this happens in [build.rs](../rust/build.rs):
 
 ```text
-bootstrap/src/compiler.omg ──► [Rust frontend] ──► bootstrap/src/compiler.omgb
+src/compiler.omg ──► [Rust frontend] ──► src/compiler.omgb
                                               (committed? no — built fresh
                                                on every cargo build)
 ```
@@ -42,9 +42,9 @@ bootstrap/src/compiler.omg ──► [Rust frontend] ──► bootstrap/src/com
 The output file is then **embedded into the runtime binary**:
 
 ```rust
-// runtime/src/main.rs
+// rust/src/main.rs
 const SELF_HOSTED_COMPILER: &[u8] =
-    include_bytes!("../../bootstrap/src/compiler.omgb");
+    include_bytes!("../../src/compiler.omgb");
 ```
 
 So the binary you ship contains, statically baked in, the compiled
@@ -104,7 +104,7 @@ OMG-written compiler; the second runs your program. Same VM
 implementation, different `(code, funcs)` loaded.
 
 The relevant glue lives in
-[`self_hosted_compile`](../runtime/src/main.rs) — about 30 lines of
+[`self_hosted_compile`](../rust/src/main.rs) — about 30 lines of
 plumbing. The bulk of the work — lexing, parsing, name mangling, import
 resolution, bytecode emission — all happens in OMG, on the VM.
 
@@ -157,7 +157,7 @@ behavior choice.
 | `omg --compile <in> [<out>]`                | Rust        | Stays Rust by default. Compiling is interactive iteration; the slow path would hurt. |
 | `omg --self-hosted-compile <in> [<out>]`    | self-hosted | Explicit opt-in to the self-hosted compiler for AOT compile. |
 | `omg --verify-self-hosted <file>`           | both        | Compiles `<file>` with both compilers and asserts byte-identical output. The self-hosting fixed-point check. |
-| `omg --verify-omg-vm <file>`                | both, plus the OMG-written VM | Triple-meta fixed-point check: compares the Rust-frontend output against running the OMG compiler **on the OMG VM** (`bootstrap/src/vm.omg`, also embedded). Proves both stage-1 components behave like their Rust counterparts on the input. |
+| `omg --verify-omg-vm <file>`                | both, plus the OMG-written VM | Triple-meta fixed-point check: compares the Rust-frontend output against running the OMG compiler **on the OMG VM** (`src/vm.omg`, also embedded). Proves both stage-1 components behave like their Rust counterparts on the input. |
 | `omg --disasm <file>`                       | Rust (only for `.omg` input) | Backend-agnostic for `.omgb` input. |
 | `omg` (no args)                             | Rust        | REPL. Stays Rust because per-turn compile latency matters interactively. |
 
@@ -168,13 +168,13 @@ behavior, kept around so existing scripts don't break.
 ## The fixed-point check
 
 ```sh
-omg --verify-self-hosted bootstrap/src/compiler.omg
+omg --verify-self-hosted src/compiler.omg
 ```
 
 This is the single most load-bearing test in the repo. It does:
 
-1. Compile `bootstrap/src/compiler.omg` with the **Rust** frontend → bytes A.
-2. Compile `bootstrap/src/compiler.omg` with the **OMG-written** compiler
+1. Compile `src/compiler.omg` with the **Rust** frontend → bytes A.
+2. Compile `src/compiler.omg` with the **OMG-written** compiler
    running on the VM → bytes B.
 3. Assert `A == B` byte-for-byte.
 
@@ -204,8 +204,8 @@ whatever input you give it. Point it at the compiler's own source and
 the result is exactly what it sounds like:
 
 ```sh
-omg --self-hosted-compile bootstrap/src/compiler.omg /tmp/recompiled.omgb
-cmp bootstrap/src/compiler.omgb /tmp/recompiled.omgb && echo byte-identical
+omg --self-hosted-compile src/compiler.omg /tmp/recompiled.omgb
+cmp src/compiler.omgb /tmp/recompiled.omgb && echo byte-identical
 ```
 
 The two files are byte-for-byte equal (around 130 KB at time of writing).
@@ -218,8 +218,8 @@ two outputs surfaced as files you can inspect. `--verify-self-hosted`
 is essentially:
 
 ```sh
-omg --compile bootstrap/src/compiler.omg /tmp/rust.omgb       # stage-0 output
-omg --self-hosted-compile bootstrap/src/compiler.omg /tmp/omg.omgb   # stage-1 output
+omg --compile src/compiler.omg /tmp/rust.omgb       # stage-0 output
+omg --self-hosted-compile src/compiler.omg /tmp/omg.omgb   # stage-1 output
 cmp /tmp/rust.omgb /tmp/omg.omgb
 ```
 
@@ -243,23 +243,23 @@ to the same artifact the bootstrap produced."
 The fixed-point property means you can update the OMG compiler using
 *itself* as the build tool:
 
-1. Edit [`bootstrap/src/compiler.omg`](../bootstrap/src/compiler.omg).
+1. Edit [`src/compiler.omg`](../src/compiler.omg).
 2. Use the *current* `compiler.omgb` (running on the VM) to compile
    the new source:
    ```sh
-   omg --self-hosted-compile bootstrap/src/compiler.omg /tmp/new.omgb
+   omg --self-hosted-compile src/compiler.omg /tmp/new.omgb
    ```
 3. Replace the embedded copy:
    ```sh
-   cp /tmp/new.omgb bootstrap/src/compiler.omgb
-   cargo build --release --manifest-path runtime/Cargo.toml
+   cp /tmp/new.omgb src/compiler.omgb
+   cargo build --release --manifest-path rust/Cargo.toml
    ```
    *(`build.rs` will rebuild `compiler.omgb` from source; if you want
    to skip that and embed a hand-built copy, you'd point `build.rs` at
    the existing file or run with the build script bypassed.)*
 4. Run the fixed-point check to confirm the Rust frontend still agrees:
    ```sh
-   omg --verify-self-hosted bootstrap/src/compiler.omg
+   omg --verify-self-hosted src/compiler.omg
    ```
 
 Most of the time, step 4 just works — because most compiler changes
@@ -272,10 +272,10 @@ check will fail — your two compilers have drifted.
 ### The triple-meta fixed point
 
 There's a third leg now: an OMG-written *VM* at
-[`bootstrap/src/vm.omg`](../bootstrap/src/vm.omg). It executes `.omgb` bytecode
+[`src/vm.omg`](../src/vm.omg). It executes `.omgb` bytecode
 the same way the Rust VM does — bytecode loader, dispatch loop,
 operand stack, env stacks, the whole thing — only it's all written in
-OMG. `cargo build` compiles it to `bootstrap/src/vm.omgb` and embeds it in
+OMG. `cargo build` compiles it to `src/vm.omgb` and embeds it in
 the runtime alongside `compiler.omgb`.
 
 Running the OMG compiler *on top of* the OMG VM gives you an entire
@@ -285,7 +285,7 @@ triple-meta path against the Rust frontend's output and asserts
 byte-identical equality:
 
 ```sh
-omg --verify-omg-vm bootstrap/src/compiler.omg
+omg --verify-omg-vm src/compiler.omg
 ```
 
 That command, when it passes (which it does, in ~60 s), is the
@@ -302,7 +302,7 @@ shows up immediately as a byte mismatch.
 ### What the Rust frontend still has to do
 
 Even though the OMG compiler can compile itself, the Rust frontend
-still has one job: it has to be able to compile `bootstrap/src/compiler.omg`
+still has one job: it has to be able to compile `src/compiler.omg`
 *at all*, because `cargo build` runs it during the build to produce
 `compiler.omgb` from source. So:
 
@@ -347,11 +347,11 @@ pay for dogfooding by default, and the reason `--rust` exists.
 
 > **Note**: the *bytecode-VM* path described above is one of two ways
 > OMG can run. There's also a **native-compilation path** —
-> [`bootstrap/src/native-c.omg`](../bootstrap/src/native-c.omg) transpiles
+> [`src/backends/native-c.omg`](../src/backends/native-c.omg) transpiles
 > bytecode to C, which `cc -O3` turns into a standalone ELF binary
-> (`bootstrap/bin/omg --build foo.omg`).
+> (`bin/omg --build foo.omg`).
 > Programs compiled that way have no Rust dependency at runtime: not
-> the VM, not the built-ins, nothing. See [`docs/native/`](native/)
+> the VM, not the built-ins, nothing. See [`docs/`](README.md)
 > for the full story. The two paths share the same bytecode format;
 > they're alternative *backends*.
 
@@ -399,19 +399,19 @@ inside an expression. The SSG was the first program that did.
 
 ## Files to read if you're hacking on this
 
-- [`runtime/src/main.rs`](../runtime/src/main.rs) — dispatch,
+- [`rust/src/main.rs`](../rust/src/main.rs) — dispatch,
   `self_hosted_compile`, `--rust` flag handling.
-- [`runtime/build.rs`](../runtime/build.rs) — the stage-0 bootstrap.
-- [`bootstrap/src/compiler.omg`](../bootstrap/src/compiler.omg) — the
+- [`rust/build.rs`](../rust/build.rs) — the stage-0 bootstrap.
+- [`src/compiler.omg`](../src/compiler.omg) — the
   OMG-written compiler. Walk it top to bottom: lexer → parser →
   bytecode emitter → bytecode writer.
-- [`runtime/src/compiler.rs`](../runtime/src/compiler.rs) — the Rust
-  frontend. The structure mirrors `bootstrap/src/compiler.omg` closely
+- [`rust/src/compiler.rs`](../rust/src/compiler.rs) — the Rust
+  frontend. The structure mirrors `src/compiler.omg` closely
   because they're meant to produce identical output.
-- [`runtime/src/bytecode.rs`](../runtime/src/bytecode.rs) — the
+- [`rust/src/bytecode.rs`](../rust/src/bytecode.rs) — the
   ground-truth definition of the `.omgb` format.
 
-If you change anything in `bootstrap/src/compiler.omg`, run the
+If you change anything in `src/compiler.omg`, run the
 fixed-point check before committing. Same for any change to
-`runtime/src/compiler.rs` or `runtime/src/bytecode.rs` that affects
+`rust/src/compiler.rs` or `rust/src/bytecode.rs` that affects
 emitted bytes.

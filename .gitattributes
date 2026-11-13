@@ -5,6 +5,6 @@
 
 # Pre-built native toolchain (Linux x86-64 and Windows x86-64) and
 # anything else that must never be touched by line-ending conversion.
-bootstrap/bin/omg   binary
+bin/omg   binary
 *.exe binary
 *.omgb binary

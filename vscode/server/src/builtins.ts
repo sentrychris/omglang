@@ -1,7 +1,7 @@
 // Static reference tables for OMG keywords and built-in functions.
 //
-// Keep these in lockstep with the runtime: `runtime/src/lexer.rs`'s keyword
-// list and `runtime/src/vm/builtins.rs`'s `call_builtin` dispatch.
+// Keep these in lockstep with the runtime: `rust/src/lexer.rs`'s keyword
+// list and `rust/src/vm/builtins.rs`'s `call_builtin` dispatch.
 
 export const KEYWORDS: readonly string[] = [
     'alloc',

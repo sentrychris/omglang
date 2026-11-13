@@ -1,9 +1,9 @@
 #!/bin/bash
 # The conformance corpus (tests/conformance/) on the native backends:
 #
-#   - the native interpreter   bootstrap/bin/omg prog.omg
-#   - ahead-of-time compiled   bootstrap/bin/omg --build prog.omg out
-#   - compiled to JavaScript   bootstrap/bin/omg --emit-js prog.omg out.js, run under node
+#   - the native interpreter   bin/omg prog.omg
+#   - ahead-of-time compiled   bin/omg --build prog.omg out
+#   - compiled to JavaScript   bin/omg --emit-js prog.omg out.js, run under node
 #
 # tests/smoke.sh runs the same corpus on the backends that need nothing
 # but the Rust runtime (the Rust VM through both frontends, the

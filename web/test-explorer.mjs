@@ -1,8 +1,8 @@
 // Smoke test for the Compiler Explorer pipeline. Mirrors the browser
 // frontend's bundle-eval path (args injection + _omg_write rewire),
 // then splits the output buffer on stage markers and prints per-stage
-// summaries. Run from the omglang root after `bash bootstrap/build-web
-// .sh`:
+// summaries. Run from the omglang root after
+// `bash scripts/build-web.sh`:
 //
 //     node web/test-explorer.mjs
 //

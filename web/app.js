@@ -2,7 +2,7 @@
 //
 // Hosts the meta-circular compiler + VM + driver in a single
 // ~1.8 MB JavaScript bundle (web/omg-web.js, built by
-// bootstrap/build-web.sh via the native-js backend). Each Run click:
+// scripts/build-web.sh via the native-js backend). Each Run click:
 //
 //   1. Sets globalThis.args = ["<playground>", <user source>]
 //   2. Reroutes omg_emit / omg_print to write into the output pane

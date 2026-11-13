@@ -1,7 +1,7 @@
 // Compiler Explorer frontend for OMG.
 //
 // What loads here:
-//   web/omg-explorer.js — the OMG-side driver (bootstrap/src/omg-explorer
+//   web/omg-explorer.js — the OMG-side driver (src/omg-explorer
 //   .omg) transpiled to JS. The bundle is an IIFE that reads args from
 //   `let args = ...`, runs the user source through every compiler stage,
 //   and emits each result framed by a `___OMG_EXPLORER_STAGE___<name>___
