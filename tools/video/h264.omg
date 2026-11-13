@@ -1,0 +1,3503 @@
+;;;omg
+
+# tools/video/h264.omg
+#
+# An H.264 (AVC) video decoder.
+#
+#     import "h264.omg" as h264
+#     h264.reset()
+#     h264.set_config(avcc_bytes)          # the avcC box of an MP4 file
+#     alloc pic := h264.decode(sample)     # one MP4 sample -> a picture, or false
+#     ...
+#     h264.release(pic)
+#
+# What it decodes: progressive 8-bit 4:2:0 streams of the Baseline
+# profile: I and P slices, CAVLC, any number of reference frames and
+# slices per picture, the in-loop deblocking filter. Anything else is
+# refused with an error that says what was met.
+#
+# A picture is three flat lists of numbers, one per plane, in pic.y,
+# pic.u and pic.v; the sizes are in info().
+#
+# Everything is in this one file on purpose: a call into another module
+# goes through a name lookup, and the procs here call each other a few
+# million times a second.
+
+# === Tables of the standard ==================================================
+
+# Zigzag scan: the raster position (x + 4 * y) of the k-th coefficient.
+alloc ZZ := [0, 1, 4, 8, 5, 2, 3, 6, 9, 12, 13, 10, 7, 11, 14, 15]
+
+# 4x4 blocks are coded in this order: the position of the n-th, in blocks.
+alloc BLK_X := [0, 1, 0, 1, 2, 3, 2, 3, 0, 1, 0, 1, 2, 3, 2, 3]
+alloc BLK_Y := [0, 0, 1, 1, 0, 0, 1, 1, 2, 2, 3, 3, 2, 2, 3, 3]
+# The reverse: the coding number of the block at x + 4 * y.
+alloc BLK_N := [0, 1, 4, 5, 2, 3, 6, 7, 8, 9, 12, 13, 10, 11, 14, 15]
+
+# Dequantisation: the three multipliers for each qp % 6.
+alloc DQ_V := [10, 16, 13, 11, 18, 14, 13, 20, 16, 14, 23, 18, 16, 25, 20, 18, 29, 23]
+# Which of the three a raster position uses.
+alloc DQ_CLASS := [0, 2, 0, 2, 2, 1, 2, 1, 0, 2, 0, 2, 2, 1, 2, 1]
+
+# Chroma qp for a luma qp (after the offset), from 30 up.
+alloc CQP_HIGH := [29, 30, 31, 32, 32, 33, 34, 34, 35, 35, 36, 36, 37, 37, 37, 38, 38, 38, 39, 39, 39, 39]
+
+alloc DEFAULT_4X4_INTRA := [6, 13, 13, 20, 20, 20, 28, 28, 28, 28, 32, 32, 32, 37, 37, 42]
+alloc DEFAULT_4X4_INTER := [10, 14, 14, 20, 20, 20, 24, 24, 24, 24, 27, 27, 27, 30, 30, 34]
+
+# coeff_token: code length and code bits for (total coefficients * 4 +
+# trailing ones), for the three ranges of the context nC.
+alloc CT_LEN_0 := [
+    1, 0, 0, 0, 6, 2, 0, 0, 8, 6, 3, 0, 9, 8, 7, 5, 10,
+    9, 8, 6, 11, 10, 9, 7, 13, 11, 10, 8, 13, 13, 11, 9, 13, 13,
+    13, 10, 14, 14, 13, 11, 14, 14, 14, 13, 15, 15, 14, 14, 15, 15, 15,
+    14, 16, 15, 15, 15, 16, 16, 16, 15, 16, 16, 16, 16, 16, 16, 16, 16
+]
+alloc CT_BITS_0 := [
+    1, 0, 0, 0, 5, 1, 0, 0, 7, 4, 1, 0, 7, 6, 5, 3, 7,
+    6, 5, 3, 7, 6, 5, 4, 15, 6, 5, 4, 11, 14, 5, 4, 8, 10,
+    13, 4, 15, 14, 9, 4, 11, 10, 13, 12, 15, 14, 9, 12, 11, 10, 13,
+    8, 15, 1, 9, 12, 11, 14, 13, 8, 7, 10, 9, 12, 4, 6, 5, 8
+]
+alloc CT_LEN_1 := [
+    2, 0, 0, 0, 6, 2, 0, 0, 6, 5, 3, 0, 7, 6, 6, 4, 8,
+    6, 6, 4, 8, 7, 7, 5, 9, 8, 8, 6, 11, 9, 9, 6, 11, 11,
+    11, 7, 12, 11, 11, 9, 12, 12, 12, 11, 12, 12, 12, 11, 13, 13, 13,
+    12, 13, 13, 13, 13, 13, 14, 13, 13, 14, 14, 14, 13, 14, 14, 14, 14
+]
+alloc CT_BITS_1 := [
+    3, 0, 0, 0, 11, 2, 0, 0, 7, 7, 3, 0, 7, 10, 9, 5, 7,
+    6, 5, 4, 4, 6, 5, 6, 7, 6, 5, 8, 15, 6, 5, 4, 11, 14,
+    13, 4, 15, 10, 9, 4, 11, 14, 13, 12, 8, 10, 9, 8, 15, 14, 13,
+    12, 11, 10, 9, 12, 7, 11, 6, 8, 9, 8, 10, 1, 7, 6, 5, 4
+]
+alloc CT_LEN_2 := [
+    4, 0, 0, 0, 6, 4, 0, 0, 6, 5, 4, 0, 6, 5, 5, 4, 7,
+    5, 5, 4, 7, 5, 5, 4, 7, 6, 6, 4, 7, 6, 6, 4, 8, 7,
+    7, 5, 8, 8, 7, 6, 9, 8, 8, 7, 9, 9, 8, 8, 9, 9, 9,
+    8, 10, 9, 9, 9, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10
+]
+alloc CT_BITS_2 := [
+    15, 0, 0, 0, 15, 14, 0, 0, 11, 15, 13, 0, 8, 12, 14, 12, 15,
+    10, 11, 11, 11, 8, 9, 10, 9, 14, 13, 9, 8, 10, 9, 8, 15, 14,
+    13, 13, 11, 14, 10, 12, 15, 10, 13, 12, 11, 14, 9, 12, 8, 10, 13,
+    8, 13, 7, 9, 12, 9, 12, 11, 10, 5, 8, 7, 6, 1, 4, 3, 2
+]
+alloc CDC_LEN := [
+    2, 0, 0, 0, 6, 1, 0, 0, 6, 6, 3, 0, 6, 7, 7, 6, 6, 8, 8, 7
+]
+alloc CDC_BITS := [
+    1, 0, 0, 0, 7, 1, 0, 0, 4, 6, 1, 0, 3, 3, 2, 5, 2, 3, 2, 0
+]
+alloc TZ_LEN := [
+    [1, 3, 3, 4, 4, 5, 5, 6, 6, 7, 7, 8, 8, 9, 9, 9],
+    [3, 3, 3, 3, 3, 4, 4, 4, 4, 5, 5, 6, 6, 6, 6],
+    [4, 3, 3, 3, 4, 4, 3, 3, 4, 5, 5, 6, 5, 6],
+    [5, 3, 4, 4, 3, 3, 3, 4, 3, 4, 5, 5, 5],
+    [4, 4, 4, 3, 3, 3, 3, 3, 4, 5, 4, 5],
+    [6, 5, 3, 3, 3, 3, 3, 3, 4, 3, 6],
+    [6, 5, 3, 3, 3, 2, 3, 4, 3, 6],
+    [6, 4, 5, 3, 2, 2, 3, 3, 6],
+    [6, 6, 4, 2, 2, 3, 2, 5],
+    [5, 5, 3, 2, 2, 2, 4],
+    [4, 4, 3, 3, 1, 3],
+    [4, 4, 2, 1, 3],
+    [3, 3, 1, 2],
+    [2, 2, 1],
+    [1, 1]
+]
+alloc TZ_BITS := [
+    [1, 3, 2, 3, 2, 3, 2, 3, 2, 3, 2, 3, 2, 3, 2, 1],
+    [7, 6, 5, 4, 3, 5, 4, 3, 2, 3, 2, 3, 2, 1, 0],
+    [5, 7, 6, 5, 4, 3, 4, 3, 2, 3, 2, 1, 1, 0],
+    [3, 7, 5, 4, 6, 5, 4, 3, 3, 2, 2, 1, 0],
+    [5, 4, 3, 7, 6, 5, 4, 3, 2, 1, 1, 0],
+    [1, 1, 7, 6, 5, 4, 3, 2, 1, 1, 0],
+    [1, 1, 5, 4, 3, 3, 2, 1, 1, 0],
+    [1, 1, 1, 3, 3, 2, 2, 1, 0],
+    [1, 0, 1, 3, 2, 1, 1, 1],
+    [1, 0, 1, 3, 2, 1, 1],
+    [0, 1, 1, 2, 1, 3],
+    [0, 1, 1, 1, 1],
+    [0, 1, 1, 1],
+    [0, 1, 1],
+    [0, 1]
+]
+alloc CTZ_LEN := [[1, 2, 3, 3], [1, 2, 2, 0], [1, 1, 0, 0]]
+alloc CTZ_BITS := [[1, 1, 1, 0], [1, 1, 0, 0], [1, 0, 0, 0]]
+alloc RUN_LEN := [
+    [1, 1],
+    [1, 2, 2],
+    [2, 2, 2, 2],
+    [2, 2, 2, 3, 3],
+    [2, 2, 3, 3, 3, 3],
+    [2, 3, 3, 3, 3, 3, 3],
+    [3, 3, 3, 3, 3, 3, 3, 4, 5, 6, 7, 8, 9, 10, 11]
+]
+alloc RUN_BITS := [
+    [1, 0],
+    [1, 1, 0],
+    [3, 2, 1, 0],
+    [3, 2, 1, 1, 0],
+    [3, 2, 3, 2, 1, 0],
+    [3, 0, 1, 3, 2, 5, 4],
+    [7, 6, 5, 4, 3, 2, 1, 1, 1, 1, 1, 1, 1, 1, 1]
+]
+alloc CBP_INTRA := [
+    47, 31, 15, 0, 23, 27, 29, 30, 7, 11, 13, 14, 39, 43, 45, 46,
+    16, 3, 5, 10, 12, 19, 21, 26, 28, 35, 37, 42, 44, 1, 2, 4,
+    8, 17, 18, 20, 24, 6, 9, 22, 25, 32, 33, 34, 36, 40, 38, 41
+]
+alloc CBP_INTER := [
+    0, 16, 1, 2, 4, 8, 32, 3, 5, 10, 12, 15, 47, 7, 11, 13,
+    14, 6, 9, 31, 35, 37, 42, 44, 33, 34, 36, 40, 39, 43, 45, 46,
+    17, 18, 20, 24, 19, 21, 26, 28, 23, 27, 29, 30, 22, 25, 38, 41
+]
+alloc ALPHA_TAB := [
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 4, 4, 5, 6, 7, 8, 9, 10, 12, 13,
+    15, 17, 20, 22, 25, 28, 32, 36, 40, 45, 50, 56, 63,
+    71, 80, 90, 101, 113, 127, 144, 162, 182, 203, 226, 255, 255
+]
+alloc BETA_TAB := [
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 2, 2, 2, 3, 3, 3, 3, 4, 4, 4,
+    6, 6, 7, 7, 8, 8, 9, 9, 10, 10, 11, 11, 12,
+    12, 13, 13, 14, 14, 15, 15, 16, 16, 17, 17, 18, 18
+]
+alloc TC0_TAB := [
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1,
+    0, 0, 0, 1, 0, 0, 1, 1, 0, 0, 1, 1, 0, 1, 1, 1,
+    0, 1, 1, 1, 0, 1, 1, 1, 0, 1, 1, 1, 0, 1, 1, 2,
+    0, 1, 1, 2, 0, 1, 1, 2, 0, 1, 1, 2, 0, 1, 2, 3,
+    0, 1, 2, 3, 0, 2, 2, 3, 0, 2, 2, 4, 0, 2, 3, 4,
+    0, 2, 3, 4, 0, 3, 3, 5, 0, 3, 4, 6, 0, 3, 4, 6,
+    0, 4, 5, 7, 0, 4, 5, 8, 0, 4, 6, 9, 0, 5, 7, 10,
+    0, 6, 8, 11, 0, 6, 8, 13, 0, 7, 10, 14, 0, 8, 11, 16,
+    0, 9, 12, 18, 0, 10, 13, 20, 0, 11, 15, 23, 0, 13, 17, 25
+]
+
+# === Reading bits ==============================================================
+#
+# A NAL unit is loaded once: the escape bytes are taken out, and for
+# every byte position the four bytes from there on are kept as one
+# number, so that any read of up to 25 bits is one list access.
+
+alloc br_b := list_repeat(0, 4096)
+alloc br_w := list_repeat(0, 4096)
+alloc br_pos := 0              # in bits
+alloc br_end := 0              # the bit position of the stop bit
+
+proc br_load(data, from, to) {
+    alloc n := to - from
+    if length(br_b) < n + 16 {
+        br_b := list_repeat(0, n * 2 + 16)
+        br_w := list_repeat(0, n * 2 + 16)
+    }
+    alloc b := br_b
+    alloc i := from
+    alloc o := 0
+    alloc zeros := 0
+    loop i < to {
+        alloc v := data[i]
+        if zeros >= 2 and v == 3 {
+            zeros := 0
+        } else {
+            b[o] := v
+            o := o + 1
+            if v == 0 {
+                zeros := zeros + 1
+            } else {
+                zeros := 0
+            }
+        }
+        i := i + 1
+    }
+    alloc last := o - 1
+    loop last >= 0 and b[last] == 0 {
+        last := last - 1
+    }
+    br_end := 0
+    if last >= 0 {
+        alloc v := b[last]
+        alloc k := 0
+        loop ((v >> k) & 1) == 0 {
+            k := k + 1
+        }
+        br_end := last * 8 + 7 - k
+    }
+    i := 0
+    loop i < 12 {
+        b[o + i] := 0
+        i := i + 1
+    }
+    alloc w := br_w
+    alloc acc := 0
+    i := o + 11
+    loop i >= 0 {
+        acc := (acc >> 8) | (b[i] << 24)
+        w[i] := acc
+        i := i - 1
+    }
+    br_pos := 0
+    return o
+}
+
+proc br_bit() {
+    alloc p := br_pos
+    br_pos := p + 1
+    return (br_w[p >> 3] >> (31 - (p & 7))) & 1
+}
+
+# The next n bits, 1 <= n <= 25.
+proc br_bits(n) {
+    alloc p := br_pos
+    br_pos := p + n
+    return (br_w[p >> 3] >> (32 - n - (p & 7))) & ((1 << n) - 1)
+}
+
+proc br_bits32() {
+    alloc hi := br_bits(16)
+    return (hi << 16) | br_bits(16)
+}
+
+proc br_more() {
+    return br_pos < br_end
+}
+
+proc br_ue_long() {
+    alloc lz := 0
+    loop br_bit() == 0 {
+        lz := lz + 1
+        if lz > 32 {
+            raise("h264: damaged data (exp-golomb code)")
+        }
+    }
+    alloc v := 0
+    alloc k := lz
+    loop k > 0 {
+        alloc s := k
+        if s > 16 {
+            s := 16
+        }
+        v := (v << s) | br_bits(s)
+        k := k - s
+    }
+    return (1 << lz) - 1 + v
+}
+
+# ue(v): an unsigned Exp-Golomb code.
+proc br_ue() {
+    alloc p := br_pos
+    alloc v := (br_w[p >> 3] >> (7 - (p & 7))) & 33554431
+    if v >= 16777216 {
+        br_pos := p + 1
+        return 0
+    }
+    if v >= 4096 {
+        alloc lz := 1
+        alloc m := 8388608
+        loop v < m {
+            m := m >> 1
+            lz := lz + 1
+        }
+        br_pos := p + lz + lz + 1
+        return (v >> (24 - lz - lz)) - 1
+    }
+    return br_ue_long()
+}
+
+# se(v): a signed one.
+proc br_se() {
+    alloc k := br_ue()
+    if (k & 1) == 1 {
+        return (k + 1) >> 1
+    }
+    return 0 - (k >> 1)
+}
+
+# --- prefix codes --------------------------------------------------------------
+#
+# A table for decoding a prefix code two levels deep. The first 256
+# entries are indexed by the next 8 bits: an entry above 0 is
+# symbol * 32 + code length; a negative entry -k says the code is longer
+# and the 8 bits after these index the 256 entries from k on.
+
+proc vlc_build(lens, codes) {
+    alloc tab := list_repeat(0, 256)
+    alloc i := 0
+    loop i < length(lens) {
+        alloc n := lens[i]
+        if n > 0 {
+            alloc c := codes[i]
+            alloc e := i * 32 + n
+            if n <= 8 {
+                alloc base := c << (8 - n)
+                alloc k := 0
+                loop k < (1 << (8 - n)) {
+                    tab[base + k] := e
+                    k := k + 1
+                }
+            } else {
+                alloc hi := c >> (n - 8)
+                if tab[hi] == 0 {
+                    tab[hi] := 0 - length(tab)
+                    tab := tab + list_repeat(0, 256)
+                }
+                alloc sub := 0 - tab[hi]
+                alloc base := (c << (16 - n)) & 255
+                alloc k := 0
+                loop k < (1 << (16 - n)) {
+                    tab[sub + base + k] := e
+                    k := k + 1
+                }
+            }
+        }
+        i := i + 1
+    }
+    return tab
+}
+
+proc vlc_read(tab) {
+    alloc p := br_pos
+    alloc v := (br_w[p >> 3] >> (16 - (p & 7))) & 65535
+    alloc e := tab[v >> 8]
+    if e < 0 {
+        e := tab[(v & 255) - e]
+    }
+    br_pos := p + (e & 31)
+    return e >> 5
+}
+
+alloc vlc_ct0 := vlc_build(CT_LEN_0, CT_BITS_0)
+alloc vlc_ct1 := vlc_build(CT_LEN_1, CT_BITS_1)
+alloc vlc_ct2 := vlc_build(CT_LEN_2, CT_BITS_2)
+alloc vlc_cdc := vlc_build(CDC_LEN, CDC_BITS)
+alloc vlc_tz := []
+alloc vlc_ctz := []
+alloc vlc_run := []
+
+proc vlc_init() {
+    alloc i := 0
+    loop i < 15 {
+        append(vlc_tz, vlc_build(TZ_LEN[i], TZ_BITS[i]))
+        i := i + 1
+    }
+    i := 0
+    loop i < 3 {
+        append(vlc_ctz, vlc_build(CTZ_LEN[i], CTZ_BITS[i]))
+        i := i + 1
+    }
+    i := 0
+    loop i < 7 {
+        append(vlc_run, vlc_build(RUN_LEN[i], RUN_BITS[i]))
+        i := i + 1
+    }
+    return false
+}
+vlc_init()
+
+# === Parameter sets ==============================================================
+
+alloc sps_tab := {}
+alloc pps_tab := {}
+alloc ps_uid := 0              # every parsed parameter set gets a fresh number
+
+proc fail(msg) {
+    raise("h264: " + msg)
+}
+
+# One scaling list of `size` entries, in zigzag order; false when the
+# stream says "use the default".
+proc parse_scaling_list(size) {
+    alloc out := list_repeat(0, size)
+    alloc last := 8
+    alloc next := 8
+    alloc j := 0
+    loop j < size {
+        if next != 0 {
+            next := (last + br_se() + 256) % 256
+            if j == 0 and next == 0 {
+                return false
+            }
+        }
+        if next != 0 {
+            last := next
+        }
+        out[j] := last
+        j := j + 1
+    }
+    return out
+}
+
+proc default_scaling(i) {
+    if i < 3 { return DEFAULT_4X4_INTRA }
+    if i < 6 { return DEFAULT_4X4_INTER }
+    return list_repeat(16, 64)
+}
+
+# The scaling lists of a parameter set. `fallback` is the list set to
+# fall back on (the sequence's, for a picture parameter set) or false.
+proc parse_scaling(count, fallback) {
+    alloc out := []
+    alloc i := 0
+    loop i < count {
+        alloc l := false
+        alloc given := br_bit() == 1
+        if given {
+            if i < 6 {
+                l := parse_scaling_list(16)
+            } else {
+                l := parse_scaling_list(64)
+            }
+            if l == false {
+                l := default_scaling(i)
+            }
+        } elif i == 0 or i == 3 or i >= 6 {
+            if fallback == false {
+                l := default_scaling(i)
+            } else {
+                l := fallback[i]
+            }
+        } else {
+            l := out[i - 1]
+        }
+        append(out, l)
+        i := i + 1
+    }
+    loop length(out) < 8 {
+        if fallback == false {
+            append(out, default_scaling(length(out)))
+        } else {
+            append(out, fallback[length(out)])
+        }
+    }
+    return out
+}
+
+proc parse_sps() {
+    alloc s := {}
+    alloc profile := br_bits(8)
+    s.profile := profile
+    s.constraints := br_bits(8)
+    s.level := br_bits(8)
+    alloc id := br_ue()
+    s.chroma_format := 1
+    s.bit_depth := 8
+    s.scaling := false
+    if profile == 100 or profile == 110 or profile == 122 or profile == 244 or profile == 44 or profile == 83 or profile == 86 or profile == 118 or profile == 128 or profile == 138 or profile == 139 or profile == 134 or profile == 135 {
+        s.chroma_format := br_ue()
+        if s.chroma_format == 3 {
+            br_bit()
+        }
+        alloc bdl := br_ue() + 8
+        alloc bdc := br_ue() + 8
+        if bdl > bdc {
+            s.bit_depth := bdl
+        } else {
+            s.bit_depth := bdc
+        }
+        br_bit()
+        if br_bit() == 1 {
+            alloc count := 8
+            if s.chroma_format == 3 {
+                count := 12
+            }
+            s.scaling := parse_scaling(count, false)
+        }
+    }
+    s.log2_max_frame_num := br_ue() + 4
+    s.poc_type := br_ue()
+    s.log2_max_poc_lsb := 0
+    s.delta_pic_order_always_zero := 0
+    s.offset_non_ref := 0
+    s.offset_top_bottom := 0
+    s.poc_cycle := []
+    if s.poc_type == 0 {
+        s.log2_max_poc_lsb := br_ue() + 4
+    } elif s.poc_type == 1 {
+        s.delta_pic_order_always_zero := br_bit()
+        s.offset_non_ref := br_se()
+        s.offset_top_bottom := br_se()
+        alloc n := br_ue()
+        alloc cyc := []
+        alloc i := 0
+        loop i < n {
+            append(cyc, br_se())
+            i := i + 1
+        }
+        s.poc_cycle := cyc
+    }
+    s.num_ref_frames := br_ue()
+    s.gaps_allowed := br_bit()
+    s.mbw := br_ue() + 1
+    s.mbh := br_ue() + 1
+    s.frame_mbs_only := br_bit()
+    if s.frame_mbs_only == 0 {
+        br_bit()
+    }
+    s.direct_8x8_inference := br_bit()
+    s.crop_left := 0
+    s.crop_right := 0
+    s.crop_top := 0
+    s.crop_bottom := 0
+    if br_bit() == 1 {
+        s.crop_left := br_ue() * 2
+        s.crop_right := br_ue() * 2
+        s.crop_top := br_ue() * 2
+        s.crop_bottom := br_ue() * 2
+    }
+    ps_uid := ps_uid + 1
+    s.uid := ps_uid
+    sps_tab[id] := s
+    return id
+}
+
+proc parse_pps() {
+    alloc p := {}
+    alloc id := br_ue()
+    p.sps_id := br_ue()
+    if has_key(sps_tab, "" + p.sps_id) == false {
+        fail("picture parameter set " + id + " names a sequence parameter set that was never sent")
+    }
+    alloc s := sps_tab[p.sps_id]
+    p.cabac := br_bit()
+    p.pic_order_present := br_bit()
+    p.slice_groups := br_ue() + 1
+    if p.slice_groups > 1 {
+        fail("slice groups (flexible macroblock ordering) are not supported")
+    }
+    p.num_ref_l0 := br_ue() + 1
+    p.num_ref_l1 := br_ue() + 1
+    p.weighted_pred := br_bit()
+    p.weighted_bipred := br_bits(2)
+    p.init_qp := 26 + br_se()
+    br_se()
+    p.cb_qp_offset := br_se()
+    p.cr_qp_offset := p.cb_qp_offset
+    p.deblocking_control := br_bit()
+    p.constrained_intra := br_bit()
+    p.redundant_pic_cnt := br_bit()
+    p.transform_8x8 := 0
+    p.scaling := false
+    if br_more() {
+        p.transform_8x8 := br_bit()
+        if br_bit() == 1 {
+            alloc count := 6
+            if p.transform_8x8 == 1 {
+                count := 8
+            }
+            p.scaling := parse_scaling(count, s.scaling)
+        }
+        p.cr_qp_offset := br_se()
+    }
+    ps_uid := ps_uid + 1
+    p.uid := ps_uid
+    pps_tab[id] := p
+    return id
+}
+
+# === The state of the decoder ======================================================
+
+alloc nal_len_size := 4
+
+alloc act_sps := -1            # uid of the parameter sets in force
+alloc act_pps := -1
+alloc cur_sps := false
+alloc cur_pps := false
+
+alloc mbw := 0                 # picture size in macroblocks
+alloc mbh := 0
+alloc mb_count := 0
+alloc ystride := 0             # width of the luma plane (mbw * 16)
+alloc cstride := 0
+alloc pic_h := 0               # height of the luma plane
+alloc s4 := 0                  # 4x4 luma blocks per row
+alloc s2 := 0                  # 4x4 chroma blocks per row
+
+# One entry per macroblock.
+alloc mb_slice := []           # number of the slice it was decoded in
+alloc mb_intra := []
+alloc mb_qp := []
+# One entry per 4x4 luma block of the picture.
+alloc nz := []                 # coefficients coded in it
+alloc ipm := []                # intra 4x4 prediction mode
+# One entry per 4x4 chroma block.
+alloc nzu := []
+alloc nzv := []
+
+# Dequantisation, one table per kind of block: entry qp * 16 + raster
+# position is the weight times the multiplier, shifted by qp / 6.
+alloc dq_yi := []
+alloc dq_ui := []
+alloc dq_vi := []
+alloc dq_yp := []
+alloc dq_up := []
+alloc dq_vp := []
+alloc cqp_u := []              # chroma qp for each luma qp
+alloc cqp_v := []
+alloc constrained_intra := false
+
+# Pictures. Every picture ever made is in pic_all and is used again once
+# nothing needs it: it is not a reference and whoever asked for it has
+# given it back.
+alloc pic_all := []
+alloc dpb := []                # the reference pictures
+alloc pic_next_id := 1
+alloc cur_pic := false
+alloc cur_y := []
+alloc cur_u := []
+alloc cur_v := []
+alloc mvx := []                # motion of the current picture, per 4x4 block
+alloc mvy := []
+alloc refi := []               # reference index, -1 for intra
+alloc refid := []              # id of the picture referred to
+
+proc make_dq(scale_zz, out) {
+    alloc w := list_repeat(16, 16)
+    alloc i := 0
+    loop i < 16 {
+        w[ZZ[i]] := scale_zz[i]
+        i := i + 1
+    }
+    alloc qp := 0
+    loop qp < 52 {
+        alloc r := 0
+        loop r < 16 {
+            out[qp * 16 + r] := (w[r] * DQ_V[(qp % 6) * 3 + DQ_CLASS[r]]) << (qp // 6)
+            r := r + 1
+        }
+        qp := qp + 1
+    }
+    return false
+}
+
+proc clip_qp(q) {
+    if q < 0 { return 0 }
+    if q > 51 { return 51 }
+    return q
+}
+
+proc chroma_qp_of(q) {
+    q := clip_qp(q)
+    if q < 30 { return q }
+    return CQP_HIGH[q - 30]
+}
+
+proc activate_pps(p) {
+    alloc s := cur_sps
+    alloc lists := p.scaling
+    if lists == false {
+        lists := s.scaling
+    }
+    alloc flat := list_repeat(16, 16)
+    if lists == false {
+        lists := [flat, flat, flat, flat, flat, flat]
+    }
+    if length(dq_yi) == 0 {
+        dq_yi := list_repeat(0, 832)
+        dq_ui := list_repeat(0, 832)
+        dq_vi := list_repeat(0, 832)
+        dq_yp := list_repeat(0, 832)
+        dq_up := list_repeat(0, 832)
+        dq_vp := list_repeat(0, 832)
+        cqp_u := list_repeat(0, 52)
+        cqp_v := list_repeat(0, 52)
+    }
+    make_dq(lists[0], dq_yi)
+    make_dq(lists[1], dq_ui)
+    make_dq(lists[2], dq_vi)
+    make_dq(lists[3], dq_yp)
+    make_dq(lists[4], dq_up)
+    make_dq(lists[5], dq_vp)
+    alloc q := 0
+    loop q < 52 {
+        cqp_u[q] := chroma_qp_of(q + p.cb_qp_offset)
+        cqp_v[q] := chroma_qp_of(q + p.cr_qp_offset)
+        q := q + 1
+    }
+    constrained_intra := p.constrained_intra == 1
+    cur_pps := p
+    act_pps := p.uid
+    return false
+}
+
+proc activate_sps(s) {
+    if s.frame_mbs_only == 0 {
+        fail("interlaced video is not supported")
+    }
+    if s.chroma_format != 1 {
+        fail("only 4:2:0 video is supported")
+    }
+    if s.bit_depth != 8 {
+        fail("only 8-bit video is supported")
+    }
+    if s.mbw != mbw or s.mbh != mbh {
+        mbw := s.mbw
+        mbh := s.mbh
+        mb_count := mbw * mbh
+        ystride := mbw * 16
+        cstride := mbw * 8
+        pic_h := mbh * 16
+        s4 := mbw * 4
+        s2 := mbw * 2
+        mb_slice := list_repeat(-1, mb_count)
+        mb_intra := list_repeat(0, mb_count)
+        mb_qp := list_repeat(0, mb_count)
+        nz := list_repeat(0, mb_count * 16)
+        ipm := list_repeat(2, mb_count * 16)
+        nzu := list_repeat(0, mb_count * 4)
+        nzv := list_repeat(0, mb_count * 4)
+        pic_all := []
+        dpb := []
+    }
+    cur_sps := s
+    act_sps := s.uid
+    act_pps := -1
+    return false
+}
+
+proc pic_alloc() {
+    alloc p := false
+    for q in pic_all {
+        if q.ref == 0 and q.hold == 0 {
+            p := q
+            break
+        }
+    }
+    if p == false {
+        p := {}
+        p.y := list_repeat(0, ystride * pic_h)
+        p.u := list_repeat(128, cstride * (pic_h // 2))
+        p.v := list_repeat(128, cstride * (pic_h // 2))
+        p.mvx := list_repeat(0, mb_count * 16)
+        p.mvy := list_repeat(0, mb_count * 16)
+        p.refi := list_repeat(-1, mb_count * 16)
+        p.refid := list_repeat(-1, mb_count * 16)
+        append(pic_all, p)
+    }
+    p.ref := 0                 # 0 not a reference, 1 short-term, 2 long-term
+    p.hold := 1
+    p.lt := -1
+    p.pnum := 0
+    p.frame_num := 0
+    p.poc := 0
+    p.id := pic_next_id
+    pic_next_id := pic_next_id + 1
+    return p
+}
+
+# === Slice header ==================================================================
+
+alloc sl_type := 0             # 0 P, 1 B, 2 I
+alloc sl_first_mb := 0
+alloc sl_qp := 0
+alloc sl_num_ref0 := 0
+alloc sl_rplm0 := []           # reference list changes, flat: idc, value
+alloc sl_dbk_idc := 0
+alloc sl_dbk_a := 0
+alloc sl_dbk_b := 0
+alloc sl_frame_num := 0
+alloc sl_idr := false
+alloc sl_ref_idc := 0
+alloc sl_poc_lsb := 0
+alloc sl_delta_poc_bottom := 0
+alloc sl_delta_poc0 := 0
+alloc sl_delta_poc1 := 0
+alloc sl_mmco := []            # flat: operation, a, b; [-1] for a sliding window
+alloc sl_long_term_ref := 0
+
+alloc slice_num := 0           # counts every slice ever decoded
+alloc pic_slice0 := 0          # the first slice number of this picture
+alloc pic_dbk := []            # per slice of the picture: idc, alpha offset, beta offset
+alloc max_frame_num := 16
+
+# Picture order count bookkeeping (8.2.1 of the standard).
+alloc poc_prev_msb := 0
+alloc poc_prev_lsb := 0
+alloc fn_prev := 0
+alloc fn_prev_offset := 0
+alloc prev_had_mmco5 := false
+
+proc parse_slice_header(nal_type, ref_idc) {
+    sl_first_mb := br_ue()
+    alloc st := br_ue()
+    if st > 4 {
+        st := st - 5
+    }
+    if st > 2 {
+        fail("switching slices (SP and SI) are not supported")
+    }
+    sl_type := st
+    alloc pps_id := br_ue()
+    if has_key(pps_tab, "" + pps_id) == false {
+        fail("a slice names picture parameter set " + pps_id + ", which was never sent")
+    }
+    alloc p := pps_tab[pps_id]
+    alloc s := sps_tab[p.sps_id]
+    if cur_pic == false and s.uid != act_sps {
+        activate_sps(s)
+    }
+    if p.uid != act_pps {
+        activate_pps(p)
+    }
+    if p.cabac == 1 {
+        fail("CABAC entropy coding (Main and High profile) is not supported")
+    }
+    if st == 1 {
+        fail("B slices (Main and High profile) are not supported")
+    }
+    max_frame_num := 1 << s.log2_max_frame_num
+    sl_frame_num := br_bits(s.log2_max_frame_num)
+    sl_idr := nal_type == 5
+    sl_ref_idc := ref_idc
+    if sl_idr {
+        br_ue()
+    }
+    sl_poc_lsb := 0
+    sl_delta_poc_bottom := 0
+    sl_delta_poc0 := 0
+    sl_delta_poc1 := 0
+    if s.poc_type == 0 {
+        sl_poc_lsb := br_bits(s.log2_max_poc_lsb)
+        if p.pic_order_present == 1 {
+            sl_delta_poc_bottom := br_se()
+        }
+    } elif s.poc_type == 1 and s.delta_pic_order_always_zero == 0 {
+        sl_delta_poc0 := br_se()
+        if p.pic_order_present == 1 {
+            sl_delta_poc1 := br_se()
+        }
+    }
+    alloc redundant := 0
+    if p.redundant_pic_cnt == 1 {
+        redundant := br_ue()
+    }
+    sl_num_ref0 := p.num_ref_l0
+    sl_rplm0 := []
+    if st == 0 {
+        if br_bit() == 1 {
+            sl_num_ref0 := br_ue() + 1
+        }
+        if br_bit() == 1 {
+            loop true {
+                alloc idc := br_ue()
+                if idc == 3 {
+                    break
+                }
+                if idc > 3 {
+                    fail("damaged data (reference list change)")
+                }
+                append(sl_rplm0, idc)
+                append(sl_rplm0, br_ue())
+            }
+        }
+        if p.weighted_pred == 1 {
+            fail("weighted prediction is not supported")
+        }
+    }
+    sl_mmco := [-1]
+    sl_long_term_ref := 0
+    if ref_idc != 0 {
+        if sl_idr {
+            br_bit()
+            sl_long_term_ref := br_bit()
+        } elif br_bit() == 1 {
+            sl_mmco := []
+            loop true {
+                alloc op := br_ue()
+                if op == 0 {
+                    break
+                }
+                alloc a := 0
+                alloc b := 0
+                if op == 1 or op == 2 or op == 3 or op == 4 {
+                    a := br_ue()
+                }
+                if op == 3 or op == 6 {
+                    b := br_ue()
+                }
+                if op > 6 {
+                    fail("damaged data (reference marking)")
+                }
+                append(sl_mmco, op)
+                append(sl_mmco, a)
+                append(sl_mmco, b)
+            }
+        }
+    }
+    sl_qp := p.init_qp + br_se()
+    sl_dbk_idc := 0
+    sl_dbk_a := 0
+    sl_dbk_b := 0
+    if p.deblocking_control == 1 {
+        sl_dbk_idc := br_ue()
+        if sl_dbk_idc != 1 {
+            sl_dbk_a := br_se() * 2
+            sl_dbk_b := br_se() * 2
+        }
+    }
+    return redundant
+}
+
+# --- picture order count -------------------------------------------------------
+
+proc compute_poc() {
+    alloc s := cur_sps
+    alloc fn_offset := 0
+    if sl_idr == false {
+        alloc prev_off := fn_prev_offset
+        if prev_had_mmco5 {
+            prev_off := 0
+        }
+        if fn_prev > sl_frame_num {
+            fn_offset := prev_off + max_frame_num
+        } else {
+            fn_offset := prev_off
+        }
+    }
+    alloc poc := 0
+    if s.poc_type == 0 {
+        alloc max_lsb := 1 << s.log2_max_poc_lsb
+        if sl_idr {
+            poc_prev_msb := 0
+            poc_prev_lsb := 0
+        }
+        alloc msb := poc_prev_msb
+        if sl_poc_lsb < poc_prev_lsb and poc_prev_lsb - sl_poc_lsb >= max_lsb // 2 {
+            msb := poc_prev_msb + max_lsb
+        } elif sl_poc_lsb > poc_prev_lsb and sl_poc_lsb - poc_prev_lsb > max_lsb // 2 {
+            msb := poc_prev_msb - max_lsb
+        }
+        poc := msb + sl_poc_lsb
+        if sl_delta_poc_bottom < 0 {
+            poc := poc + sl_delta_poc_bottom
+        }
+        if sl_ref_idc != 0 {
+            poc_prev_msb := msb
+            poc_prev_lsb := sl_poc_lsb
+        }
+    } elif s.poc_type == 1 {
+        alloc cyc := s.poc_cycle
+        alloc n := length(cyc)
+        alloc abs_fn := 0
+        if n != 0 {
+            abs_fn := fn_offset + sl_frame_num
+        }
+        if sl_ref_idc == 0 and abs_fn > 0 {
+            abs_fn := abs_fn - 1
+        }
+        alloc expected := 0
+        if abs_fn > 0 {
+            alloc per_cycle := 0
+            for d in cyc {
+                per_cycle := per_cycle + d
+            }
+            alloc cnt := (abs_fn - 1) // n
+            alloc in_cycle := (abs_fn - 1) % n
+            expected := cnt * per_cycle
+            alloc i := 0
+            loop i <= in_cycle {
+                expected := expected + cyc[i]
+                i := i + 1
+            }
+        }
+        if sl_ref_idc == 0 {
+            expected := expected + s.offset_non_ref
+        }
+        alloc top := expected + sl_delta_poc0
+        alloc bottom := top + s.offset_top_bottom + sl_delta_poc1
+        poc := top
+        if bottom < top {
+            poc := bottom
+        }
+    } else {
+        if sl_idr == false {
+            poc := 2 * (fn_offset + sl_frame_num)
+            if sl_ref_idc == 0 {
+                poc := poc - 1
+            }
+        }
+    }
+    fn_prev := sl_frame_num
+    fn_prev_offset := fn_offset
+    prev_had_mmco5 := false
+    return poc
+}
+
+# --- reference pictures --------------------------------------------------------------
+
+alloc rl0 := []                # the reference list of the slice: pictures
+alloc rl0_y := []
+alloc rl0_u := []
+alloc rl0_v := []
+alloc rl0_id := []
+
+proc dpb_remove_unused() {
+    alloc keep := []
+    for p in dpb {
+        if p.ref != 0 {
+            append(keep, p)
+        }
+    }
+    dpb := keep
+    return false
+}
+
+proc list_insert(xs, at, v) {
+    alloc out := []
+    alloc i := 0
+    loop i < at and i < length(xs) {
+        append(out, xs[i])
+        i := i + 1
+    }
+    append(out, v)
+    loop i < length(xs) {
+        if xs[i].id != v.id {
+            append(out, xs[i])
+        }
+        i := i + 1
+    }
+    return out
+}
+
+proc build_ref_list0() {
+    alloc sh := []
+    alloc lg := []
+    for p in dpb {
+        if p.ref == 1 {
+            if p.frame_num > sl_frame_num {
+                p.pnum := p.frame_num - max_frame_num
+            } else {
+                p.pnum := p.frame_num
+            }
+            # insertion sort, largest picture number first
+            alloc k := length(sh)
+            append(sh, p)
+            loop k > 0 and sh[k - 1].pnum < p.pnum {
+                sh[k] := sh[k - 1]
+                k := k - 1
+            }
+            sh[k] := p
+        } elif p.ref == 2 {
+            alloc k := length(lg)
+            append(lg, p)
+            loop k > 0 and lg[k - 1].lt > p.lt {
+                lg[k] := lg[k - 1]
+                k := k - 1
+            }
+            lg[k] := p
+        }
+    }
+    alloc rl := sh + lg
+    if length(rl) > sl_num_ref0 {
+        rl := rl[0:sl_num_ref0]
+    }
+    alloc pred := sl_frame_num
+    alloc at := 0
+    alloc i := 0
+    loop i < length(sl_rplm0) {
+        alloc idc := sl_rplm0[i]
+        alloc val := sl_rplm0[i + 1]
+        alloc found := false
+        if idc == 2 {
+            for p in lg {
+                if p.lt == val {
+                    found := p
+                }
+            }
+        } else {
+            if idc == 0 {
+                pred := pred - (val + 1)
+                if pred < 0 {
+                    pred := pred + max_frame_num
+                }
+            } else {
+                pred := pred + (val + 1)
+                if pred >= max_frame_num {
+                    pred := pred - max_frame_num
+                }
+            }
+            alloc want := pred
+            if want > sl_frame_num {
+                want := want - max_frame_num
+            }
+            for p in sh {
+                if p.pnum == want {
+                    found := p
+                }
+            }
+        }
+        if found != false {
+            rl := list_insert(rl, at, found)
+            at := at + 1
+        }
+        i := i + 2
+    }
+    if length(rl) == 0 {
+        fail("a P slice with no reference picture to predict from")
+    }
+    loop length(rl) < sl_num_ref0 {
+        append(rl, rl[0])
+    }
+    if length(rl) > sl_num_ref0 {
+        rl := rl[0:sl_num_ref0]
+    }
+    rl0 := rl
+    rl0_y := []
+    rl0_u := []
+    rl0_v := []
+    rl0_id := []
+    for p in rl {
+        append(rl0_y, p.y)
+        append(rl0_u, p.u)
+        append(rl0_v, p.v)
+        append(rl0_id, p.id)
+    }
+    return false
+}
+
+# After a reference picture has been decoded: decide which pictures
+# stay references (8.2.5).
+proc mark_references() {
+    alloc s := cur_sps
+    alloc cur := cur_pic
+    alloc cur_long := false
+    if sl_idr {
+        if sl_long_term_ref == 1 {
+            cur.ref := 2
+            cur.lt := 0
+            cur_long := true
+        }
+    } elif sl_mmco[0] == -1 {
+        # sliding window
+        alloc count := 0
+        alloc oldest := false
+        for p in dpb {
+            if p.ref != 0 {
+                count := count + 1
+            }
+            if p.ref == 1 {
+                if p.frame_num > sl_frame_num {
+                    p.pnum := p.frame_num - max_frame_num
+                } else {
+                    p.pnum := p.frame_num
+                }
+                if oldest == false {
+                    oldest := p
+                } elif p.pnum < oldest.pnum {
+                    oldest := p
+                }
+            }
+        }
+        alloc limit := s.num_ref_frames
+        if limit < 1 {
+            limit := 1
+        }
+        if count >= limit and oldest != false {
+            oldest.ref := 0
+        }
+    } else {
+        for p in dpb {
+            if p.frame_num > sl_frame_num {
+                p.pnum := p.frame_num - max_frame_num
+            } else {
+                p.pnum := p.frame_num
+            }
+        }
+        alloc i := 0
+        loop i < length(sl_mmco) {
+            alloc op := sl_mmco[i]
+            alloc a := sl_mmco[i + 1]
+            alloc b := sl_mmco[i + 2]
+            if op == 1 {
+                for p in dpb {
+                    if p.ref == 1 and p.pnum == sl_frame_num - (a + 1) {
+                        p.ref := 0
+                    }
+                }
+            } elif op == 2 {
+                for p in dpb {
+                    if p.ref == 2 and p.lt == a {
+                        p.ref := 0
+                    }
+                }
+            } elif op == 3 {
+                for p in dpb {
+                    if p.ref == 2 and p.lt == b {
+                        p.ref := 0
+                    }
+                }
+                for p in dpb {
+                    if p.ref == 1 and p.pnum == sl_frame_num - (a + 1) {
+                        p.ref := 2
+                        p.lt := b
+                    }
+                }
+            } elif op == 4 {
+                for p in dpb {
+                    if p.ref == 2 and p.lt >= a {
+                        p.ref := 0
+                    }
+                }
+            } elif op == 5 {
+                for p in dpb {
+                    p.ref := 0
+                }
+                prev_had_mmco5 := true
+                cur.frame_num := 0
+                fn_prev := 0
+                poc_prev_msb := 0
+                poc_prev_lsb := 0
+            } elif op == 6 {
+                for p in dpb {
+                    if p.ref == 2 and p.lt == b {
+                        p.ref := 0
+                    }
+                }
+                cur.ref := 2
+                cur.lt := b
+                cur_long := true
+            }
+            i := i + 3
+        }
+    }
+    if cur_long == false {
+        cur.ref := 1
+    }
+    dpb_remove_unused()
+    append(dpb, cur)
+    return false
+}
+
+# === The macroblock being decoded ==================================================
+
+alloc mb_addr := 0
+alloc mb_x := 0
+alloc mb_y := 0
+alloc av_a := false            # is the macroblock to the left usable (same slice)?
+alloc av_b := false            # above
+alloc av_c := false            # above right
+alloc av_d := false            # above left
+alloc ia := false              # the same four, for intra prediction
+alloc ib := false
+alloc ic := false
+alloc idl := false
+alloc b4 := 0                  # index of its first 4x4 block in the luma block lists
+alloc c2 := 0                  # the same for the chroma block lists
+alloc py := 0                  # index of its first sample in the luma plane
+alloc pc := 0                  # and in a chroma plane
+alloc qp := 0
+alloc cbp := 0
+
+alloc blk := list_repeat(0, 16)        # one block of coefficients, raster order
+alloc cf_idx := list_repeat(0, 16)     # what residual() read: scan positions
+alloc cf_val := list_repeat(0, 16)     # and levels
+alloc dcy := list_repeat(0, 16)
+alloc cdc := list_repeat(0, 8)
+alloc edge := list_repeat(128, 13)     # neighbours of a 4x4 block: left 3..0, corner, top 0..7
+
+proc mb_setup(addr) {
+    mb_addr := addr
+    mb_x := addr % mbw
+    mb_y := addr // mbw
+    av_a := mb_x > 0 and mb_slice[addr - 1] == slice_num
+    av_b := mb_y > 0 and mb_slice[addr - mbw] == slice_num
+    av_c := mb_y > 0 and mb_x < mbw - 1 and mb_slice[addr - mbw + 1] == slice_num
+    av_d := mb_x > 0 and mb_y > 0 and mb_slice[addr - mbw - 1] == slice_num
+    ia := av_a
+    ib := av_b
+    ic := av_c
+    idl := av_d
+    if constrained_intra {
+        ia := av_a and mb_intra[addr - 1] == 1
+        ib := av_b and mb_intra[addr - mbw] == 1
+        ic := av_c and mb_intra[addr - mbw + 1] == 1
+        idl := av_d and mb_intra[addr - mbw - 1] == 1
+    }
+    mb_slice[addr] := slice_num
+    b4 := mb_y * 4 * s4 + mb_x * 4
+    c2 := mb_y * 2 * s2 + mb_x * 2
+    py := mb_y * 16 * ystride + mb_x * 16
+    pc := mb_y * 8 * cstride + mb_x * 8
+    return false
+}
+
+# === Residual data (CAVLC) =========================================================
+
+# Read one block of at most `maxc` coefficients; nc is its context (-1
+# for chroma DC). Leaves the levels in cf_val and their scan positions
+# in cf_idx, highest frequency first, and returns how many there are.
+proc residual(nc, maxc) {
+    alloc tok := 0
+    if nc < 0 {
+        tok := vlc_read(vlc_cdc)
+    } elif nc < 2 {
+        tok := vlc_read(vlc_ct0)
+    } elif nc < 4 {
+        tok := vlc_read(vlc_ct1)
+    } elif nc < 8 {
+        tok := vlc_read(vlc_ct2)
+    } else {
+        alloc c := br_bits(6)
+        if c != 3 {
+            tok := ((c >> 2) + 1) * 4 + (c & 3)
+        }
+    }
+    alloc total := tok >> 2
+    if total == 0 {
+        return 0
+    }
+    if total > maxc {
+        fail("damaged data (too many coefficients)")
+    }
+    alloc t1 := tok & 3
+    alloc vals := cf_val
+    alloc i := 0
+    loop i < t1 {
+        vals[i] := 1 - 2 * br_bit()
+        i := i + 1
+    }
+    alloc sl := 0
+    if total > 10 and t1 < 3 {
+        sl := 1
+    }
+    loop i < total {
+        alloc p := br_pos
+        alloc v := (br_w[p >> 3] >> (7 - (p & 7))) & 33554431
+        if v == 0 {
+            fail("damaged data (coefficient level)")
+        }
+        alloc prefix := 0
+        alloc m := 16777216
+        loop v < m {
+            m := m >> 1
+            prefix := prefix + 1
+        }
+        br_pos := p + prefix + 1
+        alloc code := prefix
+        if prefix > 15 {
+            code := 15
+        }
+        code := code << sl
+        alloc size := sl
+        if prefix >= 15 {
+            size := prefix - 3
+        } elif prefix == 14 and sl == 0 {
+            size := 4
+        }
+        if size > 0 {
+            code := code + br_bits(size)
+        }
+        if prefix >= 15 and sl == 0 {
+            code := code + 15
+        }
+        if prefix >= 16 {
+            code := code + (1 << (prefix - 3)) - 4096
+        }
+        if i == t1 and t1 < 3 {
+            code := code + 2
+        }
+        alloc level := 0
+        alloc mag := (code + 2) >> 1
+        if (code & 1) == 0 {
+            level := mag
+        } else {
+            mag := (code + 1) >> 1
+            level := 0 - mag
+        }
+        vals[i] := level
+        if sl == 0 {
+            sl := 1
+        }
+        if mag > (3 << (sl - 1)) and sl < 6 {
+            sl := sl + 1
+        }
+        i := i + 1
+    }
+    alloc zeros := 0
+    if total < maxc {
+        if nc < 0 {
+            zeros := vlc_read(vlc_ctz[total - 1])
+        } else {
+            zeros := vlc_read(vlc_tz[total - 1])
+        }
+    }
+    alloc pos := total + zeros - 1
+    if pos >= maxc {
+        fail("damaged data (coefficient positions)")
+    }
+    alloc idx := cf_idx
+    i := 0
+    alloc last := total - 1
+    loop i < last and zeros > 0 {
+        idx[i] := pos
+        alloc run := 0
+        if zeros > 6 {
+            run := vlc_read(vlc_run[6])
+        } else {
+            run := vlc_read(vlc_run[zeros - 1])
+        }
+        pos := pos - 1 - run
+        zeros := zeros - run
+        if zeros < 0 {
+            fail("damaged data (coefficient runs)")
+        }
+        i := i + 1
+    }
+    loop i < total {
+        idx[i] := pos
+        pos := pos - 1
+        i := i + 1
+    }
+    return total
+}
+
+# === Inverse transform ==============================================================
+
+# blk holds dequantised coefficients: transform them, add the result to
+# the 4x4 block of plane `pl` at index o, and leave blk zeroed.
+proc idct4_add(pl, o, st) {
+    alloc b := blk
+    alloc i := 0
+    loop i < 16 {
+        alloc a0 := b[i]
+        alloc a1 := b[i + 1]
+        alloc a2 := b[i + 2]
+        alloc a3 := b[i + 3]
+        alloc e0 := a0 + a2
+        alloc e1 := a0 - a2
+        alloc e2 := (a1 >> 1) - a3
+        alloc e3 := a1 + (a3 >> 1)
+        b[i] := e0 + e3
+        b[i + 1] := e1 + e2
+        b[i + 2] := e1 - e2
+        b[i + 3] := e0 - e3
+        i := i + 4
+    }
+    i := 0
+    loop i < 4 {
+        alloc a0 := b[i]
+        alloc a1 := b[i + 4]
+        alloc a2 := b[i + 8]
+        alloc a3 := b[i + 12]
+        b[i] := 0
+        b[i + 4] := 0
+        b[i + 8] := 0
+        b[i + 12] := 0
+        alloc e0 := a0 + a2
+        alloc e1 := a0 - a2
+        alloc e2 := (a1 >> 1) - a3
+        alloc e3 := a1 + (a3 >> 1)
+        alloc p := o + i
+        alloc v := pl[p] + ((e0 + e3 + 32) >> 6)
+        if (v & -256) != 0 {
+            if v < 0 { v := 0 } else { v := 255 }
+        }
+        pl[p] := v
+        p := p + st
+        v := pl[p] + ((e1 + e2 + 32) >> 6)
+        if (v & -256) != 0 {
+            if v < 0 { v := 0 } else { v := 255 }
+        }
+        pl[p] := v
+        p := p + st
+        v := pl[p] + ((e1 - e2 + 32) >> 6)
+        if (v & -256) != 0 {
+            if v < 0 { v := 0 } else { v := 255 }
+        }
+        pl[p] := v
+        p := p + st
+        v := pl[p] + ((e0 - e3 + 32) >> 6)
+        if (v & -256) != 0 {
+            if v < 0 { v := 0 } else { v := 255 }
+        }
+        pl[p] := v
+        i := i + 1
+    }
+    return false
+}
+
+# The same for a block whose only coefficient is the DC one.
+proc idct4_dc_add(pl, o, st, dc) {
+    alloc r := (dc + 32) >> 6
+    if r == 0 {
+        return false
+    }
+    alloc y := 0
+    loop y < 4 {
+        alloc x := 0
+        loop x < 4 {
+            alloc v := pl[o + x] + r
+            if (v & -256) != 0 {
+                if v < 0 { v := 0 } else { v := 255 }
+            }
+            pl[o + x] := v
+            x := x + 1
+        }
+        o := o + st
+        y := y + 1
+    }
+    return false
+}
+
+# Context for the coefficient count of a luma block: the average of
+# the counts of the blocks to the left and above.
+proc luma_nc(bx, by) {
+    alloc gi := b4 + by * s4 + bx
+    alloc na := -1
+    alloc nb := -1
+    if bx > 0 or av_a {
+        na := nz[gi - 1]
+    }
+    if by > 0 or av_b {
+        nb := nz[gi - s4]
+    }
+    if na >= 0 and nb >= 0 {
+        return (na + nb + 1) >> 1
+    }
+    if na >= 0 {
+        return na
+    }
+    if nb >= 0 {
+        return nb
+    }
+    return 0
+}
+
+# Read the coefficients of the luma block at (bx, by) and dequantise
+# them into blk. `first` is 0 for a block of 16 coefficients, 1 for one
+# of 15 whose DC comes from elsewhere. Returns the number read.
+proc luma_block(bx, by, dq, first) {
+    alloc n := residual(luma_nc(bx, by), 16 - first)
+    nz[b4 + by * s4 + bx] := n
+    alloc q16 := qp * 16
+    alloc k := 0
+    loop k < n {
+        alloc r := ZZ[cf_idx[k] + first]
+        blk[r] := (cf_val[k] * dq[q16 + r] + 8) >> 4
+        k := k + 1
+    }
+    return n
+}
+
+proc read_qp_delta() {
+    alloc d := br_se()
+    if d < -26 or d > 25 {
+        fail("damaged data (quantiser change)")
+    }
+    qp := (qp + d + 52) % 52
+    return false
+}
+
+# The chroma residual of a macroblock, both planes, added to the picture.
+proc chroma_residual(dqu, dqv) {
+    alloc gi := c2
+    if (cbp >> 4) == 0 {
+        nzu[gi] := 0
+        nzu[gi + 1] := 0
+        nzu[gi + s2] := 0
+        nzu[gi + s2 + 1] := 0
+        nzv[gi] := 0
+        nzv[gi + 1] := 0
+        nzv[gi + s2] := 0
+        nzv[gi + s2 + 1] := 0
+        return false
+    }
+    alloc pl := 0
+    loop pl < 2 {
+        alloc scale := dqu[cqp_u[qp] * 16]
+        if pl == 1 {
+            scale := dqv[cqp_v[qp] * 16]
+        }
+        alloc o := pl * 4
+        cdc[o] := 0
+        cdc[o + 1] := 0
+        cdc[o + 2] := 0
+        cdc[o + 3] := 0
+        alloc n := residual(-1, 4)
+        alloc k := 0
+        loop k < n {
+            cdc[o + cf_idx[k]] := cf_val[k]
+            k := k + 1
+        }
+        alloc c0 := cdc[o]
+        alloc c1 := cdc[o + 1]
+        alloc c2v := cdc[o + 2]
+        alloc c3 := cdc[o + 3]
+        cdc[o] := ((c0 + c1 + c2v + c3) * scale) >> 5
+        cdc[o + 1] := ((c0 - c1 + c2v - c3) * scale) >> 5
+        cdc[o + 2] := ((c0 + c1 - c2v - c3) * scale) >> 5
+        cdc[o + 3] := ((c0 - c1 - c2v + c3) * scale) >> 5
+        pl := pl + 1
+    }
+    pl := 0
+    loop pl < 2 {
+        alloc plane := cur_u
+        alloc nzc := nzu
+        alloc dq := dqu
+        alloc q16 := cqp_u[qp] * 16
+        if pl == 1 {
+            plane := cur_v
+            nzc := nzv
+            dq := dqv
+            q16 := cqp_v[qp] * 16
+        }
+        alloc i := 0
+        loop i < 4 {
+            alloc bx := i & 1
+            alloc by := i >> 1
+            alloc g := gi + by * s2 + bx
+            alloc n := 0
+            if (cbp & 32) != 0 {
+                alloc na := -1
+                alloc nb := -1
+                if bx > 0 or av_a {
+                    na := nzc[g - 1]
+                }
+                if by > 0 or av_b {
+                    nb := nzc[g - s2]
+                }
+                alloc nc := 0
+                if na >= 0 and nb >= 0 {
+                    nc := (na + nb + 1) >> 1
+                } elif na >= 0 {
+                    nc := na
+                } elif nb >= 0 {
+                    nc := nb
+                }
+                n := residual(nc, 15)
+                alloc k := 0
+                loop k < n {
+                    alloc r := ZZ[cf_idx[k] + 1]
+                    blk[r] := (cf_val[k] * dq[q16 + r] + 8) >> 4
+                    k := k + 1
+                }
+            }
+            nzc[g] := n
+            alloc dc := cdc[pl * 4 + i]
+            alloc o := pc + by * 4 * cstride + bx * 4
+            if n > 0 {
+                blk[0] := dc
+                idct4_add(plane, o, cstride)
+            } elif dc != 0 {
+                idct4_dc_add(plane, o, cstride, dc)
+            }
+            i := i + 1
+        }
+        pl := pl + 1
+    }
+    return false
+}
+
+# === Intra prediction ==============================================================
+
+proc f3(a, b, c) {
+    return (a + b + b + c + 2) >> 2
+}
+
+# Predict the 4x4 luma block at (bx, by) of the macroblock.
+proc pred4(mode, bx, by) {
+    alloc pl := cur_y
+    alloc st := ystride
+    alloc o := py + by * 4 * st + bx * 4
+    alloc hl := bx > 0 or ia
+    alloc ht := by > 0 or ib
+    alloc e := edge
+    if ht {
+        alloc t := o - st
+        e[5] := pl[t]
+        e[6] := pl[t + 1]
+        e[7] := pl[t + 2]
+        e[8] := pl[t + 3]
+        alloc htr := false
+        if by == 0 {
+            if bx < 3 {
+                htr := ib
+            } else {
+                htr := ic
+            }
+        } elif bx == 0 or bx == 2 or (bx == 1 and by == 2) {
+            htr := true
+        }
+        if htr {
+            e[9] := pl[t + 4]
+            e[10] := pl[t + 5]
+            e[11] := pl[t + 6]
+            e[12] := pl[t + 7]
+        } else {
+            alloc v := e[8]
+            e[9] := v
+            e[10] := v
+            e[11] := v
+            e[12] := v
+        }
+        if hl {
+            e[4] := pl[t - 1]
+        }
+    }
+    if hl {
+        e[3] := pl[o - 1]
+        e[2] := pl[o + st - 1]
+        e[1] := pl[o + st + st - 1]
+        e[0] := pl[o + st + st + st - 1]
+    }
+    alloc y := 0
+    alloc x := 0
+    if mode == 2 {
+        alloc dc := 128
+        if ht and hl {
+            dc := (e[0] + e[1] + e[2] + e[3] + e[5] + e[6] + e[7] + e[8] + 4) >> 3
+        } elif ht {
+            dc := (e[5] + e[6] + e[7] + e[8] + 2) >> 2
+        } elif hl {
+            dc := (e[0] + e[1] + e[2] + e[3] + 2) >> 2
+        }
+        loop y < 4 {
+            pl[o] := dc
+            pl[o + 1] := dc
+            pl[o + 2] := dc
+            pl[o + 3] := dc
+            o := o + st
+            y := y + 1
+        }
+        return false
+    }
+    if mode == 0 {
+        loop y < 4 {
+            pl[o] := e[5]
+            pl[o + 1] := e[6]
+            pl[o + 2] := e[7]
+            pl[o + 3] := e[8]
+            o := o + st
+            y := y + 1
+        }
+        return false
+    }
+    if mode == 1 {
+        loop y < 4 {
+            alloc v := e[3 - y]
+            pl[o] := v
+            pl[o + 1] := v
+            pl[o + 2] := v
+            pl[o + 3] := v
+            o := o + st
+            y := y + 1
+        }
+        return false
+    }
+    loop y < 4 {
+        x := 0
+        loop x < 4 {
+            alloc v := 0
+            if mode == 3 {
+                alloc k := x + y
+                if k == 6 {
+                    v := (e[11] + 3 * e[12] + 2) >> 2
+                } else {
+                    v := f3(e[5 + k], e[6 + k], e[7 + k])
+                }
+            } elif mode == 4 {
+                alloc k := 3 + x - y
+                v := f3(e[k], e[k + 1], e[k + 2])
+            } elif mode == 5 {
+                alloc z := 2 * x - y
+                alloc k := x - (y >> 1)
+                if z < -1 {
+                    v := f3(e[4 - y], e[5 - y], e[6 - y])
+                } elif (z & 1) == 0 {
+                    v := (e[4 + k] + e[5 + k] + 1) >> 1
+                } else {
+                    v := f3(e[3 + k], e[4 + k], e[5 + k])
+                }
+            } elif mode == 6 {
+                alloc z := 2 * y - x
+                alloc k := y - (x >> 1)
+                if z < -1 {
+                    v := f3(e[4 + x], e[3 + x], e[2 + x])
+                } elif (z & 1) == 0 {
+                    v := (e[4 - k] + e[3 - k] + 1) >> 1
+                } else {
+                    v := f3(e[5 - k], e[4 - k], e[3 - k])
+                }
+            } elif mode == 7 {
+                alloc k := x + (y >> 1)
+                if (y & 1) == 0 {
+                    v := (e[5 + k] + e[6 + k] + 1) >> 1
+                } else {
+                    v := f3(e[5 + k], e[6 + k], e[7 + k])
+                }
+            } else {
+                alloc z := x + 2 * y
+                alloc k := y + (x >> 1)
+                if z > 5 {
+                    v := e[0]
+                } elif z == 5 {
+                    v := (e[1] + 3 * e[0] + 2) >> 2
+                } elif (z & 1) == 0 {
+                    v := (e[3 - k] + e[2 - k] + 1) >> 1
+                } else {
+                    v := f3(e[3 - k], e[2 - k], e[1 - k])
+                }
+            }
+            pl[o + x] := v
+            x := x + 1
+        }
+        o := o + st
+        y := y + 1
+    }
+    return false
+}
+
+proc clip255(v) {
+    if v < 0 { return 0 }
+    if v > 255 { return 255 }
+    return v
+}
+
+# Fill the n x n block at index o of a plane by one of the whole-block
+# modes: 0 vertical, 1 horizontal, 2 DC, 3 plane. (Chroma numbers its
+# modes DC, horizontal, vertical, plane; the caller translates.)
+proc pred_block(pl, o, st, n, mode) {
+    alloc y := 0
+    alloc x := 0
+    if mode == 0 {
+        loop y < n {
+            x := 0
+            loop x < n {
+                pl[o + y * st + x] := pl[o - st + x]
+                x := x + 1
+            }
+            y := y + 1
+        }
+        return false
+    }
+    if mode == 1 {
+        loop y < n {
+            alloc v := pl[o + y * st - 1]
+            x := 0
+            loop x < n {
+                pl[o + y * st + x] := v
+                x := x + 1
+            }
+            y := y + 1
+        }
+        return false
+    }
+    if mode == 3 {
+        alloc half := n >> 1
+        alloc hsum := 0
+        alloc vsum := 0
+        alloc i := 0
+        loop i < half {
+            hsum := hsum + (i + 1) * (pl[o - st + half + i] - pl[o - st + half - 2 - i])
+            vsum := vsum + (i + 1) * (pl[o + (half + i) * st - 1] - pl[o + (half - 2 - i) * st - 1])
+            i := i + 1
+        }
+        alloc a := 16 * (pl[o + (n - 1) * st - 1] + pl[o - st + n - 1])
+        alloc b := 0
+        alloc c := 0
+        if n == 16 {
+            b := (5 * hsum + 32) >> 6
+            c := (5 * vsum + 32) >> 6
+        } else {
+            b := (34 * hsum + 32) >> 6
+            c := (34 * vsum + 32) >> 6
+        }
+        alloc base := a - (half - 1) * (b + c) + 16
+        loop y < n {
+            alloc acc := base + c * y
+            x := 0
+            loop x < n {
+                alloc v := acc >> 5
+                if (v & -256) != 0 {
+                    if v < 0 { v := 0 } else { v := 255 }
+                }
+                pl[o + x] := v
+                acc := acc + b
+                x := x + 1
+            }
+            o := o + st
+            y := y + 1
+        }
+        return false
+    }
+    return false
+}
+
+proc fill_block(pl, o, st, w, h, v) {
+    alloc y := 0
+    loop y < h {
+        alloc x := 0
+        loop x < w {
+            pl[o + x] := v
+            x := x + 1
+        }
+        o := o + st
+        y := y + 1
+    }
+    return false
+}
+
+proc sum_row(pl, o, n) {
+    alloc s := 0
+    alloc i := 0
+    loop i < n {
+        s := s + pl[o + i]
+        i := i + 1
+    }
+    return s
+}
+
+proc sum_col(pl, o, st, n) {
+    alloc s := 0
+    alloc i := 0
+    loop i < n {
+        s := s + pl[o + i * st]
+        i := i + 1
+    }
+    return s
+}
+
+proc pred16(mode) {
+    alloc pl := cur_y
+    alloc st := ystride
+    alloc o := py
+    if mode == 2 {
+        alloc dc := 128
+        if ia and ib {
+            dc := (sum_row(pl, o - st, 16) + sum_col(pl, o - 1, st, 16) + 16) >> 5
+        } elif ib {
+            dc := (sum_row(pl, o - st, 16) + 8) >> 4
+        } elif ia {
+            dc := (sum_col(pl, o - 1, st, 16) + 8) >> 4
+        }
+        fill_block(pl, o, st, 16, 16, dc)
+        return false
+    }
+    pred_block(pl, o, st, 16, mode)
+    return false
+}
+
+proc pred_chroma_plane(pl, mode) {
+    alloc st := cstride
+    alloc o := pc
+    if mode == 1 {
+        pred_block(pl, o, st, 8, 1)
+        return false
+    }
+    if mode == 2 {
+        pred_block(pl, o, st, 8, 0)
+        return false
+    }
+    if mode == 3 {
+        pred_block(pl, o, st, 8, 3)
+        return false
+    }
+    # DC, worked out for each 4x4 quarter from the neighbours it touches
+    alloc t0 := 0
+    alloc t1 := 0
+    alloc l0 := 0
+    alloc l1 := 0
+    if ib {
+        t0 := sum_row(pl, o - st, 4)
+        t1 := sum_row(pl, o - st + 4, 4)
+    }
+    if ia {
+        l0 := sum_col(pl, o - 1, st, 4)
+        l1 := sum_col(pl, o + 4 * st - 1, st, 4)
+    }
+    alloc d00 := 128
+    alloc d10 := 128
+    alloc d01 := 128
+    alloc d11 := 128
+    if ia and ib {
+        d00 := (t0 + l0 + 4) >> 3
+        d10 := (t1 + 2) >> 2
+        d01 := (l1 + 2) >> 2
+        d11 := (t1 + l1 + 4) >> 3
+    } elif ib {
+        d00 := (t0 + 2) >> 2
+        d10 := (t1 + 2) >> 2
+        d01 := d00
+        d11 := d10
+    } elif ia {
+        d00 := (l0 + 2) >> 2
+        d10 := d00
+        d01 := (l1 + 2) >> 2
+        d11 := d01
+    }
+    fill_block(pl, o, st, 4, 4, d00)
+    fill_block(pl, o + 4, st, 4, 4, d10)
+    fill_block(pl, o + 4 * st, st, 4, 4, d01)
+    fill_block(pl, o + 4 * st + 4, st, 4, 4, d11)
+    return false
+}
+
+# === Motion compensation ============================================================
+
+alloc mc_tmp := list_repeat(0, 16 * 22)        # rows of unrounded half samples
+alloc mc_tmp2 := list_repeat(0, 256)           # a second prediction to average with
+alloc mc_edge := list_repeat(0, 32 * 24)       # a block that reaches outside the picture
+
+# Copy the w x h region at (x0, y0) of a reference plane into mc_edge
+# (32 samples per row), repeating the border samples outside it.
+proc mc_edge_fill(s, x0, y0, w, h, stride, pw, ph) {
+    alloc e := mc_edge
+    alloc j := 0
+    loop j < h {
+        alloc yy := y0 + j
+        if yy < 0 { yy := 0 }
+        if yy >= ph { yy := ph - 1 }
+        alloc row := yy * stride
+        alloc o := j * 32
+        alloc i := 0
+        loop i < w {
+            alloc xx := x0 + i
+            if xx < 0 { xx := 0 }
+            if xx >= pw { xx := pw - 1 }
+            e[o + i] := s[row + xx]
+            i := i + 1
+        }
+        j := j + 1
+    }
+    return false
+}
+
+proc mc_copy(s, so, ss, d, dp, ds, w, h) {
+    alloc y := 0
+    loop y < h {
+        alloc x := 0
+        loop x < w {
+            d[dp + x] := s[so + x]
+            x := x + 1
+        }
+        so := so + ss
+        dp := dp + ds
+        y := y + 1
+    }
+    return false
+}
+
+# Half-sample positions between two samples of a row: the six-tap filter.
+proc mc_h(s, so, ss, d, dp, ds, w, h) {
+    alloc y := 0
+    loop y < h {
+        alloc x := 0
+        loop x < w {
+            alloc i := so + x
+            alloc v := (s[i - 2] + s[i + 3] - 5 * (s[i - 1] + s[i + 2]) + 20 * (s[i] + s[i + 1]) + 16) >> 5
+            if (v & -256) != 0 {
+                if v < 0 { v := 0 } else { v := 255 }
+            }
+            d[dp + x] := v
+            x := x + 1
+        }
+        so := so + ss
+        dp := dp + ds
+        y := y + 1
+    }
+    return false
+}
+
+# Half-sample positions between two rows.
+proc mc_v(s, so, ss, d, dp, ds, w, h) {
+    alloc s2x := ss + ss
+    alloc s3x := s2x + ss
+    alloc y := 0
+    loop y < h {
+        alloc x := 0
+        loop x < w {
+            alloc i := so + x
+            alloc v := (s[i - s2x] + s[i + s3x] - 5 * (s[i - ss] + s[i + s2x]) + 20 * (s[i] + s[i + ss]) + 16) >> 5
+            if (v & -256) != 0 {
+                if v < 0 { v := 0 } else { v := 255 }
+            }
+            d[dp + x] := v
+            x := x + 1
+        }
+        so := so + ss
+        dp := dp + ds
+        y := y + 1
+    }
+    return false
+}
+
+# The position in the middle of four samples: the filter both ways.
+proc mc_j(s, so, ss, d, dp, ds, w, h) {
+    alloc t := mc_tmp
+    alloc rows := h + 5
+    alloc y := 0
+    alloc si := so - ss - ss
+    loop y < rows {
+        alloc x := 0
+        alloc to := y * 16
+        loop x < w {
+            alloc i := si + x
+            t[to + x] := s[i - 2] + s[i + 3] - 5 * (s[i - 1] + s[i + 2]) + 20 * (s[i] + s[i + 1])
+            x := x + 1
+        }
+        si := si + ss
+        y := y + 1
+    }
+    y := 0
+    loop y < h {
+        alloc x := 0
+        alloc to := (y + 2) * 16
+        loop x < w {
+            alloc i := to + x
+            alloc v := (t[i - 32] + t[i + 48] - 5 * (t[i - 16] + t[i + 32]) + 20 * (t[i] + t[i + 16]) + 512) >> 10
+            if (v & -256) != 0 {
+                if v < 0 { v := 0 } else { v := 255 }
+            }
+            d[dp + x] := v
+            x := x + 1
+        }
+        dp := dp + ds
+        y := y + 1
+    }
+    return false
+}
+
+# d := the rounded average of d and s.
+proc mc_avg(d, dp, ds, s, so, ss, w, h) {
+    alloc y := 0
+    loop y < h {
+        alloc x := 0
+        loop x < w {
+            d[dp + x] := (d[dp + x] + s[so + x] + 1) >> 1
+            x := x + 1
+        }
+        so := so + ss
+        dp := dp + ds
+        y := y + 1
+    }
+    return false
+}
+
+# Predict the w x h luma block at (x, y) of plane d from the reference
+# plane `ref`, displaced by (mx, my) quarter samples.
+proc mc_luma(ref, d, dp, ds, x, y, w, h, mx, my) {
+    alloc fx := mx & 3
+    alloc fy := my & 3
+    alloc ix := x + (mx >> 2)
+    alloc iy := y + (my >> 2)
+    alloc s := ref
+    alloc ss := ystride
+    alloc so := iy * ystride + ix
+    if ix < 2 or iy < 2 or ix + w + 3 > ystride or iy + h + 3 > pic_h {
+        mc_edge_fill(ref, ix - 2, iy - 2, w + 5, h + 5, ystride, ystride, pic_h)
+        s := mc_edge
+        ss := 32
+        so := 66
+    }
+    if fx == 0 and fy == 0 {
+        mc_copy(s, so, ss, d, dp, ds, w, h)
+        return false
+    }
+    if fy == 0 {
+        mc_h(s, so, ss, d, dp, ds, w, h)
+        if fx == 1 {
+            mc_avg(d, dp, ds, s, so, ss, w, h)
+        } elif fx == 3 {
+            mc_avg(d, dp, ds, s, so + 1, ss, w, h)
+        }
+        return false
+    }
+    if fx == 0 {
+        mc_v(s, so, ss, d, dp, ds, w, h)
+        if fy == 1 {
+            mc_avg(d, dp, ds, s, so, ss, w, h)
+        } elif fy == 3 {
+            mc_avg(d, dp, ds, s, so + ss, ss, w, h)
+        }
+        return false
+    }
+    if fx == 2 and fy == 2 {
+        mc_j(s, so, ss, d, dp, ds, w, h)
+        return false
+    }
+    alloc t := mc_tmp2
+    if fx == 2 {
+        mc_j(s, so, ss, d, dp, ds, w, h)
+        if fy == 1 {
+            mc_h(s, so, ss, t, 0, 16, w, h)
+        } else {
+            mc_h(s, so + ss, ss, t, 0, 16, w, h)
+        }
+    } elif fy == 2 {
+        mc_j(s, so, ss, d, dp, ds, w, h)
+        if fx == 1 {
+            mc_v(s, so, ss, t, 0, 16, w, h)
+        } else {
+            mc_v(s, so + 1, ss, t, 0, 16, w, h)
+        }
+    } else {
+        if fy == 1 {
+            mc_h(s, so, ss, d, dp, ds, w, h)
+        } else {
+            mc_h(s, so + ss, ss, d, dp, ds, w, h)
+        }
+        if fx == 1 {
+            mc_v(s, so, ss, t, 0, 16, w, h)
+        } else {
+            mc_v(s, so + 1, ss, t, 0, 16, w, h)
+        }
+    }
+    mc_avg(d, dp, ds, t, 0, 16, w, h)
+    return false
+}
+
+# The same for a chroma block: (mx, my) are then eighths of a sample and
+# the prediction is a weighted mean of the four samples around.
+proc mc_chroma(ref, d, dp, ds, x, y, w, h, mx, my) {
+    alloc fx := mx & 7
+    alloc fy := my & 7
+    alloc ix := x + (mx >> 3)
+    alloc iy := y + (my >> 3)
+    alloc s := ref
+    alloc ss := cstride
+    alloc so := iy * cstride + ix
+    alloc ch := pic_h >> 1
+    if ix < 0 or iy < 0 or ix + w + 1 > cstride or iy + h + 1 > ch {
+        mc_edge_fill(ref, ix, iy, w + 1, h + 1, cstride, cstride, ch)
+        s := mc_edge
+        ss := 32
+        so := 0
+    }
+    if fx == 0 and fy == 0 {
+        mc_copy(s, so, ss, d, dp, ds, w, h)
+        return false
+    }
+    alloc ca := (8 - fx) * (8 - fy)
+    alloc cb := fx * (8 - fy)
+    alloc cc := (8 - fx) * fy
+    alloc cd := fx * fy
+    alloc j := 0
+    loop j < h {
+        alloc i := 0
+        loop i < w {
+            alloc k := so + i
+            d[dp + i] := (ca * s[k] + cb * s[k + 1] + cc * s[k + ss] + cd * s[k + ss + 1] + 32) >> 6
+            i := i + 1
+        }
+        so := so + ss
+        dp := dp + ds
+        j := j + 1
+    }
+    return false
+}
+
+# === Motion vectors ==================================================================
+
+alloc pmx := 0                 # what mv_pred() predicted
+alloc pmy := 0
+
+proc median3(a, b, c) {
+    alloc lo := a
+    alloc hi := a
+    if b < lo { lo := b }
+    if b > hi { hi := b }
+    if c < lo { lo := c }
+    if c > hi { hi := c }
+    return a + b + c - lo - hi
+}
+
+# Predict the motion vector of the partition whose first 4x4 block is
+# (bx, by) of the macroblock and which is w4 blocks wide, for reference
+# `ref`. dir: 0 the median rule; 1, 2, 3 prefer the neighbour above, to
+# the left, above right when it uses the same reference (the rules for
+# 16x8 and 8x16 partitions). The result is left in pmx and pmy.
+proc mv_pred(bx, by, w4, ref, dir) {
+    alloc gi := b4 + by * s4 + bx
+    alloc ra := -2
+    alloc ax := 0
+    alloc ay := 0
+    if bx > 0 or av_a {
+        alloc i := gi - 1
+        ra := refi[i]
+        ax := mvx[i]
+        ay := mvy[i]
+    }
+    alloc rb := -2
+    alloc bvx := 0
+    alloc bvy := 0
+    if by > 0 or av_b {
+        alloc i := gi - s4
+        rb := refi[i]
+        bvx := mvx[i]
+        bvy := mvy[i]
+    }
+    alloc rc := -2
+    alloc cx := 0
+    alloc cy := 0
+    alloc cav := false
+    if by == 0 {
+        if bx + w4 < 4 {
+            cav := av_b
+        } else {
+            cav := av_c
+        }
+    } elif bx + w4 < 4 {
+        cav := BLK_N[(by - 1) * 4 + bx + w4] < BLK_N[by * 4 + bx]
+    }
+    if cav {
+        alloc i := gi - s4 + w4
+        rc := refi[i]
+        cx := mvx[i]
+        cy := mvy[i]
+    } else {
+        alloc dav := false
+        if by == 0 {
+            if bx > 0 {
+                dav := av_b
+            } else {
+                dav := av_d
+            }
+        } elif bx > 0 {
+            dav := true
+        } else {
+            dav := av_a
+        }
+        if dav {
+            alloc i := gi - s4 - 1
+            rc := refi[i]
+            cx := mvx[i]
+            cy := mvy[i]
+        }
+    }
+    if dir == 1 and rb == ref {
+        pmx := bvx
+        pmy := bvy
+        return false
+    }
+    if dir == 2 and ra == ref {
+        pmx := ax
+        pmy := ay
+        return false
+    }
+    if dir == 3 and rc == ref {
+        pmx := cx
+        pmy := cy
+        return false
+    }
+    if rb == -2 and rc == -2 and ra != -2 {
+        pmx := ax
+        pmy := ay
+        return false
+    }
+    alloc same := 0
+    if ra == ref { same := same + 1 }
+    if rb == ref { same := same + 1 }
+    if rc == ref { same := same + 1 }
+    if same == 1 {
+        if ra == ref {
+            pmx := ax
+            pmy := ay
+        } elif rb == ref {
+            pmx := bvx
+            pmy := bvy
+        } else {
+            pmx := cx
+            pmy := cy
+        }
+        return false
+    }
+    pmx := median3(ax, bvx, cx)
+    pmy := median3(ay, bvy, cy)
+    return false
+}
+
+# A partition of the macroblock gets its motion: record it for the
+# blocks it covers and build the prediction in the picture.
+proc inter_part(bx, by, w4, h4, ref, mx, my) {
+    if ref < 0 or ref >= sl_num_ref0 {
+        fail("damaged data (reference index)")
+    }
+    alloc rid := rl0_id[ref]
+    alloc j := 0
+    loop j < h4 {
+        alloc gi := b4 + (by + j) * s4 + bx
+        alloc i := 0
+        loop i < w4 {
+            mvx[gi + i] := mx
+            mvy[gi + i] := my
+            refi[gi + i] := ref
+            refid[gi + i] := rid
+            i := i + 1
+        }
+        j := j + 1
+    }
+    alloc x := mb_x * 16 + bx * 4
+    alloc y := mb_y * 16 + by * 4
+    mc_luma(rl0_y[ref], cur_y, y * ystride + x, ystride, x, y, w4 * 4, h4 * 4, mx, my)
+    x := x >> 1
+    y := y >> 1
+    mc_chroma(rl0_u[ref], cur_u, y * cstride + x, cstride, x, y, w4 * 2, h4 * 2, mx, my)
+    mc_chroma(rl0_v[ref], cur_v, y * cstride + x, cstride, x, y, w4 * 2, h4 * 2, mx, my)
+    return false
+}
+
+# Read the motion vector difference of a partition and finish it.
+proc p_part(bx, by, w4, h4, ref, dir) {
+    mv_pred(bx, by, w4, ref, dir)
+    alloc mx := pmx + br_se()
+    alloc my := pmy + br_se()
+    inter_part(bx, by, w4, h4, ref, mx, my)
+    return false
+}
+
+proc read_ref() {
+    if sl_num_ref0 == 1 {
+        return 0
+    }
+    if sl_num_ref0 == 2 {
+        return 1 - br_bit()
+    }
+    return br_ue()
+}
+
+# === Macroblocks ====================================================================
+
+proc mb_plain_modes() {
+    alloc j := 0
+    loop j < 4 {
+        alloc gi := b4 + j * s4
+        ipm[gi] := 2
+        ipm[gi + 1] := 2
+        ipm[gi + 2] := 2
+        ipm[gi + 3] := 2
+        j := j + 1
+    }
+    return false
+}
+
+proc mb_mark_intra() {
+    mb_intra[mb_addr] := 1
+    alloc j := 0
+    loop j < 4 {
+        alloc gi := b4 + j * s4
+        alloc i := 0
+        loop i < 4 {
+            refi[gi + i] := -1
+            refid[gi + i] := -1
+            mvx[gi + i] := 0
+            mvy[gi + i] := 0
+            i := i + 1
+        }
+        j := j + 1
+    }
+    return false
+}
+
+proc mb_i4x4() {
+    alloc n := 0
+    loop n < 16 {
+        alloc bx := BLK_X[n]
+        alloc by := BLK_Y[n]
+        alloc gi := b4 + by * s4 + bx
+        alloc ma := -1
+        alloc mt := -1
+        if bx > 0 or ia {
+            ma := ipm[gi - 1]
+        }
+        if by > 0 or ib {
+            mt := ipm[gi - s4]
+        }
+        alloc pm := 2
+        if ma >= 0 and mt >= 0 {
+            pm := ma
+            if mt < ma {
+                pm := mt
+            }
+        }
+        if br_bit() == 0 {
+            alloc rem := br_bits(3)
+            if rem < pm {
+                pm := rem
+            } else {
+                pm := rem + 1
+            }
+        }
+        ipm[gi] := pm
+        n := n + 1
+    }
+    alloc cmode := br_ue()
+    alloc c := br_ue()
+    if c > 47 or cmode > 3 {
+        fail("damaged data (intra macroblock)")
+    }
+    cbp := CBP_INTRA[c]
+    if cbp > 0 {
+        read_qp_delta()
+    }
+    n := 0
+    loop n < 16 {
+        alloc bx := BLK_X[n]
+        alloc by := BLK_Y[n]
+        alloc gi := b4 + by * s4 + bx
+        pred4(ipm[gi], bx, by)
+        if ((cbp >> (n >> 2)) & 1) == 1 {
+            if luma_block(bx, by, dq_yi, 0) > 0 {
+                idct4_add(cur_y, py + by * 4 * ystride + bx * 4, ystride)
+            }
+        } else {
+            nz[gi] := 0
+        }
+        n := n + 1
+    }
+    pred_chroma_plane(cur_u, cmode)
+    pred_chroma_plane(cur_v, cmode)
+    chroma_residual(dq_ui, dq_vi)
+    mb_qp[mb_addr] := qp
+    return false
+}
+
+proc mb_i16(t) {
+    alloc mode := t & 3
+    cbp := ((t >> 2) % 3) << 4
+    if t >= 12 {
+        cbp := cbp | 15
+    }
+    mb_plain_modes()
+    alloc cmode := br_ue()
+    if cmode > 3 {
+        fail("damaged data (intra macroblock)")
+    }
+    read_qp_delta()
+    pred16(mode)
+    # the sixteen DC coefficients travel together, as a block of their own
+    alloc d := dcy
+    alloc i := 0
+    loop i < 16 {
+        d[i] := 0
+        i := i + 1
+    }
+    alloc n := residual(luma_nc(0, 0), 16)
+    alloc k := 0
+    loop k < n {
+        d[ZZ[cf_idx[k]]] := cf_val[k]
+        k := k + 1
+    }
+    if n > 0 {
+        i := 0
+        loop i < 16 {
+            alloc a0 := d[i]
+            alloc a1 := d[i + 1]
+            alloc a2 := d[i + 2]
+            alloc a3 := d[i + 3]
+            d[i] := a0 + a1 + a2 + a3
+            d[i + 1] := a0 + a1 - a2 - a3
+            d[i + 2] := a0 - a1 - a2 + a3
+            d[i + 3] := a0 - a1 + a2 - a3
+            i := i + 4
+        }
+        alloc scale := dq_yi[qp * 16]
+        i := 0
+        loop i < 4 {
+            alloc a0 := d[i]
+            alloc a1 := d[i + 4]
+            alloc a2 := d[i + 8]
+            alloc a3 := d[i + 12]
+            d[i] := ((a0 + a1 + a2 + a3) * scale + 32) >> 6
+            d[i + 4] := ((a0 + a1 - a2 - a3) * scale + 32) >> 6
+            d[i + 8] := ((a0 - a1 - a2 + a3) * scale + 32) >> 6
+            d[i + 12] := ((a0 - a1 + a2 - a3) * scale + 32) >> 6
+            i := i + 1
+        }
+    }
+    alloc ac := (cbp & 15) != 0
+    n := 0
+    loop n < 16 {
+        alloc bx := BLK_X[n]
+        alloc by := BLK_Y[n]
+        alloc cnt := 0
+        if ac {
+            cnt := luma_block(bx, by, dq_yi, 1)
+        } else {
+            nz[b4 + by * s4 + bx] := 0
+        }
+        alloc dc := d[by * 4 + bx]
+        alloc o := py + by * 4 * ystride + bx * 4
+        if cnt > 0 {
+            blk[0] := dc
+            idct4_add(cur_y, o, ystride)
+        } elif dc != 0 {
+            idct4_dc_add(cur_y, o, ystride, dc)
+        }
+        n := n + 1
+    }
+    pred_chroma_plane(cur_u, cmode)
+    pred_chroma_plane(cur_v, cmode)
+    chroma_residual(dq_ui, dq_vi)
+    mb_qp[mb_addr] := qp
+    return false
+}
+
+# A macroblock sent as plain samples.
+proc mb_pcm() {
+    mb_plain_modes()
+    br_pos := ((br_pos + 7) >> 3) << 3
+    alloc y := 0
+    loop y < 16 {
+        alloc x := 0
+        loop x < 16 {
+            cur_y[py + y * ystride + x] := br_bits(8)
+            x := x + 1
+        }
+        y := y + 1
+    }
+    alloc pl := 0
+    loop pl < 2 {
+        alloc plane := cur_u
+        if pl == 1 {
+            plane := cur_v
+        }
+        y := 0
+        loop y < 8 {
+            alloc x := 0
+            loop x < 8 {
+                plane[pc + y * cstride + x] := br_bits(8)
+                x := x + 1
+            }
+            y := y + 1
+        }
+        pl := pl + 1
+    }
+    y := 0
+    loop y < 4 {
+        alloc gi := b4 + y * s4
+        nz[gi] := 16
+        nz[gi + 1] := 16
+        nz[gi + 2] := 16
+        nz[gi + 3] := 16
+        y := y + 1
+    }
+    alloc g := c2
+    nzu[g] := 16
+    nzu[g + 1] := 16
+    nzu[g + s2] := 16
+    nzu[g + s2 + 1] := 16
+    nzv[g] := 16
+    nzv[g + 1] := 16
+    nzv[g + s2] := 16
+    nzv[g + s2 + 1] := 16
+    mb_qp[mb_addr] := 0
+    return false
+}
+
+proc decode_intra_mb(t) {
+    mb_mark_intra()
+    if t == 0 {
+        mb_i4x4()
+    } elif t < 25 {
+        mb_i16(t - 1)
+    } elif t == 25 {
+        mb_pcm()
+    } else {
+        fail("damaged data (macroblock type)")
+    }
+    return false
+}
+
+proc clear_nz_luma(bx, by) {
+    alloc gi := b4 + by * s4 + bx
+    nz[gi] := 0
+    nz[gi + 1] := 0
+    nz[gi + s4] := 0
+    nz[gi + s4 + 1] := 0
+    return false
+}
+
+# The residual of an inter macroblock, added on top of its prediction.
+proc inter_residual() {
+    alloc c := br_ue()
+    if c > 47 {
+        fail("damaged data (coded block pattern)")
+    }
+    cbp := CBP_INTER[c]
+    if cbp > 0 {
+        read_qp_delta()
+    }
+    alloc n := 0
+    loop n < 16 {
+        if ((cbp >> (n >> 2)) & 1) == 1 {
+            alloc bx := BLK_X[n]
+            alloc by := BLK_Y[n]
+            if luma_block(bx, by, dq_yp, 0) > 0 {
+                idct4_add(cur_y, py + by * 4 * ystride + bx * 4, ystride)
+            }
+            n := n + 1
+        } else {
+            clear_nz_luma(BLK_X[n], BLK_Y[n])
+            n := n + 4
+        }
+    }
+    chroma_residual(dq_up, dq_vp)
+    mb_qp[mb_addr] := qp
+    return false
+}
+
+alloc sub_t := [0, 0, 0, 0]
+alloc sub_r := [0, 0, 0, 0]
+
+proc decode_p_mb(t) {
+    mb_intra[mb_addr] := 0
+    mb_plain_modes()
+    if t == 0 {
+        alloc r := read_ref()
+        p_part(0, 0, 4, 4, r, 0)
+    } elif t == 1 {
+        alloc r0 := read_ref()
+        alloc r1 := read_ref()
+        p_part(0, 0, 4, 2, r0, 1)
+        p_part(0, 2, 4, 2, r1, 2)
+    } elif t == 2 {
+        alloc r0 := read_ref()
+        alloc r1 := read_ref()
+        p_part(0, 0, 2, 4, r0, 2)
+        p_part(2, 0, 2, 4, r1, 3)
+    } else {
+        alloc i := 0
+        loop i < 4 {
+            alloc st := br_ue()
+            if st > 3 {
+                fail("damaged data (sub-macroblock type)")
+            }
+            sub_t[i] := st
+            i := i + 1
+        }
+        i := 0
+        loop i < 4 {
+            sub_r[i] := 0
+            if t == 3 {
+                sub_r[i] := read_ref()
+            }
+            i := i + 1
+        }
+        i := 0
+        loop i < 4 {
+            alloc ox := (i & 1) * 2
+            alloc oy := (i >> 1) * 2
+            alloc st := sub_t[i]
+            alloc r := sub_r[i]
+            if st == 0 {
+                p_part(ox, oy, 2, 2, r, 0)
+            } elif st == 1 {
+                p_part(ox, oy, 2, 1, r, 0)
+                p_part(ox, oy + 1, 2, 1, r, 0)
+            } elif st == 2 {
+                p_part(ox, oy, 1, 2, r, 0)
+                p_part(ox + 1, oy, 1, 2, r, 0)
+            } else {
+                p_part(ox, oy, 1, 1, r, 0)
+                p_part(ox + 1, oy, 1, 1, r, 0)
+                p_part(ox, oy + 1, 1, 1, r, 0)
+                p_part(ox + 1, oy + 1, 1, 1, r, 0)
+            }
+            i := i + 1
+        }
+    }
+    inter_residual()
+    return false
+}
+
+# A macroblock the encoder skipped: its motion is predicted, and it has
+# no residual.
+proc decode_skip_mb() {
+    mb_intra[mb_addr] := 0
+    mb_plain_modes()
+    alloc mx := 0
+    alloc my := 0
+    if av_a and av_b {
+        alloc l := b4 - 1
+        alloc u := b4 - s4
+        alloc zero_a := refi[l] == 0 and mvx[l] == 0 and mvy[l] == 0
+        alloc zero_b := refi[u] == 0 and mvx[u] == 0 and mvy[u] == 0
+        if zero_a == false and zero_b == false {
+            mv_pred(0, 0, 4, 0, 0)
+            mx := pmx
+            my := pmy
+        }
+    }
+    inter_part(0, 0, 4, 4, 0, mx, my)
+    clear_nz_luma(0, 0)
+    clear_nz_luma(2, 0)
+    clear_nz_luma(0, 2)
+    clear_nz_luma(2, 2)
+    cbp := 0
+    chroma_residual(dq_up, dq_vp)
+    mb_qp[mb_addr] := qp
+    return false
+}
+
+# === Deblocking filter ==============================================================
+#
+# Runs over the finished picture, macroblock by macroblock: first the
+# four vertical edges of each, left to right, then the four horizontal
+# ones. How hard an edge is filtered (bS, 0 to 4) depends on what was
+# coded on its two sides.
+
+alloc bsv := [0, 0, 0, 0]
+
+# Four lines across a luma edge. o: index of the first sample after the
+# edge; xs: step across the edge; ys: step along it.
+proc filter_luma(pl, o, xs, ys, bs, alpha, beta, tc0) {
+    alloc n := 0
+    loop n < 4 {
+        alloc p0 := pl[o - xs]
+        alloc q0 := pl[o]
+        alloc d := p0 - q0
+        if d < 0 { d := 0 - d }
+        if d < alpha {
+            alloc p1 := pl[o - xs - xs]
+            alloc q1 := pl[o + xs]
+            alloc d1 := p1 - p0
+            if d1 < 0 { d1 := 0 - d1 }
+            alloc d2 := q1 - q0
+            if d2 < 0 { d2 := 0 - d2 }
+            if d1 < beta and d2 < beta {
+                alloc p2 := pl[o - 3 * xs]
+                alloc q2 := pl[o + xs + xs]
+                alloc ap := p2 - p0
+                if ap < 0 { ap := 0 - ap }
+                alloc aq := q2 - q0
+                if aq < 0 { aq := 0 - aq }
+                if bs < 4 {
+                    alloc tc := tc0
+                    if ap < beta { tc := tc + 1 }
+                    if aq < beta { tc := tc + 1 }
+                    alloc dl := (((q0 - p0) << 2) + (p1 - q1) + 4) >> 3
+                    if dl < 0 - tc { dl := 0 - tc }
+                    if dl > tc { dl := tc }
+                    alloc v := p0 + dl
+                    if (v & -256) != 0 {
+                        if v < 0 { v := 0 } else { v := 255 }
+                    }
+                    pl[o - xs] := v
+                    v := q0 - dl
+                    if (v & -256) != 0 {
+                        if v < 0 { v := 0 } else { v := 255 }
+                    }
+                    pl[o] := v
+                    if ap < beta {
+                        alloc dd := (p2 + ((p0 + q0 + 1) >> 1) - (p1 << 1)) >> 1
+                        if dd < 0 - tc0 { dd := 0 - tc0 }
+                        if dd > tc0 { dd := tc0 }
+                        pl[o - xs - xs] := p1 + dd
+                    }
+                    if aq < beta {
+                        alloc dd := (q2 + ((p0 + q0 + 1) >> 1) - (q1 << 1)) >> 1
+                        if dd < 0 - tc0 { dd := 0 - tc0 }
+                        if dd > tc0 { dd := tc0 }
+                        pl[o + xs] := q1 + dd
+                    }
+                } elif d < (alpha >> 2) + 2 {
+                    if ap < beta {
+                        alloc p3 := pl[o - 4 * xs]
+                        pl[o - xs] := (p2 + 2 * p1 + 2 * p0 + 2 * q0 + q1 + 4) >> 3
+                        pl[o - xs - xs] := (p2 + p1 + p0 + q0 + 2) >> 2
+                        pl[o - 3 * xs] := (2 * p3 + 3 * p2 + p1 + p0 + q0 + 4) >> 3
+                    } else {
+                        pl[o - xs] := (2 * p1 + p0 + q1 + 2) >> 2
+                    }
+                    if aq < beta {
+                        alloc q3 := pl[o + 3 * xs]
+                        pl[o] := (p1 + 2 * p0 + 2 * q0 + 2 * q1 + q2 + 4) >> 3
+                        pl[o + xs] := (p0 + q0 + q1 + q2 + 2) >> 2
+                        pl[o + xs + xs] := (2 * q3 + 3 * q2 + q1 + q0 + p0 + 4) >> 3
+                    } else {
+                        pl[o] := (2 * q1 + q0 + p1 + 2) >> 2
+                    }
+                } else {
+                    pl[o - xs] := (2 * p1 + p0 + q1 + 2) >> 2
+                    pl[o] := (2 * q1 + q0 + p1 + 2) >> 2
+                }
+            }
+        }
+        o := o + ys
+        n := n + 1
+    }
+    return false
+}
+
+# Two lines across a chroma edge.
+proc filter_chroma(pl, o, xs, ys, bs, alpha, beta, tc0) {
+    alloc n := 0
+    loop n < 2 {
+        alloc p0 := pl[o - xs]
+        alloc q0 := pl[o]
+        alloc d := p0 - q0
+        if d < 0 { d := 0 - d }
+        if d < alpha {
+            alloc p1 := pl[o - xs - xs]
+            alloc q1 := pl[o + xs]
+            alloc d1 := p1 - p0
+            if d1 < 0 { d1 := 0 - d1 }
+            alloc d2 := q1 - q0
+            if d2 < 0 { d2 := 0 - d2 }
+            if d1 < beta and d2 < beta {
+                if bs < 4 {
+                    alloc tc := tc0 + 1
+                    alloc dl := (((q0 - p0) << 2) + (p1 - q1) + 4) >> 3
+                    if dl < 0 - tc { dl := 0 - tc }
+                    if dl > tc { dl := tc }
+                    alloc v := p0 + dl
+                    if (v & -256) != 0 {
+                        if v < 0 { v := 0 } else { v := 255 }
+                    }
+                    pl[o - xs] := v
+                    v := q0 - dl
+                    if (v & -256) != 0 {
+                        if v < 0 { v := 0 } else { v := 255 }
+                    }
+                    pl[o] := v
+                } else {
+                    pl[o - xs] := (2 * p1 + p0 + q1 + 2) >> 2
+                    pl[o] := (2 * q1 + q0 + p1 + 2) >> 2
+                }
+            }
+        }
+        o := o + ys
+        n := n + 1
+    }
+    return false
+}
+
+# Filter one edge of a macroblock, given the four strengths in bsv.
+# dir 0: a vertical edge, e * 4 samples from the left of the macroblock;
+# dir 1: a horizontal one, e * 4 from its top.
+proc filter_edge(yo, co, e, dir, qpp, qpq, offa, offb) {
+    alloc b := bsv
+    if b[0] == 0 and b[1] == 0 and b[2] == 0 and b[3] == 0 {
+        return false
+    }
+    alloc xs := 1
+    alloc ys := ystride
+    alloc o := yo + e * 4
+    if dir == 1 {
+        xs := ystride
+        ys := 1
+        o := yo + e * 4 * ystride
+    }
+    alloc qpav := (qpp + qpq + 1) >> 1
+    alloc xa := clip_qp(qpav + offa)
+    alloc alpha := ALPHA_TAB[xa]
+    alloc beta := BETA_TAB[clip_qp(qpav + offb)]
+    alloc k := 0
+    if alpha > 0 and beta > 0 {
+        loop k < 4 {
+            alloc bs := b[k]
+            if bs > 0 {
+                filter_luma(cur_y, o + k * 4 * ys, xs, ys, bs, alpha, beta, TC0_TAB[xa * 4 + (bs & 3)])
+            }
+            k := k + 1
+        }
+    }
+    if (e & 1) == 1 {
+        return false
+    }
+    xs := 1
+    ys := cstride
+    o := co + e * 2
+    if dir == 1 {
+        xs := cstride
+        ys := 1
+        o := co + e * 2 * cstride
+    }
+    alloc pl := 0
+    loop pl < 2 {
+        alloc plane := cur_u
+        alloc tab := cqp_u
+        if pl == 1 {
+            plane := cur_v
+            tab := cqp_v
+        }
+        qpav := (tab[qpp] + tab[qpq] + 1) >> 1
+        xa := clip_qp(qpav + offa)
+        alpha := ALPHA_TAB[xa]
+        beta := BETA_TAB[clip_qp(qpav + offb)]
+        if alpha > 0 and beta > 0 {
+            k := 0
+            loop k < 4 {
+                alloc bs := b[k]
+                if bs > 0 {
+                    filter_chroma(plane, o + k * 2 * ys, xs, ys, bs, alpha, beta, TC0_TAB[xa * 4 + (bs & 3)])
+                }
+                k := k + 1
+            }
+        }
+        pl := pl + 1
+    }
+    return false
+}
+
+proc deblock_mb(addr) {
+    alloc si := (mb_slice[addr] - pic_slice0) * 3
+    alloc idc := pic_dbk[si]
+    if idc == 1 {
+        return false
+    }
+    alloc offa := pic_dbk[si + 1]
+    alloc offb := pic_dbk[si + 2]
+    alloc mx := addr % mbw
+    alloc my := addr // mbw
+    alloc qpq := mb_qp[addr]
+    alloc intra := mb_intra[addr] == 1
+    alloc g := my * 4 * s4 + mx * 4
+    alloc yo := my * 16 * ystride + mx * 16
+    alloc co := my * 8 * cstride + mx * 8
+    alloc b := bsv
+    alloc dir := 0
+    loop dir < 2 {
+        alloc step := 1                    # from a block to its neighbour across the edge
+        alloc along := s4                  # from a block to the next one along the edge
+        alloc other := addr - 1            # the macroblock across edge 0
+        alloc have := mx > 0
+        if dir == 1 {
+            step := s4
+            along := 1
+            other := addr - mbw
+            have := my > 0
+        }
+        if have and idc == 2 and mb_slice[other] != mb_slice[addr] {
+            have := false
+        }
+        alloc e := 0
+        loop e < 4 {
+            alloc qpp := qpq
+            alloc pintra := intra
+            alloc go := true
+            if e == 0 {
+                if have {
+                    qpp := mb_qp[other]
+                    pintra := mb_intra[other] == 1
+                } else {
+                    go := false
+                }
+            }
+            if go {
+                alloc k := 0
+                loop k < 4 {
+                    alloc bs := 0
+                    if intra or pintra {
+                        bs := 3
+                        if e == 0 {
+                            bs := 4
+                        }
+                    } else {
+                        alloc q := g + e * step + k * along
+                        alloc p := q - step
+                        if nz[q] != 0 or nz[p] != 0 {
+                            bs := 2
+                        } elif refid[q] != refid[p] {
+                            bs := 1
+                        } else {
+                            alloc dx := mvx[q] - mvx[p]
+                            alloc dy := mvy[q] - mvy[p]
+                            if dx >= 4 or dx <= -4 or dy >= 4 or dy <= -4 {
+                                bs := 1
+                            }
+                        }
+                    }
+                    b[k] := bs
+                    k := k + 1
+                }
+                filter_edge(yo, co, e, dir, qpp, qpq, offa, offb)
+            }
+            e := e + 1
+        }
+        dir := dir + 1
+    }
+    return false
+}
+
+proc deblock_picture() {
+    alloc addr := 0
+    loop addr < mb_count {
+        if mb_slice[addr] >= pic_slice0 {
+            deblock_mb(addr)
+        }
+        addr := addr + 1
+    }
+    return false
+}
+
+# === Slices and pictures ==============================================================
+
+proc picture_start() {
+    if sl_idr {
+        for p in dpb {
+            p.ref := 0
+        }
+        dpb := []
+    }
+    alloc poc := compute_poc()
+    alloc p := pic_alloc()
+    p.frame_num := sl_frame_num
+    p.poc := poc
+    cur_pic := p
+    cur_y := p.y
+    cur_u := p.u
+    cur_v := p.v
+    mvx := p.mvx
+    mvy := p.mvy
+    refi := p.refi
+    refid := p.refid
+    pic_slice0 := slice_num + 1
+    pic_dbk := []
+    return false
+}
+
+proc picture_finish() {
+    deblock_picture()
+    alloc p := cur_pic
+    if sl_ref_idc != 0 {
+        mark_references()
+    }
+    cur_pic := false
+    return p
+}
+
+proc decode_slice(nal_type, ref_idc) {
+    alloc redundant := parse_slice_header(nal_type, ref_idc)
+    if redundant > 0 {
+        return false
+    }
+    if cur_pic == false {
+        picture_start()
+    }
+    slice_num := slice_num + 1
+    append(pic_dbk, sl_dbk_idc)
+    append(pic_dbk, sl_dbk_a)
+    append(pic_dbk, sl_dbk_b)
+    if sl_type == 0 {
+        build_ref_list0()
+    }
+    qp := sl_qp
+    alloc addr := sl_first_mb
+    alloc more := true
+    loop more and addr < mb_count {
+        if sl_type != 2 {
+            alloc run := br_ue()
+            if run > 0 {
+                loop run > 0 and addr < mb_count {
+                    mb_setup(addr)
+                    decode_skip_mb()
+                    addr := addr + 1
+                    run := run - 1
+                }
+                more := br_more()
+            }
+        }
+        if more and addr < mb_count {
+            mb_setup(addr)
+            alloc t := br_ue()
+            if sl_type == 2 {
+                decode_intra_mb(t)
+            } elif t < 5 {
+                decode_p_mb(t)
+            } else {
+                decode_intra_mb(t - 5)
+            }
+            addr := addr + 1
+            more := br_more()
+        }
+    }
+    return false
+}
+
+proc decode_nal(data, from, to) {
+    if to <= from {
+        return false
+    }
+    alloc hdr := data[from]
+    alloc nt := hdr & 31
+    if nt == 1 or nt == 5 {
+        br_load(data, from + 1, to)
+        decode_slice(nt, (hdr >> 5) & 3)
+    } elif nt == 7 {
+        br_load(data, from + 1, to)
+        parse_sps()
+    } elif nt == 8 {
+        br_load(data, from + 1, to)
+        parse_pps()
+    } elif nt == 2 or nt == 3 or nt == 4 {
+        fail("data partitioning is not supported")
+    }
+    return false
+}
+
+# === What a program calls ==============================================================
+
+# Forget everything: parameter sets, reference pictures.
+proc reset() {
+    sps_tab := {}
+    pps_tab := {}
+    act_sps := -1
+    act_pps := -1
+    cur_sps := false
+    cur_pps := false
+    cur_pic := false
+    mbw := 0
+    mbh := 0
+    pic_all := []
+    dpb := []
+    poc_prev_msb := 0
+    poc_prev_lsb := 0
+    fn_prev := 0
+    fn_prev_offset := 0
+    prev_had_mmco5 := false
+    nal_len_size := 4
+    return false
+}
+
+# Take the decoder configuration of an MP4 file (the contents of its
+# avcC box): the parameter sets, and how many bytes each NAL unit's
+# length takes in a sample.
+proc set_config(c) {
+    if length(c) < 7 or c[0] != 1 {
+        fail("not an AVC decoder configuration")
+    }
+    nal_len_size := (c[4] & 3) + 1
+    alloc pos := 5
+    alloc pass := 0
+    loop pass < 2 {
+        alloc count := c[pos]
+        if pass == 0 {
+            count := count & 31
+        }
+        pos := pos + 1
+        alloc i := 0
+        loop i < count {
+            alloc n := c[pos] * 256 + c[pos + 1]
+            decode_nal(c, pos + 2, pos + 2 + n)
+            pos := pos + 2 + n
+            i := i + 1
+        }
+        pass := pass + 1
+    }
+    return false
+}
+
+# Decode one sample of an MP4 file (one picture: NAL units, each led by
+# its length). Returns the picture, or false when the sample held none.
+# The caller hands the picture back with release() when done with it.
+proc decode(data) {
+    alloc n := length(data)
+    alloc pos := 0
+    loop pos + nal_len_size <= n {
+        alloc size := 0
+        alloc k := 0
+        loop k < nal_len_size {
+            size := (size << 8) | data[pos + k]
+            k := k + 1
+        }
+        pos := pos + nal_len_size
+        if size <= 0 or pos + size > n {
+            break
+        }
+        decode_nal(data, pos, pos + size)
+        pos := pos + size
+    }
+    if cur_pic == false {
+        return false
+    }
+    return picture_finish()
+}
+
+# Decode a raw H.264 byte stream (NAL units separated by start codes).
+# Returns the list of pictures in it, in decoding order.
+proc decode_stream(data) {
+    alloc out := []
+    alloc n := length(data)
+    alloc starts := []
+    alloc i := 0
+    loop i + 3 <= n {
+        if data[i] == 0 and data[i + 1] == 0 and data[i + 2] == 1 {
+            append(starts, i + 3)
+            i := i + 3
+        } else {
+            i := i + 1
+        }
+    }
+    alloc k := 0
+    loop k < length(starts) {
+        alloc from := starts[k]
+        alloc to := n
+        if k + 1 < length(starts) {
+            to := starts[k + 1] - 3
+        }
+        loop to > from and data[to - 1] == 0 {
+            to := to - 1
+        }
+        if to > from {
+            alloc nt := data[from] & 31
+            # A slice that starts at macroblock 0 opens a new picture.
+            if (nt == 1 or nt == 5) and cur_pic != false and to > from + 1 and data[from + 1] >= 128 {
+                append(out, picture_finish())
+            }
+            if (nt == 7 or nt == 8 or nt == 9) and cur_pic != false {
+                append(out, picture_finish())
+            }
+            decode_nal(data, from, to)
+        }
+        k := k + 1
+    }
+    if cur_pic != false {
+        append(out, picture_finish())
+    }
+    return out
+}
+
+proc release(pic) {
+    pic.hold := 0
+    return false
+}
+
+# The size of the pictures: of the stream being decoded, or, before the
+# first picture, of the first parameter set that was given.
+proc info() {
+    alloc s := cur_sps
+    if s == false {
+        for k in dict_keys(sps_tab) {
+            if s == false {
+                s := sps_tab[k]
+            }
+        }
+    }
+    if s == false {
+        fail("no sequence parameter set yet")
+    }
+    return {
+        width: s.mbw * 16 - s.crop_left - s.crop_right,
+        height: s.mbh * 16 - s.crop_top - s.crop_bottom,
+        coded_width: s.mbw * 16,
+        coded_height: s.mbh * 16,
+        crop_left: s.crop_left,
+        crop_top: s.crop_top,
+        profile: s.profile,
+        level: s.level
+    }
+}
+
+# A checksum of a picture as planar 4:2:0 bytes (Y, then U, then V,
+# cropped): Adler-32 started from 0, which is what `ffmpeg -f framecrc`
+# prints for the same frame.
+proc checksum(pic) {
+    alloc s := cur_sps
+    alloc w := s.mbw * 16 - s.crop_left - s.crop_right
+    alloc h := s.mbh * 16 - s.crop_top - s.crop_bottom
+    alloc a := 0
+    alloc b := 0
+    alloc pl := 0
+    loop pl < 3 {
+        alloc plane := pic.y
+        alloc st := ystride
+        alloc x0 := s.crop_left
+        alloc y0 := s.crop_top
+        alloc pw := w
+        alloc ph := h
+        if pl > 0 {
+            plane := pic.u
+            if pl == 2 {
+                plane := pic.v
+            }
+            st := cstride
+            x0 := x0 >> 1
+            y0 := y0 >> 1
+            pw := w >> 1
+            ph := h >> 1
+        }
+        alloc y := 0
+        loop y < ph {
+            alloc o := (y0 + y) * st + x0
+            alloc x := 0
+            loop x < pw {
+                a := a + plane[o + x]
+                b := b + a
+                x := x + 1
+            }
+            a := a % 65521
+            b := b % 65521
+            y := y + 1
+        }
+        pl := pl + 1
+    }
+    return b * 65536 + a
+}
+
+# Colour conversion tables (BT.601, video range), built on first use.
+alloc rgb_y := []
+alloc rgb_rv := []
+alloc rgb_gu := []
+alloc rgb_gv := []
+alloc rgb_bu := []
+
+proc rgb_init() {
+    alloc i := 0
+    loop i < 256 {
+        append(rgb_y, 298 * (i - 16) + 128)
+        append(rgb_rv, 409 * (i - 128))
+        append(rgb_gu, -100 * (i - 128))
+        append(rgb_gv, -208 * (i - 128))
+        append(rgb_bu, 516 * (i - 128))
+        i := i + 1
+    }
+    return false
+}
+
+# Convert a picture to one number per pixel, red * 65536 + green * 256 +
+# blue, row by row, cropped to the size info() gives. `out` is a list of
+# width * height entries to fill.
+proc to_rgb(pic, out) {
+    if length(rgb_y) == 0 {
+        rgb_init()
+    }
+    alloc s := cur_sps
+    alloc w := s.mbw * 16 - s.crop_left - s.crop_right
+    alloc h := s.mbh * 16 - s.crop_top - s.crop_bottom
+    alloc yp := pic.y
+    alloc up := pic.u
+    alloc vp := pic.v
+    alloc ty := rgb_y
+    alloc trv := rgb_rv
+    alloc tgu := rgb_gu
+    alloc tgv := rgb_gv
+    alloc tbu := rgb_bu
+    alloc x0 := s.crop_left
+    alloc y0 := s.crop_top
+    alloc y := 0
+    loop y < h {
+        alloc yo := (y0 + y) * ystride + x0
+        alloc co := ((y0 + y) >> 1) * cstride + (x0 >> 1)
+        alloc oo := y * w
+        alloc x := 0
+        loop x < w {
+            alloc ci := co + ((x + (x0 & 1)) >> 1)
+            alloc u := up[ci]
+            alloc v := vp[ci]
+            alloc l := ty[yp[yo + x]]
+            alloc r := (l + trv[v]) >> 8
+            alloc g := (l + tgu[u] + tgv[v]) >> 8
+            alloc b := (l + tbu[u]) >> 8
+            if (r & -256) != 0 {
+                if r < 0 { r := 0 } else { r := 255 }
+            }
+            if (g & -256) != 0 {
+                if g < 0 { g := 0 } else { g := 255 }
+            }
+            if (b & -256) != 0 {
+                if b < 0 { b := 0 } else { b := 255 }
+            }
+            out[oo + x] := (r << 16) | (g << 8) | b
+            x := x + 1
+        }
+        y := y + 1
+    }
+    return false
+}

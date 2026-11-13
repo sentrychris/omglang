@@ -1,0 +1,394 @@
+;;;omg
+
+# tools/video/mp4.omg
+#
+# Reads MP4 files (ISO base media file format): finds the video track
+# and hands out its samples one at a time.
+#
+#     import "mp4.omg" as mp4
+#     alloc m := mp4.open("clip.mp4")
+#     emit m.codec + " " + m.width + "x" + m.height + ", " + m.count + " frames"
+#     alloc bytes := mp4.read_sample(m, 0)      # a list of bytes
+#     mp4.close(m)
+#
+# What open() returns:
+#
+#     codec        "avc1" for H.264; whatever the file says otherwise
+#     config       the decoder configuration (for avc1, the avcC box)
+#     width, height
+#     timescale    ticks per second of the times below
+#     duration     of the track, in ticks
+#     count        number of samples
+#     sizes        per sample: bytes
+#     offsets      per sample: where it starts in the file
+#     dts, pts     per sample: when to decode it, when to show it
+#     sync         per sample: 1 when decoding can start there
+#     order        sample numbers in the order they are shown
+#     audio        codec of the audio track, "" when there is none
+#
+# The file is never read whole: only the index (the moov box) is kept
+# in memory, and read_sample() seeks.
+#
+# Not supported: fragmented files (moof boxes), which keep their index
+# in pieces throughout the file.
+
+proc u16(b, p) {
+    return (b[p] << 8) | b[p + 1]
+}
+
+proc u32(b, p) {
+    return (b[p] << 24) | (b[p + 1] << 16) | (b[p + 2] << 8) | b[p + 3]
+}
+
+proc u64(b, p) {
+    return (u32(b, p) << 32) | u32(b, p + 4)
+}
+
+proc s32(b, p) {
+    alloc v := u32(b, p)
+    if v >= 2147483648 {
+        return v - 4294967296
+    }
+    return v
+}
+
+proc fourcc(b, p) {
+    return chr(b[p]) + chr(b[p + 1]) + chr(b[p + 2]) + chr(b[p + 3])
+}
+
+# The boxes in b[from:to) as a list of [type, content start, content end].
+proc boxes(b, from, to) {
+    alloc out := []
+    alloc p := from
+    loop p + 8 <= to {
+        alloc size := u32(b, p)
+        alloc kind := fourcc(b, p + 4)
+        alloc start := p + 8
+        if size == 1 {
+            if p + 16 > to {
+                break
+            }
+            size := u64(b, p + 8)
+            start := p + 16
+        } elif size == 0 {
+            size := to - p
+        }
+        if size < start - p or p + size > to {
+            break
+        }
+        append(out, [kind, start, p + size])
+        p := p + size
+    }
+    return out
+}
+
+# The first box of a kind among those of b[from:to), or false.
+proc find(b, from, to, kind) {
+    for x in boxes(b, from, to) {
+        if x[0] == kind {
+            return x
+        }
+    }
+    return false
+}
+
+# Follow a path of box types down from b[from:to).
+proc descend(b, from, to, path) {
+    alloc x := [0, from, to]
+    for kind in path {
+        x := find(b, x[1], x[2], kind)
+        if x == false {
+            return false
+        }
+    }
+    return x
+}
+
+proc sort_by_pts(pts) {
+    alloc n := length(pts)
+    alloc order := list_repeat(0, n)
+    alloc i := 0
+    loop i < n {
+        # Samples are nearly in order already: each one is only a few
+        # places from where it belongs, so insertion is quick.
+        alloc k := i
+        alloc t := pts[i]
+        loop k > 0 and pts[order[k - 1]] > t {
+            order[k] := order[k - 1]
+            k := k - 1
+        }
+        order[k] := i
+        i := i + 1
+    }
+    return order
+}
+
+# Read the sample tables of one track (the contents of its stbl box).
+proc read_tables(b, stbl, m) {
+    alloc x := find(b, stbl[1], stbl[2], "stsz")
+    if x == false {
+        raise("mp4: the video track has no sample size table")
+    }
+    alloc p := x[1]
+    alloc fixed := u32(b, p + 4)
+    alloc count := u32(b, p + 8)
+    alloc sizes := list_repeat(fixed, count)
+    alloc i := 0
+    if fixed == 0 {
+        loop i < count {
+            sizes[i] := u32(b, p + 12 + i * 4)
+            i := i + 1
+        }
+    }
+
+    # where each chunk of samples starts
+    alloc chunks := []
+    x := find(b, stbl[1], stbl[2], "stco")
+    if x != false {
+        p := x[1]
+        alloc n := u32(b, p + 4)
+        i := 0
+        loop i < n {
+            append(chunks, u32(b, p + 8 + i * 4))
+            i := i + 1
+        }
+    } else {
+        x := find(b, stbl[1], stbl[2], "co64")
+        if x == false {
+            raise("mp4: the video track has no chunk offset table")
+        }
+        p := x[1]
+        alloc n := u32(b, p + 4)
+        i := 0
+        loop i < n {
+            append(chunks, u64(b, p + 8 + i * 8))
+            i := i + 1
+        }
+    }
+
+    # how many samples each chunk holds: runs of chunks
+    x := find(b, stbl[1], stbl[2], "stsc")
+    if x == false {
+        raise("mp4: the video track has no sample-to-chunk table")
+    }
+    p := x[1]
+    alloc runs := u32(b, p + 4)
+    alloc offsets := list_repeat(0, count)
+    alloc sample := 0
+    alloc r := 0
+    loop r < runs and sample < count {
+        alloc first := u32(b, p + 8 + r * 12) - 1
+        alloc per := u32(b, p + 12 + r * 12)
+        alloc last := length(chunks)
+        if r + 1 < runs {
+            last := u32(b, p + 8 + (r + 1) * 12) - 1
+        }
+        alloc c := first
+        loop c < last and c < length(chunks) and sample < count {
+            alloc at := chunks[c]
+            alloc k := 0
+            loop k < per and sample < count {
+                offsets[sample] := at
+                at := at + sizes[sample]
+                sample := sample + 1
+                k := k + 1
+            }
+            c := c + 1
+        }
+        r := r + 1
+    }
+
+    # decoding times: runs of equal steps
+    alloc dts := list_repeat(0, count)
+    x := find(b, stbl[1], stbl[2], "stts")
+    if x != false {
+        p := x[1]
+        alloc n := u32(b, p + 4)
+        alloc t := 0
+        sample := 0
+        i := 0
+        loop i < n {
+            alloc run := u32(b, p + 8 + i * 8)
+            alloc step := u32(b, p + 12 + i * 8)
+            alloc k := 0
+            loop k < run and sample < count {
+                dts[sample] := t
+                t := t + step
+                sample := sample + 1
+                k := k + 1
+            }
+            i := i + 1
+        }
+    }
+
+    # presentation times: decoding time plus an offset, again in runs
+    alloc pts := dts + []
+    x := find(b, stbl[1], stbl[2], "ctts")
+    if x != false {
+        p := x[1]
+        alloc n := u32(b, p + 4)
+        sample := 0
+        i := 0
+        loop i < n {
+            alloc run := u32(b, p + 8 + i * 8)
+            alloc off := s32(b, p + 12 + i * 8)
+            alloc k := 0
+            loop k < run and sample < count {
+                pts[sample] := dts[sample] + off
+                sample := sample + 1
+                k := k + 1
+            }
+            i := i + 1
+        }
+    }
+
+    # sync samples; with no table, every sample is one
+    alloc sync := list_repeat(1, count)
+    x := find(b, stbl[1], stbl[2], "stss")
+    if x != false {
+        sync := list_repeat(0, count)
+        p := x[1]
+        alloc n := u32(b, p + 4)
+        i := 0
+        loop i < n {
+            alloc s := u32(b, p + 8 + i * 4) - 1
+            if s >= 0 and s < count {
+                sync[s] := 1
+            }
+            i := i + 1
+        }
+    }
+
+    m.count := count
+    m.sizes := sizes
+    m.offsets := offsets
+    m.dts := dts
+    m.pts := pts
+    m.sync := sync
+    m.order := sort_by_pts(pts)
+    return false
+}
+
+# Open a file and index its video track.
+proc open(path) {
+    if file_exists(path) == false {
+        raise("mp4: no such file: " + path)
+    }
+    alloc total := file_size(path)
+    alloc f := file_open(path, "rb")
+    # Walk the top-level boxes for moov, reading only their headers.
+    alloc pos := 0
+    alloc moov := false
+    alloc fragmented := false
+    alloc first := true
+    loop pos + 8 <= total {
+        file_seek(f, pos)
+        alloc h := file_read(f, 16)
+        if length(h) < 8 {
+            break
+        }
+        alloc size := u32(h, 0)
+        alloc kind := fourcc(h, 4)
+        alloc head := 8
+        if size == 1 and length(h) >= 16 {
+            size := u64(h, 8)
+            head := 16
+        } elif size == 0 {
+            size := total - pos
+        }
+        if size < head {
+            break
+        }
+        if first and kind != "ftyp" and kind != "moov" and kind != "free" and kind != "skip" and kind != "wide" and kind != "mdat" and kind != "styp" {
+            file_close(f)
+            raise("mp4: " + path + " does not look like an MP4 file")
+        }
+        first := false
+        if kind == "moov" {
+            file_seek(f, pos + head)
+            moov := file_read(f, size - head)
+        } elif kind == "moof" {
+            fragmented := true
+        }
+        if moov != false {
+            break
+        }
+        pos := pos + size
+    }
+    if moov == false {
+        file_close(f)
+        raise("mp4: " + path + " has no index (moov box)")
+    }
+
+    alloc m := {file: f, path: path, codec: "", config: [], width: 0, height: 0,
+                timescale: 1, duration: 0, count: 0, sizes: [], offsets: [],
+                dts: [], pts: [], sync: [], order: [], audio: ""}
+    alloc found := false
+    for trak in boxes(moov, 0, length(moov)) {
+        if trak[0] != "trak" {
+            continue
+        }
+        alloc hdlr := descend(moov, trak[1], trak[2], ["mdia", "hdlr"])
+        alloc stbl := descend(moov, trak[1], trak[2], ["mdia", "minf", "stbl"])
+        if hdlr == false or stbl == false {
+            continue
+        }
+        alloc handler := fourcc(moov, hdlr[1] + 8)
+        alloc stsd := find(moov, stbl[1], stbl[2], "stsd")
+        if stsd == false or u32(moov, stsd[1] + 4) < 1 {
+            continue
+        }
+        alloc entry := stsd[1] + 8
+        alloc entry_end := entry + u32(moov, entry)
+        alloc codec := fourcc(moov, entry + 4)
+        if handler == "soun" and m.audio == "" {
+            m.audio := codec
+        }
+        if handler != "vide" or found {
+            continue
+        }
+        found := true
+        m.codec := codec
+        m.width := u16(moov, entry + 32)
+        m.height := u16(moov, entry + 34)
+        # the codec's own box follows the 78 bytes of the sample entry
+        for x in boxes(moov, entry + 86, entry_end) {
+            if x[0] == "avcC" or x[0] == "hvcC" or x[0] == "av1C" or x[0] == "esds" or x[0] == "vpcC" {
+                m.config := moov[x[1]:x[2]]
+            }
+        }
+        alloc mdhd := descend(moov, trak[1], trak[2], ["mdia", "mdhd"])
+        if mdhd != false {
+            if moov[mdhd[1]] == 1 {
+                m.timescale := u32(moov, mdhd[1] + 20)
+                m.duration := u64(moov, mdhd[1] + 24)
+            } else {
+                m.timescale := u32(moov, mdhd[1] + 12)
+                m.duration := u32(moov, mdhd[1] + 16)
+            }
+        }
+        if m.timescale < 1 {
+            m.timescale := 1
+        }
+        read_tables(moov, stbl, m)
+    }
+    if found == false {
+        file_close(f)
+        raise("mp4: " + path + " has no video track")
+    }
+    if m.count == 0 and (fragmented or find(moov, 0, length(moov), "mvex") != false) {
+        file_close(f)
+        raise("mp4: " + path + " is a fragmented MP4 file, which is not supported")
+    }
+    return m
+}
+
+proc read_sample(m, i) {
+    file_seek(m.file, m.offsets[i])
+    return file_read(m.file, m.sizes[i])
+}
+
+proc close(m) {
+    file_close(m.file)
+    return false
+}

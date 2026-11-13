@@ -1,0 +1,117 @@
+;;;omg
+
+# tools/video/mp4info.omg
+#
+# Says what is in an MP4 file, and with --frames decodes its video and
+# prints a checksum for every picture, in the order they are shown.
+#
+#     omg tools/video/mp4info.omg clip.mp4
+#     omg tools/video/mp4info.omg clip.mp4 --frames
+#
+# The checksums are the ones `ffmpeg -i clip.mp4 -f framecrc -` prints
+# (as decimal numbers here), which is how the decoder is tested: H.264
+# decoding is exact, so every decoder must produce the same pictures.
+# A raw H.264 stream (.h264, .264) is taken too.
+
+import "mp4.omg" as mp4
+import "h264.omg" as h264
+
+proc ends_with(s, tail) {
+    alloc n := length(s)
+    alloc k := length(tail)
+    if n < k {
+        return false
+    }
+    return s[n - k:] == tail
+}
+
+proc seconds(ticks, scale) {
+    alloc ms := ticks * 1000 // scale
+    alloc frac := "" + (ms % 1000)
+    loop length(frac) < 3 {
+        frac := "0" + frac
+    }
+    return "" + (ms // 1000) + "." + frac
+}
+
+proc raw_stream(path) {
+    alloc f := file_open(path, "rb")
+    alloc data := file_read(f)
+    file_close(f)
+    h264.reset()
+    alloc t0 := time_ms()
+    alloc pics := h264.decode_stream(data)
+    alloc took := time_ms() - t0
+    alloc n := 0
+    for p in pics {
+        emit "" + n + " " + h264.checksum(p)
+        n := n + 1
+    }
+    alloc i := h264.info()
+    emit "# " + i.width + "x" + i.height + ", " + n + " pictures decoded in " + took + " ms"
+    return false
+}
+
+proc frames(m) {
+    h264.reset()
+    h264.set_config(m.config)
+    alloc ready := {}
+    alloc shown := 0
+    alloc took := 0
+    alloc i := 0
+    loop i < m.count {
+        alloc data := mp4.read_sample(m, i)
+        alloc t0 := time_ms()
+        alloc pic := h264.decode(data)
+        took := took + (time_ms() - t0)
+        if pic != false {
+            ready[i] := pic
+        }
+        loop shown < m.count and has_key(ready, "" + m.order[shown]) {
+            alloc p := ready[m.order[shown]]
+            emit "" + shown + " " + h264.checksum(p)
+            h264.release(p)
+            shown := shown + 1
+        }
+        i := i + 1
+    }
+    alloc rate := "?"
+    if took > 0 {
+        rate := "" + (shown * 1000 // took)
+    }
+    emit "# " + shown + " pictures decoded in " + took + " ms (" + rate + " a second)"
+    return false
+}
+
+proc main() {
+    if length(args) < 2 {
+        emit "usage: mp4info <file.mp4> [--frames]"
+        exit(2)
+    }
+    alloc path := args[1]
+    if ends_with(path, ".h264") or ends_with(path, ".264") {
+        raw_stream(path)
+        return false
+    }
+    alloc m := mp4.open(path)
+    alloc rate := "?"
+    if m.duration > 0 {
+        alloc milli := m.count * m.timescale * 1000 // m.duration
+        rate := "" + (milli // 1000) + "." + ((milli % 1000) // 100)
+    }
+    emit "# video: " + m.codec + " " + m.width + "x" + m.height + ", " + m.count + " frames, " + seconds(m.duration, m.timescale) + " s, " + rate + " frames a second"
+    if m.audio != "" {
+        emit "# audio: " + m.audio
+    }
+    if length(args) > 2 and args[2] == "--frames" {
+        if m.codec != "avc1" and m.codec != "avc3" {
+            emit "the video is " + m.codec + ", not H.264: cannot decode it"
+            exit(1)
+        }
+        frames(m)
+    }
+    mp4.close(m)
+    return false
+}
+
+main()
