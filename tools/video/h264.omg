@@ -1007,6 +1007,10 @@ alloc nzv := []
 # that was read for it.
 alloc mvdx := []
 alloc mvdy := []
+alloc mvdx1 := []
+alloc mvdy1 := []
+alloc bdirect := []            # the block's motion was derived, not sent (B slices)
+alloc mb_bdir := []            # per macroblock: all of it was
 alloc cabac := false           # the slice is coded with CABAC
 alloc last_dqp := 0            # the last quantiser change read
 
@@ -1028,14 +1032,19 @@ alloc constrained_intra := false
 alloc pic_all := []
 alloc dpb := []                # the reference pictures
 alloc pic_next_id := 1
+alloc idr_count := 0           # pictures count their order of showing anew from each IDR picture
 alloc cur_pic := false
 alloc cur_y := []
 alloc cur_u := []
 alloc cur_v := []
 alloc mvx := []                # motion of the current picture, per 4x4 block
 alloc mvy := []
-alloc refi := []               # reference index, -1 for intra
+alloc refi := []               # reference index, -1 for none
 alloc refid := []              # id of the picture referred to
+alloc mvx1 := []               # the same four for the second reference list (B slices)
+alloc mvy1 := []
+alloc refi1 := []
+alloc refid1 := []
 
 proc make_dq(scale_zz, out) {
     alloc w := list_repeat(16, 16)
@@ -1135,6 +1144,10 @@ proc activate_sps(s) {
         mb_dc := list_repeat(0, mb_count)
         mvdx := list_repeat(0, mb_count * 16)
         mvdy := list_repeat(0, mb_count * 16)
+        mvdx1 := list_repeat(0, mb_count * 16)
+        mvdy1 := list_repeat(0, mb_count * 16)
+        bdirect := list_repeat(0, mb_count * 16)
+        mb_bdir := list_repeat(0, mb_count)
         nz := list_repeat(0, mb_count * 16)
         ipm := list_repeat(2, mb_count * 16)
         nzu := list_repeat(0, mb_count * 4)
@@ -1165,6 +1178,11 @@ proc pic_alloc() {
         p.mvy := list_repeat(0, mb_count * 16)
         p.refi := list_repeat(-1, mb_count * 16)
         p.refid := list_repeat(-1, mb_count * 16)
+        p.mvx1 := list_repeat(0, mb_count * 16)
+        p.mvy1 := list_repeat(0, mb_count * 16)
+        p.refi1 := list_repeat(-1, mb_count * 16)
+        p.refid1 := list_repeat(-1, mb_count * 16)
+        p.used1 := false       # a B slice has written the second four
         append(pic_all, p)
     }
     p.ref := 0                 # 0 not a reference, 1 short-term, 2 long-term
@@ -1184,7 +1202,17 @@ alloc sl_type := 0             # 0 P, 1 B, 2 I
 alloc sl_first_mb := 0
 alloc sl_qp := 0
 alloc sl_num_ref0 := 0
+alloc sl_num_ref1 := 0
 alloc sl_rplm0 := []           # reference list changes, flat: idc, value
+alloc sl_rplm1 := []
+alloc sl_direct_spatial := 1   # B slices: how motion that is not sent is derived
+# Weighted prediction: 0 none, 1 with the weights the slice gives, 2 with
+# weights that follow from how far away in time the references are.
+alloc wp_mode := 0
+alloc wp_ld := 0               # the weights are fractions of 1 << wp_ld (luma)
+alloc wp_cd := 0               # and of 1 << wp_cd (chroma)
+alloc wp0 := []                # per reference: weight and offset for Y, Cb, Cr
+alloc wp1 := []
 alloc sl_dbk_idc := 0
 alloc sl_dbk_a := 0
 alloc sl_dbk_b := 0
@@ -1211,6 +1239,50 @@ alloc fn_prev := 0
 alloc fn_prev_offset := 0
 alloc prev_had_mmco5 := false
 
+proc read_list_changes() {
+    alloc out := []
+    if br_bit() == 1 {
+        loop true {
+            alloc idc := br_ue()
+            if idc == 3 {
+                break
+            }
+            if idc > 3 {
+                fail("damaged data (reference list change)")
+            }
+            append(out, idc)
+            append(out, br_ue())
+        }
+    }
+    return out
+}
+
+proc read_weights(n) {
+    alloc out := []
+    alloc i := 0
+    loop i < n {
+        alloc wy := 1 << wp_ld
+        alloc oy := 0
+        if br_bit() == 1 {
+            wy := br_se()
+            oy := br_se()
+        }
+        alloc wb := 1 << wp_cd
+        alloc ob := 0
+        alloc wr := wb
+        alloc orr := 0
+        if br_bit() == 1 {
+            wb := br_se()
+            ob := br_se()
+            wr := br_se()
+            orr := br_se()
+        }
+        out := out + [wy, oy, wb, ob, wr, orr]
+        i := i + 1
+    }
+    return out
+}
+
 proc parse_slice_header(nal_type, ref_idc) {
     sl_first_mb := br_ue()
     alloc st := br_ue()
@@ -1234,9 +1306,7 @@ proc parse_slice_header(nal_type, ref_idc) {
         activate_pps(p)
     }
     cabac := p.cabac == 1
-    if st == 1 {
-        fail("B slices (Main and High profile) are not supported")
-    }
+    d8inf := s.direct_8x8_inference == 1
     max_frame_num := 1 << s.log2_max_frame_num
     sl_frame_num := br_bits(s.log2_max_frame_num)
     sl_idr := nal_type == 5
@@ -1263,27 +1333,42 @@ proc parse_slice_header(nal_type, ref_idc) {
     if p.redundant_pic_cnt == 1 {
         redundant := br_ue()
     }
+    sl_direct_spatial := 1
+    if st == 1 {
+        sl_direct_spatial := br_bit()
+    }
     sl_num_ref0 := p.num_ref_l0
+    sl_num_ref1 := p.num_ref_l1
     sl_rplm0 := []
-    if st == 0 {
+    sl_rplm1 := []
+    wp_mode := 0
+    if st != 2 {
         if br_bit() == 1 {
             sl_num_ref0 := br_ue() + 1
-        }
-        if br_bit() == 1 {
-            loop true {
-                alloc idc := br_ue()
-                if idc == 3 {
-                    break
-                }
-                if idc > 3 {
-                    fail("damaged data (reference list change)")
-                }
-                append(sl_rplm0, idc)
-                append(sl_rplm0, br_ue())
+            if st == 1 {
+                sl_num_ref1 := br_ue() + 1
             }
         }
-        if p.weighted_pred == 1 {
-            fail("weighted prediction is not supported")
+        if sl_num_ref0 > 32 or sl_num_ref1 > 32 {
+            fail("damaged data (number of reference pictures)")
+        }
+        sl_rplm0 := read_list_changes()
+        if st == 1 {
+            sl_rplm1 := read_list_changes()
+        }
+        if (st == 0 and p.weighted_pred == 1) or (st == 1 and p.weighted_bipred == 1) {
+            wp_mode := 1
+            wp_ld := br_ue()
+            wp_cd := br_ue()
+            if wp_ld > 7 or wp_cd > 7 {
+                fail("damaged data (prediction weights)")
+            }
+            wp0 := read_weights(sl_num_ref0)
+            if st == 1 {
+                wp1 := read_weights(sl_num_ref1)
+            }
+        } elif st == 1 and p.weighted_bipred == 2 {
+            wp_mode := 2
         }
     }
     sl_mmco := [-1]
@@ -1430,6 +1515,26 @@ alloc rl0_u := []
 alloc rl0_v := []
 alloc rl0_id := []
 
+alloc rl1 := []                # the second list (B slices)
+alloc rl1_y := []
+alloc rl1_u := []
+alloc rl1_v := []
+alloc rl1_id := []
+# For motion that a B slice derives from the first picture of its second
+# list ("direct" prediction): that picture's motion.
+alloc col_refi := []
+alloc col_refi1 := []
+alloc col_refid := []
+alloc col_refid1 := []
+alloc col_mvx := []
+alloc col_mvy := []
+alloc col_mvx1 := []
+alloc col_mvy1 := []
+alloc col_short := false
+alloc dsf := []                # per picture of list 0: how to scale that motion
+alloc imp_w1 := []             # wp_mode 2: weight of the second prediction, [r0 * 32 + r1]
+alloc DSF_SAME := 100000
+
 proc dpb_remove_unused() {
     alloc keep := []
     for p in dpb {
@@ -1458,44 +1563,17 @@ proc list_insert(xs, at, v) {
     return out
 }
 
-proc build_ref_list0() {
-    alloc sh := []
-    alloc lg := []
-    for p in dpb {
-        if p.ref == 1 {
-            if p.frame_num > sl_frame_num {
-                p.pnum := p.frame_num - max_frame_num
-            } else {
-                p.pnum := p.frame_num
-            }
-            # insertion sort, largest picture number first
-            alloc k := length(sh)
-            append(sh, p)
-            loop k > 0 and sh[k - 1].pnum < p.pnum {
-                sh[k] := sh[k - 1]
-                k := k - 1
-            }
-            sh[k] := p
-        } elif p.ref == 2 {
-            alloc k := length(lg)
-            append(lg, p)
-            loop k > 0 and lg[k - 1].lt > p.lt {
-                lg[k] := lg[k - 1]
-                k := k - 1
-            }
-            lg[k] := p
-        }
-    }
-    alloc rl := sh + lg
-    if length(rl) > sl_num_ref0 {
-        rl := rl[0:sl_num_ref0]
+# Apply a slice's changes to a reference list and bring it to n entries.
+proc ref_list_finish(rl, changes, n, sh, lg) {
+    if length(rl) > n {
+        rl := rl[0:n]
     }
     alloc pred := sl_frame_num
     alloc at := 0
     alloc i := 0
-    loop i < length(sl_rplm0) {
-        alloc idc := sl_rplm0[i]
-        alloc val := sl_rplm0[i + 1]
+    loop i < length(changes) {
+        alloc idc := changes[i]
+        alloc val := changes[i + 1]
         alloc found := false
         if idc == 2 {
             for p in lg {
@@ -1532,24 +1610,191 @@ proc build_ref_list0() {
         i := i + 2
     }
     if length(rl) == 0 {
-        fail("a P slice with no reference picture to predict from")
+        fail("a slice with no reference picture to predict from")
     }
-    loop length(rl) < sl_num_ref0 {
+    loop length(rl) < n {
         append(rl, rl[0])
     }
-    if length(rl) > sl_num_ref0 {
-        rl := rl[0:sl_num_ref0]
+    if length(rl) > n {
+        rl := rl[0:n]
     }
-    rl0 := rl
+    return rl
+}
+
+# a / b rounded towards zero, for b > 0 or b < 0.
+proc div_trunc(a, b) {
+    alloc neg := false
+    if a < 0 {
+        a := 0 - a
+        neg := true
+    }
+    if b < 0 {
+        b := 0 - b
+        neg := neg == false
+    }
+    if neg {
+        return 0 - (a // b)
+    }
+    return a // b
+}
+
+proc clip_s8(v) {
+    if v < -128 { return -128 }
+    if v > 127 { return 127 }
+    return v
+}
+
+# How far the current picture is between pictures p0 and p1, in 256ths
+# (8.4.1.2.3); DSF_SAME when that cannot be said.
+proc dist_scale(p0, p1) {
+    alloc td := clip_s8(p1.poc - p0.poc)
+    if td == 0 or p0.ref == 2 {
+        return DSF_SAME
+    }
+    alloc tb := clip_s8(cur_pic.poc - p0.poc)
+    alloc half := td
+    if half < 0 {
+        half := 0 - half
+    }
+    alloc tx := div_trunc(16384 + (half >> 1), td)
+    alloc f := (tb * tx + 32) >> 6
+    if f < -1024 { f := -1024 }
+    if f > 1023 { f := 1023 }
+    return f
+}
+
+proc build_ref_lists() {
+    alloc sh := []
+    alloc lg := []
+    for p in dpb {
+        if p.ref == 1 {
+            if p.frame_num > sl_frame_num {
+                p.pnum := p.frame_num - max_frame_num
+            } else {
+                p.pnum := p.frame_num
+            }
+            # insertion sort, largest picture number first
+            alloc k := length(sh)
+            append(sh, p)
+            loop k > 0 and sh[k - 1].pnum < p.pnum {
+                sh[k] := sh[k - 1]
+                k := k - 1
+            }
+            sh[k] := p
+        } elif p.ref == 2 {
+            alloc k := length(lg)
+            append(lg, p)
+            loop k > 0 and lg[k - 1].lt > p.lt {
+                lg[k] := lg[k - 1]
+                k := k - 1
+            }
+            lg[k] := p
+        }
+    }
+    alloc l0 := sh + lg
+    alloc l1 := []
+    if sl_type == 1 {
+        # by time: list 0 starts with the nearest earlier picture, list 1
+        # with the nearest later one
+        alloc now := cur_pic.poc
+        alloc before := []
+        alloc after := []
+        for p in sh {
+            if p.poc < now {
+                alloc k := length(before)
+                append(before, p)
+                loop k > 0 and before[k - 1].poc < p.poc {
+                    before[k] := before[k - 1]
+                    k := k - 1
+                }
+                before[k] := p
+            } else {
+                alloc k := length(after)
+                append(after, p)
+                loop k > 0 and after[k - 1].poc > p.poc {
+                    after[k] := after[k - 1]
+                    k := k - 1
+                }
+                after[k] := p
+            }
+        }
+        l0 := before + after + lg
+        l1 := after + before + lg
+        if length(l1) > 1 {
+            alloc same := true
+            alloc i := 0
+            loop i < length(l1) {
+                if l0[i].id != l1[i].id {
+                    same := false
+                    break
+                }
+                i := i + 1
+            }
+            if same {
+                alloc t := l1[0]
+                l1[0] := l1[1]
+                l1[1] := t
+            }
+        }
+    }
+    rl0 := ref_list_finish(l0, sl_rplm0, sl_num_ref0, sh, lg)
     rl0_y := []
     rl0_u := []
     rl0_v := []
     rl0_id := []
-    for p in rl {
+    for p in rl0 {
         append(rl0_y, p.y)
         append(rl0_u, p.u)
         append(rl0_v, p.v)
         append(rl0_id, p.id)
+    }
+    if sl_type != 1 {
+        return false
+    }
+    rl1 := ref_list_finish(l1, sl_rplm1, sl_num_ref1, sh, lg)
+    rl1_y := []
+    rl1_u := []
+    rl1_v := []
+    rl1_id := []
+    for p in rl1 {
+        append(rl1_y, p.y)
+        append(rl1_u, p.u)
+        append(rl1_v, p.v)
+        append(rl1_id, p.id)
+    }
+    alloc col := rl1[0]
+    col_refi := col.refi
+    col_refi1 := col.refi1
+    col_refid := col.refid
+    col_refid1 := col.refid1
+    col_mvx := col.mvx
+    col_mvy := col.mvy
+    col_mvx1 := col.mvx1
+    col_mvy1 := col.mvy1
+    col_short := col.ref == 1
+    dsf := []
+    for p in rl0 {
+        append(dsf, dist_scale(p, col))
+    }
+    if wp_mode == 2 {
+        imp_w1 := list_repeat(32, 1024)
+        alloc a := 0
+        loop a < sl_num_ref0 {
+            alloc b := 0
+            loop b < sl_num_ref1 {
+                alloc p0 := rl0[a]
+                alloc p1 := rl1[b]
+                alloc f := dist_scale(p0, p1)
+                if f != DSF_SAME and p1.ref != 2 {
+                    alloc w := f >> 2
+                    if w >= -64 and w <= 128 {
+                        imp_w1[a * 32 + b] := w
+                    }
+                }
+                b := b + 1
+            }
+            a := a + 1
+        }
     }
     return false
 }
@@ -2027,6 +2272,59 @@ proc cb_mb_type_p() {
     return 5 + cb_intra_type(17, false)
 }
 
+# The type of a macroblock of a B slice.
+proc cb_mb_type_b() {
+    alloc inc := 0
+    if av_a and mb_bdir[mb_addr - 1] == 0 {
+        inc := 1
+    }
+    if av_b and mb_bdir[mb_addr - mbw] == 0 {
+        inc := inc + 1
+    }
+    if cb_bin(27 + inc) == 0 {
+        return 0
+    }
+    if cb_bin(30) == 0 {
+        return 1 + cb_bin(32)
+    }
+    alloc bits := cb_bin(31) << 3
+    bits := bits | (cb_bin(32) << 2)
+    bits := bits | (cb_bin(32) << 1)
+    bits := bits | cb_bin(32)
+    if bits < 8 {
+        return bits + 3
+    }
+    if bits == 13 {
+        return 23 + cb_intra_type(32, false)
+    }
+    if bits == 14 {
+        return 11
+    }
+    if bits == 15 {
+        return 22
+    }
+    bits := (bits << 1) | cb_bin(32)
+    return bits - 4
+}
+
+proc cb_sub_type_b() {
+    if cb_bin(36) == 0 {
+        return 0
+    }
+    if cb_bin(37) == 0 {
+        return 1 + cb_bin(39)
+    }
+    alloc t := 3
+    if cb_bin(38) == 1 {
+        if cb_bin(39) == 1 {
+            return 11 + cb_bin(39)
+        }
+        t := 7
+    }
+    t := t + 2 * cb_bin(39)
+    return t + cb_bin(39)
+}
+
 proc cb_sub_type_p() {
     if cb_bin(21) == 1 {
         return 0
@@ -2041,13 +2339,18 @@ proc cb_sub_type_p() {
 }
 
 # The reference index of the partition that starts at block (bx, by).
-proc cb_ref(bx, by) {
+proc cb_ref(list, bx, by) {
+    alloc rr := refi
+    if list == 1 {
+        rr := refi1
+    }
     alloc gi := b4 + by * s4 + bx
     alloc inc := 0
-    if (bx > 0 or av_a) and refi[gi - 1] > 0 {
+    # a neighbour whose motion was derived counts as using reference 0
+    if (bx > 0 or av_a) and rr[gi - 1] > 0 and (sl_type == 0 or bdirect[gi - 1] == 0) {
         inc := 1
     }
-    if (by > 0 or av_b) and refi[gi - s4] > 0 {
+    if (by > 0 or av_b) and rr[gi - s4] > 0 and (sl_type == 0 or bdirect[gi - s4] == 0) {
         inc := inc + 2
     }
     alloc ref := 0
@@ -3088,25 +3391,33 @@ proc median3(a, b, c) {
 # `ref`. dir: 0 the median rule; 1, 2, 3 prefer the neighbour above, to
 # the left, above right when it uses the same reference (the rules for
 # 16x8 and 8x16 partitions). The result is left in pmx and pmy.
-proc mv_pred(bx, by, w4, ref, dir) {
+proc mv_pred(bx, by, w4, ref, dir, list) {
+    alloc rr := refi
+    alloc xx := mvx
+    alloc yy := mvy
+    if list == 1 {
+        rr := refi1
+        xx := mvx1
+        yy := mvy1
+    }
     alloc gi := b4 + by * s4 + bx
     alloc ra := -2
     alloc ax := 0
     alloc ay := 0
     if bx > 0 or av_a {
         alloc i := gi - 1
-        ra := refi[i]
-        ax := mvx[i]
-        ay := mvy[i]
+        ra := rr[i]
+        ax := xx[i]
+        ay := yy[i]
     }
     alloc rb := -2
     alloc bvx := 0
     alloc bvy := 0
     if by > 0 or av_b {
         alloc i := gi - s4
-        rb := refi[i]
-        bvx := mvx[i]
-        bvy := mvy[i]
+        rb := rr[i]
+        bvx := xx[i]
+        bvy := yy[i]
     }
     alloc rc := -2
     alloc cx := 0
@@ -3123,9 +3434,9 @@ proc mv_pred(bx, by, w4, ref, dir) {
     }
     if cav {
         alloc i := gi - s4 + w4
-        rc := refi[i]
-        cx := mvx[i]
-        cy := mvy[i]
+        rc := rr[i]
+        cx := xx[i]
+        cy := yy[i]
     } else {
         alloc dav := false
         if by == 0 {
@@ -3141,9 +3452,9 @@ proc mv_pred(bx, by, w4, ref, dir) {
         }
         if dav {
             alloc i := gi - s4 - 1
-            rc := refi[i]
-            cx := mvx[i]
-            cy := mvy[i]
+            rc := rr[i]
+            cx := xx[i]
+            cy := yy[i]
         }
     }
     if dir == 1 and rb == ref {
@@ -3188,122 +3499,537 @@ proc mv_pred(bx, by, w4, ref, dir) {
     return false
 }
 
-# A partition of the macroblock gets its motion: record it for the
-# blocks it covers and build the prediction in the picture.
-proc inter_part(bx, by, w4, h4, ref, mx, my) {
-    if ref < 0 or ref >= sl_num_ref0 {
-        fail("damaged data (reference index)")
-    }
-    alloc rid := rl0_id[ref]
-    alloc j := 0
-    loop j < h4 {
-        alloc gi := b4 + (by + j) * s4 + bx
-        alloc i := 0
-        loop i < w4 {
-            mvx[gi + i] := mx
-            mvy[gi + i] := my
-            refi[gi + i] := ref
-            refid[gi + i] := rid
-            i := i + 1
+# Give the blocks of a partition their reference picture in list `list`;
+# -1 when the partition does not use that list. Their motion vector
+# starts as zero.
+proc set_ref(list, bx, by, w4, h4, ref) {
+    alloc rid := -1
+    alloc rr := refi
+    alloc ri := refid
+    alloc xx := mvx
+    alloc yy := mvy
+    if list == 0 {
+        if ref >= sl_num_ref0 {
+            fail("damaged data (reference index)")
         }
-        j := j + 1
-    }
-    alloc x := mb_x * 16 + bx * 4
-    alloc y := mb_y * 16 + by * 4
-    mc_luma(rl0_y[ref], cur_y, y * ystride + x, ystride, x, y, w4 * 4, h4 * 4, mx, my)
-    x := x >> 1
-    y := y >> 1
-    mc_chroma(rl0_u[ref], cur_u, y * cstride + x, cstride, x, y, w4 * 2, h4 * 2, mx, my)
-    mc_chroma(rl0_v[ref], cur_v, y * cstride + x, cstride, x, y, w4 * 2, h4 * 2, mx, my)
-    return false
-}
-
-# Read the motion vector difference of a partition and finish it.
-proc p_part(bx, by, w4, h4, ref, dir) {
-    mv_pred(bx, by, w4, ref, dir)
-    alloc dx := 0
-    alloc dy := 0
-    if cabac {
-        alloc gi := b4 + by * s4 + bx
-        alloc sx := 0
-        alloc sy := 0
-        if bx > 0 or av_a {
-            sx := mvdx[gi - 1]
-            sy := mvdy[gi - 1]
-        }
-        if by > 0 or av_b {
-            sx := sx + mvdx[gi - s4]
-            sy := sy + mvdy[gi - s4]
-        }
-        dx := cb_mvd(40, sx)
-        dy := cb_mvd(47, sy)
-        alloc ax := dx
-        if ax < 0 { ax := 0 - ax }
-        if ax > 70 { ax := 70 }
-        alloc ay := dy
-        if ay < 0 { ay := 0 - ay }
-        if ay > 70 { ay := 70 }
-        alloc j := 0
-        loop j < h4 {
-            alloc i := 0
-            loop i < w4 {
-                mvdx[gi + i] := ax
-                mvdy[gi + i] := ay
-                i := i + 1
-            }
-            gi := gi + s4
-            j := j + 1
+        if ref >= 0 {
+            rid := rl0_id[ref]
         }
     } else {
-        dx := br_se()
-        dy := br_se()
+        if ref >= sl_num_ref1 {
+            fail("damaged data (reference index)")
+        }
+        if ref >= 0 {
+            rid := rl1_id[ref]
+        }
+        rr := refi1
+        ri := refid1
+        xx := mvx1
+        yy := mvy1
     }
-    inter_part(bx, by, w4, h4, ref, pmx + dx, pmy + dy)
+    alloc gi := b4 + by * s4 + bx
+    alloc j := 0
+    loop j < h4 {
+        alloc i := 0
+        loop i < w4 {
+            rr[gi + i] := ref
+            ri[gi + i] := rid
+            xx[gi + i] := 0
+            yy[gi + i] := 0
+            i := i + 1
+        }
+        gi := gi + s4
+        j := j + 1
+    }
     return false
 }
 
-# Read the reference index of the partition that starts at block
-# (bx, by) and is w4 by h4 blocks.
-proc read_ref(bx, by, w4, h4) {
-    if sl_num_ref0 == 1 {
+proc set_mv(list, bx, by, w4, h4, mx, my) {
+    alloc xx := mvx
+    alloc yy := mvy
+    if list == 1 {
+        xx := mvx1
+        yy := mvy1
+    }
+    alloc gi := b4 + by * s4 + bx
+    alloc j := 0
+    loop j < h4 {
+        alloc i := 0
+        loop i < w4 {
+            xx[gi + i] := mx
+            yy[gi + i] := my
+            i := i + 1
+        }
+        gi := gi + s4
+        j := j + 1
+    }
+    return false
+}
+
+# CABAC remembers the size of the motion vector differences it read.
+proc set_mvd(list, bx, by, w4, h4, ax, ay) {
+    alloc xx := mvdx
+    alloc yy := mvdy
+    if list == 1 {
+        xx := mvdx1
+        yy := mvdy1
+    }
+    alloc gi := b4 + by * s4 + bx
+    alloc j := 0
+    loop j < h4 {
+        alloc i := 0
+        loop i < w4 {
+            xx[gi + i] := ax
+            yy[gi + i] := ay
+            i := i + 1
+        }
+        gi := gi + s4
+        j := j + 1
+    }
+    return false
+}
+
+proc mb_zero_mvd() {
+    set_mvd(0, 0, 0, 4, 4, 0, 0)
+    if sl_type == 1 {
+        set_mvd(1, 0, 0, 4, 4, 0, 0)
+    }
+    return false
+}
+
+# Read the reference index of the partition that starts at block (bx, by).
+proc read_ref(list, bx, by) {
+    alloc n := sl_num_ref0
+    if list == 1 {
+        n := sl_num_ref1
+    }
+    if n == 1 {
         return 0
     }
     if cabac {
-        alloc r := cb_ref(bx, by)
-        # the partitions after this one look at it before it is finished
-        alloc gi := b4 + by * s4 + bx
-        alloc j := 0
-        loop j < h4 {
-            alloc i := 0
-            loop i < w4 {
-                refi[gi + i] := r
-                i := i + 1
-            }
-            gi := gi + s4
-            j := j + 1
-        }
-        return r
+        return cb_ref(list, bx, by)
     }
-    if sl_num_ref0 == 2 {
+    if n == 2 {
         return 1 - br_bit()
     }
     return br_ue()
 }
 
-proc mb_zero_mvd() {
-    alloc j := 0
-    loop j < 4 {
-        alloc gi := b4 + j * s4
-        mvdx[gi] := 0
-        mvdx[gi + 1] := 0
-        mvdx[gi + 2] := 0
-        mvdx[gi + 3] := 0
-        mvdy[gi] := 0
-        mvdy[gi + 1] := 0
-        mvdy[gi + 2] := 0
-        mvdy[gi + 3] := 0
-        j := j + 1
+alloc rdx := 0                 # what read_mvd() read
+alloc rdy := 0
+
+proc read_mvd(list, bx, by, w4, h4) {
+    if cabac == false {
+        rdx := br_se()
+        rdy := br_se()
+        return false
     }
+    alloc xx := mvdx
+    alloc yy := mvdy
+    if list == 1 {
+        xx := mvdx1
+        yy := mvdy1
+    }
+    alloc gi := b4 + by * s4 + bx
+    alloc sx := 0
+    alloc sy := 0
+    if bx > 0 or av_a {
+        sx := xx[gi - 1]
+        sy := yy[gi - 1]
+    }
+    if by > 0 or av_b {
+        sx := sx + xx[gi - s4]
+        sy := sy + yy[gi - s4]
+    }
+    rdx := cb_mvd(40, sx)
+    rdy := cb_mvd(47, sy)
+    alloc ax := rdx
+    if ax < 0 { ax := 0 - ax }
+    if ax > 70 { ax := 70 }
+    alloc ay := rdy
+    if ay < 0 { ay := 0 - ay }
+    if ay > 70 { ay := 70 }
+    set_mvd(list, bx, by, w4, h4, ax, ay)
+    return false
+}
+
+# The motion vector of a partition whose reference is known: predict
+# it, read the difference, record the sum.
+proc part_mv(list, bx, by, w4, h4, dir) {
+    alloc ref := 0
+    if list == 0 {
+        ref := refi[b4 + by * s4 + bx]
+    } else {
+        ref := refi1[b4 + by * s4 + bx]
+    }
+    mv_pred(bx, by, w4, ref, dir, list)
+    read_mvd(list, bx, by, w4, h4)
+    set_mv(list, bx, by, w4, h4, pmx + rdx, pmy + rdy)
+    return false
+}
+
+# --- building the prediction ---------------------------------------------------------
+
+alloc mc_bi := list_repeat(0, 256)     # the prediction from the second list, luma
+alloc mc_bic := list_repeat(0, 64)     # and chroma
+
+# d := d * wt / 2^ld + o
+proc weigh_one(d, dp, ds, w, h, wt, ld, o) {
+    alloc rnd := 0
+    if ld > 0 {
+        rnd := 1 << (ld - 1)
+    }
+    alloc y := 0
+    loop y < h {
+        alloc x := 0
+        loop x < w {
+            alloc v := ((d[dp + x] * wt + rnd) >> ld) + o
+            if (v & -256) != 0 {
+                if v < 0 { v := 0 } else { v := 255 }
+            }
+            d[dp + x] := v
+            x := x + 1
+        }
+        dp := dp + ds
+        y := y + 1
+    }
+    return false
+}
+
+# d := (d * w0 + s * w1) / 2^(ld + 1) + o
+proc weigh_two(d, dp, ds, s, ss, w, h, w0, w1, ld, o) {
+    alloc rnd := 1 << ld
+    alloc sh := ld + 1
+    alloc so := 0
+    alloc y := 0
+    loop y < h {
+        alloc x := 0
+        loop x < w {
+            alloc v := ((d[dp + x] * w0 + s[so + x] * w1 + rnd) >> sh) + o
+            if (v & -256) != 0 {
+                if v < 0 { v := 0 } else { v := 255 }
+            }
+            d[dp + x] := v
+            x := x + 1
+        }
+        dp := dp + ds
+        so := so + ss
+        y := y + 1
+    }
+    return false
+}
+
+# The slice's weights for a prediction from one picture; a is where
+# that picture's six numbers start in tab.
+proc weigh_planes(tab, a, o, co, w, h) {
+    if tab[a] != (1 << wp_ld) or tab[a + 1] != 0 {
+        weigh_one(cur_y, o, ystride, w, h, tab[a], wp_ld, tab[a + 1])
+    }
+    alloc cw := w >> 1
+    alloc ch := h >> 1
+    alloc one := 1 << wp_cd
+    if tab[a + 2] != one or tab[a + 3] != 0 {
+        weigh_one(cur_u, co, cstride, cw, ch, tab[a + 2], wp_cd, tab[a + 3])
+    }
+    if tab[a + 4] != one or tab[a + 5] != 0 {
+        weigh_one(cur_v, co, cstride, cw, ch, tab[a + 4], wp_cd, tab[a + 5])
+    }
+    return false
+}
+
+# Build the prediction of the w4 x h4 blocks at (bx, by) of the
+# macroblock, all of which have the motion recorded for the first.
+proc pred_piece(bx, by, w4, h4) {
+    alloc gi := b4 + by * s4 + bx
+    alloc r0 := refi[gi]
+    alloc r1 := -1
+    if sl_type == 1 {
+        r1 := refi1[gi]
+    }
+    alloc x := mb_x * 16 + bx * 4
+    alloc y := mb_y * 16 + by * 4
+    alloc w := w4 * 4
+    alloc h := h4 * 4
+    alloc o := y * ystride + x
+    alloc cx := x >> 1
+    alloc cy := y >> 1
+    alloc cw := w >> 1
+    alloc ch := h >> 1
+    alloc co := cy * cstride + cx
+    if r1 < 0 {
+        if r0 < 0 {
+            fail("damaged data (a block with no reference)")
+        }
+        alloc mx := mvx[gi]
+        alloc my := mvy[gi]
+        mc_luma(rl0_y[r0], cur_y, o, ystride, x, y, w, h, mx, my)
+        mc_chroma(rl0_u[r0], cur_u, co, cstride, cx, cy, cw, ch, mx, my)
+        mc_chroma(rl0_v[r0], cur_v, co, cstride, cx, cy, cw, ch, mx, my)
+        if wp_mode == 1 {
+            weigh_planes(wp0, r0 * 6, o, co, w, h)
+        }
+        return false
+    }
+    if r0 < 0 {
+        alloc mx := mvx1[gi]
+        alloc my := mvy1[gi]
+        mc_luma(rl1_y[r1], cur_y, o, ystride, x, y, w, h, mx, my)
+        mc_chroma(rl1_u[r1], cur_u, co, cstride, cx, cy, cw, ch, mx, my)
+        mc_chroma(rl1_v[r1], cur_v, co, cstride, cx, cy, cw, ch, mx, my)
+        if wp_mode == 1 {
+            weigh_planes(wp1, r1 * 6, o, co, w, h)
+        }
+        return false
+    }
+    # from both lists: the mean of the two, weighted or not
+    alloc ax := mvx[gi]
+    alloc ay := mvy[gi]
+    alloc bvx := mvx1[gi]
+    alloc bvy := mvy1[gi]
+    alloc plain := wp_mode == 0
+    alloc w0 := 32
+    alloc w1 := 32
+    alloc ld := 5
+    alloc a := r0 * 6
+    alloc b := r1 * 6
+    if wp_mode == 2 {
+        w1 := imp_w1[r0 * 32 + r1]
+        w0 := 64 - w1
+        plain := w1 == 32
+    }
+    mc_luma(rl0_y[r0], cur_y, o, ystride, x, y, w, h, ax, ay)
+    mc_luma(rl1_y[r1], mc_bi, 0, 16, x, y, w, h, bvx, bvy)
+    if plain {
+        mc_avg(cur_y, o, ystride, mc_bi, 0, 16, w, h)
+    } elif wp_mode == 2 {
+        weigh_two(cur_y, o, ystride, mc_bi, 16, w, h, w0, w1, 5, 0)
+    } else {
+        weigh_two(cur_y, o, ystride, mc_bi, 16, w, h, wp0[a], wp1[b], wp_ld, (wp0[a + 1] + wp1[b + 1] + 1) >> 1)
+    }
+    alloc pl := 0
+    loop pl < 2 {
+        alloc plane := cur_u
+        alloc s0 := rl0_u[r0]
+        alloc s1 := rl1_u[r1]
+        if pl == 1 {
+            plane := cur_v
+            s0 := rl0_v[r0]
+            s1 := rl1_v[r1]
+        }
+        mc_chroma(s0, plane, co, cstride, cx, cy, cw, ch, ax, ay)
+        mc_chroma(s1, mc_bic, 0, 8, cx, cy, cw, ch, bvx, bvy)
+        if plain {
+            mc_avg(plane, co, cstride, mc_bic, 0, 8, cw, ch)
+        } elif wp_mode == 2 {
+            weigh_two(plane, co, cstride, mc_bic, 8, cw, ch, w0, w1, 5, 0)
+        } else {
+            alloc k := 2 + pl * 2
+            weigh_two(plane, co, cstride, mc_bic, 8, cw, ch, wp0[a + k], wp1[b + k], wp_cd, (wp0[a + k + 1] + wp1[b + k + 1] + 1) >> 1)
+        }
+        pl := pl + 1
+    }
+    return false
+}
+
+# Have two blocks the same motion?
+proc same_motion(g, h) {
+    if refi[g] != refi[h] or mvx[g] != mvx[h] or mvy[g] != mvy[h] {
+        return false
+    }
+    return refi1[g] == refi1[h] and mvx1[g] == mvx1[h] and mvy1[g] == mvy1[h]
+}
+
+proc quadrant_whole(g) {
+    return same_motion(g, g + 1) and same_motion(g, g + s4) and same_motion(g, g + s4 + 1)
+}
+
+# Predict a quarter of the macroblock whose blocks may each have their
+# own motion, in as few pieces as that motion allows.
+proc pred_quadrant(ox, oy) {
+    if quadrant_whole(b4 + oy * s4 + ox) {
+        pred_piece(ox, oy, 2, 2)
+    } else {
+        pred_piece(ox, oy, 1, 1)
+        pred_piece(ox + 1, oy, 1, 1)
+        pred_piece(ox, oy + 1, 1, 1)
+        pred_piece(ox + 1, oy + 1, 1, 1)
+    }
+    return false
+}
+
+# The same for a whole macroblock.
+proc pred_any() {
+    alloc g := b4
+    alloc h := g + s4 + s4
+    if quadrant_whole(g) and quadrant_whole(g + 2) and quadrant_whole(h) and quadrant_whole(h + 2) and same_motion(g, g + 2) and same_motion(g, h) and same_motion(g, h + 2) {
+        pred_piece(0, 0, 4, 4)
+    } else {
+        pred_quadrant(0, 0)
+        pred_quadrant(2, 0)
+        pred_quadrant(0, 2)
+        pred_quadrant(2, 2)
+    }
+    return false
+}
+
+# --- motion that is not sent: direct prediction in B slices -----------------------------
+
+alloc d8inf := true            # derive it per 8x8 block, not per 4x4 block
+alloc dir_r0 := 0              # what the neighbours of the macroblock suggest
+alloc dir_r1 := 0
+alloc dir_mx0 := 0
+alloc dir_my0 := 0
+alloc dir_mx1 := 0
+alloc dir_my1 := 0
+
+# The smallest reference index in use to the left, above and above right.
+proc direct_ref(list) {
+    alloc rr := refi
+    if list == 1 {
+        rr := refi1
+    }
+    alloc r := -1
+    if av_a {
+        r := rr[b4 - 1]
+    }
+    if av_b {
+        alloc v := rr[b4 - s4]
+        if v >= 0 and (r < 0 or v < r) {
+            r := v
+        }
+    }
+    alloc c := -1
+    if av_c {
+        c := rr[b4 - s4 + 4]
+    } elif av_d {
+        c := rr[b4 - s4 - 1]
+    }
+    if c >= 0 and (r < 0 or c < r) {
+        r := c
+    }
+    return r
+}
+
+proc direct_spatial_setup() {
+    dir_r0 := direct_ref(0)
+    dir_r1 := direct_ref(1)
+    dir_mx0 := 0
+    dir_my0 := 0
+    dir_mx1 := 0
+    dir_my1 := 0
+    if dir_r0 < 0 and dir_r1 < 0 {
+        dir_r0 := 0
+        dir_r1 := 0
+        return false
+    }
+    if dir_r0 >= 0 {
+        mv_pred(0, 0, 4, dir_r0, 0, 0)
+        dir_mx0 := pmx
+        dir_my0 := pmy
+    }
+    if dir_r1 >= 0 {
+        mv_pred(0, 0, 4, dir_r1, 0, 1)
+        dir_mx1 := pmx
+        dir_my1 := pmy
+    }
+    return false
+}
+
+# The motion of the n x n blocks at (bx, by), from the block with index
+# ci of the picture that list 1 starts with.
+proc direct_block(bx, by, n, ci) {
+    alloc cr := col_refi[ci]
+    alloc cid := -1
+    alloc cmx := 0
+    alloc cmy := 0
+    if cr >= 0 {
+        cid := col_refid[ci]
+        cmx := col_mvx[ci]
+        cmy := col_mvy[ci]
+    } else {
+        cr := col_refi1[ci]
+        if cr >= 0 {
+            cid := col_refid1[ci]
+            cmx := col_mvx1[ci]
+            cmy := col_mvy1[ci]
+        }
+    }
+    if sl_direct_spatial == 1 {
+        # where that block hardly moved, neither does this one
+        alloc still := col_short and cr == 0 and cmx >= -1 and cmx <= 1 and cmy >= -1 and cmy <= 1
+        set_ref(0, bx, by, n, n, dir_r0)
+        set_ref(1, bx, by, n, n, dir_r1)
+        if dir_r0 > 0 or (dir_r0 == 0 and still == false) {
+            set_mv(0, bx, by, n, n, dir_mx0, dir_my0)
+        }
+        if dir_r1 > 0 or (dir_r1 == 0 and still == false) {
+            set_mv(1, bx, by, n, n, dir_mx1, dir_my1)
+        }
+        return false
+    }
+    # in time: the block moves along the line that block moved along
+    alloc r0 := 0
+    if cr >= 0 {
+        alloc k := 0
+        loop k < sl_num_ref0 {
+            if rl0_id[k] == cid {
+                r0 := k
+                break
+            }
+            k := k + 1
+        }
+    }
+    alloc f := dsf[r0]
+    alloc ax := cmx
+    alloc ay := cmy
+    alloc bvx := 0
+    alloc bvy := 0
+    if f != DSF_SAME {
+        ax := (f * cmx + 128) >> 8
+        ay := (f * cmy + 128) >> 8
+        bvx := ax - cmx
+        bvy := ay - cmy
+    }
+    set_ref(0, bx, by, n, n, r0)
+    set_ref(1, bx, by, n, n, 0)
+    set_mv(0, bx, by, n, n, ax, ay)
+    set_mv(1, bx, by, n, n, bvx, bvy)
+    return false
+}
+
+proc direct_quadrant(ox, oy) {
+    if d8inf {
+        # the corner block of the macroblock stands for the quarter
+        direct_block(ox, oy, 2, b4 + (oy + (oy >> 1)) * s4 + ox + (ox >> 1))
+    } else {
+        alloc g := b4 + oy * s4 + ox
+        direct_block(ox, oy, 1, g)
+        direct_block(ox + 1, oy, 1, g + 1)
+        direct_block(ox, oy + 1, 1, g + s4)
+        direct_block(ox + 1, oy + 1, 1, g + s4 + 1)
+    }
+    alloc g := b4 + oy * s4 + ox
+    bdirect[g] := 1
+    bdirect[g + 1] := 1
+    bdirect[g + s4] := 1
+    bdirect[g + s4 + 1] := 1
+    if cabac {
+        set_mvd(0, ox, oy, 2, 2, 0, 0)
+        set_mvd(1, ox, oy, 2, 2, 0, 0)
+    }
+    return false
+}
+
+# A whole macroblock in direct mode: its motion and its prediction.
+proc direct_mb() {
+    if sl_direct_spatial == 1 {
+        direct_spatial_setup()
+    }
+    direct_quadrant(0, 0)
+    direct_quadrant(2, 0)
+    direct_quadrant(0, 2)
+    direct_quadrant(2, 2)
+    pred_any()
     return false
 }
 
@@ -3326,6 +4052,11 @@ proc mb_mark_intra() {
     mb_intra[mb_addr] := 1
     if cabac {
         mb_zero_mvd()
+    }
+    if sl_type == 1 {
+        set_ref(1, 0, 0, 4, 4, -1)
+        mb_bdir[mb_addr] := 0
+        b_not_direct()
     }
     alloc j := 0
     loop j < 4 {
@@ -3636,7 +4367,48 @@ proc inter_residual() {
 }
 
 alloc sub_t := [0, 0, 0, 0]
-alloc sub_r := [0, 0, 0, 0]
+
+# The motion vectors of the i-th quarter of the macroblock, cut up as
+# `shape` says: 0 whole, 1 two 8x4, 2 two 4x8, 3 four 4x4.
+proc sub_mvs(list, i, shape) {
+    alloc ox := (i & 1) * 2
+    alloc oy := (i >> 1) * 2
+    if shape == 0 {
+        part_mv(list, ox, oy, 2, 2, 0)
+    } elif shape == 1 {
+        part_mv(list, ox, oy, 2, 1, 0)
+        part_mv(list, ox, oy + 1, 2, 1, 0)
+    } elif shape == 2 {
+        part_mv(list, ox, oy, 1, 2, 0)
+        part_mv(list, ox + 1, oy, 1, 2, 0)
+    } else {
+        part_mv(list, ox, oy, 1, 1, 0)
+        part_mv(list, ox + 1, oy, 1, 1, 0)
+        part_mv(list, ox, oy + 1, 1, 1, 0)
+        part_mv(list, ox + 1, oy + 1, 1, 1, 0)
+    }
+    return false
+}
+
+proc sub_pred(i, shape) {
+    alloc ox := (i & 1) * 2
+    alloc oy := (i >> 1) * 2
+    if shape == 0 {
+        pred_piece(ox, oy, 2, 2)
+    } elif shape == 1 {
+        pred_piece(ox, oy, 2, 1)
+        pred_piece(ox, oy + 1, 2, 1)
+    } elif shape == 2 {
+        pred_piece(ox, oy, 1, 2)
+        pred_piece(ox + 1, oy, 1, 2)
+    } else {
+        pred_piece(ox, oy, 1, 1)
+        pred_piece(ox + 1, oy, 1, 1)
+        pred_piece(ox, oy + 1, 1, 1)
+        pred_piece(ox + 1, oy + 1, 1, 1)
+    }
+    return false
+}
 
 proc decode_p_mb(t) {
     mb_intra[mb_addr] := 0
@@ -3644,18 +4416,23 @@ proc decode_p_mb(t) {
     mb_cmode[mb_addr] := 0
     mb_plain_modes()
     if t == 0 {
-        alloc r := read_ref(0, 0, 4, 4)
-        p_part(0, 0, 4, 4, r, 0)
+        set_ref(0, 0, 0, 4, 4, read_ref(0, 0, 0))
+        part_mv(0, 0, 0, 4, 4, 0)
+        pred_piece(0, 0, 4, 4)
     } elif t == 1 {
-        alloc r0 := read_ref(0, 0, 4, 2)
-        alloc r1 := read_ref(0, 2, 4, 2)
-        p_part(0, 0, 4, 2, r0, 1)
-        p_part(0, 2, 4, 2, r1, 2)
+        set_ref(0, 0, 0, 4, 2, read_ref(0, 0, 0))
+        set_ref(0, 0, 2, 4, 2, read_ref(0, 0, 2))
+        part_mv(0, 0, 0, 4, 2, 1)
+        part_mv(0, 0, 2, 4, 2, 2)
+        pred_piece(0, 0, 4, 2)
+        pred_piece(0, 2, 4, 2)
     } elif t == 2 {
-        alloc r0 := read_ref(0, 0, 2, 4)
-        alloc r1 := read_ref(2, 0, 2, 4)
-        p_part(0, 0, 2, 4, r0, 2)
-        p_part(2, 0, 2, 4, r1, 3)
+        set_ref(0, 0, 0, 2, 4, read_ref(0, 0, 0))
+        set_ref(0, 2, 0, 2, 4, read_ref(0, 2, 0))
+        part_mv(0, 0, 0, 2, 4, 2)
+        part_mv(0, 2, 0, 2, 4, 3)
+        pred_piece(0, 0, 2, 4)
+        pred_piece(2, 0, 2, 4)
     } else {
         alloc i := 0
         loop i < 4 {
@@ -3673,32 +4450,21 @@ proc decode_p_mb(t) {
         }
         i := 0
         loop i < 4 {
-            sub_r[i] := 0
+            alloc r := 0
             if t == 3 {
-                sub_r[i] := read_ref((i & 1) * 2, (i >> 1) * 2, 2, 2)
+                r := read_ref(0, (i & 1) * 2, (i >> 1) * 2)
             }
+            set_ref(0, (i & 1) * 2, (i >> 1) * 2, 2, 2, r)
             i := i + 1
         }
         i := 0
         loop i < 4 {
-            alloc ox := (i & 1) * 2
-            alloc oy := (i >> 1) * 2
-            alloc st := sub_t[i]
-            alloc r := sub_r[i]
-            if st == 0 {
-                p_part(ox, oy, 2, 2, r, 0)
-            } elif st == 1 {
-                p_part(ox, oy, 2, 1, r, 0)
-                p_part(ox, oy + 1, 2, 1, r, 0)
-            } elif st == 2 {
-                p_part(ox, oy, 1, 2, r, 0)
-                p_part(ox + 1, oy, 1, 2, r, 0)
-            } else {
-                p_part(ox, oy, 1, 1, r, 0)
-                p_part(ox + 1, oy, 1, 1, r, 0)
-                p_part(ox, oy + 1, 1, 1, r, 0)
-                p_part(ox + 1, oy + 1, 1, 1, r, 0)
-            }
+            sub_mvs(0, i, sub_t[i])
+            i := i + 1
+        }
+        i := 0
+        loop i < 4 {
+            sub_pred(i, sub_t[i])
             i := i + 1
         }
     }
@@ -3706,19 +4472,31 @@ proc decode_p_mb(t) {
     return false
 }
 
-# A macroblock the encoder skipped: its motion is predicted, and it has
-# no residual.
-proc decode_skip_mb() {
+# What a skipped macroblock leaves behind: no residual.
+proc skip_residual() {
+    clear_nz_luma(0, 0)
+    clear_nz_luma(2, 0)
+    clear_nz_luma(0, 2)
+    clear_nz_luma(2, 2)
+    cbp := 0
+    chroma_residual(dq_up, dq_vp)
+    mb_qp[mb_addr] := qp
     mb_intra[mb_addr] := 0
     mb_skip[mb_addr] := 1
     mb_kind[mb_addr] := 0
     mb_cmode[mb_addr] := 0
     mb_cbp[mb_addr] := 0
     last_dqp := 0
+    return false
+}
+
+# A macroblock the encoder skipped: its motion is predicted, and it has
+# no residual.
+proc decode_skip_mb() {
+    mb_plain_modes()
     if cabac {
         mb_zero_mvd()
     }
-    mb_plain_modes()
     alloc mx := 0
     alloc my := 0
     if av_a and av_b {
@@ -3727,19 +4505,198 @@ proc decode_skip_mb() {
         alloc zero_a := refi[l] == 0 and mvx[l] == 0 and mvy[l] == 0
         alloc zero_b := refi[u] == 0 and mvx[u] == 0 and mvy[u] == 0
         if zero_a == false and zero_b == false {
-            mv_pred(0, 0, 4, 0, 0)
+            mv_pred(0, 0, 4, 0, 0, 0)
             mx := pmx
             my := pmy
         }
     }
-    inter_part(0, 0, 4, 4, 0, mx, my)
-    clear_nz_luma(0, 0)
-    clear_nz_luma(2, 0)
-    clear_nz_luma(0, 2)
-    clear_nz_luma(2, 2)
-    cbp := 0
-    chroma_residual(dq_up, dq_vp)
-    mb_qp[mb_addr] := qp
+    set_ref(0, 0, 0, 4, 4, 0)
+    set_mv(0, 0, 0, 4, 4, mx, my)
+    pred_piece(0, 0, 4, 4)
+    skip_residual()
+    return false
+}
+
+# --- B slices -----------------------------------------------------------------------
+#
+# A partition of a macroblock of a B slice is predicted from list 0 (1),
+# from list 1 (2) or from both (3). By macroblock type: the shape (0 one
+# 16x16, 1 two 16x8, 2 two 8x16) and what each partition uses.
+alloc B_SHAPE := [0, 0, 0, 0, 1, 2, 1, 2, 1, 2, 1, 2, 1, 2, 1, 2, 1, 2, 1, 2, 1, 2]
+alloc B_USE0 := [0, 1, 2, 3, 1, 1, 2, 2, 1, 1, 2, 2, 1, 1, 2, 2, 3, 3, 3, 3, 3, 3]
+alloc B_USE1 := [0, 0, 0, 0, 1, 1, 2, 2, 2, 2, 1, 1, 3, 3, 3, 3, 1, 1, 2, 2, 3, 3]
+# The same for a quarter of a macroblock; type 0 is direct prediction.
+alloc BSUB_SHAPE := [0, 0, 0, 0, 1, 2, 1, 2, 1, 2, 3, 3, 3]
+alloc BSUB_USE := [0, 1, 2, 3, 1, 1, 2, 2, 3, 3, 1, 2, 3]
+
+# The reference of a partition in one list: read, or none.
+proc b_ref(list, bx, by, w4, h4, used) {
+    if used {
+        set_ref(list, bx, by, w4, h4, read_ref(list, bx, by))
+    } else {
+        set_ref(list, bx, by, w4, h4, -1)
+    }
+    if cabac {
+        set_mvd(list, bx, by, w4, h4, 0, 0)
+    }
+    return false
+}
+
+proc b_not_direct() {
+    alloc j := 0
+    loop j < 4 {
+        alloc gi := b4 + j * s4
+        bdirect[gi] := 0
+        bdirect[gi + 1] := 0
+        bdirect[gi + 2] := 0
+        bdirect[gi + 3] := 0
+        j := j + 1
+    }
+    return false
+}
+
+proc decode_b_mb(t) {
+    mb_intra[mb_addr] := 0
+    mb_kind[mb_addr] := 0
+    mb_cmode[mb_addr] := 0
+    mb_plain_modes()
+    if t == 0 {
+        mb_bdir[mb_addr] := 1
+        direct_mb()
+        inter_residual()
+        return false
+    }
+    mb_bdir[mb_addr] := 0
+    b_not_direct()
+    if t < 22 {
+        alloc shape := B_SHAPE[t]
+        alloc ua := B_USE0[t]
+        alloc ub := B_USE1[t]
+        alloc list := 0
+        loop list < 2 {
+            alloc bit := 1 << list
+            if shape == 0 {
+                b_ref(list, 0, 0, 4, 4, (ua & bit) != 0)
+            } elif shape == 1 {
+                b_ref(list, 0, 0, 4, 2, (ua & bit) != 0)
+                b_ref(list, 0, 2, 4, 2, (ub & bit) != 0)
+            } else {
+                b_ref(list, 0, 0, 2, 4, (ua & bit) != 0)
+                b_ref(list, 2, 0, 2, 4, (ub & bit) != 0)
+            }
+            list := list + 1
+        }
+        list := 0
+        loop list < 2 {
+            alloc bit := 1 << list
+            if shape == 0 {
+                if (ua & bit) != 0 {
+                    part_mv(list, 0, 0, 4, 4, 0)
+                }
+            } elif shape == 1 {
+                if (ua & bit) != 0 {
+                    part_mv(list, 0, 0, 4, 2, 1)
+                }
+                if (ub & bit) != 0 {
+                    part_mv(list, 0, 2, 4, 2, 2)
+                }
+            } else {
+                if (ua & bit) != 0 {
+                    part_mv(list, 0, 0, 2, 4, 2)
+                }
+                if (ub & bit) != 0 {
+                    part_mv(list, 2, 0, 2, 4, 3)
+                }
+            }
+            list := list + 1
+        }
+        if shape == 0 {
+            pred_piece(0, 0, 4, 4)
+        } elif shape == 1 {
+            pred_piece(0, 0, 4, 2)
+            pred_piece(0, 2, 4, 2)
+        } else {
+            pred_piece(0, 0, 2, 4)
+            pred_piece(2, 0, 2, 4)
+        }
+        inter_residual()
+        return false
+    }
+    # four quarters, each with a type of its own
+    alloc any_direct := false
+    alloc i := 0
+    loop i < 4 {
+        alloc st := 0
+        if cabac {
+            st := cb_sub_type_b()
+        } else {
+            st := br_ue()
+            if st > 12 {
+                fail("damaged data (sub-macroblock type)")
+            }
+        }
+        sub_t[i] := st
+        if st == 0 {
+            any_direct := true
+        }
+        i := i + 1
+    }
+    if any_direct {
+        if sl_direct_spatial == 1 {
+            direct_spatial_setup()
+        }
+        i := 0
+        loop i < 4 {
+            if sub_t[i] == 0 {
+                direct_quadrant((i & 1) * 2, (i >> 1) * 2)
+            }
+            i := i + 1
+        }
+    }
+    alloc list := 0
+    loop list < 2 {
+        i := 0
+        loop i < 4 {
+            alloc st := sub_t[i]
+            if st != 0 {
+                b_ref(list, (i & 1) * 2, (i >> 1) * 2, 2, 2, ((BSUB_USE[st] >> list) & 1) == 1)
+            }
+            i := i + 1
+        }
+        list := list + 1
+    }
+    list := 0
+    loop list < 2 {
+        i := 0
+        loop i < 4 {
+            alloc st := sub_t[i]
+            if st != 0 and ((BSUB_USE[st] >> list) & 1) == 1 {
+                sub_mvs(list, i, BSUB_SHAPE[st])
+            }
+            i := i + 1
+        }
+        list := list + 1
+    }
+    i := 0
+    loop i < 4 {
+        alloc st := sub_t[i]
+        if st == 0 {
+            pred_quadrant((i & 1) * 2, (i >> 1) * 2)
+        } else {
+            sub_pred(i, BSUB_SHAPE[st])
+        }
+        i := i + 1
+    }
+    inter_residual()
+    return false
+}
+
+# A skipped macroblock of a B slice: direct prediction, no residual.
+proc decode_bskip_mb() {
+    mb_plain_modes()
+    mb_bdir[mb_addr] := 1
+    direct_mb()
+    skip_residual()
     return false
 }
 
@@ -3944,6 +4901,41 @@ proc filter_edge(yo, co, e, dir, qpp, qpq, offa, offb) {
     return false
 }
 
+proc mv_far(ax, ay, bx, by) {
+    alloc dx := ax - bx
+    alloc dy := ay - by
+    return dx >= 4 or dx <= -4 or dy >= 4 or dy <= -4
+}
+
+# The strength of the edge between two blocks without coefficients, in
+# a picture that has blocks predicted from two pictures: 1 when they
+# are predicted from different pictures or with motion a sample apart.
+proc bs_two(p, q) {
+    alloc a0 := refid[p]
+    alloc a1 := refid1[p]
+    alloc b0 := refid[q]
+    alloc b1 := refid1[q]
+    alloc straight := a0 == b0 and a1 == b1
+    alloc crossed := a0 == b1 and a1 == b0
+    if straight == false and crossed == false {
+        return 1
+    }
+    alloc far_s := mv_far(mvx[p], mvy[p], mvx[q], mvy[q]) or mv_far(mvx1[p], mvy1[p], mvx1[q], mvy1[q])
+    alloc far_c := mv_far(mvx[p], mvy[p], mvx1[q], mvy1[q]) or mv_far(mvx1[p], mvy1[p], mvx[q], mvy[q])
+    if a0 != a1 {
+        if straight {
+            if far_s { return 1 }
+            return 0
+        }
+        if far_c { return 1 }
+        return 0
+    }
+    if far_s and far_c {
+        return 1
+    }
+    return 0
+}
+
 proc deblock_mb(addr) {
     alloc si := (mb_slice[addr] - pic_slice0) * 3
     alloc idc := pic_dbk[si]
@@ -3960,6 +4952,7 @@ proc deblock_mb(addr) {
     alloc yo := my * 16 * ystride + mx * 16
     alloc co := my * 8 * cstride + mx * 8
     alloc b := bsv
+    alloc two := cur_pic.used1
     alloc dir := 0
     loop dir < 2 {
         alloc step := 1                    # from a block to its neighbour across the edge
@@ -4002,6 +4995,8 @@ proc deblock_mb(addr) {
                         alloc p := q - step
                         if nz[q] != 0 or nz[p] != 0 {
                             bs := 2
+                        } elif two {
+                            bs := bs_two(p, q)
                         } elif refid[q] != refid[p] {
                             bs := 1
                         } else {
@@ -4044,10 +5039,14 @@ proc picture_start() {
         }
         dpb := []
     }
+    if sl_idr {
+        idr_count := idr_count + 1
+    }
     alloc poc := compute_poc()
     alloc p := pic_alloc()
     p.frame_num := sl_frame_num
     p.poc := poc
+    p.seq := idr_count
     cur_pic := p
     cur_y := p.y
     cur_u := p.u
@@ -4056,6 +5055,22 @@ proc picture_start() {
     mvy := p.mvy
     refi := p.refi
     refid := p.refid
+    mvx1 := p.mvx1
+    mvy1 := p.mvy1
+    refi1 := p.refi1
+    refid1 := p.refid1
+    if p.used1 {
+        alloc n := mb_count * 16
+        alloc i := 0
+        loop i < n {
+            mvx1[i] := 0
+            mvy1[i] := 0
+            refi1[i] := -1
+            refid1[i] := -1
+            i := i + 1
+        }
+        p.used1 := false
+    }
     pic_slice0 := slice_num + 1
     pic_dbk := []
     return false
@@ -4083,8 +5098,11 @@ proc decode_slice(nal_type, ref_idc) {
     append(pic_dbk, sl_dbk_idc)
     append(pic_dbk, sl_dbk_a)
     append(pic_dbk, sl_dbk_b)
-    if sl_type == 0 {
-        build_ref_list0()
+    if sl_type != 2 {
+        build_ref_lists()
+    }
+    if sl_type == 1 {
+        cur_pic.used1 := true
     }
     qp := sl_qp
     alloc addr := sl_first_mb
@@ -4106,12 +5124,26 @@ proc decode_slice(nal_type, ref_idc) {
                 if av_b and mb_skip[addr - mbw] == 0 {
                     inc := inc + 1
                 }
+                if sl_type == 1 {
+                    inc := inc + 13
+                }
                 skip := cb_bin(11 + inc) == 1
             }
             if skip {
-                decode_skip_mb()
+                if sl_type == 1 {
+                    decode_bskip_mb()
+                } else {
+                    decode_skip_mb()
+                }
             } elif sl_type == 2 {
                 decode_intra_mb(cb_intra_type(3, true))
+            } elif sl_type == 1 {
+                alloc t := cb_mb_type_b()
+                if t < 23 {
+                    decode_b_mb(t)
+                } else {
+                    decode_intra_mb(t - 23)
+                }
             } else {
                 alloc t := cb_mb_type_p()
                 if t < 5 {
@@ -4134,7 +5166,11 @@ proc decode_slice(nal_type, ref_idc) {
             if run > 0 {
                 loop run > 0 and addr < mb_count {
                     mb_setup(addr)
-                    decode_skip_mb()
+                    if sl_type == 1 {
+                        decode_bskip_mb()
+                    } else {
+                        decode_skip_mb()
+                    }
                     addr := addr + 1
                     run := run - 1
                 }
@@ -4146,6 +5182,12 @@ proc decode_slice(nal_type, ref_idc) {
             alloc t := br_ue()
             if sl_type == 2 {
                 decode_intra_mb(t)
+            } elif sl_type == 1 {
+                if t < 23 {
+                    decode_b_mb(t)
+                } else {
+                    decode_intra_mb(t - 23)
+                }
             } elif t < 5 {
                 decode_p_mb(t)
             } else {
@@ -4258,7 +5300,7 @@ proc decode(data) {
 }
 
 # Decode a raw H.264 byte stream (NAL units separated by start codes).
-# Returns the list of pictures in it, in decoding order.
+# Returns the list of pictures in it, in the order they are to be shown.
 proc decode_stream(data) {
     alloc out := []
     alloc n := length(data)
@@ -4297,6 +5339,18 @@ proc decode_stream(data) {
     }
     if cur_pic != false {
         append(out, picture_finish())
+    }
+    # B pictures are sent after a picture that is shown later
+    alloc i := 1
+    loop i < length(out) {
+        alloc p := out[i]
+        alloc j := i
+        loop j > 0 and (out[j - 1].seq > p.seq or (out[j - 1].seq == p.seq and out[j - 1].poc > p.poc)) {
+            out[j] := out[j - 1]
+            j := j - 1
+        }
+        out[j] := p
+        i := i + 1
     }
     return out
 }
