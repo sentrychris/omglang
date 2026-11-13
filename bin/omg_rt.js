@@ -1022,6 +1022,11 @@ const _omg_builtins = {
     window_draw: omg_window_draw,
     window_poll: omg_window_poll,
     window_close: omg_window_close,
+    audio_open: omg_audio_open,
+    audio_write: omg_audio_write,
+    audio_played: omg_audio_played,
+    audio_pause: omg_audio_pause,
+    audio_close: omg_audio_close,
 };
 
 // === Real-time terminal I/O (Node) =======================================
@@ -1126,6 +1131,23 @@ function omg_window_poll(_win) {
 }
 function omg_window_close(_win) {
     omg_panic('ValueError', 'window_close is not supported in the JS runtime');
+}
+
+// Sound, the same.
+function omg_audio_open(_rate, _channels) {
+    omg_panic('ValueError', 'audio_open is not supported in the JS runtime');
+}
+function omg_audio_write(_audio, _samples, _from) {
+    omg_panic('ValueError', 'audio_write is not supported in the JS runtime');
+}
+function omg_audio_played(_audio) {
+    omg_panic('ValueError', 'audio_played is not supported in the JS runtime');
+}
+function omg_audio_pause(_audio, _on) {
+    omg_panic('ValueError', 'audio_pause is not supported in the JS runtime');
+}
+function omg_audio_close(_audio) {
+    omg_panic('ValueError', 'audio_close is not supported in the JS runtime');
 }
 
 function omg_pty_spawn(_argv) {
