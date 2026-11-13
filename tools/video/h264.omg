@@ -45,6 +45,47 @@ alloc CQP_HIGH := [29, 30, 31, 32, 32, 33, 34, 34, 35, 35, 36, 36, 37, 37, 37, 3
 alloc DEFAULT_4X4_INTRA := [6, 13, 13, 20, 20, 20, 28, 28, 28, 28, 32, 32, 32, 37, 37, 42]
 alloc DEFAULT_4X4_INTER := [10, 14, 14, 20, 20, 20, 24, 24, 24, 24, 27, 27, 27, 30, 30, 34]
 
+# The same for an 8x8 block: raster position x + 8 * y.
+alloc ZZ8 := [
+    0, 1, 8, 16, 9, 2, 3, 10, 17, 24, 32, 25, 18, 11, 4, 5,
+    12, 19, 26, 33, 40, 48, 41, 34, 27, 20, 13, 6, 7, 14, 21, 28,
+    35, 42, 49, 56, 57, 50, 43, 36, 29, 22, 15, 23, 30, 37, 44, 51,
+    58, 59, 52, 45, 38, 31, 39, 46, 53, 60, 61, 54, 47, 55, 62, 63
+]
+# Dequantisation of an 8x8 block: six multipliers for each qp % 6, and
+# which of them each position takes.
+alloc DQ8_V := [
+    20, 18, 32, 19, 25, 24,
+    22, 19, 35, 21, 28, 26,
+    26, 23, 42, 24, 33, 31,
+    28, 25, 45, 26, 35, 33,
+    32, 28, 51, 30, 40, 38,
+    36, 32, 58, 34, 46, 43
+]
+alloc DQ8_CLASS := [
+    0, 3, 4, 3, 0, 3, 4, 3,
+    3, 1, 5, 1, 3, 1, 5, 1,
+    4, 5, 2, 5, 4, 5, 2, 5,
+    3, 1, 5, 1, 3, 1, 5, 1,
+    0, 3, 4, 3, 0, 3, 4, 3,
+    3, 1, 5, 1, 3, 1, 5, 1,
+    4, 5, 2, 5, 4, 5, 2, 5,
+    3, 1, 5, 1, 3, 1, 5, 1
+]
+# The default weights of 8x8 blocks, in scan order.
+alloc DEFAULT_8X8_INTRA := [
+    6, 10, 10, 13, 11, 13, 16, 16, 16, 16, 18, 18, 18, 18, 18, 23,
+    23, 23, 23, 23, 23, 25, 25, 25, 25, 25, 25, 25, 27, 27, 27, 27,
+    27, 27, 27, 27, 29, 29, 29, 29, 29, 29, 29, 31, 31, 31, 31, 31,
+    31, 33, 33, 33, 33, 33, 36, 36, 36, 36, 38, 38, 38, 40, 40, 42
+]
+alloc DEFAULT_8X8_INTER := [
+    9, 13, 13, 15, 13, 15, 17, 17, 17, 17, 19, 19, 19, 19, 19, 21,
+    21, 21, 21, 21, 21, 22, 22, 22, 22, 22, 22, 22, 24, 24, 24, 24,
+    24, 24, 24, 24, 25, 25, 25, 25, 25, 25, 25, 27, 27, 27, 27, 27,
+    27, 28, 28, 28, 28, 28, 30, 30, 30, 30, 32, 32, 32, 33, 33, 35
+]
+
 # coeff_token: code length and code bits for (total coefficients * 4 +
 # trailing ones), for the three ranges of the context nC.
 alloc CT_LEN_0 := [
@@ -806,7 +847,8 @@ proc parse_scaling_list(size) {
 proc default_scaling(i) {
     if i < 3 { return DEFAULT_4X4_INTRA }
     if i < 6 { return DEFAULT_4X4_INTER }
-    return list_repeat(16, 64)
+    if i == 6 { return DEFAULT_8X8_INTRA }
+    return DEFAULT_8X8_INTER
 }
 
 # The scaling lists of a parameter set. `fallback` is the list set to
@@ -997,6 +1039,7 @@ alloc mb_kind := []            # 0 inter, 1 intra 4x4, 2 intra 16x16, 3 plain sa
 alloc mb_cbp := []             # which of its blocks have a residual
 alloc mb_cmode := []           # intra chroma prediction mode
 alloc mb_dc := []              # has a DC block: 1 luma, 2 Cb, 4 Cr
+alloc mb_t8 := []              # 1: its luma is transformed in 8x8 blocks
 # One entry per 4x4 luma block of the picture.
 alloc nz := []                 # coefficients coded in it
 alloc ipm := []                # intra 4x4 prediction mode
@@ -1109,6 +1152,22 @@ proc activate_pps(p) {
         cqp_v[q] := chroma_qp_of(q + p.cr_qp_offset)
         q := q + 1
     }
+    t8_mode := p.transform_8x8 == 1
+    if t8_mode {
+        if length(dq8_i) == 0 {
+            dq8_i := list_repeat(0, 3328)
+            dq8_p := list_repeat(0, 3328)
+        }
+        alloc flat8 := list_repeat(16, 64)
+        alloc l6 := flat8
+        alloc l7 := flat8
+        if length(lists) > 7 {
+            l6 := lists[6]
+            l7 := lists[7]
+        }
+        make_dq8(l6, dq8_i)
+        make_dq8(l7, dq8_p)
+    }
     constrained_intra := p.constrained_intra == 1
     cur_pps := p
     act_pps := p.uid
@@ -1142,6 +1201,7 @@ proc activate_sps(s) {
         mb_cbp := list_repeat(0, mb_count)
         mb_cmode := list_repeat(0, mb_count)
         mb_dc := list_repeat(0, mb_count)
+        mb_t8 := list_repeat(0, mb_count)
         mvdx := list_repeat(0, mb_count * 16)
         mvdy := list_repeat(0, mb_count * 16)
         mvdx1 := list_repeat(0, mb_count * 16)
@@ -1933,8 +1993,8 @@ alloc qp := 0
 alloc cbp := 0
 
 alloc blk := list_repeat(0, 16)        # one block of coefficients, raster order
-alloc cf_idx := list_repeat(0, 16)     # what residual() read: scan positions
-alloc cf_val := list_repeat(0, 16)     # and levels
+alloc cf_idx := list_repeat(0, 64)     # what residual() read: scan positions
+alloc cf_val := list_repeat(0, 64)     # and levels
 alloc dcy := list_repeat(0, 16)
 alloc cdc := list_repeat(0, 8)
 alloc edge := list_repeat(128, 13)     # neighbours of a 4x4 block: left 3..0, corner, top 0..7
@@ -1960,6 +2020,7 @@ proc mb_setup(addr) {
     mb_slice[addr] := slice_num
     mb_skip[addr] := 0
     mb_dc[addr] := 0
+    mb_t8[addr] := 0
     b4 := mb_y * 4 * s4 + mb_x * 4
     c2 := mb_y * 2 * s2 + mb_x * 2
     py := mb_y * 16 * ystride + mb_x * 16
@@ -2769,6 +2830,476 @@ proc chroma_residual(dqu, dqv) {
             i := i + 1
         }
         pl := pl + 1
+    }
+    return false
+}
+
+# === 8x8 blocks (High profile) ========================================================
+#
+# A macroblock of a High profile stream may transform its luma in four
+# 8x8 blocks instead of sixteen 4x4 ones, and an intra macroblock may
+# predict 8x8 blocks.
+
+alloc blk8 := list_repeat(0, 64)       # one block of coefficients, raster order
+alloc dq8_i := []                      # dequantisation: entry qp * 64 + raster position
+alloc dq8_p := []
+alloc t8_mode := false                 # the picture may use 8x8 transforms
+alloc t8_ok := true                    # and this macroblock's partitions allow it
+
+proc make_dq8(scale_zz, out) {
+    alloc w := list_repeat(16, 64)
+    alloc i := 0
+    loop i < 64 {
+        w[ZZ8[i]] := scale_zz[i]
+        i := i + 1
+    }
+    alloc q := 0
+    loop q < 52 {
+        alloc r := 0
+        loop r < 64 {
+            out[q * 64 + r] := (w[r] * DQ8_V[(q % 6) * 6 + DQ8_CLASS[r]]) << (q // 6)
+            r := r + 1
+        }
+        q := q + 1
+    }
+    return false
+}
+
+# Is this macroblock transformed in 8x8 blocks? Read the flag.
+proc read_t8() {
+    alloc v := 0
+    if cabac {
+        alloc inc := 0
+        if av_a and mb_t8[mb_addr - 1] == 1 {
+            inc := 1
+        }
+        if av_b and mb_t8[mb_addr - mbw] == 1 {
+            inc := inc + 1
+        }
+        v := cb_bin(399 + inc)
+    } else {
+        v := br_bit()
+    }
+    mb_t8[mb_addr] := v
+    return v == 1
+}
+
+# Read the coefficients of the 8x8 luma block whose first 4x4 block is
+# (ox, oy) and dequantise them into blk8. Returns how many there are.
+proc luma_block8(ox, oy, dq) {
+    alloc q64 := qp * 64
+    alloc gi := b4 + oy * s4 + ox
+    alloc b := blk8
+    if cabac {
+        alloc pos := cb_sig
+        alloc n := 0
+        alloc i := 0
+        loop i < 63 {
+            if cb_bin(402 + CB_SIG8[i]) == 1 {
+                pos[n] := i
+                n := n + 1
+                if cb_bin(417 + CB_LAST8[i]) == 1 {
+                    break
+                }
+            }
+            i := i + 1
+        }
+        if i == 63 {
+            pos[n] := 63
+            n := n + 1
+        }
+        cb_levels(426, n)
+        alloc k := 0
+        loop k < n {
+            alloc r := ZZ8[cf_idx[k]]
+            b[r] := (cf_val[k] * dq[q64 + r] + 32) >> 6
+            k := k + 1
+        }
+        nz[gi] := n
+        nz[gi + 1] := n
+        nz[gi + s4] := n
+        nz[gi + s4 + 1] := n
+        return n
+    }
+    # CAVLC sends it as four blocks of sixteen, every fourth coefficient each
+    alloc total := 0
+    alloc i4 := 0
+    loop i4 < 4 {
+        alloc bx := ox + (i4 & 1)
+        alloc by := oy + (i4 >> 1)
+        alloc n := residual(luma_nc(bx, by), 16)
+        nz[b4 + by * s4 + bx] := n
+        alloc k := 0
+        loop k < n {
+            alloc r := ZZ8[cf_idx[k] * 4 + i4]
+            b[r] := (cf_val[k] * dq[q64 + r] + 32) >> 6
+            k := k + 1
+        }
+        total := total + n
+        i4 := i4 + 1
+    }
+    return total
+}
+
+# blk8 holds dequantised coefficients: transform them, add the result to
+# the 8x8 block of plane `pl` at index o, and leave blk8 zeroed.
+proc idct8_add(pl, o, st) {
+    alloc b := blk8
+    alloc i := 0
+    loop i < 64 {
+        alloc w0 := b[i]
+        alloc w1 := b[i + 1]
+        alloc w2 := b[i + 2]
+        alloc w3 := b[i + 3]
+        alloc w4 := b[i + 4]
+        alloc w5 := b[i + 5]
+        alloc w6 := b[i + 6]
+        alloc w7 := b[i + 7]
+        alloc a0 := w0 + w4
+        alloc a2 := w0 - w4
+        alloc a4 := (w2 >> 1) - w6
+        alloc a6 := (w6 >> 1) + w2
+        alloc b0 := a0 + a6
+        alloc b2 := a2 + a4
+        alloc b4v := a2 - a4
+        alloc b6 := a0 - a6
+        alloc a1 := w5 - w3 - w7 - (w7 >> 1)
+        alloc a3 := w1 + w7 - w3 - (w3 >> 1)
+        alloc a5 := w7 - w1 + w5 + (w5 >> 1)
+        alloc a7 := w3 + w5 + w1 + (w1 >> 1)
+        alloc b1 := (a7 >> 2) + a1
+        alloc b3 := a3 + (a5 >> 2)
+        alloc b5 := (a3 >> 2) - a5
+        alloc b7 := a7 - (a1 >> 2)
+        b[i] := b0 + b7
+        b[i + 7] := b0 - b7
+        b[i + 1] := b2 + b5
+        b[i + 6] := b2 - b5
+        b[i + 2] := b4v + b3
+        b[i + 5] := b4v - b3
+        b[i + 3] := b6 + b1
+        b[i + 4] := b6 - b1
+        i := i + 8
+    }
+    i := 0
+    loop i < 8 {
+        alloc w0 := b[i]
+        alloc w1 := b[i + 8]
+        alloc w2 := b[i + 16]
+        alloc w3 := b[i + 24]
+        alloc w4 := b[i + 32]
+        alloc w5 := b[i + 40]
+        alloc w6 := b[i + 48]
+        alloc w7 := b[i + 56]
+        b[i] := 0
+        b[i + 8] := 0
+        b[i + 16] := 0
+        b[i + 24] := 0
+        b[i + 32] := 0
+        b[i + 40] := 0
+        b[i + 48] := 0
+        b[i + 56] := 0
+        alloc a0 := w0 + w4 + 32
+        alloc a2 := w0 - w4 + 32
+        alloc a4 := (w2 >> 1) - w6
+        alloc a6 := (w6 >> 1) + w2
+        alloc b0 := a0 + a6
+        alloc b2 := a2 + a4
+        alloc b4v := a2 - a4
+        alloc b6 := a0 - a6
+        alloc a1 := w5 - w3 - w7 - (w7 >> 1)
+        alloc a3 := w1 + w7 - w3 - (w3 >> 1)
+        alloc a5 := w7 - w1 + w5 + (w5 >> 1)
+        alloc a7 := w3 + w5 + w1 + (w1 >> 1)
+        alloc b1 := (a7 >> 2) + a1
+        alloc b3 := a3 + (a5 >> 2)
+        alloc b5 := (a3 >> 2) - a5
+        alloc b7 := a7 - (a1 >> 2)
+        alloc p := o + i
+        alloc v := pl[p] + ((b0 + b7) >> 6)
+        if (v & -256) != 0 {
+            if v < 0 { v := 0 } else { v := 255 }
+        }
+        pl[p] := v
+        p := p + st
+        v := pl[p] + ((b2 + b5) >> 6)
+        if (v & -256) != 0 {
+            if v < 0 { v := 0 } else { v := 255 }
+        }
+        pl[p] := v
+        p := p + st
+        v := pl[p] + ((b4v + b3) >> 6)
+        if (v & -256) != 0 {
+            if v < 0 { v := 0 } else { v := 255 }
+        }
+        pl[p] := v
+        p := p + st
+        v := pl[p] + ((b6 + b1) >> 6)
+        if (v & -256) != 0 {
+            if v < 0 { v := 0 } else { v := 255 }
+        }
+        pl[p] := v
+        p := p + st
+        v := pl[p] + ((b6 - b1) >> 6)
+        if (v & -256) != 0 {
+            if v < 0 { v := 0 } else { v := 255 }
+        }
+        pl[p] := v
+        p := p + st
+        v := pl[p] + ((b4v - b3) >> 6)
+        if (v & -256) != 0 {
+            if v < 0 { v := 0 } else { v := 255 }
+        }
+        pl[p] := v
+        p := p + st
+        v := pl[p] + ((b2 - b5) >> 6)
+        if (v & -256) != 0 {
+            if v < 0 { v := 0 } else { v := 255 }
+        }
+        pl[p] := v
+        p := p + st
+        v := pl[p] + ((b0 - b7) >> 6)
+        if (v & -256) != 0 {
+            if v < 0 { v := 0 } else { v := 255 }
+        }
+        pl[p] := v
+        i := i + 1
+    }
+    return false
+}
+
+# The neighbours of an 8x8 block: raw in e8r, smoothed in e8. Entries
+# 0 to 7 are the samples to the left, bottom one first; 8 is the corner;
+# 9 to 24 are the sixteen above and above right.
+alloc e8r := list_repeat(128, 25)
+alloc e8 := list_repeat(128, 25)
+
+# Predict the 8x8 luma block whose first 4x4 block is (ox, oy).
+proc pred8(mode, ox, oy) {
+    alloc pl := cur_y
+    alloc st := ystride
+    alloc o := py + oy * 4 * st + ox * 4
+    alloc hl := ox > 0 or ia
+    alloc ht := oy > 0 or ib
+    alloc hc := idl
+    alloc htr := false
+    if oy == 0 {
+        if ox == 0 {
+            htr := ib
+        } else {
+            hc := ib
+            htr := ic
+        }
+    } elif ox == 0 {
+        hc := ia
+        htr := true
+    } else {
+        hc := true
+    }
+    alloc r := e8r
+    alloc e := e8
+    alloc i := 0
+    if hl {
+        alloc p := o - 1
+        loop i < 8 {
+            r[7 - i] := pl[p]
+            p := p + st
+            i := i + 1
+        }
+    }
+    if hc {
+        r[8] := pl[o - st - 1]
+    }
+    if ht {
+        alloc t := o - st
+        i := 0
+        loop i < 8 {
+            r[9 + i] := pl[t + i]
+            i := i + 1
+        }
+        if htr {
+            loop i < 16 {
+                r[9 + i] := pl[t + i]
+                i := i + 1
+            }
+        } else {
+            alloc v := r[16]
+            loop i < 16 {
+                r[9 + i] := v
+                i := i + 1
+            }
+        }
+        # smooth the row above
+        if hc {
+            e[9] := (r[8] + 2 * r[9] + r[10] + 2) >> 2
+        } else {
+            e[9] := (3 * r[9] + r[10] + 2) >> 2
+        }
+        i := 10
+        loop i < 24 {
+            e[i] := (r[i - 1] + 2 * r[i] + r[i + 1] + 2) >> 2
+            i := i + 1
+        }
+        e[24] := (r[23] + 3 * r[24] + 2) >> 2
+    }
+    if hl {
+        if hc {
+            e[7] := (r[8] + 2 * r[7] + r[6] + 2) >> 2
+        } else {
+            e[7] := (3 * r[7] + r[6] + 2) >> 2
+        }
+        i := 6
+        loop i > 0 {
+            e[i] := (r[i + 1] + 2 * r[i] + r[i - 1] + 2) >> 2
+            i := i - 1
+        }
+        e[0] := (r[1] + 3 * r[0] + 2) >> 2
+    }
+    if hc {
+        if ht and hl {
+            e[8] := (r[9] + 2 * r[8] + r[7] + 2) >> 2
+        } elif ht {
+            e[8] := (3 * r[8] + r[9] + 2) >> 2
+        } elif hl {
+            e[8] := (3 * r[8] + r[7] + 2) >> 2
+        } else {
+            e[8] := r[8]
+        }
+    }
+    alloc y := 0
+    alloc x := 0
+    if mode == 2 {
+        alloc dc := 128
+        if ht and hl {
+            dc := (e[0] + e[1] + e[2] + e[3] + e[4] + e[5] + e[6] + e[7] + e[9] + e[10] + e[11] + e[12] + e[13] + e[14] + e[15] + e[16] + 8) >> 4
+        } elif ht {
+            dc := (e[9] + e[10] + e[11] + e[12] + e[13] + e[14] + e[15] + e[16] + 4) >> 3
+        } elif hl {
+            dc := (e[0] + e[1] + e[2] + e[3] + e[4] + e[5] + e[6] + e[7] + 4) >> 3
+        }
+        loop y < 8 {
+            x := 0
+            loop x < 8 {
+                pl[o + x] := dc
+                x := x + 1
+            }
+            o := o + st
+            y := y + 1
+        }
+        return false
+    }
+    if mode == 0 {
+        loop y < 8 {
+            x := 0
+            loop x < 8 {
+                pl[o + x] := e[9 + x]
+                x := x + 1
+            }
+            o := o + st
+            y := y + 1
+        }
+        return false
+    }
+    if mode == 1 {
+        loop y < 8 {
+            alloc v := e[7 - y]
+            x := 0
+            loop x < 8 {
+                pl[o + x] := v
+                x := x + 1
+            }
+            o := o + st
+            y := y + 1
+        }
+        return false
+    }
+    # The diagonal modes. With the neighbours in one row (left ones, corner,
+    # upper ones), sample (x, y) is a mean of two or three neighbours
+    # around entry c; k is 2 for two.
+    loop y < 8 {
+        x := 0
+        loop x < 8 {
+            alloc c := 0
+            alloc two := false
+            if mode == 3 {
+                # down and to the left
+                c := 10 + x + y
+            } elif mode == 4 {
+                # down and to the right
+                c := 8 + x - y
+            } elif mode == 5 {
+                # down, a little to the right
+                alloc z := 2 * x - y
+                if z >= 0 {
+                    c := 9 + x - (y >> 1)
+                    if (z & 1) == 0 {
+                        two := true
+                        c := c - 1
+                    } else {
+                        c := c - 1
+                    }
+                } elif z == -1 {
+                    c := 8
+                } else {
+                    c := 9 - (y - 2 * x)
+                }
+            } elif mode == 6 {
+                # to the right, a little down
+                alloc z := 2 * y - x
+                if z >= 0 {
+                    c := 7 - (y - (x >> 1))
+                    if (z & 1) == 0 {
+                        two := true
+                    } else {
+                        c := c + 1
+                    }
+                } elif z == -1 {
+                    c := 8
+                } else {
+                    c := 7 + (x - 2 * y)
+                }
+            } elif mode == 7 {
+                # down, a little to the left
+                c := 9 + x + (y >> 1)
+                if (y & 1) == 0 {
+                    two := true
+                } else {
+                    c := c + 1
+                }
+            } else {
+                # to the right, a little up
+                alloc z := x + 2 * y
+                if z > 13 {
+                    c := -1
+                } elif z == 13 {
+                    c := -2
+                } else {
+                    c := 7 - (y + (x >> 1))
+                    if (z & 1) == 0 {
+                        two := true
+                        c := c - 1
+                    } else {
+                        c := c - 1
+                    }
+                }
+            }
+            alloc v := 0
+            if c == -1 {
+                v := e[0]
+            } elif c == -2 {
+                v := (e[1] + 3 * e[0] + 2) >> 2
+            } elif two {
+                v := (e[c] + e[c + 1] + 1) >> 1
+            } elif c == 24 {
+                v := (e[23] + 3 * e[24] + 2) >> 2
+            } else {
+                v := (e[c - 1] + 2 * e[c] + e[c + 1] + 2) >> 2
+            }
+            pl[o + x] := v
+            x := x + 1
+        }
+        o := o + st
+        y := y + 1
     }
     return false
 }
@@ -4150,6 +4681,94 @@ proc mb_i4x4() {
     return false
 }
 
+proc clear_nz_luma(bx, by) {
+    alloc gi := b4 + by * s4 + bx
+    nz[gi] := 0
+    nz[gi + 1] := 0
+    nz[gi + s4] := 0
+    nz[gi + s4 + 1] := 0
+    return false
+}
+
+# An intra macroblock predicted and transformed in four 8x8 blocks.
+proc mb_i8x8() {
+    alloc n := 0
+    loop n < 4 {
+        alloc ox := (n & 1) * 2
+        alloc oy := (n >> 1) * 2
+        alloc gi := b4 + oy * s4 + ox
+        alloc ma := -1
+        alloc mt := -1
+        if ox > 0 or ia {
+            ma := ipm[gi - 1]
+        }
+        if oy > 0 or ib {
+            mt := ipm[gi - s4]
+        }
+        alloc pm := 2
+        if ma >= 0 and mt >= 0 {
+            pm := ma
+            if mt < ma {
+                pm := mt
+            }
+        }
+        if cabac {
+            pm := cb_ipm(pm)
+        } elif br_bit() == 0 {
+            alloc rem := br_bits(3)
+            if rem < pm {
+                pm := rem
+            } else {
+                pm := rem + 1
+            }
+        }
+        ipm[gi] := pm
+        ipm[gi + 1] := pm
+        ipm[gi + s4] := pm
+        ipm[gi + s4 + 1] := pm
+        n := n + 1
+    }
+    alloc cmode := 0
+    if cabac {
+        cmode := cb_cmode()
+        cbp := cb_cbp()
+    } else {
+        cmode := br_ue()
+        alloc c := br_ue()
+        if c > 47 or cmode > 3 {
+            fail("damaged data (intra macroblock)")
+        }
+        cbp := CBP_INTRA[c]
+    }
+    mb_kind[mb_addr] := 1
+    mb_cmode[mb_addr] := cmode
+    mb_cbp[mb_addr] := cbp
+    if cbp > 0 {
+        read_qp_delta()
+    } else {
+        last_dqp := 0
+    }
+    n := 0
+    loop n < 4 {
+        alloc ox := (n & 1) * 2
+        alloc oy := (n >> 1) * 2
+        pred8(ipm[b4 + oy * s4 + ox], ox, oy)
+        if ((cbp >> n) & 1) == 1 {
+            if luma_block8(ox, oy, dq8_i) > 0 {
+                idct8_add(cur_y, py + oy * 4 * ystride + ox * 4, ystride)
+            }
+        } else {
+            clear_nz_luma(ox, oy)
+        }
+        n := n + 1
+    }
+    pred_chroma_plane(cur_u, cmode)
+    pred_chroma_plane(cur_v, cmode)
+    chroma_residual(dq_ui, dq_vi)
+    mb_qp[mb_addr] := qp
+    return false
+}
+
 proc mb_i16(t) {
     alloc mode := t & 3
     cbp := ((t >> 2) % 3) << 4
@@ -4310,7 +4929,11 @@ proc mb_pcm() {
 proc decode_intra_mb(t) {
     mb_mark_intra()
     if t == 0 {
-        mb_i4x4()
+        if t8_mode and read_t8() {
+            mb_i8x8()
+        } else {
+            mb_i4x4()
+        }
     } elif t < 25 {
         mb_i16(t - 1)
     } elif t == 25 {
@@ -4318,15 +4941,6 @@ proc decode_intra_mb(t) {
     } else {
         fail("damaged data (macroblock type)")
     }
-    return false
-}
-
-proc clear_nz_luma(bx, by) {
-    alloc gi := b4 + by * s4 + bx
-    nz[gi] := 0
-    nz[gi + 1] := 0
-    nz[gi + s4] := 0
-    nz[gi + s4 + 1] := 0
     return false
 }
 
@@ -4342,12 +4956,31 @@ proc inter_residual() {
         cbp := CBP_INTER[c]
     }
     mb_cbp[mb_addr] := cbp
+    alloc t8 := false
+    if t8_mode and t8_ok and (cbp & 15) != 0 {
+        t8 := read_t8()
+    }
     if cbp > 0 {
         read_qp_delta()
     } else {
         last_dqp := 0
     }
     alloc n := 0
+    if t8 {
+        loop n < 4 {
+            alloc ox := (n & 1) * 2
+            alloc oy := (n >> 1) * 2
+            if ((cbp >> n) & 1) == 1 {
+                if luma_block8(ox, oy, dq8_p) > 0 {
+                    idct8_add(cur_y, py + oy * 4 * ystride + ox * 4, ystride)
+                }
+            } else {
+                clear_nz_luma(ox, oy)
+            }
+            n := n + 1
+        }
+        n := 16
+    }
     loop n < 16 {
         if ((cbp >> (n >> 2)) & 1) == 1 {
             alloc bx := BLK_X[n]
@@ -4415,6 +5048,7 @@ proc decode_p_mb(t) {
     mb_kind[mb_addr] := 0
     mb_cmode[mb_addr] := 0
     mb_plain_modes()
+    t8_ok := true
     if t == 0 {
         set_ref(0, 0, 0, 4, 4, read_ref(0, 0, 0))
         part_mv(0, 0, 0, 4, 4, 0)
@@ -4446,6 +5080,9 @@ proc decode_p_mb(t) {
                 }
             }
             sub_t[i] := st
+            if st != 0 {
+                t8_ok := false
+            }
             i := i + 1
         }
         i := 0
@@ -4560,9 +5197,11 @@ proc decode_b_mb(t) {
     mb_kind[mb_addr] := 0
     mb_cmode[mb_addr] := 0
     mb_plain_modes()
+    t8_ok := true
     if t == 0 {
         mb_bdir[mb_addr] := 1
         direct_mb()
+        t8_ok := d8inf
         inter_residual()
         return false
     }
@@ -4638,6 +5277,11 @@ proc decode_b_mb(t) {
         sub_t[i] := st
         if st == 0 {
             any_direct := true
+            if d8inf == false {
+                t8_ok := false
+            }
+        } elif BSUB_SHAPE[st] != 0 {
+            t8_ok := false
         }
         i := i + 1
     }
@@ -4901,6 +5545,12 @@ proc filter_edge(yo, co, e, dir, qpp, qpq, offa, offb) {
     return false
 }
 
+# Has the 8x8 block that 4x4 block i lies in any coefficients?
+proc nz_any8(i) {
+    alloc base := i - ((i % s4) & 1) - ((i // s4) & 1) * s4
+    return nz[base] != 0 or nz[base + 1] != 0 or nz[base + s4] != 0 or nz[base + s4 + 1] != 0
+}
+
 proc mv_far(ax, ay, bx, by) {
     alloc dx := ax - bx
     alloc dy := ay - by
@@ -4952,6 +5602,7 @@ proc deblock_mb(addr) {
     alloc yo := my * 16 * ystride + mx * 16
     alloc co := my * 8 * cstride + mx * 8
     alloc b := bsv
+    alloc t8 := mb_t8[addr] == 1
     alloc two := cur_pic.used1
     alloc dir := 0
     loop dir < 2 {
@@ -4973,13 +5624,18 @@ proc deblock_mb(addr) {
             alloc qpp := qpq
             alloc pintra := intra
             alloc go := true
+            alloc pt8 := t8
             if e == 0 {
                 if have {
                     qpp := mb_qp[other]
                     pintra := mb_intra[other] == 1
+                    pt8 := mb_t8[other] == 1
                 } else {
                     go := false
                 }
+            } elif t8 and (e & 1) == 1 {
+                # no block ends here
+                go := false
             }
             if go {
                 alloc k := 0
@@ -4993,7 +5649,12 @@ proc deblock_mb(addr) {
                     } else {
                         alloc q := g + e * step + k * along
                         alloc p := q - step
-                        if nz[q] != 0 or nz[p] != 0 {
+                        alloc coded := nz[q] != 0 or nz[p] != 0
+                        if coded == false and (t8 or pt8) {
+                            # an 8x8 block counts whole
+                            coded := (t8 and nz_any8(q)) or (pt8 and nz_any8(p))
+                        }
+                        if coded {
                             bs := 2
                         } elif two {
                             bs := bs_two(p, q)
