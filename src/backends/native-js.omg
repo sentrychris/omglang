@@ -157,6 +157,9 @@ proc emit_builtin(name, argc) {
     if name == "read_file"     and argc == 1 { return emit_builtin1("omg_read_file") }
     if name == "file_open"     and argc == 2 { return emit_builtin2("omg_file_open") }
     if name == "file_read"     and argc == 1 { return emit_builtin1("omg_file_read") }
+    if name == "file_read"     and argc == 2 { return emit_builtin2("omg_file_read") }
+    if name == "file_size"     and argc == 1 { return emit_builtin1("omg_file_size") }
+    if name == "file_mtime"    and argc == 1 { return emit_builtin1("omg_file_mtime") }
     if name == "file_write"    and argc == 2 { return emit_builtin2("omg_file_write") }
     if name == "file_close"    and argc == 1 { return emit_builtin1("omg_file_close") }
     if name == "file_seek"     and argc == 2 { return emit_builtin2("omg_file_seek") }
@@ -189,6 +192,20 @@ proc emit_builtin(name, argc) {
     if name == "pty_close"        and argc == 1 { return emit_builtin1("omg_pty_close") }
     if name == "pty_write"        and argc == 2 { return emit_builtin2("omg_pty_write") }
     if name == "pty_resize"       and argc == 3 { return emit_builtin3("omg_pty_resize") }
+
+    # Sockets. The JS-side stubs panic (see omg_rt.js); routed through
+    # so that a program which mentions them still translates.
+    if name == "tcp_listen"       and argc == 2 { return emit_builtin2("omg_tcp_listen") }
+    if name == "tcp_accept"       and argc == 1 { return emit_builtin1("omg_tcp_accept") }
+    if name == "tcp_connect"      and argc == 2 { return emit_builtin2("omg_tcp_connect") }
+    if name == "tcp_read"         and argc == 2 { return emit_builtin2("omg_tcp_read") }
+    if name == "tcp_write"        and argc == 2 { return emit_builtin2("omg_tcp_write") }
+    if name == "tcp_write"        and argc == 3 { return emit_builtin3("omg_tcp_write") }
+    if name == "tcp_close"        and argc == 1 { return emit_builtin1("omg_tcp_close") }
+    if name == "tcp_nonblocking"  and argc == 2 { return emit_builtin2("omg_tcp_nonblocking") }
+    if name == "tcp_peer"         and argc == 1 { return emit_builtin1("omg_tcp_peer") }
+    if name == "tcp_poll"         and argc == 3 { return emit_builtin3("omg_tcp_poll") }
+    if name == "interrupted"      and argc == 0 { return emit_builtin0("omg_interrupted") }
 
     panic("native-js: builtin '" + name + "' (argc=" + argc + ") not implemented yet")
 }

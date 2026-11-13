@@ -1260,6 +1260,8 @@ alloc cc_builtins := [
     "print", "executable_path",
     "tcp_listen", "tcp_accept", "tcp_connect",
     "tcp_read", "tcp_write", "tcp_close",
+    "tcp_nonblocking", "tcp_poll", "tcp_peer",
+    "file_size", "file_mtime", "interrupted",
     "fork"
 ]
 
