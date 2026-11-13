@@ -6,10 +6,10 @@ shows what the compiler makes of it at every stage: tokens, AST,
 bytecode, and the C and JavaScript the back ends write.
 
 The OMG compiler and VM are bundled to a single `omg-web.js` file
-(~2.2 MB) by the same toolchain that builds `omg` itself — so what
+(~2.4 MB) by the same toolchain that builds `omg` itself — so what
 runs in the page is the exact same compiler the rest of the project
 uses, put through OMG's JavaScript back end. `omg-explorer.js`
-(~3.7 MB) is the same plus the C and JS back ends.
+(~3.9 MB) is the same plus the C and JS back ends.
 
 ## How it actually works
 

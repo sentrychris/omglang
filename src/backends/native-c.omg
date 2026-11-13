@@ -749,40 +749,45 @@ proc emit_call_value(nparams) {
 
 # === Code emission ========================================================
 
-# Find every instruction index that is the target of a JUMP /
-# JUMP_IF_FALSE / SETUP_EXCEPT, so we can emit labels selectively.
-proc collect_jump_targets(code, body_start, body_end) {
-    alloc targets := {}
-    alloc i := body_start
-    loop i < body_end {
-        alloc instr := code[i]
-        alloc op := instr[0]
-        if op == "JUMP" or op == "JUMP_IF_FALSE" or op == "SETUP_EXCEPT" {
-            targets[instr[1]] := true
-        }
-        i := i + 1
-    }
-    return targets
-}
-
 # Emit the body of one function (or main): walks instructions in
-# [start, end), stopping at HALT (or running off the end). Before each
-# instruction we conditionally emit `omg_current_line = N;` (only when
-# the line actually differs from the previous instruction's). Most
-# consecutive instructions share a line, so this stays cheap — one
-# write per source line, not per opcode.
+# [start, end), stopping at HALT (or running off the end).
+#
+# The runtime keeps the current source position in two globals,
+# `omg_current_file_idx` and `omg_current_line`, for tracebacks. Before
+# an instruction we write whichever of the two differs from what the
+# instruction before it left there. Most consecutive instructions share
+# a line, so this stays cheap: one write per source line, not per
+# opcode. "What the instruction before it left there" is unknown in two
+# places, and there both are written again:
+#
+#   - at a jump target (a loop head, the start of an `except` block),
+#     because control arrives from elsewhere;
+#   - after a call, because the callee leaves its own last position
+#     behind, which may be in another file.
+#
+# The file is tracked per instruction and not per function because an
+# imported module's top-level statements are compiled into the body of
+# whoever imports it.
 proc emit_body(code, body_start, body_end, ctx) {
     alloc out := be.buf_new()
-    alloc targets := collect_jump_targets(code, body_start, body_end)
+    alloc targets := be.collect_jump_targets(code, body_start, body_end)
     alloc src_lines := ctx["src_lines"]
+    alloc last_file := -1
     alloc last_line := -1
     alloc i := body_start
     loop i < body_end {
         if has_key(targets, i) {
             be.buf_add(out, label_for(i) + ":;\n")
+            last_file := -1
+            last_line := -1
         }
         if i < length(src_lines) {
+            alloc file := src_lines[i][0]
             alloc line := src_lines[i][1]
+            if file != last_file {
+                be.buf_add(out, "    omg_current_file_idx = " + file + ";\n")
+                last_file := file
+            }
             if line != last_line {
                 be.buf_add(out, "    omg_current_line = " + line + ";\n")
                 last_line := line
@@ -791,6 +796,10 @@ proc emit_body(code, body_start, body_end, ctx) {
         be.buf_add(out, emit_c_for_instr(code[i], ctx))
         if code[i][0] == "HALT" {
             break
+        }
+        if be.clobbers_position(code[i]) {
+            last_file := -1
+            last_line := -1
         }
         i := i + 1
     }

@@ -433,10 +433,13 @@ static int omg_frame_top = 0;
 ```
 
 The transpiler also emits a per-program source-file table and threads
-two globals — `omg_current_file_idx` (set once at function entry) and
-`omg_current_line` (rewritten before each instruction whose line
-differs from the previous one) — so any panic site has full
-file/line context.
+two globals, `omg_current_file_idx` and `omg_current_line`, so any
+panic site has full file/line context. Each is rewritten before an
+instruction whose file or line differs from the previous one's. Both
+are rewritten after every call, because the callee leaves the position
+of its own last statement behind, and at every jump target (a loop
+head, the start of an `except` block), because control arrives there
+from somewhere else. The JS back end does the same.
 
 ### How `try` becomes C
 

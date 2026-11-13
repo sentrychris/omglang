@@ -59,7 +59,7 @@ take its place:
 | `tests/syntax.sh`      | Malformed programs: a one-line `SyntaxError`, exit code 1, the same message from run, `--compile` and `--build`, and nothing written |
 | `tests/regression.sh`  | Specific bugs we've fixed: control-flow inside `try`, float-bits decoding in `compile_source`, `args[0]` semantics, doubled `RuntimeError:` prefix, `;;;omg` header is optional, line numbers in a file with no header, stdout/stderr ordering |
 | `tests/conformance.sh` | The conformance corpus every way: interpreter, machine code, through C, JavaScript; plus stack-limit checks that only make sense for an executable |
-| `tests/conformance/`   | The corpus itself: `NAME.omg` must print `NAME.expected`; `fail/NAME.omg` must die with the error kind on its `# expect:` line |
+| `tests/conformance/`   | The corpus itself: `NAME.omg` must print `NAME.expected`; `fail/NAME.omg` must die with the error kind on its `# expect:` line, and with the frames in `NAME.traceback` if there is one |
 | `tests/tools.sh`       | The programs in `tools/`: their own test suite interpreted and built, and the HTTP server answering real requests both ways |
 | `tests/db.sh`          | `omgdb`: SQL results and the on-disk format, with files written by the interpreted database read by the built one and back |
 | `tests/parity.sh`      | The compiler compiled vs interpreted (same bytecode for its own source); every example built vs interpreted, through C, and as JS; the self-rebuild, and a second one that must be byte-identical |

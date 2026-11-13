@@ -488,12 +488,20 @@ proc emit_js_for_instr(instr, ctx) {
 # Emit `from..to` of `code` (the function body, or top-level program)
 # as a flat IP-dispatching loop. We use a giant `switch (_ip)` with
 # fall-through-by-default — the simplest way to handle JUMP/JIF
-# without a real goto. Before each instruction we conditionally emit
-# `omg_current_line = N;` (only when the line changed from the
-# previous instruction) — feeds the traceback formatter without
-# bloating the output.
+# without a real goto.
+#
+# The runtime keeps the current source position in two variables,
+# `omg_current_file_idx` and `omg_current_line`, for tracebacks. Before
+# an instruction we write whichever of the two differs from what the
+# instruction before it left there, so the output grows by one write
+# per source line and not per opcode. At a jump target (a loop head,
+# the start of an `except` block) and after a call, what is there is
+# unknown, so both are written again: control arrives from elsewhere,
+# or the callee has left its own last position behind. See emit_body
+# in native-c.omg, which does the same.
 proc emit_body(code, body_start, body_end, ctx) {
     alloc src_lines := ctx["src_lines"]
+    alloc targets := be.collect_jump_targets(code, body_start, body_end)
     alloc out := be.buf_new()
     be.buf_add(out, "    let _ip = " + body_start + ";\n")
     be.buf_add(out, "    let _eh = [];\n")
@@ -506,18 +514,32 @@ proc emit_body(code, body_start, body_end, ctx) {
     be.buf_add(out, "    while (true) {\n")
     be.buf_add(out, "        try {\n")
     be.buf_add(out, "            switch (_ip) {\n")
+    alloc last_file := -1
     alloc last_line := -1
     alloc i := body_start
     loop i < body_end {
         be.buf_add(out, "            case " + i + ": {\n")
+        if has_key(targets, i) {
+            last_file := -1
+            last_line := -1
+        }
         if i < length(src_lines) {
+            alloc file := src_lines[i][0]
             alloc line := src_lines[i][1]
+            if file != last_file {
+                be.buf_add(out, "                omg_current_file_idx = " + file + ";\n")
+                last_file := file
+            }
             if line != last_line {
                 be.buf_add(out, "                omg_current_line = " + line + ";\n")
                 last_line := line
             }
         }
         be.buf_add(out, emit_js_for_instr(code[i], ctx))
+        if be.clobbers_position(code[i]) {
+            last_file := -1
+            last_line := -1
+        }
         be.buf_add(out, "            }\n")
         be.buf_add(out, "            // fall through to " + (i + 1) + "\n")
         i := i + 1

@@ -433,6 +433,33 @@ proc build_func_index(funcs) {
 # pieces are collected in a list instead and joined once, pairwise,
 # which allocates O(n log n) bytes in total.
 
+# Every instruction index in [body_start, body_end) that a JUMP, a
+# JUMP_IF_FALSE or a SETUP_EXCEPT can transfer control to. Control can
+# arrive at one of these from somewhere other than the instruction
+# before it, so a back end may not assume anything it set up there
+# (a label is needed, the current source position has to be restated).
+proc collect_jump_targets(code, body_start, body_end) {
+    alloc targets := {}
+    alloc i := body_start
+    loop i < body_end {
+        alloc instr := code[i]
+        alloc op := instr[0]
+        if op == "JUMP" or op == "JUMP_IF_FALSE" or op == "SETUP_EXCEPT" {
+            targets[instr[1]] := true
+        }
+        i := i + 1
+    }
+    return targets
+}
+
+# Whether the code that runs after `instr` can find the current source
+# position changed under it: a call runs a whole proc, which leaves the
+# file and line of its own last statement behind.
+proc clobbers_position(instr) {
+    alloc op := instr[0]
+    return op == "CALL" or op == "CALL_VALUE"
+}
+
 proc buf_new() {
     return {parts: list_repeat("", 64), n: 0}
 }

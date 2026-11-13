@@ -1,0 +1,38 @@
+;;;omg
+# expect: IndexError
+#
+# Where a traceback points. Each frame must name the file and line of
+# the statement that was running there, also when a call into another
+# file has already returned in the middle of that statement, and when
+# an error from deeper down was caught on the way. The positions are in
+# traceback_positions.traceback, and every way of running has to print
+# exactly those.
+import "../modules/util.omg" as util
+
+proc boom(xs) {
+    return xs[99] + 1
+}
+
+proc pick(xs, i) {
+    alloc n := util.times(2, 2)
+    alloc x := xs[i + n]
+    return x
+}
+
+proc outer() {
+    alloc total := 0
+    for k in [1, 2, 3] {
+        total := total + util.times(k, k)
+    }
+    emit total
+    try {
+        emit boom([1])
+    } except e { emit "caught " + util.label("it") + pick([1, 2], 0)
+    }
+    return total
+}
+
+facts util.fact(3) == 6
+emit "before"
+alloc result := outer()
+emit "after"

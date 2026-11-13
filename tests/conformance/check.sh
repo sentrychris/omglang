@@ -13,6 +13,13 @@
 # Only the error kind is compared, never the wording after the colon:
 # the wording is allowed to differ between backends.
 #
+# A failing program may also have a NAME.traceback file: the `File ...,
+# line N, in PROC` lines its traceback must consist of, with each path
+# cut down to the file's name. Give one to a program whose point is
+# where the traceback points. Leave it out where a tail call is in the
+# picture, because back ends differ on which calls they turn into
+# jumps, and a frame that was replaced is not in the traceback.
+#
 # The sourcing script provides `pass NAME` and `fail NAME DETAIL`, and a
 # function `conf_run BACKEND FILE` that runs FILE on BACKEND, writing
 # stdout to $CONF_DIR/out and stderr to $CONF_DIR/err and setting
@@ -21,9 +28,12 @@
 
 conf_norm() { tr -d '\r'; }
 
+# The frames of a traceback on stdin, paths reduced to file names.
+conf_frames() { conf_norm | grep '^  File "' | sed 's#File ".*[/\\]#File "#'; }
+
 # conformance_backend BACKEND LABEL: run the whole corpus on one backend.
 conformance_backend() {
-    local backend="$1" label="$2" f name expected actual kind last
+    local backend="$1" label="$2" f name expected actual kind last frames
     for f in tests/conformance/*.omg; do
         name=$(basename "$f" .omg)
         expected=$(conf_norm < "${f%.omg}.expected")
@@ -53,6 +63,15 @@ $(conf_norm < "$CONF_DIR/err" | tail -n 6)"
                 else
                     fail "fails with $kind: $name ($label)" "exit code $CONF_RC (expected 1)
 stdout: $actual"
+                fi
+                if [ -f "${f%.omg}.traceback" ]; then
+                    frames=$(conf_frames < "$CONF_DIR/err")
+                    if [ "$frames" = "$(conf_norm < "${f%.omg}.traceback")" ]; then
+                        pass "traceback positions: $name ($label)"
+                    else
+                        fail "traceback positions: $name ($label)" "$(diff \
+                            <(conf_norm < "${f%.omg}.traceback") <(echo "$frames"))"
+                    fi
                 fi ;;
             *)
                 fail "fails with $kind: $name ($label)" "exit code $CONF_RC
