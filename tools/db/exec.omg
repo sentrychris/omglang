@@ -442,19 +442,6 @@ proc alloc_page(db) {
     return n
 }
 
-# OMG has no built-in `in` operator for dicts; this is the standard idiom.
-proc has_key(d, key) {
-    alloc names := dict_keys(d)
-    alloc i := 0
-    loop i < length(names) {
-        if names[i] == key {
-            return true
-        }
-        i := i + 1
-    }
-    return false
-}
-
 # Return the index of `name` in the list `xs`, or -1 if missing. Used
 # by the executor to resolve WHERE / ORDER BY / SELECT column names
 # against the table's schema.

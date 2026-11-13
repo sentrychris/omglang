@@ -17,15 +17,6 @@ proc key(p) {
     return p[0] + "," + p[1]
 }
 
-proc has_key(d, k) {
-    try {
-        alloc probe := d[k]
-        return true
-    } except err {
-        return false
-    }
-}
-
 proc neighbors(p) {
     alloc dirs := [[1, 0], [-1, 0], [0, 1], [0, -1]]
     alloc result := []
