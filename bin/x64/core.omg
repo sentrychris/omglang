@@ -1,0 +1,1937 @@
+;;;omg
+
+# runtime/x64/core.omg
+#
+# The runtime of a natively compiled OMG program, written in OMG.
+#
+# This is "raw mode" source: native-x64.omg compiles it with every
+# value being one untagged 64-bit word, and with memory and the
+# operating system reached through the reserved __names (see part 3 of
+# native-x64.omg for the rules). It cannot be run by the VMs or built
+# by the other back ends.
+#
+# The files of rt/ are joined into one compilation unit, this one
+# first, then the float and builtin files, then one of linux.omg and
+# windows.omg, which provide the os_* procs.
+#
+# A value of the program is a (tag, payload) pair. Procs here take the
+# two as separate arguments, never keep an argument without taking a
+# count for it, and return a payload; a proc whose result can be of
+# more than one type also stores the tag in rt_tag before returning.
+# A proc named "..._new" or documented as returning an owned value
+# hands its caller one reference count.
+
+alloc T_INT := 0
+alloc T_FLOAT := 1
+alloc T_BOOL := 2
+alloc T_NONE := 3
+alloc T_UNSET := 4
+alloc T_STR := 8
+alloc T_LIST := 9
+alloc T_DICT := 10
+alloc T_CLOSURE := 11
+alloc T_CELL := 12
+
+# String:  [0] count [8] characters [16] bytes [24] hash [32] data, NUL,
+#          zero padding to a multiple of 8
+alloc S_CHARS := 8
+alloc S_BYTES := 16
+alloc S_HASH := 24
+alloc S_DATA := 32
+# List:    [0] count [8] length [16] capacity [24] items (16 bytes each:
+#          payload, tag)
+alloc L_LEN := 8
+alloc L_CAP := 16
+alloc L_ITEMS := 24
+alloc L_SIZE := 32
+# Dict:    [0] count [8] length [16] capacity [24] entries [32] index
+#          [40] index mask [48] frozen
+#          entry (32 bytes): key string, hash, value payload, value tag
+#          index: 32-bit slots holding entry number + 1, 0 when empty;
+#          absent (0) while the dict is small enough to scan
+alloc D_LEN := 8
+alloc D_CAP := 16
+alloc D_ENTRIES := 24
+alloc D_INDEX := 32
+alloc D_MASK := 40
+alloc D_FROZEN := 48
+alloc D_SIZE := 56
+alloc D_SCAN_MAX := 8
+# Closure: [0] count [8] code [16] name [24] parameters [32] captures
+#          [40] one cell pointer per captured variable
+alloc C_CODE := 8
+alloc C_NAME := 16
+alloc C_NPARAMS := 24
+alloc C_NCAPS := 32
+alloc C_CAPS := 40
+# Cell:    [0] count [8] payload [16] tag
+alloc CELL_SIZE := 24
+
+alloc IMMORTAL := 4611686018427387904
+
+# Shared with the generated code (native-x64.omg knows these names).
+alloc rt_tag := 0
+alloc rt_entry_rsp := 0
+alloc rt_stack_limit := 0
+alloc rt_call_closure := 0
+
+# === Memory =================================================================
+#
+# Blocks are handed out in size classes and returned with their size,
+# so no block carries a header. Up to 1024 bytes the classes are the
+# multiples of 16; above that, powers of two. Small classes are carved
+# from large chunks; a block of 256 KiB or more is mapped and unmapped
+# on its own.
+
+alloc rt_bins := 0             # one free-list head per class
+alloc rt_heap_ptr := 0
+alloc rt_heap_end := 0
+alloc rt_chunk_size := 1048576
+alloc BIG_BLOCK := 262144
+
+proc rt_heap_init() {
+    rt_bins := os_alloc(4096)
+    return 0
+}
+
+# Round a size above 1024 up to a power of two; returns the exponent.
+proc rt_log2_up(size) {
+    alloc k := 11
+    loop (1 << k) < size {
+        k := k + 1
+    }
+    return k
+}
+
+proc rt_carve(size) {
+    if rt_heap_ptr + size > rt_heap_end {
+        alloc want := rt_chunk_size
+        if want < size { want := size }
+        rt_heap_ptr := os_alloc(want)
+        rt_heap_end := rt_heap_ptr + want
+        if rt_chunk_size < 67108864 {
+            rt_chunk_size := rt_chunk_size * 2
+        }
+    }
+    alloc p := rt_heap_ptr
+    rt_heap_ptr := rt_heap_ptr + size
+    return p
+}
+
+proc rt_alloc(size) {
+    if size <= 1024 {
+        alloc c := (size + 15) >> 4
+        alloc bin := rt_bins + c * 8
+        alloc head := __peek64(bin)
+        if head != 0 {
+            __poke64(bin, __peek64(head))
+            return head
+        }
+        return rt_carve(c << 4)
+    }
+    if size >= BIG_BLOCK {
+        return os_alloc((size + 4095) & -4096)
+    }
+    alloc k := rt_log2_up(size)
+    alloc bin := rt_bins + (64 + k) * 8
+    alloc head := __peek64(bin)
+    if head != 0 {
+        __poke64(bin, __peek64(head))
+        return head
+    }
+    return rt_carve(1 << k)
+}
+
+proc rt_free(p, size) {
+    if size <= 1024 {
+        alloc bin := rt_bins + ((size + 15) >> 4) * 8
+        __poke64(p, __peek64(bin))
+        __poke64(bin, p)
+        return 0
+    }
+    if size >= BIG_BLOCK {
+        os_free(p, (size + 4095) & -4096)
+        return 0
+    }
+    alloc bin := rt_bins + (64 + rt_log2_up(size)) * 8
+    __poke64(p, __peek64(bin))
+    __poke64(bin, p)
+    return 0
+}
+
+# === Reference counts =========================================================
+
+proc rt_inc(tag, v) {
+    if tag >= T_STR {
+        __poke64(v, __peek64(v) + 1)
+    }
+    return 0
+}
+
+proc rt_drop(tag, v) {
+    if tag >= T_STR {
+        alloc n := __peek64(v) - 1
+        __poke64(v, n)
+        if n == 0 {
+            rt_destroy(tag, v)
+        }
+    }
+    return 0
+}
+
+# The last reference to a heap object is gone.
+proc rt_destroy(tag, v) {
+    if tag == T_STR {
+        rt_free(v, rt_str_size(__peek64(v + S_BYTES)))
+        return 0
+    }
+    if tag == T_LIST {
+        alloc items := __peek64(v + L_ITEMS)
+        alloc n := __peek64(v + L_LEN)
+        alloc i := 0
+        loop i < n {
+            alloc it := items + i * 16
+            alloc t := __peek64(it + 8)
+            if t >= T_STR {
+                rt_drop(t, __peek64(it))
+            }
+            i := i + 1
+        }
+        alloc cap := __peek64(v + L_CAP)
+        if cap > 0 {
+            rt_free(items, cap * 16)
+        }
+        rt_free(v, L_SIZE)
+        return 0
+    }
+    if tag == T_DICT {
+        alloc entries := __peek64(v + D_ENTRIES)
+        alloc n := __peek64(v + D_LEN)
+        alloc i := 0
+        loop i < n {
+            alloc e := entries + i * 32
+            rt_drop(T_STR, __peek64(e))
+            alloc t := __peek64(e + 24)
+            if t >= T_STR {
+                rt_drop(t, __peek64(e + 16))
+            }
+            i := i + 1
+        }
+        alloc cap := __peek64(v + D_CAP)
+        if cap > 0 {
+            rt_free(entries, cap * 32)
+        }
+        if __peek64(v + D_INDEX) != 0 {
+            rt_free(__peek64(v + D_INDEX), (__peek64(v + D_MASK) + 1) * 4)
+        }
+        rt_free(v, D_SIZE)
+        return 0
+    }
+    if tag == T_CLOSURE {
+        alloc n := __peek64(v + C_NCAPS)
+        alloc i := 0
+        loop i < n {
+            alloc cell := __peek64(v + C_CAPS + i * 8)
+            if cell != 0 {
+                rt_drop(T_CELL, cell)
+            }
+            i := i + 1
+        }
+        rt_free(v, C_CAPS + n * 8)
+        return 0
+    }
+    if tag == T_CELL {
+        rt_drop(__peek64(v + 16), __peek64(v + 8))
+        rt_free(v, CELL_SIZE)
+    }
+    return 0
+}
+
+# === Strings ====================================================================
+
+alloc rt_chars := 0            # the 128 one-character ASCII strings
+
+proc rt_str_size(nbytes) {
+    return S_DATA + ((nbytes + 8) & -8)
+}
+
+# A new string of `nbytes` bytes, contents not filled in yet. The
+# character count is set to the byte count (right for ASCII).
+proc rt_str_alloc(nbytes) {
+    alloc s := rt_alloc(rt_str_size(nbytes))
+    __poke64(s, 1)
+    __poke64(s + S_CHARS, nbytes)
+    __poke64(s + S_BYTES, nbytes)
+    __poke64(s + S_HASH, 0)
+    # The last word holds the tail of the text, its NUL and the padding.
+    __poke64(s + S_DATA + (nbytes & -8), 0)
+    return s
+}
+
+# How many characters the UTF-8 bytes at p hold: every byte that is not
+# a continuation byte starts one.
+proc rt_utf8_count(p, n) {
+    alloc count := 0
+    alloc i := 0
+    loop i < n {
+        if (__peek8(p + i) & 192) != 128 {
+            count := count + 1
+        }
+        i := i + 1
+    }
+    return count
+}
+
+# A new string holding a copy of n bytes at p.
+proc rt_str_from(p, n) {
+    alloc s := rt_str_alloc(n)
+    __memcpy(s + S_DATA, p, n)
+    __poke64(s + S_CHARS, rt_utf8_count(p, n))
+    return s
+}
+
+# A new string from a NUL-terminated C string.
+proc rt_str_from_c(p) {
+    alloc n := 0
+    loop __peek8(p + n) != 0 {
+        n := n + 1
+    }
+    return rt_str_from(p, n)
+}
+
+proc rt_str_hash(s) {
+    alloc h := __peek64(s + S_HASH)
+    if h != 0 {
+        return h
+    }
+    h := 2166136261
+    alloc p := s + S_DATA
+    alloc end := p + __peek64(s + S_BYTES)
+    loop p < end {
+        h := ((h ^ __peek8(p)) * 16777619) & 4294967295
+        p := p + 1
+    }
+    h := h | 4294967296
+    __poke64(s + S_HASH, h)
+    return h
+}
+
+proc rt_str_eq(a, b) {
+    if a == b {
+        return 1
+    }
+    alloc n := __peek64(a + S_BYTES)
+    if n != __peek64(b + S_BYTES) {
+        return 0
+    }
+    # Both are zero-padded to whole words, so compare by words.
+    alloc i := 0
+    loop i < n {
+        if __peek64(a + S_DATA + i) != __peek64(b + S_DATA + i) {
+            return 0
+        }
+        i := i + 8
+    }
+    return 1
+}
+
+# Byte order, as strcmp would have it: negative, zero or positive.
+proc rt_str_cmp(a, b) {
+    alloc na := __peek64(a + S_BYTES)
+    alloc nb := __peek64(b + S_BYTES)
+    alloc n := na
+    if nb < n { n := nb }
+    alloc c := __memcmp(a + S_DATA, b + S_DATA, n)
+    if c != 0 {
+        return c
+    }
+    return na - nb
+}
+
+proc rt_str_concat(a, b) {
+    alloc na := __peek64(a + S_BYTES)
+    alloc nb := __peek64(b + S_BYTES)
+    alloc s := rt_str_alloc(na + nb)
+    __memcpy(s + S_DATA, a + S_DATA, na)
+    __memcpy(s + S_DATA + na, b + S_DATA, nb)
+    __poke64(s + S_CHARS, __peek64(a + S_CHARS) + __peek64(b + S_CHARS))
+    return s
+}
+
+# Byte offset of character `idx` (0 <= idx <= characters).
+proc rt_str_offset(s, idx) {
+    alloc nbytes := __peek64(s + S_BYTES)
+    if __peek64(s + S_CHARS) == nbytes {
+        return idx
+    }
+    alloc p := s + S_DATA
+    alloc off := 0
+    alloc seen := 0
+    loop off < nbytes {
+        if (__peek8(p + off) & 192) != 128 {
+            if seen == idx {
+                return off
+            }
+            seen := seen + 1
+        }
+        off := off + 1
+    }
+    return nbytes
+}
+
+# The one-character string for an ASCII code: shared, never freed.
+proc rt_char_str(code) {
+    return __peek64(rt_chars + code * 8)
+}
+
+proc rt_chars_init() {
+    rt_chars := rt_alloc(1024)
+    alloc i := 0
+    loop i < 128 {
+        alloc s := rt_str_alloc(1)
+        __poke8(s + S_DATA, i)
+        __poke64(s, IMMORTAL)
+        __poke64(rt_chars + i * 8, s)
+        i := i + 1
+    }
+    return 0
+}
+
+# s[idx] for an index already checked to be in range. Owned.
+proc rt_str_char_at(s, idx) {
+    alloc nbytes := __peek64(s + S_BYTES)
+    if __peek64(s + S_CHARS) == nbytes {
+        alloc c := __peek8(s + S_DATA + idx)
+        if c != 0 {
+            return rt_char_str(c)
+        }
+        return rt_str_from(s + S_DATA + idx, 1)
+    }
+    alloc off := rt_str_offset(s, idx)
+    alloc end := off + 1
+    loop end < nbytes and (__peek8(s + S_DATA + end) & 192) == 128 {
+        end := end + 1
+    }
+    return rt_str_from(s + S_DATA + off, end - off)
+}
+
+# Characters [start, end) of s, bounds already clamped. Owned.
+proc rt_str_sub(s, start, end) {
+    alloc a := rt_str_offset(s, start)
+    alloc b := rt_str_offset(s, end)
+    alloc r := rt_str_alloc(b - a)
+    __memcpy(r + S_DATA, s + S_DATA + a, b - a)
+    __poke64(r + S_CHARS, end - start)
+    return r
+}
+
+# --- a growable byte buffer, for building strings ------------------------------
+#
+# [0] data [8] length [16] capacity
+
+proc rt_buf_new() {
+    alloc b := rt_alloc(24)
+    __poke64(b, rt_alloc(64))
+    __poke64(b + 8, 0)
+    __poke64(b + 16, 64)
+    return b
+}
+
+proc rt_buf_reserve(b, extra) {
+    alloc need := __peek64(b + 8) + extra
+    alloc cap := __peek64(b + 16)
+    if need <= cap {
+        return 0
+    }
+    alloc ncap := cap * 2
+    loop ncap < need {
+        ncap := ncap * 2
+    }
+    alloc nd := rt_alloc(ncap)
+    __memcpy(nd, __peek64(b), __peek64(b + 8))
+    rt_free(__peek64(b), cap)
+    __poke64(b, nd)
+    __poke64(b + 16, ncap)
+    return 0
+}
+
+proc rt_buf_add(b, p, n) {
+    rt_buf_reserve(b, n)
+    __memcpy(__peek64(b) + __peek64(b + 8), p, n)
+    __poke64(b + 8, __peek64(b + 8) + n)
+    return 0
+}
+
+proc rt_buf_byte(b, c) {
+    rt_buf_reserve(b, 1)
+    __poke8(__peek64(b) + __peek64(b + 8), c)
+    __poke64(b + 8, __peek64(b + 8) + 1)
+    return 0
+}
+
+proc rt_buf_str(b, s) {
+    return rt_buf_add(b, s + S_DATA, __peek64(s + S_BYTES))
+}
+
+# The buffer's contents as a new string; the buffer is freed.
+proc rt_buf_finish(b) {
+    alloc s := rt_str_from(__peek64(b), __peek64(b + 8))
+    rt_free(__peek64(b), __peek64(b + 16))
+    rt_free(b, 24)
+    return s
+}
+
+# --- numbers to text ---------------------------------------------------------------
+
+# Append the decimal form of a signed integer.
+proc rt_buf_int(b, n) {
+    if n == 0 {
+        return rt_buf_byte(b, 48)
+    }
+    rt_buf_reserve(b, 24)
+    alloc p := __peek64(b) + __peek64(b + 8)
+    alloc len := 0
+    alloc u := n
+    if n < 0 {
+        __poke8(p, 45)
+        p := p + 1
+        len := 1
+        u := 0 - n
+    }
+    # Digits come out last first; count them, then write backwards.
+    alloc digits := 0
+    alloc t := u
+    loop t != 0 {
+        digits := digits + 1
+        t := __udiv(t, 10)
+    }
+    alloc i := digits - 1
+    loop i >= 0 {
+        __poke8(p + i, 48 + __umod(u, 10))
+        u := __udiv(u, 10)
+        i := i - 1
+    }
+    __poke64(b + 8, __peek64(b + 8) + len + digits)
+    return 0
+}
+
+proc rt_int_to_str(n) {
+    if n >= 0 and n < 10 {
+        return rt_char_str(48 + n)
+    }
+    alloc b := rt_buf_new()
+    rt_buf_int(b, n)
+    return rt_buf_finish(b)
+}
+
+# Append the text of any value, as `emit` and string concatenation show
+# it. A list or dict that contains itself prints as [...] or {...}.
+alloc rt_print_path := 0
+alloc rt_print_depth := 0
+alloc PRINT_MAX_DEPTH := 256
+
+proc rt_print_enter(p) {
+    if rt_print_path == 0 {
+        rt_print_path := rt_alloc(PRINT_MAX_DEPTH * 8)
+    }
+    alloc i := 0
+    loop i < rt_print_depth {
+        if __peek64(rt_print_path + i * 8) == p {
+            return 0
+        }
+        i := i + 1
+    }
+    if rt_print_depth >= PRINT_MAX_DEPTH {
+        return 0
+    }
+    __poke64(rt_print_path + rt_print_depth * 8, p)
+    rt_print_depth := rt_print_depth + 1
+    return 1
+}
+
+proc rt_buf_value(b, tag, v) {
+    if tag == T_STR {
+        return rt_buf_str(b, v)
+    }
+    if tag == T_INT {
+        return rt_buf_int(b, v)
+    }
+    if tag == T_BOOL {
+        if v {
+            return rt_buf_str(b, "true")
+        }
+        return rt_buf_str(b, "false")
+    }
+    if tag == T_FLOAT {
+        return rt_buf_float(b, v)
+    }
+    if tag == T_LIST {
+        if rt_print_enter(v) == 0 {
+            return rt_buf_str(b, "[...]")
+        }
+        rt_buf_byte(b, 91)
+        alloc n := __peek64(v + L_LEN)
+        alloc i := 0
+        loop i < n {
+            if i > 0 {
+                rt_buf_str(b, ", ")
+            }
+            # The list can change under us only if printing ran user
+            # code, which it does not.
+            alloc it := __peek64(v + L_ITEMS) + i * 16
+            rt_buf_value(b, __peek64(it + 8), __peek64(it))
+            i := i + 1
+        }
+        rt_buf_byte(b, 93)
+        rt_print_depth := rt_print_depth - 1
+        return 0
+    }
+    if tag == T_DICT {
+        if rt_print_enter(v) == 0 {
+            return rt_buf_str(b, "{...}")
+        }
+        rt_buf_byte(b, 123)
+        alloc n := __peek64(v + D_LEN)
+        alloc i := 0
+        loop i < n {
+            if i > 0 {
+                rt_buf_str(b, ", ")
+            }
+            alloc e := __peek64(v + D_ENTRIES) + i * 32
+            rt_buf_str(b, __peek64(e))
+            rt_buf_str(b, ": ")
+            rt_buf_value(b, __peek64(e + 24), __peek64(e + 16))
+            i := i + 1
+        }
+        rt_buf_byte(b, 125)
+        rt_print_depth := rt_print_depth - 1
+        return 0
+    }
+    if tag == T_CLOSURE {
+        return rt_buf_str(b, "<proc>")
+    }
+    return 0
+}
+
+# The text of a value as an owned string.
+proc rt_to_str(tag, v) {
+    if tag == T_STR {
+        __poke64(v, __peek64(v) + 1)
+        return v
+    }
+    if tag == T_INT {
+        return rt_int_to_str(v)
+    }
+    if tag == T_NONE {
+        return ""
+    }
+    alloc b := rt_buf_new()
+    rt_buf_value(b, tag, v)
+    return rt_buf_finish(b)
+}
+
+# === Output ===========================================================================
+#
+# Standard output is collected in a buffer and written at the end of
+# each emit, so that a line is one write and output stays in order with
+# anything written to standard error.
+
+alloc rt_out := 0
+alloc OUT_SIZE := 65536
+
+proc rt_out_flush() {
+    if rt_out != 0 and __peek64(rt_out + 8) > 0 {
+        os_write_all(1, __peek64(rt_out), __peek64(rt_out + 8))
+        __poke64(rt_out + 8, 0)
+    }
+    return 0
+}
+
+proc rt_out_buf() {
+    if rt_out == 0 {
+        rt_out := rt_buf_new()
+    }
+    return rt_out
+}
+
+proc rt_emit(tag, v) {
+    alloc b := rt_out_buf()
+    rt_buf_value(b, tag, v)
+    rt_buf_byte(b, 10)
+    rt_out_flush()
+    return 0
+}
+
+proc rt_err_text(s) {
+    os_write_all(2, s + S_DATA, __peek64(s + S_BYTES))
+    return 0
+}
+
+proc rt_exit(code) {
+    rt_out_flush()
+    os_exit(code)
+    return 0
+}
+
+# === Errors ===========================================================================
+#
+# An error is a string "Kind: message". Raising one jumps to the most
+# recent handler set up by a `try`, or prints a traceback and exits.
+
+alloc rt_try_base := 0         # stack of (handler address, rsp, rbp)
+alloc rt_try_top := 0
+alloc TRY_MAX := 256
+
+proc rt_try_push(handler, sp, bp) {
+    if rt_try_base == 0 {
+        rt_try_base := rt_alloc(TRY_MAX * 24)
+    }
+    if rt_try_top >= TRY_MAX {
+        rt_out_flush()
+        rt_err_text("VmInvariant: try-block stack overflow\n")
+        os_exit(1)
+    }
+    alloc e := rt_try_base + rt_try_top * 24
+    __poke64(e, handler)
+    __poke64(e + 8, sp)
+    __poke64(e + 16, bp)
+    rt_try_top := rt_try_top + 1
+    return 0
+}
+
+proc rt_try_pop() {
+    if rt_try_top > 0 {
+        rt_try_top := rt_try_top - 1
+    }
+    return 0
+}
+
+# Raise the error `kind: msg` (two strings; msg is consumed).
+proc rt_throw(kind, msg) {
+    alloc b := rt_buf_new()
+    rt_buf_str(b, kind)
+    rt_buf_str(b, ": ")
+    rt_buf_str(b, msg)
+    rt_drop(T_STR, msg)
+    alloc full := rt_buf_finish(b)
+    rt_print_depth := 0
+    if rt_try_top > 0 {
+        rt_try_top := rt_try_top - 1
+        alloc e := rt_try_base + rt_try_top * 24
+        __unwind(__peek64(e + 8), __peek64(e + 16), __peek64(e), T_STR, full)
+    }
+    rt_out_flush()
+    rt_traceback(__rbp())
+    rt_err_text(full)
+    rt_err_text("\n")
+    os_exit(1)
+    return 0
+}
+
+# Raise with a message made of a static text and the text of a value.
+proc rt_throw2(kind, text, tag, v) {
+    alloc b := rt_buf_new()
+    rt_buf_str(b, text)
+    rt_buf_value(b, tag, v)
+    return rt_throw(kind, rt_buf_finish(b))
+}
+
+proc rt_throw3(kind, text, tag, v, text2) {
+    alloc b := rt_buf_new()
+    rt_buf_str(b, text)
+    rt_buf_value(b, tag, v)
+    rt_buf_str(b, text2)
+    return rt_throw(kind, rt_buf_finish(b))
+}
+
+proc rt_type_error(text) {
+    return rt_throw("TypeError", rt_str_concat(text, ""))
+}
+
+proc rt_value_error(text) {
+    return rt_throw("ValueError", rt_str_concat(text, ""))
+}
+
+proc rt_err_undefined(name) {
+    return rt_throw("UndefinedIdentError", rt_str_concat(name, ""))
+}
+
+proc rt_err_overflow(what) {
+    return rt_throw("ValueError", rt_str_concat("integer overflow on ", what))
+}
+
+proc rt_err_stack() {
+    return rt_throw("RuntimeError", rt_str_concat("maximum recursion depth exceeded", ""))
+}
+
+proc rt_err_builtin(name, argc) {
+    alloc b := rt_buf_new()
+    rt_buf_str(b, "builtin '")
+    rt_buf_str(b, name)
+    rt_buf_str(b, "' is not available with ")
+    rt_buf_int(b, argc)
+    rt_buf_str(b, " argument(s) in a native program")
+    return rt_throw("RuntimeError", rt_buf_finish(b))
+}
+
+alloc rt_kinds := 0
+
+# RAISE: `raise(msg)` and `panic(msg)` in the source, plus the kinds the
+# compiler raises itself.
+proc rt_raise(tag, v, kind) {
+    alloc k := "RuntimeError"
+    if kind == 1 { k := "SyntaxError" }
+    if kind == 2 { k := "TypeError" }
+    if kind == 3 { k := "UndefinedIdentError" }
+    if kind == 4 { k := "ValueError" }
+    if kind == 5 { k := "ModuleImportError" }
+    return rt_throw(k, rt_to_str(tag, v))
+}
+
+proc rt_assert(tag, v) {
+    if rt_truthy(tag, v) == 0 {
+        rt_throw("AssertionError", rt_str_concat("assertion failed", ""))
+    }
+    return 0
+}
+
+# --- tracebacks -------------------------------------------------------------------
+#
+# Nothing is recorded while the program runs. When an error goes
+# uncaught, the chain of saved frame pointers is walked and every
+# return address that lies in the program's code is looked up in the
+# tables native-x64.omg wrote: which proc, which file, which line.
+
+alloc TRACE_MAX := 1024
+
+# Program tables (see gen_tables in native-x64.omg).
+proc rt_prog(field) {
+    return __peek64(__sym("program") + field * 8)
+}
+
+proc rt_prog_table(field) {
+    return __sym("data") + rt_prog(field)
+}
+
+# Index of the last entry of a table of `width`-byte entries, sorted by
+# their leading 32-bit code offset, that starts at or before `off`.
+proc rt_table_find(table, count, width, off) {
+    alloc lo := 0
+    alloc hi := count
+    loop lo < hi {
+        alloc mid := (lo + hi) >> 1
+        if __peek32(table + mid * width) <= off {
+            lo := mid + 1
+        } else {
+            hi := mid
+        }
+    }
+    return lo - 1
+}
+
+# Print the traceback line for the code address `pc`, if it is in the
+# program. Returns 1 when it printed one.
+proc rt_trace_line(pc) {
+    alloc off := pc - __sym("code")
+    if off < 0 or off >= __peek32(__sym("program") + 96) {
+        return 0
+    }
+    alloc fi := rt_table_find(rt_prog_table(7), rt_prog(6), 8, off)
+    alloc li := rt_table_find(rt_prog_table(9), rt_prog(8), 12, off)
+    if fi < 0 or li < 0 {
+        return 0
+    }
+    alloc name := __sym("data") + __peek32(rt_prog_table(7) + fi * 8 + 4)
+    alloc lrow := rt_prog_table(9) + li * 12
+    alloc file := __sym("data") + __peek32(rt_prog_table(11) + __peek32(lrow + 4) * 4)
+    alloc b := rt_buf_new()
+    rt_buf_str(b, "  File \"")
+    rt_buf_str(b, file)
+    rt_buf_str(b, "\", line ")
+    rt_buf_int(b, __peek32(lrow + 8))
+    rt_buf_str(b, ", in ")
+    rt_buf_str(b, name)
+    rt_buf_byte(b, 10)
+    os_write_all(2, __peek64(b), __peek64(b + 8))
+    return 1
+}
+
+proc rt_traceback(bp) {
+    rt_err_text("Traceback (most recent call last):\n")
+    # Collect the return addresses, innermost first.
+    alloc depth := 0
+    alloc p := bp
+    loop p != 0 {
+        depth := depth + 1
+        p := __peek64(p)
+    }
+    alloc pcs := rt_alloc(depth * 8 + 8)
+    alloc i := 0
+    p := bp
+    loop p != 0 {
+        __poke64(pcs + i * 8, __peek64(p + 8) - 1)
+        i := i + 1
+        p := __peek64(p)
+    }
+    # Outermost first, and no more than TRACE_MAX of the outermost.
+    alloc printed := 0
+    i := depth - 1
+    loop i >= 0 {
+        if printed < TRACE_MAX or i < 8 {
+            printed := printed + rt_trace_line(__peek64(pcs + i * 8))
+        }
+        i := i - 1
+    }
+    return 0
+}
+
+# === Cells and closures ===============================================================
+
+# A new cell holding the value, whose count the cell takes over.
+proc rt_cell_new(tag, v) {
+    alloc c := rt_alloc(CELL_SIZE)
+    __poke64(c, 1)
+    __poke64(c + 8, v)
+    __poke64(c + 16, tag)
+    return c
+}
+
+# Store into a cell; the cell takes over the value's count.
+proc rt_cell_set(c, tag, v) {
+    alloc ot := __peek64(c + 16)
+    alloc ov := __peek64(c + 8)
+    __poke64(c + 8, v)
+    __poke64(c + 16, tag)
+    rt_drop(ot, ov)
+    return 0
+}
+
+proc rt_closure_new(code, name, nparams, ncaps) {
+    alloc c := rt_alloc(C_CAPS + ncaps * 8)
+    __poke64(c, 1)
+    __poke64(c + C_CODE, code)
+    __poke64(c + C_NAME, name)
+    __poke64(c + C_NPARAMS, nparams)
+    __poke64(c + C_NCAPS, ncaps)
+    alloc i := 0
+    loop i < ncaps {
+        __poke64(c + C_CAPS + i * 8, 0)
+        i := i + 1
+    }
+    return c
+}
+
+alloc rt_fn_dict := 0          # proc name -> row of the program's name table
+
+proc rt_fn_dict_init() {
+    rt_fn_dict := rt_dict_new()
+    alloc table := rt_prog_table(5)
+    alloc n := rt_prog(4)
+    alloc i := 0
+    loop i < n {
+        alloc row := table + i * 16
+        rt_dict_put(rt_fn_dict, __sym("data") + __peek32(row), T_INT, row)
+        i := i + 1
+    }
+    return 0
+}
+
+proc rt_arity_error(name, expected, got) {
+    alloc b := rt_buf_new()
+    rt_buf_str(b, "function '")
+    rt_buf_str(b, name)
+    rt_buf_str(b, "' expects ")
+    rt_buf_int(b, expected)
+    rt_buf_str(b, " arguments, got ")
+    rt_buf_int(b, got)
+    return rt_throw("TypeError", rt_buf_finish(b))
+}
+
+# What CALL_VALUE needs to call `v` with n arguments: the code address
+# (returned) and the closure to pass along (in rt_call_closure). A
+# string is the name of a proc; that is how a module's procs are
+# reached through its alias.
+proc rt_call_prep(tag, v, n) {
+    if tag == T_CLOSURE {
+        if __peek64(v + C_NPARAMS) != n {
+            rt_arity_error(__peek64(v + C_NAME), __peek64(v + C_NPARAMS), n)
+        }
+        rt_call_closure := v
+        return __peek64(v + C_CODE)
+    }
+    if tag == T_STR {
+        if rt_fn_dict == 0 {
+            rt_fn_dict_init()
+        }
+        alloc e := rt_dict_find(rt_fn_dict, v, rt_str_hash(v))
+        if e == 0 {
+            rt_err_undefined(v)
+        }
+        alloc row := __peek64(e + 16)
+        if __peek32(row + 8) != n {
+            rt_arity_error(v, __peek32(row + 8), n)
+        }
+        rt_call_closure := 0
+        return __sym("code") + __peek32(row + 4)
+    }
+    return rt_type_error("cannot call non-function value")
+}
+
+# === Lists ============================================================================
+
+proc rt_list_alloc(cap) {
+    alloc l := rt_alloc(L_SIZE)
+    __poke64(l, 1)
+    __poke64(l + L_LEN, 0)
+    __poke64(l + L_CAP, cap)
+    if cap > 0 {
+        __poke64(l + L_ITEMS, rt_alloc(cap * 16))
+    } else {
+        __poke64(l + L_ITEMS, 0)
+    }
+    return l
+}
+
+proc rt_list_new() {
+    return rt_list_alloc(0)
+}
+
+# Append a value; the list takes over its count.
+proc rt_list_push(l, tag, v) {
+    alloc n := __peek64(l + L_LEN)
+    alloc cap := __peek64(l + L_CAP)
+    if n == cap {
+        alloc ncap := cap * 2
+        if ncap < 4 { ncap := 4 }
+        alloc ni := rt_alloc(ncap * 16)
+        if cap > 0 {
+            __memcpy(ni, __peek64(l + L_ITEMS), n * 16)
+            rt_free(__peek64(l + L_ITEMS), cap * 16)
+        }
+        __poke64(l + L_ITEMS, ni)
+        __poke64(l + L_CAP, ncap)
+    }
+    alloc it := __peek64(l + L_ITEMS) + n * 16
+    __poke64(it, v)
+    __poke64(it + 8, tag)
+    __poke64(l + L_LEN, n + 1)
+    return 0
+}
+
+# BUILD_LIST: the n values sit on the caller's stack, the first one at
+# the highest address; the list takes over their counts.
+proc rt_list_build(p, n) {
+    alloc l := rt_list_alloc(n)
+    alloc items := __peek64(l + L_ITEMS)
+    alloc i := 0
+    loop i < n {
+        alloc src := p + (n - 1 - i) * 16
+        __poke64(items + i * 16, __peek64(src))
+        __poke64(items + i * 16 + 8, __peek64(src + 8))
+        i := i + 1
+    }
+    __poke64(l + L_LEN, n)
+    return l
+}
+
+# A new list with items [start, end) of l.
+proc rt_list_sub(l, start, end) {
+    alloc n := end - start
+    alloc r := rt_list_alloc(n)
+    alloc src := __peek64(l + L_ITEMS) + start * 16
+    alloc dst := __peek64(r + L_ITEMS)
+    alloc i := 0
+    loop i < n {
+        alloc t := __peek64(src + i * 16 + 8)
+        alloc v := __peek64(src + i * 16)
+        if t >= T_STR {
+            __poke64(v, __peek64(v) + 1)
+        }
+        __poke64(dst + i * 16, v)
+        __poke64(dst + i * 16 + 8, t)
+        i := i + 1
+    }
+    __poke64(r + L_LEN, n)
+    return r
+}
+
+proc rt_list_concat(a, b) {
+    alloc na := __peek64(a + L_LEN)
+    alloc nb := __peek64(b + L_LEN)
+    alloc r := rt_list_alloc(na + nb)
+    alloc dst := __peek64(r + L_ITEMS)
+    alloc k := 0
+    loop k < 2 {
+        alloc src := __peek64(a + L_ITEMS)
+        alloc n := na
+        if k == 1 {
+            src := __peek64(b + L_ITEMS)
+            n := nb
+        }
+        alloc i := 0
+        loop i < n {
+            alloc t := __peek64(src + i * 16 + 8)
+            alloc v := __peek64(src + i * 16)
+            if t >= T_STR {
+                __poke64(v, __peek64(v) + 1)
+            }
+            __poke64(dst, v)
+            __poke64(dst + 8, t)
+            dst := dst + 16
+            i := i + 1
+        }
+        k := k + 1
+    }
+    __poke64(r + L_LEN, na + nb)
+    return r
+}
+
+# === Dicts ============================================================================
+
+proc rt_dict_new() {
+    alloc d := rt_alloc(D_SIZE)
+    __poke64(d, 1)
+    __poke64(d + D_LEN, 0)
+    __poke64(d + D_CAP, 0)
+    __poke64(d + D_ENTRIES, 0)
+    __poke64(d + D_INDEX, 0)
+    __poke64(d + D_MASK, 0)
+    __poke64(d + D_FROZEN, 0)
+    return d
+}
+
+# The entry for `key` (a string with hash h), or 0.
+proc rt_dict_find(d, key, h) {
+    alloc entries := __peek64(d + D_ENTRIES)
+    alloc index := __peek64(d + D_INDEX)
+    if index == 0 {
+        alloc e := entries
+        alloc end := entries + __peek64(d + D_LEN) * 32
+        loop e < end {
+            if __peek64(e + 8) == h {
+                if __peek64(e) == key {
+                    return e
+                }
+                if rt_str_eq(__peek64(e), key) {
+                    return e
+                }
+            }
+            e := e + 32
+        }
+        return 0
+    }
+    alloc mask := __peek64(d + D_MASK)
+    alloc i := h & mask
+    loop true {
+        alloc slot := __peek32(index + i * 4)
+        if slot == 0 {
+            return 0
+        }
+        alloc e := entries + (slot - 1) * 32
+        if __peek64(e + 8) == h {
+            if __peek64(e) == key {
+                return e
+            }
+            if rt_str_eq(__peek64(e), key) {
+                return e
+            }
+        }
+        i := (i + 1) & mask
+    }
+    return 0
+}
+
+# Build the hash index for a dict of `cap` entries (at least twice as
+# many slots as entries).
+proc rt_dict_reindex(d, cap) {
+    if __peek64(d + D_INDEX) != 0 {
+        rt_free(__peek64(d + D_INDEX), (__peek64(d + D_MASK) + 1) * 4)
+    }
+    alloc size := 32
+    loop size < cap * 2 {
+        size := size * 2
+    }
+    alloc index := rt_alloc(size * 4)
+    __memset(index, 0, size * 4)
+    alloc mask := size - 1
+    alloc entries := __peek64(d + D_ENTRIES)
+    alloc n := __peek64(d + D_LEN)
+    alloc k := 0
+    loop k < n {
+        alloc i := __peek64(entries + k * 32 + 8) & mask
+        loop __peek32(index + i * 4) != 0 {
+            i := (i + 1) & mask
+        }
+        __poke32(index + i * 4, k + 1)
+        k := k + 1
+    }
+    __poke64(d + D_INDEX, index)
+    __poke64(d + D_MASK, mask)
+    return 0
+}
+
+# Set d[key] to a value; the dict takes over the value's count and
+# takes its own count on the key. Does not look at the frozen flag.
+proc rt_dict_put(d, key, tag, v) {
+    alloc h := rt_str_hash(key)
+    alloc e := rt_dict_find(d, key, h)
+    if e != 0 {
+        alloc ot := __peek64(e + 24)
+        alloc ov := __peek64(e + 16)
+        __poke64(e + 16, v)
+        __poke64(e + 24, tag)
+        rt_drop(ot, ov)
+        return 0
+    }
+    alloc n := __peek64(d + D_LEN)
+    alloc cap := __peek64(d + D_CAP)
+    if n == cap {
+        alloc ncap := cap * 2
+        if ncap < 4 { ncap := 4 }
+        alloc ne := rt_alloc(ncap * 32)
+        if cap > 0 {
+            __memcpy(ne, __peek64(d + D_ENTRIES), n * 32)
+            rt_free(__peek64(d + D_ENTRIES), cap * 32)
+        }
+        __poke64(d + D_ENTRIES, ne)
+        __poke64(d + D_CAP, ncap)
+        if ncap > D_SCAN_MAX {
+            rt_dict_reindex(d, ncap)
+        }
+    }
+    e := __peek64(d + D_ENTRIES) + n * 32
+    __poke64(key, __peek64(key) + 1)
+    __poke64(e, key)
+    __poke64(e + 8, h)
+    __poke64(e + 16, v)
+    __poke64(e + 24, tag)
+    __poke64(d + D_LEN, n + 1)
+    alloc index := __peek64(d + D_INDEX)
+    if index != 0 {
+        alloc mask := __peek64(d + D_MASK)
+        alloc i := h & mask
+        loop __peek32(index + i * 4) != 0 {
+            i := (i + 1) & mask
+        }
+        __poke32(index + i * 4, n + 1)
+    }
+    return 0
+}
+
+proc rt_frozen_error() {
+    return rt_throw("FrozenWriteError", rt_str_concat("Imported modules are read-only", ""))
+}
+
+# d[key] := value for a key of any type. Arguments are borrowed.
+proc rt_dict_store(d, ktag, k, tag, v) {
+    if __peek64(d + D_FROZEN) {
+        rt_frozen_error()
+    }
+    rt_inc(tag, v)
+    if ktag == T_STR {
+        return rt_dict_put(d, k, tag, v)
+    }
+    alloc key := rt_to_str(ktag, k)
+    rt_dict_put(d, key, tag, v)
+    rt_drop(T_STR, key)
+    return 0
+}
+
+proc rt_key_error(key) {
+    alloc b := rt_buf_new()
+    rt_buf_str(b, "\"Key '")
+    rt_buf_str(b, key)
+    rt_buf_str(b, "' not found\"")
+    return rt_throw("KeyError", rt_buf_finish(b))
+}
+
+# d[key] for a string key: an owned value, tag in rt_tag.
+proc rt_dict_get(d, key) {
+    alloc e := rt_dict_find(d, key, rt_str_hash(key))
+    if e == 0 {
+        rt_key_error(key)
+    }
+    alloc t := __peek64(e + 24)
+    alloc v := __peek64(e + 16)
+    if t >= T_STR {
+        __poke64(v, __peek64(v) + 1)
+    }
+    rt_tag := t
+    return v
+}
+
+# BUILD_DICT: 2 * npairs values on the caller's stack, key before value,
+# the first key at the highest address. Takes over all their counts.
+proc rt_dict_build(p, npairs) {
+    alloc d := rt_dict_new()
+    alloc i := 0
+    loop i < npairs {
+        alloc kp := p + (2 * npairs - 1 - 2 * i) * 16
+        alloc vp := kp - 16
+        alloc ktag := __peek64(kp + 8)
+        alloc key := __peek64(kp)
+        if ktag != T_STR {
+            key := rt_to_str(ktag, key)
+        }
+        rt_dict_put(d, key, __peek64(vp + 8), __peek64(vp))
+        rt_drop(T_STR, key)
+        i := i + 1
+    }
+    return d
+}
+
+# === Truth and equality ===============================================================
+
+proc rt_truthy(tag, v) {
+    if tag == T_BOOL or tag == T_INT {
+        return v != 0
+    }
+    if tag == T_STR {
+        return __peek64(v + S_BYTES) != 0
+    }
+    if tag == T_LIST or tag == T_DICT {
+        return __peek64(v + L_LEN) != 0
+    }
+    if tag == T_FLOAT {
+        # Zero of either sign is false; NaN is true.
+        return (v << 1) != 0
+    }
+    if tag == T_CLOSURE {
+        return 1
+    }
+    return 0
+}
+
+proc rt_values_equal(at, a, bt, b) {
+    if at != bt {
+        if at == T_INT and bt == T_FLOAT {
+            return __feq(__i2f(a), b)
+        }
+        if at == T_FLOAT and bt == T_INT {
+            return __feq(a, __i2f(b))
+        }
+        return 0
+    }
+    if at == T_INT or at == T_BOOL {
+        return a == b
+    }
+    if at == T_STR {
+        return rt_str_eq(a, b)
+    }
+    if at == T_FLOAT {
+        return __feq(a, b)
+    }
+    if at == T_NONE {
+        return 1
+    }
+    if at == T_LIST {
+        if a == b {
+            return 1
+        }
+        alloc n := __peek64(a + L_LEN)
+        if n != __peek64(b + L_LEN) {
+            return 0
+        }
+        alloc i := 0
+        loop i < n {
+            alloc x := __peek64(a + L_ITEMS) + i * 16
+            alloc y := __peek64(b + L_ITEMS) + i * 16
+            if rt_values_equal(__peek64(x + 8), __peek64(x), __peek64(y + 8), __peek64(y)) == 0 {
+                return 0
+            }
+            i := i + 1
+        }
+        return 1
+    }
+    if at == T_DICT {
+        if a == b {
+            return 1
+        }
+        alloc n := __peek64(a + D_LEN)
+        if n != __peek64(b + D_LEN) {
+            return 0
+        }
+        alloc i := 0
+        loop i < n {
+            alloc x := __peek64(a + D_ENTRIES) + i * 32
+            alloc y := rt_dict_find(b, __peek64(x), __peek64(x + 8))
+            if y == 0 {
+                return 0
+            }
+            if rt_values_equal(__peek64(x + 24), __peek64(x + 16), __peek64(y + 24), __peek64(y + 16)) == 0 {
+                return 0
+            }
+            i := i + 1
+        }
+        return 1
+    }
+    return a == b
+}
+
+proc rt_eq(at, a, bt, b) {
+    return rt_values_equal(at, a, bt, b)
+}
+
+proc rt_ne(at, a, bt, b) {
+    return rt_values_equal(at, a, bt, b) == 0
+}
+
+proc rt_and(at, a, bt, b) {
+    return rt_truthy(at, a) and rt_truthy(bt, b)
+}
+
+proc rt_or(at, a, bt, b) {
+    return rt_truthy(at, a) or rt_truthy(bt, b)
+}
+
+# === Numbers ==========================================================================
+
+alloc INT_MIN := -9223372036854775807
+
+proc rt_convert_error(tag, target) {
+    alloc what := "none"
+    if tag == T_LIST { what := "list" }
+    if tag == T_DICT { what := "dict" }
+    if tag == T_CLOSURE { what := "function" }
+    alloc b := rt_buf_new()
+    rt_buf_str(b, "cannot convert ")
+    rt_buf_str(b, what)
+    rt_buf_str(b, " to ")
+    rt_buf_str(b, target)
+    return rt_throw("TypeError", rt_buf_finish(b))
+}
+
+# Parse a whole string as a decimal integer. Returns 1 and leaves the
+# number in rt_parsed, or returns 0.
+alloc rt_parsed := 0
+
+proc rt_parse_int(s) {
+    alloc p := s + S_DATA
+    alloc n := __peek64(s + S_BYTES)
+    alloc i := 0
+    alloc neg := 0
+    if n > 0 and (__peek8(p) == 45 or __peek8(p) == 43) {
+        neg := __peek8(p) == 45
+        i := 1
+    }
+    if i >= n {
+        return 0
+    }
+    alloc acc := 0
+    loop i < n {
+        alloc c := __peek8(p + i)
+        if c < 48 or c > 57 {
+            return 0
+        }
+        # Accumulate as a negative number so that the most negative
+        # integer parses.
+        if acc < -922337203685477580 {
+            return 0
+        }
+        acc := acc * 10
+        alloc d := c - 48
+        if acc < INT_MIN - 1 + d {
+            return 0
+        }
+        acc := acc - d
+        i := i + 1
+    }
+    if neg {
+        rt_parsed := acc
+        return 1
+    }
+    if acc == INT_MIN - 1 {
+        return 0
+    }
+    rt_parsed := 0 - acc
+    return 1
+}
+
+# The integer a value stands for in arithmetic.
+proc rt_as_int(tag, v) {
+    if tag == T_INT or tag == T_BOOL {
+        return v
+    }
+    if tag == T_FLOAT {
+        return rt_float_to_int(v)
+    }
+    if tag == T_STR {
+        if rt_parse_int(v) {
+            return rt_parsed
+        }
+        return rt_throw3("TypeError", "Invalid literal for int(): '", T_STR, v, "'")
+    }
+    return rt_convert_error(tag, "int")
+}
+
+# The same as the bits of a double.
+proc rt_as_float(tag, v) {
+    if tag == T_FLOAT {
+        return v
+    }
+    if tag == T_INT or tag == T_BOOL {
+        return __i2f(v)
+    }
+    if tag == T_STR {
+        if rt_parse_float(v) {
+            return rt_parsed
+        }
+        return rt_throw3("TypeError", "Invalid literal for float(): '", T_STR, v, "'")
+    }
+    return rt_convert_error(tag, "float")
+}
+
+proc rt_zero_division() {
+    return rt_throw("ZeroDivisionError", rt_str_concat("integer division or modulo by zero", ""))
+}
+
+# The slow path of `+`: everything but two integers that do not overflow.
+proc rt_add(at, a, bt, b) {
+    if at == T_STR or bt == T_STR {
+        rt_tag := T_STR
+        if at == T_STR and bt == T_STR {
+            return rt_str_concat(a, b)
+        }
+        alloc sa := rt_to_str(at, a)
+        alloc sb := rt_to_str(bt, b)
+        alloc r := rt_str_concat(sa, sb)
+        rt_drop(T_STR, sa)
+        rt_drop(T_STR, sb)
+        return r
+    }
+    if at == T_LIST and bt == T_LIST {
+        rt_tag := T_LIST
+        return rt_list_concat(a, b)
+    }
+    if at == T_FLOAT or bt == T_FLOAT {
+        alloc x := rt_as_float(at, a)
+        alloc y := rt_as_float(bt, b)
+        rt_tag := T_FLOAT
+        return __fadd(x, y)
+    }
+    alloc x := rt_as_int(at, a)
+    alloc y := rt_as_int(bt, b)
+    alloc r := x + y
+    if ((x ^ r) & (y ^ r)) < 0 {
+        rt_err_overflow("addition")
+    }
+    rt_tag := T_INT
+    return r
+}
+
+proc rt_sub(at, a, bt, b) {
+    if at == T_FLOAT or bt == T_FLOAT {
+        alloc x := rt_as_float(at, a)
+        alloc y := rt_as_float(bt, b)
+        rt_tag := T_FLOAT
+        return __fsub(x, y)
+    }
+    alloc x := rt_as_int(at, a)
+    alloc y := rt_as_int(bt, b)
+    alloc r := x - y
+    if ((x ^ y) & (x ^ r)) < 0 {
+        rt_err_overflow("subtraction")
+    }
+    rt_tag := T_INT
+    return r
+}
+
+proc rt_mul(at, a, bt, b) {
+    if at == T_FLOAT or bt == T_FLOAT {
+        alloc x := rt_as_float(at, a)
+        alloc y := rt_as_float(bt, b)
+        rt_tag := T_FLOAT
+        return __fmul(x, y)
+    }
+    alloc x := rt_as_int(at, a)
+    alloc y := rt_as_int(bt, b)
+    alloc r := x * y
+    if x != 0 {
+        if (x == -1 and y == INT_MIN - 1) or r // x != y {
+            rt_err_overflow("multiplication")
+        }
+    }
+    rt_tag := T_INT
+    return r
+}
+
+proc rt_div(at, a, bt, b) {
+    alloc y := rt_as_float(bt, b)
+    if (y << 1) == 0 {
+        rt_zero_division()
+    }
+    alloc x := rt_as_float(at, a)
+    rt_tag := T_FLOAT
+    return __fdiv(x, y)
+}
+
+proc rt_floor_div(at, a, bt, b) {
+    if at == T_FLOAT or bt == T_FLOAT {
+        alloc y := rt_as_float(bt, b)
+        if (y << 1) == 0 {
+            rt_zero_division()
+        }
+        alloc x := rt_as_float(at, a)
+        rt_tag := T_FLOAT
+        return rt_floor(__fdiv(x, y))
+    }
+    alloc y := rt_as_int(bt, b)
+    if y == 0 {
+        rt_zero_division()
+    }
+    alloc x := rt_as_int(at, a)
+    if x == INT_MIN - 1 and y == -1 {
+        rt_err_overflow("division")
+    }
+    alloc q := x // y
+    if x % y != 0 and (x < 0) != (y < 0) {
+        q := q - 1
+    }
+    rt_tag := T_INT
+    return q
+}
+
+proc rt_mod(at, a, bt, b) {
+    if at == T_FLOAT or bt == T_FLOAT {
+        alloc y := rt_as_float(bt, b)
+        if (y << 1) == 0 {
+            rt_zero_division()
+        }
+        alloc x := rt_as_float(at, a)
+        rt_tag := T_FLOAT
+        return __fsub(x, __fmul(rt_floor(__fdiv(x, y)), y))
+    }
+    alloc y := rt_as_int(bt, b)
+    if y == 0 {
+        rt_zero_division()
+    }
+    alloc x := rt_as_int(at, a)
+    if x == INT_MIN - 1 and y == -1 {
+        rt_err_overflow("modulo")
+    }
+    alloc r := x % y
+    if r != 0 and (r < 0) != (y < 0) {
+        r := r + y
+    }
+    rt_tag := T_INT
+    return r
+}
+
+proc rt_neg(tag, v) {
+    if tag == T_FLOAT {
+        rt_tag := T_FLOAT
+        return v ^ (1 << 63)
+    }
+    alloc x := rt_as_int(tag, v)
+    if x == INT_MIN - 1 {
+        rt_err_overflow("negation")
+    }
+    rt_tag := T_INT
+    return 0 - x
+}
+
+proc rt_no_floats(at, bt, op) {
+    if at == T_FLOAT or bt == T_FLOAT {
+        alloc b := rt_buf_new()
+        rt_buf_str(b, "operator '")
+        rt_buf_str(b, op)
+        rt_buf_str(b, "' is not defined for floats")
+        rt_throw("TypeError", rt_buf_finish(b))
+    }
+    return 0
+}
+
+proc rt_band(at, a, bt, b) {
+    rt_no_floats(at, bt, "&")
+    alloc x := rt_as_int(at, a)
+    return x & rt_as_int(bt, b)
+}
+
+proc rt_bor(at, a, bt, b) {
+    rt_no_floats(at, bt, "|")
+    alloc x := rt_as_int(at, a)
+    return x | rt_as_int(bt, b)
+}
+
+proc rt_bxor(at, a, bt, b) {
+    rt_no_floats(at, bt, "^")
+    alloc x := rt_as_int(at, a)
+    return x ^ rt_as_int(bt, b)
+}
+
+proc rt_shift_count(n) {
+    if n < 0 or n >= 64 {
+        rt_throw2("ValueError", "shift count out of range: ", T_INT, n)
+    }
+    return n
+}
+
+proc rt_shl(at, a, bt, b) {
+    rt_no_floats(at, bt, "<<")
+    alloc x := rt_as_int(at, a)
+    alloc n := rt_shift_count(rt_as_int(bt, b))
+    return x << n
+}
+
+proc rt_shr(at, a, bt, b) {
+    rt_no_floats(at, bt, ">>")
+    alloc x := rt_as_int(at, a)
+    alloc n := rt_shift_count(rt_as_int(bt, b))
+    return x >> n
+}
+
+proc rt_bnot(tag, v) {
+    rt_no_floats(tag, T_INT, "~")
+    return ~rt_as_int(tag, v)
+}
+
+# Ordering: -1, 0 or 1. Two strings compare by bytes; otherwise both
+# sides must be numbers.
+proc rt_compare(at, a, bt, b) {
+    if at == T_STR and bt == T_STR {
+        alloc c := rt_str_cmp(a, b)
+        if c < 0 { return -1 }
+        return c > 0
+    }
+    if at == T_INT and bt == T_INT {
+        if a < b { return -1 }
+        return a > b
+    }
+    if (at == T_INT or at == T_FLOAT) and (bt == T_INT or bt == T_FLOAT) {
+        alloc x := rt_as_float(at, a)
+        alloc y := rt_as_float(bt, b)
+        if __flt(x, y) { return -1 }
+        if __flt(y, x) { return 1 }
+        if __feq(x, y) { return 0 }
+        # Unordered (a NaN): every ordering test is false.
+        return 2
+    }
+    return rt_type_error("cannot order-compare these values")
+}
+
+proc rt_lt(at, a, bt, b) {
+    return rt_compare(at, a, bt, b) == -1
+}
+
+proc rt_le(at, a, bt, b) {
+    alloc c := rt_compare(at, a, bt, b)
+    return c == -1 or c == 0
+}
+
+proc rt_gt(at, a, bt, b) {
+    return rt_compare(at, a, bt, b) == 1
+}
+
+proc rt_ge(at, a, bt, b) {
+    alloc c := rt_compare(at, a, bt, b)
+    return c == 1 or c == 0
+}
+
+# === Indexing =========================================================================
+
+proc rt_index_error(idx, len) {
+    alloc b := rt_buf_new()
+    rt_buf_str(b, "index ")
+    rt_buf_int(b, idx)
+    rt_buf_str(b, " out of range for length ")
+    rt_buf_int(b, len)
+    return rt_throw("IndexError", rt_buf_finish(b))
+}
+
+proc rt_norm_index(idx, len) {
+    alloc real := idx
+    if idx < 0 {
+        real := idx + len
+    }
+    if real < 0 or real >= len {
+        rt_index_error(idx, len)
+    }
+    return real
+}
+
+# base[idx]: an owned value, tag in rt_tag.
+proc rt_index(bt, base, it, idx) {
+    if bt == T_LIST and it == T_INT {
+        alloc real := rt_norm_index(idx, __peek64(base + L_LEN))
+        alloc item := __peek64(base + L_ITEMS) + real * 16
+        alloc t := __peek64(item + 8)
+        alloc v := __peek64(item)
+        if t >= T_STR {
+            __poke64(v, __peek64(v) + 1)
+        }
+        rt_tag := t
+        return v
+    }
+    if bt == T_DICT {
+        if it == T_STR {
+            return rt_dict_get(base, idx)
+        }
+        alloc key := rt_to_str(it, idx)
+        alloc e := rt_dict_find(base, key, rt_str_hash(key))
+        if e == 0 {
+            rt_key_error(key)
+        }
+        rt_drop(T_STR, key)
+        alloc t := __peek64(e + 24)
+        alloc v := __peek64(e + 16)
+        if t >= T_STR {
+            __poke64(v, __peek64(v) + 1)
+        }
+        rt_tag := t
+        return v
+    }
+    if bt == T_STR and it == T_INT {
+        alloc real := rt_norm_index(idx, __peek64(base + S_CHARS))
+        rt_tag := T_STR
+        return rt_str_char_at(base, real)
+    }
+    if (bt == T_LIST or bt == T_STR) and it == T_FLOAT {
+        return rt_type_error("list/string index must be an integer, not a float")
+    }
+    return rt_throw3("TypeError", "", bt, base, " is not indexable")
+}
+
+# base.name
+proc rt_attr(bt, base, name) {
+    if bt == T_DICT {
+        return rt_dict_get(base, name)
+    }
+    alloc what := "value"
+    if bt == T_STR { what := "string" }
+    alloc b := rt_buf_new()
+    rt_buf_str(b, what)
+    rt_buf_str(b, " has no attribute '")
+    rt_buf_str(b, name)
+    rt_buf_str(b, "'")
+    return rt_throw("TypeError", rt_buf_finish(b))
+}
+
+# base[idx] := value. Arguments are borrowed.
+proc rt_store_index(bt, base, it, idx, vt, v) {
+    if bt == T_LIST and it == T_INT {
+        alloc real := rt_norm_index(idx, __peek64(base + L_LEN))
+        alloc item := __peek64(base + L_ITEMS) + real * 16
+        alloc ot := __peek64(item + 8)
+        alloc ov := __peek64(item)
+        if vt >= T_STR {
+            __poke64(v, __peek64(v) + 1)
+        }
+        __poke64(item, v)
+        __poke64(item + 8, vt)
+        if ot >= T_STR {
+            rt_drop(ot, ov)
+        }
+        return 0
+    }
+    if bt == T_DICT {
+        return rt_dict_store(base, it, idx, vt, v)
+    }
+    return rt_type_error("cannot index-assign this value")
+}
+
+proc rt_store_attr(bt, base, vt, v, name) {
+    if bt == T_DICT {
+        return rt_dict_store(base, T_STR, name, vt, v)
+    }
+    alloc b := rt_buf_new()
+    rt_buf_str(b, "cannot set attribute '")
+    rt_buf_str(b, name)
+    rt_buf_str(b, "' on this value")
+    return rt_throw("TypeError", rt_buf_finish(b))
+}
+
+# One bound of a slice: none means the default.
+proc rt_slice_bound(tag, v, dflt, total) {
+    if tag == T_NONE {
+        return dflt
+    }
+    alloc n := rt_as_int(tag, v)
+    if n < 0 {
+        n := n + total
+    }
+    if n < 0 {
+        n := 0
+    }
+    if n > total {
+        n := total
+    }
+    return n
+}
+
+# base[start:end]: an owned value, tag in rt_tag.
+proc rt_slice(bt, base, st, start, et, end) {
+    if bt != T_STR and bt != T_LIST {
+        return rt_type_error("cannot slice this value")
+    }
+    alloc total := __peek64(base + 8)
+    alloc a := rt_slice_bound(st, start, 0, total)
+    alloc b := rt_slice_bound(et, end, total, total)
+    if b < a {
+        b := a
+    }
+    rt_tag := bt
+    if bt == T_STR {
+        if a == 0 and b == total {
+            __poke64(base, __peek64(base) + 1)
+            return base
+        }
+        return rt_str_sub(base, a, b)
+    }
+    return rt_list_sub(base, a, b)
+}
+
+# === Start-up =========================================================================
+
+alloc rt_cwd := 0              # the program's idea of its directory, a string
+
+proc rt_set_cwd(tag, v) {
+    if tag == T_STR {
+        __poke64(v, __peek64(v) + 1)
+        if rt_cwd != 0 {
+            rt_drop(T_STR, rt_cwd)
+        }
+        rt_cwd := v
+    }
+    return 0
+}
+
+proc rt_global_set(index, tag, v) {
+    alloc slot := __sym("globals") + index * 16
+    __poke64(slot, v)
+    __poke64(slot + 8, tag)
+    return 0
+}
+
+# Called once, before the program's top-level code. The entry code has
+# saved the initial stack pointer in rt_entry_rsp.
+proc rt_start() {
+    os_init()
+    rt_heap_init()
+    rt_chars_init()
+    # Every global starts out unset.
+    alloc n := rt_prog(0)
+    alloc g := __sym("globals")
+    alloc i := 0
+    loop i < n {
+        __poke64(g + i * 16 + 8, T_UNSET)
+        i := i + 1
+    }
+    # args, module_file and current_dir.
+    alloc argc := os_argc()
+    alloc list := rt_list_alloc(argc)
+    i := 0
+    loop i < argc {
+        rt_list_push(list, T_STR, os_arg(i))
+        i := i + 1
+    }
+    rt_global_set(rt_prog(1), T_LIST, list)
+    if argc > 0 {
+        rt_global_set(rt_prog(2), T_STR, os_arg(0))
+    } else {
+        rt_global_set(rt_prog(2), T_STR, "<stdin>")
+    }
+    alloc cwd := os_getcwd()
+    rt_global_set(rt_prog(3), T_STR, cwd)
+    rt_set_cwd(T_STR, cwd)
+    return 0
+}

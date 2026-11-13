@@ -1,0 +1,742 @@
+
+# runtime/x64/float.omg
+#
+# Floats to text and text to floats, exactly: the shortest decimal form
+# that reads back as the same number, and correctly rounded parsing.
+# Raw mode, part of the runtime unit (see core.omg). A float is carried
+# as the 64 bits of an IEEE-754 double.
+#
+# Both directions do their arithmetic on whole numbers of any size, the
+# plain way: slow next to the published fast algorithms, but short and
+# easy to check, and a program that prints floats in a hot loop is rare.
+
+alloc F_SIGN := 1 << 63
+alloc F_INF := 2047 << 52
+alloc F_MANT := 4503599627370495          # 2**52 - 1
+alloc F_NAN := 4094 << 51                 # a quiet NaN: 0x7FF8 << 48
+
+# --- big whole numbers -----------------------------------------------------
+#
+# [0] number of limbs in use, [8...] 32-bit limbs, lowest first. Always
+# normalised: the top limb in use is not zero.
+
+alloc BN_SIZE := 304           # room for 74 limbs, 2368 bits
+
+proc bn_new(v) {
+    alloc b := rt_alloc(BN_SIZE)
+    alloc lo := v & 4294967295
+    alloc hi := __lsr(v, 32)
+    __poke32(b + 8, lo)
+    __poke32(b + 12, hi)
+    alloc n := 0
+    if lo != 0 { n := 1 }
+    if hi != 0 { n := 2 }
+    __poke64(b, n)
+    return b
+}
+
+proc bn_free(b) {
+    return rt_free(b, BN_SIZE)
+}
+
+proc bn_is_zero(b) {
+    return __peek64(b) == 0
+}
+
+# b := b * m, for 0 < m < 2**32
+proc bn_mul_small(b, m) {
+    alloc n := __peek64(b)
+    alloc carry := 0
+    alloc p := b + 8
+    alloc end := p + n * 4
+    loop p < end {
+        alloc t := __peek32(p) * m + carry
+        __poke32(p, t)
+        carry := __lsr(t, 32)
+        p := p + 4
+    }
+    if carry != 0 {
+        __poke32(p, carry)
+        __poke64(b, n + 1)
+    }
+    return 0
+}
+
+# b := b + m, for 0 <= m < 2**32
+proc bn_add_small(b, m) {
+    alloc n := __peek64(b)
+    alloc carry := m
+    alloc i := 0
+    loop carry != 0 {
+        if i == n {
+            __poke32(b + 8 + i * 4, carry)
+            __poke64(b, n + 1)
+            return 0
+        }
+        alloc t := __peek32(b + 8 + i * 4) + carry
+        __poke32(b + 8 + i * 4, t)
+        carry := __lsr(t, 32)
+        i := i + 1
+    }
+    return 0
+}
+
+# b := b * 10**k
+proc bn_mul_pow10(b, k) {
+    loop k >= 9 {
+        bn_mul_small(b, 1000000000)
+        k := k - 9
+    }
+    loop k > 0 {
+        bn_mul_small(b, 10)
+        k := k - 1
+    }
+    return 0
+}
+
+# b := b * 2**bits
+proc bn_shl(b, bits) {
+    alloc n := __peek64(b)
+    if n == 0 or bits == 0 {
+        return 0
+    }
+    alloc words := bits >> 5
+    alloc r := bits & 31
+    alloc base := b + 8
+    alloc i := n - 1
+    if r == 0 {
+        loop i >= 0 {
+            __poke32(base + (i + words) * 4, __peek32(base + i * 4))
+            i := i - 1
+        }
+        n := n + words
+    } else {
+        alloc top := __peek32(base + i * 4) >> (32 - r)
+        __poke32(base + (n + words) * 4, top)
+        loop i >= 0 {
+            alloc lo := 0
+            if i > 0 {
+                lo := __peek32(base + (i - 1) * 4) >> (32 - r)
+            }
+            __poke32(base + (i + words) * 4, (__peek32(base + i * 4) << r) | lo)
+            i := i - 1
+        }
+        n := n + words
+        if top != 0 {
+            n := n + 1
+        }
+    }
+    i := 0
+    loop i < words {
+        __poke32(base + i * 4, 0)
+        i := i + 1
+    }
+    __poke64(b, n)
+    return 0
+}
+
+# b := b // 2
+proc bn_shr1(b) {
+    alloc n := __peek64(b)
+    if n == 0 {
+        return 0
+    }
+    alloc base := b + 8
+    alloc i := 0
+    loop i < n {
+        alloc hi := 0
+        if i + 1 < n {
+            hi := __peek32(base + (i + 1) * 4) & 1
+        }
+        __poke32(base + i * 4, (__peek32(base + i * 4) >> 1) | (hi << 31))
+        i := i + 1
+    }
+    if __peek32(base + (n - 1) * 4) == 0 {
+        __poke64(b, n - 1)
+    }
+    return 0
+}
+
+# -1, 0 or 1 as a is below, equal to or above b
+proc bn_cmp(a, b) {
+    alloc na := __peek64(a)
+    alloc nb := __peek64(b)
+    if na != nb {
+        if na < nb { return -1 }
+        return 1
+    }
+    alloc i := na - 1
+    loop i >= 0 {
+        alloc x := __peek32(a + 8 + i * 4)
+        alloc y := __peek32(b + 8 + i * 4)
+        if x != y {
+            if x < y { return -1 }
+            return 1
+        }
+        i := i - 1
+    }
+    return 0
+}
+
+# a := a - b, for a >= b
+proc bn_sub(a, b) {
+    alloc na := __peek64(a)
+    alloc nb := __peek64(b)
+    alloc borrow := 0
+    alloc i := 0
+    loop i < na {
+        alloc t := __peek32(a + 8 + i * 4) - borrow
+        if i < nb {
+            t := t - __peek32(b + 8 + i * 4)
+        }
+        borrow := 0
+        if t < 0 {
+            t := t + 4294967296
+            borrow := 1
+        }
+        __poke32(a + 8 + i * 4, t)
+        i := i + 1
+    }
+    loop na > 0 and __peek32(a + 8 + (na - 1) * 4) == 0 {
+        na := na - 1
+    }
+    __poke64(a, na)
+    return 0
+}
+
+# How many bits the number takes: 0 for zero.
+proc bn_bits(b) {
+    alloc n := __peek64(b)
+    if n == 0 {
+        return 0
+    }
+    alloc top := __peek32(b + 8 + (n - 1) * 4)
+    alloc bits := (n - 1) * 32
+    loop top != 0 {
+        bits := bits + 1
+        top := top >> 1
+    }
+    return bits
+}
+
+# --- decimal to float ---------------------------------------------------------
+
+# 10**k as a double, exact for 0 <= k <= 22.
+proc rt_pow10f(k) {
+    alloc p := 1
+    alloc i := 0
+    alloc lim := k
+    if lim > 18 { lim := 18 }
+    loop i < lim {
+        p := p * 10
+        i := i + 1
+    }
+    alloc f := __i2f(p)
+    if k > 18 {
+        p := 1
+        loop i < k {
+            p := p * 10
+            i := i + 1
+        }
+        f := __fmul(f, __i2f(p))
+    }
+    return f
+}
+
+# Round (q + a fraction) * 2**e to the nearest double: q is a whole
+# number below 2**62, `sticky` says whether the fraction is non-zero.
+proc rt_float_pack(q, e, sticky) {
+    if q == 0 {
+        return 0
+    }
+    alloc nb := 0
+    alloc t := q
+    loop t != 0 {
+        nb := nb + 1
+        t := t >> 1
+    }
+    # Keep 53 bits, or fewer when the result is subnormal.
+    alloc shift := nb - 53
+    if e + shift < -1074 {
+        shift := -1074 - e
+    }
+    alloc mant := q
+    if shift > 0 {
+        if shift > 62 {
+            return 0
+        }
+        alloc rest := q & ((1 << shift) - 1)
+        alloc half := 1 << (shift - 1)
+        mant := q >> shift
+        if rest > half or (rest == half and (sticky != 0 or (mant & 1) == 1)) {
+            mant := mant + 1
+        }
+    } elif shift < 0 {
+        mant := q << (0 - shift)
+    }
+    alloc ex := e + shift              # the value is mant * 2**ex
+    if mant == (1 << 53) {
+        mant := mant >> 1
+        ex := ex + 1
+    }
+    if mant < (1 << 52) {
+        # Subnormal (ex is -1074) or zero.
+        return mant
+    }
+    if ex + 1075 >= 2047 {
+        return F_INF
+    }
+    return ((ex + 1075) << 52) | (mant & F_MANT)
+}
+
+# The double nearest to w * 10**q, for an unsigned 64-bit w.
+proc rt_dec_to_float(w, q) {
+    if w == 0 {
+        return 0
+    }
+    if w > 0 and w < 9007199254740992 {
+        if q == 0 {
+            return __i2f(w)
+        }
+        if q > 0 and q <= 22 {
+            return __fmul(__i2f(w), rt_pow10f(q))
+        }
+        if q < 0 and q >= -22 {
+            return __fdiv(__i2f(w), rt_pow10f(0 - q))
+        }
+    }
+    # How many digits w has, to bound the result.
+    alloc nd := 0
+    alloc t := w
+    loop t != 0 {
+        nd := nd + 1
+        t := __udiv(t, 10)
+    }
+    if nd + q > 310 {
+        return F_INF
+    }
+    if nd + q < -326 {
+        return 0
+    }
+    alloc num := bn_new(w)
+    alloc den := bn_new(1)
+    if q >= 0 {
+        bn_mul_pow10(num, q)
+    } else {
+        bn_mul_pow10(den, 0 - q)
+    }
+    # Scale by a power of two so that the quotient has 55 or 56 bits.
+    alloc s := 55 - (bn_bits(num) - bn_bits(den))
+    if s > 0 {
+        bn_shl(num, s)
+    } else {
+        bn_shl(den, 0 - s)
+    }
+    # Long division, one bit at a time.
+    bn_shl(den, 56)
+    alloc quo := 0
+    alloc i := 56
+    loop i >= 0 {
+        if bn_cmp(num, den) >= 0 {
+            bn_sub(num, den)
+            quo := quo | (1 << i)
+        }
+        bn_shr1(den)
+        i := i - 1
+    }
+    alloc sticky := bn_is_zero(num) == 0
+    bn_free(num)
+    bn_free(den)
+    return rt_float_pack(quo, 0 - s, sticky)
+}
+
+proc rt_lower(c) {
+    if c >= 65 and c <= 90 {
+        return c + 32
+    }
+    return c
+}
+
+# Does the text at p (n bytes) spell `word`, ignoring case?
+proc rt_word_is(p, n, word) {
+    if n != __peek64(word + S_BYTES) {
+        return 0
+    }
+    alloc i := 0
+    loop i < n {
+        if rt_lower(__peek8(p + i)) != __peek8(word + S_DATA + i) {
+            return 0
+        }
+        i := i + 1
+    }
+    return 1
+}
+
+# Parse the n bytes at p as a float. Returns 1 and leaves the bits in
+# rt_parsed, or returns 0.
+proc rt_parse_float_at(p, n) {
+    alloc i := 0
+    alloc sign := 0
+    if n > 0 and (__peek8(p) == 45 or __peek8(p) == 43) {
+        if __peek8(p) == 45 {
+            sign := F_SIGN
+        }
+        i := 1
+    }
+    if rt_word_is(p + i, n - i, "inf") or rt_word_is(p + i, n - i, "infinity") {
+        rt_parsed := F_INF | sign
+        return 1
+    }
+    if rt_word_is(p + i, n - i, "nan") {
+        rt_parsed := F_NAN
+        return 1
+    }
+    # Up to 18 significant digits are kept as a number; one more digit
+    # records whether anything non-zero was dropped.
+    alloc w := 0
+    alloc kept := 0
+    alloc dropped := 0
+    alloc q := 0
+    alloc any := 0
+    alloc seen_dot := 0
+    loop i < n {
+        alloc c := __peek8(p + i)
+        if c == 46 {
+            if seen_dot {
+                return 0
+            }
+            seen_dot := 1
+        } elif c >= 48 and c <= 57 {
+            any := 1
+            if kept < 18 {
+                if kept > 0 or c != 48 {
+                    w := w * 10 + (c - 48)
+                    kept := kept + 1
+                }
+                if seen_dot {
+                    q := q - 1
+                }
+            } else {
+                if c != 48 {
+                    dropped := 1
+                }
+                if seen_dot == 0 {
+                    q := q + 1
+                }
+            }
+        } else {
+            break
+        }
+        i := i + 1
+    }
+    if any == 0 {
+        return 0
+    }
+    if i < n and (__peek8(p + i) == 101 or __peek8(p + i) == 69) {
+        i := i + 1
+        alloc eneg := 0
+        if i < n and (__peek8(p + i) == 45 or __peek8(p + i) == 43) {
+            eneg := __peek8(p + i) == 45
+            i := i + 1
+        }
+        if i >= n {
+            return 0
+        }
+        alloc ex := 0
+        loop i < n {
+            alloc c := __peek8(p + i)
+            if c < 48 or c > 57 {
+                return 0
+            }
+            if ex < 100000 {
+                ex := ex * 10 + (c - 48)
+            }
+            i := i + 1
+        }
+        if eneg {
+            q := q - ex
+        } else {
+            q := q + ex
+        }
+    }
+    if i != n {
+        return 0
+    }
+    if dropped {
+        w := w * 10 + 1
+        q := q - 1
+    }
+    rt_parsed := rt_dec_to_float(w, q) | sign
+    return 1
+}
+
+proc rt_parse_float(s) {
+    return rt_parse_float_at(s + S_DATA, __peek64(s + S_BYTES))
+}
+
+# --- float to decimal -----------------------------------------------------------
+
+# The first 18 significant decimal digits of a finite positive double,
+# as bytes 0-9 at `out`; out[18] says whether more non-zero digits
+# follow. Returns the power of ten of the first digit.
+proc rt_float_digits(bits, out) {
+    alloc mant := bits & F_MANT
+    alloc bexp := (bits >> 52) & 2047
+    alloc e := -1074
+    if bexp != 0 {
+        mant := mant | (1 << 52)
+        e := bexp - 1075
+    }
+    # The value is mant * 2**e = r / s.
+    alloc r := bn_new(mant)
+    alloc s := bn_new(1)
+    if e >= 0 {
+        bn_shl(r, e)
+    } else {
+        bn_shl(s, 0 - e)
+    }
+    # A first guess at the power of ten, from the power of two.
+    alloc nb := 0
+    alloc t := mant
+    loop t != 0 {
+        nb := nb + 1
+        t := t >> 1
+    }
+    alloc k := ((nb - 1 + e) * 1233) >> 12
+    if k >= 0 {
+        bn_mul_pow10(s, k)
+    } else {
+        bn_mul_pow10(r, 0 - k)
+    }
+    # Make it exact: afterwards s <= r < 10 s.
+    loop bn_cmp(r, s) < 0 {
+        bn_mul_small(r, 10)
+        k := k - 1
+    }
+    alloc s10 := bn_new(0)
+    __memcpy(s10, s, BN_SIZE)
+    bn_mul_small(s10, 10)
+    loop bn_cmp(r, s10) >= 0 {
+        bn_mul_small(s, 10)
+        bn_mul_small(s10, 10)
+        k := k + 1
+    }
+    bn_free(s10)
+    alloc i := 0
+    loop i < 18 {
+        alloc d := 0
+        loop bn_cmp(r, s) >= 0 {
+            bn_sub(r, s)
+            d := d + 1
+        }
+        __poke8(out + i, d)
+        bn_mul_small(r, 10)
+        i := i + 1
+    }
+    __poke8(out + 18, bn_is_zero(r) == 0)
+    bn_free(r)
+    bn_free(s)
+    return k
+}
+
+# Round the digits at `digs` (see rt_float_digits) to p of them, written
+# to `out`, halves going to the even digit as printf has it. Returns how
+# much the power of ten of the first digit went up: 0 or 1.
+proc rt_round_digits(digs, p, out) {
+    __memcpy(out, digs, p)
+    alloc next := __peek8(digs + p)
+    alloc more := 0
+    alloc i := p + 1
+    loop i <= 18 {
+        if __peek8(digs + i) != 0 {
+            more := 1
+        }
+        i := i + 1
+    }
+    alloc up := next > 5
+    if next == 5 {
+        up := more != 0 or (__peek8(out + p - 1) & 1) == 1
+    }
+    if up == 0 {
+        return 0
+    }
+    i := p - 1
+    loop i >= 0 {
+        alloc d := __peek8(out + i) + 1
+        if d < 10 {
+            __poke8(out + i, d)
+            return 0
+        }
+        __poke8(out + i, 0)
+        i := i - 1
+    }
+    # All nines: 99.9 became 100.0
+    __poke8(out, 1)
+    return 1
+}
+
+# Append p digits as plain decimal: the first digit is worth 10**x,
+# -4 <= x < p. Trailing zeros after the point are left out.
+proc rt_buf_fixed(b, digs, p, x) {
+    alloc last := p
+    loop last > 1 and __peek8(digs + last - 1) == 0 {
+        last := last - 1
+    }
+    alloc i := 0
+    if x < 0 {
+        rt_buf_byte(b, 48)
+        rt_buf_byte(b, 46)
+        i := x + 1
+        loop i < 0 {
+            rt_buf_byte(b, 48)
+            i := i + 1
+        }
+        loop i < last {
+            rt_buf_byte(b, 48 + __peek8(digs + i))
+            i := i + 1
+        }
+        return 0
+    }
+    loop i <= x {
+        rt_buf_byte(b, 48 + __peek8(digs + i))
+        i := i + 1
+    }
+    if i >= last {
+        # A whole number: say so, to keep it apart from an integer.
+        rt_buf_byte(b, 46)
+        rt_buf_byte(b, 48)
+        return 0
+    }
+    rt_buf_byte(b, 46)
+    loop i < last {
+        rt_buf_byte(b, 48 + __peek8(digs + i))
+        i := i + 1
+    }
+    return 0
+}
+
+# Append the text of a float: the fewest digits, up to 17, that read
+# back as the same number, in plain decimal; when no plain form does
+# (very large and very small numbers), 17 digits with an exponent.
+proc rt_buf_float(b, bits) {
+    alloc mag := bits & (F_SIGN - 1)
+    if mag > F_INF {
+        return rt_buf_str(b, "nan")
+    }
+    if (bits & F_SIGN) != 0 {
+        rt_buf_byte(b, 45)
+    }
+    if mag == F_INF {
+        return rt_buf_str(b, "inf")
+    }
+    if mag == 0 {
+        return rt_buf_str(b, "0.0")
+    }
+    # Whole numbers below 2**53 need no long arithmetic.
+    alloc whole := __f2i(mag)
+    if whole > 0 and whole < 1000000000000000 and __i2f(whole) == mag {
+        rt_buf_int(b, whole)
+        return rt_buf_str(b, ".0")
+    }
+    alloc digs := rt_alloc(48)
+    alloc tmp := digs + 24
+    alloc x := rt_float_digits(mag, digs)
+    alloc p := 1
+    loop p <= 17 {
+        alloc xp := x + rt_round_digits(digs, p, tmp)
+        if xp >= -4 and xp < p {
+            alloc w := 0
+            alloc i := 0
+            loop i < p {
+                w := w * 10 + __peek8(tmp + i)
+                i := i + 1
+            }
+            if rt_dec_to_float(w, xp - (p - 1)) == mag {
+                rt_buf_fixed(b, tmp, p, xp)
+                rt_free(digs, 48)
+                return 0
+            }
+        }
+        p := p + 1
+    }
+    alloc xp := x + rt_round_digits(digs, 17, tmp)
+    if xp >= -4 and xp < 17 {
+        rt_buf_fixed(b, tmp, 17, xp)
+        rt_free(digs, 48)
+        return 0
+    }
+    alloc last := 17
+    loop last > 1 and __peek8(tmp + last - 1) == 0 {
+        last := last - 1
+    }
+    rt_buf_byte(b, 48 + __peek8(tmp))
+    if last > 1 {
+        rt_buf_byte(b, 46)
+        alloc i := 1
+        loop i < last {
+            rt_buf_byte(b, 48 + __peek8(tmp + i))
+            i := i + 1
+        }
+    }
+    rt_buf_byte(b, 101)
+    if xp < 0 {
+        rt_buf_byte(b, 45)
+        xp := 0 - xp
+    } else {
+        rt_buf_byte(b, 43)
+    }
+    if xp < 10 {
+        rt_buf_byte(b, 48)
+    }
+    rt_buf_int(b, xp)
+    rt_free(digs, 48)
+    return 0
+}
+
+# --- floats and whole numbers ---------------------------------------------------
+
+# The integer a float truncates to.
+proc rt_float_to_int(bits) {
+    alloc bexp := (bits >> 52) & 2047
+    if bexp == 2047 {
+        return rt_throw2("ValueError", "cannot convert non-finite float to int: ", T_FLOAT, bits)
+    }
+    if bexp >= 1086 and bits != (F_SIGN | (1086 << 52)) {
+        # 2**63 or beyond; -2**63 itself still fits.
+        return rt_throw3("ValueError", "float ", T_FLOAT, bits, " is outside the i64 range")
+    }
+    return __f2i(bits)
+}
+
+# The largest whole float not above x.
+proc rt_floor(bits) {
+    alloc bexp := (bits >> 52) & 2047
+    if bexp >= 1075 {
+        # 2**52 and beyond are whole already; so are inf and NaN.
+        return bits
+    }
+    alloc t := __i2f(__f2i(bits))
+    if __flt(bits, t) {
+        t := __fsub(t, __i2f(1))
+    }
+    if t == 0 {
+        # Keep the sign of zero: floor(-0.0) is -0.0.
+        return bits & F_SIGN
+    }
+    return t
+}
+
+proc rt_ceil(bits) {
+    alloc bexp := (bits >> 52) & 2047
+    if bexp >= 1075 {
+        return bits
+    }
+    alloc t := __i2f(__f2i(bits))
+    if __flt(t, bits) {
+        t := __fadd(t, __i2f(1))
+    }
+    if t == 0 {
+        return bits & F_SIGN
+    }
+    return t
+}

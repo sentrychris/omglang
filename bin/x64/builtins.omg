@@ -1,0 +1,1517 @@
+
+# runtime/x64/builtins.omg
+#
+# The builtin functions of the language. Raw mode, part of the runtime
+# unit (see core.omg).
+#
+# The builtin `name` is the proc bi_name here; one that takes a varying
+# number of arguments has a proc for each count (bi_binary_1,
+# bi_binary_2). Every argument arrives as a tag and a payload, borrowed.
+# The result is returned as a payload with its tag left in rt_tag, and
+# is owned by the caller.
+#
+# Anything that needs the operating system goes through an os_* proc,
+# so that this file is the same on every system.
+
+# --- strings and numbers ---------------------------------------------------
+
+proc bi_length(t, v) {
+    rt_tag := T_INT
+    if t == T_STR {
+        return __peek64(v + S_CHARS)
+    }
+    if t == T_LIST or t == T_DICT {
+        return __peek64(v + L_LEN)
+    }
+    return rt_type_error("length() expects list, string or dict (type mismatch)")
+}
+
+# chr(i): the character with code i & 255.
+proc bi_chr(t, v) {
+    if t != T_INT {
+        return rt_type_error("chr() expects one integer")
+    }
+    rt_tag := T_STR
+    alloc c := v & 255
+    if c > 0 and c < 128 {
+        return rt_char_str(c)
+    }
+    if c == 0 {
+        return rt_str_alloc(1)
+    }
+    alloc s := rt_str_alloc(2)
+    __poke8(s + S_DATA, 192 | (c >> 6))
+    __poke8(s + S_DATA + 1, 128 | (c & 63))
+    __poke64(s + S_CHARS, 1)
+    return s
+}
+
+# ascii(c): the code of a one-character string.
+proc bi_ascii(t, v) {
+    if t != T_STR or __peek64(v + S_CHARS) != 1 {
+        return rt_type_error("ascii() expects a single character (arity mismatch)")
+    }
+    rt_tag := T_INT
+    alloc p := v + S_DATA
+    alloc b := __peek8(p)
+    if b < 128 {
+        return b
+    }
+    if (b & 224) == 192 {
+        return ((b & 31) << 6) | (__peek8(p + 1) & 63)
+    }
+    if (b & 240) == 224 {
+        return ((b & 15) << 12) | ((__peek8(p + 1) & 63) << 6) | (__peek8(p + 2) & 63)
+    }
+    if (b & 248) == 240 {
+        return ((b & 7) << 18) | ((__peek8(p + 1) & 63) << 12) | ((__peek8(p + 2) & 63) << 6) | (__peek8(p + 3) & 63)
+    }
+    return b
+}
+
+# The digits of the unsigned number u in base 2 or 16 (shift 1 or 4),
+# with a minus sign in front when `neg`.
+proc rt_radix_str(u, shift, neg) {
+    alloc b := rt_buf_new()
+    if neg {
+        rt_buf_byte(b, 45)
+    }
+    alloc digits := 1
+    alloc t := __lsr(u, shift)
+    loop t != 0 {
+        digits := digits + 1
+        t := __lsr(t, shift)
+    }
+    alloc i := digits - 1
+    loop i >= 0 {
+        alloc d := __lsr(u, i * shift) & ((1 << shift) - 1)
+        if d < 10 {
+            rt_buf_byte(b, 48 + d)
+        } else {
+            rt_buf_byte(b, 87 + d)
+        }
+        i := i - 1
+    }
+    return rt_buf_finish(b)
+}
+
+proc bi_hex(t, v) {
+    if t != T_INT {
+        return rt_type_error("hex() expects one integer (arity mismatch)")
+    }
+    rt_tag := T_STR
+    if v < 0 {
+        return rt_radix_str(0 - v, 4, 1)
+    }
+    return rt_radix_str(v, 4, 0)
+}
+
+proc bi_binary_1(t, v) {
+    if t != T_INT {
+        return rt_type_error("binary() expects one or two integers (arity mismatch)")
+    }
+    rt_tag := T_STR
+    if v < 0 {
+        return rt_radix_str(0 - v, 1, 1)
+    }
+    return rt_radix_str(v, 1, 0)
+}
+
+# binary(n, width): the low `width` bits of n, zero-padded.
+proc bi_binary_2(t, v, wt, w) {
+    if t != T_INT or wt != T_INT {
+        return rt_type_error("binary() expects one or two integers (arity mismatch)")
+    }
+    if w <= 0 {
+        return rt_value_error("binary() width must be positive")
+    }
+    if w > 4096 {
+        return rt_throw3("ValueError", "binary() width ", T_INT, w, " is too large (max 4096)")
+    }
+    alloc s := rt_str_alloc(w)
+    alloc i := 0
+    loop i < w {
+        alloc bit := 0
+        if i < 64 {
+            bit := __lsr(v, i) & 1
+        }
+        __poke8(s + S_DATA + w - 1 - i, 48 + bit)
+        i := i + 1
+    }
+    rt_tag := T_STR
+    return s
+}
+
+proc bi_string_bytes(t, v) {
+    if t != T_STR {
+        return rt_type_error("string_bytes() expects a string")
+    }
+    alloc n := __peek64(v + S_BYTES)
+    alloc l := rt_list_alloc(n)
+    alloc items := __peek64(l + L_ITEMS)
+    alloc i := 0
+    loop i < n {
+        __poke64(items + i * 16, __peek8(v + S_DATA + i))
+        __poke64(items + i * 16 + 8, T_INT)
+        i := i + 1
+    }
+    __poke64(l + L_LEN, n)
+    rt_tag := T_LIST
+    return l
+}
+
+# The bytes of a list of integers 0-255, as a new string that is not
+# yet counted in characters; `what` names the builtin for the error.
+proc rt_list_bytes(l, what) {
+    alloc n := __peek64(l + L_LEN)
+    alloc items := __peek64(l + L_ITEMS)
+    alloc s := rt_str_alloc(n)
+    alloc i := 0
+    loop i < n {
+        alloc b := __peek64(items + i * 16)
+        if __peek64(items + i * 16 + 8) != T_INT or b < 0 or b > 255 {
+            rt_drop(T_STR, s)
+            return rt_throw("TypeError", rt_str_concat(what, " expects a list of bytes (0-255)"))
+        }
+        __poke8(s + S_DATA + i, b)
+        i := i + 1
+    }
+    return s
+}
+
+proc bi_bytes_to_string(t, v) {
+    if t != T_LIST {
+        return rt_type_error("bytes_to_string() expects a list of bytes")
+    }
+    alloc s := rt_list_bytes(v, "bytes_to_string()")
+    __poke64(s + S_CHARS, rt_utf8_count(s + S_DATA, __peek64(s + S_BYTES)))
+    rt_tag := T_STR
+    return s
+}
+
+proc rt_is_space(c) {
+    return c == 32 or c == 9 or c == 10 or c == 13
+}
+
+# float_bits("3.14"): the 64 bits of the float a text stands for.
+proc bi_float_bits(t, v) {
+    if t != T_STR {
+        return rt_type_error("float_bits() expects a numeric string")
+    }
+    alloc p := v + S_DATA
+    alloc n := __peek64(v + S_BYTES)
+    loop n > 0 and rt_is_space(__peek8(p)) {
+        p := p + 1
+        n := n - 1
+    }
+    loop n > 0 and rt_is_space(__peek8(p + n - 1)) {
+        n := n - 1
+    }
+    if rt_parse_float_at(p, n) == 0 {
+        return rt_throw3("ValueError", "float_bits(): invalid literal '", T_STR, v, "'")
+    }
+    rt_tag := T_INT
+    return rt_parsed
+}
+
+proc bi_bits_to_float(t, v) {
+    if t != T_INT {
+        return rt_type_error("bits_to_float() expects an integer")
+    }
+    rt_tag := T_FLOAT
+    return v
+}
+
+proc bi_int(t, v) {
+    rt_tag := T_INT
+    if t == T_NONE {
+        return 0
+    }
+    return rt_as_int(t, v)
+}
+
+proc bi_float(t, v) {
+    rt_tag := T_FLOAT
+    if t == T_NONE {
+        return 0
+    }
+    return rt_as_float(t, v)
+}
+
+# A whole-valued float as an integer, for floor, ceil and round.
+proc rt_whole_to_int(bits, what) {
+    alloc bexp := (bits >> 52) & 2047
+    if bexp == 2047 {
+        alloc b := rt_buf_new()
+        rt_buf_str(b, what)
+        rt_buf_str(b, "() of a non-finite float: ")
+        rt_buf_float(b, bits)
+        return rt_throw("ValueError", rt_buf_finish(b))
+    }
+    if bexp >= 1086 and bits != (F_SIGN | (1086 << 52)) {
+        alloc b := rt_buf_new()
+        rt_buf_str(b, what)
+        rt_buf_str(b, "() result ")
+        rt_buf_float(b, bits)
+        rt_buf_str(b, " is outside the i64 range")
+        return rt_throw("ValueError", rt_buf_finish(b))
+    }
+    return __f2i(bits)
+}
+
+proc bi_floor(t, v) {
+    rt_tag := T_INT
+    if t == T_INT {
+        return v
+    }
+    if t == T_FLOAT {
+        return rt_whole_to_int(rt_floor(v), "floor")
+    }
+    return rt_type_error("floor() expects one number")
+}
+
+proc bi_ceil(t, v) {
+    rt_tag := T_INT
+    if t == T_INT {
+        return v
+    }
+    if t == T_FLOAT {
+        return rt_whole_to_int(rt_ceil(v), "ceil")
+    }
+    return rt_type_error("ceil() expects one number")
+}
+
+# round(x): to the nearest whole number, a half going to the even one.
+proc bi_round(t, v) {
+    rt_tag := T_INT
+    if t == T_INT {
+        return v
+    }
+    if t != T_FLOAT {
+        return rt_type_error("round() expects one number")
+    }
+    alloc bexp := (v >> 52) & 2047
+    if bexp >= 1075 {
+        return rt_whole_to_int(v, "round")
+    }
+    alloc whole := __f2i(v)
+    alloc frac := __fsub(v, __i2f(whole)) & (F_SIGN - 1)
+    alloc half := 1022 << 52
+    alloc step := 1
+    if (v & F_SIGN) != 0 {
+        step := -1
+    }
+    if frac == half {
+        if (whole & 1) != 0 {
+            whole := whole + step
+        }
+    } elif __flt(half, frac) {
+        whole := whole + step
+    }
+    return whole
+}
+
+proc bi_abs(t, v) {
+    if t == T_INT {
+        if v == INT_MIN - 1 {
+            return rt_err_overflow("abs")
+        }
+        rt_tag := T_INT
+        if v < 0 {
+            return 0 - v
+        }
+        return v
+    }
+    if t == T_FLOAT {
+        rt_tag := T_FLOAT
+        return v & (F_SIGN - 1)
+    }
+    return rt_type_error("abs() expects one number")
+}
+
+proc bi_sqrt(t, v) {
+    alloc x := rt_as_float(t, v)
+    if __flt(x, 0) {
+        return rt_value_error("sqrt() of a negative number")
+    }
+    rt_tag := T_FLOAT
+    return __fsqrt(x)
+}
+
+proc bi_log(t, v) {
+    alloc x := rt_as_float(t, v)
+    if __fle(x, 0) {
+        return rt_value_error("log() requires a positive number")
+    }
+    rt_tag := T_FLOAT
+    return __flog(x)
+}
+
+proc bi_sin(t, v) {
+    alloc x := rt_as_float(t, v)
+    rt_tag := T_FLOAT
+    return __fsin(x)
+}
+
+proc bi_cos(t, v) {
+    alloc x := rt_as_float(t, v)
+    rt_tag := T_FLOAT
+    return __fcos(x)
+}
+
+proc bi_tan(t, v) {
+    alloc x := rt_as_float(t, v)
+    rt_tag := T_FLOAT
+    return __ftan(x)
+}
+
+# x * y, or an overflow error naming `what`.
+proc rt_mul_checked(x, y, what) {
+    alloc r := x * y
+    if x != 0 {
+        if (x == -1 and y == INT_MIN - 1) or r // x != y {
+            rt_err_overflow(what)
+        }
+    }
+    return r
+}
+
+# base ** exp for whole numbers, exp >= 0.
+proc rt_ipow(base, exp) {
+    alloc result := 1
+    loop exp > 0 {
+        if (exp & 1) != 0 {
+            result := rt_mul_checked(result, base, "pow")
+        }
+        exp := exp >> 1
+        if exp > 0 {
+            base := rt_mul_checked(base, base, "pow")
+        }
+    }
+    return result
+}
+
+# x ** y for floats, with the special cases the C library has.
+proc rt_fpow(x, y) {
+    alloc one := 1023 << 52
+    alloc mag := F_SIGN - 1
+    alloc ax := x & mag
+    alloc ay := y & mag
+    if ay == 0 or x == one {
+        return one
+    }
+    if ax > F_INF or ay > F_INF {
+        return F_NAN
+    }
+    # Is y a whole number, and an odd one?
+    alloc ywhole := 0
+    alloc yodd := 0
+    alloc yi := 0
+    alloc yexp := (y >> 52) & 2047
+    if yexp >= 1086 {
+        ywhole := 1
+    } elif yexp >= 1023 {
+        yi := __f2i(y)
+        if __i2f(yi) == y {
+            ywhole := 1
+            yodd := yi & 1
+        }
+    }
+    alloc yneg := (y & F_SIGN) != 0
+    alloc sign := 0
+    if (x & F_SIGN) != 0 and yodd {
+        sign := F_SIGN
+    }
+    if ax == 0 {
+        if yneg {
+            return F_INF | sign
+        }
+        return sign
+    }
+    if ax == F_INF {
+        if yneg {
+            return sign
+        }
+        return F_INF | sign
+    }
+    if ay == F_INF {
+        if ax == one {
+            return one
+        }
+        if (ax > one) == (yneg == 0) {
+            return F_INF
+        }
+        return 0
+    }
+    if (x & F_SIGN) != 0 and ywhole == 0 {
+        return F_NAN
+    }
+    # A whole number to a small whole power is worked out exactly.
+    if ywhole and yneg == 0 and yi > 0 and yi <= 64 and ax < (1076 << 52) {
+        alloc xi := __f2i(ax)
+        if __i2f(xi) == ax {
+            alloc r := 1
+            alloc k := 0
+            loop k < yi and r < 9007199254740992 {
+                # Both below 2**53, so the 128-bit product tells all.
+                if __mulhi(r, xi) != 0 or r * xi < 0 {
+                    r := 9007199254740992
+                } else {
+                    r := r * xi
+                }
+                k := k + 1
+            }
+            if r < 9007199254740992 {
+                return __i2f(r) | sign
+            }
+        }
+    }
+    return __fpow(ax, y) | sign
+}
+
+proc bi_pow(at, a, bt, b) {
+    if at == T_INT and bt == T_INT and b >= 0 and b <= 4294967295 {
+        rt_tag := T_INT
+        return rt_ipow(a, b)
+    }
+    alloc x := rt_as_float(at, a)
+    alloc y := rt_as_float(bt, b)
+    rt_tag := T_FLOAT
+    return rt_fpow(x, y)
+}
+
+# --- lists and dicts ---------------------------------------------------------
+
+# freeze(d): a copy of the dict that cannot be written to.
+proc bi_freeze(t, v) {
+    if t != T_DICT {
+        return rt_type_error("freeze() expects a dict (type mismatch)")
+    }
+    rt_tag := T_DICT
+    if __peek64(v + D_FROZEN) {
+        __poke64(v, __peek64(v) + 1)
+        return v
+    }
+    alloc d := rt_dict_new()
+    alloc n := __peek64(v + D_LEN)
+    alloc i := 0
+    loop i < n {
+        alloc e := __peek64(v + D_ENTRIES) + i * 32
+        rt_inc(__peek64(e + 24), __peek64(e + 16))
+        rt_dict_put(d, __peek64(e), __peek64(e + 24), __peek64(e + 16))
+        i := i + 1
+    }
+    __poke64(d + D_FROZEN, 1)
+    return d
+}
+
+proc bi_dict_keys(t, v) {
+    if t != T_DICT {
+        return rt_type_error("dict_keys() expects a dict")
+    }
+    alloc n := __peek64(v + D_LEN)
+    alloc l := rt_list_alloc(n)
+    alloc items := __peek64(l + L_ITEMS)
+    alloc i := 0
+    loop i < n {
+        alloc key := __peek64(__peek64(v + D_ENTRIES) + i * 32)
+        __poke64(key, __peek64(key) + 1)
+        __poke64(items + i * 16, key)
+        __poke64(items + i * 16 + 8, T_STR)
+        i := i + 1
+    }
+    __poke64(l + L_LEN, n)
+    rt_tag := T_LIST
+    return l
+}
+
+# has_key(d, k): false for anything that is not a dict.
+proc bi_has_key(t, v, kt, k) {
+    rt_tag := T_BOOL
+    if t != T_DICT {
+        return 0
+    }
+    if kt == T_STR {
+        return rt_dict_find(v, k, rt_str_hash(k)) != 0
+    }
+    alloc key := rt_to_str(kt, k)
+    alloc found := rt_dict_find(v, key, rt_str_hash(key)) != 0
+    rt_drop(T_STR, key)
+    return found
+}
+
+proc bi_list_repeat(t, v, ct, count) {
+    if ct != T_INT {
+        return rt_type_error("list_repeat() expects (any, int)")
+    }
+    if count < 0 {
+        return rt_throw2("ValueError", "list_repeat() count must be non-negative, got ", T_INT, count)
+    }
+    alloc l := rt_list_alloc(count)
+    alloc items := __peek64(l + L_ITEMS)
+    alloc i := 0
+    loop i < count {
+        __poke64(items + i * 16, v)
+        __poke64(items + i * 16 + 8, t)
+        i := i + 1
+    }
+    if t >= T_STR {
+        __poke64(v, __peek64(v) + count)
+    }
+    __poke64(l + L_LEN, count)
+    rt_tag := T_LIST
+    return l
+}
+
+proc bi_append(lt, l, t, v) {
+    if lt != T_LIST {
+        return rt_type_error("append() expects (list, any)")
+    }
+    rt_inc(t, v)
+    rt_list_push(l, t, v)
+    rt_tag := T_NONE
+    return 0
+}
+
+# --- errors and leaving ----------------------------------------------------------
+
+proc bi_panic(t, v) {
+    if t != T_STR {
+        return rt_type_error("panic() expects a string (type mismatch)")
+    }
+    __poke64(v, __peek64(v) + 1)
+    return rt_throw("RuntimeError", v)
+}
+
+proc bi_raise(t, v) {
+    if t != T_STR {
+        return rt_type_error("raise() expects a string (type mismatch)")
+    }
+    __poke64(v, __peek64(v) + 1)
+    return rt_throw("RuntimeError", v)
+}
+
+proc bi_exit_with_error(t, v) {
+    if t != T_STR {
+        return rt_type_error("exit_with_error() expects a string")
+    }
+    rt_out_flush()
+    rt_err_text(v)
+    rt_err_text("\n")
+    return os_exit(1)
+}
+
+proc bi_exit(t, v) {
+    if t != T_INT {
+        return rt_type_error("exit() expects an integer")
+    }
+    return rt_exit(v)
+}
+
+proc bi_print(t, v) {
+    if t != T_STR {
+        return rt_type_error("print() expects a string")
+    }
+    rt_buf_str(rt_out_buf(), v)
+    rt_out_flush()
+    rt_tag := T_NONE
+    return 0
+}
+
+# --- the process and the clock ----------------------------------------------------
+
+proc bi_getpid() {
+    rt_tag := T_INT
+    return os_getpid()
+}
+
+# platform(): the system and processor this program was built for. Only
+# reachable through call_builtin: it lets a program ask "was I built by
+# the x86-64 back end, and for what" in a way that simply fails anywhere
+# else.
+proc bi_platform() {
+    rt_tag := T_STR
+    return os_platform()
+}
+
+proc bi_executable_path() {
+    alloc s := os_exe_path()
+    if s == 0 {
+        rt_tag := T_BOOL
+        return 0
+    }
+    rt_tag := T_STR
+    return s
+}
+
+proc bi_time_ms() {
+    rt_tag := T_INT
+    return os_time_ms()
+}
+
+proc bi_sleep_ms(t, v) {
+    if t != T_INT {
+        return rt_type_error("sleep_ms() expects an int")
+    }
+    if v > 0 {
+        rt_out_flush()
+        os_sleep_ms(v)
+    }
+    rt_tag := T_NONE
+    return 0
+}
+
+proc bi_fork() {
+    rt_out_flush()
+    alloc r := os_fork()
+    if r < 0 {
+        return rt_os_error("fork", "", 0 - r)
+    }
+    rt_tag := T_INT
+    return r
+}
+
+# The strings of a list as a null-terminated array of pointers to
+# their text, for the system. The array is rt_alloc'ed, 8 * (n + 1)
+# bytes. `what` names the builtin for the errors.
+proc rt_argv(lt, l, what) {
+    if lt != T_LIST {
+        return rt_throw("TypeError", rt_str_concat(what, " expects a list of strings"))
+    }
+    alloc n := __peek64(l + L_LEN)
+    alloc items := __peek64(l + L_ITEMS)
+    alloc i := 0
+    loop i < n {
+        if __peek64(items + i * 16 + 8) != T_STR {
+            return rt_throw("TypeError", rt_str_concat(what, " expects a list of strings"))
+        }
+        i := i + 1
+    }
+    if n == 0 {
+        return rt_throw("ValueError", rt_str_concat(what, " needs at least the command"))
+    }
+    alloc argv := rt_alloc(8 * (n + 1))
+    i := 0
+    loop i < n {
+        __poke64(argv + i * 8, __peek64(items + i * 16) + S_DATA)
+        i := i + 1
+    }
+    __poke64(argv + n * 8, 0)
+    return argv
+}
+
+# The system's error code when os_subprocess could not start the child
+# (exit codes can be any number on Windows, so it cannot travel in the
+# result).
+alloc rt_spawn_error := 0
+
+# subprocess(argv): run a program, wait for it, return its exit code.
+proc bi_subprocess(t, v) {
+    alloc argv := rt_argv(t, v, "subprocess()")
+    rt_out_flush()
+    rt_spawn_error := 0
+    alloc code := os_subprocess(v, argv)
+    rt_free(argv, 8 * (__peek64(v + L_LEN) + 1))
+    if rt_spawn_error != 0 {
+        alloc first := __peek64(__peek64(v + L_ITEMS))
+        return rt_os_error("subprocess: cannot exec", first, rt_spawn_error)
+    }
+    rt_tag := T_INT
+    return code
+}
+
+# --- paths and files -----------------------------------------------------------------
+
+# Raise ValueError "<what> '<name>': <the system's words> (os error N)".
+proc rt_os_error_kind(kind, what, name, code) {
+    alloc b := rt_buf_new()
+    rt_buf_str(b, what)
+    if name != 0 and __peek64(name + S_BYTES) > 0 {
+        rt_buf_str(b, " '")
+        rt_buf_str(b, name)
+        rt_buf_str(b, "'")
+    }
+    rt_buf_str(b, ": ")
+    rt_buf_str(b, os_err_text(code))
+    rt_buf_str(b, " (os error ")
+    rt_buf_int(b, code)
+    rt_buf_str(b, ")")
+    return rt_throw(kind, rt_buf_finish(b))
+}
+
+proc rt_os_error(what, name, code) {
+    return rt_os_error_kind("ValueError", what, name, code)
+}
+
+# A path as the program means it: a relative one is taken from the
+# program's current_dir, not from the directory the process is in.
+# Owned.
+proc rt_resolve(path) {
+    if os_is_abs(path) or rt_cwd == 0 {
+        __poke64(path, __peek64(path) + 1)
+        return path
+    }
+    alloc n := __peek64(rt_cwd + S_BYTES)
+    if n == 0 {
+        __poke64(path, __peek64(path) + 1)
+        return path
+    }
+    alloc last := __peek8(rt_cwd + S_DATA + n - 1)
+    if last == 47 or last == 92 {
+        return rt_str_concat(rt_cwd, path)
+    }
+    alloc b := rt_buf_new()
+    rt_buf_str(b, rt_cwd)
+    rt_buf_byte(b, 47)
+    rt_buf_str(b, path)
+    return rt_buf_finish(b)
+}
+
+# Open files: handle h (1 and up) is entry h - 1 of 16 bytes, the
+# system's descriptor + 1 (0 when free) and whether it is binary.
+alloc rt_files := 0
+alloc FILES_MAX := 256
+
+proc rt_file_entry(t, h, what) {
+    if t != T_INT {
+        return rt_throw("TypeError", rt_str_concat(what, " expects a handle"))
+    }
+    if rt_files == 0 or h < 1 or h > FILES_MAX or __peek64(rt_files + (h - 1) * 16) == 0 {
+        return rt_value_error("invalid file handle")
+    }
+    return rt_files + (h - 1) * 16
+}
+
+proc bi_file_open(pt, path, mt, mode) {
+    if pt != T_STR or mt != T_STR {
+        return rt_type_error("file_open() expects path and mode")
+    }
+    alloc kind := -1
+    alloc binary := 0
+    if rt_str_eq(mode, "r") or rt_str_eq(mode, "rb") { kind := 0 }
+    if rt_str_eq(mode, "w") or rt_str_eq(mode, "wb") { kind := 1 }
+    if rt_str_eq(mode, "a") or rt_str_eq(mode, "ab") { kind := 2 }
+    if rt_str_eq(mode, "rb+") { kind := 3 }
+    if rt_str_eq(mode, "wb+") { kind := 4 }
+    alloc nm := __peek64(mode + S_BYTES)
+    if nm > 1 and __peek8(mode + S_DATA + 1) == 98 { binary := 1 }
+    if kind < 0 {
+        return rt_value_error("invalid file mode")
+    }
+    if rt_files == 0 {
+        rt_files := rt_alloc(FILES_MAX * 16)
+        __memset(rt_files, 0, FILES_MAX * 16)
+    }
+    alloc h := 0
+    loop h < FILES_MAX and __peek64(rt_files + h * 16) != 0 {
+        h := h + 1
+    }
+    if h == FILES_MAX {
+        return rt_value_error("too many open files")
+    }
+    alloc full := rt_resolve(path)
+    alloc fd := os_open(full, kind)
+    if fd < 0 {
+        return rt_os_error("cannot open", full, 0 - fd)
+    }
+    rt_drop(T_STR, full)
+    __poke64(rt_files + h * 16, fd + 1)
+    __poke64(rt_files + h * 16 + 8, binary)
+    rt_tag := T_INT
+    return h + 1
+}
+
+# Everything from descriptor fd up to the end, in a new byte buffer.
+proc rt_read_all(fd) {
+    alloc b := rt_buf_new()
+    loop true {
+        rt_buf_reserve(b, 65536)
+        alloc got := os_read(fd, __peek64(b) + __peek64(b + 8), __peek64(b + 16) - __peek64(b + 8))
+        if got <= 0 {
+            break
+        }
+        __poke64(b + 8, __peek64(b + 8) + got)
+    }
+    return b
+}
+
+# A byte buffer as a list of integers; the buffer is freed.
+proc rt_buf_to_list(b) {
+    alloc n := __peek64(b + 8)
+    alloc p := __peek64(b)
+    alloc l := rt_list_alloc(n)
+    alloc items := __peek64(l + L_ITEMS)
+    alloc i := 0
+    loop i < n {
+        __poke64(items + i * 16, __peek8(p + i))
+        __poke64(items + i * 16 + 8, T_INT)
+        i := i + 1
+    }
+    __poke64(l + L_LEN, n)
+    rt_free(p, __peek64(b + 16))
+    rt_free(b, 24)
+    return l
+}
+
+proc bi_file_read(t, h) {
+    alloc e := rt_file_entry(t, h, "file_read()")
+    alloc b := rt_read_all(__peek64(e) - 1)
+    if __peek64(e + 8) {
+        rt_tag := T_LIST
+        return rt_buf_to_list(b)
+    }
+    rt_tag := T_STR
+    return rt_buf_finish(b)
+}
+
+proc bi_file_write(t, h, dt, data) {
+    alloc e := rt_file_entry(t, h, "file_write()")
+    alloc fd := __peek64(e) - 1
+    rt_tag := T_INT
+    if __peek64(e + 8) {
+        if dt != T_LIST {
+            return rt_type_error("file_write() binary handle expects list")
+        }
+        alloc n := __peek64(data + L_LEN)
+        alloc items := __peek64(data + L_ITEMS)
+        alloc buf := rt_alloc(n + 1)
+        alloc i := 0
+        loop i < n {
+            alloc v := __peek64(items + i * 16)
+            if __peek64(items + i * 16 + 8) != T_INT or v < 0 or v > 255 {
+                rt_free(buf, n + 1)
+                return rt_type_error("file_write() expects bytes 0-255")
+            }
+            __poke8(buf + i, v)
+            i := i + 1
+        }
+        alloc r := os_write_all(fd, buf, n)
+        rt_free(buf, n + 1)
+        if r < 0 {
+            return rt_os_error("file_write", 0, 0 - r)
+        }
+        return n
+    }
+    if dt != T_STR {
+        return rt_type_error("file_write() text handle expects string")
+    }
+    alloc r := os_write_all(fd, data + S_DATA, __peek64(data + S_BYTES))
+    if r < 0 {
+        return rt_os_error("file_write", 0, 0 - r)
+    }
+    return __peek64(data + S_BYTES)
+}
+
+proc bi_file_close(t, h) {
+    alloc e := rt_file_entry(t, h, "file_close()")
+    os_close(__peek64(e) - 1)
+    __poke64(e, 0)
+    rt_tag := T_NONE
+    return 0
+}
+
+proc bi_file_seek(t, h, ot, off) {
+    if t != T_INT or ot != T_INT {
+        return rt_type_error("file_seek() expects handle and offset")
+    }
+    if off < 0 {
+        return rt_value_error("file_seek() expects a non-negative offset")
+    }
+    alloc e := rt_file_entry(t, h, "file_seek()")
+    alloc r := os_seek(__peek64(e) - 1, off)
+    if r < 0 {
+        return rt_os_error("file_seek", 0, 0 - r)
+    }
+    rt_tag := T_INT
+    return r
+}
+
+proc bi_file_tell(t, h) {
+    alloc e := rt_file_entry(t, h, "file_tell()")
+    alloc r := os_tell(__peek64(e) - 1)
+    if r < 0 {
+        return rt_os_error("file_tell", 0, 0 - r)
+    }
+    rt_tag := T_INT
+    return r
+}
+
+proc bi_read_file(t, path) {
+    if t != T_STR {
+        return rt_type_error("read_file() expects a file path")
+    }
+    alloc full := rt_resolve(path)
+    alloc fd := os_open(full, 0)
+    if fd < 0 {
+        return rt_os_error_kind("ModuleImportError", "failed to read", full, 0 - fd)
+    }
+    alloc b := rt_read_all(fd)
+    os_close(fd)
+    rt_drop(T_STR, full)
+    rt_tag := T_STR
+    return rt_buf_finish(b)
+}
+
+proc bi_file_exists(t, path) {
+    if t != T_STR {
+        return rt_type_error("file_exists() expects a path")
+    }
+    alloc full := rt_resolve(path)
+    alloc r := os_exists(full)
+    rt_drop(T_STR, full)
+    rt_tag := T_BOOL
+    return r
+}
+
+proc bi_is_dir(t, path) {
+    if t != T_STR {
+        return rt_type_error("is_dir() expects a path")
+    }
+    alloc full := rt_resolve(path)
+    alloc r := os_is_dir(full)
+    rt_drop(T_STR, full)
+    rt_tag := T_BOOL
+    return r
+}
+
+# read_dir(path): the names in a directory, sorted by their bytes.
+proc bi_read_dir(t, path) {
+    if t != T_STR {
+        return rt_type_error("read_dir() expects a directory path")
+    }
+    alloc full := rt_resolve(path)
+    alloc l := rt_list_new()
+    alloc r := os_list_dir(full, l)
+    if r < 0 {
+        rt_drop(T_LIST, l)
+        return rt_os_error("cannot read directory", full, 0 - r)
+    }
+    rt_drop(T_STR, full)
+    # Insertion sort: directories listed this way are small.
+    alloc n := __peek64(l + L_LEN)
+    alloc items := __peek64(l + L_ITEMS)
+    alloc i := 1
+    loop i < n {
+        alloc cur := __peek64(items + i * 16)
+        alloc j := i
+        loop j > 0 and rt_str_cmp(__peek64(items + (j - 1) * 16), cur) > 0 {
+            __poke64(items + j * 16, __peek64(items + (j - 1) * 16))
+            j := j - 1
+        }
+        __poke64(items + j * 16, cur)
+        i := i + 1
+    }
+    rt_tag := T_LIST
+    return l
+}
+
+# make_dir(path): create a directory and any missing parents.
+proc bi_make_dir(t, path) {
+    if t != T_STR {
+        return rt_type_error("make_dir() expects a path")
+    }
+    alloc full := rt_resolve(path)
+    alloc n := __peek64(full + S_BYTES)
+    alloc work := rt_str_from(full + S_DATA, n)
+    alloc p := work + S_DATA
+    loop n > 0 and (__peek8(p + n - 1) == 47 or __peek8(p + n - 1) == 92) {
+        n := n - 1
+        __poke8(p + n, 0)
+    }
+    alloc i := 1
+    loop i <= n {
+        alloc c := __peek8(p + i)
+        if i == n or c == 47 or c == 92 {
+            __poke8(p + i, 0)
+            alloc r := os_mkdir(p)
+            if r < 0 {
+                rt_drop(T_STR, work)
+                return rt_os_error("cannot create directory", full, 0 - r)
+            }
+            __poke8(p + i, c)
+        }
+        i := i + 1
+    }
+    rt_drop(T_STR, work)
+    rt_drop(T_STR, full)
+    rt_tag := T_BOOL
+    return 1
+}
+
+proc bi_chmod(t, path, mt, mode) {
+    if t != T_STR or mt != T_INT {
+        return rt_type_error("chmod() expects (path, int)")
+    }
+    alloc full := rt_resolve(path)
+    alloc r := os_chmod(full, mode)
+    if r < 0 {
+        return rt_os_error("cannot chmod", full, 0 - r)
+    }
+    rt_drop(T_STR, full)
+    rt_tag := T_BOOL
+    return 1
+}
+
+# --- standard input -----------------------------------------------------------------
+#
+# Read through a buffer: [0] data [8] start of what is unread [16] end.
+
+alloc rt_in := 0
+alloc IN_SIZE := 65536
+
+# Make sure something is unread; returns 0 at the end of input.
+proc rt_in_fill() {
+    if rt_in == 0 {
+        rt_in := rt_alloc(24)
+        __poke64(rt_in, rt_alloc(IN_SIZE))
+        __poke64(rt_in + 8, 0)
+        __poke64(rt_in + 16, 0)
+    }
+    if __peek64(rt_in + 8) < __peek64(rt_in + 16) {
+        return 1
+    }
+    alloc got := os_stdin_read(__peek64(rt_in), IN_SIZE)
+    if got <= 0 {
+        return 0
+    }
+    __poke64(rt_in + 8, 0)
+    __poke64(rt_in + 16, got)
+    return 1
+}
+
+# stdin_readline(): the next line without its line end, or false at the
+# end of input.
+proc bi_stdin_readline() {
+    rt_out_flush()
+    if rt_in_fill() == 0 {
+        rt_tag := T_BOOL
+        return 0
+    }
+    alloc b := rt_buf_new()
+    alloc done := 0
+    loop done == 0 and rt_in_fill() {
+        alloc data := __peek64(rt_in)
+        alloc at := __peek64(rt_in + 8)
+        alloc end := __peek64(rt_in + 16)
+        alloc i := at
+        loop i < end and __peek8(data + i) != 10 {
+            i := i + 1
+        }
+        rt_buf_add(b, data + at, i - at)
+        if i < end {
+            done := 1
+            i := i + 1
+        }
+        __poke64(rt_in + 8, i)
+    }
+    alloc n := __peek64(b + 8)
+    if n > 0 and __peek8(__peek64(b) + n - 1) == 13 {
+        __poke64(b + 8, n - 1)
+    }
+    rt_tag := T_STR
+    return rt_buf_finish(b)
+}
+
+# Everything left on standard input, in a new byte buffer.
+proc rt_in_rest() {
+    rt_out_flush()
+    alloc b := rt_buf_new()
+    loop rt_in_fill() {
+        alloc at := __peek64(rt_in + 8)
+        alloc end := __peek64(rt_in + 16)
+        rt_buf_add(b, __peek64(rt_in) + at, end - at)
+        __poke64(rt_in + 8, end)
+    }
+    return b
+}
+
+proc bi_stdin_read() {
+    alloc b := rt_in_rest()
+    rt_tag := T_STR
+    return rt_buf_finish(b)
+}
+
+proc bi_stdin_read_bytes() {
+    alloc b := rt_in_rest()
+    rt_tag := T_LIST
+    return rt_buf_to_list(b)
+}
+
+proc bi_stdin_set_raw(t, v) {
+    if t != T_BOOL {
+        return rt_type_error("stdin_set_raw() expects a bool")
+    }
+    alloc r := os_set_raw(v)
+    if r < 0 {
+        return rt_os_error("stdin_set_raw", 0, 0 - r)
+    }
+    rt_tag := T_NONE
+    return 0
+}
+
+# stdin_read_key(): one byte of input if there is one right now, as a
+# one-character string; false otherwise.
+proc bi_stdin_read_key() {
+    alloc c := -1
+    if rt_in != 0 and __peek64(rt_in + 8) < __peek64(rt_in + 16) {
+        c := __peek8(__peek64(rt_in) + __peek64(rt_in + 8))
+        __poke64(rt_in + 8, __peek64(rt_in + 8) + 1)
+    } else {
+        rt_out_flush()
+        c := os_read_key()
+    }
+    if c < 0 {
+        rt_tag := T_BOOL
+        return 0
+    }
+    return bi_chr(T_INT, c)
+}
+
+# --- pseudo-terminals ------------------------------------------------------------------
+
+proc bi_pty_spawn(t, v) {
+    alloc argv := rt_argv(t, v, "pty_spawn()")
+    rt_out_flush()
+    alloc fd := os_pty_spawn(v, argv)
+    rt_free(argv, 8 * (__peek64(v + L_LEN) + 1))
+    if fd < 0 {
+        return rt_os_error("pty_spawn()", 0, 0 - fd)
+    }
+    rt_tag := T_INT
+    return fd
+}
+
+# pty_read(fd): what the program has written since last time ("" when
+# nothing), or false once it has gone.
+proc bi_pty_read(t, fd) {
+    if t != T_INT {
+        return rt_type_error("pty_read() expects an int fd")
+    }
+    alloc buf := rt_alloc(4096)
+    alloc n := os_pty_read(fd, buf, 4096)
+    if n < 0 {
+        rt_free(buf, 4096)
+        rt_tag := T_BOOL
+        return 0
+    }
+    alloc s := rt_str_from(buf, n)
+    rt_free(buf, 4096)
+    rt_tag := T_STR
+    return s
+}
+
+proc bi_pty_write(t, fd, st, s) {
+    if t != T_INT or st != T_STR {
+        return rt_type_error("pty_write() expects (int fd, string)")
+    }
+    alloc r := os_pty_write(fd, s + S_DATA, __peek64(s + S_BYTES))
+    if r < 0 {
+        return rt_os_error("pty_write", 0, 0 - r)
+    }
+    rt_tag := T_INT
+    return r
+}
+
+proc bi_pty_close(t, fd) {
+    if t != T_INT {
+        return rt_type_error("pty_close() expects an int fd")
+    }
+    os_pty_close(fd)
+    rt_tag := T_NONE
+    return 0
+}
+
+proc bi_pty_resize(t, fd, rt, rows, ct, cols) {
+    if t != T_INT or rt != T_INT or ct != T_INT {
+        return rt_type_error("pty_resize() expects (int fd, int rows, int cols)")
+    }
+    os_pty_resize(fd, rows, cols)
+    rt_tag := T_NONE
+    return 0
+}
+
+# --- TCP ---------------------------------------------------------------------------------
+#
+# Handle h (1 and up) is entry h - 1 of 16 bytes: the system's socket
+# + 1 (0 when free) and 1 for a listener, 0 for a connection.
+
+alloc rt_socks := 0
+alloc SOCKS_MAX := 1024
+
+proc rt_sock_new(sock, listener) {
+    if rt_socks == 0 {
+        rt_socks := rt_alloc(SOCKS_MAX * 16)
+        __memset(rt_socks, 0, SOCKS_MAX * 16)
+    }
+    alloc h := 0
+    loop h < SOCKS_MAX and __peek64(rt_socks + h * 16) != 0 {
+        h := h + 1
+    }
+    if h == SOCKS_MAX {
+        os_tcp_close(sock)
+        return rt_value_error("too many open sockets")
+    }
+    __poke64(rt_socks + h * 16, sock + 1)
+    __poke64(rt_socks + h * 16 + 8, listener)
+    return h + 1
+}
+
+# The entry of a handle that must be a listener (1) or a connection
+# (0); `what` names the builtin.
+proc rt_sock_entry(h, listener, what) {
+    if rt_socks == 0 or h < 1 or h > SOCKS_MAX or __peek64(rt_socks + (h - 1) * 16) == 0 {
+        return rt_throw("ValueError", rt_str_concat(what, ": invalid tcp handle"))
+    }
+    alloc e := rt_socks + (h - 1) * 16
+    if __peek64(e + 8) != listener {
+        if listener {
+            return rt_throw("ValueError", rt_str_concat(what, ": handle is a stream, not a listener"))
+        }
+        return rt_throw("ValueError", rt_str_concat(what, ": handle is a listener, not a stream"))
+    }
+    return e
+}
+
+proc rt_port_check(port, what) {
+    if port < 0 or port > 65535 {
+        alloc b := rt_buf_new()
+        rt_buf_str(b, what)
+        rt_buf_str(b, ": port ")
+        rt_buf_int(b, port)
+        rt_buf_str(b, " out of range 0..65535")
+        return rt_throw("ValueError", rt_buf_finish(b))
+    }
+    return 0
+}
+
+proc bi_tcp_listen(ht, host, pt, port) {
+    if ht != T_STR or pt != T_INT {
+        return rt_type_error("tcp_listen() expects (host: str, port: int)")
+    }
+    rt_port_check(port, "tcp_listen")
+    alloc s := os_tcp_listen(host, port)
+    if s < 0 {
+        return rt_os_error("tcp_listen: cannot bind", host, 0 - s)
+    }
+    rt_tag := T_INT
+    return rt_sock_new(s, 1)
+}
+
+proc bi_tcp_accept(t, h) {
+    if t != T_INT {
+        return rt_type_error("tcp_accept() expects a listener handle")
+    }
+    alloc e := rt_sock_entry(h, 1, "tcp_accept")
+    rt_out_flush()
+    alloc s := os_tcp_accept(__peek64(e) - 1)
+    if s < 0 {
+        return rt_os_error("tcp_accept", 0, 0 - s)
+    }
+    rt_tag := T_INT
+    return rt_sock_new(s, 0)
+}
+
+proc bi_tcp_connect(ht, host, pt, port) {
+    if ht != T_STR or pt != T_INT {
+        return rt_type_error("tcp_connect() expects (host: str, port: int)")
+    }
+    rt_port_check(port, "tcp_connect")
+    alloc s := os_tcp_connect(host, port)
+    if s < 0 {
+        return rt_os_error("tcp_connect: cannot connect to", host, 0 - s)
+    }
+    rt_tag := T_INT
+    return rt_sock_new(s, 0)
+}
+
+# tcp_read(h, max): up to max bytes as a list; an empty list once the
+# other side has closed.
+proc bi_tcp_read(t, h, mt, max) {
+    if t != T_INT or mt != T_INT {
+        return rt_type_error("tcp_read() expects (handle: int, max_bytes: int)")
+    }
+    if max < 0 {
+        return rt_value_error("tcp_read: max_bytes must be non-negative")
+    }
+    alloc e := rt_sock_entry(h, 0, "tcp_read")
+    alloc b := rt_buf_new()
+    rt_buf_reserve(b, max + 1)
+    alloc got := os_tcp_read(__peek64(e) - 1, __peek64(b), max)
+    if got < 0 {
+        rt_free(__peek64(b), __peek64(b + 16))
+        rt_free(b, 24)
+        return rt_os_error("tcp_read", 0, 0 - got)
+    }
+    __poke64(b + 8, got)
+    rt_tag := T_LIST
+    return rt_buf_to_list(b)
+}
+
+# tcp_write(h, data): data is a string or a list of bytes.
+proc bi_tcp_write(t, h, dt, data) {
+    if t != T_INT or (dt != T_STR and dt != T_LIST) {
+        return rt_type_error("tcp_write() expects (handle: int, data: str | [int])")
+    }
+    alloc e := rt_sock_entry(h, 0, "tcp_write")
+    alloc s := data
+    if dt == T_LIST {
+        s := rt_list_bytes(data, "tcp_write()")
+    }
+    alloc n := __peek64(s + S_BYTES)
+    alloc r := os_tcp_write(__peek64(e) - 1, s + S_DATA, n)
+    if dt == T_LIST {
+        rt_drop(T_STR, s)
+    }
+    if r < 0 {
+        return rt_os_error("tcp_write", 0, 0 - r)
+    }
+    rt_tag := T_INT
+    return n
+}
+
+proc bi_tcp_close(t, h) {
+    if t != T_INT {
+        return rt_type_error("tcp_close() expects a handle")
+    }
+    if rt_socks == 0 or h < 1 or h > SOCKS_MAX or __peek64(rt_socks + (h - 1) * 16) == 0 {
+        return rt_value_error("invalid tcp handle")
+    }
+    alloc e := rt_socks + (h - 1) * 16
+    os_tcp_close(__peek64(e) - 1)
+    __poke64(e, 0)
+    rt_tag := T_NONE
+    return 0
+}
+
+# --- calling a builtin by name -------------------------------------------------------------
+#
+# call_builtin(name, args) is how a program written in OMG that runs
+# other programs (vm.omg) reaches the builtins. The table is a dict
+# from name to a row: [0] proc, [8] number of arguments, [16] the next
+# row for the same name with another number of arguments.
+
+alloc rt_bi_dict := 0
+
+proc rt_bi_add(name, fn, argc) {
+    alloc row := rt_alloc(24)
+    __poke64(row, fn)
+    __poke64(row + 8, argc)
+    __poke64(row + 16, 0)
+    alloc e := rt_dict_find(rt_bi_dict, name, rt_str_hash(name))
+    if e != 0 {
+        __poke64(row + 16, __peek64(e + 16))
+    }
+    rt_dict_put(rt_bi_dict, name, T_INT, row)
+    return 0
+}
+
+proc rt_bi_init() {
+    rt_bi_dict := rt_dict_new()
+    rt_bi_add("length", bi_length, 1)
+    rt_bi_add("chr", bi_chr, 1)
+    rt_bi_add("ascii", bi_ascii, 1)
+    rt_bi_add("hex", bi_hex, 1)
+    rt_bi_add("binary", bi_binary_1, 1)
+    rt_bi_add("binary", bi_binary_2, 2)
+    rt_bi_add("string_bytes", bi_string_bytes, 1)
+    rt_bi_add("bytes_to_string", bi_bytes_to_string, 1)
+    rt_bi_add("float_bits", bi_float_bits, 1)
+    rt_bi_add("bits_to_float", bi_bits_to_float, 1)
+    rt_bi_add("int", bi_int, 1)
+    rt_bi_add("float", bi_float, 1)
+    rt_bi_add("floor", bi_floor, 1)
+    rt_bi_add("ceil", bi_ceil, 1)
+    rt_bi_add("round", bi_round, 1)
+    rt_bi_add("abs", bi_abs, 1)
+    rt_bi_add("sqrt", bi_sqrt, 1)
+    rt_bi_add("log", bi_log, 1)
+    rt_bi_add("sin", bi_sin, 1)
+    rt_bi_add("cos", bi_cos, 1)
+    rt_bi_add("tan", bi_tan, 1)
+    rt_bi_add("pow", bi_pow, 2)
+    rt_bi_add("freeze", bi_freeze, 1)
+    rt_bi_add("dict_keys", bi_dict_keys, 1)
+    rt_bi_add("has_key", bi_has_key, 2)
+    rt_bi_add("list_repeat", bi_list_repeat, 2)
+    rt_bi_add("append", bi_append, 2)
+    rt_bi_add("panic", bi_panic, 1)
+    rt_bi_add("raise", bi_raise, 1)
+    rt_bi_add("exit_with_error", bi_exit_with_error, 1)
+    rt_bi_add("exit", bi_exit, 1)
+    rt_bi_add("print", bi_print, 1)
+    rt_bi_add("getpid", bi_getpid, 0)
+    rt_bi_add("platform", bi_platform, 0)
+    rt_bi_add("executable_path", bi_executable_path, 0)
+    rt_bi_add("time_ms", bi_time_ms, 0)
+    rt_bi_add("sleep_ms", bi_sleep_ms, 1)
+    rt_bi_add("fork", bi_fork, 0)
+    rt_bi_add("subprocess", bi_subprocess, 1)
+    rt_bi_add("file_open", bi_file_open, 2)
+    rt_bi_add("file_read", bi_file_read, 1)
+    rt_bi_add("file_write", bi_file_write, 2)
+    rt_bi_add("file_close", bi_file_close, 1)
+    rt_bi_add("file_seek", bi_file_seek, 2)
+    rt_bi_add("file_tell", bi_file_tell, 1)
+    rt_bi_add("read_file", bi_read_file, 1)
+    rt_bi_add("file_exists", bi_file_exists, 1)
+    rt_bi_add("is_dir", bi_is_dir, 1)
+    rt_bi_add("read_dir", bi_read_dir, 1)
+    rt_bi_add("make_dir", bi_make_dir, 1)
+    rt_bi_add("chmod", bi_chmod, 2)
+    rt_bi_add("stdin_readline", bi_stdin_readline, 0)
+    rt_bi_add("stdin_read", bi_stdin_read, 0)
+    rt_bi_add("stdin_read_bytes", bi_stdin_read_bytes, 0)
+    rt_bi_add("stdin_set_raw", bi_stdin_set_raw, 1)
+    rt_bi_add("stdin_read_key", bi_stdin_read_key, 0)
+    rt_bi_add("pty_spawn", bi_pty_spawn, 1)
+    rt_bi_add("pty_read", bi_pty_read, 1)
+    rt_bi_add("pty_write", bi_pty_write, 2)
+    rt_bi_add("pty_close", bi_pty_close, 1)
+    rt_bi_add("pty_resize", bi_pty_resize, 3)
+    rt_bi_add("tcp_listen", bi_tcp_listen, 2)
+    rt_bi_add("tcp_accept", bi_tcp_accept, 1)
+    rt_bi_add("tcp_connect", bi_tcp_connect, 2)
+    rt_bi_add("tcp_read", bi_tcp_read, 2)
+    rt_bi_add("tcp_write", bi_tcp_write, 2)
+    rt_bi_add("tcp_close", bi_tcp_close, 1)
+    rt_bi_add("call_builtin", bi_call_builtin, 2)
+    return 0
+}
+
+proc bi_call_builtin(nt, name, lt, list) {
+    if nt != T_STR or lt != T_LIST {
+        return rt_type_error("call_builtin() expects a name and argument list")
+    }
+    if rt_bi_dict == 0 {
+        rt_bi_init()
+    }
+    alloc e := rt_dict_find(rt_bi_dict, name, rt_str_hash(name))
+    if e == 0 {
+        return rt_throw2("TypeError", "unknown builtin: ", T_STR, name)
+    }
+    alloc n := __peek64(list + L_LEN)
+    alloc row := __peek64(e + 16)
+    loop row != 0 and __peek64(row + 8) != n {
+        row := __peek64(row + 16)
+    }
+    if row == 0 {
+        alloc b := rt_buf_new()
+        rt_buf_str(b, name)
+        rt_buf_str(b, "() does not take ")
+        rt_buf_int(b, n)
+        rt_buf_str(b, " argument(s) (arity mismatch)")
+        return rt_throw("TypeError", rt_buf_finish(b))
+    }
+    alloc fn := __peek64(row)
+    alloc a := __peek64(list + L_ITEMS)
+    if n == 0 {
+        return __icall0(fn)
+    }
+    if n == 1 {
+        return __icall2(fn, __peek64(a + 8), __peek64(a))
+    }
+    if n == 2 {
+        return __icall4(fn, __peek64(a + 8), __peek64(a), __peek64(a + 24), __peek64(a + 16))
+    }
+    return __icall6(fn, __peek64(a + 8), __peek64(a), __peek64(a + 24), __peek64(a + 16), __peek64(a + 40), __peek64(a + 32))
+}
