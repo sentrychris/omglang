@@ -199,7 +199,7 @@ try {
 args := ["omg-fmt.omg", "/tmp/messy.omg"]
 banner("omg-fmt")
 try {
-    import "./omg/omg-fmt.omg" as _fmt
+    import "./dev/omg-fmt.omg" as _fmt
     emit "  [PASS]"
     passed := passed + 1
 } except err {
@@ -214,7 +214,7 @@ write_file("/tmp/leaf.omg", ";;;omg\nemit 1\n")
 args := ["omg-deps.omg", "/tmp/leaf.omg"]
 banner("omg-deps")
 try {
-    import "./omg/omg-deps.omg" as _deps
+    import "./dev/omg-deps.omg" as _deps
     emit "  [PASS]"
     passed := passed + 1
 } except err {
@@ -227,7 +227,7 @@ try {
 args := ["omg-bundle.omg", "/tmp/leaf.omg", "/tmp/leaf-bundle.omg"]
 banner("omg-bundle")
 try {
-    import "./omg/omg-bundle.omg" as _bundle
+    import "./dev/omg-bundle.omg" as _bundle
     emit "  [PASS]"
     passed := passed + 1
 } except err {

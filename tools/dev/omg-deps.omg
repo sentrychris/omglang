@@ -1,10 +1,10 @@
 ;;;omg
 
-import "../modules/lib.omg" as lib
+import "../lib/lib.omg" as lib
 
 # omg-deps — print the import graph of an OMG program as an indented tree.
 #
-# Usage:  omg tools/omg/omg-deps.omg <root.omg>
+# Usage:  omg tools/dev/omg-deps.omg <root.omg>
 #
 # Output (example):
 #
@@ -16,7 +16,7 @@ import "../modules/lib.omg" as lib
 # expanded again.
 
 if length(args) < 2 {
-    panic("usage: omg tools/omg/omg-deps.omg <root.omg>")
+    panic("usage: omg tools/dev/omg-deps.omg <root.omg>")
 }
 
 # Track which files are currently on the recursion stack, for cycle

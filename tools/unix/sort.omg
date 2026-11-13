@@ -1,6 +1,6 @@
 ;;;omg
 
-import "../modules/lib.omg" as lib
+import "../lib/lib.omg" as lib
 
 # sort — print all input lines sorted lexicographically.
 #

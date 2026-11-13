@@ -1,6 +1,6 @@
 ;;;omg
 
-# tools/modules/http.omg — a tiny HTTP/1.0 server library for OMG.
+# tools/lib/http.omg — a tiny HTTP/1.0 server library for OMG.
 #
 # Wraps the TCP + file + fork builtins into an accept loop so callers
 # never have to write socket boilerplate. Two layers:
@@ -17,7 +17,7 @@
 #
 # Example:
 #
-#     import "../modules/http.omg" as http
+#     import "../lib/http.omg" as http
 #
 #     proc handle(client, method, path) {
 #         if path == "/api/time" {

@@ -41,3 +41,6 @@ target
 # Contains mutation testing data
 **/mutants.out*/
 tests/conformance/tmp/
+
+# Output of `omg tools/site/ssg.omg tools/site`
+/tools/site/out/

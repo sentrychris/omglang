@@ -92,7 +92,7 @@ in the Rust runtime on Windows.
 
 | Area | On Windows |
 | ---- | ---------- |
-| `fork()` | Raises a catchable `ValueError`; Windows has no `fork`. Use `subprocess()`. (`tools/modules/http.omg` catches this and serves one request at a time.) |
+| `fork()` | Raises a catchable `ValueError`; Windows has no `fork`. Use `subprocess()`. (`tools/lib/http.omg` catches this and serves one request at a time.) |
 | `pty_spawn`, `pty_write` | Raise a catchable `ValueError`. `pty_read` returns `false`; `pty_close` and `pty_resize` do nothing. |
 | Paths | `/` and `\` both work as separators, and `C:\dir` and `\\server\share` are absolute. `current_dir` and `executable_path()` are spelled the way Windows spells them, with backslashes. |
 | Files | Always bytes. Nothing turns `\n` into `\r\n` on the way out or back on the way in, for files or for standard input and output. |

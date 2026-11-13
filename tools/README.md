@@ -6,6 +6,19 @@ Each tool is a standalone `.omg` script in this directory; together they
 demonstrate that OMG handles real tasks. They use the language's strings, 
 lists, dicts, file I/O (text and binary), imports, closures and more.
 
+## Layout
+
+```
+tools/
+├── unix/        wc, grep, sort, uniq, head, tail, hex
+├── *.omg        json, base64, tmpl, md2html, edit (the terminal editor)
+├── dev/         tools for working on OMG code: omg-fmt, omg-bundle, omg-deps
+├── db/          omgdb, a small SQL database
+├── site/        a static-site generator, an HTTP server and a sample site
+├── lib/         modules the tools import: lib.omg (helpers), http.omg (HTTP server library)
+└── test-all.omg runs every tool once and reports pass or fail
+```
+
 ## Running
 
 ```sh
@@ -62,9 +75,9 @@ that's a *compile-time* path concern, not a runtime one.)
 
 | Tool             | What it does |
 |------------------|--------------|
-| `omg/omg-fmt.omg`    | Minimal formatter: re-indents every line using 4-space units sized by accumulated `{ } ( ) [ ]` depth, strips trailing whitespace, preserves blank lines and the contents of strings/docblocks. Idempotent. |
-| `omg/omg-bundle.omg` | Inlines `import` statements into a single self-contained `.omg` file. Top-level names from each imported module are mangled to `__alias__name` and exposed via a `freeze({ ... })` namespace dict; calls like `math.is_prime(97)` continue to work because the dict holds first-class closures. |
-| `omg/omg-deps.omg`   | Prints the import graph of an OMG program as an indented tree. Detects cycles, marks unreadable files. |
+| `dev/omg-fmt.omg`    | Minimal formatter: re-indents every line using 4-space units sized by accumulated `{ } ( ) [ ]` depth, strips trailing whitespace, preserves blank lines and the contents of strings/docblocks. Idempotent. |
+| `dev/omg-bundle.omg` | Inlines `import` statements into a single self-contained `.omg` file. Top-level names from each imported module are mangled to `__alias__name` and exposed via a `freeze({ ... })` namespace dict; calls like `math.is_prime(97)` continue to work because the dict holds first-class closures. |
+| `dev/omg-deps.omg`   | Prints the import graph of an OMG program as an indented tree. Detects cycles, marks unreadable files. |
 
 ### Advanced
 
@@ -72,13 +85,13 @@ Larger, demo-quality programs that compose the smaller tools.
 
 | Tool                  | What it does |
 |-----------------------|--------------|
-| `web/ssg.omg`    | Static site generator. Walks `<site>/content/`, parses front-matter, converts each markdown file via `md2html.omg`, applies `<site>/templates/*.html`, and writes a parallel directory tree to `<site>/out/`. See [`examples/omg-ssg-site/README.md`](../examples/omg-ssg-site/README.md) for the layout, template variables, and an example site. |
+| `site/ssg.omg`    | Static site generator. Walks `<site>/content/`, parses front-matter, converts each markdown file via `md2html.omg`, applies `<site>/templates/*.html`, and writes a parallel directory tree to `<site>/out/`. The folder is itself an example site: `omg tools/site/ssg.omg tools/site` builds [`site/content/`](site/content/) with [`site/templates/`](site/templates/). |
 | `db/omgdb.omg`   | A small SQL database written in OMG — a 4-KB paged on-disk format, a recursive-descent SQL parser (`CREATE` / `INSERT` / `SELECT` / `DELETE` / `DROP` with `WHERE` and `ORDER BY`), and a SQLite-style REPL with one-shot `-e` and stdin pipeline modes. See [`db/README.md`](db/README.md). |
 | `edit.omg`       | **OMG edit** — a nano-shaped terminal editor with a sidebar file browser. Open a file directly or hand it a directory and it drops you into the sidebar to pick one. Editor side: scrollable buffer, save / quit, cut / paste lines (kill-chain semantics), forward search, go-to-line, syntax highlighting for `.omg`. Sidebar side: arrow / vi-style navigation, Enter to descend or open, Backspace for parent dir. `^B` toggles sidebar visibility, `^T` swaps focus between panes. Terminal size detected via `stty size`. AOT-compile for crispest input. |
 
 ### Shared helpers
 
-`modules/lib.omg` collects helpers shared between the tools:
+`lib/lib.omg` collects helpers shared between the tools:
 
 - `split_lines(text)`, `contains(haystack, needle)`
 - `sort_strings(xs)` — in-place insertion sort
@@ -126,7 +139,7 @@ OK
 `omg-bundle.omg` produces a single-file program with identical behaviour:
 
 ```sh
-$ omg tools/omg/omg-bundle.omg examples/import_modules.omg /tmp/bundled.omg
+$ omg tools/dev/omg-bundle.omg examples/import_modules.omg /tmp/bundled.omg
 $ diff <(omg /tmp/bundled.omg) <(omg examples/import_modules.omg) && echo OK
 OK
 ```

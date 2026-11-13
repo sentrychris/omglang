@@ -1,12 +1,12 @@
 ;;;omg
 
-import "../modules/lib.omg" as lib
+import "../lib/lib.omg" as lib
 import "../md2html.omg" as md
 
 # ssg — a tiny static site generator written in OMG.
 #
 # Usage:
-#     omg tools/web/ssg.omg <site-dir>
+#     omg tools/site/ssg.omg <site-dir>
 #
 # Reads:
 #     <site-dir>/content/**/*.md
@@ -242,7 +242,7 @@ proc ensure_parent(path) {
 # === main ================================================================
 
 if length(args) < 2 {
-    panic("usage: omg tools/web/ssg.omg <site-dir>")
+    panic("usage: omg tools/site/ssg.omg <site-dir>")
 }
 
 alloc site := args[1]

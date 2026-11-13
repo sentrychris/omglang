@@ -1,6 +1,6 @@
 ;;;omg
 
-import "../modules/lib.omg" as lib
+import "../lib/lib.omg" as lib
 
 # tail — print the last N lines of each file (default 10).  When given
 # more than one file, separates each with a banner header line.

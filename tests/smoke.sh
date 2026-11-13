@@ -254,17 +254,17 @@ bad_program "nested proc called with the wrong argument count" \
     "function 'f' expects 1 argument, got 2"
 
 # --- 7. The HTTP server answers a request -------------------------------------
-# tools/modules/http.omg forks a child per connection. Windows has no
+# tools/lib/http.omg forks a child per connection. Windows has no
 # fork(), and the server used to die there on its first request; it now
 # falls back to serving in-process. This check runs on every CI
 # platform, so it covers both paths.
 echo
-echo "== HTTP server (tools/web/http_server.omg) =="
+echo "== HTTP server (tools/site/http_server.omg) =="
 if command -v curl >/dev/null 2>&1; then
     HTTP_PORT=19876
     mkdir -p "$WORK/webroot"
     echo "hello from omg" > "$WORK/webroot/hello.txt"
-    "$OMG" --rust tools/web/http_server.omg "$WORK/webroot" "$HTTP_PORT" >"$WORK/http.log" 2>&1 &
+    "$OMG" --rust tools/site/http_server.omg "$WORK/webroot" "$HTTP_PORT" >"$WORK/http.log" 2>&1 &
     HTTP_PID=$!
     http_get() { curl -s -m 5 "http://127.0.0.1:$HTTP_PORT$1" 2>/dev/null | norm; }
     body=""

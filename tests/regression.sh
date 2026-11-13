@@ -18,7 +18,7 @@ require_native_toolchain
 
 section "Regression: control flow inside try"
 
-CFT="$REPO_ROOT/tools/tests/control_flow_in_try.omg"
+CFT="$REPO_ROOT/tests/regression/control_flow_in_try.omg"
 expected_cft=$("$OMG_RUST" "$CFT" 2>&1)
 
 assert_stdout "control_flow_in_try via Rust VM" "$expected_cft" \

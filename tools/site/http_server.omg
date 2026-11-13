@@ -1,15 +1,15 @@
 ;;;omg
 
 # A static-file HTTP server written in OMG. Most of the work lives in
-# the http library at tools/modules/http.omg; this file is just a
+# the http library at tools/lib/http.omg; this file is just a
 # driver: parse args, optionally add custom routes, hand control off.
 #
 # Usage:
-#   omg tools/web/http_server.omg                       # webroot=current directory, port=9876
-#   omg tools/web/http_server.omg path/to/webroot
-#   omg tools/web/http_server.omg path/to/webroot 8000
+#   omg tools/site/http_server.omg                       # webroot=current directory, port=9876
+#   omg tools/site/http_server.omg path/to/webroot
+#   omg tools/site/http_server.omg path/to/webroot 8000
 
-import "../modules/http.omg" as http
+import "../lib/http.omg" as http
 
 alloc webroot := "."
 alloc port := 9876

@@ -370,7 +370,7 @@ There's a regression test for an actual compiler bug we fixed earlier:
   exception-handler block, leaving a stale handler that caught later panics.
 - The fix lived in *both* `compiler.rs` and `compiler.omg`, because both
   emit `PopBlock` instructions.
-- The test: [tools/tests/control_flow_in_try.omg](../../tools/tests/control_flow_in_try.omg)
+- The test: [tests/regression/control_flow_in_try.omg](../../tests/regression/control_flow_in_try.omg)
 
 That test exercises four leak paths and should always pass on every
 runtime. Use it as a template for adding regression tests when you fix
