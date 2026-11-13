@@ -3,8 +3,8 @@
 # player) and the window builtins the player draws with.
 #
 # H.264 decoding is exact: every decoder must produce the same pictures,
-# bit for bit. So the referee for the decoder is ffmpeg. The two clips
-# in tests/video were made with it, and beside each is the checksum
+# bit for bit. So the referee for the decoder is ffmpeg. The clips in
+# tests/video were made with it, and beside each is the checksum
 # ffmpeg computes for every picture (see tests/video/README.md). ffmpeg
 # is not needed to run the tests.
 
@@ -48,6 +48,27 @@ assert_eq "a raw H.264 stream decodes to the pictures ffmpeg gets (built)" "$wan
     "$(frames_of "$TMPDIR_TEST/mp4info" tests/video/stream.h264 --frames)"
 assert_eq "a raw H.264 stream decodes to the pictures ffmpeg gets (interpreted)" "$want" \
     "$(frames_of "$OMG_NATIVE" tools/video/mp4info.omg tests/video/stream.h264 --frames)"
+
+# Main profile: arithmetic coding (CABAC), B pictures, which are built
+# from a picture before and a picture after and so are stored out of
+# order, and weighted prediction (the clip fades in).
+want=$(tr -d '\r' < tests/video/main.mp4.frames)
+assert_eq "a Main profile file decodes to the pictures ffmpeg gets" "$want" \
+    "$(frames_of "$TMPDIR_TEST/mp4info" tests/video/main.mp4 --frames)"
+
+# High profile: 8x8 transforms and 8x8 intra prediction, here with the
+# other entropy coder (CAVLC), the encoder's own quantisation weights,
+# and B pictures that other B pictures are built from.
+want=$(tr -d '\r' < tests/video/high.mp4.frames)
+assert_eq "a High profile file decodes to the pictures ffmpeg gets" "$want" \
+    "$(frames_of "$TMPDIR_TEST/mp4info" tests/video/high.mp4 --frames)"
+
+# A raw High profile stream with B pictures: there is no file around it
+# to say when each picture is shown, so the decoder must put them in
+# order itself.
+want=$(tr -d '\r' < tests/video/bframes.h264.frames)
+assert_eq "a raw stream with B pictures comes out in the order it is shown" "$want" \
+    "$(frames_of "$TMPDIR_TEST/mp4info" tests/video/bframes.h264 --frames)"
 
 echo "this is not a video" > "$TMPDIR_TEST/not-a-video.mp4"
 out=$("$TMPDIR_TEST/mp4info" "$TMPDIR_TEST/not-a-video.mp4" 2>&1); code=$?
@@ -131,6 +152,18 @@ window_checks() {
         "$("$TMPDIR_TEST/play" tests/video/clip.mp4 --fast 2>&1)"
     assert_contains "the player plays a file to its end (interpreted)" "20 pictures shown" \
         "$("$OMG_NATIVE" tools/video/play.omg tests/video/clip.mp4 --fast 2>&1)"
+    # B pictures are stored out of order: all 18 must still be shown. And
+    # without --fast the player waits for each picture's time.
+    assert_contains "the player plays a file with B pictures" "18 pictures shown" \
+        "$("$TMPDIR_TEST/play" tests/video/high.mp4 --fast 2>&1)"
+    # (a busy machine may leave pictures out, so only the time is checked:
+    # the clip lasts 1.2 seconds)
+    secs=$("$TMPDIR_TEST/play" tests/video/main.mp4 2>&1 | sed -n 's/.* pictures shown in \([0-9]*\)\..*/\1/p')
+    if [ -n "$secs" ] && [ "$secs" -ge 1 ]; then
+        pass "the player keeps the file's time"
+    else
+        fail "the player keeps the file's time"
+    fi
 }
 
 target=$(omg_default_target)
