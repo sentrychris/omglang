@@ -1,6 +1,6 @@
 /*
  * omg_rt.h  →  inlined at the top of every .c emitted by
- *              bootstrap/src/native-c.omg (`omg --build`, `omg --emit-c`).
+ *              src/backends/native-c.omg (`omg --build`, `omg --emit-c`).
  *
  * The OMG C runtime: value types, refcounting, list/dict/string
  * helpers, error handling, file + TCP builtins. Every transpiled
@@ -11,7 +11,7 @@
  * the BSDs) and Windows sits behind `#ifdef _WIN32`, in the "Platform
  * layer" section below and in the handful of builtins that talk to the
  * operating system directly. The behaviour on Windows follows the Rust
- * runtime's Windows backend (runtime/src/vm/sys.rs): what cannot exist
+ * runtime's Windows backend (rust/src/vm/sys.rs): what cannot exist
  * there (fork, pseudo-terminals) raises a catchable ValueError.
  * On Windows the supported C compilers are GCC and Clang (MinGW-w64).
  */
@@ -128,7 +128,7 @@ typedef struct {
  * (args beyond 6 spill); sibling-CO still works because the args are
  * passed inline. If you raise it further, mirror the change in
  * native-c.omg (args_list + emit_function), compiler.omg's allowlist,
- * and the docs in docs/native/06-runtime.md. */
+ * and the docs in docs/06-runtime.md. */
 #define OMG_MAX_ARITY 32
 
 typedef Value (*OmgFn)(Value *captured, int cap_count, int argc,
@@ -315,7 +315,7 @@ static const char *omg_strip_mod_prefix_cstr(const char *name) {
 }
 
 /* Print a Python-style traceback to stderr. Identical layout to the
- * Rust runtime's `format_traceback` (runtime/src/vm.rs) so AOT, native
+ * Rust runtime's `format_traceback` (rust/src/vm.rs) so AOT, native
  * interp, and Rust all share the same error UX. */
 static void omg_emit_traceback(const char *fullmsg) {
     fprintf(stderr, "Traceback (most recent call last):\n");
@@ -675,7 +675,7 @@ static Value omg_str_concat(Value a, Value b);
 /* If either operand is a float, both are promoted to double. */
 static inline int omg_is_float(Value v) { return v.tag == OMG_FLOAT; }
 
-/* Coerce `v` to int64. Mirrors `Value::as_int` in runtime/src/value.rs:
+/* Coerce `v` to int64. Mirrors `Value::as_int` in rust/src/value.rs:
  * accept ints, bools, finite in-range floats (truncated toward zero),
  * and numeric strings (parsed). Reject lists, dicts, closures, none,
  * and non-numeric strings with a TypeError so a downstream arithmetic
@@ -2346,7 +2346,7 @@ static Value omg_builtin_sleep_ms(Value v) {
 #ifdef _WIN32
 /* --- Windows console ------------------------------------------------------
  * The same two builtins on the Windows console. This is the C twin of
- * the Windows backend in runtime/src/vm/sys.rs: raw mode is three
+ * the Windows backend in rust/src/vm/sys.rs: raw mode is three
  * console-mode flags, keys arrive as input records, and the bytes handed
  * to the program are the UTF-8 / VT sequences a Unix terminal would
  * have sent, so the games and the editor need no Windows code. */
@@ -2576,7 +2576,7 @@ static Value omg_builtin_stdin_read_key(void) {
  * polls cheaply and returns "" when no data is available, so the
  * caller can multiplex with stdin in a single loop.
  *
- * The whole pty package is mirrored in runtime/src/vm/builtins.rs;
+ * The whole pty package is mirrored in rust/src/vm/builtins.rs;
  * keep them in sync.
  */
 

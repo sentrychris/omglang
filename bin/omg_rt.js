@@ -1,8 +1,8 @@
 // omg_rt.js  →  inlined at the top of every .js emitted by
-//               bootstrap/src/native-js.omg (`omg --emit-js`).
+//               src/backends/native-js.omg (`omg --emit-js`).
 //
 // Runtime for OMG programs compiled to JavaScript. Mirrors
-// bootstrap/src/omg_rt.h: provides the value coercion, the
+// src/runtime/omg_rt.h: provides the value coercion, the
 // arithmetic/string ops, and the builtins that AOT-emitted JS calls
 // into. Every transpiled program has this file pasted in, so the
 // result is a single self-contained JS file you can hand to `node`
