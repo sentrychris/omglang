@@ -1,0 +1,4674 @@
+;;;omg
+
+# native-x64.omg
+#
+# The native back end: bytecode in, an x86-64 executable out, with no C
+# compiler, assembler or linker anywhere in between.
+#
+#     import "native-x64.omg" as nx
+#     alloc image := nx.generate(program, runtime, "linux", source_path)
+#
+# `program` and `runtime` are parsed bytecode ([code, funcs, src_files,
+# src_lines], as bytecode.omg returns it). The result is the bytes of
+# the executable.
+#
+# The file is one module on purpose: a call across modules goes through
+# CALL_VALUE, and the encoder below is called a few million times per
+# build. Its parts, in order:
+#
+#   1. Encoder       x_*    one proc per instruction form, two buffers
+#   2. Pre-pass      pp_*   and/or/not patterns, jump threading
+#   3. Raw mode      rw_*   code for the runtime (src/runtime/x64/*.omg),
+#                           where every value is one untagged machine word
+#   4. Managed mode  mg_*   code for the user's program, where a value is
+#                           a (tag, payload) pair and heap objects are
+#                           reference counted
+#   5. Images        elf_*, pe_*   the executable file formats
+#   6. generate()
+#
+
+#
+# There is no assembler syntax here. Each proc appends the bytes of one
+# instruction to the code buffer. Registers are their hardware numbers
+# (RAX = 0 ... R15 = 15). A memory operand is a (base, disp) pair:
+#
+#     base 0..15   [register + disp]
+#     base DATA    the byte at offset `disp` of the data section
+#     base BSS     the byte at offset `disp` of the zero-filled section
+#
+# The last two are encoded RIP-relative, so the code never contains an
+# absolute address and the program can be loaded anywhere.
+#
+# Jumps and calls name a *label*, a number from x_new_label(). A label is
+# given its place with x_bind(); the distances are filled in by x_link(),
+# once everything has been emitted.
+
+import "backend.omg" as be
+
+alloc RAX := 0
+alloc RCX := 1
+alloc RDX := 2
+alloc RBX := 3
+alloc RSP := 4
+alloc RBP := 5
+alloc RSI := 6
+alloc RDI := 7
+alloc R8  := 8
+alloc R9  := 9
+alloc R10 := 10
+alloc R11 := 11
+alloc R12 := 12
+alloc R13 := 13
+alloc R14 := 14
+alloc R15 := 15
+
+alloc DATA := -1
+alloc BSS  := -2
+alloc IAT  := -3            # a slot of the import address table (Windows)
+
+# Condition codes, as the low four bits of Jcc / SETcc.
+alloc CC_O  := 0
+alloc CC_B  := 2
+alloc CC_AE := 3
+alloc CC_E  := 4
+alloc CC_NE := 5
+alloc CC_BE := 6
+alloc CC_A  := 7
+alloc CC_S  := 8
+alloc CC_NS := 9
+alloc CC_P  := 10
+alloc CC_NP := 11
+alloc CC_L  := 12
+alloc CC_GE := 13
+alloc CC_LE := 14
+alloc CC_G  := 15
+
+# The ALU family shares one encoding scheme: `op` is the instruction's
+# number in it (the /digit of the immediate forms).
+alloc ALU_ADD := 0
+alloc ALU_OR  := 1
+alloc ALU_AND := 4
+alloc ALU_SUB := 5
+alloc ALU_XOR := 6
+alloc ALU_CMP := 7
+
+# === Buffers ==============================================================
+
+alloc x_code := []          # machine code
+alloc x_data := []          # initialised data
+alloc x_bss_size := 0       # bytes of zero-filled data after `data`
+
+alloc x_labels := []        # label -> code offset, or -1 while unbound
+alloc x_label_fix := []     # flat: code position of a rel32, label
+alloc x_mem_fix := []       # flat: code position of a disp32, base (DATA/BSS/IAT), offset, bytes after the disp32
+alloc x_data_fix := []      # flat: data position of a u32, label (code offset written at link time)
+alloc x_iat := []           # link time: import number -> address of its slot
+
+proc x_reset() {
+    x_code := []
+    x_data := []
+    x_bss_size := 0
+    x_labels := []
+    x_label_fix := []
+    x_mem_fix := []
+    x_data_fix := []
+    x_iat := []
+}
+
+proc x_here() {
+    return length(x_code)
+}
+
+proc x_new_label() {
+    append(x_labels, -1)
+    return length(x_labels) - 1
+}
+
+proc x_bind(label) {
+    x_labels[label] := length(x_code)
+}
+
+proc x_label_pos(label) {
+    return x_labels[label]
+}
+
+proc x_byte(b) {
+    append(x_code, b & 255)
+}
+
+proc x_bytes2(a, b) {
+    append(x_code, a)
+    append(x_code, b)
+}
+
+proc x_bytes3(a, b, c) {
+    append(x_code, a)
+    append(x_code, b)
+    append(x_code, c)
+}
+
+proc x_u32(n) {
+    append(x_code, n & 255)
+    append(x_code, (n >> 8) & 255)
+    append(x_code, (n >> 16) & 255)
+    append(x_code, (n >> 24) & 255)
+}
+
+proc x_u64(n) {
+    alloc x := n
+    alloc i := 0
+    loop i < 8 {
+        append(x_code, x & 255)
+        x := x >> 8
+        i := i + 1
+    }
+}
+
+# --- data section ---------------------------------------------------------
+
+proc x_data_here() {
+    return length(x_data)
+}
+
+proc x_data_align(n) {
+    loop length(x_data) % n != 0 {
+        append(x_data, 0)
+    }
+    return length(x_data)
+}
+
+proc x_data_u8(b) {
+    append(x_data, b & 255)
+}
+
+proc x_data_u32(n) {
+    append(x_data, n & 255)
+    append(x_data, (n >> 8) & 255)
+    append(x_data, (n >> 16) & 255)
+    append(x_data, (n >> 24) & 255)
+}
+
+proc x_data_u64(n) {
+    alloc x := n
+    alloc i := 0
+    loop i < 8 {
+        append(x_data, x & 255)
+        x := x >> 8
+        i := i + 1
+    }
+}
+
+proc x_data_bytes(bs) {
+    for b in bs {
+        append(x_data, b)
+    }
+}
+
+# A u32 in the data section that will hold the code offset of `label`
+# (its distance from the start of the code).
+proc x_data_label(label) {
+    append(x_data_fix, length(x_data))
+    append(x_data_fix, label)
+    x_data_u32(0)
+}
+
+# Reserve `n` zero bytes, aligned to 8. Returns the BSS offset.
+proc x_bss(n) {
+    alloc at := x_bss_size
+    x_bss_size := x_bss_size + ((n + 7) // 8) * 8
+    return at
+}
+
+# === Encoding helpers =====================================================
+
+proc x_fits8(n) {
+    return n >= -128 and n <= 127
+}
+
+proc x_fits32(n) {
+    return n >= -2147483648 and n <= 2147483647
+}
+
+# REX prefix for an instruction with a ModRM byte. `w` is 1 for a 64-bit
+# operand. Omitted when it would be the empty prefix 0x40.
+proc x_rex(w, reg, rm) {
+    alloc r := 64 + w * 8 + ((reg >> 3) & 1) * 4 + ((rm >> 3) & 1)
+    if r != 64 {
+        append(x_code, r)
+    }
+}
+
+# ModRM for register-direct: mod = 11.
+proc x_modrm_rr(reg, rm) {
+    append(x_code, 192 + (reg & 7) * 8 + (rm & 7))
+}
+
+# ModRM (and SIB, displacement) for a memory operand. `after` is how many
+# immediate bytes follow the operand in this instruction; a RIP-relative
+# displacement is measured from the end of the instruction.
+proc x_modrm_mem(reg, base, disp, after) {
+    alloc r := (reg & 7) * 8
+    if base < 0 {
+        append(x_code, r + 5)
+        append(x_mem_fix, length(x_code))
+        append(x_mem_fix, base)
+        append(x_mem_fix, disp)
+        append(x_mem_fix, after)
+        x_u32(0)
+        return false
+    }
+    alloc b := base & 7
+    if disp == 0 and b != 5 {
+        append(x_code, r + b)
+        if b == 4 { append(x_code, 36) }
+    } elif x_fits8(disp) {
+        append(x_code, 64 + r + b)
+        if b == 4 { append(x_code, 36) }
+        append(x_code, disp & 255)
+    } else {
+        append(x_code, 128 + r + b)
+        if b == 4 { append(x_code, 36) }
+        x_u32(disp)
+    }
+    return false
+}
+
+# REX for a memory operand: RIP-relative forms have no base register.
+proc x_rex_mem(w, reg, base) {
+    if base < 0 {
+        x_rex(w, reg, 0)
+    } else {
+        x_rex(w, reg, base)
+    }
+}
+
+# === Moves ================================================================
+
+proc x_mov_rr(dst, src) {
+    if dst == src { return false }
+    x_rex(1, src, dst)
+    append(x_code, 137)
+    x_modrm_rr(src, dst)
+    return false
+}
+
+# dst := [base + disp]
+proc x_load(dst, base, disp) {
+    x_rex_mem(1, dst, base)
+    append(x_code, 139)
+    x_modrm_mem(dst, base, disp, 0)
+}
+
+# [base + disp] := src
+proc x_store(base, disp, src) {
+    x_rex_mem(1, src, base)
+    append(x_code, 137)
+    x_modrm_mem(src, base, disp, 0)
+}
+
+# dst := imm, in the shortest form that holds it.
+proc x_mov_ri(dst, imm) {
+    if imm == 0 {
+        x_rex(0, dst, dst)
+        append(x_code, 49)
+        x_modrm_rr(dst, dst)
+    } elif imm > 0 and imm <= 4294967295 {
+        x_rex(0, 0, dst)
+        append(x_code, 184 + (dst & 7))
+        x_u32(imm)
+    } elif x_fits32(imm) {
+        x_rex(1, 0, dst)
+        append(x_code, 199)
+        x_modrm_rr(0, dst)
+        x_u32(imm)
+    } else {
+        x_rex(1, 0, dst)
+        append(x_code, 184 + (dst & 7))
+        x_u64(imm)
+    }
+    return false
+}
+
+# [base + disp] := imm (sign-extended 32-bit immediate)
+proc x_store_i(base, disp, imm) {
+    x_rex_mem(1, 0, base)
+    append(x_code, 199)
+    x_modrm_mem(0, base, disp, 4)
+    x_u32(imm)
+}
+
+# Narrow loads, zero-extended into the whole register.
+proc x_load8(dst, base, disp) {
+    x_rex_mem(0, dst, base)
+    x_bytes2(15, 182)
+    x_modrm_mem(dst, base, disp, 0)
+}
+
+proc x_load16(dst, base, disp) {
+    x_rex_mem(0, dst, base)
+    x_bytes2(15, 183)
+    x_modrm_mem(dst, base, disp, 0)
+}
+
+proc x_load32(dst, base, disp) {
+    x_rex_mem(0, dst, base)
+    append(x_code, 139)
+    x_modrm_mem(dst, base, disp, 0)
+}
+
+# Narrow stores. The byte form always carries a REX prefix so that
+# registers 4..7 mean SPL..DIL and not AH..BH.
+proc x_store8(base, disp, src) {
+    alloc r := 64 + ((src >> 3) & 1) * 4
+    if base >= 0 { r := r + ((base >> 3) & 1) }
+    append(x_code, r)
+    append(x_code, 136)
+    x_modrm_mem(src, base, disp, 0)
+}
+
+proc x_store16(base, disp, src) {
+    append(x_code, 102)
+    x_rex_mem(0, src, base)
+    append(x_code, 137)
+    x_modrm_mem(src, base, disp, 0)
+}
+
+proc x_store32(base, disp, src) {
+    x_rex_mem(0, src, base)
+    append(x_code, 137)
+    x_modrm_mem(src, base, disp, 0)
+}
+
+proc x_lea(dst, base, disp) {
+    x_rex_mem(1, dst, base)
+    append(x_code, 141)
+    x_modrm_mem(dst, base, disp, 0)
+}
+
+# dst := address of a label in the code.
+proc x_lea_label(dst, label) {
+    x_rex(1, dst, 0)
+    append(x_code, 141)
+    append(x_code, (dst & 7) * 8 + 5)
+    append(x_label_fix, length(x_code))
+    append(x_label_fix, label)
+    x_u32(0)
+}
+
+# === Arithmetic ===========================================================
+
+# dst := dst <op> src
+proc x_alu_rr(op, dst, src) {
+    x_rex(1, src, dst)
+    append(x_code, op * 8 + 1)
+    x_modrm_rr(src, dst)
+}
+
+# dst := dst <op> [base + disp]
+proc x_alu_rm(op, dst, base, disp) {
+    x_rex_mem(1, dst, base)
+    append(x_code, op * 8 + 3)
+    x_modrm_mem(dst, base, disp, 0)
+}
+
+# [base + disp] := [base + disp] <op> src
+proc x_alu_mr(op, base, disp, src) {
+    x_rex_mem(1, src, base)
+    append(x_code, op * 8 + 1)
+    x_modrm_mem(src, base, disp, 0)
+}
+
+# dst := dst <op> imm (imm must fit in 32 bits, sign-extended)
+proc x_alu_ri(op, dst, imm) {
+    x_rex(1, 0, dst)
+    if x_fits8(imm) {
+        append(x_code, 131)
+        x_modrm_rr(op, dst)
+        append(x_code, imm & 255)
+    } else {
+        append(x_code, 129)
+        x_modrm_rr(op, dst)
+        x_u32(imm)
+    }
+}
+
+proc x_alu_mi(op, base, disp, imm) {
+    x_rex_mem(1, 0, base)
+    if x_fits8(imm) {
+        append(x_code, 131)
+        x_modrm_mem(op, base, disp, 1)
+        append(x_code, imm & 255)
+    } else {
+        append(x_code, 129)
+        x_modrm_mem(op, base, disp, 4)
+        x_u32(imm)
+    }
+}
+
+proc x_test_rr(a, b) {
+    x_rex(1, b, a)
+    append(x_code, 133)
+    x_modrm_rr(b, a)
+}
+
+# dst := dst * src (low 64 bits)
+proc x_imul_rr(dst, src) {
+    x_rex(1, dst, src)
+    x_bytes2(15, 175)
+    x_modrm_rr(dst, src)
+}
+
+proc x_imul_rm(dst, base, disp) {
+    x_rex_mem(1, dst, base)
+    x_bytes2(15, 175)
+    x_modrm_mem(dst, base, disp, 0)
+}
+
+# The one-operand group F7: /2 NOT, /3 NEG, /4 MUL, /6 DIV, /7 IDIV.
+proc x_group_f7(ext, reg) {
+    x_rex(1, 0, reg)
+    append(x_code, 247)
+    x_modrm_rr(ext, reg)
+}
+
+proc x_neg(reg)  { x_group_f7(3, reg) }
+proc x_not_(reg) { x_group_f7(2, reg) }
+proc x_mul(reg)  { x_group_f7(4, reg) }
+proc x_div(reg)  { x_group_f7(6, reg) }
+proc x_idiv(reg) { x_group_f7(7, reg) }
+
+# Sign-extend RAX into RDX:RAX.
+proc x_cqo() {
+    x_bytes2(72, 153)
+}
+
+# Shifts by CL: /4 SHL, /5 SHR, /7 SAR.
+proc x_shift_cl(ext, reg) {
+    x_rex(1, 0, reg)
+    append(x_code, 211)
+    x_modrm_rr(ext, reg)
+}
+
+proc x_shift_i(ext, reg, n) {
+    x_rex(1, 0, reg)
+    append(x_code, 193)
+    x_modrm_rr(ext, reg)
+    append(x_code, n & 63)
+}
+
+proc x_shl_cl(reg) { x_shift_cl(4, reg) }
+proc x_shr_cl(reg) { x_shift_cl(5, reg) }
+proc x_sar_cl(reg) { x_shift_cl(7, reg) }
+proc x_shl_i(reg, n) { x_shift_i(4, reg, n) }
+proc x_shr_i(reg, n) { x_shift_i(5, reg, n) }
+proc x_sar_i(reg, n) { x_shift_i(7, reg, n) }
+
+proc x_inc_m(base, disp) {
+    x_rex_mem(1, 0, base)
+    append(x_code, 255)
+    x_modrm_mem(0, base, disp, 0)
+}
+
+proc x_dec_m(base, disp) {
+    x_rex_mem(1, 0, base)
+    append(x_code, 255)
+    x_modrm_mem(1, base, disp, 0)
+}
+
+# reg := 1 if the condition holds, else 0 (whole register).
+proc x_setcc(cc, reg) {
+    append(x_code, 64 + ((reg >> 3) & 1))
+    x_bytes2(15, 144 + cc)
+    x_modrm_rr(0, reg)
+    append(x_code, 64 + ((reg >> 3) & 1) * 5)
+    x_bytes2(15, 182)
+    x_modrm_rr(reg, reg)
+}
+
+# dst := src * imm
+proc x_imul_rri(dst, src, imm) {
+    x_rex(1, dst, src)
+    if x_fits8(imm) {
+        append(x_code, 107)
+        x_modrm_rr(dst, src)
+        append(x_code, imm & 255)
+    } else {
+        append(x_code, 105)
+        x_modrm_rr(dst, src)
+        x_u32(imm)
+    }
+}
+
+# Flags of (reg & imm), imm a sign-extended 32-bit value.
+proc x_test_ri(reg, imm) {
+    x_rex(1, 0, reg)
+    append(x_code, 247)
+    x_modrm_rr(0, reg)
+    x_u32(imm)
+}
+
+proc x_test_mi(base, disp, imm) {
+    x_rex_mem(1, 0, base)
+    append(x_code, 247)
+    x_modrm_mem(0, base, disp, 4)
+    x_u32(imm)
+}
+
+# Sign-extend the low 32 bits of src into dst.
+proc x_movsxd(dst, src) {
+    x_rex(1, dst, src)
+    append(x_code, 99)
+    x_modrm_rr(dst, src)
+}
+
+# dst := [base + index * 8 + disp] and the store form. `index` must not
+# be RSP.
+proc x_sib(reg, base, index, scale_bits, disp) {
+    alloc r := (reg & 7) * 8
+    alloc sib := scale_bits * 64 + (index & 7) * 8 + (base & 7)
+    if disp == 0 and (base & 7) != 5 {
+        append(x_code, r + 4)
+        append(x_code, sib)
+    } elif x_fits8(disp) {
+        append(x_code, 64 + r + 4)
+        append(x_code, sib)
+        append(x_code, disp & 255)
+    } else {
+        append(x_code, 128 + r + 4)
+        append(x_code, sib)
+        x_u32(disp)
+    }
+}
+
+proc x_rex_sib(reg, base, index) {
+    append(x_code, 72 + ((reg >> 3) & 1) * 4 + ((index >> 3) & 1) * 2 + ((base >> 3) & 1))
+}
+
+proc x_load_x(dst, base, index, scale_bits, disp) {
+    x_rex_sib(dst, base, index)
+    append(x_code, 139)
+    x_sib(dst, base, index, scale_bits, disp)
+}
+
+proc x_store_x(base, index, scale_bits, disp, src) {
+    x_rex_sib(src, base, index)
+    append(x_code, 137)
+    x_sib(src, base, index, scale_bits, disp)
+}
+
+proc x_lea_x(dst, base, index, scale_bits, disp) {
+    x_rex_sib(dst, base, index)
+    append(x_code, 141)
+    x_sib(dst, base, index, scale_bits, disp)
+}
+
+# === Stack ================================================================
+
+proc x_push(reg) {
+    if reg >= 8 { append(x_code, 65) }
+    append(x_code, 80 + (reg & 7))
+}
+
+proc x_pop(reg) {
+    if reg >= 8 { append(x_code, 65) }
+    append(x_code, 88 + (reg & 7))
+}
+
+proc x_push_m(base, disp) {
+    x_rex_mem(0, 0, base)
+    append(x_code, 255)
+    x_modrm_mem(6, base, disp, 0)
+}
+
+proc x_pop_m(base, disp) {
+    x_rex_mem(0, 0, base)
+    append(x_code, 143)
+    x_modrm_mem(0, base, disp, 0)
+}
+
+# Push a sign-extended 32-bit immediate.
+proc x_push_i(imm) {
+    if x_fits8(imm) {
+        append(x_code, 106)
+        append(x_code, imm & 255)
+    } else {
+        append(x_code, 104)
+        x_u32(imm)
+    }
+}
+
+# === Control flow =========================================================
+
+proc x_rel32(label) {
+    append(x_label_fix, length(x_code))
+    append(x_label_fix, label)
+    x_u32(0)
+}
+
+proc x_jmp(label) {
+    append(x_code, 233)
+    x_rel32(label)
+}
+
+proc x_jcc(cc, label) {
+    x_bytes2(15, 128 + cc)
+    x_rel32(label)
+}
+
+# A conditional jump over a few bytes: x_jcc_short() returns a mark to
+# hand to x_patch_short() where the jump should land.
+proc x_jcc_short(cc) {
+    append(x_code, 112 + cc)
+    append(x_code, 0)
+    return length(x_code) - 1
+}
+
+proc x_jmp_short() {
+    append(x_code, 235)
+    append(x_code, 0)
+    return length(x_code) - 1
+}
+
+proc x_patch_short(mark) {
+    alloc d := length(x_code) - (mark + 1)
+    if d > 127 {
+        panic("native-x64: internal error: short jump over " + d + " bytes")
+    }
+    x_code[mark] := d
+}
+
+proc x_call(label) {
+    append(x_code, 232)
+    x_rel32(label)
+}
+
+proc x_call_r(reg) {
+    x_rex(0, 0, reg)
+    append(x_code, 255)
+    x_modrm_rr(2, reg)
+}
+
+proc x_call_m(base, disp) {
+    x_rex_mem(0, 0, base)
+    append(x_code, 255)
+    x_modrm_mem(2, base, disp, 0)
+}
+
+proc x_jmp_r(reg) {
+    x_rex(0, 0, reg)
+    append(x_code, 255)
+    x_modrm_rr(4, reg)
+}
+
+proc x_ret() {
+    append(x_code, 195)
+}
+
+# Return and drop `n` bytes of arguments.
+proc x_ret_n(n) {
+    if n == 0 {
+        append(x_code, 195)
+    } else {
+        append(x_code, 194)
+        append(x_code, n & 255)
+        append(x_code, (n >> 8) & 255)
+    }
+}
+
+proc x_leave() {
+    append(x_code, 201)
+}
+
+proc x_syscall() {
+    x_bytes2(15, 5)
+}
+
+proc x_int3() {
+    append(x_code, 204)
+}
+
+# rep movsb / rep stosb / repe cmpsb, forward.
+proc x_rep_movsb() { x_bytes2(243, 164) }
+proc x_rep_stosb() { x_bytes2(243, 170) }
+proc x_repe_cmpsb() { x_bytes2(243, 166) }
+
+# === SSE2 and x87 (floats) ================================================
+
+# xmm := r64 (bit pattern)
+proc x_movq_xr(xmm, reg) {
+    append(x_code, 102)
+    x_rex(1, xmm, reg)
+    x_bytes2(15, 110)
+    x_modrm_rr(xmm, reg)
+}
+
+# r64 := xmm (bit pattern)
+proc x_movq_rx(reg, xmm) {
+    append(x_code, 102)
+    x_rex(1, xmm, reg)
+    x_bytes2(15, 126)
+    x_modrm_rr(xmm, reg)
+}
+
+# Scalar double op on xmm registers: 88 ADDSD, 92 SUBSD, 89 MULSD,
+# 94 DIVSD, 81 SQRTSD.
+proc x_sse_rr(opcode, dst, src) {
+    append(x_code, 242)
+    x_bytes2(15, opcode)
+    x_modrm_rr(dst, src)
+}
+
+proc x_ucomisd(a, b) {
+    append(x_code, 102)
+    x_bytes2(15, 46)
+    x_modrm_rr(a, b)
+}
+
+# xmm := (double) r64
+proc x_cvtsi2sd(xmm, reg) {
+    append(x_code, 242)
+    x_rex(1, xmm, reg)
+    x_bytes2(15, 42)
+    x_modrm_rr(xmm, reg)
+}
+
+# r64 := (int64) xmm, truncating toward zero
+proc x_cvttsd2si(reg, xmm) {
+    append(x_code, 242)
+    x_rex(1, reg, xmm)
+    x_bytes2(15, 44)
+    x_modrm_rr(reg, xmm)
+}
+
+# x87: load / store-and-pop a double at [base + disp].
+proc x_fld_m(base, disp) {
+    x_rex_mem(0, 0, base)
+    append(x_code, 221)
+    x_modrm_mem(0, base, disp, 0)
+}
+
+proc x_fstp_m(base, disp) {
+    x_rex_mem(0, 0, base)
+    append(x_code, 221)
+    x_modrm_mem(3, base, disp, 0)
+}
+
+# x87: load the 80-bit number at [base + disp].
+proc x_fld_t(base, disp) {
+    x_rex_mem(0, 0, base)
+    append(x_code, 219)
+    x_modrm_mem(5, base, disp, 0)
+}
+
+# === Linking ==============================================================
+
+# Fill in every distance now that all labels are bound and the layout
+# is known. `code_addr`, `data_addr` and `bss_addr` are the addresses
+# the three parts will be loaded at (only their differences matter).
+proc x_put32(buf, pos, n) {
+    buf[pos] := n & 255
+    buf[pos + 1] := (n >> 8) & 255
+    buf[pos + 2] := (n >> 16) & 255
+    buf[pos + 3] := (n >> 24) & 255
+}
+
+proc x_link(code_addr, data_addr, bss_addr) {
+    alloc i := 0
+    alloc n := length(x_label_fix)
+    loop i < n {
+        alloc pos := x_label_fix[i]
+        alloc target := x_labels[x_label_fix[i + 1]]
+        if target < 0 {
+            panic("native-x64: internal error: label " + x_label_fix[i + 1] + " was never bound")
+        }
+        x_put32(x_code, pos, target - (pos + 4))
+        i := i + 2
+    }
+    i := 0
+    n := length(x_mem_fix)
+    loop i < n {
+        alloc pos := x_mem_fix[i]
+        alloc target := data_addr + x_mem_fix[i + 2]
+        if x_mem_fix[i + 1] == BSS {
+            target := bss_addr + x_mem_fix[i + 2]
+        } elif x_mem_fix[i + 1] == IAT {
+            target := x_iat[x_mem_fix[i + 2]]
+        }
+        x_put32(x_code, pos, target - (code_addr + pos + 4 + x_mem_fix[i + 3]))
+        i := i + 4
+    }
+    i := 0
+    n := length(x_data_fix)
+    loop i < n {
+        alloc target := x_labels[x_data_fix[i + 1]]
+        if target < 0 {
+            panic("native-x64: internal error: x_data label " + x_data_fix[i + 1] + " was never bound")
+        }
+        x_put32(x_data, x_data_fix[i], target)
+        i := i + 2
+    }
+    return false
+}
+
+# === 2. Pre-pass ==========================================================
+#
+# The compiler spells `a and b`, `a or b` and `not a` with jumps and the
+# AND / OR / EQ opcodes, always leaving a Bool on the stack:
+#
+#     a and b    [a] JUMP_IF_FALSE f  [b] PUSH_BOOL true  AND  JUMP e
+#                f: PUSH_BOOL false  e:
+#     a or b     [a] JUMP_IF_FALSE r  PUSH_BOOL true  JUMP e
+#                r: [b] PUSH_BOOL false  OR  e:
+#     not a      [a] PUSH_BOOL false  OR  PUSH_BOOL false  EQ
+#
+# Most of these feed straight into the JUMP_IF_FALSE of an `if` or a
+# `loop`. Building the Bool only to test it again is wasted work, so
+# before generating code for a proc its bytecode is rewritten in place.
+# Instruction indexes never move (jump targets stay valid); what goes
+# away becomes a NOP. Three opcodes exist only after this pass:
+#
+#     TRUTHY          replace the top of the stack by its truth, a Bool
+#     LNOT            replace it by the opposite Bool
+#     JUMP_IF_TRUE    the mirror image of JUMP_IF_FALSE
+
+proc pp_targets(code, lo, hi) {
+    alloc t := {}
+    alloc i := lo
+    loop i < hi {
+        alloc op := code[i][0]
+        if op == "JUMP" or op == "JUMP_IF_FALSE" or op == "JUMP_IF_TRUE" or op == "SETUP_EXCEPT" {
+            t[code[i][1]] := true
+        }
+        i := i + 1
+    }
+    return t
+}
+
+# The first instruction that does something, starting at `i`: NOPs are
+# skipped and unconditional jumps followed.
+proc pp_next(code, i, hi) {
+    alloc steps := 0
+    loop i < hi and steps < 64 {
+        alloc op := code[i][0]
+        if op == "NOP" {
+            i := i + 1
+        } elif op == "JUMP" {
+            i := code[i][1]
+        } else {
+            return i
+        }
+        steps := steps + 1
+    }
+    return i
+}
+
+# Where control ends up when the Bool `val` is on top of the stack on
+# arrival at `i`, if the next thing that happens is a conditional jump
+# that pops it. -1 when it is anything else.
+proc pp_bool_dest(code, i, hi, val) {
+    alloc k := pp_next(code, i, hi)
+    if k >= hi { return -1 }
+    alloc op := code[k][0]
+    if op == "JUMP_IF_FALSE" {
+        if val { return k + 1 }
+        return code[k][1]
+    }
+    if op == "JUMP_IF_TRUE" {
+        if val { return code[k][1] }
+        return k + 1
+    }
+    return -1
+}
+
+proc pp_run(code, lo, hi) {
+    alloc targets := pp_targets(code, lo, hi)
+    alloc i := lo
+    # Truth tests.
+    loop i + 1 < hi {
+        alloc a := code[i]
+        alloc b := code[i + 1]
+        if a[0] == "PUSH_BOOL" and has_key(targets, i + 1) == false {
+            if (a[1] == true and b[0] == "AND") or (a[1] == false and b[0] == "OR") {
+                code[i] := ["NOP", 0]
+                code[i + 1] := ["TRUTHY", 0]
+            }
+        }
+        i := i + 1
+    }
+    # not: TRUTHY, PUSH_BOOL false, EQ.
+    i := lo
+    loop i + 2 < hi {
+        if code[i][0] == "TRUTHY" and code[i + 1][0] == "PUSH_BOOL" and code[i + 1][1] == false and code[i + 2][0] == "EQ" {
+            if has_key(targets, i + 1) == false and has_key(targets, i + 2) == false {
+                code[i] := ["NOP", 0]
+                code[i + 1] := ["NOP", 0]
+                code[i + 2] := ["LNOT", 0]
+            }
+        }
+        i := i + 1
+    }
+    # A truth test feeding a conditional jump.
+    i := lo
+    loop i + 1 < hi {
+        alloc op := code[i][0]
+        alloc nop := code[i + 1][0]
+        if op == "LNOT" and has_key(targets, i + 1) == false {
+            if nop == "JUMP_IF_FALSE" {
+                code[i] := ["NOP", 0]
+                code[i + 1] := ["JUMP_IF_TRUE", code[i + 1][1]]
+            } elif nop == "JUMP_IF_TRUE" {
+                code[i] := ["NOP", 0]
+                code[i + 1] := ["JUMP_IF_FALSE", code[i + 1][1]]
+            }
+        } elif op == "TRUTHY" and (nop == "JUMP_IF_FALSE" or nop == "JUMP_IF_TRUE") {
+            code[i] := ["NOP", 0]
+        }
+        i := i + 1
+    }
+    # Jump threading, to a fixed point.
+    alloc round := 0
+    alloc changed := true
+    loop changed and round < 12 {
+        changed := false
+        round := round + 1
+        targets := pp_targets(code, lo, hi)
+        i := lo
+        loop i < hi {
+            alloc op := code[i][0]
+            if op == "JUMP_IF_FALSE" or op == "JUMP_IF_TRUE" {
+                alloc dest := code[i][1]
+                alloc t := pp_next(code, dest, hi)
+                alloc nd := t
+                if t < hi and code[t][0] == "PUSH_BOOL" {
+                    alloc d := pp_bool_dest(code, t + 1, hi, code[t][1])
+                    if d >= 0 { nd := d }
+                }
+                if nd != dest {
+                    code[i] := [op, nd]
+                    changed := true
+                }
+            } elif op == "JUMP" {
+                alloc dest := code[i][1]
+                alloc done := false
+                if i > lo and has_key(targets, i) == false {
+                    alloc prev := code[i - 1]
+                    if prev[0] == "PUSH_BOOL" {
+                        alloc d := pp_bool_dest(code, dest, hi, prev[1])
+                        if d >= 0 {
+                            code[i - 1] := ["NOP", 0]
+                            code[i] := ["JUMP", d]
+                            changed := true
+                            done := true
+                        }
+                    } elif prev[0] == "TRUTHY" or prev[0] == "LNOT" {
+                        alloc k := pp_next(code, dest, hi)
+                        if k < hi and (code[k][0] == "JUMP_IF_FALSE" or code[k][0] == "JUMP_IF_TRUE") {
+                            alloc jop := code[k][0]
+                            if prev[0] == "LNOT" {
+                                if jop == "JUMP_IF_FALSE" {
+                                    jop := "JUMP_IF_TRUE"
+                                } else {
+                                    jop := "JUMP_IF_FALSE"
+                                }
+                            }
+                            code[i - 1] := [jop, code[k][1]]
+                            code[i] := ["JUMP", k + 1]
+                            changed := true
+                            done := true
+                        }
+                    }
+                }
+                if done == false {
+                    alloc t := pp_next(code, dest, hi)
+                    if t != dest and t < hi {
+                        code[i] := ["JUMP", t]
+                        changed := true
+                    }
+                }
+            }
+            i := i + 1
+        }
+    }
+    return false
+}
+
+# Which instructions of [lo, hi) can run at all, and how many values are
+# on the operand stack when each one starts. `arity` answers how many
+# arguments a CALL takes (-1: the name is unknown, the call raises).
+# Returns a list indexed from `lo`: the depth, or -1 for dead code.
+alloc pp_raw := false          # true while the runtime unit is being compiled
+
+proc pp_call_argc(name, funcs) {
+    if has_key(funcs, name) {
+        return length(funcs[name][0])
+    }
+    if pp_raw and has_key(RW_INTRINSICS, name) {
+        return RW_INTRINSICS[name]
+    }
+    return -1
+}
+
+proc pp_depths(code, lo, hi, funcs) {
+    alloc depth := list_repeat(-1, hi - lo)
+    alloc work := [lo, 0]
+    loop length(work) > 0 {
+        alloc n := length(work)
+        alloc d := work[n - 1]
+        alloc i := work[n - 2]
+        work := work[0:n - 2]
+        loop i < hi and depth[i - lo] < 0 {
+            depth[i - lo] := d
+            alloc instr := code[i]
+            alloc op := instr[0]
+            alloc stop := false
+            if op == "PUSH_INT" or op == "PUSH_STR" or op == "PUSH_BOOL" or op == "PUSH_NONE" or op == "PUSH_FLOAT_BITS" or op == "LOAD" {
+                d := d + 1
+            } elif op == "STORE" or op == "STORE_LOCAL" or op == "POP" or op == "EMIT" or op == "ASSERT" or op == "INDEX" {
+                d := d - 1
+            } elif op == "JUMP" {
+                i := instr[1] - 1
+            } elif op == "JUMP_IF_FALSE" or op == "JUMP_IF_TRUE" {
+                d := d - 1
+                append(work, instr[1])
+                append(work, d)
+            } elif op == "SETUP_EXCEPT" {
+                append(work, instr[1])
+                append(work, d + 1)
+            } elif op == "RET" or op == "TCALL" or op == "RAISE" or op == "HALT" {
+                stop := true
+            } elif op == "CALL" {
+                alloc argc := pp_call_argc(instr[1], funcs)
+                if argc < 0 {
+                    stop := true
+                } else {
+                    d := d - argc + 1
+                }
+            } elif op == "CALL_VALUE" {
+                d := d - instr[1]
+            } elif op == "BUILTIN" {
+                d := d - instr[1][1] + 1
+            } elif op == "BUILD_LIST" {
+                d := d - instr[1] + 1
+            } elif op == "BUILD_DICT" {
+                d := d - 2 * instr[1] + 1
+            } elif op == "SLICE" or op == "STORE_ATTR" {
+                d := d - 2
+            } elif op == "STORE_INDEX" {
+                d := d - 3
+            } elif op == "NEG" or op == "NOT" or op == "TRUTHY" or op == "LNOT" or op == "ATTR" or op == "NOP" or op == "POP_BLOCK" or op == "MAKE_FUNC" {
+                d := d
+            } else {
+                # Every remaining opcode takes two values and leaves one.
+                d := d - 1
+            }
+            if stop {
+                break
+            }
+            i := i + 1
+        }
+    }
+    return depth
+}
+
+# === Shared tables ========================================================
+
+# Static string objects, shared by both modes. Layout (see runtime/x64/core.omg):
+#   [0] refcount  [8] characters  [16] bytes  [24] hash  [32] the bytes,
+#   NUL-terminated and zero-padded to a multiple of eight.
+# A static string's refcount starts so high that it never reaches zero.
+alloc gen_strs := {}           # text -> data offset of the object
+alloc gen_syms := {}           # name -> [base, disp] or ["label", label]
+alloc gen_os := "linux"
+alloc gen_symtab := []         # code offset, name, ... for every proc emitted
+alloc gen_trig := -1           # data offset of the constants rw_trig uses
+
+# FNV-1a over the bytes, 32 bits, with bit 32 set so that 0 can mean
+# "not computed yet". rt_str_hash in the runtime computes the same.
+proc gen_hash(bs) {
+    alloc h := 2166136261
+    for b in bs {
+        h := ((h ^ b) * 16777619) & 4294967295
+    }
+    return h | 4294967296
+}
+
+proc gen_str(text) {
+    if has_key(gen_strs, text) {
+        return gen_strs[text]
+    }
+    alloc bs := string_bytes(text)
+    x_data_align(8)
+    alloc at := length(x_data)
+    x_data_u64(4611686018427387904)
+    x_data_u64(length(text))
+    x_data_u64(length(bs))
+    x_data_u64(gen_hash(bs))
+    x_data_bytes(bs)
+    x_data_u8(0)
+    x_data_align(8)
+    gen_strs[text] := at
+    return at
+}
+
+proc gen_fail(msg) {
+    panic("native-x64: " + msg)
+}
+
+# Where every proc of the last generated image starts: a flat list of
+# code offset, name, code offset, name ... in the order emitted.
+proc symbols() {
+    return gen_symtab
+}
+
+# === 3. Raw mode ==========================================================
+#
+# The runtime (src/runtime/x64/*.omg) is ordinary OMG source, compiled
+# by the ordinary front end, but its bytecode is given a different
+# meaning here. In raw mode:
+#
+#   * every value is one 64-bit word with no tag: an integer, a pointer
+#     or the bits of a float. true is 1; false and none are 0;
+#   * + - * wrap around, // and % are the machine's signed division
+#     (truncating, not flooring), >> is an arithmetic shift, comparisons
+#     are signed, and a condition is true when the word is not zero;
+#   * a string literal is the address of a static string object;
+#   * a top-level `alloc NAME := <integer literal>` whose name is all
+#     upper case is a compile-time constant; any other top-level name
+#     is a 64-bit global variable, initialised by the unit's top-level
+#     code before anything else runs;
+#   * the name of a proc, used as a value, is its address;
+#   * memory, system calls and floats are reached through calls to the
+#     reserved names in RW_INTRINSICS. To any other back end these are
+#     calls to undefined procs, so the front end needs no change;
+#   * lists, dicts, indexing, builtins, closures, emit, try and raise
+#     do not exist and are refused at build time.
+#
+# Calling convention: arguments are pushed left to right, the caller
+# removes them, the result comes back in RAX. RBX and R12-R15 are not
+# touched by generated code, except that __wincall borrows R12.
+#
+# Expressions are evaluated on a small virtual stack whose entries are
+# constants, registers, or memory operands not loaded yet, so that
+# `__peek64(p + 8)` becomes a single instruction.
+
+alloc RW_INTRINSICS := {
+    __peek8: 1, __peek16: 1, __peek32: 1, __peek64: 1,
+    __poke8: 2, __poke16: 2, __poke32: 2, __poke64: 2,
+    __memcpy: 3, __memset: 3, __memcmp: 3,
+    __udiv: 2, __umod: 2, __ult: 2, __lsr: 2, __mulhi: 2,
+    __fadd: 2, __fsub: 2, __fmul: 2, __fdiv: 2,
+    __flt: 2, __fle: 2, __feq: 2,
+    __i2f: 1, __f2i: 1, __fsqrt: 1,
+    __fsin: 1, __fcos: 1, __ftan: 1, __flog: 1, __fpow: 2,
+    __syscall: 7,
+    __icall0: 1, __icall1: 2, __icall2: 3, __icall3: 4, __icall4: 5,
+    __icall5: 6, __icall6: 7,
+    __rsp: 0, __rbp: 0, __unwind: 5, __sym: 1, __brk: 0,
+    __import: 1,
+    __wincall0: 1, __wincall1: 2, __wincall2: 3, __wincall3: 4,
+    __wincall4: 5, __wincall5: 6, __wincall6: 7, __wincall7: 8,
+    __wincall8: 9, __wincall9: 10, __wincall10: 11, __wincall11: 12,
+    __wincall12: 13
+}
+
+alloc RK_CONST := 0     # [kind, value]
+alloc RK_REG   := 1     # [kind, reg, disp]      the value is reg + disp
+alloc RK_MEM   := 2     # [kind, base, disp]     the word at [base + disp], not loaded yet
+alloc RK_ADDR  := 3     # [kind, base, disp]     the address of a data / bss item
+alloc RK_LABEL := 4     # [kind, label]          the address of code
+alloc RK_SPILL := 5     # [kind]                 pushed on the machine stack
+alloc RK_STR   := 6     # [kind, text]           a string literal, not emitted yet
+
+alloc RW_POOL := [0, 1, 2, 6, 7, 8, 9, 10]    # RAX RCX RDX RSI RDI R8 R9 R10; R11 is scratch
+
+alloc rw_code := []
+alloc rw_funcs := {}
+alloc rw_files := []
+alloc rw_lines := []
+alloc rw_main_end := 0
+alloc rw_ranges := {}          # proc name -> [start, end)
+alloc rw_labels := {}          # proc name -> label
+alloc rw_consts := {}          # constant name -> value
+alloc rw_globals := {}         # global name -> bss offset
+alloc rw_wanted := {}          # proc name -> true once queued
+alloc rw_queue := []
+alloc rw_init_label := -1
+
+alloc rw_stack := []
+alloc rw_sp := 0
+alloc rw_tmp := []             # registers claimed inside one operation
+alloc rw_locals := {}          # name -> displacement from RBP
+alloc rw_fn := ""
+alloc rw_at := 0               # index of the instruction being compiled
+
+proc rw_fail(msg) {
+    alloc where := ""
+    if rw_at < length(rw_lines) {
+        where := " (" + rw_files[rw_lines[rw_at][0]] + ":" + rw_lines[rw_at][1] + ")"
+    }
+    gen_fail("runtime proc " + rw_fn + where + ": " + msg)
+}
+
+proc rw_is_const_name(name) {
+    alloc i := 0
+    alloc n := length(name)
+    loop i < n {
+        if name[i] >= "a" and name[i] <= "z" {
+            return false
+        }
+        i := i + 1
+    }
+    return true
+}
+
+# Take in the runtime unit: find its constants and globals, give every
+# proc a label. Nothing is emitted until a proc is asked for.
+proc rw_setup(parsed) {
+    rw_code := parsed[0]
+    rw_funcs := parsed[1]
+    rw_files := parsed[2]
+    rw_lines := parsed[3]
+    rw_ranges := {}
+    rw_labels := {}
+    rw_consts := {}
+    rw_globals := {}
+    rw_wanted := {}
+    rw_queue := []
+    rw_stack := list_repeat(0, 256)
+    alloc n := length(rw_code)
+    rw_main_end := n
+    alloc i := 0
+    loop i < n {
+        if rw_code[i][0] == "HALT" {
+            rw_main_end := i + 1
+            break
+        }
+        i := i + 1
+    }
+    # Top-level names. A name stored exactly once, from a literal, and
+    # spelled in upper case is a constant.
+    alloc stores := {}
+    i := 0
+    loop i < rw_main_end {
+        alloc op := rw_code[i][0]
+        if op == "STORE_LOCAL" or op == "STORE" {
+            alloc nm := rw_code[i][1]
+            if has_key(stores, nm) {
+                stores[nm] := stores[nm] + 1
+            } else {
+                stores[nm] := 1
+            }
+        }
+        i := i + 1
+    }
+    i := 0
+    loop i < rw_main_end {
+        alloc op := rw_code[i][0]
+        if op == "STORE_LOCAL" or op == "STORE" {
+            alloc nm := rw_code[i][1]
+            alloc is_const := false
+            if stores[nm] == 1 and rw_is_const_name(nm) and i > 0 {
+                if rw_code[i - 1][0] == "PUSH_INT" {
+                    rw_consts[nm] := rw_code[i - 1][1]
+                    is_const := true
+                } elif i > 1 and rw_code[i - 1][0] == "NEG" and rw_code[i - 2][0] == "PUSH_INT" {
+                    rw_consts[nm] := 0 - rw_code[i - 2][1]
+                    is_const := true
+                }
+            }
+            if is_const == false and has_key(rw_globals, nm) == false {
+                rw_globals[nm] := x_bss(8)
+            }
+        }
+        i := i + 1
+    }
+    alloc sorted := be.sorted_funcs_by_addr(rw_funcs)
+    alloc k := 0
+    alloc ns := length(sorted)
+    loop k < ns {
+        alloc hi := n
+        if k + 1 < ns {
+            hi := sorted[k + 1][0]
+        }
+        rw_ranges[sorted[k][1]] := [sorted[k][0], hi]
+        rw_labels[sorted[k][1]] := x_new_label()
+        k := k + 1
+    }
+    rw_init_label := x_new_label()
+    return false
+}
+
+# The label of a runtime proc; queues the proc for code generation.
+proc rw_need(name) {
+    if has_key(rw_labels, name) == false {
+        gen_fail("the runtime has no proc named " + name)
+    }
+    if has_key(rw_wanted, name) == false {
+        rw_wanted[name] := true
+        append(rw_queue, name)
+    }
+    return rw_labels[name]
+}
+
+# The bss offset of a runtime global variable.
+proc rw_global(name) {
+    if has_key(rw_globals, name) == false {
+        gen_fail("the runtime has no global named " + name)
+    }
+    return rw_globals[name]
+}
+
+# --- the virtual stack ----------------------------------------------------
+
+proc rw_push(e) {
+    rw_stack[rw_sp] := e
+    rw_sp := rw_sp + 1
+}
+
+proc rw_reg_busy(r) {
+    alloc i := 0
+    loop i < rw_sp {
+        alloc e := rw_stack[i]
+        if e[0] == RK_REG and e[1] == r {
+            return true
+        }
+        i := i + 1
+    }
+    for t in rw_tmp {
+        if t == r { return true }
+    }
+    return false
+}
+
+# Put entry `k` on the machine stack.
+proc rw_spill(k) {
+    alloc e := rw_stack[k]
+    alloc kind := e[0]
+    if kind == RK_SPILL {
+        return false
+    }
+    if kind == RK_CONST {
+        if x_fits32(e[1]) {
+            x_push_i(e[1])
+        } else {
+            x_mov_ri(R11, e[1])
+            x_push(R11)
+        }
+    } elif kind == RK_REG {
+        if e[2] != 0 {
+            x_lea(e[1], e[1], e[2])
+        }
+        x_push(e[1])
+    } elif kind == RK_MEM {
+        x_push_m(e[1], e[2])
+    } elif kind == RK_ADDR {
+        x_lea(R11, e[1], e[2])
+        x_push(R11)
+    } elif kind == RK_LABEL {
+        x_lea_label(R11, e[1])
+        x_push(R11)
+    } elif kind == RK_STR {
+        x_lea(R11, DATA, gen_str(e[1]))
+        x_push(R11)
+    }
+    rw_stack[k] := [RK_SPILL]
+    return false
+}
+
+# Spilled entries always form the bottom of the stack, so that they
+# come back off the machine stack in the right order.
+proc rw_spill_upto(k) {
+    alloc i := 0
+    loop i <= k {
+        rw_spill(i)
+        i := i + 1
+    }
+}
+
+proc rw_flush() {
+    rw_spill_upto(rw_sp - 1)
+}
+
+proc rw_alloc() {
+    for r in RW_POOL {
+        if rw_reg_busy(r) == false {
+            return r
+        }
+    }
+    # Everything is taken: spill the lowest register entry.
+    alloc i := 0
+    loop i < rw_sp {
+        if rw_stack[i][0] == RK_REG {
+            alloc r := rw_stack[i][1]
+            rw_spill_upto(i)
+            return r
+        }
+        i := i + 1
+    }
+    rw_fail("expression too complex (out of registers)")
+}
+
+# Load entry `e` into register `r`.
+proc rw_load_into(r, e) {
+    alloc kind := e[0]
+    if kind == RK_CONST {
+        x_mov_ri(r, e[1])
+    } elif kind == RK_REG {
+        if e[2] != 0 {
+            x_lea(r, e[1], e[2])
+        } else {
+            x_mov_rr(r, e[1])
+        }
+    } elif kind == RK_MEM {
+        x_load(r, e[1], e[2])
+    } elif kind == RK_ADDR {
+        x_lea(r, e[1], e[2])
+    } elif kind == RK_LABEL {
+        x_lea_label(r, e[1])
+    } elif kind == RK_STR {
+        x_lea(r, DATA, gen_str(e[1]))
+    } else {
+        x_pop(r)
+    }
+}
+
+# Make entry `k` a register entry (possibly with a displacement) and
+# return it. A spilled entry must be the topmost spilled one.
+proc rw_reg_d(k) {
+    alloc e := rw_stack[k]
+    if e[0] == RK_REG {
+        return e
+    }
+    alloc r := rw_alloc()
+    rw_load_into(r, e)
+    alloc ne := [RK_REG, r, 0]
+    rw_stack[k] := ne
+    return ne
+}
+
+# The same with the displacement folded in; returns the register.
+proc rw_reg(k) {
+    alloc e := rw_reg_d(k)
+    if e[2] != 0 {
+        x_lea(e[1], e[1], e[2])
+        e[2] := 0
+    }
+    return e[1]
+}
+
+# Move the top entries into the given registers (the deepest of them
+# into regs[0]) and take them off the stack. Everything else is
+# spilled, so every register is free afterwards.
+proc rw_take_fixed(regs) {
+    rw_flush()
+    alloc n := length(regs)
+    alloc i := n - 1
+    loop i >= 0 {
+        x_pop(regs[i])
+        i := i - 1
+    }
+    rw_sp := rw_sp - n
+}
+
+proc rw_small(v) {
+    return v > -1073741824 and v < 1073741824
+}
+
+# --- operators ------------------------------------------------------------
+
+proc rw_add_sub(is_add) {
+    alloc l := rw_stack[rw_sp - 2]
+    alloc r := rw_stack[rw_sp - 1]
+    if l[0] == RK_CONST and r[0] == RK_CONST and rw_small(l[1]) and rw_small(r[1]) {
+        rw_sp := rw_sp - 1
+        if is_add {
+            rw_stack[rw_sp - 1] := [RK_CONST, l[1] + r[1]]
+        } else {
+            rw_stack[rw_sp - 1] := [RK_CONST, l[1] - r[1]]
+        }
+        return false
+    }
+    if is_add and l[0] == RK_CONST and r[0] != RK_SPILL {
+        # constant + x: turn it round.
+        rw_stack[rw_sp - 2] := r
+        rw_stack[rw_sp - 1] := l
+        l := rw_stack[rw_sp - 2]
+        r := rw_stack[rw_sp - 1]
+    }
+    if r[0] == RK_SPILL or r[0] == RK_ADDR or r[0] == RK_LABEL or r[0] == RK_STR {
+        rw_reg_d(rw_sp - 1)
+        r := rw_stack[rw_sp - 1]
+    } elif r[0] == RK_CONST and x_fits32(r[1]) == false {
+        rw_reg_d(rw_sp - 1)
+        r := rw_stack[rw_sp - 1]
+    }
+    alloc le := rw_reg_d(rw_sp - 2)
+    alloc lr := le[1]
+    alloc op := ALU_SUB
+    if is_add { op := ALU_ADD }
+    if r[0] == RK_CONST {
+        alloc d := r[1]
+        if is_add == false { d := 0 - d }
+        if x_fits32(le[2] + d) {
+            le[2] := le[2] + d
+        } else {
+            x_lea(lr, lr, le[2])
+            le[2] := d
+        }
+    } elif r[0] == RK_MEM {
+        x_alu_rm(op, lr, r[1], r[2])
+    } else {
+        x_alu_rr(op, lr, r[1])
+        if is_add {
+            le[2] := le[2] + r[2]
+        } else {
+            le[2] := le[2] - r[2]
+        }
+    }
+    rw_sp := rw_sp - 1
+    return false
+}
+
+# AND / OR / XOR / MUL: commutative, operand forms reg <- reg | mem | imm.
+proc rw_logic(opname) {
+    alloc l := rw_stack[rw_sp - 2]
+    alloc r := rw_stack[rw_sp - 1]
+    if l[0] == RK_CONST and r[0] != RK_SPILL and r[0] != RK_CONST {
+        rw_stack[rw_sp - 2] := r
+        rw_stack[rw_sp - 1] := l
+        l := rw_stack[rw_sp - 2]
+        r := rw_stack[rw_sp - 1]
+    }
+    if r[0] != RK_MEM and (r[0] != RK_CONST or x_fits32(r[1]) == false) {
+        rw_reg(rw_sp - 1)
+        r := rw_stack[rw_sp - 1]
+    }
+    alloc lr := rw_reg(rw_sp - 2)
+    if opname == "MUL" {
+        if r[0] == RK_CONST {
+            x_imul_rri(lr, lr, r[1])
+        } elif r[0] == RK_MEM {
+            x_imul_rm(lr, r[1], r[2])
+        } else {
+            x_imul_rr(lr, r[1])
+        }
+    } else {
+        alloc op := ALU_AND
+        if opname == "BOR" { op := ALU_OR }
+        if opname == "BXOR" { op := ALU_XOR }
+        if r[0] == RK_CONST {
+            x_alu_ri(op, lr, r[1])
+        } elif r[0] == RK_MEM {
+            x_alu_rm(op, lr, r[1], r[2])
+        } else {
+            x_alu_rr(op, lr, r[1])
+        }
+    }
+    rw_sp := rw_sp - 1
+    return false
+}
+
+# Shifts: ext 4 = shl, 5 = shr (logical), 7 = sar.
+proc rw_shift(ext) {
+    alloc r := rw_stack[rw_sp - 1]
+    if r[0] == RK_CONST {
+        rw_sp := rw_sp - 1
+        alloc lr := rw_reg(rw_sp - 1)
+        x_shift_i(ext, lr, r[1])
+        return false
+    }
+    rw_take_fixed([RAX, RCX])
+    x_shift_cl(ext, RAX)
+    rw_push([RK_REG, RAX, 0])
+    return false
+}
+
+proc rw_divide(want_rem, signed) {
+    rw_take_fixed([RAX, RCX])
+    if signed {
+        x_cqo()
+        x_idiv(RCX)
+    } else {
+        x_mov_ri(RDX, 0)
+        x_div(RCX)
+    }
+    if want_rem {
+        rw_push([RK_REG, RDX, 0])
+    } else {
+        rw_push([RK_REG, RAX, 0])
+    }
+    return false
+}
+
+# Compare the top two entries and take them off. Returns the condition
+# code that holds when `L <cmp> R` is true (signed).
+proc rw_compare(cmp) {
+    alloc l := rw_stack[rw_sp - 2]
+    alloc r := rw_stack[rw_sp - 1]
+    alloc cc := CC_E
+    if cmp == "NE" { cc := CC_NE }
+    if cmp == "LT" { cc := CC_L }
+    if cmp == "LE" { cc := CC_LE }
+    if cmp == "GT" { cc := CC_G }
+    if cmp == "GE" { cc := CC_GE }
+    if cmp == "ULT" { cc := CC_B }
+    if l[0] == RK_CONST and r[0] != RK_CONST and r[0] != RK_SPILL {
+        # constant on the left: turn the comparison round.
+        rw_stack[rw_sp - 2] := r
+        rw_stack[rw_sp - 1] := l
+        l := rw_stack[rw_sp - 2]
+        r := rw_stack[rw_sp - 1]
+        if cmp == "LT" { cc := CC_G }
+        if cmp == "LE" { cc := CC_GE }
+        if cmp == "GT" { cc := CC_L }
+        if cmp == "GE" { cc := CC_LE }
+        if cmp == "ULT" { cc := CC_A }
+    }
+    if r[0] != RK_MEM and (r[0] != RK_CONST or x_fits32(r[1]) == false) {
+        rw_reg(rw_sp - 1)
+        r := rw_stack[rw_sp - 1]
+    }
+    if l[0] == RK_MEM and r[0] == RK_CONST {
+        x_alu_mi(ALU_CMP, l[1], l[2], r[1])
+    } else {
+        alloc lr := rw_reg(rw_sp - 2)
+        if r[0] == RK_CONST {
+            if r[1] == 0 {
+                x_test_rr(lr, lr)
+            } else {
+                x_alu_ri(ALU_CMP, lr, r[1])
+            }
+        } elif r[0] == RK_MEM {
+            x_alu_rm(ALU_CMP, lr, r[1], r[2])
+        } else {
+            x_alu_rr(ALU_CMP, lr, r[1])
+        }
+    }
+    rw_sp := rw_sp - 2
+    return cc
+}
+
+# Flags for "is the top entry zero", taking it off. A constant has to
+# be tested by the caller.
+proc rw_test_top() {
+    alloc e := rw_stack[rw_sp - 1]
+    if e[0] == RK_MEM {
+        x_alu_mi(ALU_CMP, e[1], e[2], 0)
+    } else {
+        alloc r := rw_reg(rw_sp - 1)
+        x_test_rr(r, r)
+    }
+    rw_sp := rw_sp - 1
+}
+
+proc rw_cc_invert(cc) {
+    return cc ^ 1
+}
+
+# --- intrinsics -----------------------------------------------------------
+
+proc rw_float2(opcode) {
+    alloc rr := rw_reg(rw_sp - 1)
+    alloc lr := rw_reg(rw_sp - 2)
+    x_movq_xr(0, lr)
+    x_movq_xr(1, rr)
+    x_sse_rr(opcode, 0, 1)
+    x_movq_rx(lr, 0)
+    rw_sp := rw_sp - 1
+}
+
+# sin, cos and tan (kind 0, 1, 2) of the float on top of the stack.
+#
+# The processor's own fsin is only good close to zero: it reduces a
+# larger argument with a value of pi that is 66 bits long, so that
+# sin(3.141592653589793) comes out wrong from the fourth digit on. Here
+# the argument is first brought into [-pi/4, pi/4] by subtracting a
+# multiple k of pi/2 held in three pieces, 160 bits in all, in 80-bit
+# arithmetic; then the quadrant k mod 4 says which of sin and cos of
+# the remainder is wanted, and with what sign.
+proc rw_trig(kind) {
+    if gen_trig < 0 {
+        x_data_align(16)
+        gen_trig := x_data_here()
+        # 2/pi, then pi/2 as P1 + P2 + P3 (32, 32 and 64 bits)
+        x_data_bytes([42, 21, 68, 78, 110, 131, 249, 162, 254, 63, 0, 0, 0, 0, 0, 0])
+        x_data_bytes([0, 0, 0, 0, 162, 218, 15, 201, 255, 63, 0, 0, 0, 0, 0, 0])
+        x_data_bytes([0, 0, 0, 0, 208, 8, 163, 133, 221, 63, 0, 0, 0, 0, 0, 0])
+        x_data_bytes([209, 28, 220, 128, 139, 98, 198, 196, 191, 63, 0, 0, 0, 0, 0, 0])
+    }
+    alloc r := rw_reg(rw_sp - 1)
+    x_push(r)
+    x_fld_m(RSP, 0)                 # x
+    x_bytes2(217, 192)              # fld st(0)           x x
+    x_fld_t(DATA, gen_trig)
+    x_bytes2(222, 201)              # fmulp               x*2/pi x
+    x_bytes2(217, 252)              # frndint             k x
+    alloc i := 1
+    loop i <= 3 {
+        x_fld_t(DATA, gen_trig + 16 * i)
+        x_bytes2(216, 201)          # fmul st(0), st(1)   k*P k x
+        x_bytes2(222, 234)          # fsubp st(2), st(0)  k x-k*P
+        i := i + 1
+    }
+    x_bytes3(223, 60, 36)           # fistp qword [rsp]   the remainder is left
+    x_load(R11, RSP, 0)
+    if kind == 2 {
+        x_bytes2(217, 242)          # fptan               1 tan
+        x_test_ri(R11, 1)
+        alloc odd := x_jcc_short(CC_NE)
+        x_bytes2(221, 216)          # fstp st(0)
+        alloc done := x_jmp_short()
+        x_patch_short(odd)
+        x_bytes2(222, 241)          # fdivrp st(1)        1 / tan
+        x_bytes2(217, 224)          # fchs
+        x_patch_short(done)
+    } else {
+        x_test_ri(R11, 1)
+        alloc odd := x_jcc_short(CC_NE)
+        if kind == 0 {
+            x_bytes2(217, 254)      # fsin
+        } else {
+            x_bytes2(217, 255)      # fcos
+        }
+        alloc done := x_jmp_short()
+        x_patch_short(odd)
+        if kind == 0 {
+            x_bytes2(217, 255)
+        } else {
+            x_bytes2(217, 254)
+        }
+        x_patch_short(done)
+        if kind == 1 {
+            x_lea(R11, R11, 1)
+        }
+        x_test_ri(R11, 2)
+        alloc pos := x_jcc_short(CC_E)
+        x_bytes2(217, 224)          # fchs
+        x_patch_short(pos)
+    }
+    x_fstp_m(RSP, 0)
+    x_pop(r)
+    return false
+}
+
+proc rw_peek(size) {
+    alloc e := rw_stack[rw_sp - 1]
+    alloc base := 0
+    alloc disp := 0
+    alloc r := 0
+    if e[0] == RK_ADDR {
+        base := e[1]
+        disp := e[2]
+        r := rw_alloc()
+    } else {
+        alloc re := rw_reg_d(rw_sp - 1)
+        base := re[1]
+        disp := re[2]
+        r := base
+    }
+    if size == 8 { x_load8(r, base, disp) }
+    if size == 16 { x_load16(r, base, disp) }
+    if size == 32 { x_load32(r, base, disp) }
+    if size == 64 { x_load(r, base, disp) }
+    rw_stack[rw_sp - 1] := [RK_REG, r, 0]
+}
+
+proc rw_poke(size) {
+    alloc v := rw_stack[rw_sp - 1]
+    alloc imm := false
+    if size == 64 and v[0] == RK_CONST and x_fits32(v[1]) {
+        imm := true
+    } else {
+        rw_reg(rw_sp - 1)
+        v := rw_stack[rw_sp - 1]
+    }
+    alloc p := rw_stack[rw_sp - 2]
+    alloc base := 0
+    alloc disp := 0
+    if p[0] == RK_ADDR {
+        base := p[1]
+        disp := p[2]
+    } else {
+        alloc pe := rw_reg_d(rw_sp - 2)
+        base := pe[1]
+        disp := pe[2]
+    }
+    if imm {
+        x_store_i(base, disp, v[1])
+    } elif size == 8 {
+        x_store8(base, disp, v[1])
+    } elif size == 16 {
+        x_store16(base, disp, v[1])
+    } elif size == 32 {
+        x_store32(base, disp, v[1])
+    } else {
+        x_store(base, disp, v[1])
+    }
+    rw_sp := rw_sp - 2
+    rw_push([RK_CONST, 0])
+}
+
+proc rw_wincall(nargs) {
+    rw_flush()
+    # Machine stack: [rsp] = last argument ... [rsp + 8*nargs] = the function.
+    x_push(R12)
+    x_mov_rr(R12, RSP)
+    alloc extra := 0
+    if nargs > 4 { extra := nargs - 4 }
+    x_alu_ri(ALU_SUB, RSP, 32 + 8 * extra)
+    x_alu_ri(ALU_AND, RSP, -16)
+    alloc i := 5
+    loop i <= nargs {
+        x_load(RAX, R12, 8 + 8 * (nargs - i))
+        x_store(RSP, 32 + 8 * (i - 5), RAX)
+        i := i + 1
+    }
+    if nargs >= 1 { x_load(RCX, R12, 8 + 8 * (nargs - 1)) }
+    if nargs >= 2 { x_load(RDX, R12, 8 + 8 * (nargs - 2)) }
+    if nargs >= 3 { x_load(R8, R12, 8 + 8 * (nargs - 3)) }
+    if nargs >= 4 { x_load(R9, R12, 8 + 8 * (nargs - 4)) }
+    x_load(RAX, R12, 8 + 8 * nargs)
+    x_call_r(RAX)
+    x_mov_rr(RSP, R12)
+    x_pop(R12)
+    x_alu_ri(ALU_ADD, RSP, 8 * (nargs + 1))
+    rw_sp := rw_sp - (nargs + 1)
+    rw_push([RK_REG, RAX, 0])
+}
+
+proc rw_const_text(what) {
+    alloc e := rw_stack[rw_sp - 1]
+    if e[0] != RK_STR {
+        rw_fail(what + " needs a string literal")
+    }
+    return e[1]
+}
+
+proc rw_intrinsic(name) {
+    if name == "__peek64" { return rw_peek(64) }
+    if name == "__peek8" { return rw_peek(8) }
+    if name == "__peek32" { return rw_peek(32) }
+    if name == "__peek16" { return rw_peek(16) }
+    if name == "__poke64" { return rw_poke(64) }
+    if name == "__poke8" { return rw_poke(8) }
+    if name == "__poke32" { return rw_poke(32) }
+    if name == "__poke16" { return rw_poke(16) }
+    if name == "__memcpy" {
+        rw_take_fixed([RDI, RSI, RCX])
+        x_rep_movsb()
+        return rw_push([RK_CONST, 0])
+    }
+    if name == "__memset" {
+        rw_take_fixed([RDI, RAX, RCX])
+        x_rep_stosb()
+        return rw_push([RK_CONST, 0])
+    }
+    if name == "__memcmp" {
+        rw_take_fixed([RSI, RDI, RCX])
+        x_mov_ri(RAX, 0)
+        x_repe_cmpsb()
+        x_bytes3(15, 151, 192)          # seta al
+        x_bytes3(15, 146, 193)          # setb cl
+        x_bytes2(40, 200)               # sub al, cl
+        x_byte(72)
+        x_bytes3(15, 190, 192)          # movsx rax, al
+        return rw_push([RK_REG, RAX, 0])
+    }
+    if name == "__udiv" { return rw_divide(false, false) }
+    if name == "__umod" { return rw_divide(true, false) }
+    if name == "__lsr" { return rw_shift(5) }
+    if name == "__ult" {
+        alloc cc := rw_compare("ULT")
+        alloc r := rw_alloc()
+        x_setcc(cc, r)
+        return rw_push([RK_REG, r, 0])
+    }
+    if name == "__mulhi" {
+        rw_take_fixed([RAX, RCX])
+        x_mul(RCX)
+        return rw_push([RK_REG, RDX, 0])
+    }
+    if name == "__fadd" { return rw_float2(88) }
+    if name == "__fsub" { return rw_float2(92) }
+    if name == "__fmul" { return rw_float2(89) }
+    if name == "__fdiv" { return rw_float2(94) }
+    if name == "__flt" or name == "__fle" or name == "__feq" {
+        alloc rr := rw_reg(rw_sp - 1)
+        alloc lr := rw_reg(rw_sp - 2)
+        x_movq_xr(0, lr)
+        x_movq_xr(1, rr)
+        if name == "__feq" {
+            x_ucomisd(0, 1)
+            x_setcc(CC_E, lr)
+            x_setcc(CC_NP, rr)
+            x_alu_rr(ALU_AND, lr, rr)
+        } else {
+            # a < b is "b above a"; an unordered pair sets the carry
+            # flag, which makes both tests false.
+            x_ucomisd(1, 0)
+            if name == "__flt" {
+                x_setcc(CC_A, lr)
+            } else {
+                x_setcc(CC_AE, lr)
+            }
+        }
+        rw_sp := rw_sp - 1
+        return false
+    }
+    if name == "__i2f" {
+        alloc r := rw_reg(rw_sp - 1)
+        x_cvtsi2sd(0, r)
+        x_movq_rx(r, 0)
+        return false
+    }
+    if name == "__f2i" {
+        alloc r := rw_reg(rw_sp - 1)
+        x_movq_xr(0, r)
+        x_cvttsd2si(r, 0)
+        return false
+    }
+    if name == "__fsqrt" {
+        alloc r := rw_reg(rw_sp - 1)
+        x_movq_xr(0, r)
+        x_sse_rr(81, 0, 0)
+        x_movq_rx(r, 0)
+        return false
+    }
+    if name == "__fsin" { return rw_trig(0) }
+    if name == "__fcos" { return rw_trig(1) }
+    if name == "__ftan" { return rw_trig(2) }
+    if name == "__flog" {
+        alloc r := rw_reg(rw_sp - 1)
+        x_push(r)
+        x_bytes2(217, 237)              # fldln2
+        x_fld_m(RSP, 0)
+        x_bytes2(217, 241)              # fyl2x
+        x_fstp_m(RSP, 0)
+        x_pop(r)
+        return false
+    }
+    if name == "__fpow" {
+        # x ** y for x > 0, as 2 ** (y * log2 x).
+        alloc yr := rw_reg(rw_sp - 1)
+        alloc xr := rw_reg(rw_sp - 2)
+        x_push(yr)
+        x_fld_m(RSP, 0)
+        x_store(RSP, 0, xr)
+        x_fld_m(RSP, 0)
+        x_bytes2(217, 241)              # fyl2x        t = y * log2 x
+        x_bytes2(217, 192)              # fld st(0)
+        x_bytes2(217, 252)              # frndint      n = round(t)
+        x_bytes2(220, 233)              # fsub st(1), st(0)    f = t - n
+        x_bytes2(217, 201)              # fxch
+        x_bytes2(217, 240)              # f2xm1        2**f - 1
+        x_bytes2(217, 232)              # fld1
+        x_bytes2(222, 193)              # faddp        2**f
+        x_bytes2(217, 253)              # fscale       * 2**n
+        x_bytes2(221, 217)              # fstp st(1)
+        x_fstp_m(RSP, 0)
+        x_pop(xr)
+        rw_sp := rw_sp - 1
+        return false
+    }
+    if name == "__syscall" {
+        rw_take_fixed([RAX, RDI, RSI, RDX, R10, R8, R9])
+        x_syscall()
+        return rw_push([RK_REG, RAX, 0])
+    }
+    if length(name) == 8 and name[0:7] == "__icall" {
+        alloc nargs := RW_INTRINSICS[name] - 1
+        rw_flush()
+        x_load(R11, RSP, 8 * nargs)
+        x_call_r(R11)
+        x_alu_ri(ALU_ADD, RSP, 8 * (nargs + 1))
+        rw_sp := rw_sp - (nargs + 1)
+        return rw_push([RK_REG, RAX, 0])
+    }
+    if name == "__rsp" {
+        alloc r := rw_alloc()
+        x_mov_rr(r, RSP)
+        return rw_push([RK_REG, r, 0])
+    }
+    if name == "__rbp" {
+        alloc r := rw_alloc()
+        x_mov_rr(r, RBP)
+        return rw_push([RK_REG, r, 0])
+    }
+    if name == "__unwind" {
+        rw_take_fixed([RCX, RSI, RDI, RDX, RAX])
+        x_mov_rr(RSP, RCX)
+        x_mov_rr(RBP, RSI)
+        x_jmp_r(RDI)
+        return rw_push([RK_CONST, 0])
+    }
+    if name == "__sym" {
+        alloc nm := rw_const_text("__sym")
+        if has_key(gen_syms, nm) == false {
+            rw_fail("__sym: unknown symbol " + nm)
+        }
+        alloc s := gen_syms[nm]
+        if s[0] == "label" {
+            rw_stack[rw_sp - 1] := [RK_LABEL, s[1]]
+        } else {
+            rw_stack[rw_sp - 1] := [RK_ADDR, s[0], s[1]]
+        }
+        return false
+    }
+    if name == "__import" {
+        alloc nm := rw_const_text("__import")
+        if gen_os != "windows" {
+            rw_fail("__import is only for Windows")
+        }
+        rw_stack[rw_sp - 1] := [RK_MEM, IAT, pe_import(nm)]
+        return false
+    }
+    if name == "__brk" {
+        x_int3()
+        return rw_push([RK_CONST, 0])
+    }
+    if length(name) > 9 and name[0:9] == "__wincall" {
+        return rw_wincall(RW_INTRINSICS[name] - 1)
+    }
+    rw_fail("intrinsic " + name + " is not implemented")
+}
+
+# --- one proc -------------------------------------------------------------
+
+proc rw_var_entry(name) {
+    if has_key(rw_locals, name) {
+        return [RK_MEM, RBP, rw_locals[name]]
+    }
+    if has_key(rw_consts, name) {
+        return [RK_CONST, rw_consts[name]]
+    }
+    if has_key(rw_globals, name) {
+        return [RK_MEM, BSS, rw_globals[name]]
+    }
+    if has_key(rw_labels, name) {
+        return [RK_LABEL, rw_need(name)]
+    }
+    rw_fail("undefined name " + name)
+}
+
+proc rw_store(name) {
+    alloc base := BSS
+    alloc disp := 0
+    if has_key(rw_locals, name) {
+        base := RBP
+        disp := rw_locals[name]
+    } elif has_key(rw_consts, name) {
+        if rw_fn != "" {
+            rw_fail("assignment to the constant " + name)
+        }
+        rw_sp := rw_sp - 1
+        return false
+    } elif has_key(rw_globals, name) {
+        disp := rw_globals[name]
+    } else {
+        rw_fail("assignment to the undefined name " + name)
+    }
+    alloc e := rw_stack[rw_sp - 1]
+    if e[0] == RK_CONST and x_fits32(e[1]) {
+        x_store_i(base, disp, e[1])
+    } else {
+        alloc r := rw_reg(rw_sp - 1)
+        x_store(base, disp, r)
+    }
+    rw_sp := rw_sp - 1
+    return false
+}
+
+# Compile instructions [lo, hi) as one proc with the given parameters.
+proc rw_body(name, params, lo, hi, label) {
+    rw_fn := name
+    pp_raw := true
+    pp_run(rw_code, lo, hi)
+    alloc depths := pp_depths(rw_code, lo, hi, rw_funcs)
+    alloc targets := pp_targets(rw_code, lo, hi)
+    alloc jl := {}                 # instruction index -> label
+    for t in dict_keys(targets) {
+        jl[t] := x_new_label()
+    }
+    # Frame: parameters above the return address, locals below RBP.
+    rw_locals := {}
+    alloc np := length(params)
+    alloc i := 0
+    loop i < np {
+        rw_locals[params[i]] := 16 + 8 * (np - 1 - i)
+        i := i + 1
+    }
+    alloc nl := 0
+    if name != "" {
+        i := lo
+        loop i < hi {
+            if rw_code[i][0] == "STORE_LOCAL" and has_key(rw_locals, rw_code[i][1]) == false {
+                nl := nl + 1
+                rw_locals[rw_code[i][1]] := 0 - 8 * nl
+            }
+            i := i + 1
+        }
+    }
+    x_bind(label)
+    append(gen_symtab, x_here())
+    if name == "" {
+        append(gen_symtab, "rt_init")
+    } else {
+        append(gen_symtab, name)
+    }
+    x_push(RBP)
+    x_mov_rr(RBP, RSP)
+    if nl > 0 {
+        if nl >= 500 {
+            # Windows grows the stack one page at a time, as it is
+            # touched; a frame this size could step over the next page.
+            rw_fail("too many locals in one runtime proc")
+        }
+        x_alu_ri(ALU_SUB, RSP, 8 * nl)
+    }
+    rw_sp := 0
+    rw_tmp := []
+    i := lo
+    loop i < hi {
+        rw_at := i
+        alloc d := depths[i - lo]
+        if d < 0 {
+            i := i + 1
+            continue
+        }
+        if has_key(jl, i) {
+            rw_flush()
+            x_bind(jl[i])
+            # Whoever jumps here has everything on the machine stack.
+            rw_sp := 0
+            loop rw_sp < d {
+                rw_stack[rw_sp] := [RK_SPILL]
+                rw_sp := rw_sp + 1
+            }
+        }
+        if rw_sp != d {
+            rw_fail("internal error: stack depth " + rw_sp + " where " + d + " was expected")
+        }
+        alloc instr := rw_code[i]
+        alloc op := instr[0]
+        alloc arg := instr[1]
+        alloc next_op := ""
+        if i + 1 < hi and has_key(jl, i + 1) == false {
+            next_op := rw_code[i + 1][0]
+        }
+        if op == "NOP" or op == "MAKE_FUNC" {
+            if op == "MAKE_FUNC" and name != "" {
+                rw_fail("nested procs are not available in the runtime")
+            }
+        } elif op == "PUSH_INT" or op == "PUSH_FLOAT_BITS" {
+            rw_push([RK_CONST, arg])
+        } elif op == "PUSH_BOOL" {
+            if arg {
+                rw_push([RK_CONST, 1])
+            } else {
+                rw_push([RK_CONST, 0])
+            }
+        } elif op == "PUSH_NONE" {
+            rw_push([RK_CONST, 0])
+        } elif op == "PUSH_STR" {
+            rw_push([RK_STR, arg])
+        } elif op == "LOAD" {
+            rw_push(rw_var_entry(arg))
+        } elif op == "STORE" or op == "STORE_LOCAL" {
+            rw_store(arg)
+        } elif op == "ADD" {
+            rw_add_sub(true)
+        } elif op == "SUB" {
+            rw_add_sub(false)
+        } elif op == "MUL" or op == "BAND" or op == "BOR" or op == "BXOR" {
+            rw_logic(op)
+        } elif op == "SHL" {
+            rw_shift(4)
+        } elif op == "SHR" {
+            rw_shift(7)
+        } elif op == "FLOOR_DIV" {
+            rw_divide(false, true)
+        } elif op == "MOD" {
+            rw_divide(true, true)
+        } elif op == "NEG" {
+            alloc e := rw_stack[rw_sp - 1]
+            if e[0] == RK_CONST {
+                rw_stack[rw_sp - 1] := [RK_CONST, 0 - e[1]]
+            } else {
+                x_neg(rw_reg(rw_sp - 1))
+            }
+        } elif op == "NOT" {
+            x_not_(rw_reg(rw_sp - 1))
+        } elif op == "EQ" or op == "NE" or op == "LT" or op == "LE" or op == "GT" or op == "GE" {
+            alloc cc := rw_compare(op)
+            if next_op == "JUMP_IF_FALSE" or next_op == "JUMP_IF_TRUE" {
+                rw_flush()
+                if next_op == "JUMP_IF_FALSE" {
+                    cc := rw_cc_invert(cc)
+                }
+                x_jcc(cc, jl[rw_code[i + 1][1]])
+                i := i + 1
+            } else {
+                alloc r := rw_alloc()
+                x_setcc(cc, r)
+                rw_push([RK_REG, r, 0])
+            }
+        } elif op == "TRUTHY" or op == "LNOT" {
+            alloc e := rw_stack[rw_sp - 1]
+            if e[0] == RK_CONST {
+                alloc t := e[1] != 0
+                if op == "LNOT" { t := t == false }
+                if t {
+                    rw_stack[rw_sp - 1] := [RK_CONST, 1]
+                } else {
+                    rw_stack[rw_sp - 1] := [RK_CONST, 0]
+                }
+            } else {
+                rw_test_top()
+                alloc r := rw_alloc()
+                if op == "TRUTHY" {
+                    x_setcc(CC_NE, r)
+                } else {
+                    x_setcc(CC_E, r)
+                }
+                rw_push([RK_REG, r, 0])
+            }
+        } elif op == "JUMP" {
+            rw_flush()
+            x_jmp(jl[arg])
+        } elif op == "JUMP_IF_FALSE" or op == "JUMP_IF_TRUE" {
+            alloc e := rw_stack[rw_sp - 1]
+            if e[0] == RK_CONST or e[0] == RK_STR or e[0] == RK_ADDR or e[0] == RK_LABEL {
+                alloc t := true
+                if e[0] == RK_CONST { t := e[1] != 0 }
+                rw_sp := rw_sp - 1
+                rw_flush()
+                if (op == "JUMP_IF_TRUE") == t {
+                    x_jmp(jl[arg])
+                }
+            } else {
+                rw_test_top()
+                rw_flush()
+                if op == "JUMP_IF_FALSE" {
+                    x_jcc(CC_E, jl[arg])
+                } else {
+                    x_jcc(CC_NE, jl[arg])
+                }
+            }
+        } elif op == "CALL" or op == "TCALL" {
+            if has_key(rw_funcs, arg) {
+                alloc argc := length(rw_funcs[arg][0])
+                rw_flush()
+                x_call(rw_need(arg))
+                if argc > 0 {
+                    x_alu_ri(ALU_ADD, RSP, 8 * argc)
+                }
+                rw_sp := rw_sp - argc
+                rw_push([RK_REG, RAX, 0])
+            } elif has_key(RW_INTRINSICS, arg) {
+                rw_intrinsic(arg)
+            } else {
+                rw_fail("call to the undefined proc " + arg)
+            }
+            if op == "TCALL" {
+                rw_load_into(RAX, rw_stack[rw_sp - 1])
+                rw_sp := rw_sp - 1
+                x_leave()
+                x_ret()
+            }
+        } elif op == "POP" {
+            if rw_stack[rw_sp - 1][0] == RK_SPILL {
+                x_alu_ri(ALU_ADD, RSP, 8)
+            }
+            rw_sp := rw_sp - 1
+        } elif op == "RET" {
+            rw_load_into(RAX, rw_stack[rw_sp - 1])
+            rw_sp := rw_sp - 1
+            x_leave()
+            x_ret()
+        } elif op == "HALT" {
+            x_mov_ri(RAX, 0)
+            x_leave()
+            x_ret()
+        } else {
+            rw_fail(op + " is not available in the runtime")
+        }
+        i := i + 1
+    }
+    return false
+}
+
+# Emit every proc that has been asked for, and whatever those need.
+proc rw_emit_pending() {
+    alloc at := 0
+    loop at < length(rw_queue) {
+        alloc name := rw_queue[at]
+        alloc range := rw_ranges[name]
+        rw_body(name, rw_funcs[name][0], range[0], range[1], rw_labels[name])
+        at := at + 1
+    }
+    rw_queue := []
+    return false
+}
+
+# The unit's top-level code: the initialisers of its globals.
+proc rw_emit_init() {
+    rw_body("", [], 0, rw_main_end, rw_init_label)
+    return false
+}
+
+# === 4. Managed mode ======================================================
+#
+# The user's program. A value is two machine words, a tag and a payload:
+#
+#     tag 0 Int      payload: the integer
+#         1 Float             the bits of the double
+#         2 Bool              0 or 1
+#         3 None              0
+#         4 (unset)           a variable nothing has been stored into
+#         8 Str               pointer to the object
+#         9 List, 10 Dict, 11 Closure, 12 Cell (a captured variable)
+#
+# In memory the payload comes first and the tag eight bytes after it.
+# Every heap object starts with its reference count. "Owned" below
+# means the holder is responsible for one count.
+#
+# Frame of a proc with n parameters:
+#
+#     [rbp + 16 + 16*(n-1-i)]   parameter i, pushed by the caller, owned
+#     [rbp + 8]                 return address
+#     [rbp]                     caller's rbp
+#     [rbp - 8]                 the closure being run (nested procs only)
+#     below that                one 16-byte slot per local variable
+#     below that                the operand stack
+#
+# The result comes back in RAX (payload) and RDX (tag), owned, and the
+# callee removes the arguments. The runtime's procs are raw-mode code:
+# they take tags and payloads as separate words, never keep what they
+# are passed, and return the payload in RAX with the tag in the
+# global rt_tag.
+#
+# Operands are tracked on a virtual stack so that most never touch the
+# machine stack. An entry is a constant, a variable not read yet, a
+# value on the machine stack, or the one value in RAX:RDX ("acc").
+# Entries on the machine stack are always the bottom of the virtual
+# stack. Integer arithmetic and comparisons are done in line when the
+# tags allow, and fall back to a runtime call placed after the proc's
+# body otherwise.
+
+alloc TAG_INT := 0
+alloc TAG_FLOAT := 1
+alloc TAG_BOOL := 2
+alloc TAG_NONE := 3
+alloc TAG_UNSET := 4
+alloc TAG_STR := 8
+alloc TAG_LIST := 9
+alloc TAG_DICT := 10
+alloc TAG_CLOSURE := 11
+alloc TAG_CELL := 12
+
+alloc VK_INT := 0       # [kind, value]
+alloc VK_BOOL := 1      # [kind, 0 | 1]
+alloc VK_NONE := 2      # [kind]
+alloc VK_FLOAT := 3     # [kind, bits]
+alloc VK_STR := 4       # [kind, text]
+alloc VK_VAR := 5       # [kind, base, disp, name, check]   a variable's slot, borrowed
+alloc VK_STK := 6       # [kind, type, owned]              on the machine stack
+alloc VK_ACC := 7       # [kind, type]                     in RAX:RDX, owned
+
+# What is known about a value's type at build time.
+alloc TY_ANY := 0
+alloc TY_INT := 1
+alloc TY_BOOL := 2
+alloc TY_NOHEAP := 3    # not a heap object, so there is no count to keep
+
+alloc MV_PLAIN := 0     # the slot holds the value
+alloc MV_BOXED := 1     # the slot holds a cell that holds the value
+
+alloc MG_HELPERS := {
+    ADD: "rt_add", SUB: "rt_sub", MUL: "rt_mul", DIV: "rt_div",
+    FLOOR_DIV: "rt_floor_div", MOD: "rt_mod",
+    BAND: "rt_band", BOR: "rt_bor", BXOR: "rt_bxor", SHL: "rt_shl", SHR: "rt_shr",
+    AND: "rt_and", OR: "rt_or",
+    EQ: "rt_eq", NE: "rt_ne", LT: "rt_lt", LE: "rt_le", GT: "rt_gt", GE: "rt_ge"
+}
+
+# Builtins whose result type is known whatever the arguments are.
+alloc MG_BUILTIN_TY := {
+    length: 1, ascii: 1, file_exists: 2, is_dir: 2, has_key: 2, time_ms: 1, getpid: 1
+}
+
+alloc mg_code := []
+alloc mg_funcs := {}
+alloc mg_files := []
+alloc mg_lines := []
+alloc mg_info := {}
+alloc mg_globals := {}         # name -> bss offset of its slot
+alloc mg_gsafe := {}           # global name -> index of the store that makes it certainly set
+alloc mg_first_call := 0
+alloc mg_fn_labels := {}
+alloc mg_linetab := []         # flat: code offset, file index, line
+alloc mg_fntab := []           # flat: label, display name
+alloc mg_stub_drop := -1
+alloc mg_stub_release := -1
+alloc mg_stub_drop_acc := -1
+
+alloc mg_name := ""            # proc being compiled; "" for the top level
+alloc mg_vars := {}            # name -> [MV_*, disp]
+alloc mg_safe := {}            # local name -> index after which it is certainly set
+alloc mg_slots := []           # displacements of every slot to release on return
+alloc mg_nparams := 0
+alloc mg_vs := []
+alloc mg_vn := 0
+alloc mg_stk_n := 0
+alloc mg_acc := -1
+alloc mg_deferred := []
+alloc mg_ret_label := -1
+alloc mg_at := 0
+alloc mg_last_file := -1
+alloc mg_last_line := -1
+alloc mg_ovf := {}
+alloc mg_undef := {}
+
+proc mg_fail(msg) {
+    gen_fail("internal error in " + mg_name + " at instruction " + mg_at + ": " + msg)
+}
+
+proc mg_small(v) {
+    return v > -1073741824 and v < 1073741824
+}
+
+# Record that the code from here on belongs to the source line of
+# instruction `i`. Tracebacks are built from this table.
+proc mg_note_line(i) {
+    if i >= length(mg_lines) {
+        return false
+    }
+    alloc fl := mg_lines[i]
+    if fl[0] != mg_last_file or fl[1] != mg_last_line {
+        mg_last_file := fl[0]
+        mg_last_line := fl[1]
+        append(mg_linetab, length(x_code))
+        append(mg_linetab, fl[0])
+        append(mg_linetab, fl[1])
+    }
+    return false
+}
+
+# --- entries ----------------------------------------------------------------
+
+proc mg_ty(e) {
+    alloc k := e[0]
+    if k == VK_INT { return TY_INT }
+    if k == VK_BOOL { return TY_BOOL }
+    if k == VK_VAR { return TY_ANY }
+    if k == VK_STK or k == VK_ACC { return e[1] }
+    return TY_NOHEAP
+}
+
+# Can the fast integer path apply to an operand of this type?
+proc mg_intish(ty) {
+    return ty == TY_INT or ty == TY_ANY or ty == TY_NOHEAP
+}
+
+proc mg_const_tag(e) {
+    alloc k := e[0]
+    if k == VK_INT { return TAG_INT }
+    if k == VK_BOOL { return TAG_BOOL }
+    if k == VK_NONE { return TAG_NONE }
+    if k == VK_FLOAT { return TAG_FLOAT }
+    if k == VK_STR { return TAG_STR }
+    if k == VK_STK or k == VK_ACC {
+        if e[1] == TY_INT { return TAG_INT }
+        if e[1] == TY_BOOL { return TAG_BOOL }
+    }
+    return -1
+}
+
+# Does a holder of this entry have a count to give back?
+proc mg_needs_drop(e) {
+    if e[0] == VK_STK {
+        return e[2] and e[1] == TY_ANY
+    }
+    if e[0] == VK_ACC {
+        return e[1] == TY_ANY
+    }
+    return false
+}
+
+proc mg_push(e) {
+    mg_vs[mg_vn] := e
+    mg_vn := mg_vn + 1
+}
+
+proc mg_push_acc(ty) {
+    if mg_acc >= 0 {
+        mg_fail("two values in the accumulator")
+    }
+    mg_acc := mg_vn
+    mg_vs[mg_vn] := [VK_ACC, ty]
+    mg_vn := mg_vn + 1
+}
+
+# Forget the top n entries (their machine state is the caller's affair).
+proc mg_forget(n) {
+    alloc i := 0
+    loop i < n {
+        mg_vn := mg_vn - 1
+        alloc k := mg_vs[mg_vn][0]
+        if k == VK_STK { mg_stk_n := mg_stk_n - 1 }
+        if k == VK_ACC { mg_acc := -1 }
+        i := i + 1
+    }
+}
+
+# rsp offset of the machine-stack entry at virtual index i.
+proc mg_stk_off(i) {
+    return 16 * (mg_stk_n - 1 - i)
+}
+
+# inc the count of the object in `reg` if the tag in `treg` says heap.
+proc mg_inc_if_heap(reg, treg) {
+    x_alu_ri(ALU_CMP, treg, 8)
+    alloc p := x_jcc_short(CC_B)
+    x_inc_m(reg, 0)
+    x_patch_short(p)
+}
+
+proc mg_undef_label(name) {
+    alloc key := name + ":" + mg_last_line
+    if has_key(mg_undef, key) == false {
+        alloc lab := x_new_label()
+        mg_undef[key] := lab
+        append(mg_deferred, ["undef", lab, mg_at, name])
+    }
+    return mg_undef[key]
+}
+
+proc mg_ovf_label(what) {
+    alloc key := what + mg_last_line
+    if has_key(mg_ovf, key) == false {
+        alloc lab := x_new_label()
+        mg_ovf[key] := lab
+        append(mg_deferred, ["ovf", lab, mg_at, what])
+    }
+    return mg_ovf[key]
+}
+
+# A variable entry is about to be read: raise UndefinedIdentError if
+# nothing has been stored in it.
+proc mg_check_var(e) {
+    if e[0] == VK_VAR and e[4] {
+        x_alu_mi(ALU_CMP, e[1], e[2] + 8, TAG_UNSET)
+        x_jcc(CC_E, mg_undef_label(e[3]))
+        e[4] := false
+    }
+    return false
+}
+
+# Put entry i on the machine stack. Everything below it must be there
+# already. With `own`, the stack copy holds a count of its own.
+proc mg_materialise(i, own) {
+    alloc e := mg_vs[i]
+    alloc k := e[0]
+    if k == VK_STK {
+        if own and e[2] == false {
+            if e[1] == TY_ANY {
+                alloc off := mg_stk_off(i)
+                x_alu_mi(ALU_CMP, RSP, off + 8, 8)
+                alloc p := x_jcc_short(CC_B)
+                x_load(RCX, RSP, off)
+                x_inc_m(RCX, 0)
+                x_patch_short(p)
+            }
+            e[2] := true
+        }
+        return false
+    }
+    if i != mg_stk_n {
+        mg_fail("materialising entry " + i + " above " + mg_stk_n)
+    }
+    alloc ne := [VK_STK, TY_NOHEAP, true]
+    if k == VK_INT {
+        x_push_i(TAG_INT)
+        if x_fits32(e[1]) {
+            x_push_i(e[1])
+        } else {
+            x_mov_ri(RCX, e[1])
+            x_push(RCX)
+        }
+        ne[1] := TY_INT
+    } elif k == VK_BOOL {
+        x_push_i(TAG_BOOL)
+        x_push_i(e[1])
+        ne[1] := TY_BOOL
+    } elif k == VK_NONE {
+        x_push_i(TAG_NONE)
+        x_push_i(0)
+    } elif k == VK_FLOAT {
+        x_push_i(TAG_FLOAT)
+        x_mov_ri(RCX, e[1])
+        x_push(RCX)
+    } elif k == VK_STR {
+        x_push_i(TAG_STR)
+        x_lea(RCX, DATA, gen_str(e[1]))
+        x_push(RCX)
+    } elif k == VK_VAR {
+        mg_check_var(e)
+        x_push_m(e[1], e[2] + 8)
+        x_push_m(e[1], e[2])
+        ne[1] := TY_ANY
+        if own or e[1] == BSS {
+            x_alu_mi(ALU_CMP, RSP, 8, 8)
+            alloc p := x_jcc_short(CC_B)
+            x_load(RCX, RSP, 0)
+            x_inc_m(RCX, 0)
+            x_patch_short(p)
+        } else {
+            ne[2] := false
+        }
+    } else {
+        # VK_ACC
+        if e[1] == TY_INT {
+            x_push_i(TAG_INT)
+        } elif e[1] == TY_BOOL {
+            x_push_i(TAG_BOOL)
+        } else {
+            x_push(RDX)
+        }
+        x_push(RAX)
+        ne[1] := e[1]
+        mg_acc := -1
+    }
+    mg_vs[i] := ne
+    mg_stk_n := mg_stk_n + 1
+    return false
+}
+
+# RAX:RDX is about to be used: if it holds a value that is not one of
+# the top `nops` operands, move that value to the machine stack.
+proc mg_free_acc(nops) {
+    if mg_acc >= 0 and mg_acc < mg_vn - nops {
+        alloc top := mg_acc
+        alloc i := mg_stk_n
+        loop i <= top {
+            mg_materialise(i, false)
+            i := i + 1
+        }
+    }
+    return false
+}
+
+# Everything except the top `keep` entries goes to the machine stack,
+# each holding its own count: the state every jump and label agrees on.
+proc mg_flush_canon(keep) {
+    alloc i := 0
+    alloc n := mg_vn - keep
+    loop i < n {
+        mg_materialise(i, true)
+        i := i + 1
+    }
+    return false
+}
+
+# Everything goes to the machine stack; the top `nown` entries (the
+# arguments of a call) hold their own counts.
+proc mg_flush_args(nown) {
+    alloc i := 0
+    loop i < mg_vn {
+        mg_materialise(i, i >= mg_vn - nown)
+        i := i + 1
+    }
+    return false
+}
+
+# Take the top entry off the virtual stack and into RAX:RDX, owned.
+# Returns what is known of its type.
+proc mg_take_owned() {
+    alloc e := mg_vs[mg_vn - 1]
+    alloc k := e[0]
+    mg_forget(1)
+    if k == VK_ACC {
+        if e[1] == TY_INT { x_mov_ri(RDX, TAG_INT) }
+        if e[1] == TY_BOOL { x_mov_ri(RDX, TAG_BOOL) }
+        return e[1]
+    }
+    if k == VK_STK {
+        x_pop(RAX)
+        x_pop(RDX)
+        if e[2] == false and e[1] == TY_ANY {
+            mg_inc_if_heap(RAX, RDX)
+        }
+        return e[1]
+    }
+    if k == VK_VAR {
+        mg_check_var(e)
+        x_load(RAX, e[1], e[2])
+        x_load(RDX, e[1], e[2] + 8)
+        mg_inc_if_heap(RAX, RDX)
+        return TY_ANY
+    }
+    if k == VK_INT {
+        x_mov_ri(RAX, e[1])
+        x_mov_ri(RDX, TAG_INT)
+        return TY_INT
+    }
+    if k == VK_BOOL {
+        x_mov_ri(RAX, e[1])
+        x_mov_ri(RDX, TAG_BOOL)
+        return TY_BOOL
+    }
+    if k == VK_NONE {
+        x_mov_ri(RAX, 0)
+        x_mov_ri(RDX, TAG_NONE)
+        return TY_NOHEAP
+    }
+    if k == VK_FLOAT {
+        x_mov_ri(RAX, e[1])
+        x_mov_ri(RDX, TAG_FLOAT)
+        return TY_NOHEAP
+    }
+    x_lea(RAX, DATA, gen_str(e[1]))
+    x_mov_ri(RDX, TAG_STR)
+    return TY_NOHEAP
+}
+
+# --- operand access ---------------------------------------------------------
+#
+# Where an operand's payload is: [0, value] an immediate, [1, base, disp]
+# memory, [2] RAX, [3, text] the address of a static string. `off` is
+# the entry's rsp offset when it is on the machine stack.
+
+proc mg_loc(e, off) {
+    alloc k := e[0]
+    if k == VK_INT or k == VK_BOOL or k == VK_FLOAT { return [0, e[1]] }
+    if k == VK_NONE { return [0, 0] }
+    if k == VK_STR { return [3, e[1]] }
+    if k == VK_VAR { return [1, e[1], e[2]] }
+    if k == VK_STK { return [1, RSP, off] }
+    return [2]
+}
+
+proc mg_load(reg, loc) {
+    if loc[0] == 0 {
+        x_mov_ri(reg, loc[1])
+    } elif loc[0] == 1 {
+        x_load(reg, loc[1], loc[2])
+    } elif loc[0] == 2 {
+        x_mov_rr(reg, RAX)
+    } else {
+        x_lea(reg, DATA, gen_str(loc[1]))
+    }
+}
+
+# Jump to `slow` unless the entry's tag is Int. Leaves RAX and RDX alone.
+proc mg_int_check(e, off, slow) {
+    if e[0] == VK_ACC {
+        x_test_rr(RDX, RDX)
+    } elif e[0] == VK_VAR {
+        x_alu_mi(ALU_CMP, e[1], e[2] + 8, TAG_INT)
+    } else {
+        x_alu_mi(ALU_CMP, RSP, off + 8, TAG_INT)
+    }
+    x_jcc(CC_NE, slow)
+}
+
+proc mg_int_check2(l, loff, r, roff, slow) {
+    alloc lu := mg_ty(l) != TY_INT
+    alloc ru := mg_ty(r) != TY_INT
+    if lu and ru and l[0] != VK_ACC and r[0] != VK_ACC {
+        if l[0] == VK_VAR {
+            x_load(RCX, l[1], l[2] + 8)
+        } else {
+            x_load(RCX, RSP, loff + 8)
+        }
+        if r[0] == VK_VAR {
+            x_alu_rm(ALU_OR, RCX, r[1], r[2] + 8)
+        } else {
+            x_alu_rm(ALU_OR, RCX, RSP, roff + 8)
+        }
+        x_jcc(CC_NE, slow)
+        return false
+    }
+    if lu { mg_int_check(l, loff, slow) }
+    if ru { mg_int_check(r, roff, slow) }
+    return false
+}
+
+# --- calls into the runtime ---------------------------------------------------
+
+# Call the runtime proc `name` on the operand entries `ops` (in stack
+# order; those on the machine stack are its top entries), followed by
+# the extra word arguments `extras` ([0, n] a number, [1, text] the
+# address of a static string). Afterwards the operands are gone from
+# the machine stack and their counts given back. `rty`: -1 no result,
+# otherwise the type of the result, left in RAX:RDX.
+proc mg_helper(name, ops, extras, rty) {
+    alloc n := length(ops)
+    for e in ops {
+        mg_check_var(e)
+    }
+    for e in ops {
+        alloc k := e[0]
+        if k == VK_STK {
+            continue
+        }
+        alloc tag := mg_const_tag(e)
+        if tag >= 0 {
+            x_push_i(tag)
+        } elif k == VK_VAR {
+            x_push_m(e[1], e[2] + 8)
+        } else {
+            x_push(RDX)
+        }
+        if k == VK_ACC {
+            x_push(RAX)
+        } elif k == VK_VAR {
+            x_push_m(e[1], e[2])
+        } elif k == VK_STR {
+            x_lea(RCX, DATA, gen_str(e[1]))
+            x_push(RCX)
+        } elif k == VK_NONE {
+            x_push_i(0)
+        } elif x_fits32(e[1]) {
+            x_push_i(e[1])
+        } else {
+            x_mov_ri(RCX, e[1])
+            x_push(RCX)
+        }
+    }
+    for x in extras {
+        if x[0] == 0 {
+            x_push_i(x[1])
+        } else {
+            x_lea(RCX, DATA, gen_str(x[1]))
+            x_push(RCX)
+        }
+    }
+    x_call(rw_need(name))
+    if rty == TY_ANY or rty == TY_NOHEAP {
+        x_load(RDX, BSS, rw_global("rt_tag"))
+    }
+    alloc nx := length(extras)
+    alloc i := 0
+    loop i < n {
+        if mg_needs_drop(ops[i]) {
+            x_lea(RDI, RSP, 8 * nx + 16 * (n - 1 - i))
+            x_call(mg_stub_drop)
+        }
+        i := i + 1
+    }
+    if n > 0 or nx > 0 {
+        x_alu_ri(ALU_ADD, RSP, 16 * n + 8 * nx)
+    }
+    return false
+}
+
+# The same, in line, on the top `nops` entries of the virtual stack.
+proc mg_generic(name, nops, extras, rty) {
+    mg_free_acc(nops)
+    alloc ops := []
+    alloc i := mg_vn - nops
+    loop i < mg_vn {
+        append(ops, mg_vs[i])
+        i := i + 1
+    }
+    mg_helper(name, ops, extras, rty)
+    mg_forget(nops)
+    if rty >= 0 {
+        mg_push_acc(rty)
+    }
+    return false
+}
+
+# --- arithmetic and comparison ------------------------------------------------
+
+# RAX := RAX <op> the operand at `loc`.
+proc mg_alu(op, loc) {
+    if loc[0] == 0 and x_fits32(loc[1]) == false {
+        x_mov_ri(RCX, loc[1])
+        if op == "MUL" {
+            x_imul_rr(RAX, RCX)
+        } else {
+            x_alu_rr(MG_ALU[op], RAX, RCX)
+        }
+    } elif loc[0] == 0 {
+        if op == "MUL" {
+            x_imul_rri(RAX, RAX, loc[1])
+        } else {
+            x_alu_ri(MG_ALU[op], RAX, loc[1])
+        }
+    } elif op == "MUL" {
+        x_imul_rm(RAX, loc[1], loc[2])
+    } else {
+        x_alu_rm(MG_ALU[op], RAX, loc[1], loc[2])
+    }
+}
+
+alloc MG_ALU := {ADD: 0, SUB: 5, BAND: 4, BOR: 1, BXOR: 6}
+
+# rsp offsets of the top two entries, when they are on the machine stack.
+proc mg_pair_offs(l, r) {
+    alloc nstk := 0
+    if l[0] == VK_STK { nstk := nstk + 1 }
+    if r[0] == VK_STK { nstk := nstk + 1 }
+    alloc loff := 0
+    if r[0] == VK_STK { loff := 16 }
+    return [nstk, loff, 0]
+}
+
+# ADD SUB MUL BAND BOR BXOR
+proc mg_arith(op) {
+    mg_free_acc(2)
+    alloc l := mg_vs[mg_vn - 2]
+    alloc r := mg_vs[mg_vn - 1]
+    alloc lt := mg_ty(l)
+    alloc rt := mg_ty(r)
+    alloc helper := MG_HELPERS[op]
+    alloc checked := op == "ADD" or op == "SUB" or op == "MUL"
+    alloc rty := TY_INT
+    if op == "ADD" { rty := TY_ANY }
+    if op == "SUB" or op == "MUL" { rty := TY_NOHEAP }
+    if mg_intish(lt) == false or mg_intish(rt) == false or l[0] == VK_FLOAT or r[0] == VK_FLOAT or l[0] == VK_NONE or r[0] == VK_NONE or l[0] == VK_STR or r[0] == VK_STR {
+        return mg_generic(helper, 2, [], rty)
+    }
+    if l[0] == VK_INT and r[0] == VK_INT and mg_small(l[1]) and mg_small(r[1]) and op != "MUL" {
+        alloc v := 0
+        if op == "ADD" { v := l[1] + r[1] }
+        if op == "SUB" { v := l[1] - r[1] }
+        if op == "BAND" { v := l[1] & r[1] }
+        if op == "BOR" { v := l[1] | r[1] }
+        if op == "BXOR" { v := l[1] ^ r[1] }
+        mg_forget(2)
+        mg_push([VK_INT, v])
+        return false
+    }
+    alloc offs := mg_pair_offs(l, r)
+    alloc nstk := offs[0]
+    alloc need_check := lt != TY_INT or rt != TY_INT
+    alloc slow := -1
+    alloc back := -1
+    if need_check {
+        slow := x_new_label()
+        back := x_new_label()
+        mg_int_check2(l, offs[1], r, offs[2], slow)
+    }
+    alloc lp := mg_loc(l, offs[1])
+    alloc rp := mg_loc(r, offs[2])
+    if l[0] == VK_ACC {
+        mg_alu(op, rp)
+    } elif r[0] == VK_ACC {
+        if op == "SUB" {
+            x_mov_rr(RCX, RAX)
+            mg_load(RAX, lp)
+            x_alu_rr(ALU_SUB, RAX, RCX)
+        } else {
+            mg_alu(op, lp)
+        }
+    } else {
+        mg_load(RAX, lp)
+        mg_alu(op, rp)
+    }
+    if checked {
+        alloc what := "addition"
+        if op == "SUB" { what := "subtraction" }
+        if op == "MUL" { what := "multiplication" }
+        x_jcc(CC_O, mg_ovf_label(what))
+    }
+    if nstk > 0 {
+        x_lea(RSP, RSP, 16 * nstk)
+    }
+    mg_forget(2)
+    if need_check {
+        if rty != TY_INT {
+            x_mov_ri(RDX, TAG_INT)
+        }
+        x_bind(back)
+        append(mg_deferred, ["helper", slow, mg_at, helper, [l, r], [], rty, 0, back, -1])
+        mg_push_acc(rty)
+    } else {
+        mg_push_acc(TY_INT)
+    }
+    return false
+}
+
+proc mg_cc_for(op) {
+    if op == "EQ" { return CC_E }
+    if op == "NE" { return CC_NE }
+    if op == "LT" { return CC_L }
+    if op == "LE" { return CC_LE }
+    if op == "GT" { return CC_G }
+    return CC_GE
+}
+
+proc mg_cc_swap(cc) {
+    if cc == CC_L { return CC_G }
+    if cc == CC_LE { return CC_GE }
+    if cc == CC_G { return CC_L }
+    if cc == CC_GE { return CC_LE }
+    return cc
+}
+
+# Finish a comparison whose flags are set: either jump (jop is the
+# conditional jump that follows in the bytecode, target its label) or
+# leave a Bool in the accumulator. `slow_item` is the deferred runtime
+# call for the case the fast path could not handle, or false.
+proc mg_finish_compare(cc, jop, target, nstk, slow, back, helper, ops) {
+    if nstk > 0 {
+        x_lea(RSP, RSP, 16 * nstk)
+    }
+    mg_forget(2)
+    if jop == "" {
+        x_setcc(cc, RAX)
+        if slow >= 0 {
+            x_bind(back)
+            append(mg_deferred, ["helper", slow, mg_at, helper, ops, [], TY_BOOL, 0, back, -1])
+        }
+        mg_push_acc(TY_BOOL)
+        return false
+    }
+    if jop == "JUMP_IF_FALSE" {
+        x_jcc(cc ^ 1, target)
+    } else {
+        x_jcc(cc, target)
+    }
+    if slow >= 0 {
+        x_bind(back)
+        alloc tail := 1
+        if jop == "JUMP_IF_TRUE" { tail := 2 }
+        append(mg_deferred, ["helper", slow, mg_at, helper, ops, [], TY_BOOL, tail, back, target])
+    }
+    return false
+}
+
+# EQ NE LT LE GT GE. With `jop`, the comparison is fused with the
+# conditional jump that follows it.
+proc mg_compare(op, jop, target) {
+    if jop == "" {
+        mg_free_acc(2)
+    } else {
+        mg_flush_canon(2)
+    }
+    alloc l := mg_vs[mg_vn - 2]
+    alloc r := mg_vs[mg_vn - 1]
+    alloc lt := mg_ty(l)
+    alloc rt := mg_ty(r)
+    alloc helper := MG_HELPERS[op]
+    alloc offs := mg_pair_offs(l, r)
+    alloc nstk := offs[0]
+    alloc cc := mg_cc_for(op)
+    alloc is_eq := op == "EQ" or op == "NE"
+
+    # x == true / x == false: a Bool on one side.
+    if is_eq and (l[0] == VK_BOOL or r[0] == VK_BOOL) and l[0] != r[0] {
+        alloc o := l
+        alloc ooff := offs[1]
+        alloc bv := r[1]
+        if l[0] == VK_BOOL {
+            o := r
+            ooff := offs[2]
+            bv := l[1]
+        }
+        alloc oty := mg_ty(o)
+        if oty == TY_ANY or oty == TY_BOOL or oty == TY_NOHEAP and (o[0] == VK_STK or o[0] == VK_ACC) {
+            alloc slow := -1
+            alloc back := -1
+            if oty != TY_BOOL {
+                slow := x_new_label()
+                back := x_new_label()
+                if o[0] == VK_ACC {
+                    x_alu_ri(ALU_CMP, RDX, TAG_BOOL)
+                } elif o[0] == VK_VAR {
+                    x_alu_mi(ALU_CMP, o[1], o[2] + 8, TAG_BOOL)
+                } else {
+                    x_alu_mi(ALU_CMP, RSP, ooff + 8, TAG_BOOL)
+                }
+                x_jcc(CC_NE, slow)
+            }
+            if o[0] == VK_ACC {
+                x_alu_ri(ALU_CMP, RAX, bv)
+            } elif o[0] == VK_VAR {
+                x_alu_mi(ALU_CMP, o[1], o[2], bv)
+            } else {
+                x_alu_mi(ALU_CMP, RSP, ooff, bv)
+            }
+            return mg_finish_compare(cc, jop, target, nstk, slow, back, helper, [l, r])
+        }
+    }
+
+    alloc fast := mg_intish(lt) and mg_intish(rt) and l[0] != VK_FLOAT and r[0] != VK_FLOAT and l[0] != VK_NONE and r[0] != VK_NONE and l[0] != VK_STR and r[0] != VK_STR
+    if fast == false {
+        # No fast path: ask the runtime, which answers 0 or 1 in RAX.
+        mg_helper(helper, [l, r], [], TY_BOOL)
+        mg_forget(2)
+        if jop == "" {
+            mg_push_acc(TY_BOOL)
+        } else {
+            x_test_rr(RAX, RAX)
+            if jop == "JUMP_IF_FALSE" {
+                x_jcc(CC_E, target)
+            } else {
+                x_jcc(CC_NE, target)
+            }
+        }
+        return false
+    }
+    alloc slow := -1
+    alloc back := -1
+    if lt != TY_INT or rt != TY_INT {
+        slow := x_new_label()
+        back := x_new_label()
+        mg_int_check2(l, offs[1], r, offs[2], slow)
+    }
+    alloc a := l
+    alloc b := r
+    alloc aoff := offs[1]
+    alloc boff := offs[2]
+    if l[0] == VK_INT and r[0] != VK_INT {
+        a := r
+        b := l
+        aoff := offs[2]
+        boff := offs[1]
+        cc := mg_cc_swap(cc)
+    }
+    alloc ap := mg_loc(a, aoff)
+    alloc bp := mg_loc(b, boff)
+    if a[0] == VK_ACC {
+        if bp[0] == 0 and x_fits32(bp[1]) {
+            x_alu_ri(ALU_CMP, RAX, bp[1])
+        } elif bp[0] == 0 {
+            x_mov_ri(RCX, bp[1])
+            x_alu_rr(ALU_CMP, RAX, RCX)
+        } else {
+            x_alu_rm(ALU_CMP, RAX, bp[1], bp[2])
+        }
+    } elif b[0] == VK_ACC {
+        if ap[0] == 0 {
+            x_mov_ri(RCX, ap[1])
+            x_alu_rr(ALU_CMP, RCX, RAX)
+        } else {
+            x_alu_mr(ALU_CMP, ap[1], ap[2], RAX)
+        }
+    } elif ap[0] == 1 and bp[0] == 0 and x_fits32(bp[1]) {
+        x_alu_mi(ALU_CMP, ap[1], ap[2], bp[1])
+    } else {
+        mg_load(RCX, ap)
+        if bp[0] == 0 and x_fits32(bp[1]) {
+            x_alu_ri(ALU_CMP, RCX, bp[1])
+        } elif bp[0] == 0 {
+            x_mov_ri(RAX, bp[1])
+            x_alu_rr(ALU_CMP, RCX, RAX)
+        } else {
+            x_alu_rm(ALU_CMP, RCX, bp[1], bp[2])
+        }
+    }
+    return mg_finish_compare(cc, jop, target, nstk, slow, back, helper, [l, r])
+}
+
+# Is this constant entry true?
+proc mg_const_truth(e) {
+    alloc k := e[0]
+    if k == VK_INT or k == VK_BOOL or k == VK_FLOAT {
+        # -0.0 is false too.
+        return e[1] != 0 and (k != VK_FLOAT or e[1] != (1 << 63))
+    }
+    if k == VK_STR { return length(e[1]) > 0 }
+    return false
+}
+
+proc mg_is_const(e) {
+    return e[0] <= VK_STR
+}
+
+# JUMP_IF_FALSE / JUMP_IF_TRUE on the top entry.
+proc mg_cond_jump(jop, target) {
+    mg_flush_canon(1)
+    alloc e := mg_vs[mg_vn - 1]
+    alloc want := jop == "JUMP_IF_TRUE"
+    if mg_is_const(e) {
+        mg_forget(1)
+        if mg_const_truth(e) == want {
+            x_jmp(target)
+        }
+        return false
+    }
+    alloc ty := mg_ty(e)
+    alloc slow := -1
+    alloc back := -1
+    if ty != TY_BOOL and ty != TY_INT {
+        # Fast when the tag is Int (0) or Bool (2): true iff the payload is not zero.
+        slow := x_new_label()
+        back := x_new_label()
+        if e[0] == VK_ACC {
+            x_test_ri(RDX, -3)
+        } elif e[0] == VK_VAR {
+            x_test_mi(e[1], e[2] + 8, -3)
+        } else {
+            x_test_mi(RSP, 8, -3)
+        }
+        x_jcc(CC_NE, slow)
+    }
+    if e[0] == VK_ACC {
+        x_test_rr(RAX, RAX)
+    } elif e[0] == VK_VAR {
+        x_alu_mi(ALU_CMP, e[1], e[2], 0)
+    } else {
+        x_alu_mi(ALU_CMP, RSP, 0, 0)
+        x_lea(RSP, RSP, 16)
+    }
+    mg_forget(1)
+    if want {
+        x_jcc(CC_NE, target)
+    } else {
+        x_jcc(CC_E, target)
+    }
+    if slow >= 0 {
+        x_bind(back)
+        alloc tail := 1
+        if want { tail := 2 }
+        append(mg_deferred, ["helper", slow, mg_at, "rt_truthy", [e], [], TY_BOOL, tail, back, target])
+    }
+    return false
+}
+
+# TRUTHY / LNOT: the top entry becomes a Bool.
+proc mg_truth(negate) {
+    alloc e := mg_vs[mg_vn - 1]
+    if mg_is_const(e) {
+        alloc t := mg_const_truth(e)
+        if negate { t := t == false }
+        mg_forget(1)
+        if t {
+            mg_push([VK_BOOL, 1])
+        } else {
+            mg_push([VK_BOOL, 0])
+        }
+        return false
+    }
+    if mg_ty(e) == TY_BOOL {
+        if negate {
+            mg_free_acc(1)
+            mg_take_owned()
+            x_alu_ri(ALU_XOR, RAX, 1)
+            mg_push_acc(TY_BOOL)
+        }
+        return false
+    }
+    mg_generic("rt_truthy", 1, [], TY_BOOL)
+    if negate {
+        x_alu_ri(ALU_XOR, RAX, 1)
+    }
+    return false
+}
+
+# NEG and NOT (bitwise).
+proc mg_unary(op) {
+    alloc e := mg_vs[mg_vn - 1]
+    if e[0] == VK_INT and mg_small(e[1]) {
+        mg_forget(1)
+        if op == "NEG" {
+            mg_push([VK_INT, 0 - e[1]])
+        } else {
+            mg_push([VK_INT, ~e[1]])
+        }
+        return false
+    }
+    alloc helper := "rt_neg"
+    alloc rty := TY_NOHEAP
+    if op == "NOT" {
+        helper := "rt_bnot"
+        rty := TY_INT
+    }
+    alloc ty := mg_ty(e)
+    if mg_intish(ty) == false or mg_is_const(e) {
+        return mg_generic(helper, 1, [], rty)
+    }
+    mg_free_acc(1)
+    alloc slow := -1
+    alloc back := -1
+    if ty != TY_INT {
+        slow := x_new_label()
+        back := x_new_label()
+        mg_int_check(e, 0, slow)
+    }
+    if e[0] != VK_ACC {
+        mg_load(RAX, mg_loc(e, 0))
+    }
+    if op == "NEG" {
+        x_neg(RAX)
+        x_jcc(CC_O, mg_ovf_label("negation"))
+    } else {
+        x_not_(RAX)
+    }
+    if e[0] == VK_STK {
+        x_lea(RSP, RSP, 16)
+    }
+    mg_forget(1)
+    if slow >= 0 {
+        if rty != TY_INT {
+            x_mov_ri(RDX, TAG_INT)
+        }
+        x_bind(back)
+        append(mg_deferred, ["helper", slow, mg_at, helper, [e], [], rty, 0, back, -1])
+        mg_push_acc(rty)
+    } else {
+        mg_push_acc(TY_INT)
+    }
+    return false
+}
+
+# --- variables ----------------------------------------------------------------
+
+proc mg_global_slot(name) {
+    if has_key(mg_globals, name) == false {
+        mg_fail("no slot for the global " + name)
+    }
+    return mg_globals[name]
+}
+
+# Does reading `name` at instruction i need the "is it set" check?
+proc mg_needs_check(name, i, is_global) {
+    if is_global {
+        if has_key(mg_gsafe, name) == false { return true }
+        if mg_name != "" { return false }
+        return i <= mg_gsafe[name]
+    }
+    if has_key(mg_safe, name) == false { return true }
+    return i <= mg_safe[name]
+}
+
+proc mg_load_var(name, i) {
+    if has_key(mg_vars, name) {
+        alloc v := mg_vars[name]
+        if v[0] == MV_PLAIN {
+            mg_push([VK_VAR, RBP, v[1], name, mg_needs_check(name, i, false)])
+            return false
+        }
+        # A cell: read through it now.
+        mg_free_acc(0)
+        alloc undef := mg_undef_label(name)
+        x_alu_mi(ALU_CMP, RBP, v[1] + 8, TAG_CELL)
+        x_jcc(CC_NE, undef)
+        x_load(RCX, RBP, v[1])
+        x_load(RDX, RCX, 16)
+        x_load(RAX, RCX, 8)
+        x_alu_ri(ALU_CMP, RDX, TAG_UNSET)
+        x_jcc(CC_E, undef)
+        mg_inc_if_heap(RAX, RDX)
+        mg_push_acc(TY_ANY)
+        return false
+    }
+    mg_push([VK_VAR, BSS, mg_global_slot(name), name, mg_needs_check(name, i, true)])
+    return false
+}
+
+# Give back the count held by the slot at [base + disp], if any.
+# RAX and RDX survive.
+proc mg_release(base, disp) {
+    x_alu_mi(ALU_CMP, base, disp + 8, 8)
+    alloc p := x_jcc_short(CC_B)
+    x_lea(RDI, base, disp)
+    x_call(mg_stub_release)
+    x_patch_short(p)
+}
+
+# Store the top entry into a plain slot.
+proc mg_store_slot(base, disp) {
+    alloc e := mg_vs[mg_vn - 1]
+    if (e[0] == VK_INT and x_fits32(e[1])) or e[0] == VK_BOOL {
+        mg_forget(1)
+        mg_release(base, disp)
+        x_store_i(base, disp, e[1])
+        if e[0] == VK_INT {
+            x_store_i(base, disp + 8, TAG_INT)
+        } else {
+            x_store_i(base, disp + 8, TAG_BOOL)
+        }
+        return false
+    }
+    mg_take_owned()
+    mg_release(base, disp)
+    x_store(base, disp, RAX)
+    x_store(base, disp + 8, RDX)
+    return false
+}
+
+# Wrap the top entry in a new cell: RAX:RDX becomes the cell.
+proc mg_box_top() {
+    mg_free_acc(1)
+    mg_take_owned()
+    x_push(RDX)
+    x_push(RAX)
+    x_call(rw_need("rt_cell_new"))
+    x_alu_ri(ALU_ADD, RSP, 16)
+    x_mov_ri(RDX, TAG_CELL)
+    mg_push_acc(TY_ANY)
+}
+
+# No lazy entry may keep pointing at a slot that is about to change.
+proc mg_settle_var(base, disp) {
+    alloc i := mg_vn - 1
+    loop i >= 0 {
+        alloc e := mg_vs[i]
+        if e[0] == VK_VAR and e[1] == base and e[2] == disp {
+            alloc j := mg_stk_n
+            loop j <= i {
+                mg_materialise(j, true)
+                j := j + 1
+            }
+            return false
+        }
+        i := i - 1
+    }
+    return false
+}
+
+# STORE (is_local false) and STORE_LOCAL of the top entry.
+proc mg_store_var(name, is_local, i) {
+    mg_free_acc(1)
+    if has_key(mg_vars, name) {
+        alloc v := mg_vars[name]
+        if v[0] == MV_PLAIN {
+            if is_local == false and mg_needs_check(name, i, false) {
+                x_alu_mi(ALU_CMP, RBP, v[1] + 8, TAG_UNSET)
+                x_jcc(CC_E, mg_undef_label(name))
+            }
+            mg_settle_var(RBP, v[1])
+            mg_store_slot(RBP, v[1])
+            return false
+        }
+        if is_local {
+            # A new binding gets a new cell; closures that captured the
+            # old one keep it.
+            mg_box_top()
+            mg_store_slot(RBP, v[1])
+            return false
+        }
+        x_alu_mi(ALU_CMP, RBP, v[1] + 8, TAG_CELL)
+        x_jcc(CC_NE, mg_undef_label(name))
+        mg_take_owned()
+        x_push_m(RBP, v[1])
+        x_push(RDX)
+        x_push(RAX)
+        x_call(rw_need("rt_cell_set"))
+        x_alu_ri(ALU_ADD, RSP, 24)
+        return false
+    }
+    alloc slot := mg_global_slot(name)
+    if is_local == false and mg_needs_check(name, i, true) {
+        x_alu_mi(ALU_CMP, BSS, slot + 8, TAG_UNSET)
+        x_jcc(CC_E, mg_undef_label(name))
+    }
+    mg_settle_var(BSS, slot)
+    mg_store_slot(BSS, slot)
+    if name == "current_dir" {
+        # Relative paths follow the program's idea of where it is.
+        x_push_m(BSS, slot + 8)
+        x_push_m(BSS, slot)
+        x_call(rw_need("rt_set_cwd"))
+        x_alu_ri(ALU_ADD, RSP, 16)
+    }
+    return false
+}
+
+# --- calls ----------------------------------------------------------------------
+
+proc mg_release_slots() {
+    for disp in mg_slots {
+        mg_release(RBP, disp)
+    }
+}
+
+proc mg_undefined_call(name) {
+    mg_free_acc(0)
+    x_lea(RAX, DATA, gen_str(name))
+    x_push(RAX)
+    x_call(rw_need("rt_err_undefined"))
+    return false
+}
+
+proc mg_call(name) {
+    alloc argc := length(mg_funcs[name][0])
+    mg_flush_args(argc)
+    x_call(mg_fn_labels[name])
+    mg_forget(argc)
+    mg_push_acc(TY_ANY)
+    return false
+}
+
+# A tail call: this proc's frame is replaced by the callee's, so a
+# chain of them runs in constant stack space.
+proc mg_tcall(name) {
+    alloc argc := length(mg_funcs[name][0])
+    mg_flush_args(argc)
+    mg_release_slots()
+    x_load(RCX, RBP, 8)
+    x_load(R11, RBP, 0)
+    # The arguments move up to where the caller of this proc expects
+    # the callee to find and remove them. The destination is always
+    # above the source, so the copy runs from the top word down.
+    alloc dst := 16 + 16 * mg_nparams - 16 * argc
+    alloc w := 2 * argc - 1
+    loop w >= 0 {
+        x_load(RAX, RSP, 8 * w)
+        x_store(RBP, dst + 8 * w, RAX)
+        w := w - 1
+    }
+    x_lea(RSP, RBP, dst - 8)
+    x_store(RSP, 0, RCX)
+    x_mov_rr(RBP, R11)
+    x_jmp(mg_fn_labels[name])
+    mg_forget(argc)
+    return false
+}
+
+# Call the value under the top n entries with those as arguments.
+proc mg_call_value(n) {
+    mg_flush_args(n)
+    alloc slow := x_new_label()
+    alloc back := x_new_label()
+    # A closure that takes n arguments is called directly.
+    x_alu_mi(ALU_CMP, RSP, 16 * n + 8, TAG_CLOSURE)
+    x_jcc(CC_NE, slow)
+    x_load(R10, RSP, 16 * n)
+    x_alu_mi(ALU_CMP, R10, 24, n)
+    x_jcc(CC_NE, slow)
+    x_call_m(R10, 8)
+    x_bind(back)
+    append(mg_deferred, ["callv", slow, mg_at, n, back])
+    # The arguments are gone; the callee value is on top.
+    mg_forget(n)
+    alloc callee := mg_vs[mg_vn - 1]
+    if mg_needs_drop(callee) {
+        mg_release(RSP, 0)
+    }
+    x_alu_ri(ALU_ADD, RSP, 16)
+    mg_forget(1)
+    mg_push_acc(TY_ANY)
+    return false
+}
+
+proc mg_builtin(name, argc) {
+    # A builtin that takes a varying number of arguments has one proc
+    # for each: bi_binary_1, bi_binary_2.
+    alloc helper := "bi_" + name
+    if has_key(rw_labels, helper + "_" + argc) {
+        helper := helper + "_" + argc
+    }
+    if has_key(rw_labels, helper) == false or length(rw_funcs[helper][0]) != 2 * argc {
+        # Not a builtin this runtime has, or not with this many
+        # arguments: an error if the call is ever reached.
+        mg_free_acc(0)
+        x_lea(RAX, DATA, gen_str(name))
+        x_push(RAX)
+        x_push_i(argc)
+        x_call(rw_need("rt_err_builtin"))
+        mg_forget(argc)
+        mg_free_acc(0)
+        mg_push([VK_NONE])
+        return false
+    }
+    alloc rty := TY_ANY
+    if has_key(MG_BUILTIN_TY, name) {
+        rty := MG_BUILTIN_TY[name]
+    }
+    mg_generic(helper, argc, [], rty)
+    return false
+}
+
+# The variable a MAKE_FUNC binds, and whether a second, bare-named
+# global has to be bound as well (see native-c.omg, MAKE_FUNC).
+proc mg_make_func(fname, i) {
+    alloc info := mg_info[fname]
+    alloc caps := info["captured_list"]
+    alloc nc := length(caps)
+    alloc bare := be.strip_mod_prefix(fname)
+    alloc display := fname
+    if bare != false { display := bare }
+    mg_free_acc(0)
+    x_lea_label(RAX, mg_fn_labels[fname])
+    x_push(RAX)
+    x_lea(RAX, DATA, gen_str(display))
+    x_push(RAX)
+    x_push_i(length(info["params"]))
+    x_push_i(nc)
+    x_call(rw_need("rt_closure_new"))
+    x_alu_ri(ALU_ADD, RSP, 32)
+    alloc k := 0
+    loop k < nc {
+        # Share the cell of each captured variable. A variable that is
+        # not bound yet has no cell; the closure then sees it unset.
+        alloc cv := mg_vars[caps[k]]
+        x_alu_mi(ALU_CMP, RBP, cv[1] + 8, TAG_CELL)
+        alloc p := x_jcc_short(CC_NE)
+        x_load(RCX, RBP, cv[1])
+        x_inc_m(RCX, 0)
+        x_store(RAX, 40 + 8 * k, RCX)
+        x_patch_short(p)
+        k := k + 1
+    }
+    x_mov_ri(RDX, TAG_CLOSURE)
+    mg_push_acc(TY_ANY)
+    if mg_name != "" {
+        alloc target := fname
+        if bare != false { target := bare }
+        mg_store_var(target, true, i)
+        return false
+    }
+    mg_store_var(fname, true, i)
+    if bare != false and has_key(mg_globals, bare) {
+        mg_load_var(fname, i + 1)
+        mg_store_var(bare, true, i)
+    }
+    return false
+}
+
+proc mg_build(n, helper, empty_helper, tag) {
+    if n == 0 {
+        mg_free_acc(0)
+        x_call(rw_need(empty_helper))
+    } else {
+        mg_flush_args(n)
+        x_mov_rr(RAX, RSP)
+        x_push(RAX)
+        if helper == "rt_dict_build" {
+            x_push_i(n // 2)
+        } else {
+            x_push_i(n)
+        }
+        x_call(rw_need(helper))
+        x_alu_ri(ALU_ADD, RSP, 16 + 16 * n)
+        mg_forget(n)
+    }
+    x_mov_ri(RDX, tag)
+    mg_push_acc(TY_ANY)
+    return false
+}
+
+# --- one proc -------------------------------------------------------------------
+
+# How many forward jumps (and try bodies) each instruction sits inside:
+# zero means it runs on every path through the proc.
+proc mg_cover(lo, hi) {
+    alloc diff := list_repeat(0, hi - lo + 1)
+    alloc i := lo
+    loop i < hi {
+        alloc op := mg_code[i][0]
+        if op == "JUMP" or op == "JUMP_IF_FALSE" or op == "JUMP_IF_TRUE" or op == "SETUP_EXCEPT" {
+            alloc t := mg_code[i][1]
+            if t > i + 1 and t <= hi {
+                diff[i + 1 - lo] := diff[i + 1 - lo] + 1
+                diff[t - lo] := diff[t - lo] - 1
+            }
+        }
+        i := i + 1
+    }
+    alloc run := 0
+    i := 0
+    loop i < hi - lo {
+        run := run + diff[i]
+        diff[i] := run
+        i := i + 1
+    }
+    return diff
+}
+
+proc mg_emit_deferred() {
+    alloc at := 0
+    loop at < length(mg_deferred) {
+        alloc d := mg_deferred[at]
+        alloc kind := d[0]
+        mg_at := d[2]
+        mg_note_line(d[2])
+        x_bind(d[1])
+        if kind == "undef" {
+            x_lea(RAX, DATA, gen_str(d[3]))
+            x_push(RAX)
+            x_call(rw_need("rt_err_undefined"))
+        } elif kind == "ovf" {
+            x_lea(RAX, DATA, gen_str(d[3]))
+            x_push(RAX)
+            x_call(rw_need("rt_err_overflow"))
+        } elif kind == "stack" {
+            x_call(rw_need("rt_err_stack"))
+        } elif kind == "handler" {
+            x_push(RDX)
+            x_push(RAX)
+            x_jmp(d[3])
+        } elif kind == "callv" {
+            alloc n := d[3]
+            x_push_m(RSP, 16 * n + 8)
+            x_push_m(RSP, 16 * n + 8)
+            x_push_i(n)
+            x_call(rw_need("rt_call_prep"))
+            x_alu_ri(ALU_ADD, RSP, 24)
+            x_load(R10, BSS, rw_global("rt_call_closure"))
+            x_call_r(RAX)
+            x_jmp(d[4])
+        } else {
+            mg_helper(d[3], d[4], d[5], d[6])
+            if d[7] == 1 {
+                x_test_rr(RAX, RAX)
+                x_jcc(CC_E, d[9])
+            } elif d[7] == 2 {
+                x_test_rr(RAX, RAX)
+                x_jcc(CC_NE, d[9])
+            }
+            x_jmp(d[8])
+        }
+        at := at + 1
+    }
+    mg_deferred := []
+    return false
+}
+
+proc mg_reset_vs(depth) {
+    mg_vn := 0
+    loop mg_vn < depth {
+        mg_vs[mg_vn] := [VK_STK, TY_ANY, true]
+        mg_vn := mg_vn + 1
+    }
+    mg_stk_n := depth
+    mg_acc := -1
+}
+
+# Compile instructions [lo, hi): a proc's body, or the top-level code
+# when `name` is "".
+proc mg_body(name, lo, hi, label) {
+    mg_name := name
+    pp_raw := false
+    pp_run(mg_code, lo, hi)
+    alloc depths := pp_depths(mg_code, lo, hi, mg_funcs)
+    alloc targets := pp_targets(mg_code, lo, hi)
+    alloc jl := {}
+    for t in dict_keys(targets) {
+        jl[t] := x_new_label()
+    }
+    mg_vars := {}
+    mg_safe := {}
+    mg_slots := []
+    mg_deferred := []
+    mg_ovf := {}
+    mg_undef := {}
+    mg_nparams := 0
+    mg_ret_label := x_new_label()
+    mg_last_line := -1
+    mg_at := lo
+    mg_reset_vs(0)
+
+    append(mg_fntab, label)
+    if name == "" {
+        append(mg_fntab, "<top-level>")
+    } else {
+        alloc bare := be.strip_mod_prefix(name)
+        if bare == false { bare := name }
+        append(mg_fntab, bare)
+    }
+    mg_note_line(lo)
+    x_bind(label)
+    append(gen_symtab, x_here())
+    append(gen_symtab, "omg:" + mg_fntab[length(mg_fntab) - 1])
+    x_push(RBP)
+    x_mov_rr(RBP, RSP)
+    if name != "" {
+        alloc info := mg_info[name]
+        alloc params := info["params"]
+        alloc boxed := info["boxed_set"]
+        alloc caps := info["captured_list"]
+        alloc self_name := info["self_name"]
+        alloc np := length(params)
+        mg_nparams := np
+        alloc base := 0
+        if length(caps) > 0 or self_name != false {
+            x_push(R10)
+            base := -8
+        }
+        alloc pi := 0
+        loop pi < np {
+            alloc disp := 16 + 16 * (np - 1 - pi)
+            if has_key(boxed, params[pi]) {
+                mg_vars[params[pi]] := [MV_BOXED, disp]
+            } else {
+                mg_vars[params[pi]] := [MV_PLAIN, disp]
+                mg_safe[params[pi]] := -1
+            }
+            append(mg_slots, disp)
+            pi := pi + 1
+        }
+        alloc nslots := 0
+        for nm in dict_keys(info["locals"]) {
+            nslots := nslots + 1
+            alloc disp := base - 16 * nslots
+            if has_key(boxed, nm) {
+                mg_vars[nm] := [MV_BOXED, disp]
+            } else {
+                mg_vars[nm] := [MV_PLAIN, disp]
+            }
+            append(mg_slots, disp)
+        }
+        for nm in caps {
+            nslots := nslots + 1
+            alloc disp := base - 16 * nslots
+            mg_vars[nm] := [MV_BOXED, disp]
+            append(mg_slots, disp)
+        }
+        alloc s := 0
+        loop s < nslots {
+            x_push_i(TAG_UNSET)
+            x_push(RAX)
+            s := s + 1
+        }
+        alloc stack_lab := x_new_label()
+        x_alu_rm(ALU_CMP, RSP, BSS, rw_global("rt_stack_limit"))
+        x_jcc(CC_B, stack_lab)
+        append(mg_deferred, ["stack", stack_lab, lo])
+        # Captured variables arrive as cells in the closure.
+        alloc ci := 0
+        loop ci < length(caps) {
+            alloc cv := mg_vars[caps[ci]]
+            x_load(RCX, R10, 40 + 8 * ci)
+            x_test_rr(RCX, RCX)
+            alloc p := x_jcc_short(CC_E)
+            x_inc_m(RCX, 0)
+            x_store(RBP, cv[1], RCX)
+            x_store_i(RBP, cv[1] + 8, TAG_CELL)
+            x_patch_short(p)
+            ci := ci + 1
+        }
+        # A nested proc that refers to itself finds the closure that
+        # is running under its own name.
+        if self_name != false {
+            alloc sv := mg_vars[self_name]
+            x_inc_m(R10, 0)
+            if sv[0] == MV_BOXED {
+                x_push_i(TAG_CLOSURE)
+                x_push(R10)
+                x_call(rw_need("rt_cell_new"))
+                x_alu_ri(ALU_ADD, RSP, 16)
+                x_store(RBP, sv[1], RAX)
+                x_store_i(RBP, sv[1] + 8, TAG_CELL)
+            } else {
+                x_store(RBP, sv[1], R10)
+                x_store_i(RBP, sv[1] + 8, TAG_CLOSURE)
+                mg_safe[self_name] := -1
+            }
+        }
+        # A parameter some nested proc captures lives in a cell.
+        pi := 0
+        loop pi < np {
+            if has_key(boxed, params[pi]) {
+                alloc pv := mg_vars[params[pi]]
+                x_push_m(RBP, pv[1] + 8)
+                x_push_m(RBP, pv[1])
+                x_call(rw_need("rt_cell_new"))
+                x_alu_ri(ALU_ADD, RSP, 16)
+                x_store(RBP, pv[1], RAX)
+                x_store_i(RBP, pv[1] + 8, TAG_CELL)
+            }
+            pi := pi + 1
+        }
+        # Locals that are certainly bound before a given point need no
+        # "is it set" test after it.
+        alloc cover := mg_cover(lo, hi)
+        alloc ii := lo
+        loop ii < hi {
+            alloc op := mg_code[ii][0]
+            if (op == "STORE_LOCAL" or op == "MAKE_FUNC") and cover[ii - lo] == 0 {
+                alloc nm := mg_code[ii][1]
+                if op == "MAKE_FUNC" {
+                    alloc b := be.strip_mod_prefix(nm)
+                    if b != false { nm := b }
+                }
+                if has_key(mg_safe, nm) == false {
+                    mg_safe[nm] := ii
+                }
+            }
+            ii := ii + 1
+        }
+    }
+
+    alloc i := lo
+    loop i < hi {
+        alloc d := depths[i - lo]
+        if d < 0 {
+            i := i + 1
+            continue
+        }
+        mg_at := i
+        if has_key(jl, i) {
+            mg_flush_canon(0)
+            x_bind(jl[i])
+            mg_reset_vs(d)
+        }
+        if mg_vn != d {
+            mg_fail("operand stack depth " + mg_vn + " where " + d + " was expected")
+        }
+        mg_note_line(i)
+        alloc instr := mg_code[i]
+        alloc op := instr[0]
+        alloc arg := instr[1]
+        alloc jop := ""
+        if i + 1 < hi and has_key(jl, i + 1) == false {
+            alloc nop := mg_code[i + 1][0]
+            if nop == "JUMP_IF_FALSE" or nop == "JUMP_IF_TRUE" {
+                jop := nop
+            }
+        }
+        if op == "NOP" {
+            i := i + 1
+            continue
+        }
+        if op == "LOAD" {
+            mg_load_var(arg, i)
+        } elif op == "PUSH_INT" {
+            mg_push([VK_INT, arg])
+        } elif op == "PUSH_STR" {
+            mg_push([VK_STR, arg])
+        } elif op == "STORE" {
+            mg_store_var(arg, false, i)
+        } elif op == "STORE_LOCAL" {
+            mg_store_var(arg, true, i)
+        } elif op == "CALL" {
+            if has_key(mg_funcs, arg) {
+                mg_call(arg)
+            } else {
+                mg_undefined_call(arg)
+                mg_reset_vs(0)
+            }
+        } elif op == "JUMP_IF_FALSE" or op == "JUMP_IF_TRUE" {
+            mg_cond_jump(op, jl[arg])
+        } elif op == "JUMP" {
+            mg_flush_canon(0)
+            # A jump to the very next live instruction is no jump.
+            alloc k := i + 1
+            loop k < arg and (depths[k - lo] < 0 or mg_code[k][0] == "NOP") {
+                k := k + 1
+            }
+            if k != arg {
+                x_jmp(jl[arg])
+            }
+        } elif op == "EQ" or op == "NE" or op == "LT" or op == "LE" or op == "GT" or op == "GE" {
+            if jop != "" {
+                mg_compare(op, jop, jl[mg_code[i + 1][1]])
+                i := i + 1
+            } else {
+                mg_compare(op, "", -1)
+            }
+        } elif op == "ADD" or op == "SUB" or op == "MUL" or op == "BAND" or op == "BOR" or op == "BXOR" {
+            mg_arith(op)
+        } elif op == "INDEX" {
+            mg_generic("rt_index", 2, [], TY_ANY)
+        } elif op == "BUILTIN" {
+            mg_builtin(arg[0], arg[1])
+        } elif op == "CALL_VALUE" {
+            mg_call_value(arg)
+        } elif op == "ATTR" {
+            mg_generic("rt_attr", 1, [[1, arg]], TY_ANY)
+        } elif op == "RET" {
+            mg_free_acc(1)
+            mg_take_owned()
+            alloc k := i + 1
+            loop k < hi and depths[k - lo] < 0 {
+                k := k + 1
+            }
+            if k < hi {
+                x_jmp(mg_ret_label)
+            }
+            mg_reset_vs(0)
+        } elif op == "TCALL" {
+            if has_key(mg_funcs, arg) {
+                mg_tcall(arg)
+            } else {
+                mg_undefined_call(arg)
+            }
+            mg_reset_vs(0)
+        } elif op == "PUSH_BOOL" {
+            if arg {
+                mg_push([VK_BOOL, 1])
+            } else {
+                mg_push([VK_BOOL, 0])
+            }
+        } elif op == "PUSH_NONE" {
+            mg_push([VK_NONE])
+        } elif op == "PUSH_FLOAT_BITS" {
+            mg_push([VK_FLOAT, arg])
+        } elif op == "POP" {
+            alloc e := mg_vs[mg_vn - 1]
+            if e[0] == VK_STK {
+                if mg_needs_drop(e) {
+                    mg_release(RSP, 0)
+                }
+                x_alu_ri(ALU_ADD, RSP, 16)
+            } elif e[0] == VK_ACC and e[1] == TY_ANY {
+                x_call(mg_stub_drop_acc)
+            }
+            mg_forget(1)
+        } elif op == "STORE_INDEX" {
+            mg_generic("rt_store_index", 3, [], -1)
+        } elif op == "STORE_ATTR" {
+            mg_generic("rt_store_attr", 2, [[1, arg]], -1)
+        } elif op == "SLICE" {
+            mg_generic("rt_slice", 3, [], TY_ANY)
+        } elif op == "BUILD_LIST" {
+            mg_build(arg, "rt_list_build", "rt_list_new", TAG_LIST)
+        } elif op == "BUILD_DICT" {
+            mg_build(2 * arg, "rt_dict_build", "rt_dict_new", TAG_DICT)
+        } elif op == "DIV" or op == "FLOOR_DIV" or op == "MOD" {
+            mg_generic(MG_HELPERS[op], 2, [], TY_NOHEAP)
+        } elif op == "SHL" or op == "SHR" {
+            mg_generic(MG_HELPERS[op], 2, [], TY_INT)
+        } elif op == "AND" or op == "OR" {
+            mg_generic(MG_HELPERS[op], 2, [], TY_BOOL)
+        } elif op == "NEG" or op == "NOT" {
+            mg_unary(op)
+        } elif op == "TRUTHY" {
+            mg_truth(false)
+        } elif op == "LNOT" {
+            mg_truth(true)
+        } elif op == "EMIT" {
+            mg_generic("rt_emit", 1, [], -1)
+        } elif op == "ASSERT" {
+            mg_generic("rt_assert", 1, [], -1)
+        } elif op == "MAKE_FUNC" {
+            mg_make_func(arg, i)
+        } elif op == "SETUP_EXCEPT" {
+            mg_flush_canon(0)
+            alloc entry := x_new_label()
+            x_lea_label(RAX, entry)
+            x_push(RAX)
+            x_lea(RAX, RSP, 8)
+            x_push(RAX)
+            x_push(RBP)
+            x_call(rw_need("rt_try_push"))
+            x_alu_ri(ALU_ADD, RSP, 24)
+            append(mg_deferred, ["handler", entry, i, jl[arg]])
+        } elif op == "POP_BLOCK" {
+            mg_free_acc(0)
+            x_call(rw_need("rt_try_pop"))
+        } elif op == "RAISE" {
+            mg_generic("rt_raise", 1, [[0, arg]], -1)
+            mg_reset_vs(0)
+        } elif op == "HALT" {
+            x_mov_ri(RAX, 0)
+            x_leave()
+            x_ret()
+        } else {
+            mg_fail("opcode " + op + " is not implemented")
+        }
+        i := i + 1
+    }
+    if name != "" {
+        x_bind(mg_ret_label)
+        mg_release_slots()
+        x_leave()
+        x_ret_n(16 * mg_nparams)
+    }
+    mg_emit_deferred()
+    return false
+}
+
+# === 5. Images ====================================================================
+
+proc img_u16(out, n) {
+    append(out, n & 255)
+    append(out, (n >> 8) & 255)
+}
+
+proc img_u32(out, n) {
+    append(out, n & 255)
+    append(out, (n >> 8) & 255)
+    append(out, (n >> 16) & 255)
+    append(out, (n >> 24) & 255)
+}
+
+proc img_u64(out, n) {
+    img_u32(out, n & 4294967295)
+    img_u32(out, (n >> 32) & 4294967295)
+}
+
+proc img_pad(out, size) {
+    loop length(out) < size {
+        append(out, 0)
+    }
+}
+
+# A static ELF executable for Linux: one read+execute segment holding
+# the headers and the code, one read+write segment holding the data and
+# the zero-filled area after it. No sections, no symbols, no interpreter.
+alloc ELF_BASE := 4194304          # 0x400000
+alloc ELF_HEADERS := 240           # ELF header + three program headers, padded
+
+proc elf_image(entry_label) {
+    alloc code_len := length(x_code)
+    x_data_align(8)
+    alloc data_len := length(x_data)
+    alloc data_off := ((ELF_HEADERS + code_len + 4095) // 4096) * 4096
+    alloc code_addr := ELF_BASE + ELF_HEADERS
+    alloc data_addr := ELF_BASE + data_off
+    x_link(code_addr, data_addr, data_addr + data_len)
+    alloc out := [127, 69, 76, 70, 2, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+    img_u16(out, 2)                 # e_type: executable
+    img_u16(out, 62)                # e_machine: x86-64
+    img_u32(out, 1)
+    img_u64(out, code_addr + x_label_pos(entry_label))
+    img_u64(out, 64)                # e_phoff
+    img_u64(out, 0)                 # e_shoff
+    img_u32(out, 0)
+    img_u16(out, 64)                # e_ehsize
+    img_u16(out, 56)                # e_phentsize
+    img_u16(out, 3)                 # e_phnum
+    img_u16(out, 64)
+    img_u16(out, 0)
+    img_u16(out, 0)
+    # Code.
+    img_u32(out, 1)
+    img_u32(out, 5)
+    img_u64(out, 0)
+    img_u64(out, ELF_BASE)
+    img_u64(out, ELF_BASE)
+    img_u64(out, ELF_HEADERS + code_len)
+    img_u64(out, ELF_HEADERS + code_len)
+    img_u64(out, 4096)
+    # Data and bss.
+    img_u32(out, 1)
+    img_u32(out, 6)
+    img_u64(out, data_off)
+    img_u64(out, data_addr)
+    img_u64(out, data_addr)
+    img_u64(out, data_len)
+    img_u64(out, data_len + x_bss_size)
+    img_u64(out, 4096)
+    # PT_GNU_STACK: the stack is not executable.
+    img_u32(out, 1685382481)
+    img_u32(out, 6)
+    img_u64(out, 0)
+    img_u64(out, 0)
+    img_u64(out, 0)
+    img_u64(out, 0)
+    img_u64(out, 0)
+    img_u64(out, 16)
+    img_pad(out, ELF_HEADERS)
+    for b in x_code {
+        append(out, b)
+    }
+    img_pad(out, data_off)
+    for b in x_data {
+        append(out, b)
+    }
+    return out
+}
+
+# A PE32+ executable for Windows: the headers, `.text` with the code,
+# and `.data` with the data, the import tables and the zero-filled area
+# after them. It is loaded at a fixed address, so it carries no
+# relocations.
+alloc PE_BASE := 5368709120        # 0x140000000
+alloc PE_HEADERS := 512            # every header, padded to the file alignment
+alloc PE_TEXT_RVA := 4096
+
+alloc pe_imports := []             # "dll!Name", in the order first asked for
+alloc pe_import_ix := {}           # "dll!Name" -> its place in pe_imports
+
+# The number of the import `name` ("kernel32.dll!ExitProcess"). Code
+# reaches the function through [IAT, number].
+proc pe_import(name) {
+    if has_key(pe_import_ix, name) {
+        return pe_import_ix[name]
+    }
+    alloc bang := -1
+    alloc i := 0
+    loop i < length(name) {
+        if name[i] == "!" { bang := i }
+        i := i + 1
+    }
+    if bang <= 0 or bang == length(name) - 1 {
+        gen_fail("__import needs \"library.dll!Function\", not " + name)
+    }
+    alloc n := length(pe_imports)
+    append(pe_imports, name)
+    pe_import_ix[name] := n
+    return n
+}
+
+proc pe_align(n, to) {
+    return ((n + to - 1) // to) * to
+}
+
+proc pe_data_u64(n) {
+    x_data_u32(n & 4294967295)
+    x_data_u32((n >> 32) & 4294967295)
+}
+
+# Append the import tables to the data. `data_rva` is where the data
+# will be loaded. Returns [rva, size] of the import descriptors and
+# fills x_iat.
+proc pe_import_tables(data_rva) {
+    # Group by library, each in first-use order.
+    alloc dlls := []
+    alloc by_dll := {}
+    alloc i := 0
+    loop i < length(pe_imports) {
+        alloc full := pe_imports[i]
+        alloc bang := 0
+        loop full[bang] != "!" {
+            bang := bang + 1
+        }
+        alloc dll := full[0:bang]
+        if has_key(by_dll, dll) == false {
+            by_dll[dll] := []
+            append(dlls, dll)
+        }
+        append(by_dll[dll], [i, full[bang + 1:length(full)]])
+        i := i + 1
+    }
+    x_data_align(8)
+    alloc ndll := length(dlls)
+    alloc start := length(x_data)
+    # Where everything will sit.
+    alloc pos := pe_align(start + (ndll + 1) * 20, 8)
+    alloc ilt_pos := []
+    alloc iat_pos := []
+    for dll in dlls {
+        alloc n := length(by_dll[dll])
+        append(ilt_pos, pos)
+        pos := pos + (n + 1) * 8
+        append(iat_pos, pos)
+        pos := pos + (n + 1) * 8
+    }
+    alloc hint_pos := {}
+    for dll in dlls {
+        for imp in by_dll[dll] {
+            hint_pos[imp[0]] := pos
+            pos := pe_align(pos + 2 + length(imp[1]) + 1, 2)
+        }
+    }
+    alloc name_pos := []
+    for dll in dlls {
+        append(name_pos, pos)
+        pos := pos + length(dll) + 1
+    }
+    # The descriptors, one per library, then an empty one.
+    alloc d := 0
+    loop d < ndll {
+        x_data_u32(data_rva + ilt_pos[d])
+        x_data_u32(0)
+        x_data_u32(0)
+        x_data_u32(data_rva + name_pos[d])
+        x_data_u32(data_rva + iat_pos[d])
+        d := d + 1
+    }
+    i := 0
+    loop i < 5 {
+        x_data_u32(0)
+        i := i + 1
+    }
+    x_data_align(8)
+    # Lookup table and address table: the loader overwrites the second
+    # with the functions' addresses.
+    x_iat := list_repeat(0, length(pe_imports))
+    d := 0
+    loop d < ndll {
+        alloc imps := by_dll[dlls[d]]
+        alloc pass := 0
+        loop pass < 2 {
+            alloc k := 0
+            loop k < length(imps) {
+                if pass == 1 {
+                    x_iat[imps[k][0]] := PE_BASE + data_rva + length(x_data)
+                }
+                pe_data_u64(data_rva + hint_pos[imps[k][0]])
+                k := k + 1
+            }
+            pe_data_u64(0)
+            pass := pass + 1
+        }
+        d := d + 1
+    }
+    for dll in dlls {
+        for imp in by_dll[dll] {
+            append(x_data, 0)
+            append(x_data, 0)
+            for b in string_bytes(imp[1]) {
+                append(x_data, b)
+            }
+            append(x_data, 0)
+            x_data_align(2)
+        }
+    }
+    for dll in dlls {
+        for b in string_bytes(dll) {
+            append(x_data, b)
+        }
+        append(x_data, 0)
+    }
+    if length(x_data) != pos {
+        gen_fail("internal error: the import tables came out at " + length(x_data) + ", not " + pos)
+    }
+    x_data_align(8)
+    return [data_rva + start, (ndll + 1) * 20]
+}
+
+proc pe_section(out, name, vsize, rva, raw_size, raw_at, flags) {
+    alloc i := 0
+    loop i < 8 {
+        if i < length(name) {
+            append(out, ascii(name[i]))
+        } else {
+            append(out, 0)
+        }
+        i := i + 1
+    }
+    img_u32(out, vsize)
+    img_u32(out, rva)
+    img_u32(out, raw_size)
+    img_u32(out, raw_at)
+    img_u32(out, 0)
+    img_u32(out, 0)
+    img_u16(out, 0)
+    img_u16(out, 0)
+    img_u32(out, flags)
+}
+
+proc pe_image(entry_label) {
+    alloc code_len := length(x_code)
+    alloc data_rva := PE_TEXT_RVA + pe_align(code_len, 4096)
+    alloc imports := pe_import_tables(data_rva)
+    alloc data_len := length(x_data)
+    alloc code_addr := PE_BASE + PE_TEXT_RVA
+    alloc data_addr := PE_BASE + data_rva
+    x_link(code_addr, data_addr, data_addr + data_len)
+    alloc code_raw := pe_align(code_len, 512)
+    alloc data_raw := pe_align(data_len, 512)
+    alloc image_size := data_rva + pe_align(data_len + x_bss_size, 4096)
+
+    # The DOS header: only its first two bytes and its last word count.
+    alloc out := [77, 90]
+    img_pad(out, 60)
+    img_u32(out, 64)
+    # "PE", then the file header.
+    img_u32(out, 17744)
+    img_u16(out, 34404)             # machine: x86-64
+    img_u16(out, 2)                 # sections
+    img_u32(out, 0)                 # no time stamp: the same input gives the same file
+    img_u32(out, 0)
+    img_u32(out, 0)
+    img_u16(out, 240)               # size of the optional header
+    img_u16(out, 35)                # executable, no relocations, large addresses
+    # The optional header (PE32+).
+    img_u16(out, 523)
+    append(out, 0)
+    append(out, 0)
+    img_u32(out, code_raw)
+    img_u32(out, data_raw)
+    img_u32(out, 0)
+    img_u32(out, PE_TEXT_RVA + x_label_pos(entry_label))
+    img_u32(out, PE_TEXT_RVA)
+    img_u64(out, PE_BASE)
+    img_u32(out, 4096)              # section alignment
+    img_u32(out, 512)               # file alignment
+    img_u16(out, 6)                 # system version 6.0
+    img_u16(out, 0)
+    img_u16(out, 0)
+    img_u16(out, 0)
+    img_u16(out, 6)                 # subsystem version 6.0
+    img_u16(out, 0)
+    img_u32(out, 0)
+    img_u32(out, image_size)
+    img_u32(out, PE_HEADERS)
+    img_u32(out, 0)                 # checksum
+    img_u16(out, 3)                 # a console program
+    img_u16(out, 33024)             # data is not executable; terminal-server aware
+    img_u64(out, 67108864)          # stack: 64 MiB reserved,
+    img_u64(out, 65536)             #        64 KiB committed at once
+    img_u64(out, 1048576)
+    img_u64(out, 4096)
+    img_u32(out, 0)
+    img_u32(out, 16)                # data directories
+    alloc dir := 0
+    loop dir < 16 {
+        if dir == 1 {
+            img_u32(out, imports[0])
+            img_u32(out, imports[1])
+        } else {
+            img_u32(out, 0)
+            img_u32(out, 0)
+        }
+        dir := dir + 1
+    }
+    pe_section(out, ".text", code_len, PE_TEXT_RVA, code_raw, PE_HEADERS, 1610612768)
+    pe_section(out, ".data", data_len + x_bss_size, data_rva, data_raw, PE_HEADERS + code_raw, 3221225536)
+    img_pad(out, PE_HEADERS)
+    for b in x_code {
+        append(out, b)
+    }
+    img_pad(out, PE_HEADERS + code_raw)
+    for b in x_data {
+        append(out, b)
+    }
+    img_pad(out, PE_HEADERS + code_raw + data_raw)
+    return out
+}
+
+# === 6. generate() ================================================================
+
+# Small pieces of hand-written code the generated code calls.
+proc gen_stubs() {
+    # mg_stub_drop: RDI points at a value slot; give its count back if
+    # it is a heap object. mg_stub_release: the same when the caller
+    # has already seen a heap tag. Both keep RAX, RDX and RDI.
+    mg_stub_drop := x_new_label()
+    mg_stub_release := x_new_label()
+    mg_stub_drop_acc := x_new_label()
+    x_bind(mg_stub_drop)
+    x_alu_mi(ALU_CMP, RDI, 8, 8)
+    alloc p1 := x_jcc_short(CC_B)
+    x_bind(mg_stub_release)
+    x_load(RSI, RDI, 0)
+    x_dec_m(RSI, 0)
+    alloc p2 := x_jcc_short(CC_NE)
+    x_push(RAX)
+    x_push(RDX)
+    x_push(RDI)
+    x_push_m(RDI, 8)
+    x_push(RSI)
+    x_call(rw_need("rt_destroy"))
+    x_alu_ri(ALU_ADD, RSP, 16)
+    x_pop(RDI)
+    x_pop(RDX)
+    x_pop(RAX)
+    x_patch_short(p1)
+    x_patch_short(p2)
+    x_ret()
+    # mg_stub_drop_acc: the value in RAX:RDX is not wanted.
+    x_bind(mg_stub_drop_acc)
+    x_alu_ri(ALU_CMP, RDX, 8)
+    alloc p3 := x_jcc_short(CC_B)
+    x_dec_m(RAX, 0)
+    alloc p4 := x_jcc_short(CC_NE)
+    x_push(RDX)
+    x_push(RAX)
+    x_call(rw_need("rt_destroy"))
+    x_alu_ri(ALU_ADD, RSP, 16)
+    x_patch_short(p3)
+    x_patch_short(p4)
+    x_ret()
+}
+
+# What the runtime needs to know about the program, as tables in the
+# data section. The runtime reaches them through __sym("program").
+proc gen_tables(main_end_label) {
+    alloc names := dict_keys(mg_funcs)
+    for nm in names {
+        gen_str(nm)
+    }
+    alloc i := 1
+    loop i < length(mg_fntab) {
+        gen_str(mg_fntab[i])
+        i := i + 2
+    }
+    for f in mg_files {
+        gen_str(f)
+    }
+    x_data_align(8)
+    alloc names_off := length(x_data)
+    for nm in names {
+        x_data_u32(gen_str(nm))
+        x_data_label(mg_fn_labels[nm])
+        x_data_u32(length(mg_funcs[nm][0]))
+        x_data_u32(0)
+    }
+    alloc ranges_off := length(x_data)
+    i := 0
+    loop i < length(mg_fntab) {
+        x_data_label(mg_fntab[i])
+        x_data_u32(gen_str(mg_fntab[i + 1]))
+        i := i + 2
+    }
+    alloc lines_off := length(x_data)
+    for v in mg_linetab {
+        x_data_u32(v)
+    }
+    alloc files_off := length(x_data)
+    for f in mg_files {
+        x_data_u32(gen_str(f))
+    }
+    x_data_align(8)
+    alloc at := length(x_data)
+    alloc gnames := dict_keys(mg_globals)
+    alloc base := 0
+    if length(gnames) > 0 {
+        base := mg_globals[gnames[0]]
+    }
+    x_data_u64(length(gnames))
+    x_data_u64((mg_globals["args"] - base) // 16)
+    x_data_u64((mg_globals["module_file"] - base) // 16)
+    x_data_u64((mg_globals["current_dir"] - base) // 16)
+    x_data_u64(length(names))
+    x_data_u64(names_off)
+    x_data_u64(length(mg_fntab) // 2)
+    x_data_u64(ranges_off)
+    x_data_u64(length(mg_linetab) // 3)
+    x_data_u64(lines_off)
+    x_data_u64(length(mg_files))
+    x_data_u64(files_off)
+    x_data_label(main_end_label)
+    x_data_u32(0)
+    gen_syms["program"] := [DATA, at]
+    gen_syms["globals"] := [BSS, base]
+    gen_syms["data"] := [DATA, 0]
+}
+
+proc mg_setup(parsed) {
+    mg_code := parsed[0]
+    mg_funcs := parsed[1]
+    mg_files := parsed[2]
+    mg_lines := parsed[3]
+    mg_linetab := []
+    mg_fntab := []
+    mg_fn_labels := {}
+    mg_globals := {}
+    mg_gsafe := {}
+    mg_vs := list_repeat(0, 4096)
+    mg_last_file := -1
+    alloc globals := be.collect_globals(mg_code)
+    mg_info := be.analyze_all_functions(mg_code, mg_funcs, globals)
+    alloc gnames := dict_keys(globals)
+    alloc base := x_bss(16 * length(gnames))
+    alloc k := 0
+    for nm in gnames {
+        mg_globals[nm] := base + 16 * k
+        k := k + 1
+    }
+    for nm in dict_keys(mg_funcs) {
+        mg_fn_labels[nm] := x_new_label()
+    }
+    alloc n := length(mg_code)
+    alloc main_end := n
+    alloc i := 0
+    loop i < n {
+        if mg_code[i][0] == "HALT" {
+            main_end := i + 1
+            break
+        }
+        i := i + 1
+    }
+    # Globals bound on every path before the first call the top-level
+    # code makes are set by the time any proc can run.
+    pp_raw := false
+    pp_run(mg_code, 0, main_end)
+    alloc cover := mg_cover(0, main_end)
+    mg_gsafe["args"] := -1
+    mg_gsafe["module_file"] := -1
+    mg_gsafe["current_dir"] := -1
+    i := 0
+    loop i < main_end {
+        alloc op := mg_code[i][0]
+        if op == "CALL" or op == "TCALL" or op == "CALL_VALUE" {
+            break
+        }
+        if (op == "STORE_LOCAL" or op == "MAKE_FUNC") and cover[i] == 0 {
+            alloc nm := mg_code[i][1]
+            if has_key(mg_gsafe, nm) == false {
+                mg_gsafe[nm] := i
+            }
+            if op == "MAKE_FUNC" {
+                alloc bare := be.strip_mod_prefix(nm)
+                if bare != false and has_key(mg_gsafe, bare) == false {
+                    mg_gsafe[bare] := i
+                }
+            }
+        }
+        i := i + 1
+    }
+    return main_end
+}
+
+# `program` and `runtime` are parsed bytecode; `os` is "linux" or
+# "windows". Returns the executable as a list of bytes.
+proc generate(program, runtime, os, source_path) {
+    x_reset()
+    gen_strs := {}
+    gen_syms := {}
+    gen_symtab := []
+    gen_trig := -1
+    gen_os := os
+    pe_imports := []
+    pe_import_ix := {}
+    rw_setup(runtime)
+    alloc main_end := mg_setup(program)
+    alloc main_label := x_new_label()
+    alloc end_label := x_new_label()
+    alloc entry := x_new_label()
+
+    # The first instructions the process runs.
+    x_bind(entry)
+    x_mov_ri(RBP, 0)
+    x_call(rw_init_label)
+    x_store(BSS, rw_global("rt_entry_rsp"), RSP)
+    x_call(rw_need("rt_start"))
+    x_call(main_label)
+    x_push_i(0)
+    x_call(rw_need("rt_exit"))
+    gen_stubs()
+
+    mg_body("", 0, main_end, main_label)
+    alloc sorted := be.sorted_funcs_by_addr(mg_funcs)
+    for pair in sorted {
+        alloc nm := pair[1]
+        alloc info := mg_info[nm]
+        mg_body(nm, info["body_start"], info["body_end"], mg_fn_labels[nm])
+    }
+    x_bind(end_label)
+    gen_tables(end_label)
+    gen_syms["code"] := ["label", entry]
+    gen_syms["main"] := ["label", main_label]
+
+    rw_emit_init()
+    rw_emit_pending()
+    if os == "linux" {
+        return elf_image(entry)
+    }
+    if os == "windows" {
+        return pe_image(entry)
+    }
+    gen_fail("unknown target " + os)
+}

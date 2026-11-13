@@ -1,0 +1,980 @@
+
+# runtime/x64/windows.omg
+#
+# The operating system layer of the runtime for Windows on x86-64: the
+# os_* procs the rest of the runtime is written against, on top of
+# kernel32.dll and, for TCP, ws2_32.dll. Raw mode, the last file of the
+# runtime unit (see core.omg). Nothing here goes through a C library.
+#
+# __import("dll!Name") is the address of a function the loader bound
+# when the program started; __wincallN calls it with N arguments in the
+# Windows calling convention. A function that returns a 32-bit value
+# leaves the upper half of the result undefined, hence os_u32.
+#
+# Text crosses the boundary as UTF-16: OMG strings are UTF-8 inside.
+# Where the rest of the runtime speaks of a descriptor, this layer
+# hands it a HANDLE (or a SOCKET); 0, 1 and 2 stand for the standard
+# streams. An error comes back as minus the Windows error code.
+
+alloc CP_UTF8 := 65001
+alloc ERROR_NOT_SUPPORTED := 50
+alloc ERROR_BROKEN_PIPE := 109
+alloc E_NO_HOST := 11001           # WSAHOST_NOT_FOUND
+
+alloc os_scratch := 0              # a page for the system to write results to
+alloc os_args := 0                 # the command line as a list of strings
+alloc os_saved_cp := 0             # the console's code page before we set UTF-8
+
+proc os_u32(x) {
+    return x & 4294967295
+}
+
+proc os_last_error() {
+    alloc e := os_u32(__wincall0(__import("kernel32.dll!GetLastError")))
+    if e == 0 {
+        e := 1
+    }
+    return e
+}
+
+# A block that remembers its own size, for buffers handed to the system.
+proc os_tmp(size) {
+    alloc p := rt_alloc(size + 8)
+    __poke64(p, size + 8)
+    return p + 8
+}
+
+proc os_tmp_free(p) {
+    return rt_free(p - 8, __peek64(p - 8))
+}
+
+# The UTF-16 form of a NUL-terminated UTF-8 text, in an os_tmp block.
+proc os_wide(cstr) {
+    alloc n := os_u32(__wincall6(__import("kernel32.dll!MultiByteToWideChar"), CP_UTF8, 0, cstr, -1, 0, 0))
+    if n == 0 or n > 1073741824 {
+        n := 1
+    }
+    alloc w := os_tmp(n * 2 + 2)
+    __poke16(w, 0)
+    __wincall6(__import("kernel32.dll!MultiByteToWideChar"), CP_UTF8, 0, cstr, -1, w, n)
+    __poke16(w + n * 2, 0)
+    return w
+}
+
+# A NUL-terminated UTF-16 text as an owned string.
+proc os_utf8(w) {
+    alloc n := os_u32(__wincall8(__import("kernel32.dll!WideCharToMultiByte"), CP_UTF8, 0, w, -1, 0, 0, 0, 0))
+    if n == 0 or n > 1073741824 {
+        return rt_str_from(w, 0)
+    }
+    alloc buf := os_tmp(n + 1)
+    __wincall8(__import("kernel32.dll!WideCharToMultiByte"), CP_UTF8, 0, w, -1, buf, n, 0, 0)
+    alloc s := rt_str_from(buf, n - 1)
+    os_tmp_free(buf)
+    return s
+}
+
+# The HANDLE behind a descriptor.
+proc os_handle(fd) {
+    if fd == 0 {
+        return __wincall1(__import("kernel32.dll!GetStdHandle"), -10)
+    }
+    if fd == 1 {
+        return __wincall1(__import("kernel32.dll!GetStdHandle"), -11)
+    }
+    if fd == 2 {
+        return __wincall1(__import("kernel32.dll!GetStdHandle"), -12)
+    }
+    return fd
+}
+
+alloc os_raw_on := 0
+alloc os_con_have := 0             # os_con_saved is valid: raw mode is on
+alloc os_con_saved := 0            # the input mode before raw mode
+alloc os_con_vt := 0               # the console sends VT sequences itself
+alloc os_con_hi := 0               # first half of a UTF-16 pair, or 0
+alloc os_con_q := 0                # bytes decoded and not yet read
+alloc os_con_head := 0
+alloc os_con_len := 0
+alloc CON_QUEUE := 1024
+
+proc os_exit(code) {
+    if os_con_have {
+        __wincall2(__import("kernel32.dll!SetConsoleMode"), os_handle(0), os_con_saved)
+    }
+    if os_saved_cp != 0 {
+        __wincall1(__import("kernel32.dll!SetConsoleOutputCP"), os_saved_cp)
+    }
+    __wincall1(__import("kernel32.dll!ExitProcess"), code)
+    return 0
+}
+
+# Write all n bytes at p. Returns 0, or minus the error code.
+proc os_write_all(fd, p, n) {
+    alloc h := os_handle(fd)
+    alloc cell := os_scratch + 8
+    loop n > 0 {
+        alloc step := n
+        if step > 1073741824 {
+            step := 1073741824
+        }
+        __poke32(cell, 0)
+        if os_u32(__wincall5(__import("kernel32.dll!WriteFile"), h, p, step, cell, 0)) == 0 {
+            return 0 - os_last_error()
+        }
+        alloc wrote := __peek32(cell)
+        p := p + wrote
+        n := n - wrote
+    }
+    return 0
+}
+
+proc os_die(text) {
+    os_write_all(2, text + S_DATA, __peek64(text + S_BYTES))
+    return os_exit(1)
+}
+
+# Whole pages from the system, zero-filled.
+proc os_alloc(size) {
+    # MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE
+    alloc p := __wincall4(__import("kernel32.dll!VirtualAlloc"), 0, size, 12288, 4)
+    if p == 0 {
+        os_die("out of memory\n")
+    }
+    return p
+}
+
+proc os_free(p, size) {
+    __wincall3(__import("kernel32.dll!VirtualFree"), p, 0, 32768)
+    return 0
+}
+
+# Called first of all.
+proc os_init() {
+    os_scratch := os_alloc(4096)
+
+    # The stack was reserved in one piece when the process started (64
+    # MiB, asked for in the header of the executable); the system says
+    # where the reservation ends. Generated code compares the stack
+    # pointer with rt_stack_limit on entry to every proc.
+    alloc sp := rt_entry_rsp
+    alloc mbi := os_scratch + 1024
+    if __wincall3(__import("kernel32.dll!VirtualQuery"), sp, mbi, 48) != 0 {
+        alloc low := __peek64(mbi + 8)
+        alloc size := sp - low
+        alloc reserve := 1048576
+        if size < 4194304 {
+            reserve := size >> 2
+        }
+        rt_stack_limit := low + reserve
+    }
+
+    # Windows Terminal reads ANSI escapes already; the classic console
+    # has to be asked. Fails harmlessly on a pipe.
+    alloc fd := 1
+    loop fd <= 2 {
+        alloc h := os_handle(fd)
+        if os_u32(__wincall2(__import("kernel32.dll!GetConsoleMode"), h, os_scratch)) != 0 {
+            __wincall2(__import("kernel32.dll!SetConsoleMode"), h, __peek32(os_scratch) | 4)
+        }
+        fd := fd + 1
+    }
+    # Strings are written as UTF-8 bytes, so the console must decode
+    # UTF-8. The code page belongs to the console, not to this process:
+    # os_exit puts the old one back.
+    alloc cp := os_u32(__wincall0(__import("kernel32.dll!GetConsoleOutputCP")))
+    if cp != 0 and cp != CP_UTF8 {
+        if os_u32(__wincall1(__import("kernel32.dll!SetConsoleOutputCP"), CP_UTF8)) != 0 {
+            os_saved_cp := cp
+        }
+    }
+    return 0
+}
+
+# Split the command line into arguments the way the C runtime and
+# CommandLineToArgvW do: blanks separate, double quotes group, and a
+# run of backslashes before a quote halves, an odd one escaping it.
+proc os_args_init() {
+    os_args := rt_list_new()
+    alloc line := os_utf8(__wincall0(__import("kernel32.dll!GetCommandLineW")))
+    alloc p := line + S_DATA
+    alloc n := __peek64(line + S_BYTES)
+    alloc i := 0
+    alloc first := 1
+    loop i < n {
+        loop i < n and (__peek8(p + i) == 32 or __peek8(p + i) == 9) {
+            i := i + 1
+        }
+        if i >= n and first == 0 {
+            break
+        }
+        alloc b := rt_buf_new()
+        if first {
+            # The program name: a quoted part runs to the next quote,
+            # with no escapes.
+            if i < n and __peek8(p + i) == 34 {
+                i := i + 1
+                loop i < n and __peek8(p + i) != 34 {
+                    rt_buf_byte(b, __peek8(p + i))
+                    i := i + 1
+                }
+                if i < n {
+                    i := i + 1
+                }
+            }
+            loop i < n and __peek8(p + i) != 32 and __peek8(p + i) != 9 {
+                rt_buf_byte(b, __peek8(p + i))
+                i := i + 1
+            }
+            first := 0
+        } else {
+            alloc quoted := 0
+            loop i < n {
+                alloc c := __peek8(p + i)
+                if quoted == 0 and (c == 32 or c == 9) {
+                    break
+                }
+                if c == 92 {
+                    alloc slashes := 0
+                    loop i < n and __peek8(p + i) == 92 {
+                        slashes := slashes + 1
+                        i := i + 1
+                    }
+                    if i < n and __peek8(p + i) == 34 {
+                        alloc k := 0
+                        loop k < slashes // 2 {
+                            rt_buf_byte(b, 92)
+                            k := k + 1
+                        }
+                        if (slashes & 1) != 0 {
+                            rt_buf_byte(b, 34)
+                            i := i + 1
+                        }
+                    } else {
+                        alloc k := 0
+                        loop k < slashes {
+                            rt_buf_byte(b, 92)
+                            k := k + 1
+                        }
+                    }
+                } elif c == 34 {
+                    if quoted and i + 1 < n and __peek8(p + i + 1) == 34 {
+                        rt_buf_byte(b, 34)
+                        i := i + 2
+                    } else {
+                        quoted := quoted == 0
+                        i := i + 1
+                    }
+                } else {
+                    rt_buf_byte(b, c)
+                    i := i + 1
+                }
+            }
+        }
+        rt_list_push(os_args, T_STR, rt_buf_finish(b))
+    }
+    rt_drop(T_STR, line)
+    return 0
+}
+
+proc os_argc() {
+    if os_args == 0 {
+        os_args_init()
+    }
+    return __peek64(os_args + L_LEN)
+}
+
+# Argument i as an owned string.
+proc os_arg(i) {
+    alloc s := __peek64(__peek64(os_args + L_ITEMS) + i * 16)
+    __poke64(s, __peek64(s) + 1)
+    return s
+}
+
+# The working directory as an owned string.
+proc os_getcwd() {
+    alloc n := os_u32(__wincall2(__import("kernel32.dll!GetCurrentDirectoryW"), 0, 0))
+    if n == 0 {
+        return "."
+    }
+    alloc w := os_tmp(n * 2 + 2)
+    __poke16(w, 0)
+    __wincall2(__import("kernel32.dll!GetCurrentDirectoryW"), n, w)
+    alloc s := os_utf8(w)
+    os_tmp_free(w)
+    return s
+}
+
+# --- files -----------------------------------------------------------------
+
+# What the system says about error `code`.
+proc os_err_text(code) {
+    if code == 2 { return "The system cannot find the file specified." }
+    if code == 3 { return "The system cannot find the path specified." }
+    if code == 5 { return "Access is denied." }
+    if code == 6 { return "The handle is invalid." }
+    if code == 8 { return "Not enough memory resources are available to process this command." }
+    if code == 19 { return "The media is write protected." }
+    if code == 32 { return "The process cannot access the file because it is being used by another process." }
+    if code == 50 { return "The request is not supported." }
+    if code == 80 { return "The file exists." }
+    if code == 87 { return "The parameter is incorrect." }
+    if code == 109 { return "The pipe has been ended." }
+    if code == 112 { return "There is not enough space on the disk." }
+    if code == 123 { return "The filename, directory name, or volume label syntax is incorrect." }
+    if code == 145 { return "The directory is not empty." }
+    if code == 183 { return "Cannot create a file when that file already exists." }
+    if code == 193 { return "This is not a valid Win32 application." }
+    if code == 206 { return "The filename or extension is too long." }
+    if code == 267 { return "The directory name is invalid." }
+    if code == 10013 { return "An attempt was made to access a socket in a way forbidden by its access permissions." }
+    if code == 10048 { return "Only one usage of each socket address is normally permitted." }
+    if code == 10049 { return "The requested address is not valid in its context." }
+    if code == 10051 { return "A socket operation was attempted to an unreachable network." }
+    if code == 10054 { return "An existing connection was forcibly closed by the remote host." }
+    if code == 10060 { return "A connection attempt failed because the connected party did not properly respond." }
+    if code == 10061 { return "No connection could be made because the target machine actively refused it." }
+    if code == 11001 { return "No such host is known." }
+    return "error"
+}
+
+proc os_is_abs(path) {
+    alloc c := __peek8(path + S_DATA)
+    if c == 47 or c == 92 {
+        return 1
+    }
+    return __peek64(path + S_BYTES) >= 2 and __peek8(path + S_DATA + 1) == 58
+}
+
+# Open a file: kind 0 to read, 1 to write from empty, 2 to append,
+# 3 to read and write, 4 to read and write from empty.
+proc os_open(path, kind) {
+    alloc access := 2147483648             # GENERIC_READ
+    alloc how := 3                         # OPEN_EXISTING
+    if kind == 1 {
+        access := 1073741824               # GENERIC_WRITE
+        how := 2                           # CREATE_ALWAYS
+    }
+    if kind == 2 {
+        access := 4                        # FILE_APPEND_DATA
+        how := 4                           # OPEN_ALWAYS
+    }
+    if kind == 3 {
+        access := 3221225472
+    }
+    if kind == 4 {
+        access := 3221225472
+        how := 2
+    }
+    alloc w := os_wide(path + S_DATA)
+    # Share with readers, writers and deleters; FILE_ATTRIBUTE_NORMAL.
+    alloc h := __wincall7(__import("kernel32.dll!CreateFileW"), w, access, 7, 0, how, 128, 0)
+    os_tmp_free(w)
+    if h == -1 or h == 0 {
+        return 0 - os_last_error()
+    }
+    return h
+}
+
+proc os_close(fd) {
+    __wincall1(__import("kernel32.dll!CloseHandle"), fd)
+    return 0
+}
+
+# Read up to n bytes: the count, 0 at the end, or minus the error code.
+proc os_read(fd, p, n) {
+    alloc h := os_handle(fd)
+    alloc cell := os_scratch + 16
+    if n > 1073741824 {
+        n := 1073741824
+    }
+    __poke32(cell, 0)
+    if os_u32(__wincall5(__import("kernel32.dll!ReadFile"), h, p, n, cell, 0)) == 0 {
+        alloc e := os_last_error()
+        if e == ERROR_BROKEN_PIPE {
+            return 0
+        }
+        return 0 - e
+    }
+    return __peek32(cell)
+}
+
+proc os_stdin_read(p, n) {
+    return os_read(0, p, n)
+}
+
+proc os_seek_from(fd, off, whence) {
+    alloc cell := os_scratch + 24
+    if os_u32(__wincall4(__import("kernel32.dll!SetFilePointerEx"), fd, off, cell, whence)) == 0 {
+        return 0 - os_last_error()
+    }
+    return __peek64(cell)
+}
+
+proc os_seek(fd, off) {
+    return os_seek_from(fd, off, 0)
+}
+
+proc os_tell(fd) {
+    return os_seek_from(fd, 0, 1)
+}
+
+# The attributes of a path, or -1 when there is nothing there.
+proc os_attrs(cpath) {
+    alloc w := os_wide(cpath)
+    alloc a := os_u32(__wincall1(__import("kernel32.dll!GetFileAttributesW"), w))
+    os_tmp_free(w)
+    if a == 4294967295 {
+        return -1
+    }
+    return a
+}
+
+proc os_exists(path) {
+    return os_attrs(path + S_DATA) >= 0
+}
+
+proc os_is_dir(path) {
+    alloc a := os_attrs(path + S_DATA)
+    return a >= 0 and (a & 16) != 0
+}
+
+# Append the names in a directory to `list`, leaving out . and ..
+proc os_list_dir(path, list) {
+    alloc b := rt_buf_new()
+    rt_buf_str(b, path)
+    alloc n := __peek64(path + S_BYTES)
+    if n > 0 and __peek8(path + S_DATA + n - 1) != 47 and __peek8(path + S_DATA + n - 1) != 92 {
+        rt_buf_byte(b, 92)
+    }
+    rt_buf_byte(b, 42)
+    alloc pattern := rt_buf_finish(b)
+    alloc w := os_wide(pattern + S_DATA)
+    rt_drop(T_STR, pattern)
+    alloc data := os_tmp(608)              # WIN32_FIND_DATAW
+    alloc find := __wincall2(__import("kernel32.dll!FindFirstFileW"), w, data)
+    os_tmp_free(w)
+    if find == -1 {
+        alloc e := os_last_error()
+        os_tmp_free(data)
+        return 0 - e
+    }
+    loop true {
+        alloc name := data + 44
+        alloc dot := __peek16(name) == 46
+        alloc skip := dot and (__peek16(name + 2) == 0 or (__peek16(name + 2) == 46 and __peek16(name + 4) == 0))
+        if skip == 0 {
+            rt_list_push(list, T_STR, os_utf8(name))
+        }
+        if os_u32(__wincall2(__import("kernel32.dll!FindNextFileW"), find, data)) == 0 {
+            break
+        }
+    }
+    __wincall1(__import("kernel32.dll!FindClose"), find)
+    os_tmp_free(data)
+    return 0
+}
+
+# Create one directory; one that is already there is not an error.
+proc os_mkdir(cpath) {
+    alloc w := os_wide(cpath)
+    alloc ok := os_u32(__wincall2(__import("kernel32.dll!CreateDirectoryW"), w, 0))
+    alloc e := 0
+    if ok == 0 {
+        e := os_last_error()
+    }
+    os_tmp_free(w)
+    if ok != 0 {
+        return 0
+    }
+    alloc a := os_attrs(cpath)
+    if a >= 0 and (a & 16) != 0 {
+        return 0
+    }
+    return 0 - e
+}
+
+# There are no permission bits to set: only check that the file is there.
+proc os_chmod(path, mode) {
+    if os_attrs(path + S_DATA) < 0 {
+        return -2
+    }
+    return 0
+}
+
+# --- the process and the clock ------------------------------------------------
+
+proc os_platform() {
+    return "windows-x64"
+}
+
+proc os_getpid() {
+    return os_u32(__wincall0(__import("kernel32.dll!GetCurrentProcessId")))
+}
+
+# The path of the running program, or 0.
+proc os_exe_path() {
+    alloc w := os_tmp(65538)
+    alloc n := os_u32(__wincall3(__import("kernel32.dll!GetModuleFileNameW"), 0, w, 32768))
+    alloc s := 0
+    if n > 0 and n < 32768 {
+        __poke16(w + n * 2, 0)
+        s := os_utf8(w)
+    }
+    os_tmp_free(w)
+    return s
+}
+
+# Milliseconds since 1970. The system counts 100 ns steps since 1601.
+proc os_time_ms() {
+    alloc cell := os_scratch + 32
+    __wincall1(__import("kernel32.dll!GetSystemTimeAsFileTime"), cell)
+    return __udiv(__peek64(cell) - 116444736000000000, 10000)
+}
+
+proc os_sleep_ms(ms) {
+    loop ms > 0 {
+        alloc step := ms
+        if step > 1000000000 {
+            step := 1000000000
+        }
+        __wincall1(__import("kernel32.dll!Sleep"), step)
+        ms := ms - step
+    }
+    return 0
+}
+
+# Append one argument to a command line, quoted the way os_args_init
+# (and every C program) will take apart again.
+proc os_cmd_arg(b, s) {
+    if __peek64(b + 8) > 0 {
+        rt_buf_byte(b, 32)
+    }
+    alloc p := s + S_DATA
+    alloc n := __peek64(s + S_BYTES)
+    alloc plain := n > 0
+    alloc i := 0
+    loop i < n {
+        alloc c := __peek8(p + i)
+        if c == 32 or c == 9 or c == 10 or c == 11 or c == 34 {
+            plain := 0
+        }
+        i := i + 1
+    }
+    if plain {
+        return rt_buf_str(b, s)
+    }
+    rt_buf_byte(b, 34)
+    i := 0
+    loop true {
+        alloc slashes := 0
+        loop i < n and __peek8(p + i) == 92 {
+            slashes := slashes + 1
+            i := i + 1
+        }
+        alloc out := slashes
+        if i >= n {
+            out := slashes * 2
+        } elif __peek8(p + i) == 34 {
+            out := slashes * 2 + 1
+        }
+        loop out > 0 {
+            rt_buf_byte(b, 92)
+            out := out - 1
+        }
+        if i >= n {
+            break
+        }
+        rt_buf_byte(b, __peek8(p + i))
+        i := i + 1
+    }
+    rt_buf_byte(b, 34)
+    return 0
+}
+
+# Run the strings of `list` as a child and wait for it. Returns its
+# exit code; when it could not be started, rt_spawn_error is set.
+proc os_subprocess(list, argv) {
+    alloc b := rt_buf_new()
+    alloc n := __peek64(list + L_LEN)
+    alloc i := 0
+    loop i < n {
+        os_cmd_arg(b, __peek64(__peek64(list + L_ITEMS) + i * 16))
+        i := i + 1
+    }
+    alloc cmd := rt_buf_finish(b)
+    alloc w := os_wide(cmd + S_DATA)
+    rt_drop(T_STR, cmd)
+    alloc si := os_tmp(136)                # STARTUPINFOW, then PROCESS_INFORMATION
+    __memset(si, 0, 136)
+    __poke32(si, 104)
+    alloc pi := si + 104
+    rt_spawn_error := 0
+    alloc ok := os_u32(__wincall10(__import("kernel32.dll!CreateProcessW"), 0, w, 0, 0, 1, 0, 0, 0, si, pi))
+    if ok == 0 {
+        rt_spawn_error := os_last_error()
+        os_tmp_free(w)
+        os_tmp_free(si)
+        return -1
+    }
+    os_tmp_free(w)
+    alloc process := __peek64(pi)
+    __wincall2(__import("kernel32.dll!WaitForSingleObject"), process, 4294967295)
+    alloc cell := os_scratch + 40
+    __poke32(cell, 4294967295)
+    __wincall2(__import("kernel32.dll!GetExitCodeProcess"), process, cell)
+    alloc code := __peek32(cell)
+    if code >= 2147483648 {
+        code := code - 4294967296
+    }
+    __wincall1(__import("kernel32.dll!CloseHandle"), __peek64(pi + 8))
+    __wincall1(__import("kernel32.dll!CloseHandle"), process)
+    os_tmp_free(si)
+    return code
+}
+
+# There is no fork on Windows.
+proc os_fork() {
+    return 0 - ERROR_NOT_SUPPORTED
+}
+
+# --- the console ----------------------------------------------------------------
+#
+# Raw mode is three console-mode flags; keys arrive as input records;
+# and the bytes handed to the program are the UTF-8 and VT sequences a
+# Unix terminal would have sent, so games and editors need nothing
+# special for Windows.
+
+proc os_set_raw(on) {
+    alloc h := os_handle(0)
+    if h == 0 or h == -1 or os_u32(__wincall2(__import("kernel32.dll!GetConsoleMode"), h, os_scratch)) == 0 {
+        return -6
+    }
+    alloc mode := __peek32(os_scratch)
+    # ENABLE_PROCESSED_INPUT | ENABLE_LINE_INPUT | ENABLE_ECHO_INPUT
+    alloc cooked := 7
+    if on {
+        if os_con_have == 0 {
+            os_con_saved := mode
+            os_con_have := 1
+        }
+        alloc raw := mode & ~cooked
+        # ENABLE_VIRTUAL_TERMINAL_INPUT, where the console knows it.
+        if os_u32(__wincall2(__import("kernel32.dll!SetConsoleMode"), h, raw | 512)) != 0 {
+            os_con_vt := 1
+        } elif os_u32(__wincall2(__import("kernel32.dll!SetConsoleMode"), h, raw)) != 0 {
+            os_con_vt := 0
+        } else {
+            return 0 - os_last_error()
+        }
+    } else {
+        alloc restore := (mode | cooked) & ~512
+        if os_con_have {
+            restore := os_con_saved
+        }
+        os_con_have := 0
+        os_con_vt := 0
+        os_con_head := 0
+        os_con_len := 0
+        os_con_hi := 0
+        if os_u32(__wincall2(__import("kernel32.dll!SetConsoleMode"), h, restore)) == 0 {
+            return 0 - os_last_error()
+        }
+    }
+    os_raw_on := on
+    return 0
+}
+
+proc os_con_push(b) {
+    if os_con_q == 0 {
+        os_con_q := rt_alloc(CON_QUEUE)
+    }
+    if os_con_len < CON_QUEUE {
+        __poke8(os_con_q + (os_con_head + os_con_len) % CON_QUEUE, b)
+        os_con_len := os_con_len + 1
+    }
+    return 0
+}
+
+proc os_con_pop() {
+    if os_con_len == 0 {
+        return -1
+    }
+    alloc b := __peek8(os_con_q + os_con_head)
+    os_con_head := (os_con_head + 1) % CON_QUEUE
+    os_con_len := os_con_len - 1
+    return b
+}
+
+# Queue one UTF-16 unit as UTF-8, pairing surrogates.
+proc os_con_push_utf16(unit) {
+    alloc c := unit
+    if unit >= 55296 and unit <= 56319 {
+        os_con_hi := unit
+        return 0
+    }
+    if unit >= 56320 and unit <= 57343 {
+        if os_con_hi == 0 {
+            return 0
+        }
+        c := 65536 + ((os_con_hi - 55296) << 10) + (unit - 56320)
+    }
+    os_con_hi := 0
+    if c < 128 {
+        os_con_push(c)
+    } elif c < 2048 {
+        os_con_push(192 | (c >> 6))
+        os_con_push(128 | (c & 63))
+    } elif c < 65536 {
+        os_con_push(224 | (c >> 12))
+        os_con_push(128 | ((c >> 6) & 63))
+        os_con_push(128 | (c & 63))
+    } else {
+        os_con_push(240 | (c >> 18))
+        os_con_push(128 | ((c >> 12) & 63))
+        os_con_push(128 | ((c >> 6) & 63))
+        os_con_push(128 | (c & 63))
+    }
+    return 0
+}
+
+# What follows ESC in the sequence a VT terminal sends for a
+# navigation key, or 0.
+proc os_con_vk(vk) {
+    if vk == 38 { return "[A" }
+    if vk == 40 { return "[B" }
+    if vk == 39 { return "[C" }
+    if vk == 37 { return "[D" }
+    if vk == 36 { return "[H" }
+    if vk == 35 { return "[F" }
+    if vk == 45 { return "[2~" }
+    if vk == 46 { return "[3~" }
+    if vk == 33 { return "[5~" }
+    if vk == 34 { return "[6~" }
+    return 0
+}
+
+# One byte from the keyboard, or -1 when none is waiting.
+proc os_read_key() {
+    alloc b := os_con_pop()
+    if b >= 0 {
+        return b
+    }
+    alloc h := os_handle(0)
+    if h == 0 or h == -1 {
+        return -1
+    }
+    if os_u32(__wincall2(__import("kernel32.dll!GetConsoleMode"), h, os_scratch)) == 0 {
+        # Not a console: a pipe or a file.
+        alloc cell := os_scratch + 48
+        if os_read(0, cell, 1) == 1 {
+            return __peek8(cell)
+        }
+        return -1
+    }
+    alloc rec := os_scratch + 64           # one INPUT_RECORD
+    loop true {
+        __poke32(os_scratch, 0)
+        if os_u32(__wincall2(__import("kernel32.dll!GetNumberOfConsoleInputEvents"), h, os_scratch)) == 0 {
+            return -1
+        }
+        if __peek32(os_scratch) == 0 {
+            return -1
+        }
+        __poke32(os_scratch, 0)
+        if os_u32(__wincall4(__import("kernel32.dll!ReadConsoleInputW"), h, rec, 1, os_scratch)) == 0 {
+            return -1
+        }
+        if __peek32(os_scratch) == 0 {
+            return -1
+        }
+        # A key going down: KEY_EVENT with bKeyDown set.
+        if __peek16(rec) == 1 and __peek32(rec + 4) != 0 {
+            alloc repeat := __peek16(rec + 8)
+            if repeat == 0 {
+                repeat := 1
+            }
+            alloc unit := __peek16(rec + 14)
+            alloc seq := 0
+            if unit == 0 and os_con_vt == 0 {
+                seq := os_con_vk(__peek16(rec + 10))
+            }
+            loop repeat > 0 {
+                if unit != 0 {
+                    os_con_push_utf16(unit)
+                } elif seq != 0 {
+                    os_con_push(27)
+                    alloc i := 0
+                    loop i < __peek64(seq + S_BYTES) {
+                        os_con_push(__peek8(seq + S_DATA + i))
+                        i := i + 1
+                    }
+                }
+                repeat := repeat - 1
+            }
+            b := os_con_pop()
+            if b >= 0 {
+                return b
+            }
+        }
+    }
+    return -1
+}
+
+# --- pseudo-terminals: not on Windows ----------------------------------------------
+
+proc os_pty_spawn(list, argv) {
+    return 0 - ERROR_NOT_SUPPORTED
+}
+
+proc os_pty_read(fd, buf, n) {
+    return -1
+}
+
+proc os_pty_write(fd, p, n) {
+    return 0 - ERROR_NOT_SUPPORTED
+}
+
+proc os_pty_close(fd) {
+    return 0
+}
+
+proc os_pty_resize(fd, rows, cols) {
+    return 0
+}
+
+# --- TCP -------------------------------------------------------------------------
+
+alloc os_wsa_on := 0
+
+proc os_sock_error() {
+    alloc e := os_u32(__wincall0(__import("ws2_32.dll!WSAGetLastError")))
+    if e == 0 {
+        e := 1
+    }
+    return 0 - e
+}
+
+# The addresses of a host and port (a list the system owns; free it
+# with freeaddrinfo), or 0.
+proc os_resolve(host, port, passive) {
+    if os_wsa_on == 0 {
+        alloc data := os_tmp(512)
+        __wincall2(__import("ws2_32.dll!WSAStartup"), 514, data)
+        os_tmp_free(data)
+        os_wsa_on := 1
+    }
+    alloc hints := os_tmp(64)
+    __memset(hints, 0, 64)
+    if passive {
+        __poke32(hints, 1)                 # AI_PASSIVE
+    }
+    __poke32(hints + 8, 1)                 # SOCK_STREAM
+    alloc service := rt_int_to_str(port)
+    alloc cell := os_scratch + 56
+    __poke64(cell, 0)
+    alloc r := os_u32(__wincall4(__import("ws2_32.dll!getaddrinfo"), host + S_DATA, service + S_DATA, hints, cell))
+    rt_drop(T_STR, service)
+    os_tmp_free(hints)
+    if r != 0 {
+        return 0
+    }
+    return __peek64(cell)
+}
+
+# A socket for one address of the list, or -1.
+proc os_socket_for(ai) {
+    alloc s := __wincall3(__import("ws2_32.dll!socket"), __peek32(ai + 4), __peek32(ai + 8), __peek32(ai + 12))
+    return s
+}
+
+proc os_tcp_listen(host, port) {
+    alloc res := os_resolve(host, port, 1)
+    if res == 0 {
+        return 0 - E_NO_HOST
+    }
+    alloc s := os_socket_for(res)
+    if s == -1 {
+        alloc e := os_sock_error()
+        __wincall1(__import("ws2_32.dll!freeaddrinfo"), res)
+        return e
+    }
+    alloc r := os_u32(__wincall3(__import("ws2_32.dll!bind"), s, __peek64(res + 32), __peek64(res + 16)))
+    if r == 0 {
+        r := os_u32(__wincall2(__import("ws2_32.dll!listen"), s, 16))
+    }
+    alloc e := 0
+    if r != 0 {
+        e := os_sock_error()
+        __wincall1(__import("ws2_32.dll!closesocket"), s)
+    }
+    __wincall1(__import("ws2_32.dll!freeaddrinfo"), res)
+    if e != 0 {
+        return e
+    }
+    return s
+}
+
+proc os_tcp_accept(s) {
+    alloc c := __wincall3(__import("ws2_32.dll!accept"), s, 0, 0)
+    if c == -1 {
+        return os_sock_error()
+    }
+    return c
+}
+
+proc os_tcp_connect(host, port) {
+    alloc res := os_resolve(host, port, 0)
+    if res == 0 {
+        return 0 - E_NO_HOST
+    }
+    alloc result := 0 - E_NO_HOST
+    alloc ai := res
+    loop ai != 0 {
+        alloc s := os_socket_for(ai)
+        if s == -1 {
+            result := os_sock_error()
+        } elif os_u32(__wincall3(__import("ws2_32.dll!connect"), s, __peek64(ai + 32), __peek64(ai + 16))) == 0 {
+            result := s
+            break
+        } else {
+            result := os_sock_error()
+            __wincall1(__import("ws2_32.dll!closesocket"), s)
+        }
+        ai := __peek64(ai + 40)
+    }
+    __wincall1(__import("ws2_32.dll!freeaddrinfo"), res)
+    return result
+}
+
+proc os_tcp_read(s, p, n) {
+    if n > 1073741824 {
+        n := 1073741824
+    }
+    alloc r := os_u32(__wincall4(__import("ws2_32.dll!recv"), s, p, n, 0))
+    if r == 4294967295 {
+        return os_sock_error()
+    }
+    return r
+}
+
+proc os_tcp_write(s, p, n) {
+    loop n > 0 {
+        alloc step := n
+        if step > 1073741824 {
+            step := 1073741824
+        }
+        alloc r := os_u32(__wincall4(__import("ws2_32.dll!send"), s, p, step, 0))
+        if r == 4294967295 {
+            return os_sock_error()
+        }
+        p := p + r
+        n := n - r
+    }
+    return 0
+}
+
+proc os_tcp_close(s) {
+    __wincall1(__import("ws2_32.dll!closesocket"), s)
+    return 0
+}

@@ -1,0 +1,842 @@
+
+# runtime/x64/linux.omg
+#
+# The operating system layer of the runtime for Linux on x86-64: the
+# os_* procs the rest of the runtime is written against, on top of
+# system calls made directly. Raw mode, the last file of the runtime
+# unit (see core.omg). Nothing here goes through a C library.
+#
+# A system call returns a negative errno, -1 to -4095, when it fails.
+
+alloc SYS_READ := 0
+alloc SYS_WRITE := 1
+alloc SYS_OPEN := 2
+alloc SYS_CLOSE := 3
+alloc SYS_STAT := 4
+alloc SYS_LSEEK := 8
+alloc SYS_MMAP := 9
+alloc SYS_MUNMAP := 11
+alloc SYS_RT_SIGACTION := 13
+alloc SYS_IOCTL := 16
+alloc SYS_DUP2 := 33
+alloc SYS_NANOSLEEP := 35
+alloc SYS_GETPID := 39
+alloc SYS_SOCKET := 41
+alloc SYS_CONNECT := 42
+alloc SYS_ACCEPT := 43
+alloc SYS_BIND := 49
+alloc SYS_LISTEN := 50
+alloc SYS_SETSOCKOPT := 54
+alloc SYS_FORK := 57
+alloc SYS_EXECVE := 59
+alloc SYS_WAIT4 := 61
+alloc SYS_FCNTL := 72
+alloc SYS_GETCWD := 79
+alloc SYS_MKDIR := 83
+alloc SYS_READLINK := 89
+alloc SYS_CHMOD := 90
+alloc SYS_GETRLIMIT := 97
+alloc SYS_SETSID := 112
+alloc SYS_SETRLIMIT := 160
+alloc SYS_GETDENTS64 := 217
+alloc SYS_CLOCK_GETTIME := 228
+alloc SYS_EXIT_GROUP := 231
+alloc SYS_PIPE2 := 293
+
+alloc ENOENT := 2
+alloc EINTR := 4
+alloc EAGAIN := 11
+alloc EACCES := 13
+alloc EEXIST := 17
+alloc ENOTDIR := 20
+alloc E_NO_HOST := 1000        # ours: a host name that cannot be resolved
+
+alloc O_CREAT := 64
+alloc O_NOCTTY := 256
+alloc O_TRUNC := 512
+alloc O_APPEND := 1024
+alloc O_NONBLOCK := 2048
+alloc O_DIRECTORY := 65536
+alloc O_CLOEXEC := 524288
+
+alloc TCGETS := 21505
+alloc TCSETS := 21506
+alloc TIOCSCTTY := 21518
+alloc TIOCSWINSZ := 21524
+alloc TIOCGPTN := 2147767344
+alloc TIOCSPTLCK := 1074025521
+
+alloc os_nargs := 0
+alloc os_argv := 0
+alloc os_envp := 0
+
+proc os_sys1(n, a) {
+    return __syscall(n, a, 0, 0, 0, 0, 0)
+}
+
+proc os_sys2(n, a, b) {
+    return __syscall(n, a, b, 0, 0, 0, 0)
+}
+
+proc os_sys3(n, a, b, c) {
+    return __syscall(n, a, b, c, 0, 0, 0)
+}
+
+# Did a system call fail?
+proc os_failed(r) {
+    return r < 0 and r > -4096
+}
+
+proc os_exit(code) {
+    if os_raw_on {
+        os_set_raw(0)
+    }
+    os_sys1(SYS_EXIT_GROUP, code)
+    return 0
+}
+
+# Write all n bytes at p, however many calls that takes. Returns 0, or
+# the negative errno that stopped it.
+proc os_write_all(fd, p, n) {
+    loop n > 0 {
+        alloc r := os_sys3(SYS_WRITE, fd, p, n)
+        if r < 0 {
+            if r != 0 - EINTR {
+                return r
+            }
+        } else {
+            p := p + r
+            n := n - r
+        }
+    }
+    return 0
+}
+
+proc os_die(text) {
+    os_write_all(2, text + S_DATA, __peek64(text + S_BYTES))
+    return os_exit(1)
+}
+
+# Whole pages from the system, zero-filled. `size` is a multiple of 4096.
+proc os_alloc(size) {
+    # PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS
+    alloc p := __syscall(SYS_MMAP, 0, size, 3, 34, -1, 0)
+    if os_failed(p) {
+        os_die("out of memory\n")
+    }
+    return p
+}
+
+proc os_free(p, size) {
+    os_sys2(SYS_MUNMAP, p, size)
+    return 0
+}
+
+# Called first of all. The entry code left the initial stack pointer in
+# rt_entry_rsp; the kernel put the argument count there, then the
+# argument pointers, a null, and the environment pointers.
+proc os_init() {
+    alloc sp := rt_entry_rsp
+    os_nargs := __peek64(sp)
+    os_argv := sp + 8
+    os_envp := os_argv + (os_nargs + 1) * 8
+
+    # The stack grows on demand up to the soft limit in force at the
+    # time, so a small limit is first raised to 64 MiB, the depth the
+    # other ways of running a program allow. Generated code compares
+    # the stack pointer with rt_stack_limit on entry to every proc and
+    # raises an ordinary error in time.
+    alloc size := 8388608
+    alloc buf := os_alloc(4096)
+    if os_sys2(SYS_GETRLIMIT, 3, buf) == 0 {
+        alloc cur := __peek64(buf)
+        alloc max := __peek64(buf + 8)
+        alloc want := 67108864
+        if cur != -1 and __ult(cur, want) {
+            alloc to := want
+            if max != -1 and __ult(max, want) {
+                to := max
+            }
+            __poke64(buf, to)
+            if os_sys2(SYS_SETRLIMIT, 3, buf) == 0 {
+                cur := to
+            }
+        }
+        if cur == -1 {
+            size := 268435456
+        } else {
+            size := cur
+        }
+    }
+    os_free(buf, 4096)
+    # Room for the environment above the first frame, and for the
+    # frames that format and report the error.
+    alloc reserve := 1048576
+    if size < 4194304 {
+        reserve := size >> 2
+    }
+    rt_stack_limit := sp - size + reserve
+    return 0
+}
+
+proc os_argc() {
+    return os_nargs
+}
+
+# Argument i as an owned string.
+proc os_arg(i) {
+    return rt_str_from_c(__peek64(os_argv + i * 8))
+}
+
+# The working directory as an owned string.
+proc os_getcwd() {
+    alloc buf := rt_alloc(4096)
+    alloc r := os_sys2(SYS_GETCWD, buf, 4096)
+    alloc s := "."
+    if os_failed(r) == 0 {
+        s := rt_str_from_c(buf)
+    }
+    rt_free(buf, 4096)
+    return s
+}
+
+# --- files -----------------------------------------------------------------
+
+# What the system says about error `code`.
+proc os_err_text(code) {
+    if code == 1 { return "Operation not permitted" }
+    if code == 2 { return "No such file or directory" }
+    if code == 4 { return "Interrupted system call" }
+    if code == 5 { return "Input/output error" }
+    if code == 8 { return "Exec format error" }
+    if code == 9 { return "Bad file descriptor" }
+    if code == 11 { return "Resource temporarily unavailable" }
+    if code == 12 { return "Cannot allocate memory" }
+    if code == 13 { return "Permission denied" }
+    if code == 17 { return "File exists" }
+    if code == 20 { return "Not a directory" }
+    if code == 21 { return "Is a directory" }
+    if code == 22 { return "Invalid argument" }
+    if code == 24 { return "Too many open files" }
+    if code == 25 { return "Inappropriate ioctl for device" }
+    if code == 26 { return "Text file busy" }
+    if code == 28 { return "No space left on device" }
+    if code == 30 { return "Read-only file system" }
+    if code == 32 { return "Broken pipe" }
+    if code == 36 { return "File name too long" }
+    if code == 39 { return "Directory not empty" }
+    if code == 40 { return "Too many levels of symbolic links" }
+    if code == 98 { return "Address already in use" }
+    if code == 99 { return "Cannot assign requested address" }
+    if code == 101 { return "Network is unreachable" }
+    if code == 104 { return "Connection reset by peer" }
+    if code == 110 { return "Connection timed out" }
+    if code == 111 { return "Connection refused" }
+    if code == 113 { return "No route to host" }
+    if code == E_NO_HOST { return "cannot resolve the host name" }
+    return "error"
+}
+
+proc os_is_abs(path) {
+    return __peek8(path + S_DATA) == 47
+}
+
+# Open a file: kind 0 to read, 1 to write from empty, 2 to append,
+# 3 to read and write, 4 to read and write from empty. Returns the
+# descriptor or a negative errno.
+proc os_open(path, kind) {
+    alloc flags := 0
+    if kind == 1 { flags := 1 | O_CREAT | O_TRUNC }
+    if kind == 2 { flags := 1 | O_CREAT | O_APPEND }
+    if kind == 3 { flags := 2 }
+    if kind == 4 { flags := 2 | O_CREAT | O_TRUNC }
+    return os_sys3(SYS_OPEN, path + S_DATA, flags, 438)
+}
+
+proc os_close(fd) {
+    return os_sys1(SYS_CLOSE, fd)
+}
+
+# Read up to n bytes: the count, 0 at the end, or a negative errno.
+proc os_read(fd, p, n) {
+    loop true {
+        alloc r := os_sys3(SYS_READ, fd, p, n)
+        if r != 0 - EINTR {
+            return r
+        }
+    }
+    return 0
+}
+
+proc os_stdin_read(p, n) {
+    return os_read(0, p, n)
+}
+
+proc os_seek(fd, off) {
+    return os_sys3(SYS_LSEEK, fd, off, 0)
+}
+
+proc os_tell(fd) {
+    return os_sys3(SYS_LSEEK, fd, 0, 1)
+}
+
+# The st_mode of a path, or -1 when there is nothing there.
+proc os_mode(cpath) {
+    alloc buf := rt_alloc(160)
+    alloc r := os_sys2(SYS_STAT, cpath, buf)
+    alloc mode := -1
+    if r == 0 {
+        mode := __peek32(buf + 24)
+    }
+    rt_free(buf, 160)
+    return mode
+}
+
+proc os_exists(path) {
+    return os_mode(path + S_DATA) >= 0
+}
+
+proc os_is_dir(path) {
+    alloc mode := os_mode(path + S_DATA)
+    return mode >= 0 and (mode & 61440) == 16384
+}
+
+# Append the names in a directory to `list`, leaving out . and ..
+proc os_list_dir(path, list) {
+    alloc fd := os_sys3(SYS_OPEN, path + S_DATA, O_DIRECTORY, 0)
+    if fd < 0 {
+        return fd
+    }
+    alloc buf := rt_alloc(32768)
+    alloc result := 0
+    loop true {
+        alloc n := os_sys3(SYS_GETDENTS64, fd, buf, 32768)
+        if n <= 0 {
+            result := n
+            break
+        }
+        alloc at := 0
+        loop at < n {
+            alloc ent := buf + at
+            alloc name := ent + 19
+            alloc dot := __peek8(name) == 46
+            alloc skip := dot and (__peek8(name + 1) == 0 or (__peek8(name + 1) == 46 and __peek8(name + 2) == 0))
+            if skip == 0 {
+                rt_list_push(list, T_STR, rt_str_from_c(name))
+            }
+            at := at + __peek16(ent + 16)
+        }
+    }
+    rt_free(buf, 32768)
+    os_close(fd)
+    return result
+}
+
+# Create one directory; one that is already there is not an error.
+proc os_mkdir(cpath) {
+    alloc r := os_sys2(SYS_MKDIR, cpath, 511)
+    if r == 0 - EEXIST {
+        alloc mode := os_mode(cpath)
+        if mode >= 0 and (mode & 61440) == 16384 {
+            return 0
+        }
+    }
+    return r
+}
+
+proc os_chmod(path, mode) {
+    return os_sys2(SYS_CHMOD, path + S_DATA, mode)
+}
+
+# --- the process and the clock ------------------------------------------------
+
+proc os_platform() {
+    return "linux-x64"
+}
+
+proc os_getpid() {
+    return os_sys1(SYS_GETPID, 0)
+}
+
+# The path of the running program, or 0.
+proc os_exe_path() {
+    alloc buf := rt_alloc(4096)
+    alloc n := os_sys3(SYS_READLINK, "/proc/self/exe" + S_DATA, buf, 4095)
+    alloc s := 0
+    if n > 0 {
+        s := rt_str_from(buf, n)
+    }
+    rt_free(buf, 4096)
+    return s
+}
+
+# Milliseconds since 1970.
+proc os_time_ms() {
+    alloc ts := rt_alloc(16)
+    os_sys2(SYS_CLOCK_GETTIME, 0, ts)
+    alloc ms := __peek64(ts) * 1000 + __peek64(ts + 8) // 1000000
+    rt_free(ts, 16)
+    return ms
+}
+
+proc os_sleep_ms(ms) {
+    alloc ts := rt_alloc(16)
+    __poke64(ts, ms // 1000)
+    __poke64(ts + 8, (ms % 1000) * 1000000)
+    # An interrupted sleep leaves what remains in the same place.
+    loop os_sys2(SYS_NANOSLEEP, ts, ts) == 0 - EINTR {
+    }
+    rt_free(ts, 16)
+    return 0
+}
+
+# The value of an environment variable as a C string, or 0. `name` is
+# a string that ends with "=".
+proc os_getenv(name) {
+    alloc n := __peek64(name + S_BYTES)
+    alloc p := os_envp
+    loop __peek64(p) != 0 {
+        if __memcmp(__peek64(p), name + S_DATA, n) == 0 {
+            return __peek64(p) + n
+        }
+        p := p + 8
+    }
+    return 0
+}
+
+proc os_cstr_len(p) {
+    alloc n := 0
+    loop __peek8(p + n) != 0 {
+        n := n + 1
+    }
+    return n
+}
+
+# Replace this process with the program argv[0], looked for along PATH
+# when it is not a path itself. Returns only on failure, with the
+# negative errno.
+proc os_execvp(argv, envp) {
+    alloc file := __peek64(argv)
+    alloc flen := os_cstr_len(file)
+    alloc i := 0
+    loop i < flen {
+        if __peek8(file + i) == 47 {
+            return os_sys3(SYS_EXECVE, file, argv, envp)
+        }
+        i := i + 1
+    }
+    alloc path := os_getenv("PATH=")
+    if path == 0 {
+        path := "/usr/local/bin:/usr/bin:/bin" + S_DATA
+    }
+    alloc result := 0 - ENOENT
+    alloc buf := rt_alloc(4096 + flen + 2)
+    loop true {
+        alloc n := 0
+        loop __peek8(path + n) != 0 and __peek8(path + n) != 58 {
+            n := n + 1
+        }
+        if n > 0 and n < 4096 {
+            __memcpy(buf, path, n)
+            __poke8(buf + n, 47)
+            __memcpy(buf + n + 1, file, flen + 1)
+            alloc r := os_sys3(SYS_EXECVE, buf, argv, envp)
+            if r == 0 - EACCES {
+                result := r
+            } elif r != 0 - ENOENT and r != 0 - ENOTDIR {
+                return r
+            }
+        }
+        if __peek8(path + n) == 0 {
+            break
+        }
+        path := path + n + 1
+    }
+    return result
+}
+
+# Run argv as a child and wait for it. Returns its exit code (128 + the
+# signal number when a signal ended it, -1 when it cannot be told); when
+# it could not be started, rt_spawn_error is set to the errno.
+proc os_subprocess(list, argv) {
+    # A pipe that closes by itself when the child starts its program
+    # tells the parent whether that worked.
+    alloc mem := rt_alloc(16)
+    alloc r := os_sys2(SYS_PIPE2, mem, O_CLOEXEC)
+    if r < 0 {
+        rt_free(mem, 16)
+        rt_spawn_error := 0 - r
+        return -1
+    }
+    alloc rd := __peek32(mem)
+    alloc wr := __peek32(mem + 4)
+    alloc pid := os_sys1(SYS_FORK, 0)
+    if pid < 0 {
+        os_close(rd)
+        os_close(wr)
+        rt_free(mem, 16)
+        rt_spawn_error := 0 - pid
+        return -1
+    }
+    if pid == 0 {
+        os_close(rd)
+        alloc e := os_execvp(argv, os_envp)
+        __poke32(mem, 0 - e)
+        os_sys3(SYS_WRITE, wr, mem, 4)
+        os_sys1(SYS_EXIT_GROUP, 127)
+    }
+    os_close(wr)
+    alloc exec_errno := 0
+    if os_read(rd, mem, 4) == 4 {
+        exec_errno := __peek32(mem)
+    }
+    os_close(rd)
+    __poke32(mem + 8, 0)
+    loop __syscall(SYS_WAIT4, pid, mem + 8, 0, 0, 0, 0) == 0 - EINTR {
+    }
+    alloc status := __peek32(mem + 8)
+    rt_free(mem, 16)
+    if exec_errno != 0 {
+        rt_spawn_error := exec_errno
+        return -1
+    }
+    alloc sig := status & 127
+    if sig == 0 {
+        return (status >> 8) & 255
+    }
+    if sig != 127 {
+        return 128 + sig
+    }
+    return -1
+}
+
+alloc os_reaping := 0
+
+# fork(): 0 in the child, the child's id in the parent. Children are
+# not waited for, so the system is told to clear them away itself.
+proc os_fork() {
+    if os_reaping == 0 {
+        os_reaping := 1
+        alloc act := rt_alloc(32)
+        __memset(act, 0, 32)
+        __poke64(act, 1)                     # SIG_IGN
+        __syscall(SYS_RT_SIGACTION, 17, act, 0, 8, 0, 0)    # SIGCHLD
+        rt_free(act, 32)
+    }
+    return os_sys1(SYS_FORK, 0)
+}
+
+# --- the terminal ------------------------------------------------------------
+
+alloc os_raw_on := 0
+alloc os_termios := 0          # the settings found, to put back
+
+# Raw mode: no line editing, no echo, no signal keys, no flow control,
+# and a read that returns at once when no key is waiting.
+proc os_set_raw(on) {
+    alloc t := rt_alloc(64)
+    alloc r := os_sys3(SYS_IOCTL, 0, TCGETS, t)
+    if r < 0 {
+        rt_free(t, 64)
+        return r
+    }
+    if on {
+        if os_termios == 0 {
+            os_termios := rt_alloc(64)
+            __memcpy(os_termios, t, 64)
+        }
+        __poke32(t + 12, __peek32(t + 12) & ~11)        # ICANON | ECHO | ISIG
+        __poke32(t, __peek32(t) & ~1024)                # IXON
+        __poke8(t + 22, 0)                              # VTIME
+        __poke8(t + 23, 0)                              # VMIN
+    } elif os_termios != 0 {
+        __memcpy(t, os_termios, 64)
+    } else {
+        __poke32(t + 12, __peek32(t + 12) | 11)
+        __poke32(t, __peek32(t) | 1024)
+    }
+    r := os_sys3(SYS_IOCTL, 0, TCSETS, t)
+    rt_free(t, 64)
+    if r < 0 {
+        return r
+    }
+    os_raw_on := on
+    return 0
+}
+
+# One byte from standard input, or -1 when none is to be had.
+proc os_read_key() {
+    alloc buf := rt_alloc(16)
+    alloc r := os_sys3(SYS_READ, 0, buf, 1)
+    alloc c := -1
+    if r == 1 {
+        c := __peek8(buf)
+    }
+    rt_free(buf, 16)
+    return c
+}
+
+# --- pseudo-terminals --------------------------------------------------------------
+
+# Start argv on a new pseudo-terminal; returns the descriptor of our
+# end of it, set not to block, or a negative errno.
+proc os_pty_spawn(list, argv) {
+    alloc master := os_sys3(SYS_OPEN, "/dev/ptmx" + S_DATA, 2 | O_NOCTTY, 0)
+    if master < 0 {
+        return master
+    }
+    alloc mem := rt_alloc(16)
+    __poke32(mem, 0)
+    os_sys3(SYS_IOCTL, master, TIOCSPTLCK, mem)
+    alloc r := os_sys3(SYS_IOCTL, master, TIOCGPTN, mem)
+    alloc number := __peek32(mem)
+    rt_free(mem, 16)
+    if r < 0 {
+        os_close(master)
+        return r
+    }
+    alloc b := rt_buf_new()
+    rt_buf_str(b, "/dev/pts/")
+    rt_buf_int(b, number)
+    alloc name := rt_buf_finish(b)
+    # The child's environment: ours, with TERM set.
+    alloc count := 0
+    loop __peek64(os_envp + count * 8) != 0 {
+        count := count + 1
+    }
+    alloc envp := rt_alloc(8 * (count + 2))
+    alloc k := 0
+    alloc i := 0
+    loop i < count {
+        alloc ent := __peek64(os_envp + i * 8)
+        if __memcmp(ent, "TERM=" + S_DATA, 5) != 0 {
+            __poke64(envp + k * 8, ent)
+            k := k + 1
+        }
+        i := i + 1
+    }
+    __poke64(envp + k * 8, "TERM=xterm-256color" + S_DATA)
+    __poke64(envp + (k + 1) * 8, 0)
+    alloc pid := os_sys1(SYS_FORK, 0)
+    if pid == 0 {
+        os_sys1(SYS_SETSID, 0)
+        alloc slave := os_sys3(SYS_OPEN, name + S_DATA, 2, 0)
+        if slave < 0 {
+            os_sys1(SYS_EXIT_GROUP, 127)
+        }
+        os_sys3(SYS_IOCTL, slave, TIOCSCTTY, 0)
+        os_sys2(SYS_DUP2, slave, 0)
+        os_sys2(SYS_DUP2, slave, 1)
+        os_sys2(SYS_DUP2, slave, 2)
+        if slave > 2 {
+            os_close(slave)
+        }
+        os_close(master)
+        os_execvp(argv, envp)
+        os_sys1(SYS_EXIT_GROUP, 127)
+    }
+    rt_free(envp, 8 * (count + 2))
+    rt_drop(T_STR, name)
+    if pid < 0 {
+        os_close(master)
+        return pid
+    }
+    alloc fl := os_sys3(SYS_FCNTL, master, 3, 0)
+    os_sys3(SYS_FCNTL, master, 4, fl | O_NONBLOCK)
+    return master
+}
+
+# What the program wrote: the byte count, 0 when there is nothing new,
+# -1 once it has gone.
+proc os_pty_read(fd, buf, n) {
+    alloc r := os_sys3(SYS_READ, fd, buf, n)
+    if r > 0 {
+        return r
+    }
+    if r == 0 - EAGAIN {
+        return 0
+    }
+    return -1
+}
+
+proc os_pty_write(fd, p, n) {
+    return os_sys3(SYS_WRITE, fd, p, n)
+}
+
+proc os_pty_close(fd) {
+    return os_close(fd)
+}
+
+proc os_pty_resize(fd, rows, cols) {
+    alloc ws := rt_alloc(16)
+    __poke16(ws, rows)
+    __poke16(ws + 2, cols)
+    __poke32(ws + 4, 0)
+    os_sys3(SYS_IOCTL, fd, TIOCSWINSZ, ws)
+    rt_free(ws, 16)
+    return 0
+}
+
+# --- TCP -------------------------------------------------------------------------
+#
+# IPv4 only, and without a C library there is no name service: a host
+# is a dotted address, "localhost", or a name listed in /etc/hosts.
+
+# Parse a dotted address of n bytes at p into the 4 bytes at `out`.
+proc os_parse_ipv4(p, n, out) {
+    alloc part := 0
+    alloc i := 0
+    loop part < 4 {
+        alloc v := 0
+        alloc digits := 0
+        loop i < n and __peek8(p + i) >= 48 and __peek8(p + i) <= 57 and digits < 4 {
+            v := v * 10 + (__peek8(p + i) - 48)
+            digits := digits + 1
+            i := i + 1
+        }
+        if digits == 0 or v > 255 {
+            return 0
+        }
+        __poke8(out + part, v)
+        part := part + 1
+        if part < 4 {
+            if i >= n or __peek8(p + i) != 46 {
+                return 0
+            }
+            i := i + 1
+        }
+    }
+    return i == n
+}
+
+# Look a name up in /etc/hosts; fills in `out` and returns 1 if found.
+proc os_hosts_lookup(host, out) {
+    alloc fd := os_sys3(SYS_OPEN, "/etc/hosts" + S_DATA, 0, 0)
+    if fd < 0 {
+        return 0
+    }
+    alloc b := rt_read_all(fd)
+    os_close(fd)
+    alloc data := __peek64(b)
+    alloc size := __peek64(b + 8)
+    alloc hn := __peek64(host + S_BYTES)
+    alloc found := 0
+    alloc at := 0
+    loop at < size and found == 0 {
+        alloc end := at
+        loop end < size and __peek8(data + end) != 10 {
+            end := end + 1
+        }
+        # One line: an address, then names, up to any '#'.
+        alloc i := at
+        loop i < end and rt_is_space(__peek8(data + i)) == 0 and __peek8(data + i) != 35 {
+            i := i + 1
+        }
+        alloc addr_end := i
+        loop i < end and __peek8(data + i) != 35 and found == 0 {
+            loop i < end and rt_is_space(__peek8(data + i)) {
+                i := i + 1
+            }
+            alloc start := i
+            loop i < end and rt_is_space(__peek8(data + i)) == 0 and __peek8(data + i) != 35 {
+                i := i + 1
+            }
+            if i - start == hn and hn > 0 and __memcmp(data + start, host + S_DATA, hn) == 0 {
+                found := os_parse_ipv4(data + at, addr_end - at, out)
+            }
+        }
+        at := end + 1
+    }
+    rt_free(data, __peek64(b + 16))
+    rt_free(b, 24)
+    return found
+}
+
+# A 16-byte IPv4 socket address for host and port, or 0.
+proc os_sockaddr(host, port) {
+    alloc sa := rt_alloc(16)
+    __memset(sa, 0, 16)
+    __poke16(sa, 2)                              # AF_INET
+    __poke8(sa + 2, port >> 8)
+    __poke8(sa + 3, port & 255)
+    alloc n := __peek64(host + S_BYTES)
+    if n == 0 {
+        return sa
+    }
+    if os_parse_ipv4(host + S_DATA, n, sa + 4) {
+        return sa
+    }
+    if rt_str_eq(host, "localhost") {
+        __poke8(sa + 4, 127)
+        __poke8(sa + 7, 1)
+        return sa
+    }
+    if os_hosts_lookup(host, sa + 4) {
+        return sa
+    }
+    rt_free(sa, 16)
+    return 0
+}
+
+proc os_tcp_listen(host, port) {
+    alloc sa := os_sockaddr(host, port)
+    if sa == 0 {
+        return 0 - E_NO_HOST
+    }
+    alloc s := os_sys3(SYS_SOCKET, 2, 1, 0)
+    if s >= 0 {
+        alloc one := rt_alloc(16)
+        __poke32(one, 1)
+        __syscall(SYS_SETSOCKOPT, s, 1, 2, one, 4, 0)       # SO_REUSEADDR
+        rt_free(one, 16)
+        alloc r := os_sys3(SYS_BIND, s, sa, 16)
+        if r == 0 {
+            r := os_sys2(SYS_LISTEN, s, 16)
+        }
+        if r < 0 {
+            os_close(s)
+            s := r
+        }
+    }
+    rt_free(sa, 16)
+    return s
+}
+
+proc os_tcp_accept(s) {
+    loop true {
+        alloc r := os_sys3(SYS_ACCEPT, s, 0, 0)
+        if r != 0 - EINTR {
+            return r
+        }
+    }
+    return 0
+}
+
+proc os_tcp_connect(host, port) {
+    alloc sa := os_sockaddr(host, port)
+    if sa == 0 {
+        return 0 - E_NO_HOST
+    }
+    alloc s := os_sys3(SYS_SOCKET, 2, 1, 0)
+    if s >= 0 {
+        alloc r := os_sys3(SYS_CONNECT, s, sa, 16)
+        if r < 0 {
+            os_close(s)
+            s := r
+        }
+    }
+    rt_free(sa, 16)
+    return s
+}
+
+proc os_tcp_read(s, p, n) {
+    return os_read(s, p, n)
+}
+
+proc os_tcp_write(s, p, n) {
+    return os_write_all(s, p, n)
+}
+
+proc os_tcp_close(s) {
+    return os_close(s)
+}
