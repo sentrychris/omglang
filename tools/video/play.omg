@@ -219,8 +219,13 @@ proc decode_one() {
         n_decoded := n_decoded + 1
         est_ms := (est_ms * 3 + took) // 4
         if pic != false {
-            ready[next] := pic
-            n_ready := n_ready + 1
+            if rank[next] < shown {
+                # after a jump: a picture from before the place jumped to
+                h264.release(pic)
+            } else {
+                ready[next] := pic
+                n_ready := n_ready + 1
+            }
         }
     }
     next := next + 1
