@@ -30,7 +30,7 @@ For example:
 ```sh
 omg tools/unix/wc.omg examples/hello_world.omg examples/prime_sieve.omg
 omg tools/unix/grep.omg "proc " examples/higher_order.omg
-omg tools/unix/hex.omg src/compiler.omgb | head
+omg tools/unix/hex.omg bin/omg | head
 ```
 
 ## Path handling
@@ -130,9 +130,10 @@ ccc
 `base64.omg` round-trips byte-for-byte:
 
 ```sh
-$ omg tools/base64.omg encode src/compiler.omgb /tmp/c.b64
+$ omg --compile src/compiler.omg /tmp/c.omgb      # any binary file will do
+$ omg tools/base64.omg encode /tmp/c.omgb /tmp/c.b64
 $ omg tools/base64.omg decode /tmp/c.b64 /tmp/c.bin
-$ cmp src/compiler.omgb /tmp/c.bin && echo OK
+$ cmp /tmp/c.omgb /tmp/c.bin && echo OK
 OK
 ```
 

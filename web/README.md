@@ -1,10 +1,15 @@
-# OMG playground (browser)
+# OMG playground and compiler explorer (browser)
 
-A static page that runs **any** OMG program you type, in your
-browser. The full OMG-in-OMG compiler and VM are bundled to a single
-`omg-web.js` file (~1.4 MB) by the same self-hosted toolchain that
-produces the native binaries — so what runs in the page is the exact
-same compiler the rest of the project uses, transpiled to JavaScript.
+Two static pages. The **playground** (`index.html`) runs any OMG
+program you type, in your browser. The **explorer** (`explorer.html`)
+shows what the compiler makes of it at every stage: tokens, AST,
+bytecode, and the C and JavaScript the back ends write.
+
+The OMG compiler and VM are bundled to a single `omg-web.js` file
+(~2.2 MB) by the same toolchain that builds `omg` itself — so what
+runs in the page is the exact same compiler the rest of the project
+uses, put through OMG's JavaScript back end. `omg-explorer.js`
+(~3.7 MB) is the same plus the C and JS back ends.
 
 ## How it actually works
 
@@ -29,7 +34,7 @@ click re-evaluates the bundle so OMG-side globals start fresh.
 ## Running locally
 
 ```sh
-scripts/build-web.sh                    # builds web/omg-web.js + web/examples/
+scripts/build-web.sh                    # builds web/omg-web.js, web/omg-explorer.js, web/examples/
 cd web && python3 -m http.server          # any static server works
 open http://localhost:8000
 ```
@@ -39,9 +44,16 @@ open http://localhost:8000
 ```
 web/
 ├── README.md           this file
-├── index.html          page shell + styling
+├── index.html          the playground: page shell
 ├── app.js              loads the bundle, redirects emit/print into <pre>
 ├── omg-web.js          compiler + VM + driver bundled to JavaScript
+├── explorer.html       the compiler explorer
+├── explorer.app.js     drives each stage and renders its output
+├── omg-explorer.js     compiler + VM + the C and JS back ends, bundled
+├── reference.js        the language reference shown beside the editor
+├── share.js            share links: the source, compressed into the URL
+├── style.css           styling for both pages
+├── test-explorer.mjs   node test: every explorer stage still works (CI runs it)
 └── examples/           copies of a few programs from examples/, plus
                         manifest.json. The playground and explorer
                         populate their "Examples" dropdown from the
@@ -54,8 +66,8 @@ web/
 ## What's not here
 
 - **Mobile-friendly UI.** Layout works but isn't optimised for touch.
-- **Save / share.** The page has no persistence — refresh wipes your
-  edits. URL-fragment encoding for share-this-snippet would be a
-  small addition.
-- **AOT-build.** `omg --build foo.omg foo` compiles to a native ELF;
-  there's no equivalent here. The browser path uses the bytecode VM.
+- **Building executables.** `omg --build foo.omg foo` writes a native
+  executable; there's no equivalent here. The browser path uses the
+  bytecode VM.
+- **The machine-code back end.** The explorer shows the C and
+  JavaScript routes. The x86-64 back end is not in the bundle.

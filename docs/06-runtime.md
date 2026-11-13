@@ -236,7 +236,8 @@ Windows side is described in [08-windows.md](08-windows.md).
 ```c
 typedef enum {
     OMG_INT, OMG_STR, OMG_BOOL, OMG_NONE,
-    OMG_CLOSURE, OMG_LIST, OMG_DICT, OMG_FLOAT
+    OMG_CLOSURE, OMG_LIST, OMG_DICT, OMG_FLOAT,
+    OMG_UNSET   /* a variable slot nothing has been stored into */
 } omg_tag;
 
 typedef struct {

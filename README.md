@@ -938,7 +938,7 @@ Some interesting starting points:
 - [`examples/higher_order.omg`](examples/higher_order.omg): closures + first-class functions.
 - [`examples/donut.omg`](examples/donut.omg): Andy Sloane's spinning 3D
   ASCII donut, ported to OMG. Exercises the float kit and ANSI-escape
-  animation — AOT-compile it for a smooth ~90 FPS spin.
+  animation — build it with `omg --build` for a smooth spin.
 - [`examples/games/`](examples/games/): interactive terminal games (Snake, Pong, Tetris,
   a small roguelike) driven by `time_ms` / `sleep_ms` /
   `stdin_set_raw` / `stdin_read_key`. See
