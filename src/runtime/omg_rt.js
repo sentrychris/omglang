@@ -796,13 +796,38 @@ function omg_file_open(path, mode) {
     return BigInt(fd);
 }
 
-function omg_file_read(handle) {
+// file_read(handle) reads everything that remains; file_read(handle,
+// max) at most max bytes, fewer only when the file ends first.
+function omg_file_read(handle, max) {
     const h = _omg_handles.get(Number(omg_as_int(handle)));
     if (!h) omg_panic('ValueError', 'invalid file handle');
-    const slice = h.buf.subarray(h.pos);
-    h.pos = h.buf.length;
+    let end = h.buf.length;
+    if (max !== undefined) {
+        if (typeof max !== 'bigint') omg_panic('TypeError', 'file_read() expects (handle: int, max_bytes: int)');
+        if (max < 0n) omg_panic('ValueError', 'file_read: max_bytes must be non-negative');
+        if (BigInt(h.pos) + max < BigInt(end)) end = h.pos + Number(max);
+    }
+    const slice = h.buf.subarray(h.pos, end);
+    h.pos = Math.max(h.pos, end);
     if (h.binary) return Array.from(slice).map(b => BigInt(b));
     return slice.toString('utf8');
+}
+
+// file_size(path) in bytes; file_mtime(path), the time of the last
+// write in milliseconds since 1970.
+function _omg_stat(path, what) {
+    _need_fs(what);
+    if (typeof path !== 'string') omg_panic('TypeError', what + '() expects a path');
+    try { return _omg_fs.statSync(path); }
+    catch (e) { omg_panic('ValueError', "cannot stat '" + path + "': " + ((e && e.code) || 'error')); }
+}
+
+function omg_file_size(path) {
+    return BigInt(_omg_stat(path, 'file_size').size);
+}
+
+function omg_file_mtime(path) {
+    return BigInt(Math.floor(_omg_stat(path, 'file_mtime').mtimeMs));
 }
 
 function omg_file_write(handle, data) {
@@ -958,6 +983,8 @@ const _omg_builtins = {
     read_file: omg_read_file,
     file_open: omg_file_open,
     file_read: omg_file_read,
+    file_size: omg_file_size,
+    file_mtime: omg_file_mtime,
     file_write: omg_file_write,
     file_close: omg_file_close,
     file_seek: omg_file_seek,
@@ -981,6 +1008,16 @@ const _omg_builtins = {
     subprocess: omg_subprocess,
     getpid: omg_getpid,
     executable_path: omg_executable_path,
+    tcp_listen: omg_tcp_listen,
+    tcp_accept: omg_tcp_accept,
+    tcp_connect: omg_tcp_connect,
+    tcp_read: omg_tcp_read,
+    tcp_write: omg_tcp_write,
+    tcp_close: omg_tcp_close,
+    tcp_nonblocking: omg_tcp_nonblocking,
+    tcp_peer: omg_tcp_peer,
+    tcp_poll: omg_tcp_poll,
+    interrupted: omg_interrupted,
 };
 
 // === Real-time terminal I/O (Node) =======================================
@@ -1032,6 +1069,45 @@ function omg_stdin_read_key() {
 // so we panic rather than fail silently. The browser playground
 // never touches these — the editor that uses them is a native-only
 // tool.
+
+// Sockets: a JS program cannot wait for the network without giving up
+// its turn, and an OMG program is one straight run. These exist so
+// that a program which mentions them still translates; calling one is
+// an error the program can catch.
+function omg_tcp_listen(_host, _port) {
+    omg_panic('RuntimeError', 'tcp_listen is not supported in the JS runtime');
+}
+function omg_tcp_accept(_h) {
+    omg_panic('RuntimeError', 'tcp_accept is not supported in the JS runtime');
+}
+function omg_tcp_connect(_host, _port) {
+    omg_panic('RuntimeError', 'tcp_connect is not supported in the JS runtime');
+}
+function omg_tcp_read(_h, _max) {
+    omg_panic('RuntimeError', 'tcp_read is not supported in the JS runtime');
+}
+function omg_tcp_write(_h, _data, _offset) {
+    omg_panic('RuntimeError', 'tcp_write is not supported in the JS runtime');
+}
+function omg_tcp_close(_h) {
+    omg_panic('RuntimeError', 'tcp_close is not supported in the JS runtime');
+}
+function omg_tcp_nonblocking(_h, _on) {
+    omg_panic('RuntimeError', 'tcp_nonblocking is not supported in the JS runtime');
+}
+function omg_tcp_peer(_h) {
+    omg_panic('RuntimeError', 'tcp_peer is not supported in the JS runtime');
+}
+function omg_tcp_poll(_reads, _writes, _timeout) {
+    omg_panic('RuntimeError', 'tcp_poll is not supported in the JS runtime');
+}
+
+// interrupted(): a JS program is never told of Ctrl-C while it runs
+// (the signal would be delivered between turns, and there are none),
+// so the count stays 0 and Ctrl-C ends the program as it always did.
+function omg_interrupted() {
+    return 0n;
+}
 
 function omg_pty_spawn(_argv) {
     omg_panic('RuntimeError', 'pty_spawn is not supported in the JS runtime');

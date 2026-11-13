@@ -14,9 +14,11 @@ alloc SYS_OPEN := 2
 alloc SYS_CLOSE := 3
 alloc SYS_STAT := 4
 alloc SYS_LSEEK := 8
+alloc SYS_POLL := 7
 alloc SYS_MMAP := 9
 alloc SYS_MUNMAP := 11
 alloc SYS_RT_SIGACTION := 13
+alloc SYS_RT_SIGPROCMASK := 14
 alloc SYS_IOCTL := 16
 alloc SYS_DUP2 := 33
 alloc SYS_NANOSLEEP := 35
@@ -24,8 +26,10 @@ alloc SYS_GETPID := 39
 alloc SYS_SOCKET := 41
 alloc SYS_CONNECT := 42
 alloc SYS_ACCEPT := 43
+alloc SYS_SENDTO := 44
 alloc SYS_BIND := 49
 alloc SYS_LISTEN := 50
+alloc SYS_GETPEERNAME := 52
 alloc SYS_SETSOCKOPT := 54
 alloc SYS_FORK := 57
 alloc SYS_EXECVE := 59
@@ -41,6 +45,7 @@ alloc SYS_SETRLIMIT := 160
 alloc SYS_GETDENTS64 := 217
 alloc SYS_CLOCK_GETTIME := 228
 alloc SYS_EXIT_GROUP := 231
+alloc SYS_SIGNALFD4 := 289
 alloc SYS_PIPE2 := 293
 
 alloc ENOENT := 2
@@ -292,6 +297,20 @@ proc os_mode(cpath) {
     return mode
 }
 
+# The size of a path in bytes and the time it was last written, in
+# milliseconds since 1970, into the two words at `out`. Returns 0, or a
+# negative errno.
+proc os_stat(path, out) {
+    alloc buf := rt_alloc(160)
+    alloc r := os_sys2(SYS_STAT, path + S_DATA, buf)
+    if r == 0 {
+        __poke64(out, __peek64(buf + 48))
+        __poke64(out + 8, __peek64(buf + 88) * 1000 + __peek64(buf + 96) // 1000000)
+    }
+    rt_free(buf, 160)
+    return r
+}
+
 proc os_exists(path) {
     return os_mode(path + S_DATA) >= 0
 }
@@ -480,6 +499,7 @@ proc os_subprocess(list, argv) {
     }
     if pid == 0 {
         os_close(rd)
+        os_sig_release()
         alloc e := os_execvp(argv, os_envp)
         __poke32(mem, 0 - e)
         os_sys3(SYS_WRITE, wr, mem, 4)
@@ -524,6 +544,50 @@ proc os_fork() {
         rt_free(act, 32)
     }
     return os_sys1(SYS_FORK, 0)
+}
+
+# --- requests to stop ------------------------------------------------------------
+#
+# SIGINT (Ctrl-C) and SIGTERM. Once the program has asked, the two are
+# held back from their usual effect and collected through a descriptor
+# instead, which costs no handler code and lets os_poll_wait wake up for
+# them like for any socket.
+
+alloc SIG_STOP_MASK := 16386   # bit (n - 1) for signals 2 and 15
+alloc os_sigfd := 0            # the descriptor + 1, once asked for
+alloc os_sig_count := 0
+
+proc os_interrupts() {
+    alloc mem := rt_alloc(128)
+    if os_sigfd == 0 {
+        __poke64(mem, SIG_STOP_MASK)
+        __syscall(SYS_RT_SIGPROCMASK, 0, mem, 0, 8, 0, 0)      # SIG_BLOCK
+        alloc fd := __syscall(SYS_SIGNALFD4, -1, mem, 8, O_NONBLOCK | O_CLOEXEC, 0, 0)
+        if fd < 0 {
+            # No such descriptor to be had: leave the signals alone.
+            __syscall(SYS_RT_SIGPROCMASK, 1, mem, 0, 8, 0, 0)
+            fd := -2
+        }
+        os_sigfd := fd + 1
+    }
+    # One 128-byte record for each signal that has arrived.
+    loop os_sigfd > 0 and os_sys3(SYS_READ, os_sigfd - 1, mem, 128) == 128 {
+        os_sig_count := os_sig_count + 1
+    }
+    rt_free(mem, 128)
+    return os_sig_count
+}
+
+# In a child about to become another program: give it the usual
+# meaning of the signals back.
+proc os_sig_release() {
+    if os_sigfd > 0 {
+        alloc mem := rt_alloc(16)
+        __poke64(mem, SIG_STOP_MASK)
+        __syscall(SYS_RT_SIGPROCMASK, 1, mem, 0, 8, 0, 0)      # SIG_UNBLOCK
+        rt_free(mem, 16)
+    }
+    return 0
 }
 
 # --- the terminal ------------------------------------------------------------
@@ -619,6 +683,7 @@ proc os_pty_spawn(list, argv) {
     __poke64(envp + (k + 1) * 8, 0)
     alloc pid := os_sys1(SYS_FORK, 0)
     if pid == 0 {
+        os_sig_release()
         os_sys1(SYS_SETSID, 0)
         alloc slave := os_sys3(SYS_OPEN, name + S_DATA, 2, 0)
         if slave < 0 {
@@ -791,7 +856,7 @@ proc os_tcp_listen(host, port) {
         rt_free(one, 16)
         alloc r := os_sys3(SYS_BIND, s, sa, 16)
         if r == 0 {
-            r := os_sys2(SYS_LISTEN, s, 16)
+            r := os_sys2(SYS_LISTEN, s, 511)
         }
         if r < 0 {
             os_close(s)
@@ -802,10 +867,31 @@ proc os_tcp_listen(host, port) {
     return s
 }
 
+# Is this result the error of a non-blocking call that would have had
+# to wait?
+proc os_would_block(r) {
+    return r == 0 - EAGAIN
+}
+
+# A connection fresh from accept or connect: send what is written at
+# once (TCP_NODELAY). A program that writes a reply in two pieces would
+# otherwise have the second held back until the first is acknowledged,
+# which the other side may put off for 40 ms.
+proc os_tcp_tune(s) {
+    alloc one := rt_alloc(16)
+    __poke32(one, 1)
+    __syscall(SYS_SETSOCKOPT, s, 6, 1, one, 4, 0)
+    rt_free(one, 16)
+    return 0
+}
+
 proc os_tcp_accept(s) {
     loop true {
         alloc r := os_sys3(SYS_ACCEPT, s, 0, 0)
         if r != 0 - EINTR {
+            if r >= 0 {
+                os_tcp_tune(r)
+            }
             return r
         }
     }
@@ -823,6 +909,8 @@ proc os_tcp_connect(host, port) {
         if r < 0 {
             os_close(s)
             s := r
+        } else {
+            os_tcp_tune(s)
         }
     }
     rt_free(sa, 16)
@@ -833,10 +921,122 @@ proc os_tcp_read(s, p, n) {
     return os_read(s, p, n)
 }
 
+# Send n bytes at p: all of them on a blocking socket, as many as there
+# is room for on a non-blocking one. Returns the count sent, or a
+# negative errno. MSG_NOSIGNAL: a connection the other side has closed
+# is an error to report, not a signal that ends the program.
 proc os_tcp_write(s, p, n) {
-    return os_write_all(s, p, n)
+    alloc sent := 0
+    loop n > 0 {
+        alloc r := __syscall(SYS_SENDTO, s, p, n, 16384, 0, 0)
+        if r < 0 {
+            if r == 0 - EAGAIN {
+                break
+            }
+            if r != 0 - EINTR {
+                return r
+            }
+        } else {
+            p := p + r
+            n := n - r
+            sent := sent + r
+        }
+    }
+    return sent
 }
 
 proc os_tcp_close(s) {
     return os_close(s)
+}
+
+proc os_tcp_nonblocking(s, on) {
+    alloc fl := os_sys3(SYS_FCNTL, s, 3, 0)                 # F_GETFL
+    if fl < 0 {
+        return fl
+    }
+    fl := fl | O_NONBLOCK
+    if on == 0 {
+        fl := fl - O_NONBLOCK
+    }
+    return os_sys3(SYS_FCNTL, s, 4, fl)                     # F_SETFL
+}
+
+# The other end of a connection as text (see rt_peer_v4), or 0.
+proc os_tcp_peer(s) {
+    alloc sa := rt_alloc(32)
+    __memset(sa, 0, 32)
+    __poke32(sa + 28, 28)
+    alloc r := os_sys3(SYS_GETPEERNAME, s, sa, sa + 28)
+    alloc text := 0
+    alloc port := __peek8(sa + 2) * 256 + __peek8(sa + 3)
+    if r == 0 and __peek16(sa) == 2 {                       # AF_INET
+        text := rt_peer_v4(sa + 4, port)
+    } elif r == 0 and __peek16(sa) == 10 {                  # AF_INET6
+        text := rt_peer_v6(sa + 8, port)
+    }
+    rt_free(sa, 32)
+    return text
+}
+
+# --- waiting for several sockets ----------------------------------------------
+#
+# An array of the system's pollfd: [0] descriptor (32 bits) [4] what
+# to wait for (16 bits) [6] what happened (16 bits). One spare entry at
+# the end is for the descriptor that reports requests to stop.
+
+alloc POLLIN := 1
+alloc POLLOUT := 4
+alloc POLL_TROUBLE := 56       # POLLERR | POLLHUP | POLLNVAL
+
+# Bytes for an array of n entries.
+proc os_poll_size(n) {
+    return (n + 1) * 8
+}
+
+# Entry i: wait for socket s to be readable (want 1) or writable (2).
+proc os_poll_set(arr, i, s, want) {
+    __poke32(arr + i * 8, s)
+    if want == 1 {
+        __poke16(arr + i * 8 + 4, POLLIN)
+    } else {
+        __poke16(arr + i * 8 + 4, POLLOUT)
+    }
+    __poke16(arr + i * 8 + 6, 0)
+    return 0
+}
+
+# Wait up to `timeout` milliseconds (negative: without limit) for one
+# of n entries. Returns 0 or more, or a negative errno.
+proc os_poll_wait(arr, n, timeout) {
+    alloc count := n
+    if os_sigfd > 0 {
+        __poke32(arr + n * 8, os_sigfd - 1)
+        __poke16(arr + n * 8 + 4, POLLIN)
+        __poke16(arr + n * 8 + 6, 0)
+        count := n + 1
+    }
+    if timeout < 0 {
+        timeout := -1
+    } elif timeout > 2147483647 {
+        timeout := 2147483647
+    }
+    alloc r := os_sys3(SYS_POLL, arr, count, timeout)
+    if r == 0 - EINTR {
+        return 0
+    }
+    return r
+}
+
+# What happened to entry i: 1 when it can be read, 2 when it can be
+# written. Trouble counts as whichever was asked about.
+proc os_poll_got(arr, i) {
+    alloc want := __peek16(arr + i * 8 + 4)
+    alloc got := __peek16(arr + i * 8 + 6)
+    if (got & (want | POLL_TROUBLE)) == 0 {
+        return 0
+    }
+    if want == POLLIN {
+        return 1
+    }
+    return 2
 }

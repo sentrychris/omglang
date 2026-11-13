@@ -451,3 +451,168 @@ EOF
 assert_both_paths "print: rejects non-string" \
     "$TMPDIR_TEST/print_typeerror.omg" \
     "TypeError: print() expects a string"
+
+# === Builtins added for the HTTP server ===================================
+# These exist in every way of running a program, so each is checked in
+# every way this machine has: interpreted, built, built through C when
+# there is a C compiler, and (for the ones JavaScript has) under node.
+
+# `assert_every_path <name> <src> <expected> <js: yes|no> [args...]`
+assert_every_path() {
+    local name="$1" src="$2" expected="$3" js="$4"
+    shift 4
+    local stem got problems=""
+    stem="$TMPDIR_TEST/$(basename "$src" .omg)"
+    got=$("$OMG_NATIVE" "$src" "$@" 2>&1)
+    [ "$got" = "$expected" ] || problems="$problems
+      interpreted:   $(printf '%q' "$got")"
+    "$OMG_NATIVE" --build "$src" "$stem-built" >/dev/null 2>&1
+    got=$("$stem-built" "$@" 2>&1)
+    [ "$got" = "$expected" ] || problems="$problems
+      built:         $(printf '%q' "$got")"
+    if [ -n "$(omg_c_compiler)" ] && [ "$(omg_default_target)" != "c" ]; then
+        "$OMG_NATIVE" --build "$src" "$stem-viac" --target c >/dev/null 2>&1
+        got=$("$stem-viac" "$@" 2>&1)
+        [ "$got" = "$expected" ] || problems="$problems
+      through C:     $(printf '%q' "$got")"
+    fi
+    if [ "$js" = "yes" ] && command -v node >/dev/null 2>&1; then
+        "$OMG_NATIVE" --emit-js "$src" "$stem.js" >/dev/null 2>&1
+        got=$(node "$stem.js" "$@" 2>&1)
+        [ "$got" = "$expected" ] || problems="$problems
+      JavaScript:    $(printf '%q' "$got")"
+    fi
+    if [ -z "$problems" ]; then
+        pass "$name"
+    else
+        fail "$name" "expected:      $(printf '%q' "$expected")$problems"
+    fi
+}
+
+section "Builtins: file_read(h, max) / file_size / file_mtime / interrupted"
+
+cat > "$TMPDIR_TEST/file_pieces.omg" <<'EOF'
+;;;omg
+alloc p := args[1]
+alloc out := file_open(p, "w")
+file_write(out, "hello, world\n")
+file_close(out)
+emit file_size(p)
+alloc h := file_open(p, "r")
+emit file_read(h, 5)
+emit file_read(h, 100)
+emit length(file_read(h, 10))
+file_close(h)
+alloc hb := file_open(p, "rb")
+emit file_read(hb, 3)
+file_close(hb)
+alloc m := file_mtime(p)
+alloc now := time_ms()
+emit m > now - 60000 and m < now + 60000
+try {
+    file_size(p + ".missing")
+} except err {
+    emit "no such file"
+}
+emit interrupted()
+EOF
+assert_every_path "a file read a piece at a time, its size and its age" \
+    "$TMPDIR_TEST/file_pieces.omg" \
+    "13
+hello
+, world
+
+0
+[104, 101, 108]
+true
+no such file
+0" yes "$TMPDIR_TEST/file_pieces.txt"
+
+section "Builtins: tcp_nonblocking / tcp_poll / tcp_peer / tcp_write(h, data, offset)"
+
+# One program holds both ends of a connection, so the order of events
+# is its own: nothing here depends on timing.
+cat > "$TMPDIR_TEST/socket_poll.omg" <<'EOF'
+;;;omg
+alloc port := int(args[1])
+alloc l := tcp_listen("127.0.0.1", port)
+tcp_nonblocking(l, true)
+emit tcp_accept(l) == false
+emit tcp_poll([l], [], 0)
+alloc c := tcp_connect("127.0.0.1", port)
+emit length(tcp_poll([l], [], 2000)[0])
+alloc s := tcp_accept(l)
+emit s != false
+emit tcp_peer(s)[0:10]
+tcp_nonblocking(s, true)
+emit tcp_read(s, 100) == false
+emit length(tcp_poll([s], [], 50)[0])
+emit length(tcp_poll([], [s], 1000)[1])
+emit tcp_write(c, "hello")
+emit length(tcp_poll([s], [], 2000)[0])
+emit bytes_to_string(tcp_read(s, 100))
+emit tcp_write(s, "abcdef", 2)
+emit bytes_to_string(tcp_read(c, 100))
+tcp_close(c)
+emit length(tcp_poll([s], [], 2000)[0])
+emit length(tcp_read(s, 100))
+tcp_close(s)
+tcp_close(l)
+EOF
+assert_every_path "a socket that does not block, and waiting on several" \
+    "$TMPDIR_TEST/socket_poll.omg" \
+    "true
+[[], []]
+1
+true
+127.0.0.1:
+true
+0
+1
+5
+1
+hello
+4
+cdef
+1
+0" no 19881
+
+# interrupted() counts requests to stop instead of letting them end the
+# program. Not on Windows, where Git Bash's kill ends a native program
+# outright rather than sending it anything.
+if [ -z "$OMG_WINDOWS" ]; then
+    cat > "$TMPDIR_TEST/interrupted.omg" <<'EOF'
+;;;omg
+emit interrupted()
+emit "ready"
+alloc n := 0
+loop interrupted() == 0 and n < 100 {
+    tcp_poll([], [], 100)
+    n := n + 1
+}
+emit interrupted()
+EOF
+    interrupted_check() {
+        local label="$1" tries=0 pid
+        shift
+        : > "$TMPDIR_TEST/interrupted.out"
+        "$@" > "$TMPDIR_TEST/interrupted.out" 2>&1 &
+        pid=$!
+        while [ $tries -lt 50 ] && ! grep -q ready "$TMPDIR_TEST/interrupted.out" 2>/dev/null; do
+            sleep 0.1
+            tries=$((tries + 1))
+        done
+        kill -TERM "$pid" 2>/dev/null
+        wait "$pid" 2>/dev/null
+        assert_eq "interrupted() counts a request to stop, and tcp_poll wakes for it ($label)" "0
+ready
+1" "$(cat "$TMPDIR_TEST/interrupted.out")"
+    }
+    interrupted_check "interpreted" "$OMG_NATIVE" "$TMPDIR_TEST/interrupted.omg"
+    "$OMG_NATIVE" --build "$TMPDIR_TEST/interrupted.omg" "$TMPDIR_TEST/interrupted-built" >/dev/null 2>&1
+    interrupted_check "built" "$TMPDIR_TEST/interrupted-built"
+    if [ -n "$(omg_c_compiler)" ] && [ "$(omg_default_target)" != "c" ]; then
+        "$OMG_NATIVE" --build "$TMPDIR_TEST/interrupted.omg" "$TMPDIR_TEST/interrupted-viac" --target c >/dev/null 2>&1
+        interrupted_check "through C" "$TMPDIR_TEST/interrupted-viac"
+    fi
+fi

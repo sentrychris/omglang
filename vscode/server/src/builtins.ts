@@ -156,6 +156,15 @@ export const BUILTINS: readonly BuiltinDoc[] = [
             'Current process ID. Useful for unique tempfile paths.'
     },
     {
+        name: 'interrupted',
+        signature: 'interrupted()',
+        detail:
+            'How many times the program has been asked to stop ' +
+            '(Ctrl-C, SIGTERM) since it first called this. From the ' +
+            'first call on, those requests are counted instead of ' +
+            'ending the program.'
+    },
+    {
         name: 'subprocess',
         signature: 'subprocess(argv)',
         detail:
@@ -230,10 +239,23 @@ export const BUILTINS: readonly BuiltinDoc[] = [
     },
     {
         name: 'file_read',
-        signature: 'file_read(handle)',
+        signature: 'file_read(handle[, max_bytes])',
         detail:
-            'Read the full contents of an opened file. Text mode → ' +
-            '`string`; binary mode → `list` of bytes.'
+            'Read what is left of an opened file, or at most ' +
+            '`max_bytes` of it. Text mode → `string`; binary mode → ' +
+            '`list` of bytes.'
+    },
+    {
+        name: 'file_size',
+        signature: 'file_size(path)',
+        detail: 'A file\'s length in bytes. Raises if there is no such file.'
+    },
+    {
+        name: 'file_mtime',
+        signature: 'file_mtime(path)',
+        detail:
+            'When a file was last changed, in milliseconds since 1970 ' +
+            '(the same clock as `time_ms`).'
     },
     {
         name: 'file_write',
@@ -274,7 +296,8 @@ export const BUILTINS: readonly BuiltinDoc[] = [
         signature: 'tcp_accept(handle)',
         detail:
             'Block until a peer connects to a listener. Returns a new ' +
-            'stream handle for that connection.'
+            'stream handle for that connection, or `false` when the ' +
+            'listener is non-blocking and nobody is waiting.'
     },
     {
         name: 'tcp_connect',
@@ -288,14 +311,39 @@ export const BUILTINS: readonly BuiltinDoc[] = [
         signature: 'tcp_read(handle, max_bytes)',
         detail:
             'Read up to `max_bytes` from a stream handle. Returns a list ' +
-            'of byte ints (0–255); empty list means EOF.'
+            'of byte ints (0–255); empty list means EOF; `false` when ' +
+            'the handle is non-blocking and nothing has arrived.'
     },
     {
         name: 'tcp_write',
-        signature: 'tcp_write(handle, data)',
+        signature: 'tcp_write(handle, data[, offset])',
         detail:
             'Write to a stream handle. `data` is a string or a list of ' +
-            'byte ints (0–255). Returns bytes written.'
+            'byte ints (0–255), sent from byte `offset` on. Returns ' +
+            'bytes written, which on a non-blocking handle can be fewer ' +
+            'than were given.'
+    },
+    {
+        name: 'tcp_nonblocking',
+        signature: 'tcp_nonblocking(handle, on)',
+        detail:
+            'Make a listener or stream non-blocking: `tcp_accept` and ' +
+            '`tcp_read` return `false` rather than wait, and ' +
+            '`tcp_write` sends what fits.'
+    },
+    {
+        name: 'tcp_poll',
+        signature: 'tcp_poll(reads, writes, timeout_ms)',
+        detail:
+            'Wait until a handle in `reads` can be read (or accepted ' +
+            'from), one in `writes` has room, or the time runs out. ' +
+            'Returns `[readable, writable]`. Negative timeout: wait ' +
+            'for ever; 0: only look.'
+    },
+    {
+        name: 'tcp_peer',
+        signature: 'tcp_peer(handle)',
+        detail: 'The other end\'s address, as `"203.0.113.9:53012"`.'
     },
     {
         name: 'tcp_close',

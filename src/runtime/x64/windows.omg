@@ -20,6 +20,8 @@ alloc CP_UTF8 := 65001
 alloc ERROR_NOT_SUPPORTED := 50
 alloc ERROR_BROKEN_PIPE := 109
 alloc E_NO_HOST := 11001           # WSAHOST_NOT_FOUND
+alloc E_WOULD_BLOCK := 10035       # WSAEWOULDBLOCK
+alloc FIONBIO := 2147772030        # 0x8004667E
 
 alloc os_scratch := 0              # a page for the system to write results to
 alloc os_args := 0                 # the command line as a list of strings
@@ -327,10 +329,15 @@ proc os_err_text(code) {
     if code == 193 { return "This is not a valid Win32 application." }
     if code == 206 { return "The filename or extension is too long." }
     if code == 267 { return "The directory name is invalid." }
+    if code == 10004 { return "A blocking operation was interrupted." }
     if code == 10013 { return "An attempt was made to access a socket in a way forbidden by its access permissions." }
+    if code == 10024 { return "Too many open sockets." }
+    if code == 10035 { return "A non-blocking socket operation could not be completed immediately." }
+    if code == 10038 { return "An operation was attempted on something that is not a socket." }
     if code == 10048 { return "Only one usage of each socket address is normally permitted." }
     if code == 10049 { return "The requested address is not valid in its context." }
     if code == 10051 { return "A socket operation was attempted to an unreachable network." }
+    if code == 10053 { return "An established connection was aborted by the software in your host machine." }
     if code == 10054 { return "An existing connection was forcibly closed by the remote host." }
     if code == 10060 { return "A connection attempt failed because the connected party did not properly respond." }
     if code == 10061 { return "No connection could be made because the target machine actively refused it." }
@@ -428,6 +435,27 @@ proc os_attrs(cpath) {
         return -1
     }
     return a
+}
+
+# The size of a path in bytes and the time it was last written, in
+# milliseconds since 1970, into the two words at `out`. Returns 0, or
+# minus the error code.
+proc os_stat(path, out) {
+    alloc w := os_wide(path + S_DATA)
+    alloc data := os_tmp(40)
+    # GetFileExInfoStandard fills in a WIN32_FILE_ATTRIBUTE_DATA: the
+    # time of the last write at 20, the size at 28 (high) and 32 (low).
+    alloc ok := os_u32(__wincall3(__import("kernel32.dll!GetFileAttributesExW"), w, 0, data))
+    alloc r := 0
+    if ok == 0 {
+        r := 0 - os_last_error()
+    } else {
+        __poke64(out, (os_u32(__peek32(data + 28)) << 32) | os_u32(__peek32(data + 32)))
+        __poke64(out + 8, __udiv(__peek64(data + 20) - 116444736000000000, 10000))
+    }
+    os_tmp_free(data)
+    os_tmp_free(w)
+    return r
 }
 
 proc os_exists(path) {
@@ -636,6 +664,40 @@ proc os_subprocess(list, argv) {
 # There is no fork on Windows.
 proc os_fork() {
     return 0 - ERROR_NOT_SUPPORTED
+}
+
+# --- requests to stop ------------------------------------------------------------
+#
+# Ctrl-C, Ctrl-Break and the closing of the console arrive on a thread
+# the system starts for the purpose, as a call to a handler. The
+# handler is twenty bytes of machine code written here into a page of
+# its own: it adds one to a counter and says the request was dealt
+# with. Nothing else of the program runs on that thread.
+
+alloc os_ctrl := 0             # the counter's address, once asked for
+
+proc os_interrupts() {
+    if os_ctrl == 0 {
+        # MEM_COMMIT | MEM_RESERVE, PAGE_EXECUTE_READWRITE
+        alloc page := __wincall4(__import("kernel32.dll!VirtualAlloc"), 0, 4096, 12288, 64)
+        if page == 0 {
+            return 0
+        }
+        __poke64(page + 64, 0)
+        __poke8(page, 72)                  # mov rax, <the counter>
+        __poke8(page + 1, 184)
+        __poke64(page + 2, page + 64)
+        __poke8(page + 10, 240)            # lock inc qword [rax]
+        __poke8(page + 11, 72)
+        __poke8(page + 12, 255)
+        __poke8(page + 13, 0)
+        __poke8(page + 14, 184)            # mov eax, 1
+        __poke32(page + 15, 1)
+        __poke8(page + 19, 195)            # ret
+        __wincall2(__import("kernel32.dll!SetConsoleCtrlHandler"), page, 1)
+        os_ctrl := page + 64
+    }
+    return __peek64(os_ctrl)
 }
 
 # --- the console ----------------------------------------------------------------
@@ -901,7 +963,7 @@ proc os_tcp_listen(host, port) {
     }
     alloc r := os_u32(__wincall3(__import("ws2_32.dll!bind"), s, __peek64(res + 32), __peek64(res + 16)))
     if r == 0 {
-        r := os_u32(__wincall2(__import("ws2_32.dll!listen"), s, 16))
+        r := os_u32(__wincall2(__import("ws2_32.dll!listen"), s, 511))
     }
     alloc e := 0
     if r != 0 {
@@ -915,11 +977,42 @@ proc os_tcp_listen(host, port) {
     return s
 }
 
+# Is this result the error of a non-blocking call that would have had
+# to wait?
+proc os_would_block(r) {
+    return r == 0 - E_WOULD_BLOCK
+}
+
+# A connection fresh from accept or connect: send what is written at
+# once (TCP_NODELAY), as on Linux.
+proc os_tcp_tune(s) {
+    alloc cell := os_tmp(8)
+    __poke64(cell, 1)
+    __wincall5(__import("ws2_32.dll!setsockopt"), s, 6, 1, cell, 4)
+    os_tmp_free(cell)
+    return 0
+}
+
+proc os_tcp_nonblocking(s, on) {
+    alloc cell := os_tmp(8)
+    __poke64(cell, on != 0)
+    alloc r := os_u32(__wincall3(__import("ws2_32.dll!ioctlsocket"), s, FIONBIO, cell))
+    os_tmp_free(cell)
+    if r != 0 {
+        return os_sock_error()
+    }
+    return 0
+}
+
 proc os_tcp_accept(s) {
     alloc c := __wincall3(__import("ws2_32.dll!accept"), s, 0, 0)
     if c == -1 {
         return os_sock_error()
     }
+    # Windows hands a connection the listener's mode. Every socket of
+    # ours starts out blocking, whatever it came from.
+    os_tcp_nonblocking(c, 0)
+    os_tcp_tune(c)
     return c
 }
 
@@ -935,6 +1028,7 @@ proc os_tcp_connect(host, port) {
         if s == -1 {
             result := os_sock_error()
         } elif os_u32(__wincall3(__import("ws2_32.dll!connect"), s, __peek64(ai + 32), __peek64(ai + 16))) == 0 {
+            os_tcp_tune(s)
             result := s
             break
         } else {
@@ -958,7 +1052,11 @@ proc os_tcp_read(s, p, n) {
     return r
 }
 
+# Send n bytes at p: all of them on a blocking socket, as many as there
+# is room for on a non-blocking one. Returns the count sent, or minus
+# the error code.
 proc os_tcp_write(s, p, n) {
+    alloc sent := 0
     loop n > 0 {
         alloc step := n
         if step > 1073741824 {
@@ -966,15 +1064,130 @@ proc os_tcp_write(s, p, n) {
         }
         alloc r := os_u32(__wincall4(__import("ws2_32.dll!send"), s, p, step, 0))
         if r == 4294967295 {
-            return os_sock_error()
+            alloc e := os_sock_error()
+            if os_would_block(e) {
+                break
+            }
+            return e
         }
         p := p + r
         n := n - r
+        sent := sent + r
     }
-    return 0
+    return sent
 }
 
 proc os_tcp_close(s) {
     __wincall1(__import("ws2_32.dll!closesocket"), s)
+    return 0
+}
+
+# The other end of a connection as text (see rt_peer_v4), or 0.
+proc os_tcp_peer(s) {
+    alloc sa := os_tmp(40)
+    __memset(sa, 0, 40)
+    __poke32(sa + 32, 28)
+    alloc r := os_u32(__wincall3(__import("ws2_32.dll!getpeername"), s, sa, sa + 32))
+    alloc text := 0
+    alloc port := __peek8(sa + 2) * 256 + __peek8(sa + 3)
+    if r == 0 and __peek16(sa) == 2 {                       # AF_INET
+        text := rt_peer_v4(sa + 4, port)
+    } elif r == 0 and __peek16(sa) == 23 {                  # AF_INET6
+        text := rt_peer_v6(sa + 8, port)
+    }
+    os_tmp_free(sa)
+    return text
+}
+
+# --- waiting for several sockets ----------------------------------------------
+#
+# An array of WSAPOLLFD: [0] socket (64 bits) [8] what to wait for
+# (16 bits) [10] what happened (16 bits).
+
+alloc POLLRDNORM := 256
+alloc POLLWRNORM := 16
+alloc POLL_TROUBLE := 7        # POLLERR | POLLHUP | POLLNVAL
+
+# Bytes for an array of n entries.
+proc os_poll_size(n) {
+    return (n + 1) * 16
+}
+
+# Entry i: wait for socket s to be readable (want 1) or writable (2).
+proc os_poll_set(arr, i, s, want) {
+    __poke64(arr + i * 16, s)
+    __poke64(arr + i * 16 + 8, 0)
+    if want == 1 {
+        __poke16(arr + i * 16 + 8, POLLRDNORM)
+    } else {
+        __poke16(arr + i * 16 + 8, POLLWRNORM)
+    }
+    return 0
+}
+
+# Wait up to `timeout` milliseconds (negative: without limit) for one
+# of n entries. Returns 0 or more, or minus the error code.
+#
+# Nothing wakes WSAPoll when the user asks the program to stop, so once
+# the program has said it wants to hear of that (os_interrupts), the
+# wait is taken in steps of a tenth of a second with a look at the
+# counter between them. WSAPoll also refuses an empty array, which
+# here is simply a sleep.
+proc os_poll_wait(arr, n, timeout) {
+    alloc left := timeout
+    if left > 2147483647 {
+        left := 2147483647
+    }
+    alloc seen := 0
+    if os_ctrl != 0 {
+        seen := __peek64(os_ctrl)
+    }
+    loop true {
+        alloc step := left
+        if os_ctrl != 0 and (step < 0 or step > 100) {
+            step := 100
+        }
+        alloc r := 0
+        if n == 0 {
+            if step < 0 {
+                step := 3600000
+            }
+            __wincall1(__import("kernel32.dll!Sleep"), step)
+        } else {
+            r := os_u32(__wincall3(__import("ws2_32.dll!WSAPoll"), arr, n, step))
+            if r == 4294967295 {
+                return os_sock_error()
+            }
+        }
+        if r > 0 {
+            return r
+        }
+        if os_ctrl != 0 and __peek64(os_ctrl) != seen {
+            return 0
+        }
+        if left >= 0 {
+            left := left - step
+            if left <= 0 {
+                return 0
+            }
+        }
+    }
+    return 0
+}
+
+# What happened to entry i: 1 when it can be read, 2 when it can be
+# written. Trouble counts as whichever was asked about.
+proc os_poll_got(arr, i) {
+    alloc want := __peek16(arr + i * 16 + 8)
+    alloc got := __peek16(arr + i * 16 + 10)
+    if want == POLLRDNORM {
+        if (got & (POLLRDNORM | 512 | POLL_TROUBLE)) != 0 {
+            return 1
+        }
+        return 0
+    }
+    if (got & (POLLWRNORM | POLL_TROUBLE)) != 0 {
+        return 2
+    }
     return 0
 }
