@@ -1,0 +1,94 @@
+;;;omg
+
+# A scripted TCP client for tests/http.sh: it says exactly the bytes it
+# is told to, which curl will not do.
+#
+#   client.omg PORT SCRIPT
+#
+# SCRIPT is a file with one step to a line:
+#   send TEXT    send TEXT; \r \n \t and \\ are escapes
+#   pause MS     do nothing for MS milliseconds
+#   recv MS      print what arrives until nothing has for MS
+#                milliseconds or the server closes the connection; a
+#                close is shown as a line saying [closed]
+
+proc unescape(s) {
+    alloc out := ""
+    alloc n := length(s)
+    alloc i := 0
+    loop i < n {
+        alloc ch := s[i]
+        if ch == "\\" and i + 1 < n {
+            alloc next := s[i + 1]
+            if next == "r" { ch := "\r" }
+            if next == "n" { ch := "\n" }
+            if next == "t" { ch := "\t" }
+            if next == "\\" { ch := "\\" }
+            i := i + 1
+        }
+        out := out + ch
+        i := i + 1
+    }
+    return out
+}
+
+alloc port := int(args[1])
+alloc script := read_file(args[2])
+alloc h := tcp_connect("127.0.0.1", port)
+tcp_nonblocking(h, true)
+
+proc recv(quiet_ms) {
+    alloc got := []
+    alloc closed := false
+    loop true {
+        alloc r := tcp_poll([h], [], quiet_ms)
+        if length(r[0]) == 0 { break }
+        alloc data := false
+        try { data := tcp_read(h, 65536) } except err { closed := true }
+        if closed { break }
+        if data == false { continue }
+        if length(data) == 0 {
+            closed := true
+            break
+        }
+        got := got + data
+    }
+    print(bytes_to_string(got))
+    if closed { emit "[closed]" }
+    return closed
+}
+
+proc step(line) {
+    if length(line) > 5 and line[0:5] == "send " {
+        alloc data := unescape(line[5:])
+        alloc total := length(string_bytes(data))
+        alloc sent := 0
+        try {
+            loop sent < total {
+                alloc n := tcp_write(h, data, sent)
+                sent := sent + n
+                if n == 0 { tcp_poll([], [h], 1000) }
+            }
+        } except err {
+            emit "[write failed]"
+        }
+    } elif length(line) > 6 and line[0:6] == "pause " {
+        sleep_ms(int(line[6:]))
+    } elif length(line) > 5 and line[0:5] == "recv " {
+        recv(int(line[5:]))
+    }
+    return true
+}
+
+alloc start := 0
+alloc i := 0
+loop i <= length(script) {
+    if i == length(script) or script[i] == "\n" {
+        alloc line := script[start:i]
+        if length(line) > 0 and line[length(line) - 1] == "\r" { line := line[0:length(line) - 1] }
+        step(line)
+        start := i + 1
+    }
+    i := i + 1
+}
+tcp_close(h)

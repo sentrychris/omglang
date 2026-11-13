@@ -1,0 +1,173 @@
+;;;omg
+
+# The application tests/http.sh talks to: one route for each thing the
+# server in tools/lib/http.omg is supposed to be able to do.
+#
+#   app.omg PORT WEBROOT [strict]
+#
+# With "strict" the limits and timeouts are small enough to run into
+# on purpose.
+
+import "../../tools/lib/http.omg" as http
+
+alloc port := int(args[1])
+alloc webroot := args[2]
+alloc options := {port: port}
+if length(args) > 3 and args[3] == "strict" {
+    options := {
+        port: port,
+        max_body_bytes: 4096,
+        max_header_bytes: 2048,
+        idle_timeout_ms: 700,
+        header_timeout_ms: 500,
+        body_timeout_ms: 500,
+        handler_timeout_ms: 600,
+        max_requests_per_connection: 3
+    }
+}
+alloc app := http.server(options)
+
+proc hello(req) {
+    return http.text(200, "hello, " + req.params.name + "\n")
+}
+
+proc show_query(req) {
+    return http.text(200, "a=" + http.get(req.query, "a", "-") + " b=" + http.get(req.query, "b", "-") + " path=" + req.path + "\n")
+}
+
+proc echo(req) {
+    return http.bytes(200, "application/octet-stream", req.body)
+}
+
+proc size(req) {
+    return http.text(200, length(req.body) + "\n")
+}
+
+proc show_form(req) {
+    alloc f := http.form(req)
+    return http.text(200, "name=" + http.get(f, "name", "-") + " msg=" + http.get(f, "msg", "-") + "\n")
+}
+
+proc show_cookies(req) {
+    alloc c := http.cookies(req)
+    return http.text(200, "sid=" + http.get(c, "sid", "-") + " theme=" + http.get(c, "theme", "-") + "\n")
+}
+
+proc set_headers(req) {
+    return http.response(200, {"Set-Cookie": ["a=1; Path=/", "b=2; Path=/"], "X-Custom": "yes"}, "headers\n")
+}
+
+proc boom(req) {
+    panic("kaboom")
+}
+
+proc none(req) {
+}
+
+proc bad_header(req) {
+    return http.response(200, {"X-Bad": "one\r\nX-Injected: two"}, "never sent\n")
+}
+
+proc later(req) {
+    alloc ms := int(req.params.ms)
+    proc answer() {
+        app.respond(req, http.text(200, "after " + ms + "\n"))
+    }
+    app.timer(ms, answer)
+    return http.pending()
+}
+
+proc never(req) {
+    return http.pending()
+}
+
+proc ticks(req) {
+    alloc n := 0
+    alloc id := 0
+    proc tick() {
+        n := n + 1
+        app.send(req, "tick " + n + "\n")
+        if n == 3 {
+            app.cancel(id)
+            app.finish(req)
+        }
+        return true
+    }
+    id := app.every(30, tick)
+    return http.stream(200, {"Content-Type": "text/plain"})
+}
+
+# A body of n bytes, as text and as a list of bytes.
+proc big_text(req) {
+    alloc n := int(req.params.n)
+    alloc block := "0123456789abcdef"
+    loop length(block) < n { block := block + block }
+    return http.text(200, block[0:n])
+}
+
+proc big_bytes(req) {
+    return http.bytes(200, "application/octet-stream", list_repeat(120, int(req.params.n)))
+}
+
+proc utf8(req) {
+    return http.text(200, "héllo ☕\n")
+}
+
+proc moved(req) {
+    return http.redirect(302, "/hello/there")
+}
+
+proc one_file(req) {
+    return http.send_file(req, webroot + "/hello.txt")
+}
+
+proc stats(req) {
+    alloc st := app.stats()
+    return http.text(200, "requests=" + st.requests + "\n")
+}
+
+proc quit(req) {
+    app.stop()
+    return http.text(200, "bye\n")
+}
+
+# Hooks: one that can answer before any route is looked at, one that
+# sees every answer on its way out.
+proc guard(req) {
+    if http.header(req, "X-Block") != "" { return http.text(403, "blocked\n") }
+    return false
+}
+
+proc stamp(req, res) {
+    if has_key(res, "headers") { res.headers["X-Stamp"] := "after" }
+    return res
+}
+
+app.before(guard)
+app.after(stamp)
+
+app.get("/hello/:name", hello)
+app.get("/query", show_query)
+app.post("/echo", echo)
+app.put("/echo", echo)
+app.post("/size", size)
+app.post("/form", show_form)
+app.get("/cookies", show_cookies)
+app.get("/headers", set_headers)
+app.get("/boom", boom)
+app.get("/none", none)
+app.get("/bad-header", bad_header)
+app.get("/later/:ms", later)
+app.get("/never", never)
+app.get("/ticks", ticks)
+app.get("/big/text/:n", big_text)
+app.get("/big/bytes/:n", big_bytes)
+app.get("/utf8", utf8)
+app.get("/moved", moved)
+app.get("/one-file", one_file)
+app.get("/stats", stats)
+app.post("/quit", quit)
+app.files("/static", webroot, {listing: true})
+
+app.listen()
+emit "stopped"

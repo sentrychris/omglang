@@ -295,16 +295,32 @@ The full list, grouped by area. Argument counts in parens.
 
 **File I/O**
 `read_file(path)` (returns string),
-`file_open(path, mode)` (returns int handle), `file_read(h)`, `file_write(h, data)`,
+`file_open(path, mode)` (returns int handle), `file_read(h)`,
+`file_read(h, max)` (at most `max` bytes), `file_write(h, data)`,
 `file_close(h)`,
-`file_exists(p)`, `is_dir(p)`, `read_dir(p)` (sorted list of names),
+`file_exists(p)`, `file_size(p)`, `file_mtime(p)` (ms since 1970),
+`is_dir(p)`, `read_dir(p)` (sorted list of names),
 `make_dir(p)` (mkdir -p), `chmod(p, mode)` (permission bits; on
 Windows it only checks that the file exists)
 
 **Errors**
 `panic(msg)`, `raise(msg)`, `exit_with_error(msg)`
 
+**Networking**
+`tcp_listen(host, port)`, `tcp_accept(listener)`, `tcp_connect(host, port)`,
+`tcp_read(h, max)` (a list of bytes; `[]` once the other side has closed),
+`tcp_write(h, data)` and `tcp_write(h, data, offset)` (return the bytes
+sent), `tcp_close(h)`, `tcp_peer(h)` (`"address:port"`),
+`tcp_nonblocking(h, on)` (accept and read then return `false` rather
+than wait), `tcp_poll(reads, writes, timeout_ms)` (waits for any of
+several sockets; returns `[readable, writable]`).
+[09-http-server.md](09-http-server.md) has the details, and a web
+server built on them.
+
 **Process control**
+`interrupted()` (how many times the program has been asked to stop by
+Ctrl-C or SIGTERM; from the first call on they are counted instead of
+ending it),
 `subprocess(argv_list)` (run a child, return its exit code; a program
 that cannot be started raises a catchable `ValueError`),
 `exit(code)`, `getpid()`, `executable_path()` (absolute path of the

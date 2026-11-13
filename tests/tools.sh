@@ -27,10 +27,9 @@ else
 fi
 
 # === The HTTP server answers a request ====================================
-# tools/lib/http.omg forks a child per connection. Windows has no
-# fork(), and the server used to die there on its first request; it
-# falls back to serving in-process. This runs on every CI platform, so
-# it covers both paths.
+# The command-line server, started the way a person would start it.
+# tests/http.sh tests the library under it, tools/lib/http.omg, in
+# depth.
 section "Tools: HTTP server (tools/site/http_server.omg)"
 
 http_check() {

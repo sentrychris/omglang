@@ -25,6 +25,7 @@ SUITES=(
     regression
     conformance
     tools
+    http
     db
     parity
 )

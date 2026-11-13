@@ -18,6 +18,7 @@ VM, the back ends and the runtimes are put together.
 | ...understand what a built program carries with it | [06-runtime.md](06-runtime.md) |
 | ...debug something that's gone wrong               | [07-debugging.md](07-debugging.md) |
 | ...use it on Windows                               | [08-windows.md](08-windows.md) |
+| ...serve web pages from an OMG program             | [09-http-server.md](09-http-server.md) |
 
 ## TL;DR
 

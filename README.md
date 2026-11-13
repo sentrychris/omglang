@@ -742,9 +742,12 @@ Always available, no import needed.
 | `read_file(path)`              | read a text file in one shot, or `false` on error     |
 | `file_open(path, mode)`        | open and return a handle (`r`, `rb`, `w`, `wb`, `a`, `ab`) |
 | `file_read(handle)`            | read everything remaining from a handle               |
+| `file_read(handle, max)`       | read at most `max` bytes: for going through a large file a piece at a time |
 | `file_write(handle, data)`     | write to a handle                                     |
 | `file_close(handle)`           | close a handle                                        |
 | `file_exists(path)`            | does the file exist?                                  |
+| `file_size(path)`              | a file's length in bytes                              |
+| `file_mtime(path)`             | when a file was last changed, in ms since 1970        |
 | `is_dir(path)`                 | is the path a directory?                              |
 | `read_dir(path)`               | list of entry names (sorted, no `.`/`..`)             |
 | `make_dir(path)`               | create directories (mkdir -p semantics)               |
@@ -761,10 +764,21 @@ Always available, no import needed.
 | **Errors**                     |                                                       |
 | `panic(msg)` / `raise(msg)`    | raise a runtime error (catchable with `try`/`except`) |
 | `exit_with_error(msg)`         | print `msg` to stderr verbatim and exit 1 (uncatchable) |
+| **Networking**                 | (see [docs/09-http-server.md](docs/09-http-server.md)) |
+| `tcp_listen(host, port)`       | a listening TCP socket                                |
+| `tcp_accept(listener)`         | the next connection to it                             |
+| `tcp_connect(host, port)`      | a connection to somewhere else                        |
+| `tcp_read(h, max)`             | up to `max` bytes as a list; `[]` once the other side has closed |
+| `tcp_write(h, data)` / `tcp_write(h, data, offset)` | send a string or bytes (from `offset` on); returns the number of bytes sent |
+| `tcp_close(h)`                 | close a socket                                        |
+| `tcp_peer(h)`                  | the other end's address, as `"203.0.113.9:53012"`     |
+| `tcp_nonblocking(h, on)`       | with it on, `tcp_accept` and `tcp_read` return `false` rather than wait, and `tcp_write` sends what fits |
+| `tcp_poll(reads, writes, ms)`  | wait until one of these sockets can be read or written, or `ms` pass; returns `[readable, writable]` |
 | **Process control**            |                                                       |
 | `subprocess([cmd, args...])`   | run a child process; returns its exit code (a program that cannot be started raises `ValueError`) |
 | `exit(code)`                   | exit the current process with the given status       |
 | `getpid()`                     | current process ID (useful for unique tempfile names) |
+| `interrupted()`                | how many times the program has been asked to stop (Ctrl-C, SIGTERM); from the first call on, those are counted instead of ending it |
 | `executable_path()`            | path of the native OMG executable running the program, or `false` where there is none (in the browser) |
 | **Reflection**                 |                                                       |
 | `call_builtin(name, args)`     | call a builtin by name (advanced)                     |
@@ -925,7 +939,7 @@ omglang/
 ├── examples/        programs to read and run: one language feature each
 │   └── games/           interactive terminal games (snake, pong, tetris, rogue)
 ├── tests/           shell-driven test suite (conformance, parity, regression, REPL, builtins)
-├── tools/           programs written in OMG (wc, grep, sort, omgdb, an editor, a site generator)
+├── tools/           programs written in OMG (wc, grep, sort, omgdb, an editor, a web server)
 ├── web/             browser playground + compiler explorer (static site)
 ├── docs/            the manual: quickstart, language tour, architecture, extending, Windows
 └── vscode/          VS Code extension (syntax highlighting + LSP completion)
@@ -947,6 +961,11 @@ Some interesting starting points:
   [`tools/json.omg`](tools/json.omg): Unix-style utilities,
   written in OMG. See [`tools/README.md`](tools/README.md) for the
   full list.
+- [`tools/lib/http.omg`](tools/lib/http.omg): an **HTTP server** written in
+  OMG: one loop serving thousands of connections, with routing, static
+  files, keep-alive, timeouts and a clean stop on Ctrl-C. About 45,000
+  requests a second when built. See
+  [`docs/09-http-server.md`](docs/09-http-server.md).
 - [`tools/db/`](tools/db/): **omgdb**, a small SQL database written in OMG —
   a paged on-disk format, a recursive-descent SQL parser, and a SQLite-style
   REPL. See [`tools/db/README.md`](tools/db/README.md).
@@ -990,7 +1009,8 @@ Windows `omg.exe` that is checked in was written by the Linux `omg`.
   ends, and where the Rust runtime went.
 - [`docs/`](docs/): the manual. Quickstart, architecture, language
   tour, the pipeline from source to executable, the runtimes, how to
-  add a feature in every place it has to go, debugging, Windows.
+  add a feature in every place it has to go, debugging, Windows, the
+  HTTP server.
 - [`docs/compilation-pipeline.md`](docs/compilation-pipeline.md): how
   `omg foo.omg` actually runs your script, step by step.
 - [`rust/README.md`](rust/README.md): the frozen Rust runtime, and how

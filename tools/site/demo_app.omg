@@ -1,0 +1,127 @@
+;;;omg
+
+# A small web application on tools/lib/http.omg, to show what a server
+# with routes of its own looks like.
+#
+#   omg tools/site/demo_app.omg [port]        (default 9877)
+#
+# Then, from another terminal:
+#
+#   curl http://127.0.0.1:9877/
+#   curl http://127.0.0.1:9877/hello/world
+#   curl -d "buy milk" http://127.0.0.1:9877/notes
+#   curl http://127.0.0.1:9877/notes
+#   curl http://127.0.0.1:9877/wait/2000      (answers two seconds later,
+#                                              and holds up nobody else)
+#   curl -N http://127.0.0.1:9877/countdown   (an answer that arrives in pieces)
+
+import "../lib/http.omg" as http
+
+alloc port := 9877
+if length(args) > 1 { port := int(args[1]) }
+
+alloc app := http.server({port: port})
+
+# --- a page -------------------------------------------------------------------
+
+proc home(req) {
+    alloc page := "<!doctype html>\n<meta charset=\"utf-8\">\n<title>OMG demo</title>\n"
+    page := page + "<h1>Served by OMG</h1>\n<ul>\n"
+    for link in ["/hello/world", "/notes", "/wait/1000", "/countdown", "/stats"] {
+        page := page + "<li><a href=\"" + link + "\">" + link + "</a></li>\n"
+    }
+    return http.html(200, page + "</ul>\n")
+}
+
+# --- a parameter from the path, another from the query string -----------------
+
+proc hello(req) {
+    alloc greeting := http.get(req.query, "greeting", "hello")
+    return http.text(200, greeting + ", " + req.params.name + "\n")
+}
+
+# --- state kept between requests ----------------------------------------------
+#
+# Handlers run one at a time, so plain variables are safe to share.
+
+alloc notes := []
+
+proc list_notes(req) {
+    alloc out := ""
+    alloc n := 1
+    for note in notes {
+        out := out + n + ". " + note + "\n"
+        n := n + 1
+    }
+    if out == "" { out := "(no notes yet; POST one)\n" }
+    return http.text(200, out)
+}
+
+proc add_note(req) {
+    alloc note := http.body_text(req)
+    if note == "" { return http.text(400, "send the note as the request body\n") }
+    append(notes, note)
+    alloc res := http.text(201, "saved as note " + length(notes) + "\n")
+    res.headers["Location"] := "/notes/" + length(notes)
+    return res
+}
+
+proc one_note(req) {
+    alloc n := 0
+    try { n := int(req.params.id) } except err { n := 0 }
+    if n < 1 or n > length(notes) { return http.error_page(404, "no such note") }
+    return http.text(200, notes[n - 1] + "\n")
+}
+
+# --- an answer that comes later -----------------------------------------------
+#
+# Sleeping here would stop the whole server for everyone. Instead the
+# handler says "pending", and a timer answers when the time has passed.
+
+proc wait(req) {
+    alloc ms := 0
+    try { ms := int(req.params.ms) } except err { ms := 0 }
+    if ms < 0 or ms > 30000 { return http.text(400, "0 to 30000 milliseconds, please\n") }
+    proc answer() {
+        app.respond(req, http.text(200, "waited " + ms + " ms\n"))
+    }
+    app.timer(ms, answer)
+    return http.pending()
+}
+
+# --- an answer in pieces --------------------------------------------------------
+
+proc countdown(req) {
+    alloc left := 5
+    alloc id := 0
+    proc tick() {
+        if left == 0 {
+            app.send(req, "liftoff\n")
+            app.finish(req)
+            app.cancel(id)
+            return true
+        }
+        # send() is false once the client has gone away.
+        if not app.send(req, left + "...\n") { app.cancel(id) }
+        left := left - 1
+        return true
+    }
+    id := app.every(500, tick)
+    return http.stream(200, {"Content-Type": "text/plain; charset=utf-8"})
+}
+
+proc stats(req) {
+    alloc st := app.stats()
+    return http.json(200, "{\"connections\": " + st.connections + ", \"accepted\": " + st.accepted + ", \"requests\": " + st.requests + "}\n")
+}
+
+app.get("/", home)
+app.get("/hello/:name", hello)
+app.get("/notes", list_notes)
+app.post("/notes", add_note)
+app.get("/notes/:id", one_note)
+app.get("/wait/:ms", wait)
+app.get("/countdown", countdown)
+app.get("/stats", stats)
+
+app.listen()

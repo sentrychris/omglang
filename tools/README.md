@@ -12,10 +12,10 @@ lists, dicts, file I/O (text and binary), imports, closures and more.
 tools/
 ├── unix/        wc, grep, sort, uniq, head, tail, hex
 ├── *.omg        json, base64, tmpl, md2html, edit (the terminal editor)
-├── dev/         tools for working on OMG code: omg-fmt, omg-bundle, omg-deps
+├── dev/         tools for working on OMG code: omg-fmt, omg-bundle, omg-deps, http-bench
 ├── db/          omgdb, a small SQL database
-├── site/        a static-site generator, an HTTP server and a sample site
-├── lib/         modules the tools import: lib.omg (helpers), http.omg (HTTP server library)
+├── site/        a static-site generator, an HTTP server, an example web app and a sample site
+├── lib/         modules the tools import: lib.omg (helpers), http.omg (the HTTP server library)
 └── test-all.omg runs every tool once and reports pass or fail
 ```
 
@@ -78,6 +78,7 @@ that's a *compile-time* path concern, not a runtime one.)
 | `dev/omg-fmt.omg`    | Minimal formatter: re-indents every line using 4-space units sized by accumulated `{ } ( ) [ ]` depth, strips trailing whitespace, preserves blank lines and the contents of strings/docblocks. Idempotent. |
 | `dev/omg-bundle.omg` | Inlines `import` statements into a single self-contained `.omg` file. Top-level names from each imported module are mangled to `__alias__name` and exposed via a `freeze({ ... })` namespace dict; calls like `math.is_prime(97)` continue to work because the dict holds first-class closures. |
 | `dev/omg-deps.omg`   | Prints the import graph of an OMG program as an indented tree. Detects cycles, marks unreadable files. |
+| `dev/http-bench.omg` | A load generator for HTTP servers (`-c` connections, `-n` requests or `-t` seconds): requests a second, failures, and how long answers took. A non-blocking client in one loop around `tcp_poll`. |
 
 ### Advanced
 
@@ -86,6 +87,9 @@ Larger, demo-quality programs that compose the smaller tools.
 | Tool                  | What it does |
 |-----------------------|--------------|
 | `site/ssg.omg`    | Static site generator. Walks `<site>/content/`, parses front-matter, converts each markdown file via `md2html.omg`, applies `<site>/templates/*.html`, and writes a parallel directory tree to `<site>/out/`. The folder is itself an example site: `omg tools/site/ssg.omg tools/site` builds [`site/content/`](site/content/) with [`site/templates/`](site/templates/). |
+| `lib/http.omg`    | An HTTP/1.1 server library: one loop serving every connection at once, with routes, static files (ranges, caching headers), keep-alive, limits and timeouts, answers that come later or in pieces, and a clean stop on Ctrl-C. About 45,000 requests a second when built. See [`docs/09-http-server.md`](../docs/09-http-server.md). |
+| `site/http_server.omg` | Serves a folder with that library: `omg tools/site/http_server.omg [webroot] [port] [--host ADDRESS] [--list] [--cache SECONDS] [--quiet]`. |
+| `site/demo_app.omg` | An example application on it: a page, a collection with `GET` and `POST`, an answer that comes later, and one that arrives in pieces. |
 | `db/omgdb.omg`   | A small SQL database written in OMG — a 4-KB paged on-disk format, a recursive-descent SQL parser (`CREATE` / `INSERT` / `SELECT` / `DELETE` / `DROP` with `WHERE` and `ORDER BY`), and a SQLite-style REPL with one-shot `-e` and stdin pipeline modes. See [`db/README.md`](db/README.md). |
 | `edit.omg`       | **OMG edit** — a nano-shaped terminal editor with a sidebar file browser. Open a file directly or hand it a directory and it drops you into the sidebar to pick one. Editor side: scrollable buffer, save / quit, cut / paste lines (kill-chain semantics), forward search, go-to-line, syntax highlighting for `.omg`. Sidebar side: arrow / vi-style navigation, Enter to descend or open, Backspace for parent dir. `^B` toggles sidebar visibility, `^T` swaps focus between panes. Terminal size detected via `stty size`. AOT-compile for crispest input. |
 
