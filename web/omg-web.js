@@ -1436,6 +1436,7 @@ function omg_p0(_captured, v_b) {
         try {
             switch (_ip) {
             case 1507: {
+                omg_current_file_idx = 1;
                 omg_current_line = 147;
     if (v___mod_1__wb_buf_top === OMG_UNSET) omg_undefined("__mod_1__wb_buf_top"); _s.push(v___mod_1__wb_buf_top);
             }
@@ -1516,6 +1517,7 @@ function omg_p0(_captured, v_b) {
             }
             // fall through to 1526
             case 1526: {
+                omg_current_file_idx = 1;
                 omg_current_line = 151;
     if (v_nc === OMG_UNSET) omg_undefined("nc"); _s.push(v_nc);
             }
@@ -1525,6 +1527,8 @@ function omg_p0(_captured, v_b) {
             }
             // fall through to 1528
             case 1528: {
+                omg_current_file_idx = 1;
+                omg_current_line = 151;
     _s.pop();
             }
             // fall through to 1529
@@ -1533,6 +1537,7 @@ function omg_p0(_captured, v_b) {
             }
             // fall through to 1530
             case 1530: {
+                omg_current_file_idx = 1;
                 omg_current_line = 153;
     if (v___mod_1__wb_buf === OMG_UNSET) omg_undefined("__mod_1__wb_buf"); _s.push(v___mod_1__wb_buf);
             }
@@ -1600,6 +1605,7 @@ function omg_p1(_captured, v_path) {
         try {
             switch (_ip) {
             case 10283: {
+                omg_current_file_idx = 1;
                 omg_current_line = 2842;
     _s.push(v_path);
             }
@@ -1648,6 +1654,7 @@ function omg_p2(_captured) {
         try {
             switch (_ip) {
             case 10470: {
+                omg_current_file_idx = 1;
                 omg_current_line = 2955;
     if (v_args === OMG_UNSET) omg_undefined("args"); _s.push(v_args);
             }
@@ -1686,6 +1693,7 @@ function omg_p2(_captured) {
             }
             // fall through to 10479
             case 10479: {
+                omg_current_file_idx = 1;
                 omg_current_line = 2957;
     if (v_i === OMG_UNSET) omg_undefined("i"); _s.push(v_i);
             }
@@ -1736,6 +1744,8 @@ function omg_p2(_captured) {
             }
             // fall through to 10491
             case 10491: {
+                omg_current_file_idx = 1;
+                omg_current_line = 2958;
     if (v_p === OMG_UNSET) omg_undefined("p"); _s.push(v_p);
             }
             // fall through to 10492
@@ -1764,6 +1774,8 @@ function omg_p2(_captured) {
             }
             // fall through to 10498
             case 10498: {
+                omg_current_file_idx = 1;
+                omg_current_line = 2958;
     { const _c = _s.pop(); if (!omg_truthy(_c)) { _ip = 10507; continue; } }
             }
             // fall through to 10499
@@ -1801,6 +1813,7 @@ function omg_p2(_captured) {
             }
             // fall through to 10507
             case 10507: {
+                omg_current_file_idx = 1;
                 omg_current_line = 2961;
     if (v_i === OMG_UNSET) omg_undefined("i"); _s.push(v_i);
             }
@@ -1822,6 +1835,7 @@ function omg_p2(_captured) {
             }
             // fall through to 10512
             case 10512: {
+                omg_current_file_idx = 1;
                 omg_current_line = 2963;
     if (v_p === OMG_UNSET) omg_undefined("p"); _s.push(v_p);
             }
@@ -1866,6 +1880,7 @@ function omg_p3(_captured, v_bare_name, v_resolved, v_got, v_line) {
         try {
             switch (_ip) {
             case 7620: {
+                omg_current_file_idx = 1;
                 omg_current_line = 2048;
     _s.push(v_resolved);
             }
@@ -1875,6 +1890,8 @@ function omg_p3(_captured, v_bare_name, v_resolved, v_got, v_line) {
             }
             // fall through to 7622
             case 7622: {
+                omg_current_file_idx = 1;
+                omg_current_line = 2048;
     v_expected = _s.pop();
             }
             // fall through to 7623
@@ -1912,6 +1929,7 @@ function omg_p3(_captured, v_bare_name, v_resolved, v_got, v_line) {
             }
             // fall through to 7631
             case 7631: {
+                omg_current_file_idx = 1;
                 omg_current_line = 2050;
     _s.push(v_got);
             }
@@ -1941,6 +1959,7 @@ function omg_p3(_captured, v_bare_name, v_resolved, v_got, v_line) {
             }
             // fall through to 7638
             case 7638: {
+                omg_current_file_idx = 1;
                 omg_current_line = 2051;
     _s.push("s");
             }
@@ -1979,6 +1998,7 @@ function omg_p3(_captured, v_bare_name, v_resolved, v_got, v_line) {
             }
             // fall through to 7647
             case 7647: {
+                omg_current_file_idx = 1;
                 omg_current_line = 2053;
     _s.push("SyntaxError: function '");
             }
@@ -2115,6 +2135,7 @@ function omg_p4(_captured, v_name) {
         try {
             switch (_ip) {
             case 5854: {
+                omg_current_file_idx = 1;
                 omg_current_line = 1385;
     if (v___mod_1__cc_later_decls === OMG_UNSET) omg_undefined("__mod_1__cc_later_decls"); _s.push(v___mod_1__cc_later_decls);
             }
@@ -2153,6 +2174,8 @@ function omg_p4(_captured, v_name) {
             }
             // fall through to 5863
             case 5863: {
+                omg_current_file_idx = 1;
+                omg_current_line = 1386;
     _s.push(v_name);
             }
             // fall through to 5864
@@ -2161,6 +2184,8 @@ function omg_p4(_captured, v_name) {
             }
             // fall through to 5865
             case 5865: {
+                omg_current_file_idx = 1;
+                omg_current_line = 1386;
     _s.push(false);
             }
             // fall through to 5866
@@ -2169,6 +2194,8 @@ function omg_p4(_captured, v_name) {
             }
             // fall through to 5867
             case 5867: {
+                omg_current_file_idx = 1;
+                omg_current_line = 1386;
     { const _c = _s.pop(); if (!omg_truthy(_c)) { _ip = 5871; continue; } }
             }
             // fall through to 5868
@@ -2186,6 +2213,7 @@ function omg_p4(_captured, v_name) {
             }
             // fall through to 5871
             case 5871: {
+                omg_current_file_idx = 1;
                 omg_current_line = 1389;
     if (v___mod_1__cc_file_top_names === OMG_UNSET) omg_undefined("__mod_1__cc_file_top_names"); _s.push(v___mod_1__cc_file_top_names);
             }
@@ -2199,6 +2227,8 @@ function omg_p4(_captured, v_name) {
             }
             // fall through to 5874
             case 5874: {
+                omg_current_file_idx = 1;
+                omg_current_line = 1389;
     { const _c = _s.pop(); if (!omg_truthy(_c)) { _ip = 5877; continue; } }
             }
             // fall through to 5875
@@ -2211,6 +2241,8 @@ function omg_p4(_captured, v_name) {
             }
             // fall through to 5877
             case 5877: {
+                omg_current_file_idx = 1;
+                omg_current_line = 1389;
     if (v___mod_1__cc_local_scopes === OMG_UNSET) omg_undefined("__mod_1__cc_local_scopes"); _s.push(v___mod_1__cc_local_scopes);
             }
             // fall through to 5878
@@ -2231,6 +2263,8 @@ function omg_p4(_captured, v_name) {
             }
             // fall through to 5882
             case 5882: {
+                omg_current_file_idx = 1;
+                omg_current_line = 1389;
     _s.push(false);
             }
             // fall through to 5883
@@ -2239,6 +2273,8 @@ function omg_p4(_captured, v_name) {
             }
             // fall through to 5884
             case 5884: {
+                omg_current_file_idx = 1;
+                omg_current_line = 1389;
     { const _c = _s.pop(); if (!omg_truthy(_c)) { _ip = 5888; continue; } }
             }
             // fall through to 5885
@@ -2256,6 +2292,7 @@ function omg_p4(_captured, v_name) {
             }
             // fall through to 5888
             case 5888: {
+                omg_current_file_idx = 1;
                 omg_current_line = 1392;
     _s.push(0n);
             }
@@ -2265,6 +2302,7 @@ function omg_p4(_captured, v_name) {
             }
             // fall through to 5890
             case 5890: {
+                omg_current_file_idx = 1;
                 omg_current_line = 1393;
     if (v_i === OMG_UNSET) omg_undefined("i"); _s.push(v_i);
             }
@@ -2311,6 +2349,8 @@ function omg_p4(_captured, v_name) {
             }
             // fall through to 5901
             case 5901: {
+                omg_current_file_idx = 1;
+                omg_current_line = 1394;
     { const _c = _s.pop(); if (!omg_truthy(_c)) { _ip = 5916; continue; } }
             }
             // fall through to 5902
@@ -2372,6 +2412,7 @@ function omg_p4(_captured, v_name) {
             }
             // fall through to 5916
             case 5916: {
+                omg_current_file_idx = 1;
                 omg_current_line = 1397;
     if (v_i === OMG_UNSET) omg_undefined("i"); _s.push(v_i);
             }
@@ -2393,6 +2434,7 @@ function omg_p4(_captured, v_name) {
             }
             // fall through to 5921
             case 5921: {
+                omg_current_file_idx = 1;
                 omg_current_line = 1399;
     _s.push(false);
             }
@@ -2439,6 +2481,7 @@ function omg_p5(_captured, v_node, v_acc) {
         try {
             switch (_ip) {
             case 5702: {
+                omg_current_file_idx = 1;
                 omg_current_line = 1335;
     _s.push(v_node);
             }
@@ -2481,6 +2524,8 @@ function omg_p5(_captured, v_node, v_acc) {
             }
             // fall through to 5712
             case 5712: {
+                omg_current_file_idx = 1;
+                omg_current_line = 1336;
     if (v_kind === OMG_UNSET) omg_undefined("kind"); _s.push(v_kind);
             }
             // fall through to 5713
@@ -2501,6 +2546,8 @@ function omg_p5(_captured, v_node, v_acc) {
             }
             // fall through to 5717
             case 5717: {
+                omg_current_file_idx = 1;
+                omg_current_line = 1336;
     { const _c = _s.pop(); if (!omg_truthy(_c)) { _ip = 5726; continue; } }
             }
             // fall through to 5718
@@ -2538,6 +2585,7 @@ function omg_p5(_captured, v_node, v_acc) {
             }
             // fall through to 5726
             case 5726: {
+                omg_current_file_idx = 1;
                 omg_current_line = 1339;
     if (v_kind === OMG_UNSET) omg_undefined("kind"); _s.push(v_kind);
             }
@@ -2588,6 +2636,7 @@ function omg_p5(_captured, v_node, v_acc) {
             }
             // fall through to 5738
             case 5738: {
+                omg_current_file_idx = 1;
                 omg_current_line = 1342;
     if (v_kind === OMG_UNSET) omg_undefined("kind"); _s.push(v_kind);
             }
@@ -2644,6 +2693,7 @@ function omg_p5(_captured, v_node, v_acc) {
             }
             // fall through to 5751
             case 5751: {
+                omg_current_file_idx = 1;
                 omg_current_line = 1346;
     if (v_i === OMG_UNSET) omg_undefined("i"); _s.push(v_i);
             }
@@ -2682,6 +2732,8 @@ function omg_p5(_captured, v_node, v_acc) {
             }
             // fall through to 5760
             case 5760: {
+                omg_current_file_idx = 1;
+                omg_current_line = 1347;
     v_acc = _s.pop();
             }
             // fall through to 5761
@@ -2707,6 +2759,7 @@ function omg_p5(_captured, v_node, v_acc) {
             }
             // fall through to 5766
             case 5766: {
+                omg_current_file_idx = 1;
                 omg_current_line = 1350;
     _s.push(v_acc);
             }
@@ -2720,6 +2773,7 @@ function omg_p5(_captured, v_node, v_acc) {
             }
             // fall through to 5769
             case 5769: {
+                omg_current_file_idx = 1;
                 omg_current_line = 1352;
     if (v_kind === OMG_UNSET) omg_undefined("kind"); _s.push(v_kind);
             }
@@ -2758,6 +2812,8 @@ function omg_p5(_captured, v_node, v_acc) {
             }
             // fall through to 5778
             case 5778: {
+                omg_current_file_idx = 1;
+                omg_current_line = 1353;
     v_acc = _s.pop();
             }
             // fall through to 5779
@@ -2808,6 +2864,8 @@ function omg_p5(_captured, v_node, v_acc) {
             }
             // fall through to 5790
             case 5790: {
+                omg_current_file_idx = 1;
+                omg_current_line = 1355;
     v_acc = _s.pop();
             }
             // fall through to 5791
@@ -2816,6 +2874,7 @@ function omg_p5(_captured, v_node, v_acc) {
             }
             // fall through to 5792
             case 5792: {
+                omg_current_file_idx = 1;
                 omg_current_line = 1357;
     _s.push(v_acc);
             }
@@ -2829,6 +2888,7 @@ function omg_p5(_captured, v_node, v_acc) {
             }
             // fall through to 5795
             case 5795: {
+                omg_current_file_idx = 1;
                 omg_current_line = 1359;
     if (v_kind === OMG_UNSET) omg_undefined("kind"); _s.push(v_kind);
             }
@@ -2871,6 +2931,7 @@ function omg_p5(_captured, v_node, v_acc) {
             }
             // fall through to 5805
             case 5805: {
+                omg_current_file_idx = 1;
                 omg_current_line = 1362;
     if (v_kind === OMG_UNSET) omg_undefined("kind"); _s.push(v_kind);
             }
@@ -2933,6 +2994,7 @@ function omg_p5(_captured, v_node, v_acc) {
             }
             // fall through to 5820
             case 5820: {
+                omg_current_file_idx = 1;
                 omg_current_line = 1365;
     if (v_kind === OMG_UNSET) omg_undefined("kind"); _s.push(v_kind);
             }
@@ -2971,6 +3033,8 @@ function omg_p5(_captured, v_node, v_acc) {
             }
             // fall through to 5829
             case 5829: {
+                omg_current_file_idx = 1;
+                omg_current_line = 1366;
     v_acc = _s.pop();
             }
             // fall through to 5830
@@ -3033,6 +3097,7 @@ function omg_p5(_captured, v_node, v_acc) {
             }
             // fall through to 5844
             case 5844: {
+                omg_current_file_idx = 1;
                 omg_current_line = 1370;
     _s.push(v_node);
             }
@@ -3058,6 +3123,7 @@ function omg_p5(_captured, v_node, v_acc) {
             }
             // fall through to 5850
             case 5850: {
+                omg_current_file_idx = 1;
                 omg_current_line = 1372;
     _s.push(v_acc);
             }
@@ -3103,6 +3169,7 @@ function omg_p6(_captured, v_ast) {
         try {
             switch (_ip) {
             case 7546: {
+                omg_current_file_idx = 1;
                 omg_current_line = 2018;
     _s.push(0n);
             }
@@ -3125,6 +3192,7 @@ function omg_p6(_captured, v_ast) {
             }
             // fall through to 7551
             case 7551: {
+                omg_current_file_idx = 1;
                 omg_current_line = 2020;
     if (v_i === OMG_UNSET) omg_undefined("i"); _s.push(v_i);
             }
@@ -3205,6 +3273,8 @@ function omg_p6(_captured, v_ast) {
             }
             // fall through to 7570
             case 7570: {
+                omg_current_file_idx = 1;
+                omg_current_line = 2023;
     if (v_s === OMG_UNSET) omg_undefined("s"); _s.push(v_s);
             }
             // fall through to 7571
@@ -3241,6 +3311,7 @@ function omg_p6(_captured, v_ast) {
             }
             // fall through to 7579
             case 7579: {
+                omg_current_file_idx = 1;
                 omg_current_line = 2025;
     if (v_i === OMG_UNSET) omg_undefined("i"); _s.push(v_i);
             }
@@ -3262,6 +3333,8 @@ function omg_p6(_captured, v_ast) {
             }
             // fall through to 7584
             case 7584: {
+                omg_current_file_idx = 1;
+                omg_current_line = 2025;
     _s.push(null);
             }
             // fall through to 7585
@@ -3298,6 +3371,7 @@ function omg_p7(_captured, v_ast) {
         try {
             switch (_ip) {
             case 7520: {
+                omg_current_file_idx = 1;
                 omg_current_line = 2003;
     { const _arr = _s.splice(_s.length - 0, 0); _s.push(_arr); }
             }
@@ -3329,6 +3403,7 @@ function omg_p7(_captured, v_ast) {
             }
             // fall through to 7527
             case 7527: {
+                omg_current_file_idx = 1;
                 omg_current_line = 2006;
     if (v_i === OMG_UNSET) omg_undefined("i"); _s.push(v_i);
             }
@@ -3367,6 +3442,8 @@ function omg_p7(_captured, v_ast) {
             }
             // fall through to 7536
             case 7536: {
+                omg_current_file_idx = 1;
+                omg_current_line = 2007;
     if (v_names === OMG_UNSET) omg_undefined("names"); v_names = _s.pop();
             }
             // fall through to 7537
@@ -3392,6 +3469,7 @@ function omg_p7(_captured, v_ast) {
             }
             // fall through to 7542
             case 7542: {
+                omg_current_file_idx = 1;
                 omg_current_line = 2010;
     if (v_names === OMG_UNSET) omg_undefined("names"); _s.push(v_names);
             }
@@ -3438,6 +3516,7 @@ function omg_p8(_captured, v_body, v_start, v_jf) {
         try {
             switch (_ip) {
             case 8972: {
+                omg_current_file_idx = 1;
                 omg_current_line = 2490;
     if (v___mod_1__cc_break_stack === OMG_UNSET) omg_undefined("__mod_1__cc_break_stack"); _s.push(v___mod_1__cc_break_stack);
             }
@@ -3510,6 +3589,8 @@ function omg_p8(_captured, v_body, v_start, v_jf) {
             }
             // fall through to 8989
             case 8989: {
+                omg_current_file_idx = 1;
+                omg_current_line = 2493;
     _s.pop();
             }
             // fall through to 8990
@@ -3531,6 +3612,8 @@ function omg_p8(_captured, v_body, v_start, v_jf) {
             }
             // fall through to 8994
             case 8994: {
+                omg_current_file_idx = 1;
+                omg_current_line = 2494;
     _s.pop();
             }
             // fall through to 8995
@@ -3561,6 +3644,8 @@ function omg_p8(_captured, v_body, v_start, v_jf) {
             }
             // fall through to 9001
             case 9001: {
+                omg_current_file_idx = 1;
+                omg_current_line = 2496;
     _s.pop();
             }
             // fall through to 9002
@@ -3675,6 +3760,7 @@ function omg_p8(_captured, v_body, v_start, v_jf) {
             }
             // fall through to 9028
             case 9028: {
+                omg_current_file_idx = 1;
                 omg_current_line = 2503;
     if (v_i === OMG_UNSET) omg_undefined("i"); _s.push(v_i);
             }
@@ -3717,6 +3803,8 @@ function omg_p8(_captured, v_body, v_start, v_jf) {
             }
             // fall through to 9038
             case 9038: {
+                omg_current_file_idx = 1;
+                omg_current_line = 2504;
     _s.pop();
             }
             // fall through to 9039
@@ -3742,6 +3830,7 @@ function omg_p8(_captured, v_body, v_start, v_jf) {
             }
             // fall through to 9044
             case 9044: {
+                omg_current_file_idx = 1;
                 omg_current_line = 2507;
     _s.push(false);
             }
@@ -3786,6 +3875,7 @@ function omg_p9(_captured, v_name) {
         try {
             switch (_ip) {
             case 6023: {
+                omg_current_file_idx = 1;
                 omg_current_line = 1442;
     if (v___mod_1__cc_local_scopes === OMG_UNSET) omg_undefined("__mod_1__cc_local_scopes"); _s.push(v___mod_1__cc_local_scopes);
             }
@@ -3890,6 +3980,7 @@ function omg_p10(_captured, v_code) {
         try {
             switch (_ip) {
             case 10324: {
+                omg_current_file_idx = 1;
                 omg_current_line = 2878;
     { const _arr = _s.splice(_s.length - 0, 0); _s.push(_arr); }
             }
@@ -3921,6 +4012,7 @@ function omg_p10(_captured, v_code) {
             }
             // fall through to 10331
             case 10331: {
+                omg_current_file_idx = 1;
                 omg_current_line = 2881;
     if (v_i === OMG_UNSET) omg_undefined("i"); _s.push(v_i);
             }
@@ -4025,6 +4117,7 @@ function omg_p10(_captured, v_code) {
             }
             // fall through to 10356
             case 10356: {
+                omg_current_file_idx = 1;
                 omg_current_line = 2886;
     if (v_out === OMG_UNSET) omg_undefined("out"); _s.push(v_out);
             }
@@ -4046,6 +4139,7 @@ function omg_p10(_captured, v_code) {
             }
             // fall through to 10361
             case 10361: {
+                omg_current_file_idx = 1;
                 omg_current_line = 2888;
     if (v_i === OMG_UNSET) omg_undefined("i"); _s.push(v_i);
             }
@@ -4067,6 +4161,7 @@ function omg_p10(_captured, v_code) {
             }
             // fall through to 10366
             case 10366: {
+                omg_current_file_idx = 1;
                 omg_current_line = 2890;
     if (v_out === OMG_UNSET) omg_undefined("out"); _s.push(v_out);
             }
@@ -4109,6 +4204,7 @@ function omg_p11(_captured, v_instr) {
         try {
             switch (_ip) {
             case 6108: {
+                omg_current_file_idx = 1;
                 omg_current_line = 1495;
     if (v___mod_1__cc_code === OMG_UNSET) omg_undefined("__mod_1__cc_code"); _s.push(v___mod_1__cc_code);
             }
@@ -4193,6 +4289,7 @@ function omg_p12(_captured, v_n) {
         try {
             switch (_ip) {
             case 6170: {
+                omg_current_file_idx = 1;
                 omg_current_line = 1529;
     _s.push(0n);
             }
@@ -4202,6 +4299,7 @@ function omg_p12(_captured, v_n) {
             }
             // fall through to 6172
             case 6172: {
+                omg_current_file_idx = 1;
                 omg_current_line = 1530;
     if (v_i === OMG_UNSET) omg_undefined("i"); _s.push(v_i);
             }
@@ -4228,6 +4326,8 @@ function omg_p12(_captured, v_n) {
             }
             // fall through to 6178
             case 6178: {
+                omg_current_file_idx = 1;
+                omg_current_line = 1531;
     _s.pop();
             }
             // fall through to 6179
@@ -4253,6 +4353,8 @@ function omg_p12(_captured, v_n) {
             }
             // fall through to 6184
             case 6184: {
+                omg_current_file_idx = 1;
+                omg_current_line = 1532;
     _s.push(null);
             }
             // fall through to 6185
@@ -4286,6 +4388,7 @@ function omg_p13(_captured, v_opname) {
         try {
             switch (_ip) {
             case 6122: {
+                omg_current_file_idx = 1;
                 omg_current_line = 1500;
     _s.push(v_opname);
             }
@@ -4303,6 +4406,8 @@ function omg_p13(_captured, v_opname) {
             }
             // fall through to 6126
             case 6126: {
+                omg_current_file_idx = 1;
+                omg_current_line = 1500;
     _s.pop();
             }
             // fall through to 6127
@@ -4343,6 +4448,7 @@ function omg_p14(_captured, v_name) {
         try {
             switch (_ip) {
             case 5642: {
+                omg_current_file_idx = 1;
                 omg_current_line = 1313;
     if (v___mod_1__cc_nested_procs === OMG_UNSET) omg_undefined("__mod_1__cc_nested_procs"); _s.push(v___mod_1__cc_nested_procs);
             }
@@ -4364,6 +4470,7 @@ function omg_p14(_captured, v_name) {
             }
             // fall through to 5647
             case 5647: {
+                omg_current_file_idx = 1;
                 omg_current_line = 1314;
     if (v_i === OMG_UNSET) omg_undefined("i"); _s.push(v_i);
             }
@@ -4452,6 +4559,7 @@ function omg_p14(_captured, v_name) {
             }
             // fall through to 5668
             case 5668: {
+                omg_current_file_idx = 1;
                 omg_current_line = 1318;
     if (v_depth === OMG_UNSET) omg_undefined("depth"); _s.push(v_depth);
             }
@@ -4490,6 +4598,8 @@ function omg_p14(_captured, v_name) {
             }
             // fall through to 5677
             case 5677: {
+                omg_current_file_idx = 1;
+                omg_current_line = 1319;
     { const _c = _s.pop(); if (!omg_truthy(_c)) { _ip = 5681; continue; } }
             }
             // fall through to 5678
@@ -4507,6 +4617,7 @@ function omg_p14(_captured, v_name) {
             }
             // fall through to 5681
             case 5681: {
+                omg_current_file_idx = 1;
                 omg_current_line = 1322;
     if (v_depth === OMG_UNSET) omg_undefined("depth"); _s.push(v_depth);
             }
@@ -4528,6 +4639,7 @@ function omg_p14(_captured, v_name) {
             }
             // fall through to 5686
             case 5686: {
+                omg_current_file_idx = 1;
                 omg_current_line = 1324;
     if (v___mod_1__cc_nested_procs === OMG_UNSET) omg_undefined("__mod_1__cc_nested_procs"); _s.push(v___mod_1__cc_nested_procs);
             }
@@ -4557,6 +4669,7 @@ function omg_p14(_captured, v_name) {
             }
             // fall through to 5693
             case 5693: {
+                omg_current_file_idx = 1;
                 omg_current_line = 1326;
     if (v_i === OMG_UNSET) omg_undefined("i"); _s.push(v_i);
             }
@@ -4578,6 +4691,7 @@ function omg_p14(_captured, v_name) {
             }
             // fall through to 5698
             case 5698: {
+                omg_current_file_idx = 1;
                 omg_current_line = 1328;
     _s.push(false);
             }
@@ -4622,6 +4736,7 @@ function omg_p15(_captured, v_resolved) {
         try {
             switch (_ip) {
             case 7674: {
+                omg_current_file_idx = 1;
                 omg_current_line = 2057;
     _s.push(0n);
             }
@@ -4644,6 +4759,7 @@ function omg_p15(_captured, v_resolved) {
             }
             // fall through to 7679
             case 7679: {
+                omg_current_file_idx = 1;
                 omg_current_line = 2059;
     if (v_i === OMG_UNSET) omg_undefined("i"); _s.push(v_i);
             }
@@ -4715,6 +4831,7 @@ function omg_p15(_captured, v_resolved) {
             }
             // fall through to 7696
             case 7696: {
+                omg_current_file_idx = 1;
                 omg_current_line = 2063;
     if (v_i === OMG_UNSET) omg_undefined("i"); _s.push(v_i);
             }
@@ -4736,6 +4853,7 @@ function omg_p15(_captured, v_resolved) {
             }
             // fall through to 7701
             case 7701: {
+                omg_current_file_idx = 1;
                 omg_current_line = 2065;
     _s.push(false);
             }
@@ -4783,6 +4901,7 @@ function omg_p16(_captured, v_name) {
         try {
             switch (_ip) {
             case 5925: {
+                omg_current_file_idx = 1;
                 omg_current_line = 1403;
     if (v___mod_1__cc_local_scopes === OMG_UNSET) omg_undefined("__mod_1__cc_local_scopes"); _s.push(v___mod_1__cc_local_scopes);
             }
@@ -4817,6 +4936,7 @@ function omg_p16(_captured, v_name) {
             }
             // fall through to 5933
             case 5933: {
+                omg_current_file_idx = 1;
                 omg_current_line = 1406;
     _s.push(1n);
             }
@@ -4839,6 +4959,7 @@ function omg_p16(_captured, v_name) {
             }
             // fall through to 5938
             case 5938: {
+                omg_current_file_idx = 1;
                 omg_current_line = 1408;
     if (v_i === OMG_UNSET) omg_undefined("i"); _s.push(v_i);
             }
@@ -4895,6 +5016,7 @@ function omg_p16(_captured, v_name) {
             }
             // fall through to 5951
             case 5951: {
+                omg_current_file_idx = 1;
                 omg_current_line = 1412;
     if (v_j === OMG_UNSET) omg_undefined("j"); _s.push(v_j);
             }
@@ -4950,6 +5072,7 @@ function omg_p16(_captured, v_name) {
             }
             // fall through to 5964
             case 5964: {
+                omg_current_file_idx = 1;
                 omg_current_line = 1416;
     if (v_j === OMG_UNSET) omg_undefined("j"); _s.push(v_j);
             }
@@ -4971,6 +5094,7 @@ function omg_p16(_captured, v_name) {
             }
             // fall through to 5969
             case 5969: {
+                omg_current_file_idx = 1;
                 omg_current_line = 1418;
     if (v_i === OMG_UNSET) omg_undefined("i"); _s.push(v_i);
             }
@@ -4992,6 +5116,7 @@ function omg_p16(_captured, v_name) {
             }
             // fall through to 5974
             case 5974: {
+                omg_current_file_idx = 1;
                 omg_current_line = 1420;
     _s.push(false);
             }
@@ -5036,6 +5161,7 @@ function omg_p17(_captured, v_path) {
         try {
             switch (_ip) {
             case 6129: {
+                omg_current_file_idx = 1;
                 omg_current_line = 1506;
     _s.push(0n);
             }
@@ -5058,6 +5184,7 @@ function omg_p17(_captured, v_path) {
             }
             // fall through to 6134
             case 6134: {
+                omg_current_file_idx = 1;
                 omg_current_line = 1508;
     if (v_i === OMG_UNSET) omg_undefined("i"); _s.push(v_i);
             }
@@ -5113,6 +5240,7 @@ function omg_p17(_captured, v_path) {
             }
             // fall through to 6147
             case 6147: {
+                omg_current_file_idx = 1;
                 omg_current_line = 1512;
     if (v_i === OMG_UNSET) omg_undefined("i"); _s.push(v_i);
             }
@@ -5134,6 +5262,7 @@ function omg_p17(_captured, v_path) {
             }
             // fall through to 6152
             case 6152: {
+                omg_current_file_idx = 1;
                 omg_current_line = 1514;
     if (v___mod_1__cc_src_files === OMG_UNSET) omg_undefined("__mod_1__cc_src_files"); _s.push(v___mod_1__cc_src_files);
             }
@@ -5199,6 +5328,7 @@ function omg_p18(_captured, v_name) {
         try {
             switch (_ip) {
             case 5521: {
+                omg_current_file_idx = 1;
                 omg_current_line = 1267;
     _s.push(0n);
             }
@@ -5221,6 +5351,7 @@ function omg_p18(_captured, v_name) {
             }
             // fall through to 5526
             case 5526: {
+                omg_current_file_idx = 1;
                 omg_current_line = 1269;
     if (v_i === OMG_UNSET) omg_undefined("i"); _s.push(v_i);
             }
@@ -5276,6 +5407,7 @@ function omg_p18(_captured, v_name) {
             }
             // fall through to 5539
             case 5539: {
+                omg_current_file_idx = 1;
                 omg_current_line = 1273;
     if (v_i === OMG_UNSET) omg_undefined("i"); _s.push(v_i);
             }
@@ -5297,6 +5429,7 @@ function omg_p18(_captured, v_name) {
             }
             // fall through to 5544
             case 5544: {
+                omg_current_file_idx = 1;
                 omg_current_line = 1275;
     _s.push(false);
             }
@@ -5341,6 +5474,7 @@ function omg_p19(_captured, v_resolved) {
         try {
             switch (_ip) {
             case 7705: {
+                omg_current_file_idx = 1;
                 omg_current_line = 2070;
     _s.push(0n);
             }
@@ -5363,6 +5497,7 @@ function omg_p19(_captured, v_resolved) {
             }
             // fall through to 7710
             case 7710: {
+                omg_current_file_idx = 1;
                 omg_current_line = 2072;
     if (v_i === OMG_UNSET) omg_undefined("i"); _s.push(v_i);
             }
@@ -5418,6 +5553,7 @@ function omg_p19(_captured, v_resolved) {
             }
             // fall through to 7723
             case 7723: {
+                omg_current_file_idx = 1;
                 omg_current_line = 2076;
     if (v_i === OMG_UNSET) omg_undefined("i"); _s.push(v_i);
             }
@@ -5439,6 +5575,7 @@ function omg_p19(_captured, v_resolved) {
             }
             // fall through to 7728
             case 7728: {
+                omg_current_file_idx = 1;
                 omg_current_line = 2078;
     _s.push(false);
             }
@@ -5482,11 +5619,14 @@ function omg_p20(_captured) {
         try {
             switch (_ip) {
             case 10516: {
+                omg_current_file_idx = 1;
                 omg_current_line = 2967;
     { const _argv = _s.splice(_s.length - 0, 0); omg_frame_push("cc_argv0_basename", omg_current_file_idx, omg_current_line); const _rv = omg_p2(null, ..._argv); omg_frame_pop(); _s.push(_rv); }
             }
             // fall through to 10517
             case 10517: {
+                omg_current_file_idx = 1;
+                omg_current_line = 2967;
     v_bn = _s.pop();
             }
             // fall through to 10518
@@ -5516,6 +5656,8 @@ function omg_p20(_captured) {
             }
             // fall through to 10524
             case 10524: {
+                omg_current_file_idx = 1;
+                omg_current_line = 2970;
     if (v_bn === OMG_UNSET) omg_undefined("bn"); _s.push(v_bn);
             }
             // fall through to 10525
@@ -5536,6 +5678,8 @@ function omg_p20(_captured) {
             }
             // fall through to 10529
             case 10529: {
+                omg_current_file_idx = 1;
+                omg_current_line = 2970;
     { const _c = _s.pop(); if (!omg_truthy(_c)) { _ip = 10532; continue; } }
             }
             // fall through to 10530
@@ -5548,6 +5692,8 @@ function omg_p20(_captured) {
             }
             // fall through to 10532
             case 10532: {
+                omg_current_file_idx = 1;
+                omg_current_line = 2970;
     if (v_bn === OMG_UNSET) omg_undefined("bn"); _s.push(v_bn);
             }
             // fall through to 10533
@@ -5568,6 +5714,8 @@ function omg_p20(_captured) {
             }
             // fall through to 10537
             case 10537: {
+                omg_current_file_idx = 1;
+                omg_current_line = 2970;
     { const _c = _s.pop(); if (!omg_truthy(_c)) { _ip = 10541; continue; } }
             }
             // fall through to 10538
@@ -5585,6 +5733,7 @@ function omg_p20(_captured) {
             }
             // fall through to 10541
             case 10541: {
+                omg_current_file_idx = 1;
                 omg_current_line = 2977;
     if (v_bn === OMG_UNSET) omg_undefined("bn"); _s.push(v_bn);
             }
@@ -5598,6 +5747,8 @@ function omg_p20(_captured) {
             }
             // fall through to 10544
             case 10544: {
+                omg_current_file_idx = 1;
+                omg_current_line = 2977;
     { const _c = _s.pop(); if (!omg_truthy(_c)) { _ip = 10548; continue; } }
             }
             // fall through to 10545
@@ -5615,6 +5766,7 @@ function omg_p20(_captured) {
             }
             // fall through to 10548
             case 10548: {
+                omg_current_file_idx = 1;
                 omg_current_line = 2980;
     _s.push(false);
             }
@@ -5657,6 +5809,7 @@ function omg_p21(_captured, v_name) {
         try {
             switch (_ip) {
             case 5603: {
+                omg_current_file_idx = 1;
                 omg_current_line = 1292;
     _s.push(v_name);
             }
@@ -5682,6 +5835,8 @@ function omg_p21(_captured, v_name) {
             }
             // fall through to 5609
             case 5609: {
+                omg_current_file_idx = 1;
+                omg_current_line = 1292;
     _s.push(v_name);
             }
             // fall through to 5610
@@ -5702,6 +5857,8 @@ function omg_p21(_captured, v_name) {
             }
             // fall through to 5614
             case 5614: {
+                omg_current_file_idx = 1;
+                omg_current_line = 1292;
     { const _c = _s.pop(); if (!omg_truthy(_c)) { _ip = 5617; continue; } }
             }
             // fall through to 5615
@@ -5714,6 +5871,8 @@ function omg_p21(_captured, v_name) {
             }
             // fall through to 5617
             case 5617: {
+                omg_current_file_idx = 1;
+                omg_current_line = 1292;
     _s.push(v_name);
             }
             // fall through to 5618
@@ -5734,6 +5893,8 @@ function omg_p21(_captured, v_name) {
             }
             // fall through to 5622
             case 5622: {
+                omg_current_file_idx = 1;
+                omg_current_line = 1292;
     return _s.pop();
             }
             // fall through to 5623
@@ -5776,6 +5937,7 @@ function omg_p22(_captured, v_name) {
         try {
             switch (_ip) {
             case 5978: {
+                omg_current_file_idx = 1;
                 omg_current_line = 1424;
     _s.push(0n);
             }
@@ -5798,6 +5960,7 @@ function omg_p22(_captured, v_name) {
             }
             // fall through to 5983
             case 5983: {
+                omg_current_file_idx = 1;
                 omg_current_line = 1426;
     if (v_i === OMG_UNSET) omg_undefined("i"); _s.push(v_i);
             }
@@ -5854,6 +6017,7 @@ function omg_p22(_captured, v_name) {
             }
             // fall through to 5996
             case 5996: {
+                omg_current_file_idx = 1;
                 omg_current_line = 1430;
     if (v_j === OMG_UNSET) omg_undefined("j"); _s.push(v_j);
             }
@@ -5909,6 +6073,7 @@ function omg_p22(_captured, v_name) {
             }
             // fall through to 6009
             case 6009: {
+                omg_current_file_idx = 1;
                 omg_current_line = 1434;
     if (v_j === OMG_UNSET) omg_undefined("j"); _s.push(v_j);
             }
@@ -5930,6 +6095,7 @@ function omg_p22(_captured, v_name) {
             }
             // fall through to 6014
             case 6014: {
+                omg_current_file_idx = 1;
                 omg_current_line = 1436;
     if (v_i === OMG_UNSET) omg_undefined("i"); _s.push(v_i);
             }
@@ -5951,6 +6117,7 @@ function omg_p22(_captured, v_name) {
             }
             // fall through to 6019
             case 6019: {
+                omg_current_file_idx = 1;
                 omg_current_line = 1438;
     _s.push(false);
             }
@@ -5995,6 +6162,7 @@ function omg_p23(_captured, v_mangled) {
         try {
             switch (_ip) {
             case 7586: {
+                omg_current_file_idx = 1;
                 omg_current_line = 2033;
     _s.push(0n);
             }
@@ -6017,6 +6185,7 @@ function omg_p23(_captured, v_mangled) {
             }
             // fall through to 7591
             case 7591: {
+                omg_current_file_idx = 1;
                 omg_current_line = 2035;
     if (v_i === OMG_UNSET) omg_undefined("i"); _s.push(v_i);
             }
@@ -6096,6 +6265,7 @@ function omg_p23(_captured, v_mangled) {
             }
             // fall through to 7610
             case 7610: {
+                omg_current_file_idx = 1;
                 omg_current_line = 2039;
     if (v_i === OMG_UNSET) omg_undefined("i"); _s.push(v_i);
             }
@@ -6117,6 +6287,7 @@ function omg_p23(_captured, v_mangled) {
             }
             // fall through to 7615
             case 7615: {
+                omg_current_file_idx = 1;
                 omg_current_line = 2041;
     _s.push(1n);
             }
@@ -6163,6 +6334,7 @@ function omg_p24(_captured, v_name) {
         try {
             switch (_ip) {
             case 5625: {
+                omg_current_file_idx = 1;
                 omg_current_line = 1296;
     if (v___mod_1__cc_current_prefix === OMG_UNSET) omg_undefined("__mod_1__cc_current_prefix"); _s.push(v___mod_1__cc_current_prefix);
             }
@@ -6193,6 +6365,7 @@ function omg_p24(_captured, v_name) {
             }
             // fall through to 5632
             case 5632: {
+                omg_current_file_idx = 1;
                 omg_current_line = 1299;
     if (v___mod_1__cc_current_prefix === OMG_UNSET) omg_undefined("__mod_1__cc_current_prefix"); _s.push(v___mod_1__cc_current_prefix);
             }
@@ -6243,6 +6416,7 @@ function omg_p25(_captured, v_node) {
         try {
             switch (_ip) {
             case 6161: {
+                omg_current_file_idx = 1;
                 omg_current_line = 1522;
     _s.push(v_node);
             }
@@ -6305,6 +6479,7 @@ function omg_p26(_captured, v_idx, v_target) {
         try {
             switch (_ip) {
             case 6198: {
+                omg_current_file_idx = 1;
                 omg_current_line = 1543;
     if (v___mod_1__cc_code === OMG_UNSET) omg_undefined("__mod_1__cc_code"); _s.push(v___mod_1__cc_code);
             }
@@ -6381,6 +6556,7 @@ function omg_p27(_captured, v_s, v_suffix) {
         try {
             switch (_ip) {
             case 10446: {
+                omg_current_file_idx = 1;
                 omg_current_line = 2944;
     _s.push(v_s);
             }
@@ -6437,6 +6613,7 @@ function omg_p27(_captured, v_s, v_suffix) {
             }
             // fall through to 10459
             case 10459: {
+                omg_current_file_idx = 1;
                 omg_current_line = 2949;
     _s.push(v_s);
             }
@@ -6508,6 +6685,7 @@ function omg_p28(_captured, v_opname) {
         try {
             switch (_ip) {
             case 6186: {
+                omg_current_file_idx = 1;
                 omg_current_line = 1537;
     if (v___mod_1__cc_code === OMG_UNSET) omg_undefined("__mod_1__cc_code"); _s.push(v___mod_1__cc_code);
             }
@@ -6538,6 +6716,8 @@ function omg_p28(_captured, v_opname) {
             }
             // fall through to 6193
             case 6193: {
+                omg_current_file_idx = 1;
+                omg_current_line = 1538;
     _s.pop();
             }
             // fall through to 6194
@@ -6584,6 +6764,7 @@ function omg_p29(_captured, v_name) {
         try {
             switch (_ip) {
             case 5548: {
+                omg_current_file_idx = 1;
                 omg_current_line = 1280;
     _s.push(v_name);
             }
@@ -6609,6 +6790,8 @@ function omg_p29(_captured, v_name) {
             }
             // fall through to 5554
             case 5554: {
+                omg_current_file_idx = 1;
+                omg_current_line = 1280;
     _s.push(v_name);
             }
             // fall through to 5555
@@ -6629,6 +6812,8 @@ function omg_p29(_captured, v_name) {
             }
             // fall through to 5559
             case 5559: {
+                omg_current_file_idx = 1;
+                omg_current_line = 1280;
     { const _c = _s.pop(); if (!omg_truthy(_c)) { _ip = 5563; continue; } }
             }
             // fall through to 5560
@@ -6646,6 +6831,7 @@ function omg_p29(_captured, v_name) {
             }
             // fall through to 5563
             case 5563: {
+                omg_current_file_idx = 1;
                 omg_current_line = 1283;
     _s.push(v_name);
             }
@@ -6675,6 +6861,7 @@ function omg_p29(_captured, v_name) {
             }
             // fall through to 5570
             case 5570: {
+                omg_current_file_idx = 1;
                 omg_current_line = 1284;
     _s.push(v_name);
             }
@@ -6704,6 +6891,7 @@ function omg_p29(_captured, v_name) {
             }
             // fall through to 5577
             case 5577: {
+                omg_current_file_idx = 1;
                 omg_current_line = 1285;
     _s.push(v_name);
             }
@@ -6733,6 +6921,7 @@ function omg_p29(_captured, v_name) {
             }
             // fall through to 5584
             case 5584: {
+                omg_current_file_idx = 1;
                 omg_current_line = 1286;
     _s.push(v_name);
             }
@@ -6762,6 +6951,7 @@ function omg_p29(_captured, v_name) {
             }
             // fall through to 5591
             case 5591: {
+                omg_current_file_idx = 1;
                 omg_current_line = 1287;
     _s.push(v_name);
             }
@@ -6791,6 +6981,7 @@ function omg_p29(_captured, v_name) {
             }
             // fall through to 5598
             case 5598: {
+                omg_current_file_idx = 1;
                 omg_current_line = 1288;
     _s.push(1n);
             }
@@ -6842,6 +7033,7 @@ function omg_p30(_captured, v_body, v_base) {
         try {
             switch (_ip) {
             case 9162: {
+                omg_current_file_idx = 1;
                 omg_current_line = 2562;
     { const _arr = _s.splice(_s.length - 0, 0); _s.push(_arr); }
             }
@@ -6873,6 +7065,7 @@ function omg_p30(_captured, v_body, v_base) {
             }
             // fall through to 9169
             case 9169: {
+                omg_current_file_idx = 1;
                 omg_current_line = 2565;
     if (v_i === OMG_UNSET) omg_undefined("i"); _s.push(v_i);
             }
@@ -6949,6 +7142,8 @@ function omg_p30(_captured, v_body, v_base) {
             }
             // fall through to 9187
             case 9187: {
+                omg_current_file_idx = 1;
+                omg_current_line = 2568;
     if (v_op === OMG_UNSET) omg_undefined("op"); _s.push(v_op);
             }
             // fall through to 9188
@@ -6969,6 +7164,8 @@ function omg_p30(_captured, v_body, v_base) {
             }
             // fall through to 9192
             case 9192: {
+                omg_current_file_idx = 1;
+                omg_current_line = 2568;
     { const _c = _s.pop(); if (!omg_truthy(_c)) { _ip = 9195; continue; } }
             }
             // fall through to 9193
@@ -6981,6 +7178,8 @@ function omg_p30(_captured, v_body, v_base) {
             }
             // fall through to 9195
             case 9195: {
+                omg_current_file_idx = 1;
+                omg_current_line = 2568;
     if (v_op === OMG_UNSET) omg_undefined("op"); _s.push(v_op);
             }
             // fall through to 9196
@@ -7001,6 +7200,8 @@ function omg_p30(_captured, v_body, v_base) {
             }
             // fall through to 9200
             case 9200: {
+                omg_current_file_idx = 1;
+                omg_current_line = 2568;
     { const _c = _s.pop(); if (!omg_truthy(_c)) { _ip = 9213; continue; } }
             }
             // fall through to 9201
@@ -7054,6 +7255,7 @@ function omg_p30(_captured, v_body, v_base) {
             }
             // fall through to 9213
             case 9213: {
+                omg_current_file_idx = 1;
                 omg_current_line = 2571;
     if (v_out === OMG_UNSET) omg_undefined("out"); _s.push(v_out);
             }
@@ -7075,6 +7277,7 @@ function omg_p30(_captured, v_body, v_base) {
             }
             // fall through to 9218
             case 9218: {
+                omg_current_file_idx = 1;
                 omg_current_line = 2573;
     if (v_i === OMG_UNSET) omg_undefined("i"); _s.push(v_i);
             }
@@ -7096,6 +7299,7 @@ function omg_p30(_captured, v_body, v_base) {
             }
             // fall through to 9223
             case 9223: {
+                omg_current_file_idx = 1;
                 omg_current_line = 2575;
     if (v_out === OMG_UNSET) omg_undefined("out"); _s.push(v_out);
             }
@@ -7138,6 +7342,7 @@ function omg_p31(_captured, v_name) {
         try {
             switch (_ip) {
             case 5638: {
+                omg_current_file_idx = 1;
                 omg_current_line = 1306;
     _s.push(v_name);
             }
@@ -7180,6 +7385,7 @@ function omg_p32(_captured, v_name) {
         try {
             switch (_ip) {
             case 6068: {
+                omg_current_file_idx = 1;
                 omg_current_line = 1462;
     _s.push(v_name);
             }
@@ -7189,6 +7395,8 @@ function omg_p32(_captured, v_name) {
             }
             // fall through to 6070
             case 6070: {
+                omg_current_file_idx = 1;
+                omg_current_line = 1462;
     { const _c = _s.pop(); if (!omg_truthy(_c)) { _ip = 6074; continue; } }
             }
             // fall through to 6071
@@ -7206,6 +7414,7 @@ function omg_p32(_captured, v_name) {
             }
             // fall through to 6074
             case 6074: {
+                omg_current_file_idx = 1;
                 omg_current_line = 1465;
     _s.push(v_name);
             }
@@ -7215,6 +7424,8 @@ function omg_p32(_captured, v_name) {
             }
             // fall through to 6076
             case 6076: {
+                omg_current_file_idx = 1;
+                omg_current_line = 1465;
     { const _c = _s.pop(); if (!omg_truthy(_c)) { _ip = 6080; continue; } }
             }
             // fall through to 6077
@@ -7232,6 +7443,7 @@ function omg_p32(_captured, v_name) {
             }
             // fall through to 6080
             case 6080: {
+                omg_current_file_idx = 1;
                 omg_current_line = 1468;
     _s.push(v_name);
             }
@@ -7274,6 +7486,7 @@ function omg_p33(_captured, v_name) {
         try {
             switch (_ip) {
             case 6084: {
+                omg_current_file_idx = 1;
                 omg_current_line = 1473;
     _s.push(v_name);
             }
@@ -7283,6 +7496,8 @@ function omg_p33(_captured, v_name) {
             }
             // fall through to 6086
             case 6086: {
+                omg_current_file_idx = 1;
+                omg_current_line = 1473;
     { const _c = _s.pop(); if (!omg_truthy(_c)) { _ip = 6090; continue; } }
             }
             // fall through to 6087
@@ -7300,6 +7515,7 @@ function omg_p33(_captured, v_name) {
             }
             // fall through to 6090
             case 6090: {
+                omg_current_file_idx = 1;
                 omg_current_line = 1481;
     if (v___mod_1__cc_local_scopes === OMG_UNSET) omg_undefined("__mod_1__cc_local_scopes"); _s.push(v___mod_1__cc_local_scopes);
             }
@@ -7330,6 +7546,8 @@ function omg_p33(_captured, v_name) {
             }
             // fall through to 6097
             case 6097: {
+                omg_current_file_idx = 1;
+                omg_current_line = 1482;
     { const _c = _s.pop(); if (!omg_truthy(_c)) { _ip = 6101; continue; } }
             }
             // fall through to 6098
@@ -7347,6 +7565,7 @@ function omg_p33(_captured, v_name) {
             }
             // fall through to 6101
             case 6101: {
+                omg_current_file_idx = 1;
                 omg_current_line = 1485;
     _s.push(v_name);
             }
@@ -7360,6 +7579,7 @@ function omg_p33(_captured, v_name) {
             }
             // fall through to 6104
             case 6104: {
+                omg_current_file_idx = 1;
                 omg_current_line = 1487;
     _s.push(v_name);
             }
@@ -7404,6 +7624,7 @@ function omg_p34(_captured, v_names) {
         try {
             switch (_ip) {
             case 10419: {
+                omg_current_file_idx = 1;
                 omg_current_line = 2933;
     _s.push(0n);
             }
@@ -7426,6 +7647,7 @@ function omg_p34(_captured, v_names) {
             }
             // fall through to 10424
             case 10424: {
+                omg_current_file_idx = 1;
                 omg_current_line = 2935;
     if (v_i === OMG_UNSET) omg_undefined("i"); _s.push(v_i);
             }
@@ -7509,6 +7731,8 @@ function omg_p34(_captured, v_names) {
             }
             // fall through to 10444
             case 10444: {
+                omg_current_file_idx = 1;
+                omg_current_line = 2937;
     _s.push(null);
             }
             // fall through to 10445
@@ -7544,6 +7768,7 @@ function omg_p35(_captured, v_b, v_i) {
         try {
             switch (_ip) {
             case 2083: {
+                omg_current_file_idx = 1;
                 omg_current_line = 304;
     _s.push(v_b);
             }
@@ -7600,6 +7825,7 @@ function omg_p35(_captured, v_b, v_i) {
             }
             // fall through to 2096
             case 2096: {
+                omg_current_file_idx = 1;
                 omg_current_line = 308;
     if (v_c === OMG_UNSET) omg_undefined("c"); _s.push(v_c);
             }
@@ -7630,6 +7856,7 @@ function omg_p35(_captured, v_b, v_i) {
             }
             // fall through to 2103
             case 2103: {
+                omg_current_file_idx = 1;
                 omg_current_line = 310;
     if (v_c === OMG_UNSET) omg_undefined("c"); _s.push(v_c);
             }
@@ -7660,6 +7887,7 @@ function omg_p35(_captured, v_b, v_i) {
             }
             // fall through to 2110
             case 2110: {
+                omg_current_file_idx = 1;
                 omg_current_line = 313;
     _s.push(v_i);
             }
@@ -7714,6 +7942,7 @@ function omg_p35(_captured, v_b, v_i) {
             }
             // fall through to 2123
             case 2123: {
+                omg_current_file_idx = 1;
                 omg_current_line = 316;
     _s.push(v_b);
             }
@@ -7783,6 +8012,7 @@ function omg_p36(_captured, v_block) {
         try {
             switch (_ip) {
             case 7032: {
+                omg_current_file_idx = 1;
                 omg_current_line = 1814;
     _s.push(v_block);
             }
@@ -7847,6 +8077,7 @@ function omg_p36(_captured, v_block) {
             }
             // fall through to 7047
             case 7047: {
+                omg_current_file_idx = 1;
                 omg_current_line = 1818;
     if (v_i === OMG_UNSET) omg_undefined("i"); _s.push(v_i);
             }
@@ -7881,6 +8112,8 @@ function omg_p36(_captured, v_block) {
             }
             // fall through to 7055
             case 7055: {
+                omg_current_file_idx = 1;
+                omg_current_line = 1819;
     _s.pop();
             }
             // fall through to 7056
@@ -7906,6 +8139,7 @@ function omg_p36(_captured, v_block) {
             }
             // fall through to 7061
             case 7061: {
+                omg_current_file_idx = 1;
                 omg_current_line = 1822;
     _s.push(false);
             }
@@ -7919,6 +8153,7 @@ function omg_p36(_captured, v_block) {
             }
             // fall through to 7064
             case 7064: {
+                omg_current_file_idx = 1;
                 omg_current_line = 1824;
     _s.push(v_block);
             }
@@ -7928,6 +8163,8 @@ function omg_p36(_captured, v_block) {
             }
             // fall through to 7066
             case 7066: {
+                omg_current_file_idx = 1;
+                omg_current_line = 1824;
     _s.pop();
             }
             // fall through to 7067
@@ -7988,6 +8225,7 @@ function omg_p37(_captured, v_node) {
         try {
             switch (_ip) {
             case 6210: {
+                omg_current_file_idx = 1;
                 omg_current_line = 1549;
     _s.push(v_node);
             }
@@ -7997,6 +8235,8 @@ function omg_p37(_captured, v_node) {
             }
             // fall through to 6212
             case 6212: {
+                omg_current_file_idx = 1;
+                omg_current_line = 1549;
     if (v___mod_1__cc_current_line === OMG_UNSET) omg_undefined("__mod_1__cc_current_line"); v___mod_1__cc_current_line = _s.pop();
             }
             // fall through to 6213
@@ -8060,6 +8300,8 @@ function omg_p37(_captured, v_node) {
             }
             // fall through to 6227
             case 6227: {
+                omg_current_file_idx = 1;
+                omg_current_line = 1552;
     _s.pop();
             }
             // fall through to 6228
@@ -8077,6 +8319,7 @@ function omg_p37(_captured, v_node) {
             }
             // fall through to 6231
             case 6231: {
+                omg_current_file_idx = 1;
                 omg_current_line = 1555;
     if (v_kind === OMG_UNSET) omg_undefined("kind"); _s.push(v_kind);
             }
@@ -8123,6 +8366,8 @@ function omg_p37(_captured, v_node) {
             }
             // fall through to 6242
             case 6242: {
+                omg_current_file_idx = 1;
+                omg_current_line = 1559;
     _s.pop();
             }
             // fall through to 6243
@@ -8140,6 +8385,7 @@ function omg_p37(_captured, v_node) {
             }
             // fall through to 6246
             case 6246: {
+                omg_current_file_idx = 1;
                 omg_current_line = 1562;
     if (v_kind === OMG_UNSET) omg_undefined("kind"); _s.push(v_kind);
             }
@@ -8182,6 +8428,8 @@ function omg_p37(_captured, v_node) {
             }
             // fall through to 6256
             case 6256: {
+                omg_current_file_idx = 1;
+                omg_current_line = 1563;
     _s.pop();
             }
             // fall through to 6257
@@ -8199,6 +8447,7 @@ function omg_p37(_captured, v_node) {
             }
             // fall through to 6260
             case 6260: {
+                omg_current_file_idx = 1;
                 omg_current_line = 1566;
     if (v_kind === OMG_UNSET) omg_undefined("kind"); _s.push(v_kind);
             }
@@ -8241,6 +8490,8 @@ function omg_p37(_captured, v_node) {
             }
             // fall through to 6270
             case 6270: {
+                omg_current_file_idx = 1;
+                omg_current_line = 1567;
     _s.pop();
             }
             // fall through to 6271
@@ -8258,6 +8509,7 @@ function omg_p37(_captured, v_node) {
             }
             // fall through to 6274
             case 6274: {
+                omg_current_file_idx = 1;
                 omg_current_line = 1570;
     if (v_kind === OMG_UNSET) omg_undefined("kind"); _s.push(v_kind);
             }
@@ -8292,6 +8544,8 @@ function omg_p37(_captured, v_node) {
             }
             // fall through to 6282
             case 6282: {
+                omg_current_file_idx = 1;
+                omg_current_line = 1571;
     _s.push(false);
             }
             // fall through to 6283
@@ -8321,6 +8575,8 @@ function omg_p37(_captured, v_node) {
             }
             // fall through to 6289
             case 6289: {
+                omg_current_file_idx = 1;
+                omg_current_line = 1572;
     _s.pop();
             }
             // fall through to 6290
@@ -8329,6 +8585,7 @@ function omg_p37(_captured, v_node) {
             }
             // fall through to 6291
             case 6291: {
+                omg_current_file_idx = 1;
                 omg_current_line = 1574;
     _s.push("LOAD");
             }
@@ -8350,6 +8607,8 @@ function omg_p37(_captured, v_node) {
             }
             // fall through to 6296
             case 6296: {
+                omg_current_file_idx = 1;
+                omg_current_line = 1574;
     { const _arr = _s.splice(_s.length - 2, 2); _s.push(_arr); }
             }
             // fall through to 6297
@@ -8358,6 +8617,8 @@ function omg_p37(_captured, v_node) {
             }
             // fall through to 6298
             case 6298: {
+                omg_current_file_idx = 1;
+                omg_current_line = 1574;
     _s.pop();
             }
             // fall through to 6299
@@ -8375,6 +8636,7 @@ function omg_p37(_captured, v_node) {
             }
             // fall through to 6302
             case 6302: {
+                omg_current_file_idx = 1;
                 omg_current_line = 1577;
     if (v_kind === OMG_UNSET) omg_undefined("kind"); _s.push(v_kind);
             }
@@ -8431,6 +8693,7 @@ function omg_p37(_captured, v_node) {
             }
             // fall through to 6315
             case 6315: {
+                omg_current_file_idx = 1;
                 omg_current_line = 1581;
     if (v_i === OMG_UNSET) omg_undefined("i"); _s.push(v_i);
             }
@@ -8465,6 +8728,8 @@ function omg_p37(_captured, v_node) {
             }
             // fall through to 6323
             case 6323: {
+                omg_current_file_idx = 1;
+                omg_current_line = 1582;
     _s.pop();
             }
             // fall through to 6324
@@ -8490,6 +8755,7 @@ function omg_p37(_captured, v_node) {
             }
             // fall through to 6329
             case 6329: {
+                omg_current_file_idx = 1;
                 omg_current_line = 1585;
     _s.push("BUILD_LIST");
             }
@@ -8507,6 +8773,8 @@ function omg_p37(_captured, v_node) {
             }
             // fall through to 6333
             case 6333: {
+                omg_current_file_idx = 1;
+                omg_current_line = 1585;
     _s.pop();
             }
             // fall through to 6334
@@ -8524,6 +8792,7 @@ function omg_p37(_captured, v_node) {
             }
             // fall through to 6337
             case 6337: {
+                omg_current_file_idx = 1;
                 omg_current_line = 1588;
     if (v_kind === OMG_UNSET) omg_undefined("kind"); _s.push(v_kind);
             }
@@ -8580,6 +8849,7 @@ function omg_p37(_captured, v_node) {
             }
             // fall through to 6350
             case 6350: {
+                omg_current_file_idx = 1;
                 omg_current_line = 1592;
     if (v_i === OMG_UNSET) omg_undefined("i"); _s.push(v_i);
             }
@@ -8630,6 +8900,8 @@ function omg_p37(_captured, v_node) {
             }
             // fall through to 6362
             case 6362: {
+                omg_current_file_idx = 1;
+                omg_current_line = 1593;
     _s.pop();
             }
             // fall through to 6363
@@ -8659,6 +8931,8 @@ function omg_p37(_captured, v_node) {
             }
             // fall through to 6369
             case 6369: {
+                omg_current_file_idx = 1;
+                omg_current_line = 1594;
     _s.pop();
             }
             // fall through to 6370
@@ -8684,6 +8958,7 @@ function omg_p37(_captured, v_node) {
             }
             // fall through to 6375
             case 6375: {
+                omg_current_file_idx = 1;
                 omg_current_line = 1597;
     _s.push("BUILD_DICT");
             }
@@ -8701,6 +8976,8 @@ function omg_p37(_captured, v_node) {
             }
             // fall through to 6379
             case 6379: {
+                omg_current_file_idx = 1;
+                omg_current_line = 1597;
     _s.pop();
             }
             // fall through to 6380
@@ -8718,6 +8995,7 @@ function omg_p37(_captured, v_node) {
             }
             // fall through to 6383
             case 6383: {
+                omg_current_file_idx = 1;
                 omg_current_line = 1600;
     if (v_kind === OMG_UNSET) omg_undefined("kind"); _s.push(v_kind);
             }
@@ -8752,6 +9030,8 @@ function omg_p37(_captured, v_node) {
             }
             // fall through to 6391
             case 6391: {
+                omg_current_file_idx = 1;
+                omg_current_line = 1601;
     _s.pop();
             }
             // fall through to 6392
@@ -8773,6 +9053,8 @@ function omg_p37(_captured, v_node) {
             }
             // fall through to 6396
             case 6396: {
+                omg_current_file_idx = 1;
+                omg_current_line = 1602;
     _s.pop();
             }
             // fall through to 6397
@@ -8786,6 +9068,8 @@ function omg_p37(_captured, v_node) {
             }
             // fall through to 6399
             case 6399: {
+                omg_current_file_idx = 1;
+                omg_current_line = 1603;
     _s.pop();
             }
             // fall through to 6400
@@ -8803,6 +9087,7 @@ function omg_p37(_captured, v_node) {
             }
             // fall through to 6403
             case 6403: {
+                omg_current_file_idx = 1;
                 omg_current_line = 1606;
     if (v_kind === OMG_UNSET) omg_undefined("kind"); _s.push(v_kind);
             }
@@ -8837,6 +9122,8 @@ function omg_p37(_captured, v_node) {
             }
             // fall through to 6411
             case 6411: {
+                omg_current_file_idx = 1;
+                omg_current_line = 1607;
     _s.pop();
             }
             // fall through to 6412
@@ -8858,6 +9145,8 @@ function omg_p37(_captured, v_node) {
             }
             // fall through to 6416
             case 6416: {
+                omg_current_file_idx = 1;
+                omg_current_line = 1608;
     _s.pop();
             }
             // fall through to 6417
@@ -8896,6 +9185,8 @@ function omg_p37(_captured, v_node) {
             }
             // fall through to 6425
             case 6425: {
+                omg_current_file_idx = 1;
+                omg_current_line = 1610;
     _s.pop();
             }
             // fall through to 6426
@@ -8904,6 +9195,7 @@ function omg_p37(_captured, v_node) {
             }
             // fall through to 6427
             case 6427: {
+                omg_current_file_idx = 1;
                 omg_current_line = 1612;
     _s.push(v_node);
             }
@@ -8921,10 +9213,13 @@ function omg_p37(_captured, v_node) {
             }
             // fall through to 6431
             case 6431: {
+                omg_current_file_idx = 1;
+                omg_current_line = 1612;
     _s.pop();
             }
             // fall through to 6432
             case 6432: {
+                omg_current_file_idx = 1;
                 omg_current_line = 1614;
     _s.push("SLICE");
             }
@@ -8934,6 +9229,8 @@ function omg_p37(_captured, v_node) {
             }
             // fall through to 6434
             case 6434: {
+                omg_current_file_idx = 1;
+                omg_current_line = 1614;
     _s.pop();
             }
             // fall through to 6435
@@ -8951,6 +9248,7 @@ function omg_p37(_captured, v_node) {
             }
             // fall through to 6438
             case 6438: {
+                omg_current_file_idx = 1;
                 omg_current_line = 1617;
     if (v_kind === OMG_UNSET) omg_undefined("kind"); _s.push(v_kind);
             }
@@ -8985,6 +9283,8 @@ function omg_p37(_captured, v_node) {
             }
             // fall through to 6446
             case 6446: {
+                omg_current_file_idx = 1;
+                omg_current_line = 1618;
     _s.pop();
             }
             // fall through to 6447
@@ -9014,6 +9314,8 @@ function omg_p37(_captured, v_node) {
             }
             // fall through to 6453
             case 6453: {
+                omg_current_file_idx = 1;
+                omg_current_line = 1619;
     _s.pop();
             }
             // fall through to 6454
@@ -9031,6 +9333,7 @@ function omg_p37(_captured, v_node) {
             }
             // fall through to 6457
             case 6457: {
+                omg_current_file_idx = 1;
                 omg_current_line = 1622;
     if (v_kind === OMG_UNSET) omg_undefined("kind"); _s.push(v_kind);
             }
@@ -9133,6 +9436,8 @@ function omg_p37(_captured, v_node) {
             }
             // fall through to 6481
             case 6481: {
+                omg_current_file_idx = 1;
+                omg_current_line = 1627;
     v_rk = _s.pop();
             }
             // fall through to 6482
@@ -9196,6 +9501,8 @@ function omg_p37(_captured, v_node) {
             }
             // fall through to 6496
             case 6496: {
+                omg_current_file_idx = 1;
+                omg_current_line = 1630;
     _s.pop();
             }
             // fall through to 6497
@@ -9204,6 +9511,7 @@ function omg_p37(_captured, v_node) {
             }
             // fall through to 6498
             case 6498: {
+                omg_current_file_idx = 1;
                 omg_current_line = 1632;
     _s.push("PUSH_STR");
             }
@@ -9221,10 +9529,13 @@ function omg_p37(_captured, v_node) {
             }
             // fall through to 6502
             case 6502: {
+                omg_current_file_idx = 1;
+                omg_current_line = 1632;
     _s.pop();
             }
             // fall through to 6503
             case 6503: {
+                omg_current_file_idx = 1;
                 omg_current_line = 1634;
     _s.push("RAISE");
             }
@@ -9242,6 +9553,8 @@ function omg_p37(_captured, v_node) {
             }
             // fall through to 6507
             case 6507: {
+                omg_current_file_idx = 1;
+                omg_current_line = 1634;
     _s.pop();
             }
             // fall through to 6508
@@ -9259,6 +9572,7 @@ function omg_p37(_captured, v_node) {
             }
             // fall through to 6511
             case 6511: {
+                omg_current_file_idx = 1;
                 omg_current_line = 1640;
     if (v_cname === OMG_UNSET) omg_undefined("cname"); _s.push(v_cname);
             }
@@ -9268,6 +9582,8 @@ function omg_p37(_captured, v_node) {
             }
             // fall through to 6513
             case 6513: {
+                omg_current_file_idx = 1;
+                omg_current_line = 1640;
     { const _c = _s.pop(); if (!omg_truthy(_c)) { _ip = 6543; continue; } }
             }
             // fall through to 6514
@@ -9294,6 +9610,7 @@ function omg_p37(_captured, v_node) {
             }
             // fall through to 6519
             case 6519: {
+                omg_current_file_idx = 1;
                 omg_current_line = 1643;
     if (v_i === OMG_UNSET) omg_undefined("i"); _s.push(v_i);
             }
@@ -9328,6 +9645,8 @@ function omg_p37(_captured, v_node) {
             }
             // fall through to 6527
             case 6527: {
+                omg_current_file_idx = 1;
+                omg_current_line = 1644;
     _s.pop();
             }
             // fall through to 6528
@@ -9353,6 +9672,7 @@ function omg_p37(_captured, v_node) {
             }
             // fall through to 6533
             case 6533: {
+                omg_current_file_idx = 1;
                 omg_current_line = 1647;
     _s.push("BUILTIN");
             }
@@ -9378,6 +9698,8 @@ function omg_p37(_captured, v_node) {
             }
             // fall through to 6539
             case 6539: {
+                omg_current_file_idx = 1;
+                omg_current_line = 1647;
     _s.pop();
             }
             // fall through to 6540
@@ -9395,6 +9717,7 @@ function omg_p37(_captured, v_node) {
             }
             // fall through to 6543
             case 6543: {
+                omg_current_file_idx = 1;
                 omg_current_line = 1650;
     if (v_cname === OMG_UNSET) omg_undefined("cname"); _s.push(v_cname);
             }
@@ -9404,6 +9727,8 @@ function omg_p37(_captured, v_node) {
             }
             // fall through to 6545
             case 6545: {
+                omg_current_file_idx = 1;
+                omg_current_line = 1650;
     { const _c = _s.pop(); if (!omg_truthy(_c)) { _ip = 6594; continue; } }
             }
             // fall through to 6546
@@ -9417,6 +9742,8 @@ function omg_p37(_captured, v_node) {
             }
             // fall through to 6548
             case 6548: {
+                omg_current_file_idx = 1;
+                omg_current_line = 1654;
     v_nested_key = _s.pop();
             }
             // fall through to 6549
@@ -9463,6 +9790,8 @@ function omg_p37(_captured, v_node) {
             }
             // fall through to 6559
             case 6559: {
+                omg_current_file_idx = 1;
+                omg_current_line = 1656;
     _s.pop();
             }
             // fall through to 6560
@@ -9471,6 +9800,7 @@ function omg_p37(_captured, v_node) {
             }
             // fall through to 6561
             case 6561: {
+                omg_current_file_idx = 1;
                 omg_current_line = 1658;
     _s.push("LOAD");
             }
@@ -9484,6 +9814,8 @@ function omg_p37(_captured, v_node) {
             }
             // fall through to 6564
             case 6564: {
+                omg_current_file_idx = 1;
+                omg_current_line = 1658;
     { const _arr = _s.splice(_s.length - 2, 2); _s.push(_arr); }
             }
             // fall through to 6565
@@ -9492,6 +9824,8 @@ function omg_p37(_captured, v_node) {
             }
             // fall through to 6566
             case 6566: {
+                omg_current_file_idx = 1;
+                omg_current_line = 1658;
     _s.pop();
             }
             // fall through to 6567
@@ -9518,6 +9852,7 @@ function omg_p37(_captured, v_node) {
             }
             // fall through to 6572
             case 6572: {
+                omg_current_file_idx = 1;
                 omg_current_line = 1661;
     if (v_i === OMG_UNSET) omg_undefined("i"); _s.push(v_i);
             }
@@ -9552,6 +9887,8 @@ function omg_p37(_captured, v_node) {
             }
             // fall through to 6580
             case 6580: {
+                omg_current_file_idx = 1;
+                omg_current_line = 1662;
     _s.pop();
             }
             // fall through to 6581
@@ -9577,6 +9914,7 @@ function omg_p37(_captured, v_node) {
             }
             // fall through to 6586
             case 6586: {
+                omg_current_file_idx = 1;
                 omg_current_line = 1665;
     _s.push("CALL_VALUE");
             }
@@ -9594,6 +9932,8 @@ function omg_p37(_captured, v_node) {
             }
             // fall through to 6590
             case 6590: {
+                omg_current_file_idx = 1;
+                omg_current_line = 1665;
     _s.pop();
             }
             // fall through to 6591
@@ -9611,6 +9951,7 @@ function omg_p37(_captured, v_node) {
             }
             // fall through to 6594
             case 6594: {
+                omg_current_file_idx = 1;
                 omg_current_line = 1668;
     if (v_cname === OMG_UNSET) omg_undefined("cname"); _s.push(v_cname);
             }
@@ -9620,6 +9961,8 @@ function omg_p37(_captured, v_node) {
             }
             // fall through to 6596
             case 6596: {
+                omg_current_file_idx = 1;
+                omg_current_line = 1668;
     _s.pop();
             }
             // fall through to 6597
@@ -9633,6 +9976,8 @@ function omg_p37(_captured, v_node) {
             }
             // fall through to 6599
             case 6599: {
+                omg_current_file_idx = 1;
+                omg_current_line = 1669;
     v_resolved_call_name = _s.pop();
             }
             // fall through to 6600
@@ -9662,6 +10007,8 @@ function omg_p37(_captured, v_node) {
             }
             // fall through to 6606
             case 6606: {
+                omg_current_file_idx = 1;
+                omg_current_line = 1670;
     _s.pop();
             }
             // fall through to 6607
@@ -9688,6 +10035,7 @@ function omg_p37(_captured, v_node) {
             }
             // fall through to 6612
             case 6612: {
+                omg_current_file_idx = 1;
                 omg_current_line = 1673;
     if (v_i === OMG_UNSET) omg_undefined("i"); _s.push(v_i);
             }
@@ -9722,6 +10070,8 @@ function omg_p37(_captured, v_node) {
             }
             // fall through to 6620
             case 6620: {
+                omg_current_file_idx = 1;
+                omg_current_line = 1674;
     _s.pop();
             }
             // fall through to 6621
@@ -9747,6 +10097,7 @@ function omg_p37(_captured, v_node) {
             }
             // fall through to 6626
             case 6626: {
+                omg_current_file_idx = 1;
                 omg_current_line = 1677;
     _s.push("CALL");
             }
@@ -9764,6 +10115,8 @@ function omg_p37(_captured, v_node) {
             }
             // fall through to 6630
             case 6630: {
+                omg_current_file_idx = 1;
+                omg_current_line = 1677;
     _s.pop();
             }
             // fall through to 6631
@@ -9781,6 +10134,7 @@ function omg_p37(_captured, v_node) {
             }
             // fall through to 6634
             case 6634: {
+                omg_current_file_idx = 1;
                 omg_current_line = 1680;
     if (v_callee === OMG_UNSET) omg_undefined("callee"); _s.push(v_callee);
             }
@@ -9790,6 +10144,8 @@ function omg_p37(_captured, v_node) {
             }
             // fall through to 6636
             case 6636: {
+                omg_current_file_idx = 1;
+                omg_current_line = 1680;
     _s.pop();
             }
             // fall through to 6637
@@ -9816,6 +10172,7 @@ function omg_p37(_captured, v_node) {
             }
             // fall through to 6642
             case 6642: {
+                omg_current_file_idx = 1;
                 omg_current_line = 1683;
     if (v_i === OMG_UNSET) omg_undefined("i"); _s.push(v_i);
             }
@@ -9850,6 +10207,8 @@ function omg_p37(_captured, v_node) {
             }
             // fall through to 6650
             case 6650: {
+                omg_current_file_idx = 1;
+                omg_current_line = 1684;
     _s.pop();
             }
             // fall through to 6651
@@ -9875,6 +10234,7 @@ function omg_p37(_captured, v_node) {
             }
             // fall through to 6656
             case 6656: {
+                omg_current_file_idx = 1;
                 omg_current_line = 1687;
     _s.push("CALL_VALUE");
             }
@@ -9892,6 +10252,8 @@ function omg_p37(_captured, v_node) {
             }
             // fall through to 6660
             case 6660: {
+                omg_current_file_idx = 1;
+                omg_current_line = 1687;
     _s.pop();
             }
             // fall through to 6661
@@ -9909,6 +10271,7 @@ function omg_p37(_captured, v_node) {
             }
             // fall through to 6664
             case 6664: {
+                omg_current_file_idx = 1;
                 omg_current_line = 1690;
     if (v_kind === OMG_UNSET) omg_undefined("kind"); _s.push(v_kind);
             }
@@ -9943,6 +10306,8 @@ function omg_p37(_captured, v_node) {
             }
             // fall through to 6672
             case 6672: {
+                omg_current_file_idx = 1;
+                omg_current_line = 1691;
     _s.pop();
             }
             // fall through to 6673
@@ -9981,6 +10346,8 @@ function omg_p37(_captured, v_node) {
             }
             // fall through to 6681
             case 6681: {
+                omg_current_file_idx = 1;
+                omg_current_line = 1693;
     _s.pop();
             }
             // fall through to 6682
@@ -9998,6 +10365,7 @@ function omg_p37(_captured, v_node) {
             }
             // fall through to 6685
             case 6685: {
+                omg_current_file_idx = 1;
                 omg_current_line = 1696;
     _s.push(v_node);
             }
@@ -10032,6 +10400,8 @@ function omg_p37(_captured, v_node) {
             }
             // fall through to 6693
             case 6693: {
+                omg_current_file_idx = 1;
+                omg_current_line = 1697;
     _s.pop();
             }
             // fall through to 6694
@@ -10049,6 +10419,7 @@ function omg_p37(_captured, v_node) {
             }
             // fall through to 6697
             case 6697: {
+                omg_current_file_idx = 1;
                 omg_current_line = 1700;
     _s.push(v_node);
             }
@@ -10086,6 +10457,7 @@ function omg_p37(_captured, v_node) {
             }
             // fall through to 6706
             case 6706: {
+                omg_current_file_idx = 1;
                 omg_current_line = 1701;
     _s.push(v_node);
             }
@@ -10128,6 +10500,8 @@ function omg_p37(_captured, v_node) {
             }
             // fall through to 6716
             case 6716: {
+                omg_current_file_idx = 1;
+                omg_current_line = 1704;
     _s.pop();
             }
             // fall through to 6717
@@ -10141,6 +10515,8 @@ function omg_p37(_captured, v_node) {
             }
             // fall through to 6719
             case 6719: {
+                omg_current_file_idx = 1;
+                omg_current_line = 1705;
     _s.pop();
             }
             // fall through to 6720
@@ -10162,6 +10538,8 @@ function omg_p37(_captured, v_node) {
             }
             // fall through to 6724
             case 6724: {
+                omg_current_file_idx = 1;
+                omg_current_line = 1706;
     _s.pop();
             }
             // fall through to 6725
@@ -10175,6 +10553,8 @@ function omg_p37(_captured, v_node) {
             }
             // fall through to 6727
             case 6727: {
+                omg_current_file_idx = 1;
+                omg_current_line = 1707;
     _s.pop();
             }
             // fall through to 6728
@@ -10192,6 +10572,7 @@ function omg_p37(_captured, v_node) {
             }
             // fall through to 6731
             case 6731: {
+                omg_current_file_idx = 1;
                 omg_current_line = 1710;
     _s.push("unknown unary op ");
             }
@@ -10225,6 +10606,7 @@ function omg_p37(_captured, v_node) {
             }
             // fall through to 6739
             case 6739: {
+                omg_current_file_idx = 1;
                 omg_current_line = 1712;
     if (v_kind === OMG_UNSET) omg_undefined("kind"); _s.push(v_kind);
             }
@@ -10293,6 +10675,8 @@ function omg_p37(_captured, v_node) {
             }
             // fall through to 6755
             case 6755: {
+                omg_current_file_idx = 1;
+                omg_current_line = 1715;
     _s.pop();
             }
             // fall through to 6756
@@ -10306,6 +10690,8 @@ function omg_p37(_captured, v_node) {
             }
             // fall through to 6758
             case 6758: {
+                omg_current_file_idx = 1;
+                omg_current_line = 1716;
     v_jf = _s.pop();
             }
             // fall through to 6759
@@ -10327,6 +10713,8 @@ function omg_p37(_captured, v_node) {
             }
             // fall through to 6763
             case 6763: {
+                omg_current_file_idx = 1;
+                omg_current_line = 1717;
     _s.pop();
             }
             // fall through to 6764
@@ -10348,6 +10736,8 @@ function omg_p37(_captured, v_node) {
             }
             // fall through to 6768
             case 6768: {
+                omg_current_file_idx = 1;
+                omg_current_line = 1718;
     _s.pop();
             }
             // fall through to 6769
@@ -10361,6 +10751,8 @@ function omg_p37(_captured, v_node) {
             }
             // fall through to 6771
             case 6771: {
+                omg_current_file_idx = 1;
+                omg_current_line = 1719;
     _s.pop();
             }
             // fall through to 6772
@@ -10374,6 +10766,8 @@ function omg_p37(_captured, v_node) {
             }
             // fall through to 6774
             case 6774: {
+                omg_current_file_idx = 1;
+                omg_current_line = 1720;
     v_jend = _s.pop();
             }
             // fall through to 6775
@@ -10395,6 +10789,8 @@ function omg_p37(_captured, v_node) {
             }
             // fall through to 6779
             case 6779: {
+                omg_current_file_idx = 1;
+                omg_current_line = 1721;
     _s.pop();
             }
             // fall through to 6780
@@ -10416,6 +10812,8 @@ function omg_p37(_captured, v_node) {
             }
             // fall through to 6784
             case 6784: {
+                omg_current_file_idx = 1;
+                omg_current_line = 1722;
     _s.pop();
             }
             // fall through to 6785
@@ -10437,6 +10835,8 @@ function omg_p37(_captured, v_node) {
             }
             // fall through to 6789
             case 6789: {
+                omg_current_file_idx = 1;
+                omg_current_line = 1723;
     _s.pop();
             }
             // fall through to 6790
@@ -10454,6 +10854,7 @@ function omg_p37(_captured, v_node) {
             }
             // fall through to 6793
             case 6793: {
+                omg_current_file_idx = 1;
                 omg_current_line = 1726;
     if (v_op === OMG_UNSET) omg_undefined("op"); _s.push(v_op);
             }
@@ -10488,6 +10889,8 @@ function omg_p37(_captured, v_node) {
             }
             // fall through to 6801
             case 6801: {
+                omg_current_file_idx = 1;
+                omg_current_line = 1727;
     _s.pop();
             }
             // fall through to 6802
@@ -10501,6 +10904,8 @@ function omg_p37(_captured, v_node) {
             }
             // fall through to 6804
             case 6804: {
+                omg_current_file_idx = 1;
+                omg_current_line = 1728;
     v_jf = _s.pop();
             }
             // fall through to 6805
@@ -10522,6 +10927,8 @@ function omg_p37(_captured, v_node) {
             }
             // fall through to 6809
             case 6809: {
+                omg_current_file_idx = 1;
+                omg_current_line = 1729;
     _s.pop();
             }
             // fall through to 6810
@@ -10535,6 +10942,8 @@ function omg_p37(_captured, v_node) {
             }
             // fall through to 6812
             case 6812: {
+                omg_current_file_idx = 1;
+                omg_current_line = 1730;
     v_jend = _s.pop();
             }
             // fall through to 6813
@@ -10556,6 +10965,8 @@ function omg_p37(_captured, v_node) {
             }
             // fall through to 6817
             case 6817: {
+                omg_current_file_idx = 1;
+                omg_current_line = 1731;
     _s.pop();
             }
             // fall through to 6818
@@ -10577,6 +10988,8 @@ function omg_p37(_captured, v_node) {
             }
             // fall through to 6822
             case 6822: {
+                omg_current_file_idx = 1;
+                omg_current_line = 1732;
     _s.pop();
             }
             // fall through to 6823
@@ -10598,6 +11011,8 @@ function omg_p37(_captured, v_node) {
             }
             // fall through to 6827
             case 6827: {
+                omg_current_file_idx = 1;
+                omg_current_line = 1733;
     _s.pop();
             }
             // fall through to 6828
@@ -10611,6 +11026,8 @@ function omg_p37(_captured, v_node) {
             }
             // fall through to 6830
             case 6830: {
+                omg_current_file_idx = 1;
+                omg_current_line = 1734;
     _s.pop();
             }
             // fall through to 6831
@@ -10632,6 +11049,8 @@ function omg_p37(_captured, v_node) {
             }
             // fall through to 6835
             case 6835: {
+                omg_current_file_idx = 1;
+                omg_current_line = 1735;
     _s.pop();
             }
             // fall through to 6836
@@ -10649,6 +11068,7 @@ function omg_p37(_captured, v_node) {
             }
             // fall through to 6839
             case 6839: {
+                omg_current_file_idx = 1;
                 omg_current_line = 1738;
     _s.push(v_node);
             }
@@ -10666,6 +11086,8 @@ function omg_p37(_captured, v_node) {
             }
             // fall through to 6843
             case 6843: {
+                omg_current_file_idx = 1;
+                omg_current_line = 1738;
     _s.pop();
             }
             // fall through to 6844
@@ -10687,6 +11109,8 @@ function omg_p37(_captured, v_node) {
             }
             // fall through to 6848
             case 6848: {
+                omg_current_file_idx = 1;
+                omg_current_line = 1739;
     _s.pop();
             }
             // fall through to 6849
@@ -10717,6 +11141,8 @@ function omg_p37(_captured, v_node) {
             }
             // fall through to 6855
             case 6855: {
+                omg_current_file_idx = 1;
+                omg_current_line = 1741;
     _s.pop();
             }
             // fall through to 6856
@@ -10734,6 +11160,7 @@ function omg_p37(_captured, v_node) {
             }
             // fall through to 6859
             case 6859: {
+                omg_current_file_idx = 1;
                 omg_current_line = 1744;
     if (v_op === OMG_UNSET) omg_undefined("op"); _s.push(v_op);
             }
@@ -10760,6 +11187,8 @@ function omg_p37(_captured, v_node) {
             }
             // fall through to 6865
             case 6865: {
+                omg_current_file_idx = 1;
+                omg_current_line = 1745;
     _s.pop();
             }
             // fall through to 6866
@@ -10777,6 +11206,7 @@ function omg_p37(_captured, v_node) {
             }
             // fall through to 6869
             case 6869: {
+                omg_current_file_idx = 1;
                 omg_current_line = 1748;
     if (v_op === OMG_UNSET) omg_undefined("op"); _s.push(v_op);
             }
@@ -10803,6 +11233,8 @@ function omg_p37(_captured, v_node) {
             }
             // fall through to 6875
             case 6875: {
+                omg_current_file_idx = 1;
+                omg_current_line = 1749;
     _s.pop();
             }
             // fall through to 6876
@@ -10820,6 +11252,7 @@ function omg_p37(_captured, v_node) {
             }
             // fall through to 6879
             case 6879: {
+                omg_current_file_idx = 1;
                 omg_current_line = 1752;
     if (v_op === OMG_UNSET) omg_undefined("op"); _s.push(v_op);
             }
@@ -10846,6 +11279,8 @@ function omg_p37(_captured, v_node) {
             }
             // fall through to 6885
             case 6885: {
+                omg_current_file_idx = 1;
+                omg_current_line = 1753;
     _s.pop();
             }
             // fall through to 6886
@@ -10863,6 +11298,7 @@ function omg_p37(_captured, v_node) {
             }
             // fall through to 6889
             case 6889: {
+                omg_current_file_idx = 1;
                 omg_current_line = 1756;
     if (v_op === OMG_UNSET) omg_undefined("op"); _s.push(v_op);
             }
@@ -10889,6 +11325,8 @@ function omg_p37(_captured, v_node) {
             }
             // fall through to 6895
             case 6895: {
+                omg_current_file_idx = 1;
+                omg_current_line = 1757;
     _s.pop();
             }
             // fall through to 6896
@@ -10906,6 +11344,7 @@ function omg_p37(_captured, v_node) {
             }
             // fall through to 6899
             case 6899: {
+                omg_current_file_idx = 1;
                 omg_current_line = 1760;
     if (v_op === OMG_UNSET) omg_undefined("op"); _s.push(v_op);
             }
@@ -10932,6 +11371,8 @@ function omg_p37(_captured, v_node) {
             }
             // fall through to 6905
             case 6905: {
+                omg_current_file_idx = 1;
+                omg_current_line = 1761;
     _s.pop();
             }
             // fall through to 6906
@@ -10949,6 +11390,7 @@ function omg_p37(_captured, v_node) {
             }
             // fall through to 6909
             case 6909: {
+                omg_current_file_idx = 1;
                 omg_current_line = 1764;
     if (v_op === OMG_UNSET) omg_undefined("op"); _s.push(v_op);
             }
@@ -10975,6 +11417,8 @@ function omg_p37(_captured, v_node) {
             }
             // fall through to 6915
             case 6915: {
+                omg_current_file_idx = 1;
+                omg_current_line = 1765;
     _s.pop();
             }
             // fall through to 6916
@@ -10992,6 +11436,7 @@ function omg_p37(_captured, v_node) {
             }
             // fall through to 6919
             case 6919: {
+                omg_current_file_idx = 1;
                 omg_current_line = 1768;
     if (v_op === OMG_UNSET) omg_undefined("op"); _s.push(v_op);
             }
@@ -11018,6 +11463,8 @@ function omg_p37(_captured, v_node) {
             }
             // fall through to 6925
             case 6925: {
+                omg_current_file_idx = 1;
+                omg_current_line = 1769;
     _s.pop();
             }
             // fall through to 6926
@@ -11035,6 +11482,7 @@ function omg_p37(_captured, v_node) {
             }
             // fall through to 6929
             case 6929: {
+                omg_current_file_idx = 1;
                 omg_current_line = 1772;
     if (v_op === OMG_UNSET) omg_undefined("op"); _s.push(v_op);
             }
@@ -11061,6 +11509,8 @@ function omg_p37(_captured, v_node) {
             }
             // fall through to 6935
             case 6935: {
+                omg_current_file_idx = 1;
+                omg_current_line = 1773;
     _s.pop();
             }
             // fall through to 6936
@@ -11078,6 +11528,7 @@ function omg_p37(_captured, v_node) {
             }
             // fall through to 6939
             case 6939: {
+                omg_current_file_idx = 1;
                 omg_current_line = 1776;
     if (v_op === OMG_UNSET) omg_undefined("op"); _s.push(v_op);
             }
@@ -11104,6 +11555,8 @@ function omg_p37(_captured, v_node) {
             }
             // fall through to 6945
             case 6945: {
+                omg_current_file_idx = 1;
+                omg_current_line = 1777;
     _s.pop();
             }
             // fall through to 6946
@@ -11121,6 +11574,7 @@ function omg_p37(_captured, v_node) {
             }
             // fall through to 6949
             case 6949: {
+                omg_current_file_idx = 1;
                 omg_current_line = 1780;
     if (v_op === OMG_UNSET) omg_undefined("op"); _s.push(v_op);
             }
@@ -11147,6 +11601,8 @@ function omg_p37(_captured, v_node) {
             }
             // fall through to 6955
             case 6955: {
+                omg_current_file_idx = 1;
+                omg_current_line = 1781;
     _s.pop();
             }
             // fall through to 6956
@@ -11164,6 +11620,7 @@ function omg_p37(_captured, v_node) {
             }
             // fall through to 6959
             case 6959: {
+                omg_current_file_idx = 1;
                 omg_current_line = 1784;
     if (v_op === OMG_UNSET) omg_undefined("op"); _s.push(v_op);
             }
@@ -11190,6 +11647,8 @@ function omg_p37(_captured, v_node) {
             }
             // fall through to 6965
             case 6965: {
+                omg_current_file_idx = 1;
+                omg_current_line = 1785;
     _s.pop();
             }
             // fall through to 6966
@@ -11207,6 +11666,7 @@ function omg_p37(_captured, v_node) {
             }
             // fall through to 6969
             case 6969: {
+                omg_current_file_idx = 1;
                 omg_current_line = 1788;
     if (v_op === OMG_UNSET) omg_undefined("op"); _s.push(v_op);
             }
@@ -11233,6 +11693,8 @@ function omg_p37(_captured, v_node) {
             }
             // fall through to 6975
             case 6975: {
+                omg_current_file_idx = 1;
+                omg_current_line = 1789;
     _s.pop();
             }
             // fall through to 6976
@@ -11250,6 +11712,7 @@ function omg_p37(_captured, v_node) {
             }
             // fall through to 6979
             case 6979: {
+                omg_current_file_idx = 1;
                 omg_current_line = 1792;
     if (v_op === OMG_UNSET) omg_undefined("op"); _s.push(v_op);
             }
@@ -11276,6 +11739,8 @@ function omg_p37(_captured, v_node) {
             }
             // fall through to 6985
             case 6985: {
+                omg_current_file_idx = 1;
+                omg_current_line = 1793;
     _s.pop();
             }
             // fall through to 6986
@@ -11293,6 +11758,7 @@ function omg_p37(_captured, v_node) {
             }
             // fall through to 6989
             case 6989: {
+                omg_current_file_idx = 1;
                 omg_current_line = 1796;
     if (v_op === OMG_UNSET) omg_undefined("op"); _s.push(v_op);
             }
@@ -11319,6 +11785,8 @@ function omg_p37(_captured, v_node) {
             }
             // fall through to 6995
             case 6995: {
+                omg_current_file_idx = 1;
+                omg_current_line = 1797;
     _s.pop();
             }
             // fall through to 6996
@@ -11336,6 +11804,7 @@ function omg_p37(_captured, v_node) {
             }
             // fall through to 6999
             case 6999: {
+                omg_current_file_idx = 1;
                 omg_current_line = 1800;
     if (v_op === OMG_UNSET) omg_undefined("op"); _s.push(v_op);
             }
@@ -11362,6 +11831,8 @@ function omg_p37(_captured, v_node) {
             }
             // fall through to 7005
             case 7005: {
+                omg_current_file_idx = 1;
+                omg_current_line = 1801;
     _s.pop();
             }
             // fall through to 7006
@@ -11379,6 +11850,7 @@ function omg_p37(_captured, v_node) {
             }
             // fall through to 7009
             case 7009: {
+                omg_current_file_idx = 1;
                 omg_current_line = 1804;
     if (v_op === OMG_UNSET) omg_undefined("op"); _s.push(v_op);
             }
@@ -11405,6 +11877,8 @@ function omg_p37(_captured, v_node) {
             }
             // fall through to 7015
             case 7015: {
+                omg_current_file_idx = 1;
+                omg_current_line = 1805;
     _s.pop();
             }
             // fall through to 7016
@@ -11422,6 +11896,7 @@ function omg_p37(_captured, v_node) {
             }
             // fall through to 7019
             case 7019: {
+                omg_current_file_idx = 1;
                 omg_current_line = 1808;
     _s.push("unknown binary op ");
             }
@@ -11447,6 +11922,7 @@ function omg_p37(_captured, v_node) {
             }
             // fall through to 7025
             case 7025: {
+                omg_current_file_idx = 1;
                 omg_current_line = 1810;
     _s.push("unknown expression kind: ");
             }
@@ -11506,6 +11982,7 @@ function omg_p38(_captured, v_in_path) {
         try {
             switch (_ip) {
             case 10222: {
+                omg_current_file_idx = 1;
                 omg_current_line = 2815;
     _s.push(v_in_path);
             }
@@ -11569,6 +12046,7 @@ function omg_p38(_captured, v_in_path) {
             }
             // fall through to 10237
             case 10237: {
+                omg_current_file_idx = 1;
                 omg_current_line = 2823;
     _s.push(v_in_path);
             }
@@ -11578,6 +12056,8 @@ function omg_p38(_captured, v_in_path) {
             }
             // fall through to 10239
             case 10239: {
+                omg_current_file_idx = 1;
+                omg_current_line = 2823;
     v_abs_path = _s.pop();
             }
             // fall through to 10240
@@ -11595,6 +12075,8 @@ function omg_p38(_captured, v_in_path) {
             }
             // fall through to 10243
             case 10243: {
+                omg_current_file_idx = 1;
+                omg_current_line = 2824;
     v_tokens = _s.pop();
             }
             // fall through to 10244
@@ -11612,6 +12094,8 @@ function omg_p38(_captured, v_in_path) {
             }
             // fall through to 10247
             case 10247: {
+                omg_current_file_idx = 1;
+                omg_current_line = 2825;
     v_ast = _s.pop();
             }
             // fall through to 10248
@@ -11629,6 +12113,8 @@ function omg_p38(_captured, v_in_path) {
             }
             // fall through to 10251
             case 10251: {
+                omg_current_file_idx = 1;
+                omg_current_line = 2826;
     v_compiled = _s.pop();
             }
             // fall through to 10252
@@ -11732,6 +12218,7 @@ function omg_p39(_captured, v_params, v_body) {
         try {
             switch (_ip) {
             case 9048: {
+                omg_current_file_idx = 1;
                 omg_current_line = 2511;
     if (v___mod_1__cc_code === OMG_UNSET) omg_undefined("__mod_1__cc_code"); _s.push(v___mod_1__cc_code);
             }
@@ -11889,6 +12376,7 @@ function omg_p39(_captured, v_params, v_body) {
             }
             // fall through to 9083
             case 9083: {
+                omg_current_file_idx = 1;
                 omg_current_line = 2531;
     if (v_i === OMG_UNSET) omg_undefined("i"); _s.push(v_i);
             }
@@ -11956,6 +12444,7 @@ function omg_p39(_captured, v_params, v_body) {
             }
             // fall through to 9099
             case 9099: {
+                omg_current_file_idx = 1;
                 omg_current_line = 2535;
     if (v___mod_1__cc_local_scopes === OMG_UNSET) omg_undefined("__mod_1__cc_local_scopes"); _s.push(v___mod_1__cc_local_scopes);
             }
@@ -11994,6 +12483,8 @@ function omg_p39(_captured, v_params, v_body) {
             }
             // fall through to 9108
             case 9108: {
+                omg_current_file_idx = 1;
+                omg_current_line = 2536;
     { const _arr = _s.splice(_s.length - 1, 1); _s.push(_arr); }
             }
             // fall through to 9109
@@ -12015,6 +12506,8 @@ function omg_p39(_captured, v_params, v_body) {
             }
             // fall through to 9113
             case 9113: {
+                omg_current_file_idx = 1;
+                omg_current_line = 2537;
     _s.pop();
             }
             // fall through to 9114
@@ -12061,6 +12554,8 @@ function omg_p39(_captured, v_params, v_body) {
             }
             // fall through to 9124
             case 9124: {
+                omg_current_file_idx = 1;
+                omg_current_line = 2543;
     _s.pop();
             }
             // fall through to 9125
@@ -12074,6 +12569,8 @@ function omg_p39(_captured, v_params, v_body) {
             }
             // fall through to 9127
             case 9127: {
+                omg_current_file_idx = 1;
+                omg_current_line = 2544;
     _s.pop();
             }
             // fall through to 9128
@@ -12270,6 +12767,7 @@ function omg_p40(_captured, v_path, v_alias, v_line) {
         try {
             switch (_ip) {
             case 7732: {
+                omg_current_file_idx = 1;
                 omg_current_line = 2086;
     if (v___mod_1__cc_current_file === OMG_UNSET) omg_undefined("__mod_1__cc_current_file"); _s.push(v___mod_1__cc_current_file);
             }
@@ -12279,6 +12777,8 @@ function omg_p40(_captured, v_path, v_alias, v_line) {
             }
             // fall through to 7734
             case 7734: {
+                omg_current_file_idx = 1;
+                omg_current_line = 2086;
     _s.push(v_path);
             }
             // fall through to 7735
@@ -12287,6 +12787,8 @@ function omg_p40(_captured, v_path, v_alias, v_line) {
             }
             // fall through to 7736
             case 7736: {
+                omg_current_file_idx = 1;
+                omg_current_line = 2086;
     v_resolved = _s.pop();
             }
             // fall through to 7737
@@ -12300,6 +12802,8 @@ function omg_p40(_captured, v_path, v_alias, v_line) {
             }
             // fall through to 7739
             case 7739: {
+                omg_current_file_idx = 1;
+                omg_current_line = 2088;
     { const _c = _s.pop(); if (!omg_truthy(_c)) { _ip = 7748; continue; } }
             }
             // fall through to 7740
@@ -12337,6 +12841,7 @@ function omg_p40(_captured, v_path, v_alias, v_line) {
             }
             // fall through to 7748
             case 7748: {
+                omg_current_file_idx = 1;
                 omg_current_line = 2092;
     _s.push("");
             }
@@ -12364,6 +12869,8 @@ function omg_p40(_captured, v_path, v_alias, v_line) {
             }
             // fall through to 7754
             case 7754: {
+                omg_current_file_idx = 1;
+                omg_current_line = 2094;
     v_cached = _s.pop();
             }
             // fall through to 7755
@@ -12423,6 +12930,7 @@ function omg_p40(_captured, v_path, v_alias, v_line) {
             }
             // fall through to 7768
             case 7768: {
+                omg_current_file_idx = 1;
                 omg_current_line = 2102;
     if (v___mod_1__cc_module_counter === OMG_UNSET) omg_undefined("__mod_1__cc_module_counter"); _s.push(v___mod_1__cc_module_counter);
             }
@@ -12528,6 +13036,7 @@ function omg_p40(_captured, v_path, v_alias, v_line) {
             }
             // fall through to 7793
             case 7793: {
+                omg_current_file_idx = 1;
                 omg_current_line = 2108;
     if (v_src === OMG_UNSET) omg_undefined("src"); _s.push(v_src);
             }
@@ -12541,6 +13050,8 @@ function omg_p40(_captured, v_path, v_alias, v_line) {
             }
             // fall through to 7796
             case 7796: {
+                omg_current_file_idx = 1;
+                omg_current_line = 2108;
     v_tokens = _s.pop();
             }
             // fall through to 7797
@@ -12558,6 +13069,8 @@ function omg_p40(_captured, v_path, v_alias, v_line) {
             }
             // fall through to 7800
             case 7800: {
+                omg_current_file_idx = 1;
+                omg_current_line = 2109;
     v_ast = _s.pop();
             }
             // fall through to 7801
@@ -12584,6 +13097,7 @@ function omg_p40(_captured, v_path, v_alias, v_line) {
             }
             // fall through to 7806
             case 7806: {
+                omg_current_file_idx = 1;
                 omg_current_line = 2113;
     if (v_i === OMG_UNSET) omg_undefined("i"); _s.push(v_i);
             }
@@ -12684,6 +13198,7 @@ function omg_p40(_captured, v_path, v_alias, v_line) {
             }
             // fall through to 7830
             case 7830: {
+                omg_current_file_idx = 1;
                 omg_current_line = 2118;
     if (v_s === OMG_UNSET) omg_undefined("s"); _s.push(v_s);
             }
@@ -12750,6 +13265,7 @@ function omg_p40(_captured, v_path, v_alias, v_line) {
             }
             // fall through to 7846
             case 7846: {
+                omg_current_file_idx = 1;
                 omg_current_line = 2121;
     if (v_i === OMG_UNSET) omg_undefined("i"); _s.push(v_i);
             }
@@ -12771,6 +13287,7 @@ function omg_p40(_captured, v_path, v_alias, v_line) {
             }
             // fall through to 7851
             case 7851: {
+                omg_current_file_idx = 1;
                 omg_current_line = 2125;
     if (v___mod_1__cc_loaded_modules === OMG_UNSET) omg_undefined("__mod_1__cc_loaded_modules"); _s.push(v___mod_1__cc_loaded_modules);
             }
@@ -12879,6 +13396,8 @@ function omg_p40(_captured, v_path, v_alias, v_line) {
             }
             // fall through to 7876
             case 7876: {
+                omg_current_file_idx = 1;
+                omg_current_line = 2136;
     if (v___mod_1__cc_current_file_idx === OMG_UNSET) omg_undefined("__mod_1__cc_current_file_idx"); v___mod_1__cc_current_file_idx = _s.pop();
             }
             // fall through to 7877
@@ -12937,6 +13456,8 @@ function omg_p40(_captured, v_path, v_alias, v_line) {
             }
             // fall through to 7889
             case 7889: {
+                omg_current_file_idx = 1;
+                omg_current_line = 2144;
     if (v___mod_1__cc_file_top_names === OMG_UNSET) omg_undefined("__mod_1__cc_file_top_names"); v___mod_1__cc_file_top_names = _s.pop();
             }
             // fall through to 7890
@@ -12950,6 +13471,8 @@ function omg_p40(_captured, v_path, v_alias, v_line) {
             }
             // fall through to 7892
             case 7892: {
+                omg_current_file_idx = 1;
+                omg_current_line = 2145;
     _s.pop();
             }
             // fall through to 7893
@@ -12963,6 +13486,7 @@ function omg_p40(_captured, v_path, v_alias, v_line) {
             }
             // fall through to 7895
             case 7895: {
+                omg_current_file_idx = 1;
                 omg_current_line = 2147;
     if (v_i === OMG_UNSET) omg_undefined("i"); _s.push(v_i);
             }
@@ -12997,6 +13521,8 @@ function omg_p40(_captured, v_path, v_alias, v_line) {
             }
             // fall through to 7903
             case 7903: {
+                omg_current_file_idx = 1;
+                omg_current_line = 2148;
     _s.pop();
             }
             // fall through to 7904
@@ -13022,6 +13548,7 @@ function omg_p40(_captured, v_path, v_alias, v_line) {
             }
             // fall through to 7909
             case 7909: {
+                omg_current_file_idx = 1;
                 omg_current_line = 2151;
     if (v_saved_nested === OMG_UNSET) omg_undefined("saved_nested"); _s.push(v_saved_nested);
             }
@@ -13118,6 +13645,7 @@ function omg_p40(_captured, v_path, v_alias, v_line) {
             }
             // fall through to 7931
             case 7931: {
+                omg_current_file_idx = 1;
                 omg_current_line = 2165;
     _s.push(0n);
             }
@@ -13140,6 +13668,7 @@ function omg_p40(_captured, v_path, v_alias, v_line) {
             }
             // fall through to 7936
             case 7936: {
+                omg_current_file_idx = 1;
                 omg_current_line = 2167;
     if (v_i === OMG_UNSET) omg_undefined("i"); _s.push(v_i);
             }
@@ -13199,6 +13728,8 @@ function omg_p40(_captured, v_path, v_alias, v_line) {
             }
             // fall through to 7950
             case 7950: {
+                omg_current_file_idx = 1;
+                omg_current_line = 2169;
     _s.pop();
             }
             // fall through to 7951
@@ -13261,6 +13792,8 @@ function omg_p40(_captured, v_path, v_alias, v_line) {
             }
             // fall through to 7965
             case 7965: {
+                omg_current_file_idx = 1;
+                omg_current_line = 2171;
     _s.pop();
             }
             // fall through to 7966
@@ -13269,6 +13802,7 @@ function omg_p40(_captured, v_path, v_alias, v_line) {
             }
             // fall through to 7967
             case 7967: {
+                omg_current_file_idx = 1;
                 omg_current_line = 2173;
     if (v_ex === OMG_UNSET) omg_undefined("ex"); _s.push(v_ex);
             }
@@ -13286,6 +13820,8 @@ function omg_p40(_captured, v_path, v_alias, v_line) {
             }
             // fall through to 7971
             case 7971: {
+                omg_current_file_idx = 1;
+                omg_current_line = 2173;
     { const _c = _s.pop(); if (!omg_truthy(_c)) { _ip = 7980; continue; } }
             }
             // fall through to 7972
@@ -13315,6 +13851,8 @@ function omg_p40(_captured, v_path, v_alias, v_line) {
             }
             // fall through to 7978
             case 7978: {
+                omg_current_file_idx = 1;
+                omg_current_line = 2174;
     _s.pop();
             }
             // fall through to 7979
@@ -13323,6 +13861,7 @@ function omg_p40(_captured, v_path, v_alias, v_line) {
             }
             // fall through to 7980
             case 7980: {
+                omg_current_file_idx = 1;
                 omg_current_line = 2176;
     _s.push("LOAD");
             }
@@ -13356,10 +13895,13 @@ function omg_p40(_captured, v_path, v_alias, v_line) {
             }
             // fall through to 7988
             case 7988: {
+                omg_current_file_idx = 1;
+                omg_current_line = 2176;
     _s.pop();
             }
             // fall through to 7989
             case 7989: {
+                omg_current_file_idx = 1;
                 omg_current_line = 2179;
     if (v_i === OMG_UNSET) omg_undefined("i"); _s.push(v_i);
             }
@@ -13381,6 +13923,7 @@ function omg_p40(_captured, v_path, v_alias, v_line) {
             }
             // fall through to 7994
             case 7994: {
+                omg_current_file_idx = 1;
                 omg_current_line = 2181;
     _s.push("BUILD_DICT");
             }
@@ -13398,6 +13941,8 @@ function omg_p40(_captured, v_path, v_alias, v_line) {
             }
             // fall through to 7998
             case 7998: {
+                omg_current_file_idx = 1;
+                omg_current_line = 2181;
     _s.pop();
             }
             // fall through to 7999
@@ -13427,6 +13972,8 @@ function omg_p40(_captured, v_path, v_alias, v_line) {
             }
             // fall through to 8005
             case 8005: {
+                omg_current_file_idx = 1;
+                omg_current_line = 2182;
     _s.pop();
             }
             // fall through to 8006
@@ -13440,6 +13987,8 @@ function omg_p40(_captured, v_path, v_alias, v_line) {
             }
             // fall through to 8008
             case 8008: {
+                omg_current_file_idx = 1;
+                omg_current_line = 2183;
     _s.pop();
             }
             // fall through to 8009
@@ -13457,6 +14006,8 @@ function omg_p40(_captured, v_path, v_alias, v_line) {
             }
             // fall through to 8012
             case 8012: {
+                omg_current_file_idx = 1;
+                omg_current_line = 2184;
     { const _arr = _s.splice(_s.length - 2, 2); _s.push(_arr); }
             }
             // fall through to 8013
@@ -13465,6 +14016,8 @@ function omg_p40(_captured, v_path, v_alias, v_line) {
             }
             // fall through to 8014
             case 8014: {
+                omg_current_file_idx = 1;
+                omg_current_line = 2184;
     _s.pop();
             }
             // fall through to 8015
@@ -13502,6 +14055,7 @@ function omg_p41(_captured, v_ast, v_file) {
         try {
             switch (_ip) {
             case 9227: {
+                omg_current_file_idx = 1;
                 omg_current_line = 2581;
     _s.push(v_ast);
             }
@@ -13559,6 +14113,7 @@ function omg_p42(_captured, v_ast, v_file, v_known_globals) {
         try {
             switch (_ip) {
             case 9233: {
+                omg_current_file_idx = 1;
                 omg_current_line = 2589;
     { const _arr = _s.splice(_s.length - 0, 0); _s.push(_arr); }
             }
@@ -13754,6 +14309,8 @@ function omg_p42(_captured, v_ast, v_file, v_known_globals) {
             }
             // fall through to 9277
             case 9277: {
+                omg_current_file_idx = 1;
+                omg_current_line = 2613;
     if (v___mod_1__cc_file_top_names === OMG_UNSET) omg_undefined("__mod_1__cc_file_top_names"); v___mod_1__cc_file_top_names = _s.pop();
             }
             // fall through to 9278
@@ -13803,6 +14360,8 @@ function omg_p42(_captured, v_ast, v_file, v_known_globals) {
             }
             // fall through to 9288
             case 9288: {
+                omg_current_file_idx = 1;
+                omg_current_line = 2618;
     _s.pop();
             }
             // fall through to 9289
@@ -13829,6 +14388,7 @@ function omg_p42(_captured, v_ast, v_file, v_known_globals) {
             }
             // fall through to 9294
             case 9294: {
+                omg_current_file_idx = 1;
                 omg_current_line = 2621;
     if (v_i === OMG_UNSET) omg_undefined("i"); _s.push(v_i);
             }
@@ -13863,6 +14423,8 @@ function omg_p42(_captured, v_ast, v_file, v_known_globals) {
             }
             // fall through to 9302
             case 9302: {
+                omg_current_file_idx = 1;
+                omg_current_line = 2622;
     _s.pop();
             }
             // fall through to 9303
@@ -13888,6 +14450,7 @@ function omg_p42(_captured, v_ast, v_file, v_known_globals) {
             }
             // fall through to 9308
             case 9308: {
+                omg_current_file_idx = 1;
                 omg_current_line = 2625;
     _s.push("HALT");
             }
@@ -13897,6 +14460,8 @@ function omg_p42(_captured, v_ast, v_file, v_known_globals) {
             }
             // fall through to 9310
             case 9310: {
+                omg_current_file_idx = 1;
+                omg_current_line = 2625;
     _s.pop();
             }
             // fall through to 9311
@@ -13950,6 +14515,7 @@ function omg_p42(_captured, v_ast, v_file, v_known_globals) {
             }
             // fall through to 9322
             case 9322: {
+                omg_current_file_idx = 1;
                 omg_current_line = 2631;
     if (v_i === OMG_UNSET) omg_undefined("i"); _s.push(v_i);
             }
@@ -14083,6 +14649,8 @@ function omg_p42(_captured, v_ast, v_file, v_known_globals) {
             }
             // fall through to 9354
             case 9354: {
+                omg_current_file_idx = 1;
+                omg_current_line = 2635;
     { const _b = _s.pop(); const _a = _s.pop(); _s.push(omg_add(_a, _b)); }
             }
             // fall through to 9355
@@ -14137,6 +14705,7 @@ function omg_p42(_captured, v_ast, v_file, v_known_globals) {
             }
             // fall through to 9367
             case 9367: {
+                omg_current_file_idx = 1;
                 omg_current_line = 2639;
     if (v_final_code === OMG_UNSET) omg_undefined("final_code"); _s.push(v_final_code);
             }
@@ -14195,6 +14764,7 @@ function omg_p43(_captured) {
         try {
             switch (_ip) {
             case 10370: {
+                omg_current_file_idx = 1;
                 omg_current_line = 2897;
     { const _arr = _s.splice(_s.length - 0, 0); _s.push(_arr); }
             }
@@ -14439,6 +15009,7 @@ function omg_p44(_captured, v_text, v_file_path) {
         try {
             switch (_ip) {
             case 10288: {
+                omg_current_file_idx = 1;
                 omg_current_line = 2858;
     _s.push(v_text);
             }
@@ -14492,6 +15063,7 @@ function omg_p45(_captured, v_text, v_file_path, v_known_globals) {
         try {
             switch (_ip) {
             case 10294: {
+                omg_current_file_idx = 1;
                 omg_current_line = 2868;
     _s.push(v_text);
             }
@@ -14505,6 +15077,8 @@ function omg_p45(_captured, v_text, v_file_path, v_known_globals) {
             }
             // fall through to 10297
             case 10297: {
+                omg_current_file_idx = 1;
+                omg_current_line = 2868;
     v_tokens = _s.pop();
             }
             // fall through to 10298
@@ -14522,6 +15096,8 @@ function omg_p45(_captured, v_text, v_file_path, v_known_globals) {
             }
             // fall through to 10301
             case 10301: {
+                omg_current_file_idx = 1;
+                omg_current_line = 2869;
     v_ast = _s.pop();
             }
             // fall through to 10302
@@ -14543,6 +15119,8 @@ function omg_p45(_captured, v_text, v_file_path, v_known_globals) {
             }
             // fall through to 10306
             case 10306: {
+                omg_current_file_idx = 1;
+                omg_current_line = 2870;
     v_compiled = _s.pop();
             }
             // fall through to 10307
@@ -14564,6 +15142,8 @@ function omg_p45(_captured, v_text, v_file_path, v_known_globals) {
             }
             // fall through to 10311
             case 10311: {
+                omg_current_file_idx = 1;
+                omg_current_line = 2874;
     if (v_compiled === OMG_UNSET) omg_undefined("compiled"); _s.push(v_compiled);
             }
             // fall through to 10312
@@ -14680,6 +15260,7 @@ function omg_p46(_captured, v_stmt) {
         try {
             switch (_ip) {
             case 8017: {
+                omg_current_file_idx = 1;
                 omg_current_line = 2188;
     _s.push(v_stmt);
             }
@@ -14689,6 +15270,8 @@ function omg_p46(_captured, v_stmt) {
             }
             // fall through to 8019
             case 8019: {
+                omg_current_file_idx = 1;
+                omg_current_line = 2188;
     if (v___mod_1__cc_current_line === OMG_UNSET) omg_undefined("__mod_1__cc_current_line"); v___mod_1__cc_current_line = _s.pop();
             }
             // fall through to 8020
@@ -14744,6 +15327,8 @@ function omg_p46(_captured, v_stmt) {
             }
             // fall through to 8032
             case 8032: {
+                omg_current_file_idx = 1;
+                omg_current_line = 2191;
     _s.pop();
             }
             // fall through to 8033
@@ -14757,6 +15342,8 @@ function omg_p46(_captured, v_stmt) {
             }
             // fall through to 8035
             case 8035: {
+                omg_current_file_idx = 1;
+                omg_current_line = 2192;
     _s.pop();
             }
             // fall through to 8036
@@ -14774,6 +15361,7 @@ function omg_p46(_captured, v_stmt) {
             }
             // fall through to 8039
             case 8039: {
+                omg_current_file_idx = 1;
                 omg_current_line = 2195;
     if (v_kind === OMG_UNSET) omg_undefined("kind"); _s.push(v_kind);
             }
@@ -14829,6 +15417,8 @@ function omg_p46(_captured, v_stmt) {
             }
             // fall through to 8052
             case 8052: {
+                omg_current_file_idx = 1;
+                omg_current_line = 2205;
     v_dn_mangled = _s.pop();
             }
             // fall through to 8053
@@ -14846,6 +15436,8 @@ function omg_p46(_captured, v_stmt) {
             }
             // fall through to 8056
             case 8056: {
+                omg_current_file_idx = 1;
+                omg_current_line = 2206;
     { const _c = _s.pop(); if (!omg_truthy(_c)) { _ip = 8075; continue; } }
             }
             // fall through to 8057
@@ -14923,6 +15515,7 @@ function omg_p46(_captured, v_stmt) {
             }
             // fall through to 8075
             case 8075: {
+                omg_current_file_idx = 1;
                 omg_current_line = 2209;
     if (v___mod_1__cc_top_level_declared === OMG_UNSET) omg_undefined("__mod_1__cc_top_level_declared"); _s.push(v___mod_1__cc_top_level_declared);
             }
@@ -14948,6 +15541,7 @@ function omg_p46(_captured, v_stmt) {
             }
             // fall through to 8081
             case 8081: {
+                omg_current_file_idx = 1;
                 omg_current_line = 2211;
     _s.push(v_stmt);
             }
@@ -14965,6 +15559,8 @@ function omg_p46(_captured, v_stmt) {
             }
             // fall through to 8085
             case 8085: {
+                omg_current_file_idx = 1;
+                omg_current_line = 2211;
     _s.pop();
             }
             // fall through to 8086
@@ -14986,6 +15582,8 @@ function omg_p46(_captured, v_stmt) {
             }
             // fall through to 8090
             case 8090: {
+                omg_current_file_idx = 1;
+                omg_current_line = 2215;
     _s.pop();
             }
             // fall through to 8091
@@ -15011,6 +15609,8 @@ function omg_p46(_captured, v_stmt) {
             }
             // fall through to 8096
             case 8096: {
+                omg_current_file_idx = 1;
+                omg_current_line = 2216;
     { const _arr = _s.splice(_s.length - 2, 2); _s.push(_arr); }
             }
             // fall through to 8097
@@ -15019,6 +15619,8 @@ function omg_p46(_captured, v_stmt) {
             }
             // fall through to 8098
             case 8098: {
+                omg_current_file_idx = 1;
+                omg_current_line = 2216;
     _s.pop();
             }
             // fall through to 8099
@@ -15036,6 +15638,7 @@ function omg_p46(_captured, v_stmt) {
             }
             // fall through to 8102
             case 8102: {
+                omg_current_file_idx = 1;
                 omg_current_line = 2219;
     if (v_kind === OMG_UNSET) omg_undefined("kind"); _s.push(v_kind);
             }
@@ -15070,6 +15673,8 @@ function omg_p46(_captured, v_stmt) {
             }
             // fall through to 8110
             case 8110: {
+                omg_current_file_idx = 1;
+                omg_current_line = 2220;
     _s.pop();
             }
             // fall through to 8111
@@ -15091,6 +15696,8 @@ function omg_p46(_captured, v_stmt) {
             }
             // fall through to 8115
             case 8115: {
+                omg_current_file_idx = 1;
+                omg_current_line = 2221;
     _s.push(false);
             }
             // fall through to 8116
@@ -15120,6 +15727,8 @@ function omg_p46(_captured, v_stmt) {
             }
             // fall through to 8122
             case 8122: {
+                omg_current_file_idx = 1;
+                omg_current_line = 2222;
     _s.pop();
             }
             // fall through to 8123
@@ -15128,6 +15737,7 @@ function omg_p46(_captured, v_stmt) {
             }
             // fall through to 8124
             case 8124: {
+                omg_current_file_idx = 1;
                 omg_current_line = 2224;
     _s.push("STORE");
             }
@@ -15149,6 +15759,8 @@ function omg_p46(_captured, v_stmt) {
             }
             // fall through to 8129
             case 8129: {
+                omg_current_file_idx = 1;
+                omg_current_line = 2224;
     { const _arr = _s.splice(_s.length - 2, 2); _s.push(_arr); }
             }
             // fall through to 8130
@@ -15157,6 +15769,8 @@ function omg_p46(_captured, v_stmt) {
             }
             // fall through to 8131
             case 8131: {
+                omg_current_file_idx = 1;
+                omg_current_line = 2224;
     _s.pop();
             }
             // fall through to 8132
@@ -15174,6 +15788,7 @@ function omg_p46(_captured, v_stmt) {
             }
             // fall through to 8135
             case 8135: {
+                omg_current_file_idx = 1;
                 omg_current_line = 2227;
     if (v_kind === OMG_UNSET) omg_undefined("kind"); _s.push(v_kind);
             }
@@ -15208,6 +15823,8 @@ function omg_p46(_captured, v_stmt) {
             }
             // fall through to 8143
             case 8143: {
+                omg_current_file_idx = 1;
+                omg_current_line = 2228;
     _s.pop();
             }
             // fall through to 8144
@@ -15229,6 +15846,8 @@ function omg_p46(_captured, v_stmt) {
             }
             // fall through to 8148
             case 8148: {
+                omg_current_file_idx = 1;
+                omg_current_line = 2229;
     _s.pop();
             }
             // fall through to 8149
@@ -15258,6 +15877,8 @@ function omg_p46(_captured, v_stmt) {
             }
             // fall through to 8155
             case 8155: {
+                omg_current_file_idx = 1;
+                omg_current_line = 2230;
     _s.pop();
             }
             // fall through to 8156
@@ -15275,6 +15896,7 @@ function omg_p46(_captured, v_stmt) {
             }
             // fall through to 8159
             case 8159: {
+                omg_current_file_idx = 1;
                 omg_current_line = 2233;
     if (v_kind === OMG_UNSET) omg_undefined("kind"); _s.push(v_kind);
             }
@@ -15309,6 +15931,8 @@ function omg_p46(_captured, v_stmt) {
             }
             // fall through to 8167
             case 8167: {
+                omg_current_file_idx = 1;
+                omg_current_line = 2234;
     _s.pop();
             }
             // fall through to 8168
@@ -15330,6 +15954,8 @@ function omg_p46(_captured, v_stmt) {
             }
             // fall through to 8172
             case 8172: {
+                omg_current_file_idx = 1;
+                omg_current_line = 2235;
     _s.pop();
             }
             // fall through to 8173
@@ -15351,6 +15977,8 @@ function omg_p46(_captured, v_stmt) {
             }
             // fall through to 8177
             case 8177: {
+                omg_current_file_idx = 1;
+                omg_current_line = 2236;
     _s.pop();
             }
             // fall through to 8178
@@ -15364,6 +15992,8 @@ function omg_p46(_captured, v_stmt) {
             }
             // fall through to 8180
             case 8180: {
+                omg_current_file_idx = 1;
+                omg_current_line = 2237;
     _s.pop();
             }
             // fall through to 8181
@@ -15381,6 +16011,7 @@ function omg_p46(_captured, v_stmt) {
             }
             // fall through to 8184
             case 8184: {
+                omg_current_file_idx = 1;
                 omg_current_line = 2240;
     if (v_kind === OMG_UNSET) omg_undefined("kind"); _s.push(v_kind);
             }
@@ -15415,6 +16046,8 @@ function omg_p46(_captured, v_stmt) {
             }
             // fall through to 8192
             case 8192: {
+                omg_current_file_idx = 1;
+                omg_current_line = 2241;
     _s.pop();
             }
             // fall through to 8193
@@ -15428,6 +16061,8 @@ function omg_p46(_captured, v_stmt) {
             }
             // fall through to 8195
             case 8195: {
+                omg_current_file_idx = 1;
+                omg_current_line = 2242;
     _s.pop();
             }
             // fall through to 8196
@@ -15445,6 +16080,7 @@ function omg_p46(_captured, v_stmt) {
             }
             // fall through to 8199
             case 8199: {
+                omg_current_file_idx = 1;
                 omg_current_line = 2245;
     if (v_kind === OMG_UNSET) omg_undefined("kind"); _s.push(v_kind);
             }
@@ -15503,6 +16139,8 @@ function omg_p46(_captured, v_stmt) {
             }
             // fall through to 8213
             case 8213: {
+                omg_current_file_idx = 1;
+                omg_current_line = 2246;
     _s.pop();
             }
             // fall through to 8214
@@ -15520,6 +16158,7 @@ function omg_p46(_captured, v_stmt) {
             }
             // fall through to 8217
             case 8217: {
+                omg_current_file_idx = 1;
                 omg_current_line = 2249;
     if (v_kind === OMG_UNSET) omg_undefined("kind"); _s.push(v_kind);
             }
@@ -15554,6 +16193,8 @@ function omg_p46(_captured, v_stmt) {
             }
             // fall through to 8225
             case 8225: {
+                omg_current_file_idx = 1;
+                omg_current_line = 2250;
     _s.pop();
             }
             // fall through to 8226
@@ -15567,6 +16208,8 @@ function omg_p46(_captured, v_stmt) {
             }
             // fall through to 8228
             case 8228: {
+                omg_current_file_idx = 1;
+                omg_current_line = 2251;
     _s.pop();
             }
             // fall through to 8229
@@ -15584,6 +16227,7 @@ function omg_p46(_captured, v_stmt) {
             }
             // fall through to 8232
             case 8232: {
+                omg_current_file_idx = 1;
                 omg_current_line = 2254;
     if (v_kind === OMG_UNSET) omg_undefined("kind"); _s.push(v_kind);
             }
@@ -15673,6 +16317,7 @@ function omg_p46(_captured, v_stmt) {
             }
             // fall through to 8253
             case 8253: {
+                omg_current_file_idx = 1;
                 omg_current_line = 2262;
     if (v_done === OMG_UNSET) omg_undefined("done"); _s.push(v_done);
             }
@@ -15720,6 +16365,7 @@ function omg_p46(_captured, v_stmt) {
             }
             // fall through to 8264
             case 8264: {
+                omg_current_file_idx = 1;
                 omg_current_line = 2265;
     if (v_cur_tail === OMG_UNSET) omg_undefined("cur_tail"); _s.push(v_cur_tail);
             }
@@ -15811,6 +16457,7 @@ function omg_p46(_captured, v_stmt) {
             }
             // fall through to 8286
             case 8286: {
+                omg_current_file_idx = 1;
                 omg_current_line = 2269;
     if (v_cur_tail === OMG_UNSET) omg_undefined("cur_tail"); _s.push(v_cur_tail);
             }
@@ -15829,10 +16476,13 @@ function omg_p46(_captured, v_stmt) {
             }
             // fall through to 8290
             case 8290: {
+                omg_current_file_idx = 1;
+                omg_current_line = 2270;
     _ip = 8253; continue;
             }
             // fall through to 8291
             case 8291: {
+                omg_current_file_idx = 1;
                 omg_current_line = 2273;
     { const _arr = _s.splice(_s.length - 0, 0); _s.push(_arr); }
             }
@@ -15864,6 +16514,7 @@ function omg_p46(_captured, v_stmt) {
             }
             // fall through to 8298
             case 8298: {
+                omg_current_file_idx = 1;
                 omg_current_line = 2276;
     if (v_i === OMG_UNSET) omg_undefined("i"); _s.push(v_i);
             }
@@ -15915,6 +16566,8 @@ function omg_p46(_captured, v_stmt) {
             }
             // fall through to 8310
             case 8310: {
+                omg_current_file_idx = 1;
+                omg_current_line = 2278;
     _s.pop();
             }
             // fall through to 8311
@@ -15928,6 +16581,8 @@ function omg_p46(_captured, v_stmt) {
             }
             // fall through to 8313
             case 8313: {
+                omg_current_file_idx = 1;
+                omg_current_line = 2279;
     v_jf = _s.pop();
             }
             // fall through to 8314
@@ -15949,6 +16604,8 @@ function omg_p46(_captured, v_stmt) {
             }
             // fall through to 8318
             case 8318: {
+                omg_current_file_idx = 1;
+                omg_current_line = 2280;
     _s.pop();
             }
             // fall through to 8319
@@ -15962,6 +16619,8 @@ function omg_p46(_captured, v_stmt) {
             }
             // fall through to 8321
             case 8321: {
+                omg_current_file_idx = 1;
+                omg_current_line = 2281;
     v_tmp_jp = _s.pop();
             }
             // fall through to 8322
@@ -16004,6 +16663,8 @@ function omg_p46(_captured, v_stmt) {
             }
             // fall through to 8331
             case 8331: {
+                omg_current_file_idx = 1;
+                omg_current_line = 2283;
     _s.pop();
             }
             // fall through to 8332
@@ -16029,6 +16690,7 @@ function omg_p46(_captured, v_stmt) {
             }
             // fall through to 8337
             case 8337: {
+                omg_current_file_idx = 1;
                 omg_current_line = 2286;
     if (v_else_block === OMG_UNSET) omg_undefined("else_block"); _s.push(v_else_block);
             }
@@ -16055,6 +16717,8 @@ function omg_p46(_captured, v_stmt) {
             }
             // fall through to 8343
             case 8343: {
+                omg_current_file_idx = 1;
+                omg_current_line = 2287;
     _s.pop();
             }
             // fall through to 8344
@@ -16063,6 +16727,7 @@ function omg_p46(_captured, v_stmt) {
             }
             // fall through to 8345
             case 8345: {
+                omg_current_file_idx = 1;
                 omg_current_line = 2289;
     if (v___mod_1__cc_code === OMG_UNSET) omg_undefined("__mod_1__cc_code"); _s.push(v___mod_1__cc_code);
             }
@@ -16098,6 +16763,7 @@ function omg_p46(_captured, v_stmt) {
             }
             // fall through to 8353
             case 8353: {
+                omg_current_file_idx = 1;
                 omg_current_line = 2292;
     if (v_i === OMG_UNSET) omg_undefined("i"); _s.push(v_i);
             }
@@ -16136,6 +16802,8 @@ function omg_p46(_captured, v_stmt) {
             }
             // fall through to 8362
             case 8362: {
+                omg_current_file_idx = 1;
+                omg_current_line = 2293;
     _s.pop();
             }
             // fall through to 8363
@@ -16161,6 +16829,7 @@ function omg_p46(_captured, v_stmt) {
             }
             // fall through to 8368
             case 8368: {
+                omg_current_file_idx = 1;
                 omg_current_line = 2296;
     _s.push(false);
             }
@@ -16174,6 +16843,7 @@ function omg_p46(_captured, v_stmt) {
             }
             // fall through to 8371
             case 8371: {
+                omg_current_file_idx = 1;
                 omg_current_line = 2298;
     if (v_kind === OMG_UNSET) omg_undefined("kind"); _s.push(v_kind);
             }
@@ -16221,6 +16891,8 @@ function omg_p46(_captured, v_stmt) {
             }
             // fall through to 8382
             case 8382: {
+                omg_current_file_idx = 1;
+                omg_current_line = 2300;
     _s.pop();
             }
             // fall through to 8383
@@ -16234,6 +16906,8 @@ function omg_p46(_captured, v_stmt) {
             }
             // fall through to 8385
             case 8385: {
+                omg_current_file_idx = 1;
+                omg_current_line = 2301;
     v_jf = _s.pop();
             }
             // fall through to 8386
@@ -16263,6 +16937,8 @@ function omg_p46(_captured, v_stmt) {
             }
             // fall through to 8392
             case 8392: {
+                omg_current_file_idx = 1;
+                omg_current_line = 2302;
     _s.pop();
             }
             // fall through to 8393
@@ -16280,6 +16956,7 @@ function omg_p46(_captured, v_stmt) {
             }
             // fall through to 8396
             case 8396: {
+                omg_current_file_idx = 1;
                 omg_current_line = 2305;
     if (v_kind === OMG_UNSET) omg_undefined("kind"); _s.push(v_kind);
             }
@@ -16348,6 +17025,8 @@ function omg_p46(_captured, v_stmt) {
             }
             // fall through to 8412
             case 8412: {
+                omg_current_file_idx = 1;
+                omg_current_line = 2322;
     _s.pop();
             }
             // fall through to 8413
@@ -16361,6 +17040,8 @@ function omg_p46(_captured, v_stmt) {
             }
             // fall through to 8415
             case 8415: {
+                omg_current_file_idx = 1;
+                omg_current_line = 2323;
     _s.pop();
             }
             // fall through to 8416
@@ -16378,6 +17059,8 @@ function omg_p46(_captured, v_stmt) {
             }
             // fall through to 8419
             case 8419: {
+                omg_current_file_idx = 1;
+                omg_current_line = 2324;
     { const _arr = _s.splice(_s.length - 2, 2); _s.push(_arr); }
             }
             // fall through to 8420
@@ -16386,6 +17069,8 @@ function omg_p46(_captured, v_stmt) {
             }
             // fall through to 8421
             case 8421: {
+                omg_current_file_idx = 1;
+                omg_current_line = 2324;
     _s.pop();
             }
             // fall through to 8422
@@ -16407,6 +17092,8 @@ function omg_p46(_captured, v_stmt) {
             }
             // fall through to 8426
             case 8426: {
+                omg_current_file_idx = 1;
+                omg_current_line = 2325;
     _s.pop();
             }
             // fall through to 8427
@@ -16420,6 +17107,8 @@ function omg_p46(_captured, v_stmt) {
             }
             // fall through to 8429
             case 8429: {
+                omg_current_file_idx = 1;
+                omg_current_line = 2326;
     _s.pop();
             }
             // fall through to 8430
@@ -16437,6 +17126,8 @@ function omg_p46(_captured, v_stmt) {
             }
             // fall through to 8433
             case 8433: {
+                omg_current_file_idx = 1;
+                omg_current_line = 2327;
     { const _arr = _s.splice(_s.length - 2, 2); _s.push(_arr); }
             }
             // fall through to 8434
@@ -16445,6 +17136,8 @@ function omg_p46(_captured, v_stmt) {
             }
             // fall through to 8435
             case 8435: {
+                omg_current_file_idx = 1;
+                omg_current_line = 2327;
     _s.pop();
             }
             // fall through to 8436
@@ -16475,6 +17168,8 @@ function omg_p46(_captured, v_stmt) {
             }
             // fall through to 8442
             case 8442: {
+                omg_current_file_idx = 1;
+                omg_current_line = 2329;
     { const _arr = _s.splice(_s.length - 2, 2); _s.push(_arr); }
             }
             // fall through to 8443
@@ -16483,6 +17178,8 @@ function omg_p46(_captured, v_stmt) {
             }
             // fall through to 8444
             case 8444: {
+                omg_current_file_idx = 1;
+                omg_current_line = 2329;
     _s.pop();
             }
             // fall through to 8445
@@ -16500,6 +17197,8 @@ function omg_p46(_captured, v_stmt) {
             }
             // fall through to 8448
             case 8448: {
+                omg_current_file_idx = 1;
+                omg_current_line = 2330;
     { const _arr = _s.splice(_s.length - 2, 2); _s.push(_arr); }
             }
             // fall through to 8449
@@ -16508,6 +17207,8 @@ function omg_p46(_captured, v_stmt) {
             }
             // fall through to 8450
             case 8450: {
+                omg_current_file_idx = 1;
+                omg_current_line = 2330;
     _s.pop();
             }
             // fall through to 8451
@@ -16537,6 +17238,8 @@ function omg_p46(_captured, v_stmt) {
             }
             // fall through to 8457
             case 8457: {
+                omg_current_file_idx = 1;
+                omg_current_line = 2331;
     _s.pop();
             }
             // fall through to 8458
@@ -16550,6 +17253,8 @@ function omg_p46(_captured, v_stmt) {
             }
             // fall through to 8460
             case 8460: {
+                omg_current_file_idx = 1;
+                omg_current_line = 2332;
     _s.pop();
             }
             // fall through to 8461
@@ -16563,6 +17268,8 @@ function omg_p46(_captured, v_stmt) {
             }
             // fall through to 8463
             case 8463: {
+                omg_current_file_idx = 1;
+                omg_current_line = 2333;
     v_jf = _s.pop();
             }
             // fall through to 8464
@@ -16580,6 +17287,8 @@ function omg_p46(_captured, v_stmt) {
             }
             // fall through to 8467
             case 8467: {
+                omg_current_file_idx = 1;
+                omg_current_line = 2334;
     { const _arr = _s.splice(_s.length - 2, 2); _s.push(_arr); }
             }
             // fall through to 8468
@@ -16588,6 +17297,8 @@ function omg_p46(_captured, v_stmt) {
             }
             // fall through to 8469
             case 8469: {
+                omg_current_file_idx = 1;
+                omg_current_line = 2334;
     _s.pop();
             }
             // fall through to 8470
@@ -16605,6 +17316,8 @@ function omg_p46(_captured, v_stmt) {
             }
             // fall through to 8473
             case 8473: {
+                omg_current_file_idx = 1;
+                omg_current_line = 2335;
     { const _arr = _s.splice(_s.length - 2, 2); _s.push(_arr); }
             }
             // fall through to 8474
@@ -16613,6 +17326,8 @@ function omg_p46(_captured, v_stmt) {
             }
             // fall through to 8475
             case 8475: {
+                omg_current_file_idx = 1;
+                omg_current_line = 2335;
     _s.pop();
             }
             // fall through to 8476
@@ -16626,6 +17341,8 @@ function omg_p46(_captured, v_stmt) {
             }
             // fall through to 8478
             case 8478: {
+                omg_current_file_idx = 1;
+                omg_current_line = 2336;
     _s.pop();
             }
             // fall through to 8479
@@ -16647,6 +17364,8 @@ function omg_p46(_captured, v_stmt) {
             }
             // fall through to 8483
             case 8483: {
+                omg_current_file_idx = 1;
+                omg_current_line = 2337;
     _s.pop();
             }
             // fall through to 8484
@@ -16672,6 +17391,8 @@ function omg_p46(_captured, v_stmt) {
             }
             // fall through to 8489
             case 8489: {
+                omg_current_file_idx = 1;
+                omg_current_line = 2338;
     { const _arr = _s.splice(_s.length - 2, 2); _s.push(_arr); }
             }
             // fall through to 8490
@@ -16680,6 +17401,8 @@ function omg_p46(_captured, v_stmt) {
             }
             // fall through to 8491
             case 8491: {
+                omg_current_file_idx = 1;
+                omg_current_line = 2338;
     _s.pop();
             }
             // fall through to 8492
@@ -16697,6 +17420,8 @@ function omg_p46(_captured, v_stmt) {
             }
             // fall through to 8495
             case 8495: {
+                omg_current_file_idx = 1;
+                omg_current_line = 2339;
     { const _arr = _s.splice(_s.length - 2, 2); _s.push(_arr); }
             }
             // fall through to 8496
@@ -16705,6 +17430,8 @@ function omg_p46(_captured, v_stmt) {
             }
             // fall through to 8497
             case 8497: {
+                omg_current_file_idx = 1;
+                omg_current_line = 2339;
     _s.pop();
             }
             // fall through to 8498
@@ -16726,6 +17453,8 @@ function omg_p46(_captured, v_stmt) {
             }
             // fall through to 8502
             case 8502: {
+                omg_current_file_idx = 1;
+                omg_current_line = 2340;
     _s.pop();
             }
             // fall through to 8503
@@ -16739,6 +17468,8 @@ function omg_p46(_captured, v_stmt) {
             }
             // fall through to 8505
             case 8505: {
+                omg_current_file_idx = 1;
+                omg_current_line = 2341;
     _s.pop();
             }
             // fall through to 8506
@@ -16756,6 +17487,8 @@ function omg_p46(_captured, v_stmt) {
             }
             // fall through to 8509
             case 8509: {
+                omg_current_file_idx = 1;
+                omg_current_line = 2342;
     { const _arr = _s.splice(_s.length - 2, 2); _s.push(_arr); }
             }
             // fall through to 8510
@@ -16764,6 +17497,8 @@ function omg_p46(_captured, v_stmt) {
             }
             // fall through to 8511
             case 8511: {
+                omg_current_file_idx = 1;
+                omg_current_line = 2342;
     _s.pop();
             }
             // fall through to 8512
@@ -16810,6 +17545,8 @@ function omg_p46(_captured, v_stmt) {
             }
             // fall through to 8522
             case 8522: {
+                omg_current_file_idx = 1;
+                omg_current_line = 2344;
     _s.pop();
             }
             // fall through to 8523
@@ -16844,6 +17581,7 @@ function omg_p46(_captured, v_stmt) {
             }
             // fall through to 8530
             case 8530: {
+                omg_current_file_idx = 1;
                 omg_current_line = 2348;
     if (v_kind === OMG_UNSET) omg_undefined("kind"); _s.push(v_kind);
             }
@@ -16870,6 +17608,8 @@ function omg_p46(_captured, v_stmt) {
             }
             // fall through to 8536
             case 8536: {
+                omg_current_file_idx = 1;
+                omg_current_line = 2349;
     v_handler_idx = _s.pop();
             }
             // fall through to 8537
@@ -16908,6 +17648,8 @@ function omg_p46(_captured, v_stmt) {
             }
             // fall through to 8545
             case 8545: {
+                omg_current_file_idx = 1;
+                omg_current_line = 2354;
     _s.pop();
             }
             // fall through to 8546
@@ -16938,6 +17680,8 @@ function omg_p46(_captured, v_stmt) {
             }
             // fall through to 8552
             case 8552: {
+                omg_current_file_idx = 1;
+                omg_current_line = 2356;
     _s.pop();
             }
             // fall through to 8553
@@ -16951,6 +17695,8 @@ function omg_p46(_captured, v_stmt) {
             }
             // fall through to 8555
             case 8555: {
+                omg_current_file_idx = 1;
+                omg_current_line = 2357;
     v_jend = _s.pop();
             }
             // fall through to 8556
@@ -16981,6 +17727,8 @@ function omg_p46(_captured, v_stmt) {
             }
             // fall through to 8562
             case 8562: {
+                omg_current_file_idx = 1;
+                omg_current_line = 2359;
     _s.pop();
             }
             // fall through to 8563
@@ -17028,6 +17776,8 @@ function omg_p46(_captured, v_stmt) {
             }
             // fall through to 8573
             case 8573: {
+                omg_current_file_idx = 1;
+                omg_current_line = 2362;
     _s.pop();
             }
             // fall through to 8574
@@ -17036,6 +17786,7 @@ function omg_p46(_captured, v_stmt) {
             }
             // fall through to 8575
             case 8575: {
+                omg_current_file_idx = 1;
                 omg_current_line = 2364;
     if (v_exc_name === OMG_UNSET) omg_undefined("exc_name"); _s.push(v_exc_name);
             }
@@ -17045,6 +17796,8 @@ function omg_p46(_captured, v_stmt) {
             }
             // fall through to 8577
             case 8577: {
+                omg_current_file_idx = 1;
+                omg_current_line = 2364;
     _s.pop();
             }
             // fall through to 8578
@@ -17062,6 +17815,8 @@ function omg_p46(_captured, v_stmt) {
             }
             // fall through to 8581
             case 8581: {
+                omg_current_file_idx = 1;
+                omg_current_line = 2365;
     { const _arr = _s.splice(_s.length - 2, 2); _s.push(_arr); }
             }
             // fall through to 8582
@@ -17070,10 +17825,13 @@ function omg_p46(_captured, v_stmt) {
             }
             // fall through to 8583
             case 8583: {
+                omg_current_file_idx = 1;
+                omg_current_line = 2365;
     _s.pop();
             }
             // fall through to 8584
             case 8584: {
+                omg_current_file_idx = 1;
                 omg_current_line = 2367;
     _s.push(v_stmt);
             }
@@ -17091,6 +17849,8 @@ function omg_p46(_captured, v_stmt) {
             }
             // fall through to 8588
             case 8588: {
+                omg_current_file_idx = 1;
+                omg_current_line = 2367;
     _s.pop();
             }
             // fall through to 8589
@@ -17112,6 +17872,8 @@ function omg_p46(_captured, v_stmt) {
             }
             // fall through to 8593
             case 8593: {
+                omg_current_file_idx = 1;
+                omg_current_line = 2368;
     _s.pop();
             }
             // fall through to 8594
@@ -17129,6 +17891,7 @@ function omg_p46(_captured, v_stmt) {
             }
             // fall through to 8597
             case 8597: {
+                omg_current_file_idx = 1;
                 omg_current_line = 2371;
     if (v_kind === OMG_UNSET) omg_undefined("kind"); _s.push(v_kind);
             }
@@ -17227,6 +17990,8 @@ function omg_p46(_captured, v_stmt) {
             }
             // fall through to 8620
             case 8620: {
+                omg_current_file_idx = 1;
+                omg_current_line = 2381;
     v_mangled = _s.pop();
             }
             // fall through to 8621
@@ -17332,6 +18097,8 @@ function omg_p46(_captured, v_stmt) {
             }
             // fall through to 8645
             case 8645: {
+                omg_current_file_idx = 1;
+                omg_current_line = 2391;
     _s.pop();
             }
             // fall through to 8646
@@ -17377,6 +18144,7 @@ function omg_p46(_captured, v_stmt) {
             }
             // fall through to 8656
             case 8656: {
+                omg_current_file_idx = 1;
                 omg_current_line = 2394;
     if (v_params === OMG_UNSET) omg_undefined("params"); _s.push(v_params);
             }
@@ -17390,6 +18158,8 @@ function omg_p46(_captured, v_stmt) {
             }
             // fall through to 8659
             case 8659: {
+                omg_current_file_idx = 1;
+                omg_current_line = 2394;
     v_body_pair = _s.pop();
             }
             // fall through to 8660
@@ -17440,6 +18210,7 @@ function omg_p46(_captured, v_stmt) {
             }
             // fall through to 8671
             case 8671: {
+                omg_current_file_idx = 1;
                 omg_current_line = 2398;
     if (v_body_pair === OMG_UNSET) omg_undefined("body_pair"); _s.push(v_body_pair);
             }
@@ -17541,6 +18312,8 @@ function omg_p46(_captured, v_stmt) {
             }
             // fall through to 8695
             case 8695: {
+                omg_current_file_idx = 1;
+                omg_current_line = 2402;
     _s.pop();
             }
             // fall through to 8696
@@ -17558,6 +18331,7 @@ function omg_p46(_captured, v_stmt) {
             }
             // fall through to 8699
             case 8699: {
+                omg_current_file_idx = 1;
                 omg_current_line = 2405;
     if (v_kind === OMG_UNSET) omg_undefined("kind"); _s.push(v_kind);
             }
@@ -17645,6 +18419,7 @@ function omg_p46(_captured, v_stmt) {
             }
             // fall through to 8720
             case 8720: {
+                omg_current_file_idx = 1;
                 omg_current_line = 2413;
     _s.push(v_stmt);
             }
@@ -17727,10 +18502,14 @@ function omg_p46(_captured, v_stmt) {
             }
             // fall through to 8740
             case 8740: {
+                omg_current_file_idx = 1;
+                omg_current_line = 2414;
     _s.push(false);
             }
             // fall through to 8741
             case 8741: {
+                omg_current_file_idx = 1;
+                omg_current_line = 2414;
     { const _c = _s.pop(); if (!omg_truthy(_c)) { _ip = 8854; continue; } }
             }
             // fall through to 8742
@@ -17769,6 +18548,8 @@ function omg_p46(_captured, v_stmt) {
             }
             // fall through to 8750
             case 8750: {
+                omg_current_file_idx = 1;
+                omg_current_line = 2416;
     v_rk = _s.pop();
             }
             // fall through to 8751
@@ -17848,6 +18629,8 @@ function omg_p46(_captured, v_stmt) {
             }
             // fall through to 8769
             case 8769: {
+                omg_current_file_idx = 1;
+                omg_current_line = 2419;
     _s.pop();
             }
             // fall through to 8770
@@ -17856,6 +18639,7 @@ function omg_p46(_captured, v_stmt) {
             }
             // fall through to 8771
             case 8771: {
+                omg_current_file_idx = 1;
                 omg_current_line = 2421;
     _s.push("PUSH_STR");
             }
@@ -17873,10 +18657,13 @@ function omg_p46(_captured, v_stmt) {
             }
             // fall through to 8775
             case 8775: {
+                omg_current_file_idx = 1;
+                omg_current_line = 2421;
     _s.pop();
             }
             // fall through to 8776
             case 8776: {
+                omg_current_file_idx = 1;
                 omg_current_line = 2423;
     _s.push("RAISE");
             }
@@ -17894,6 +18681,8 @@ function omg_p46(_captured, v_stmt) {
             }
             // fall through to 8780
             case 8780: {
+                omg_current_file_idx = 1;
+                omg_current_line = 2423;
     _s.pop();
             }
             // fall through to 8781
@@ -17911,6 +18700,7 @@ function omg_p46(_captured, v_stmt) {
             }
             // fall through to 8784
             case 8784: {
+                omg_current_file_idx = 1;
                 omg_current_line = 2426;
     if (v_cname === OMG_UNSET) omg_undefined("cname"); _s.push(v_cname);
             }
@@ -17920,6 +18710,8 @@ function omg_p46(_captured, v_stmt) {
             }
             // fall through to 8786
             case 8786: {
+                omg_current_file_idx = 1;
+                omg_current_line = 2426;
     _s.push(false);
             }
             // fall through to 8787
@@ -17940,6 +18732,8 @@ function omg_p46(_captured, v_stmt) {
             }
             // fall through to 8791
             case 8791: {
+                omg_current_file_idx = 1;
+                omg_current_line = 2426;
     _s.push(false);
             }
             // fall through to 8792
@@ -17960,10 +18754,14 @@ function omg_p46(_captured, v_stmt) {
             }
             // fall through to 8796
             case 8796: {
+                omg_current_file_idx = 1;
+                omg_current_line = 2426;
     _s.push(false);
             }
             // fall through to 8797
             case 8797: {
+                omg_current_file_idx = 1;
+                omg_current_line = 2426;
     { const _c = _s.pop(); if (!omg_truthy(_c)) { _ip = 8804; continue; } }
             }
             // fall through to 8798
@@ -17992,10 +18790,14 @@ function omg_p46(_captured, v_stmt) {
             }
             // fall through to 8804
             case 8804: {
+                omg_current_file_idx = 1;
+                omg_current_line = 2426;
     _s.push(false);
             }
             // fall through to 8805
             case 8805: {
+                omg_current_file_idx = 1;
+                omg_current_line = 2426;
     { const _c = _s.pop(); if (!omg_truthy(_c)) { _ip = 8853; continue; } }
             }
             // fall through to 8806
@@ -18026,6 +18828,8 @@ function omg_p46(_captured, v_stmt) {
             }
             // fall through to 8812
             case 8812: {
+                omg_current_file_idx = 1;
+                omg_current_line = 2432;
     _s.pop();
             }
             // fall through to 8813
@@ -18039,6 +18843,8 @@ function omg_p46(_captured, v_stmt) {
             }
             // fall through to 8815
             case 8815: {
+                omg_current_file_idx = 1;
+                omg_current_line = 2433;
     v_resolved_tcall_name = _s.pop();
             }
             // fall through to 8816
@@ -18068,6 +18874,8 @@ function omg_p46(_captured, v_stmt) {
             }
             // fall through to 8822
             case 8822: {
+                omg_current_file_idx = 1;
+                omg_current_line = 2434;
     _s.pop();
             }
             // fall through to 8823
@@ -18094,6 +18902,7 @@ function omg_p46(_captured, v_stmt) {
             }
             // fall through to 8828
             case 8828: {
+                omg_current_file_idx = 1;
                 omg_current_line = 2437;
     if (v_i === OMG_UNSET) omg_undefined("i"); _s.push(v_i);
             }
@@ -18128,6 +18937,8 @@ function omg_p46(_captured, v_stmt) {
             }
             // fall through to 8836
             case 8836: {
+                omg_current_file_idx = 1;
+                omg_current_line = 2438;
     _s.pop();
             }
             // fall through to 8837
@@ -18153,6 +18964,7 @@ function omg_p46(_captured, v_stmt) {
             }
             // fall through to 8842
             case 8842: {
+                omg_current_file_idx = 1;
                 omg_current_line = 2443;
     if (v___mod_1__cc_try_depth === OMG_UNSET) omg_undefined("__mod_1__cc_try_depth"); _s.push(v___mod_1__cc_try_depth);
             }
@@ -18162,6 +18974,8 @@ function omg_p46(_captured, v_stmt) {
             }
             // fall through to 8844
             case 8844: {
+                omg_current_file_idx = 1;
+                omg_current_line = 2443;
     _s.pop();
             }
             // fall through to 8845
@@ -18183,6 +18997,8 @@ function omg_p46(_captured, v_stmt) {
             }
             // fall through to 8849
             case 8849: {
+                omg_current_file_idx = 1;
+                omg_current_line = 2444;
     _s.pop();
             }
             // fall through to 8850
@@ -18200,10 +19016,13 @@ function omg_p46(_captured, v_stmt) {
             }
             // fall through to 8853
             case 8853: {
+                omg_current_file_idx = 1;
+                omg_current_line = 2445;
     _ip = 8854; continue;
             }
             // fall through to 8854
             case 8854: {
+                omg_current_file_idx = 1;
                 omg_current_line = 2448;
     if (v_expr === OMG_UNSET) omg_undefined("expr"); _s.push(v_expr);
             }
@@ -18213,6 +19032,8 @@ function omg_p46(_captured, v_stmt) {
             }
             // fall through to 8856
             case 8856: {
+                omg_current_file_idx = 1;
+                omg_current_line = 2448;
     _s.pop();
             }
             // fall through to 8857
@@ -18226,6 +19047,8 @@ function omg_p46(_captured, v_stmt) {
             }
             // fall through to 8859
             case 8859: {
+                omg_current_file_idx = 1;
+                omg_current_line = 2449;
     _s.pop();
             }
             // fall through to 8860
@@ -18239,6 +19062,8 @@ function omg_p46(_captured, v_stmt) {
             }
             // fall through to 8862
             case 8862: {
+                omg_current_file_idx = 1;
+                omg_current_line = 2450;
     _s.pop();
             }
             // fall through to 8863
@@ -18256,6 +19081,7 @@ function omg_p46(_captured, v_stmt) {
             }
             // fall through to 8866
             case 8866: {
+                omg_current_file_idx = 1;
                 omg_current_line = 2453;
     if (v_kind === OMG_UNSET) omg_undefined("kind"); _s.push(v_kind);
             }
@@ -18319,6 +19145,7 @@ function omg_p46(_captured, v_stmt) {
             }
             // fall through to 8881
             case 8881: {
+                omg_current_file_idx = 1;
                 omg_current_line = 2460;
     if (v___mod_1__cc_loop_try_depth === OMG_UNSET) omg_undefined("__mod_1__cc_loop_try_depth"); _s.push(v___mod_1__cc_loop_try_depth);
             }
@@ -18374,6 +19201,8 @@ function omg_p46(_captured, v_stmt) {
             }
             // fall through to 8894
             case 8894: {
+                omg_current_file_idx = 1;
+                omg_current_line = 2462;
     _s.pop();
             }
             // fall through to 8895
@@ -18408,6 +19237,8 @@ function omg_p46(_captured, v_stmt) {
             }
             // fall through to 8902
             case 8902: {
+                omg_current_file_idx = 1;
+                omg_current_line = 2464;
     v_j = _s.pop();
             }
             // fall through to 8903
@@ -18462,6 +19293,7 @@ function omg_p46(_captured, v_stmt) {
             }
             // fall through to 8915
             case 8915: {
+                omg_current_file_idx = 1;
                 omg_current_line = 2468;
     if (v_kind === OMG_UNSET) omg_undefined("kind"); _s.push(v_kind);
             }
@@ -18525,6 +19357,7 @@ function omg_p46(_captured, v_stmt) {
             }
             // fall through to 8930
             case 8930: {
+                omg_current_file_idx = 1;
                 omg_current_line = 2474;
     if (v___mod_1__cc_loop_try_depth === OMG_UNSET) omg_undefined("__mod_1__cc_loop_try_depth"); _s.push(v___mod_1__cc_loop_try_depth);
             }
@@ -18571,6 +19404,8 @@ function omg_p46(_captured, v_stmt) {
             }
             // fall through to 8941
             case 8941: {
+                omg_current_file_idx = 1;
+                omg_current_line = 2475;
     _s.pop();
             }
             // fall through to 8942
@@ -18612,6 +19447,8 @@ function omg_p46(_captured, v_stmt) {
             }
             // fall through to 8951
             case 8951: {
+                omg_current_file_idx = 1;
+                omg_current_line = 2476;
     _s.pop();
             }
             // fall through to 8952
@@ -18629,6 +19466,7 @@ function omg_p46(_captured, v_stmt) {
             }
             // fall through to 8955
             case 8955: {
+                omg_current_file_idx = 1;
                 omg_current_line = 2479;
     if (v_kind === OMG_UNSET) omg_undefined("kind"); _s.push(v_kind);
             }
@@ -18655,6 +19493,8 @@ function omg_p46(_captured, v_stmt) {
             }
             // fall through to 8961
             case 8961: {
+                omg_current_file_idx = 1;
+                omg_current_line = 2480;
     _s.pop();
             }
             // fall through to 8962
@@ -18672,6 +19512,7 @@ function omg_p46(_captured, v_stmt) {
             }
             // fall through to 8965
             case 8965: {
+                omg_current_file_idx = 1;
                 omg_current_line = 2483;
     _s.push("unknown statement: ");
             }
@@ -18726,6 +19567,7 @@ function omg_p47(_captured, v_c) {
         try {
             switch (_ip) {
             case 2021: {
+                omg_current_file_idx = 1;
                 omg_current_line = 289;
     _s.push(v_c);
             }
@@ -18759,6 +19601,7 @@ function omg_p47(_captured, v_c) {
             }
             // fall through to 2029
             case 2029: {
+                omg_current_file_idx = 1;
                 omg_current_line = 290;
     _s.push(v_c);
             }
@@ -18792,6 +19635,7 @@ function omg_p47(_captured, v_c) {
             }
             // fall through to 2037
             case 2037: {
+                omg_current_file_idx = 1;
                 omg_current_line = 291;
     _s.push(v_c);
             }
@@ -18825,6 +19669,7 @@ function omg_p47(_captured, v_c) {
             }
             // fall through to 2045
             case 2045: {
+                omg_current_file_idx = 1;
                 omg_current_line = 292;
     _s.push(v_c);
             }
@@ -18858,6 +19703,7 @@ function omg_p47(_captured, v_c) {
             }
             // fall through to 2053
             case 2053: {
+                omg_current_file_idx = 1;
                 omg_current_line = 293;
     _s.push(v_c);
             }
@@ -18891,6 +19737,7 @@ function omg_p47(_captured, v_c) {
             }
             // fall through to 2061
             case 2061: {
+                omg_current_file_idx = 1;
                 omg_current_line = 294;
     _s.push(v_c);
             }
@@ -18924,6 +19771,7 @@ function omg_p47(_captured, v_c) {
             }
             // fall through to 2069
             case 2069: {
+                omg_current_file_idx = 1;
                 omg_current_line = 295;
     _s.push(v_c);
             }
@@ -18957,6 +19805,7 @@ function omg_p47(_captured, v_c) {
             }
             // fall through to 2077
             case 2077: {
+                omg_current_file_idx = 1;
                 omg_current_line = 298;
     _s.push(92n);
             }
@@ -19009,6 +19858,7 @@ function omg_p48(_captured, v_in_path, v_out_path) {
         try {
             switch (_ip) {
             case 10267: {
+                omg_current_file_idx = 1;
                 omg_current_line = 2832;
     _s.push(v_in_path);
             }
@@ -19018,6 +19868,8 @@ function omg_p48(_captured, v_in_path, v_out_path) {
             }
             // fall through to 10269
             case 10269: {
+                omg_current_file_idx = 1;
+                omg_current_line = 2832;
     v_bytes = _s.pop();
             }
             // fall through to 10270
@@ -19104,6 +19956,7 @@ function omg_p49(_captured, v_n) {
         try {
             switch (_ip) {
             case 1568: {
+                omg_current_file_idx = 1;
                 omg_current_line = 169;
     _s.push(v_n);
             }
@@ -19122,6 +19975,7 @@ function omg_p49(_captured, v_n) {
             }
             // fall through to 1572
             case 1572: {
+                omg_current_file_idx = 1;
                 omg_current_line = 171;
     if (v_i === OMG_UNSET) omg_undefined("i"); _s.push(v_i);
             }
@@ -19156,6 +20010,8 @@ function omg_p49(_captured, v_n) {
             }
             // fall through to 1580
             case 1580: {
+                omg_current_file_idx = 1;
+                omg_current_line = 172;
     _s.pop();
             }
             // fall through to 1581
@@ -19198,6 +20054,8 @@ function omg_p49(_captured, v_n) {
             }
             // fall through to 1590
             case 1590: {
+                omg_current_file_idx = 1;
+                omg_current_line = 174;
     _s.push(null);
             }
             // fall through to 1591
@@ -19234,6 +20092,7 @@ function omg_p50(_captured, v_s) {
         try {
             switch (_ip) {
             case 1592: {
+                omg_current_file_idx = 1;
                 omg_current_line = 184;
     _s.push(v_s);
             }
@@ -19260,6 +20119,8 @@ function omg_p50(_captured, v_s) {
             }
             // fall through to 1598
             case 1598: {
+                omg_current_file_idx = 1;
+                omg_current_line = 185;
     _s.pop();
             }
             // fall through to 1599
@@ -19286,6 +20147,7 @@ function omg_p50(_captured, v_s) {
             }
             // fall through to 1604
             case 1604: {
+                omg_current_file_idx = 1;
                 omg_current_line = 188;
     if (v_i === OMG_UNSET) omg_undefined("i"); _s.push(v_i);
             }
@@ -19320,6 +20182,8 @@ function omg_p50(_captured, v_s) {
             }
             // fall through to 1612
             case 1612: {
+                omg_current_file_idx = 1;
+                omg_current_line = 189;
     _s.pop();
             }
             // fall through to 1613
@@ -19345,6 +20209,8 @@ function omg_p50(_captured, v_s) {
             }
             // fall through to 1618
             case 1618: {
+                omg_current_file_idx = 1;
+                omg_current_line = 190;
     _s.push(null);
             }
             // fall through to 1619
@@ -19378,6 +20244,7 @@ function omg_p51(_captured, v_n) {
         try {
             switch (_ip) {
             case 1540: {
+                omg_current_file_idx = 1;
                 omg_current_line = 159;
     _s.push(v_n);
             }
@@ -19395,6 +20262,8 @@ function omg_p51(_captured, v_n) {
             }
             // fall through to 1544
             case 1544: {
+                omg_current_file_idx = 1;
+                omg_current_line = 159;
     _s.pop();
             }
             // fall through to 1545
@@ -19424,6 +20293,8 @@ function omg_p51(_captured, v_n) {
             }
             // fall through to 1551
             case 1551: {
+                omg_current_file_idx = 1;
+                omg_current_line = 160;
     _s.pop();
             }
             // fall through to 1552
@@ -19453,6 +20324,8 @@ function omg_p51(_captured, v_n) {
             }
             // fall through to 1558
             case 1558: {
+                omg_current_file_idx = 1;
+                omg_current_line = 161;
     _s.pop();
             }
             // fall through to 1559
@@ -19482,6 +20355,8 @@ function omg_p51(_captured, v_n) {
             }
             // fall through to 1565
             case 1565: {
+                omg_current_file_idx = 1;
+                omg_current_line = 162;
     _s.pop();
             }
             // fall through to 1566
@@ -19521,6 +20396,7 @@ function omg_p52(_captured, v_instr) {
         try {
             switch (_ip) {
             case 9375: {
+                omg_current_file_idx = 1;
                 omg_current_line = 2647;
     _s.push(v_instr);
             }
@@ -19580,6 +20456,8 @@ function omg_p52(_captured, v_instr) {
             }
             // fall through to 9389
             case 9389: {
+                omg_current_file_idx = 1;
+                omg_current_line = 2649;
     _s.pop();
             }
             // fall through to 9390
@@ -19592,6 +20470,8 @@ function omg_p52(_captured, v_instr) {
             }
             // fall through to 9392
             case 9392: {
+                omg_current_file_idx = 1;
+                omg_current_line = 2649;
     _s.pop();
             }
             // fall through to 9393
@@ -19608,6 +20488,7 @@ function omg_p52(_captured, v_instr) {
             }
             // fall through to 9396
             case 9396: {
+                omg_current_file_idx = 1;
                 omg_current_line = 2650;
     if (v_op === OMG_UNSET) omg_undefined("op"); _s.push(v_op);
             }
@@ -19634,6 +20515,8 @@ function omg_p52(_captured, v_instr) {
             }
             // fall through to 9402
             case 9402: {
+                omg_current_file_idx = 1;
+                omg_current_line = 2652;
     _s.pop();
             }
             // fall through to 9403
@@ -19647,6 +20530,8 @@ function omg_p52(_captured, v_instr) {
             }
             // fall through to 9405
             case 9405: {
+                omg_current_file_idx = 1;
+                omg_current_line = 2653;
     _s.pop();
             }
             // fall through to 9406
@@ -19664,6 +20549,7 @@ function omg_p52(_captured, v_instr) {
             }
             // fall through to 9409
             case 9409: {
+                omg_current_file_idx = 1;
                 omg_current_line = 2656;
     if (v_op === OMG_UNSET) omg_undefined("op"); _s.push(v_op);
             }
@@ -19689,6 +20575,8 @@ function omg_p52(_captured, v_instr) {
             }
             // fall through to 9415
             case 9415: {
+                omg_current_file_idx = 1;
+                omg_current_line = 2656;
     _s.pop();
             }
             // fall through to 9416
@@ -19701,6 +20589,8 @@ function omg_p52(_captured, v_instr) {
             }
             // fall through to 9418
             case 9418: {
+                omg_current_file_idx = 1;
+                omg_current_line = 2656;
     _s.pop();
             }
             // fall through to 9419
@@ -19717,6 +20607,7 @@ function omg_p52(_captured, v_instr) {
             }
             // fall through to 9422
             case 9422: {
+                omg_current_file_idx = 1;
                 omg_current_line = 2657;
     if (v_op === OMG_UNSET) omg_undefined("op"); _s.push(v_op);
             }
@@ -19743,6 +20634,8 @@ function omg_p52(_captured, v_instr) {
             }
             // fall through to 9428
             case 9428: {
+                omg_current_file_idx = 1;
+                omg_current_line = 2658;
     _s.pop();
             }
             // fall through to 9429
@@ -19772,6 +20665,8 @@ function omg_p52(_captured, v_instr) {
             }
             // fall through to 9435
             case 9435: {
+                omg_current_file_idx = 1;
+                omg_current_line = 2659;
     _s.pop();
             }
             // fall through to 9436
@@ -19780,6 +20675,8 @@ function omg_p52(_captured, v_instr) {
             }
             // fall through to 9437
             case 9437: {
+                omg_current_file_idx = 1;
+                omg_current_line = 2659;
     _s.push(0n);
             }
             // fall through to 9438
@@ -19788,10 +20685,13 @@ function omg_p52(_captured, v_instr) {
             }
             // fall through to 9439
             case 9439: {
+                omg_current_file_idx = 1;
+                omg_current_line = 2659;
     _s.pop();
             }
             // fall through to 9440
             case 9440: {
+                omg_current_file_idx = 1;
                 omg_current_line = 2660;
     _s.push(false);
             }
@@ -19805,6 +20705,7 @@ function omg_p52(_captured, v_instr) {
             }
             // fall through to 9443
             case 9443: {
+                omg_current_file_idx = 1;
                 omg_current_line = 2662;
     if (v_op === OMG_UNSET) omg_undefined("op"); _s.push(v_op);
             }
@@ -19830,6 +20731,8 @@ function omg_p52(_captured, v_instr) {
             }
             // fall through to 9449
             case 9449: {
+                omg_current_file_idx = 1;
+                omg_current_line = 2662;
     _s.pop();
             }
             // fall through to 9450
@@ -19842,6 +20745,8 @@ function omg_p52(_captured, v_instr) {
             }
             // fall through to 9452
             case 9452: {
+                omg_current_file_idx = 1;
+                omg_current_line = 2662;
     _s.pop();
             }
             // fall through to 9453
@@ -19858,6 +20763,7 @@ function omg_p52(_captured, v_instr) {
             }
             // fall through to 9456
             case 9456: {
+                omg_current_file_idx = 1;
                 omg_current_line = 2663;
     if (v_op === OMG_UNSET) omg_undefined("op"); _s.push(v_op);
             }
@@ -19883,6 +20789,8 @@ function omg_p52(_captured, v_instr) {
             }
             // fall through to 9462
             case 9462: {
+                omg_current_file_idx = 1;
+                omg_current_line = 2663;
     _s.pop();
             }
             // fall through to 9463
@@ -19895,6 +20803,8 @@ function omg_p52(_captured, v_instr) {
             }
             // fall through to 9465
             case 9465: {
+                omg_current_file_idx = 1;
+                omg_current_line = 2663;
     _s.pop();
             }
             // fall through to 9466
@@ -19911,6 +20821,7 @@ function omg_p52(_captured, v_instr) {
             }
             // fall through to 9469
             case 9469: {
+                omg_current_file_idx = 1;
                 omg_current_line = 2664;
     if (v_op === OMG_UNSET) omg_undefined("op"); _s.push(v_op);
             }
@@ -19936,6 +20847,8 @@ function omg_p52(_captured, v_instr) {
             }
             // fall through to 9475
             case 9475: {
+                omg_current_file_idx = 1;
+                omg_current_line = 2664;
     _s.pop();
             }
             // fall through to 9476
@@ -19948,6 +20861,8 @@ function omg_p52(_captured, v_instr) {
             }
             // fall through to 9478
             case 9478: {
+                omg_current_file_idx = 1;
+                omg_current_line = 2664;
     _s.pop();
             }
             // fall through to 9479
@@ -19964,6 +20879,7 @@ function omg_p52(_captured, v_instr) {
             }
             // fall through to 9482
             case 9482: {
+                omg_current_file_idx = 1;
                 omg_current_line = 2665;
     if (v_op === OMG_UNSET) omg_undefined("op"); _s.push(v_op);
             }
@@ -19989,6 +20905,8 @@ function omg_p52(_captured, v_instr) {
             }
             // fall through to 9488
             case 9488: {
+                omg_current_file_idx = 1;
+                omg_current_line = 2665;
     _s.pop();
             }
             // fall through to 9489
@@ -20001,6 +20919,8 @@ function omg_p52(_captured, v_instr) {
             }
             // fall through to 9491
             case 9491: {
+                omg_current_file_idx = 1;
+                omg_current_line = 2665;
     _s.pop();
             }
             // fall through to 9492
@@ -20017,6 +20937,7 @@ function omg_p52(_captured, v_instr) {
             }
             // fall through to 9495
             case 9495: {
+                omg_current_file_idx = 1;
                 omg_current_line = 2666;
     if (v_op === OMG_UNSET) omg_undefined("op"); _s.push(v_op);
             }
@@ -20042,6 +20963,8 @@ function omg_p52(_captured, v_instr) {
             }
             // fall through to 9501
             case 9501: {
+                omg_current_file_idx = 1;
+                omg_current_line = 2666;
     _s.pop();
             }
             // fall through to 9502
@@ -20058,6 +20981,7 @@ function omg_p52(_captured, v_instr) {
             }
             // fall through to 9505
             case 9505: {
+                omg_current_file_idx = 1;
                 omg_current_line = 2667;
     if (v_op === OMG_UNSET) omg_undefined("op"); _s.push(v_op);
             }
@@ -20083,6 +21007,8 @@ function omg_p52(_captured, v_instr) {
             }
             // fall through to 9511
             case 9511: {
+                omg_current_file_idx = 1;
+                omg_current_line = 2667;
     _s.pop();
             }
             // fall through to 9512
@@ -20099,6 +21025,7 @@ function omg_p52(_captured, v_instr) {
             }
             // fall through to 9515
             case 9515: {
+                omg_current_file_idx = 1;
                 omg_current_line = 2668;
     if (v_op === OMG_UNSET) omg_undefined("op"); _s.push(v_op);
             }
@@ -20124,6 +21051,8 @@ function omg_p52(_captured, v_instr) {
             }
             // fall through to 9521
             case 9521: {
+                omg_current_file_idx = 1;
+                omg_current_line = 2668;
     _s.pop();
             }
             // fall through to 9522
@@ -20140,6 +21069,7 @@ function omg_p52(_captured, v_instr) {
             }
             // fall through to 9525
             case 9525: {
+                omg_current_file_idx = 1;
                 omg_current_line = 2669;
     if (v_op === OMG_UNSET) omg_undefined("op"); _s.push(v_op);
             }
@@ -20165,6 +21095,8 @@ function omg_p52(_captured, v_instr) {
             }
             // fall through to 9531
             case 9531: {
+                omg_current_file_idx = 1;
+                omg_current_line = 2669;
     _s.pop();
             }
             // fall through to 9532
@@ -20181,6 +21113,7 @@ function omg_p52(_captured, v_instr) {
             }
             // fall through to 9535
             case 9535: {
+                omg_current_file_idx = 1;
                 omg_current_line = 2670;
     if (v_op === OMG_UNSET) omg_undefined("op"); _s.push(v_op);
             }
@@ -20206,6 +21139,8 @@ function omg_p52(_captured, v_instr) {
             }
             // fall through to 9541
             case 9541: {
+                omg_current_file_idx = 1;
+                omg_current_line = 2670;
     _s.pop();
             }
             // fall through to 9542
@@ -20222,6 +21157,7 @@ function omg_p52(_captured, v_instr) {
             }
             // fall through to 9545
             case 9545: {
+                omg_current_file_idx = 1;
                 omg_current_line = 2671;
     if (v_op === OMG_UNSET) omg_undefined("op"); _s.push(v_op);
             }
@@ -20247,6 +21183,8 @@ function omg_p52(_captured, v_instr) {
             }
             // fall through to 9551
             case 9551: {
+                omg_current_file_idx = 1;
+                omg_current_line = 2671;
     _s.pop();
             }
             // fall through to 9552
@@ -20263,6 +21201,7 @@ function omg_p52(_captured, v_instr) {
             }
             // fall through to 9555
             case 9555: {
+                omg_current_file_idx = 1;
                 omg_current_line = 2672;
     if (v_op === OMG_UNSET) omg_undefined("op"); _s.push(v_op);
             }
@@ -20288,6 +21227,8 @@ function omg_p52(_captured, v_instr) {
             }
             // fall through to 9561
             case 9561: {
+                omg_current_file_idx = 1;
+                omg_current_line = 2672;
     _s.pop();
             }
             // fall through to 9562
@@ -20304,6 +21245,7 @@ function omg_p52(_captured, v_instr) {
             }
             // fall through to 9565
             case 9565: {
+                omg_current_file_idx = 1;
                 omg_current_line = 2673;
     if (v_op === OMG_UNSET) omg_undefined("op"); _s.push(v_op);
             }
@@ -20329,6 +21271,8 @@ function omg_p52(_captured, v_instr) {
             }
             // fall through to 9571
             case 9571: {
+                omg_current_file_idx = 1;
+                omg_current_line = 2673;
     _s.pop();
             }
             // fall through to 9572
@@ -20345,6 +21289,7 @@ function omg_p52(_captured, v_instr) {
             }
             // fall through to 9575
             case 9575: {
+                omg_current_file_idx = 1;
                 omg_current_line = 2674;
     if (v_op === OMG_UNSET) omg_undefined("op"); _s.push(v_op);
             }
@@ -20370,6 +21315,8 @@ function omg_p52(_captured, v_instr) {
             }
             // fall through to 9581
             case 9581: {
+                omg_current_file_idx = 1;
+                omg_current_line = 2674;
     _s.pop();
             }
             // fall through to 9582
@@ -20386,6 +21333,7 @@ function omg_p52(_captured, v_instr) {
             }
             // fall through to 9585
             case 9585: {
+                omg_current_file_idx = 1;
                 omg_current_line = 2675;
     if (v_op === OMG_UNSET) omg_undefined("op"); _s.push(v_op);
             }
@@ -20411,6 +21359,8 @@ function omg_p52(_captured, v_instr) {
             }
             // fall through to 9591
             case 9591: {
+                omg_current_file_idx = 1;
+                omg_current_line = 2675;
     _s.pop();
             }
             // fall through to 9592
@@ -20427,6 +21377,7 @@ function omg_p52(_captured, v_instr) {
             }
             // fall through to 9595
             case 9595: {
+                omg_current_file_idx = 1;
                 omg_current_line = 2676;
     if (v_op === OMG_UNSET) omg_undefined("op"); _s.push(v_op);
             }
@@ -20452,6 +21403,8 @@ function omg_p52(_captured, v_instr) {
             }
             // fall through to 9601
             case 9601: {
+                omg_current_file_idx = 1;
+                omg_current_line = 2676;
     _s.pop();
             }
             // fall through to 9602
@@ -20468,6 +21421,7 @@ function omg_p52(_captured, v_instr) {
             }
             // fall through to 9605
             case 9605: {
+                omg_current_file_idx = 1;
                 omg_current_line = 2677;
     if (v_op === OMG_UNSET) omg_undefined("op"); _s.push(v_op);
             }
@@ -20493,6 +21447,8 @@ function omg_p52(_captured, v_instr) {
             }
             // fall through to 9611
             case 9611: {
+                omg_current_file_idx = 1;
+                omg_current_line = 2677;
     _s.pop();
             }
             // fall through to 9612
@@ -20509,6 +21465,7 @@ function omg_p52(_captured, v_instr) {
             }
             // fall through to 9615
             case 9615: {
+                omg_current_file_idx = 1;
                 omg_current_line = 2678;
     if (v_op === OMG_UNSET) omg_undefined("op"); _s.push(v_op);
             }
@@ -20534,6 +21491,8 @@ function omg_p52(_captured, v_instr) {
             }
             // fall through to 9621
             case 9621: {
+                omg_current_file_idx = 1;
+                omg_current_line = 2678;
     _s.pop();
             }
             // fall through to 9622
@@ -20550,6 +21509,7 @@ function omg_p52(_captured, v_instr) {
             }
             // fall through to 9625
             case 9625: {
+                omg_current_file_idx = 1;
                 omg_current_line = 2679;
     if (v_op === OMG_UNSET) omg_undefined("op"); _s.push(v_op);
             }
@@ -20575,6 +21535,8 @@ function omg_p52(_captured, v_instr) {
             }
             // fall through to 9631
             case 9631: {
+                omg_current_file_idx = 1;
+                omg_current_line = 2679;
     _s.pop();
             }
             // fall through to 9632
@@ -20591,6 +21553,7 @@ function omg_p52(_captured, v_instr) {
             }
             // fall through to 9635
             case 9635: {
+                omg_current_file_idx = 1;
                 omg_current_line = 2680;
     if (v_op === OMG_UNSET) omg_undefined("op"); _s.push(v_op);
             }
@@ -20616,6 +21579,8 @@ function omg_p52(_captured, v_instr) {
             }
             // fall through to 9641
             case 9641: {
+                omg_current_file_idx = 1;
+                omg_current_line = 2680;
     _s.pop();
             }
             // fall through to 9642
@@ -20632,6 +21597,7 @@ function omg_p52(_captured, v_instr) {
             }
             // fall through to 9645
             case 9645: {
+                omg_current_file_idx = 1;
                 omg_current_line = 2681;
     if (v_op === OMG_UNSET) omg_undefined("op"); _s.push(v_op);
             }
@@ -20657,6 +21623,8 @@ function omg_p52(_captured, v_instr) {
             }
             // fall through to 9651
             case 9651: {
+                omg_current_file_idx = 1;
+                omg_current_line = 2681;
     _s.pop();
             }
             // fall through to 9652
@@ -20673,6 +21641,7 @@ function omg_p52(_captured, v_instr) {
             }
             // fall through to 9655
             case 9655: {
+                omg_current_file_idx = 1;
                 omg_current_line = 2682;
     if (v_op === OMG_UNSET) omg_undefined("op"); _s.push(v_op);
             }
@@ -20698,6 +21667,8 @@ function omg_p52(_captured, v_instr) {
             }
             // fall through to 9661
             case 9661: {
+                omg_current_file_idx = 1;
+                omg_current_line = 2682;
     _s.pop();
             }
             // fall through to 9662
@@ -20714,6 +21685,7 @@ function omg_p52(_captured, v_instr) {
             }
             // fall through to 9665
             case 9665: {
+                omg_current_file_idx = 1;
                 omg_current_line = 2683;
     if (v_op === OMG_UNSET) omg_undefined("op"); _s.push(v_op);
             }
@@ -20739,6 +21711,8 @@ function omg_p52(_captured, v_instr) {
             }
             // fall through to 9671
             case 9671: {
+                omg_current_file_idx = 1;
+                omg_current_line = 2683;
     _s.pop();
             }
             // fall through to 9672
@@ -20755,6 +21729,7 @@ function omg_p52(_captured, v_instr) {
             }
             // fall through to 9675
             case 9675: {
+                omg_current_file_idx = 1;
                 omg_current_line = 2684;
     if (v_op === OMG_UNSET) omg_undefined("op"); _s.push(v_op);
             }
@@ -20780,6 +21755,8 @@ function omg_p52(_captured, v_instr) {
             }
             // fall through to 9681
             case 9681: {
+                omg_current_file_idx = 1;
+                omg_current_line = 2684;
     _s.pop();
             }
             // fall through to 9682
@@ -20796,6 +21773,7 @@ function omg_p52(_captured, v_instr) {
             }
             // fall through to 9685
             case 9685: {
+                omg_current_file_idx = 1;
                 omg_current_line = 2685;
     if (v_op === OMG_UNSET) omg_undefined("op"); _s.push(v_op);
             }
@@ -20821,6 +21799,8 @@ function omg_p52(_captured, v_instr) {
             }
             // fall through to 9691
             case 9691: {
+                omg_current_file_idx = 1;
+                omg_current_line = 2685;
     _s.pop();
             }
             // fall through to 9692
@@ -20837,6 +21817,7 @@ function omg_p52(_captured, v_instr) {
             }
             // fall through to 9695
             case 9695: {
+                omg_current_file_idx = 1;
                 omg_current_line = 2686;
     if (v_op === OMG_UNSET) omg_undefined("op"); _s.push(v_op);
             }
@@ -20862,6 +21843,8 @@ function omg_p52(_captured, v_instr) {
             }
             // fall through to 9701
             case 9701: {
+                omg_current_file_idx = 1;
+                omg_current_line = 2686;
     _s.pop();
             }
             // fall through to 9702
@@ -20878,6 +21861,7 @@ function omg_p52(_captured, v_instr) {
             }
             // fall through to 9705
             case 9705: {
+                omg_current_file_idx = 1;
                 omg_current_line = 2687;
     if (v_op === OMG_UNSET) omg_undefined("op"); _s.push(v_op);
             }
@@ -20903,6 +21887,8 @@ function omg_p52(_captured, v_instr) {
             }
             // fall through to 9711
             case 9711: {
+                omg_current_file_idx = 1;
+                omg_current_line = 2687;
     _s.pop();
             }
             // fall through to 9712
@@ -20919,6 +21905,7 @@ function omg_p52(_captured, v_instr) {
             }
             // fall through to 9715
             case 9715: {
+                omg_current_file_idx = 1;
                 omg_current_line = 2688;
     if (v_op === OMG_UNSET) omg_undefined("op"); _s.push(v_op);
             }
@@ -20944,6 +21931,8 @@ function omg_p52(_captured, v_instr) {
             }
             // fall through to 9721
             case 9721: {
+                omg_current_file_idx = 1;
+                omg_current_line = 2688;
     _s.pop();
             }
             // fall through to 9722
@@ -20960,6 +21949,7 @@ function omg_p52(_captured, v_instr) {
             }
             // fall through to 9725
             case 9725: {
+                omg_current_file_idx = 1;
                 omg_current_line = 2689;
     if (v_op === OMG_UNSET) omg_undefined("op"); _s.push(v_op);
             }
@@ -20985,6 +21975,8 @@ function omg_p52(_captured, v_instr) {
             }
             // fall through to 9731
             case 9731: {
+                omg_current_file_idx = 1;
+                omg_current_line = 2689;
     _s.pop();
             }
             // fall through to 9732
@@ -20997,6 +21989,8 @@ function omg_p52(_captured, v_instr) {
             }
             // fall through to 9734
             case 9734: {
+                omg_current_file_idx = 1;
+                omg_current_line = 2689;
     _s.pop();
             }
             // fall through to 9735
@@ -21013,6 +22007,7 @@ function omg_p52(_captured, v_instr) {
             }
             // fall through to 9738
             case 9738: {
+                omg_current_file_idx = 1;
                 omg_current_line = 2690;
     if (v_op === OMG_UNSET) omg_undefined("op"); _s.push(v_op);
             }
@@ -21038,6 +22033,8 @@ function omg_p52(_captured, v_instr) {
             }
             // fall through to 9744
             case 9744: {
+                omg_current_file_idx = 1;
+                omg_current_line = 2690;
     _s.pop();
             }
             // fall through to 9745
@@ -21050,6 +22047,8 @@ function omg_p52(_captured, v_instr) {
             }
             // fall through to 9747
             case 9747: {
+                omg_current_file_idx = 1;
+                omg_current_line = 2690;
     _s.pop();
             }
             // fall through to 9748
@@ -21066,6 +22065,7 @@ function omg_p52(_captured, v_instr) {
             }
             // fall through to 9751
             case 9751: {
+                omg_current_file_idx = 1;
                 omg_current_line = 2691;
     if (v_op === OMG_UNSET) omg_undefined("op"); _s.push(v_op);
             }
@@ -21091,6 +22091,8 @@ function omg_p52(_captured, v_instr) {
             }
             // fall through to 9757
             case 9757: {
+                omg_current_file_idx = 1;
+                omg_current_line = 2691;
     _s.pop();
             }
             // fall through to 9758
@@ -21103,6 +22105,8 @@ function omg_p52(_captured, v_instr) {
             }
             // fall through to 9760
             case 9760: {
+                omg_current_file_idx = 1;
+                omg_current_line = 2691;
     _s.pop();
             }
             // fall through to 9761
@@ -21119,6 +22123,7 @@ function omg_p52(_captured, v_instr) {
             }
             // fall through to 9764
             case 9764: {
+                omg_current_file_idx = 1;
                 omg_current_line = 2692;
     if (v_op === OMG_UNSET) omg_undefined("op"); _s.push(v_op);
             }
@@ -21144,6 +22149,8 @@ function omg_p52(_captured, v_instr) {
             }
             // fall through to 9770
             case 9770: {
+                omg_current_file_idx = 1;
+                omg_current_line = 2692;
     _s.pop();
             }
             // fall through to 9771
@@ -21156,6 +22163,8 @@ function omg_p52(_captured, v_instr) {
             }
             // fall through to 9773
             case 9773: {
+                omg_current_file_idx = 1;
+                omg_current_line = 2692;
     _s.pop();
             }
             // fall through to 9774
@@ -21172,6 +22181,7 @@ function omg_p52(_captured, v_instr) {
             }
             // fall through to 9777
             case 9777: {
+                omg_current_file_idx = 1;
                 omg_current_line = 2693;
     if (v_op === OMG_UNSET) omg_undefined("op"); _s.push(v_op);
             }
@@ -21198,6 +22208,8 @@ function omg_p52(_captured, v_instr) {
             }
             // fall through to 9783
             case 9783: {
+                omg_current_file_idx = 1;
+                omg_current_line = 2694;
     _s.pop();
             }
             // fall through to 9784
@@ -21219,6 +22231,8 @@ function omg_p52(_captured, v_instr) {
             }
             // fall through to 9788
             case 9788: {
+                omg_current_file_idx = 1;
+                omg_current_line = 2695;
     _s.pop();
             }
             // fall through to 9789
@@ -21240,6 +22254,8 @@ function omg_p52(_captured, v_instr) {
             }
             // fall through to 9793
             case 9793: {
+                omg_current_file_idx = 1;
+                omg_current_line = 2696;
     _s.pop();
             }
             // fall through to 9794
@@ -21257,6 +22273,7 @@ function omg_p52(_captured, v_instr) {
             }
             // fall through to 9797
             case 9797: {
+                omg_current_file_idx = 1;
                 omg_current_line = 2699;
     if (v_op === OMG_UNSET) omg_undefined("op"); _s.push(v_op);
             }
@@ -21282,6 +22299,8 @@ function omg_p52(_captured, v_instr) {
             }
             // fall through to 9803
             case 9803: {
+                omg_current_file_idx = 1;
+                omg_current_line = 2699;
     _s.pop();
             }
             // fall through to 9804
@@ -21298,6 +22317,7 @@ function omg_p52(_captured, v_instr) {
             }
             // fall through to 9807
             case 9807: {
+                omg_current_file_idx = 1;
                 omg_current_line = 2700;
     if (v_op === OMG_UNSET) omg_undefined("op"); _s.push(v_op);
             }
@@ -21323,6 +22343,8 @@ function omg_p52(_captured, v_instr) {
             }
             // fall through to 9813
             case 9813: {
+                omg_current_file_idx = 1;
+                omg_current_line = 2700;
     _s.pop();
             }
             // fall through to 9814
@@ -21339,6 +22361,7 @@ function omg_p52(_captured, v_instr) {
             }
             // fall through to 9817
             case 9817: {
+                omg_current_file_idx = 1;
                 omg_current_line = 2701;
     if (v_op === OMG_UNSET) omg_undefined("op"); _s.push(v_op);
             }
@@ -21364,6 +22387,8 @@ function omg_p52(_captured, v_instr) {
             }
             // fall through to 9823
             case 9823: {
+                omg_current_file_idx = 1;
+                omg_current_line = 2701;
     _s.pop();
             }
             // fall through to 9824
@@ -21380,6 +22405,7 @@ function omg_p52(_captured, v_instr) {
             }
             // fall through to 9827
             case 9827: {
+                omg_current_file_idx = 1;
                 omg_current_line = 2702;
     if (v_op === OMG_UNSET) omg_undefined("op"); _s.push(v_op);
             }
@@ -21405,6 +22431,8 @@ function omg_p52(_captured, v_instr) {
             }
             // fall through to 9833
             case 9833: {
+                omg_current_file_idx = 1;
+                omg_current_line = 2702;
     _s.pop();
             }
             // fall through to 9834
@@ -21421,6 +22449,7 @@ function omg_p52(_captured, v_instr) {
             }
             // fall through to 9837
             case 9837: {
+                omg_current_file_idx = 1;
                 omg_current_line = 2703;
     if (v_op === OMG_UNSET) omg_undefined("op"); _s.push(v_op);
             }
@@ -21446,6 +22475,8 @@ function omg_p52(_captured, v_instr) {
             }
             // fall through to 9843
             case 9843: {
+                omg_current_file_idx = 1;
+                omg_current_line = 2703;
     _s.pop();
             }
             // fall through to 9844
@@ -21462,6 +22493,7 @@ function omg_p52(_captured, v_instr) {
             }
             // fall through to 9847
             case 9847: {
+                omg_current_file_idx = 1;
                 omg_current_line = 2704;
     if (v_op === OMG_UNSET) omg_undefined("op"); _s.push(v_op);
             }
@@ -21487,6 +22519,8 @@ function omg_p52(_captured, v_instr) {
             }
             // fall through to 9853
             case 9853: {
+                omg_current_file_idx = 1;
+                omg_current_line = 2704;
     _s.pop();
             }
             // fall through to 9854
@@ -21503,6 +22537,7 @@ function omg_p52(_captured, v_instr) {
             }
             // fall through to 9857
             case 9857: {
+                omg_current_file_idx = 1;
                 omg_current_line = 2705;
     if (v_op === OMG_UNSET) omg_undefined("op"); _s.push(v_op);
             }
@@ -21528,6 +22563,8 @@ function omg_p52(_captured, v_instr) {
             }
             // fall through to 9863
             case 9863: {
+                omg_current_file_idx = 1;
+                omg_current_line = 2705;
     _s.pop();
             }
             // fall through to 9864
@@ -21540,6 +22577,8 @@ function omg_p52(_captured, v_instr) {
             }
             // fall through to 9866
             case 9866: {
+                omg_current_file_idx = 1;
+                omg_current_line = 2705;
     _s.pop();
             }
             // fall through to 9867
@@ -21556,6 +22595,7 @@ function omg_p52(_captured, v_instr) {
             }
             // fall through to 9870
             case 9870: {
+                omg_current_file_idx = 1;
                 omg_current_line = 2706;
     if (v_op === OMG_UNSET) omg_undefined("op"); _s.push(v_op);
             }
@@ -21581,6 +22621,8 @@ function omg_p52(_captured, v_instr) {
             }
             // fall through to 9876
             case 9876: {
+                omg_current_file_idx = 1;
+                omg_current_line = 2706;
     _s.pop();
             }
             // fall through to 9877
@@ -21593,6 +22635,8 @@ function omg_p52(_captured, v_instr) {
             }
             // fall through to 9879
             case 9879: {
+                omg_current_file_idx = 1;
+                omg_current_line = 2706;
     _s.pop();
             }
             // fall through to 9880
@@ -21609,6 +22653,7 @@ function omg_p52(_captured, v_instr) {
             }
             // fall through to 9883
             case 9883: {
+                omg_current_file_idx = 1;
                 omg_current_line = 2707;
     if (v_op === OMG_UNSET) omg_undefined("op"); _s.push(v_op);
             }
@@ -21634,6 +22679,8 @@ function omg_p52(_captured, v_instr) {
             }
             // fall through to 9889
             case 9889: {
+                omg_current_file_idx = 1;
+                omg_current_line = 2707;
     _s.pop();
             }
             // fall through to 9890
@@ -21650,6 +22697,7 @@ function omg_p52(_captured, v_instr) {
             }
             // fall through to 9893
             case 9893: {
+                omg_current_file_idx = 1;
                 omg_current_line = 2708;
     if (v_op === OMG_UNSET) omg_undefined("op"); _s.push(v_op);
             }
@@ -21675,6 +22723,8 @@ function omg_p52(_captured, v_instr) {
             }
             // fall through to 9899
             case 9899: {
+                omg_current_file_idx = 1;
+                omg_current_line = 2708;
     _s.pop();
             }
             // fall through to 9900
@@ -21687,6 +22737,8 @@ function omg_p52(_captured, v_instr) {
             }
             // fall through to 9902
             case 9902: {
+                omg_current_file_idx = 1;
+                omg_current_line = 2708;
     _s.pop();
             }
             // fall through to 9903
@@ -21703,6 +22755,7 @@ function omg_p52(_captured, v_instr) {
             }
             // fall through to 9906
             case 9906: {
+                omg_current_file_idx = 1;
                 omg_current_line = 2709;
     if (v_op === OMG_UNSET) omg_undefined("op"); _s.push(v_op);
             }
@@ -21728,6 +22781,8 @@ function omg_p52(_captured, v_instr) {
             }
             // fall through to 9912
             case 9912: {
+                omg_current_file_idx = 1;
+                omg_current_line = 2709;
     _s.pop();
             }
             // fall through to 9913
@@ -21740,6 +22795,8 @@ function omg_p52(_captured, v_instr) {
             }
             // fall through to 9915
             case 9915: {
+                omg_current_file_idx = 1;
+                omg_current_line = 2709;
     _s.pop();
             }
             // fall through to 9916
@@ -21756,6 +22813,7 @@ function omg_p52(_captured, v_instr) {
             }
             // fall through to 9919
             case 9919: {
+                omg_current_file_idx = 1;
                 omg_current_line = 2710;
     if (v_op === OMG_UNSET) omg_undefined("op"); _s.push(v_op);
             }
@@ -21781,6 +22839,8 @@ function omg_p52(_captured, v_instr) {
             }
             // fall through to 9925
             case 9925: {
+                omg_current_file_idx = 1;
+                omg_current_line = 2710;
     _s.pop();
             }
             // fall through to 9926
@@ -21797,6 +22857,7 @@ function omg_p52(_captured, v_instr) {
             }
             // fall through to 9929
             case 9929: {
+                omg_current_file_idx = 1;
                 omg_current_line = 2711;
     if (v_op === OMG_UNSET) omg_undefined("op"); _s.push(v_op);
             }
@@ -21823,6 +22884,8 @@ function omg_p52(_captured, v_instr) {
             }
             // fall through to 9935
             case 9935: {
+                omg_current_file_idx = 1;
+                omg_current_line = 2712;
     _s.pop();
             }
             // fall through to 9936
@@ -21836,6 +22899,8 @@ function omg_p52(_captured, v_instr) {
             }
             // fall through to 9938
             case 9938: {
+                omg_current_file_idx = 1;
+                omg_current_line = 2713;
     _s.pop();
             }
             // fall through to 9939
@@ -21853,6 +22918,7 @@ function omg_p52(_captured, v_instr) {
             }
             // fall through to 9942
             case 9942: {
+                omg_current_file_idx = 1;
                 omg_current_line = 2716;
     if (v_op === OMG_UNSET) omg_undefined("op"); _s.push(v_op);
             }
@@ -21878,6 +22944,8 @@ function omg_p52(_captured, v_instr) {
             }
             // fall through to 9948
             case 9948: {
+                omg_current_file_idx = 1;
+                omg_current_line = 2716;
     _s.pop();
             }
             // fall through to 9949
@@ -21890,6 +22958,8 @@ function omg_p52(_captured, v_instr) {
             }
             // fall through to 9951
             case 9951: {
+                omg_current_file_idx = 1;
+                omg_current_line = 2716;
     _s.pop();
             }
             // fall through to 9952
@@ -21906,6 +22976,7 @@ function omg_p52(_captured, v_instr) {
             }
             // fall through to 9955
             case 9955: {
+                omg_current_file_idx = 1;
                 omg_current_line = 2717;
     if (v_op === OMG_UNSET) omg_undefined("op"); _s.push(v_op);
             }
@@ -21931,6 +23002,8 @@ function omg_p52(_captured, v_instr) {
             }
             // fall through to 9961
             case 9961: {
+                omg_current_file_idx = 1;
+                omg_current_line = 2717;
     _s.pop();
             }
             // fall through to 9962
@@ -21943,6 +23016,8 @@ function omg_p52(_captured, v_instr) {
             }
             // fall through to 9964
             case 9964: {
+                omg_current_file_idx = 1;
+                omg_current_line = 2717;
     _s.pop();
             }
             // fall through to 9965
@@ -21959,6 +23034,7 @@ function omg_p52(_captured, v_instr) {
             }
             // fall through to 9968
             case 9968: {
+                omg_current_file_idx = 1;
                 omg_current_line = 2718;
     _s.push("unknown instruction: ");
             }
@@ -22013,6 +23089,7 @@ function omg_p53(_captured, v_kind, v_i) {
         try {
             switch (_ip) {
             case 3449: {
+                omg_current_file_idx = 1;
                 omg_current_line = 623;
     _s.push(v_i);
             }
@@ -22022,6 +23099,8 @@ function omg_p53(_captured, v_kind, v_i) {
             }
             // fall through to 3451
             case 3451: {
+                omg_current_file_idx = 1;
+                omg_current_line = 623;
     _s.push(v_kind);
             }
             // fall through to 3452
@@ -22047,6 +23126,8 @@ function omg_p53(_captured, v_kind, v_i) {
             }
             // fall through to 3457
             case 3457: {
+                omg_current_file_idx = 1;
+                omg_current_line = 624;
     { const _b = _s.pop(); const _a = _s.pop(); _s.push(omg_add(_a, _b)); }
             }
             // fall through to 3458
@@ -22067,10 +23148,14 @@ function omg_p53(_captured, v_kind, v_i) {
             }
             // fall through to 3462
             case 3462: {
+                omg_current_file_idx = 1;
+                omg_current_line = 624;
     { const _argv = _s.splice(_s.length - 1, 1); omg_frame_push("tok_describe", omg_current_file_idx, omg_current_line); const _rv = omg_p93(null, ..._argv); omg_frame_pop(); _s.push(_rv); }
             }
             // fall through to 3463
             case 3463: {
+                omg_current_file_idx = 1;
+                omg_current_line = 624;
     { const _b = _s.pop(); const _a = _s.pop(); _s.push(omg_add(_a, _b)); }
             }
             // fall through to 3464
@@ -22091,6 +23176,8 @@ function omg_p53(_captured, v_kind, v_i) {
             }
             // fall through to 3468
             case 3468: {
+                omg_current_file_idx = 1;
+                omg_current_line = 624;
     _s.pop();
             }
             // fall through to 3469
@@ -22099,6 +23186,7 @@ function omg_p53(_captured, v_kind, v_i) {
             }
             // fall through to 3470
             case 3470: {
+                omg_current_file_idx = 1;
                 omg_current_line = 626;
     _s.push(v_i);
             }
@@ -22149,6 +23237,7 @@ function omg_p54(_captured, v_c) {
         try {
             switch (_ip) {
             case 1672: {
+                omg_current_file_idx = 1;
                 omg_current_line = 214;
     _s.push(v_c);
             }
@@ -22158,6 +23247,8 @@ function omg_p54(_captured, v_c) {
             }
             // fall through to 1674
             case 1674: {
+                omg_current_file_idx = 1;
+                omg_current_line = 214;
     { const _c = _s.pop(); if (!omg_truthy(_c)) { _ip = 1677; continue; } }
             }
             // fall through to 1675
@@ -22170,6 +23261,8 @@ function omg_p54(_captured, v_c) {
             }
             // fall through to 1677
             case 1677: {
+                omg_current_file_idx = 1;
+                omg_current_line = 214;
     _s.push(v_c);
             }
             // fall through to 1678
@@ -22178,6 +23271,8 @@ function omg_p54(_captured, v_c) {
             }
             // fall through to 1679
             case 1679: {
+                omg_current_file_idx = 1;
+                omg_current_line = 214;
     _s.push(false);
             }
             // fall through to 1680
@@ -22186,6 +23281,8 @@ function omg_p54(_captured, v_c) {
             }
             // fall through to 1681
             case 1681: {
+                omg_current_file_idx = 1;
+                omg_current_line = 214;
     return _s.pop();
             }
             // fall through to 1682
@@ -22223,6 +23320,7 @@ function omg_p55(_captured, v_c) {
         try {
             switch (_ip) {
             case 1634: {
+                omg_current_file_idx = 1;
                 omg_current_line = 210;
     _s.push(v_c);
             }
@@ -22264,10 +23362,14 @@ function omg_p55(_captured, v_c) {
             }
             // fall through to 1644
             case 1644: {
+                omg_current_file_idx = 1;
+                omg_current_line = 210;
     _s.push(false);
             }
             // fall through to 1645
             case 1645: {
+                omg_current_file_idx = 1;
+                omg_current_line = 210;
     { const _c = _s.pop(); if (!omg_truthy(_c)) { _ip = 1648; continue; } }
             }
             // fall through to 1646
@@ -22280,6 +23382,8 @@ function omg_p55(_captured, v_c) {
             }
             // fall through to 1648
             case 1648: {
+                omg_current_file_idx = 1;
+                omg_current_line = 210;
     _s.push(v_c);
             }
             // fall through to 1649
@@ -22320,10 +23424,14 @@ function omg_p55(_captured, v_c) {
             }
             // fall through to 1658
             case 1658: {
+                omg_current_file_idx = 1;
+                omg_current_line = 210;
     _s.push(false);
             }
             // fall through to 1659
             case 1659: {
+                omg_current_file_idx = 1;
+                omg_current_line = 210;
     _s.push(false);
             }
             // fall through to 1660
@@ -22332,6 +23440,8 @@ function omg_p55(_captured, v_c) {
             }
             // fall through to 1661
             case 1661: {
+                omg_current_file_idx = 1;
+                omg_current_line = 210;
     { const _c = _s.pop(); if (!omg_truthy(_c)) { _ip = 1664; continue; } }
             }
             // fall through to 1662
@@ -22344,6 +23454,8 @@ function omg_p55(_captured, v_c) {
             }
             // fall through to 1664
             case 1664: {
+                omg_current_file_idx = 1;
+                omg_current_line = 210;
     _s.push(v_c);
             }
             // fall through to 1665
@@ -22364,6 +23476,8 @@ function omg_p55(_captured, v_c) {
             }
             // fall through to 1669
             case 1669: {
+                omg_current_file_idx = 1;
+                omg_current_line = 210;
     return _s.pop();
             }
             // fall through to 1670
@@ -22401,6 +23515,7 @@ function omg_p56(_captured, v_c) {
         try {
             switch (_ip) {
             case 1620: {
+                omg_current_file_idx = 1;
                 omg_current_line = 206;
     _s.push(v_c);
             }
@@ -22442,10 +23557,14 @@ function omg_p56(_captured, v_c) {
             }
             // fall through to 1630
             case 1630: {
+                omg_current_file_idx = 1;
+                omg_current_line = 206;
     _s.push(false);
             }
             // fall through to 1631
             case 1631: {
+                omg_current_file_idx = 1;
+                omg_current_line = 206;
     return _s.pop();
             }
             // fall through to 1632
@@ -22483,6 +23602,7 @@ function omg_p57(_captured, v_word) {
         try {
             switch (_ip) {
             case 1863: {
+                omg_current_file_idx = 1;
                 omg_current_line = 261;
     _s.push(v_word);
             }
@@ -22512,6 +23632,7 @@ function omg_p57(_captured, v_word) {
             }
             // fall through to 1870
             case 1870: {
+                omg_current_file_idx = 1;
                 omg_current_line = 262;
     _s.push(v_word);
             }
@@ -22541,6 +23662,7 @@ function omg_p57(_captured, v_word) {
             }
             // fall through to 1877
             case 1877: {
+                omg_current_file_idx = 1;
                 omg_current_line = 263;
     _s.push(v_word);
             }
@@ -22570,6 +23692,7 @@ function omg_p57(_captured, v_word) {
             }
             // fall through to 1884
             case 1884: {
+                omg_current_file_idx = 1;
                 omg_current_line = 264;
     _s.push(v_word);
             }
@@ -22599,6 +23722,7 @@ function omg_p57(_captured, v_word) {
             }
             // fall through to 1891
             case 1891: {
+                omg_current_file_idx = 1;
                 omg_current_line = 265;
     _s.push(v_word);
             }
@@ -22628,6 +23752,7 @@ function omg_p57(_captured, v_word) {
             }
             // fall through to 1898
             case 1898: {
+                omg_current_file_idx = 1;
                 omg_current_line = 266;
     _s.push(v_word);
             }
@@ -22657,6 +23782,7 @@ function omg_p57(_captured, v_word) {
             }
             // fall through to 1905
             case 1905: {
+                omg_current_file_idx = 1;
                 omg_current_line = 267;
     _s.push(v_word);
             }
@@ -22686,6 +23812,7 @@ function omg_p57(_captured, v_word) {
             }
             // fall through to 1912
             case 1912: {
+                omg_current_file_idx = 1;
                 omg_current_line = 268;
     _s.push(v_word);
             }
@@ -22715,6 +23842,7 @@ function omg_p57(_captured, v_word) {
             }
             // fall through to 1919
             case 1919: {
+                omg_current_file_idx = 1;
                 omg_current_line = 269;
     _s.push(v_word);
             }
@@ -22744,6 +23872,7 @@ function omg_p57(_captured, v_word) {
             }
             // fall through to 1926
             case 1926: {
+                omg_current_file_idx = 1;
                 omg_current_line = 270;
     _s.push(v_word);
             }
@@ -22773,6 +23902,7 @@ function omg_p57(_captured, v_word) {
             }
             // fall through to 1933
             case 1933: {
+                omg_current_file_idx = 1;
                 omg_current_line = 271;
     _s.push(v_word);
             }
@@ -22802,6 +23932,7 @@ function omg_p57(_captured, v_word) {
             }
             // fall through to 1940
             case 1940: {
+                omg_current_file_idx = 1;
                 omg_current_line = 272;
     _s.push(v_word);
             }
@@ -22831,6 +23962,7 @@ function omg_p57(_captured, v_word) {
             }
             // fall through to 1947
             case 1947: {
+                omg_current_file_idx = 1;
                 omg_current_line = 273;
     _s.push(v_word);
             }
@@ -22860,6 +23992,7 @@ function omg_p57(_captured, v_word) {
             }
             // fall through to 1954
             case 1954: {
+                omg_current_file_idx = 1;
                 omg_current_line = 274;
     _s.push(v_word);
             }
@@ -22889,6 +24022,7 @@ function omg_p57(_captured, v_word) {
             }
             // fall through to 1961
             case 1961: {
+                omg_current_file_idx = 1;
                 omg_current_line = 275;
     _s.push(v_word);
             }
@@ -22918,6 +24052,7 @@ function omg_p57(_captured, v_word) {
             }
             // fall through to 1968
             case 1968: {
+                omg_current_file_idx = 1;
                 omg_current_line = 276;
     _s.push(v_word);
             }
@@ -22947,6 +24082,7 @@ function omg_p57(_captured, v_word) {
             }
             // fall through to 1975
             case 1975: {
+                omg_current_file_idx = 1;
                 omg_current_line = 277;
     _s.push(v_word);
             }
@@ -22976,6 +24112,7 @@ function omg_p57(_captured, v_word) {
             }
             // fall through to 1982
             case 1982: {
+                omg_current_file_idx = 1;
                 omg_current_line = 278;
     _s.push(v_word);
             }
@@ -23005,6 +24142,7 @@ function omg_p57(_captured, v_word) {
             }
             // fall through to 1989
             case 1989: {
+                omg_current_file_idx = 1;
                 omg_current_line = 279;
     _s.push(v_word);
             }
@@ -23034,6 +24172,7 @@ function omg_p57(_captured, v_word) {
             }
             // fall through to 1996
             case 1996: {
+                omg_current_file_idx = 1;
                 omg_current_line = 280;
     _s.push(v_word);
             }
@@ -23063,6 +24202,7 @@ function omg_p57(_captured, v_word) {
             }
             // fall through to 2003
             case 2003: {
+                omg_current_file_idx = 1;
                 omg_current_line = 281;
     _s.push(v_word);
             }
@@ -23092,6 +24232,7 @@ function omg_p57(_captured, v_word) {
             }
             // fall through to 2010
             case 2010: {
+                omg_current_file_idx = 1;
                 omg_current_line = 282;
     _s.push(v_word);
             }
@@ -23121,6 +24262,7 @@ function omg_p57(_captured, v_word) {
             }
             // fall through to 2017
             case 2017: {
+                omg_current_file_idx = 1;
                 omg_current_line = 283;
     _s.push("");
             }
@@ -23165,6 +24307,7 @@ function omg_p58(_captured, v_xs, v_name) {
         try {
             switch (_ip) {
             case 6041: {
+                omg_current_file_idx = 1;
                 omg_current_line = 1450;
     _s.push(0n);
             }
@@ -23187,6 +24330,7 @@ function omg_p58(_captured, v_xs, v_name) {
             }
             // fall through to 6046
             case 6046: {
+                omg_current_file_idx = 1;
                 omg_current_line = 1452;
     if (v_i === OMG_UNSET) omg_undefined("i"); _s.push(v_i);
             }
@@ -23242,6 +24386,7 @@ function omg_p58(_captured, v_xs, v_name) {
             }
             // fall through to 6059
             case 6059: {
+                omg_current_file_idx = 1;
                 omg_current_line = 1456;
     if (v_i === OMG_UNSET) omg_undefined("i"); _s.push(v_i);
             }
@@ -23263,6 +24408,7 @@ function omg_p58(_captured, v_xs, v_name) {
             }
             // fall through to 6064
             case 6064: {
+                omg_current_file_idx = 1;
                 omg_current_line = 1458;
     _s.push(false);
             }
@@ -23310,6 +24456,7 @@ function omg_p59(_captured, v_i) {
         try {
             switch (_ip) {
             case 3878: {
+                omg_current_file_idx = 1;
                 omg_current_line = 735;
     _s.push(v_i);
             }
@@ -23319,10 +24466,13 @@ function omg_p59(_captured, v_i) {
             }
             // fall through to 3880
             case 3880: {
+                omg_current_file_idx = 1;
+                omg_current_line = 735;
     v_r = _s.pop();
             }
             // fall through to 3881
             case 3881: {
+                omg_current_file_idx = 1;
                 omg_current_line = 736;
     _s.push(true);
             }
@@ -23349,6 +24499,8 @@ function omg_p59(_captured, v_i) {
             }
             // fall through to 3887
             case 3887: {
+                omg_current_file_idx = 1;
+                omg_current_line = 737;
     v_k = _s.pop();
             }
             // fall through to 3888
@@ -23391,6 +24543,7 @@ function omg_p59(_captured, v_i) {
             }
             // fall through to 3897
             case 3897: {
+                omg_current_file_idx = 1;
                 omg_current_line = 740;
     if (v_k === OMG_UNSET) omg_undefined("k"); _s.push(v_k);
             }
@@ -23420,6 +24573,7 @@ function omg_p59(_captured, v_i) {
             }
             // fall through to 3904
             case 3904: {
+                omg_current_file_idx = 1;
                 omg_current_line = 741;
     if (v_op === OMG_UNSET) omg_undefined("op"); _s.push(v_op);
             }
@@ -23450,6 +24604,7 @@ function omg_p59(_captured, v_i) {
             }
             // fall through to 3911
             case 3911: {
+                omg_current_file_idx = 1;
                 omg_current_line = 744;
     if (v_r === OMG_UNSET) omg_undefined("r"); _s.push(v_r);
             }
@@ -23467,6 +24622,8 @@ function omg_p59(_captured, v_i) {
             }
             // fall through to 3915
             case 3915: {
+                omg_current_file_idx = 1;
+                omg_current_line = 744;
     v_line = _s.pop();
             }
             // fall through to 3916
@@ -23496,6 +24653,8 @@ function omg_p59(_captured, v_i) {
             }
             // fall through to 3922
             case 3922: {
+                omg_current_file_idx = 1;
+                omg_current_line = 745;
     v_rhs = _s.pop();
             }
             // fall through to 3923
@@ -23565,6 +24724,7 @@ function omg_p59(_captured, v_i) {
             }
             // fall through to 3939
             case 3939: {
+                omg_current_file_idx = 1;
                 omg_current_line = 748;
     if (v_r === OMG_UNSET) omg_undefined("r"); _s.push(v_r);
             }
@@ -23610,6 +24770,7 @@ function omg_p60(_captured, v_i) {
         try {
             switch (_ip) {
             case 3522: {
+                omg_current_file_idx = 1;
                 omg_current_line = 646;
     _s.push(v_i);
             }
@@ -23619,10 +24780,13 @@ function omg_p60(_captured, v_i) {
             }
             // fall through to 3524
             case 3524: {
+                omg_current_file_idx = 1;
+                omg_current_line = 646;
     v_r = _s.pop();
             }
             // fall through to 3525
             case 3525: {
+                omg_current_file_idx = 1;
                 omg_current_line = 647;
     if (v_r === OMG_UNSET) omg_undefined("r"); _s.push(v_r);
             }
@@ -23640,6 +24804,8 @@ function omg_p60(_captured, v_i) {
             }
             // fall through to 3529
             case 3529: {
+                omg_current_file_idx = 1;
+                omg_current_line = 647;
     _s.push("AND");
             }
             // fall through to 3530
@@ -23669,6 +24835,8 @@ function omg_p60(_captured, v_i) {
             }
             // fall through to 3536
             case 3536: {
+                omg_current_file_idx = 1;
+                omg_current_line = 648;
     v_line = _s.pop();
             }
             // fall through to 3537
@@ -23698,6 +24866,8 @@ function omg_p60(_captured, v_i) {
             }
             // fall through to 3543
             case 3543: {
+                omg_current_file_idx = 1;
+                omg_current_line = 649;
     v_rhs = _s.pop();
             }
             // fall through to 3544
@@ -23767,6 +24937,7 @@ function omg_p60(_captured, v_i) {
             }
             // fall through to 3560
             case 3560: {
+                omg_current_file_idx = 1;
                 omg_current_line = 652;
     if (v_r === OMG_UNSET) omg_undefined("r"); _s.push(v_r);
             }
@@ -23812,6 +24983,7 @@ function omg_p61(_captured, v_i) {
         try {
             switch (_ip) {
             case 3771: {
+                omg_current_file_idx = 1;
                 omg_current_line = 708;
     _s.push(v_i);
             }
@@ -23821,10 +24993,13 @@ function omg_p61(_captured, v_i) {
             }
             // fall through to 3773
             case 3773: {
+                omg_current_file_idx = 1;
+                omg_current_line = 708;
     v_r = _s.pop();
             }
             // fall through to 3774
             case 3774: {
+                omg_current_file_idx = 1;
                 omg_current_line = 709;
     if (v_r === OMG_UNSET) omg_undefined("r"); _s.push(v_r);
             }
@@ -23842,6 +25017,8 @@ function omg_p61(_captured, v_i) {
             }
             // fall through to 3778
             case 3778: {
+                omg_current_file_idx = 1;
+                omg_current_line = 709;
     _s.push("AMP");
             }
             // fall through to 3779
@@ -23871,6 +25048,8 @@ function omg_p61(_captured, v_i) {
             }
             // fall through to 3785
             case 3785: {
+                omg_current_file_idx = 1;
+                omg_current_line = 710;
     v_line = _s.pop();
             }
             // fall through to 3786
@@ -23900,6 +25079,8 @@ function omg_p61(_captured, v_i) {
             }
             // fall through to 3792
             case 3792: {
+                omg_current_file_idx = 1;
+                omg_current_line = 711;
     v_rhs = _s.pop();
             }
             // fall through to 3793
@@ -23969,6 +25150,7 @@ function omg_p61(_captured, v_i) {
             }
             // fall through to 3809
             case 3809: {
+                omg_current_file_idx = 1;
                 omg_current_line = 714;
     if (v_r === OMG_UNSET) omg_undefined("r"); _s.push(v_r);
             }
@@ -24015,6 +25197,7 @@ function omg_p62(_captured, v_i) {
         try {
             switch (_ip) {
             case 4644: {
+                omg_current_file_idx = 1;
                 omg_current_line = 921;
     _s.push(v_i);
             }
@@ -24024,6 +25207,8 @@ function omg_p62(_captured, v_i) {
             }
             // fall through to 4646
             case 4646: {
+                omg_current_file_idx = 1;
+                omg_current_line = 921;
     v_line = _s.pop();
             }
             // fall through to 4647
@@ -24041,6 +25226,8 @@ function omg_p62(_captured, v_i) {
             }
             // fall through to 4650
             case 4650: {
+                omg_current_file_idx = 1;
+                omg_current_line = 922;
     v_j = _s.pop();
             }
             // fall through to 4651
@@ -24054,6 +25241,8 @@ function omg_p62(_captured, v_i) {
             }
             // fall through to 4653
             case 4653: {
+                omg_current_file_idx = 1;
+                omg_current_line = 923;
     if (v_j === OMG_UNSET) omg_undefined("j"); v_j = _s.pop();
             }
             // fall through to 4654
@@ -24067,6 +25256,7 @@ function omg_p62(_captured, v_i) {
             }
             // fall through to 4656
             case 4656: {
+                omg_current_file_idx = 1;
                 omg_current_line = 925;
     if (v_j === OMG_UNSET) omg_undefined("j"); _s.push(v_j);
             }
@@ -24076,6 +25266,8 @@ function omg_p62(_captured, v_i) {
             }
             // fall through to 4658
             case 4658: {
+                omg_current_file_idx = 1;
+                omg_current_line = 925;
     _s.push("RBRACE");
             }
             // fall through to 4659
@@ -24097,6 +25289,8 @@ function omg_p62(_captured, v_i) {
             }
             // fall through to 4663
             case 4663: {
+                omg_current_file_idx = 1;
+                omg_current_line = 926;
     v_r = _s.pop();
             }
             // fall through to 4664
@@ -24147,6 +25341,8 @@ function omg_p62(_captured, v_i) {
             }
             // fall through to 4675
             case 4675: {
+                omg_current_file_idx = 1;
+                omg_current_line = 928;
     if (v_j === OMG_UNSET) omg_undefined("j"); v_j = _s.pop();
             }
             // fall through to 4676
@@ -24155,6 +25351,7 @@ function omg_p62(_captured, v_i) {
             }
             // fall through to 4677
             case 4677: {
+                omg_current_file_idx = 1;
                 omg_current_line = 930;
     _s.push("block");
             }
@@ -24228,6 +25425,7 @@ function omg_p63(_captured, v_i) {
         try {
             switch (_ip) {
             case 3687: {
+                omg_current_file_idx = 1;
                 omg_current_line = 688;
     _s.push(v_i);
             }
@@ -24237,10 +25435,13 @@ function omg_p63(_captured, v_i) {
             }
             // fall through to 3689
             case 3689: {
+                omg_current_file_idx = 1;
+                omg_current_line = 688;
     v_r = _s.pop();
             }
             // fall through to 3690
             case 3690: {
+                omg_current_file_idx = 1;
                 omg_current_line = 689;
     if (v_r === OMG_UNSET) omg_undefined("r"); _s.push(v_r);
             }
@@ -24258,6 +25459,8 @@ function omg_p63(_captured, v_i) {
             }
             // fall through to 3694
             case 3694: {
+                omg_current_file_idx = 1;
+                omg_current_line = 689;
     _s.push("PIPE");
             }
             // fall through to 3695
@@ -24287,6 +25490,8 @@ function omg_p63(_captured, v_i) {
             }
             // fall through to 3701
             case 3701: {
+                omg_current_file_idx = 1;
+                omg_current_line = 690;
     v_line = _s.pop();
             }
             // fall through to 3702
@@ -24316,6 +25521,8 @@ function omg_p63(_captured, v_i) {
             }
             // fall through to 3708
             case 3708: {
+                omg_current_file_idx = 1;
+                omg_current_line = 691;
     v_rhs = _s.pop();
             }
             // fall through to 3709
@@ -24385,6 +25592,7 @@ function omg_p63(_captured, v_i) {
             }
             // fall through to 3725
             case 3725: {
+                omg_current_file_idx = 1;
                 omg_current_line = 694;
     if (v_r === OMG_UNSET) omg_undefined("r"); _s.push(v_r);
             }
@@ -24430,6 +25638,7 @@ function omg_p64(_captured, v_i) {
         try {
             switch (_ip) {
             case 3729: {
+                omg_current_file_idx = 1;
                 omg_current_line = 698;
     _s.push(v_i);
             }
@@ -24439,10 +25648,13 @@ function omg_p64(_captured, v_i) {
             }
             // fall through to 3731
             case 3731: {
+                omg_current_file_idx = 1;
+                omg_current_line = 698;
     v_r = _s.pop();
             }
             // fall through to 3732
             case 3732: {
+                omg_current_file_idx = 1;
                 omg_current_line = 699;
     if (v_r === OMG_UNSET) omg_undefined("r"); _s.push(v_r);
             }
@@ -24460,6 +25672,8 @@ function omg_p64(_captured, v_i) {
             }
             // fall through to 3736
             case 3736: {
+                omg_current_file_idx = 1;
+                omg_current_line = 699;
     _s.push("CARET");
             }
             // fall through to 3737
@@ -24489,6 +25703,8 @@ function omg_p64(_captured, v_i) {
             }
             // fall through to 3743
             case 3743: {
+                omg_current_file_idx = 1;
+                omg_current_line = 700;
     v_line = _s.pop();
             }
             // fall through to 3744
@@ -24518,6 +25734,8 @@ function omg_p64(_captured, v_i) {
             }
             // fall through to 3750
             case 3750: {
+                omg_current_file_idx = 1;
+                omg_current_line = 701;
     v_rhs = _s.pop();
             }
             // fall through to 3751
@@ -24587,6 +25805,7 @@ function omg_p64(_captured, v_i) {
             }
             // fall through to 3767
             case 3767: {
+                omg_current_file_idx = 1;
                 omg_current_line = 704;
     if (v_r === OMG_UNSET) omg_undefined("r"); _s.push(v_r);
             }
@@ -24634,6 +25853,7 @@ function omg_p65(_captured, v_i) {
         try {
             switch (_ip) {
             case 3594: {
+                omg_current_file_idx = 1;
                 omg_current_line = 667;
     _s.push(v_i);
             }
@@ -24643,10 +25863,13 @@ function omg_p65(_captured, v_i) {
             }
             // fall through to 3596
             case 3596: {
+                omg_current_file_idx = 1;
+                omg_current_line = 667;
     v_r = _s.pop();
             }
             // fall through to 3597
             case 3597: {
+                omg_current_file_idx = 1;
                 omg_current_line = 668;
     _s.push(true);
             }
@@ -24673,6 +25896,8 @@ function omg_p65(_captured, v_i) {
             }
             // fall through to 3603
             case 3603: {
+                omg_current_file_idx = 1;
+                omg_current_line = 669;
     v_k = _s.pop();
             }
             // fall through to 3604
@@ -24715,6 +25940,7 @@ function omg_p65(_captured, v_i) {
             }
             // fall through to 3613
             case 3613: {
+                omg_current_file_idx = 1;
                 omg_current_line = 672;
     if (v_k === OMG_UNSET) omg_undefined("k"); _s.push(v_k);
             }
@@ -24744,6 +25970,7 @@ function omg_p65(_captured, v_i) {
             }
             // fall through to 3620
             case 3620: {
+                omg_current_file_idx = 1;
                 omg_current_line = 673;
     if (v_k === OMG_UNSET) omg_undefined("k"); _s.push(v_k);
             }
@@ -24773,6 +26000,7 @@ function omg_p65(_captured, v_i) {
             }
             // fall through to 3627
             case 3627: {
+                omg_current_file_idx = 1;
                 omg_current_line = 674;
     if (v_k === OMG_UNSET) omg_undefined("k"); _s.push(v_k);
             }
@@ -24802,6 +26030,7 @@ function omg_p65(_captured, v_i) {
             }
             // fall through to 3634
             case 3634: {
+                omg_current_file_idx = 1;
                 omg_current_line = 675;
     if (v_k === OMG_UNSET) omg_undefined("k"); _s.push(v_k);
             }
@@ -24831,6 +26060,7 @@ function omg_p65(_captured, v_i) {
             }
             // fall through to 3641
             case 3641: {
+                omg_current_file_idx = 1;
                 omg_current_line = 676;
     if (v_k === OMG_UNSET) omg_undefined("k"); _s.push(v_k);
             }
@@ -24860,6 +26090,7 @@ function omg_p65(_captured, v_i) {
             }
             // fall through to 3648
             case 3648: {
+                omg_current_file_idx = 1;
                 omg_current_line = 677;
     if (v_op === OMG_UNSET) omg_undefined("op"); _s.push(v_op);
             }
@@ -24890,6 +26121,7 @@ function omg_p65(_captured, v_i) {
             }
             // fall through to 3655
             case 3655: {
+                omg_current_file_idx = 1;
                 omg_current_line = 680;
     if (v_r === OMG_UNSET) omg_undefined("r"); _s.push(v_r);
             }
@@ -24907,6 +26139,8 @@ function omg_p65(_captured, v_i) {
             }
             // fall through to 3659
             case 3659: {
+                omg_current_file_idx = 1;
+                omg_current_line = 680;
     v_line = _s.pop();
             }
             // fall through to 3660
@@ -24936,6 +26170,8 @@ function omg_p65(_captured, v_i) {
             }
             // fall through to 3666
             case 3666: {
+                omg_current_file_idx = 1;
+                omg_current_line = 681;
     v_rhs = _s.pop();
             }
             // fall through to 3667
@@ -25005,6 +26241,7 @@ function omg_p65(_captured, v_i) {
             }
             // fall through to 3683
             case 3683: {
+                omg_current_file_idx = 1;
                 omg_current_line = 684;
     if (v_r === OMG_UNSET) omg_undefined("r"); _s.push(v_r);
             }
@@ -25047,6 +26284,7 @@ function omg_p66(_captured, v_i) {
         try {
             switch (_ip) {
             case 3476: {
+                omg_current_file_idx = 1;
                 omg_current_line = 632;
     _s.push(v_i);
             }
@@ -25089,6 +26327,7 @@ function omg_p67(_captured) {
         try {
             switch (_ip) {
             case 3359: {
+                omg_current_file_idx = 1;
                 omg_current_line = 561;
     if (v___mod_1__parse_state === OMG_UNSET) omg_undefined("__mod_1__parse_state"); _s.push(v___mod_1__parse_state);
             }
@@ -25145,6 +26384,7 @@ function omg_p68(_captured, v_text, v_line, v_file) {
         try {
             switch (_ip) {
             case 2133: {
+                omg_current_file_idx = 1;
                 omg_current_line = 324;
     _s.push(0n);
             }
@@ -25167,6 +26407,7 @@ function omg_p68(_captured, v_text, v_line, v_file) {
             }
             // fall through to 2138
             case 2138: {
+                omg_current_file_idx = 1;
                 omg_current_line = 326;
     if (v_k === OMG_UNSET) omg_undefined("k"); _s.push(v_k);
             }
@@ -25224,10 +26465,14 @@ function omg_p68(_captured, v_text, v_line, v_file) {
             }
             // fall through to 2152
             case 2152: {
+                omg_current_file_idx = 1;
+                omg_current_line = 326;
     _s.push(false);
             }
             // fall through to 2153
             case 2153: {
+                omg_current_file_idx = 1;
+                omg_current_line = 326;
     { const _c = _s.pop(); if (!omg_truthy(_c)) { _ip = 2159; continue; } }
             }
             // fall through to 2154
@@ -25253,6 +26498,7 @@ function omg_p68(_captured, v_text, v_line, v_file) {
             }
             // fall through to 2159
             case 2159: {
+                omg_current_file_idx = 1;
                 omg_current_line = 329;
     _s.push(v_text);
             }
@@ -25312,6 +26558,8 @@ function omg_p68(_captured, v_text, v_line, v_file) {
             }
             // fall through to 2173
             case 2173: {
+                omg_current_file_idx = 1;
+                omg_current_line = 331;
     if (v_nd === OMG_UNSET) omg_undefined("nd"); _s.push(v_nd);
             }
             // fall through to 2174
@@ -25352,10 +26600,14 @@ function omg_p68(_captured, v_text, v_line, v_file) {
             }
             // fall through to 2183
             case 2183: {
+                omg_current_file_idx = 1;
+                omg_current_line = 331;
     _s.push(false);
             }
             // fall through to 2184
             case 2184: {
+                omg_current_file_idx = 1;
+                omg_current_line = 331;
     _s.push(false);
             }
             // fall through to 2185
@@ -25364,6 +26616,8 @@ function omg_p68(_captured, v_text, v_line, v_file) {
             }
             // fall through to 2186
             case 2186: {
+                omg_current_file_idx = 1;
+                omg_current_line = 331;
     { const _c = _s.pop(); if (!omg_truthy(_c)) { _ip = 2201; continue; } }
             }
             // fall through to 2187
@@ -25425,6 +26679,7 @@ function omg_p68(_captured, v_text, v_line, v_file) {
             }
             // fall through to 2201
             case 2201: {
+                omg_current_file_idx = 1;
                 omg_current_line = 334;
     _s.push(0n);
             }
@@ -25443,6 +26698,7 @@ function omg_p68(_captured, v_text, v_line, v_file) {
             }
             // fall through to 2205
             case 2205: {
+                omg_current_file_idx = 1;
                 omg_current_line = 336;
     if (v_j === OMG_UNSET) omg_undefined("j"); _s.push(v_j);
             }
@@ -25530,6 +26786,7 @@ function omg_p68(_captured, v_text, v_line, v_file) {
             }
             // fall through to 2226
             case 2226: {
+                omg_current_file_idx = 1;
                 omg_current_line = 342;
     if (v_num === OMG_UNSET) omg_undefined("num"); _s.push(v_num);
             }
@@ -25578,6 +26835,7 @@ function omg_p69(_captured, v_i) {
         try {
             switch (_ip) {
             case 4688: {
+                omg_current_file_idx = 1;
                 omg_current_line = 934;
     _s.push(v_i);
             }
@@ -25587,6 +26845,8 @@ function omg_p69(_captured, v_i) {
             }
             // fall through to 4690
             case 4690: {
+                omg_current_file_idx = 1;
+                omg_current_line = 934;
     _s.push("ID");
             }
             // fall through to 4691
@@ -25612,6 +26872,8 @@ function omg_p69(_captured, v_i) {
             }
             // fall through to 4696
             case 4696: {
+                omg_current_file_idx = 1;
+                omg_current_line = 935;
     _s.pop();
             }
             // fall through to 4697
@@ -25620,6 +26882,7 @@ function omg_p69(_captured, v_i) {
             }
             // fall through to 4698
             case 4698: {
+                omg_current_file_idx = 1;
                 omg_current_line = 937;
     _s.push("id");
             }
@@ -25633,6 +26896,8 @@ function omg_p69(_captured, v_i) {
             }
             // fall through to 4701
             case 4701: {
+                omg_current_file_idx = 1;
+                omg_current_line = 937;
     _s.push(v_i);
             }
             // fall through to 4702
@@ -25641,6 +26906,8 @@ function omg_p69(_captured, v_i) {
             }
             // fall through to 4703
             case 4703: {
+                omg_current_file_idx = 1;
+                omg_current_line = 937;
     { const _arr = _s.splice(_s.length - 3, 3); _s.push(_arr); }
             }
             // fall through to 4704
@@ -25666,6 +26933,7 @@ function omg_p69(_captured, v_i) {
             }
             // fall through to 4709
             case 4709: {
+                omg_current_file_idx = 1;
                 omg_current_line = 939;
     _s.push(true);
             }
@@ -25684,6 +26952,8 @@ function omg_p69(_captured, v_i) {
             }
             // fall through to 4713
             case 4713: {
+                omg_current_file_idx = 1;
+                omg_current_line = 940;
     v_k = _s.pop();
             }
             // fall through to 4714
@@ -25722,6 +26992,8 @@ function omg_p69(_captured, v_i) {
             }
             // fall through to 4722
             case 4722: {
+                omg_current_file_idx = 1;
+                omg_current_line = 942;
     _s.push("ID");
             }
             // fall through to 4723
@@ -25755,6 +27027,8 @@ function omg_p69(_captured, v_i) {
             }
             // fall through to 4730
             case 4730: {
+                omg_current_file_idx = 1;
+                omg_current_line = 943;
     _s.pop();
             }
             // fall through to 4731
@@ -25763,6 +27037,7 @@ function omg_p69(_captured, v_i) {
             }
             // fall through to 4732
             case 4732: {
+                omg_current_file_idx = 1;
                 omg_current_line = 945;
     if (v_j === OMG_UNSET) omg_undefined("j"); _s.push(v_j);
             }
@@ -25780,6 +27055,8 @@ function omg_p69(_captured, v_i) {
             }
             // fall through to 4736
             case 4736: {
+                omg_current_file_idx = 1;
+                omg_current_line = 945;
     v_attr = _s.pop();
             }
             // fall through to 4737
@@ -25813,6 +27090,8 @@ function omg_p69(_captured, v_i) {
             }
             // fall through to 4744
             case 4744: {
+                omg_current_file_idx = 1;
+                omg_current_line = 946;
     { const _arr = _s.splice(_s.length - 4, 4); _s.push(_arr); }
             }
             // fall through to 4745
@@ -25842,6 +27121,7 @@ function omg_p69(_captured, v_i) {
             }
             // fall through to 4751
             case 4751: {
+                omg_current_file_idx = 1;
                 omg_current_line = 948;
     if (v_k === OMG_UNSET) omg_undefined("k"); _s.push(v_k);
             }
@@ -25868,6 +27148,8 @@ function omg_p69(_captured, v_i) {
             }
             // fall through to 4757
             case 4757: {
+                omg_current_file_idx = 1;
+                omg_current_line = 949;
     v_line = _s.pop();
             }
             // fall through to 4758
@@ -25889,6 +27171,8 @@ function omg_p69(_captured, v_i) {
             }
             // fall through to 4762
             case 4762: {
+                omg_current_file_idx = 1;
+                omg_current_line = 950;
     v_r = _s.pop();
             }
             // fall through to 4763
@@ -25914,6 +27198,8 @@ function omg_p69(_captured, v_i) {
             }
             // fall through to 4768
             case 4768: {
+                omg_current_file_idx = 1;
+                omg_current_line = 951;
     if (v_j === OMG_UNSET) omg_undefined("j"); v_j = _s.pop();
             }
             // fall through to 4769
@@ -25955,6 +27241,7 @@ function omg_p69(_captured, v_i) {
             }
             // fall through to 4778
             case 4778: {
+                omg_current_file_idx = 1;
                 omg_current_line = 954;
     if (v_node === OMG_UNSET) omg_undefined("node"); _s.push(v_node);
             }
@@ -25972,10 +27259,13 @@ function omg_p69(_captured, v_i) {
             }
             // fall through to 4782
             case 4782: {
+                omg_current_file_idx = 1;
+                omg_current_line = 954;
     _ip = 4709; continue;
             }
             // fall through to 4783
             case 4783: {
+                omg_current_file_idx = 1;
                 omg_current_line = 957;
     if (v_node === OMG_UNSET) omg_undefined("node"); _s.push(v_node);
             }
@@ -26031,6 +27321,7 @@ function omg_p70(_captured, v_i) {
         try {
             switch (_ip) {
             case 3943: {
+                omg_current_file_idx = 1;
                 omg_current_line = 752;
     _s.push(v_i);
             }
@@ -26040,10 +27331,13 @@ function omg_p70(_captured, v_i) {
             }
             // fall through to 3945
             case 3945: {
+                omg_current_file_idx = 1;
+                omg_current_line = 752;
     v_r = _s.pop();
             }
             // fall through to 3946
             case 3946: {
+                omg_current_file_idx = 1;
                 omg_current_line = 753;
     _s.push(true);
             }
@@ -26070,6 +27364,8 @@ function omg_p70(_captured, v_i) {
             }
             // fall through to 3952
             case 3952: {
+                omg_current_file_idx = 1;
+                omg_current_line = 754;
     v_k = _s.pop();
             }
             // fall through to 3953
@@ -26112,6 +27408,7 @@ function omg_p70(_captured, v_i) {
             }
             // fall through to 3962
             case 3962: {
+                omg_current_file_idx = 1;
                 omg_current_line = 757;
     if (v_k === OMG_UNSET) omg_undefined("k"); _s.push(v_k);
             }
@@ -26141,6 +27438,7 @@ function omg_p70(_captured, v_i) {
             }
             // fall through to 3969
             case 3969: {
+                omg_current_file_idx = 1;
                 omg_current_line = 758;
     if (v_k === OMG_UNSET) omg_undefined("k"); _s.push(v_k);
             }
@@ -26170,6 +27468,7 @@ function omg_p70(_captured, v_i) {
             }
             // fall through to 3976
             case 3976: {
+                omg_current_file_idx = 1;
                 omg_current_line = 759;
     if (v_k === OMG_UNSET) omg_undefined("k"); _s.push(v_k);
             }
@@ -26199,6 +27498,7 @@ function omg_p70(_captured, v_i) {
             }
             // fall through to 3983
             case 3983: {
+                omg_current_file_idx = 1;
                 omg_current_line = 760;
     if (v_op === OMG_UNSET) omg_undefined("op"); _s.push(v_op);
             }
@@ -26229,6 +27529,7 @@ function omg_p70(_captured, v_i) {
             }
             // fall through to 3990
             case 3990: {
+                omg_current_file_idx = 1;
                 omg_current_line = 763;
     if (v_r === OMG_UNSET) omg_undefined("r"); _s.push(v_r);
             }
@@ -26246,6 +27547,8 @@ function omg_p70(_captured, v_i) {
             }
             // fall through to 3994
             case 3994: {
+                omg_current_file_idx = 1;
+                omg_current_line = 763;
     v_line = _s.pop();
             }
             // fall through to 3995
@@ -26275,6 +27578,8 @@ function omg_p70(_captured, v_i) {
             }
             // fall through to 4001
             case 4001: {
+                omg_current_file_idx = 1;
+                omg_current_line = 764;
     v_rhs = _s.pop();
             }
             // fall through to 4002
@@ -26344,6 +27649,7 @@ function omg_p70(_captured, v_i) {
             }
             // fall through to 4018
             case 4018: {
+                omg_current_file_idx = 1;
                 omg_current_line = 767;
     if (v_r === OMG_UNSET) omg_undefined("r"); _s.push(v_r);
             }
@@ -26388,6 +27694,7 @@ function omg_p71(_captured, v_i) {
         try {
             switch (_ip) {
             case 3564: {
+                omg_current_file_idx = 1;
                 omg_current_line = 658;
     _s.push(v_i);
             }
@@ -26397,6 +27704,8 @@ function omg_p71(_captured, v_i) {
             }
             // fall through to 3566
             case 3566: {
+                omg_current_file_idx = 1;
+                omg_current_line = 658;
     _s.push("NOT");
             }
             // fall through to 3567
@@ -26418,6 +27727,8 @@ function omg_p71(_captured, v_i) {
             }
             // fall through to 3571
             case 3571: {
+                omg_current_file_idx = 1;
+                omg_current_line = 659;
     v_line = _s.pop();
             }
             // fall through to 3572
@@ -26439,6 +27750,8 @@ function omg_p71(_captured, v_i) {
             }
             // fall through to 3576
             case 3576: {
+                omg_current_file_idx = 1;
+                omg_current_line = 660;
     v_r = _s.pop();
             }
             // fall through to 3577
@@ -26496,6 +27809,7 @@ function omg_p71(_captured, v_i) {
             }
             // fall through to 3590
             case 3590: {
+                omg_current_file_idx = 1;
                 omg_current_line = 663;
     _s.push(v_i);
             }
@@ -26541,6 +27855,7 @@ function omg_p72(_captured, v_i) {
         try {
             switch (_ip) {
             case 3480: {
+                omg_current_file_idx = 1;
                 omg_current_line = 636;
     _s.push(v_i);
             }
@@ -26550,10 +27865,13 @@ function omg_p72(_captured, v_i) {
             }
             // fall through to 3482
             case 3482: {
+                omg_current_file_idx = 1;
+                omg_current_line = 636;
     v_r = _s.pop();
             }
             // fall through to 3483
             case 3483: {
+                omg_current_file_idx = 1;
                 omg_current_line = 637;
     if (v_r === OMG_UNSET) omg_undefined("r"); _s.push(v_r);
             }
@@ -26571,6 +27889,8 @@ function omg_p72(_captured, v_i) {
             }
             // fall through to 3487
             case 3487: {
+                omg_current_file_idx = 1;
+                omg_current_line = 637;
     _s.push("OR");
             }
             // fall through to 3488
@@ -26600,6 +27920,8 @@ function omg_p72(_captured, v_i) {
             }
             // fall through to 3494
             case 3494: {
+                omg_current_file_idx = 1;
+                omg_current_line = 638;
     v_line = _s.pop();
             }
             // fall through to 3495
@@ -26629,6 +27951,8 @@ function omg_p72(_captured, v_i) {
             }
             // fall through to 3501
             case 3501: {
+                omg_current_file_idx = 1;
+                omg_current_line = 639;
     v_rhs = _s.pop();
             }
             // fall through to 3502
@@ -26698,6 +28022,7 @@ function omg_p72(_captured, v_i) {
             }
             // fall through to 3518
             case 3518: {
+                omg_current_file_idx = 1;
                 omg_current_line = 642;
     if (v_r === OMG_UNSET) omg_undefined("r"); _s.push(v_r);
             }
@@ -26750,6 +28075,7 @@ function omg_p73(_captured, v_i) {
         try {
             switch (_ip) {
             case 4104: {
+                omg_current_file_idx = 1;
                 omg_current_line = 791;
     _s.push(v_i);
             }
@@ -26759,10 +28085,13 @@ function omg_p73(_captured, v_i) {
             }
             // fall through to 4106
             case 4106: {
+                omg_current_file_idx = 1;
+                omg_current_line = 791;
     v_r = _s.pop();
             }
             // fall through to 4107
             case 4107: {
+                omg_current_file_idx = 1;
                 omg_current_line = 792;
     _s.push(true);
             }
@@ -26789,6 +28118,8 @@ function omg_p73(_captured, v_i) {
             }
             // fall through to 4113
             case 4113: {
+                omg_current_file_idx = 1;
+                omg_current_line = 793;
     v_k = _s.pop();
             }
             // fall through to 4114
@@ -26827,6 +28158,8 @@ function omg_p73(_captured, v_i) {
             }
             // fall through to 4122
             case 4122: {
+                omg_current_file_idx = 1;
+                omg_current_line = 795;
     v_line = _s.pop();
             }
             // fall through to 4123
@@ -26856,6 +28189,8 @@ function omg_p73(_captured, v_i) {
             }
             // fall through to 4129
             case 4129: {
+                omg_current_file_idx = 1;
+                omg_current_line = 796;
     v_j = _s.pop();
             }
             // fall through to 4130
@@ -26878,6 +28213,8 @@ function omg_p73(_captured, v_i) {
             }
             // fall through to 4134
             case 4134: {
+                omg_current_file_idx = 1;
+                omg_current_line = 798;
     _s.push("RPAREN");
             }
             // fall through to 4135
@@ -26899,6 +28236,8 @@ function omg_p73(_captured, v_i) {
             }
             // fall through to 4139
             case 4139: {
+                omg_current_file_idx = 1;
+                omg_current_line = 799;
     v_a = _s.pop();
             }
             // fall through to 4140
@@ -26949,10 +28288,13 @@ function omg_p73(_captured, v_i) {
             }
             // fall through to 4151
             case 4151: {
+                omg_current_file_idx = 1;
+                omg_current_line = 801;
     if (v_j === OMG_UNSET) omg_undefined("j"); v_j = _s.pop();
             }
             // fall through to 4152
             case 4152: {
+                omg_current_file_idx = 1;
                 omg_current_line = 802;
     if (v_j === OMG_UNSET) omg_undefined("j"); _s.push(v_j);
             }
@@ -26962,6 +28304,8 @@ function omg_p73(_captured, v_i) {
             }
             // fall through to 4154
             case 4154: {
+                omg_current_file_idx = 1;
+                omg_current_line = 802;
     _s.push("COMMA");
             }
             // fall through to 4155
@@ -26991,6 +28335,8 @@ function omg_p73(_captured, v_i) {
             }
             // fall through to 4161
             case 4161: {
+                omg_current_file_idx = 1;
+                omg_current_line = 803;
     if (v_j === OMG_UNSET) omg_undefined("j"); v_j = _s.pop();
             }
             // fall through to 4162
@@ -27004,6 +28350,8 @@ function omg_p73(_captured, v_i) {
             }
             // fall through to 4164
             case 4164: {
+                omg_current_file_idx = 1;
+                omg_current_line = 804;
     if (v_a === OMG_UNSET) omg_undefined("a"); v_a = _s.pop();
             }
             // fall through to 4165
@@ -27054,6 +28402,8 @@ function omg_p73(_captured, v_i) {
             }
             // fall through to 4176
             case 4176: {
+                omg_current_file_idx = 1;
+                omg_current_line = 806;
     if (v_j === OMG_UNSET) omg_undefined("j"); v_j = _s.pop();
             }
             // fall through to 4177
@@ -27062,10 +28412,13 @@ function omg_p73(_captured, v_i) {
             }
             // fall through to 4178
             case 4178: {
+                omg_current_file_idx = 1;
+                omg_current_line = 806;
     _ip = 4179; continue;
             }
             // fall through to 4179
             case 4179: {
+                omg_current_file_idx = 1;
                 omg_current_line = 809;
     _s.push("RPAREN");
             }
@@ -27079,6 +28432,8 @@ function omg_p73(_captured, v_i) {
             }
             // fall through to 4182
             case 4182: {
+                omg_current_file_idx = 1;
+                omg_current_line = 809;
     if (v_j === OMG_UNSET) omg_undefined("j"); v_j = _s.pop();
             }
             // fall through to 4183
@@ -27128,6 +28483,7 @@ function omg_p73(_captured, v_i) {
             }
             // fall through to 4194
             case 4194: {
+                omg_current_file_idx = 1;
                 omg_current_line = 811;
     if (v_k === OMG_UNSET) omg_undefined("k"); _s.push(v_k);
             }
@@ -27162,6 +28518,8 @@ function omg_p73(_captured, v_i) {
             }
             // fall through to 4202
             case 4202: {
+                omg_current_file_idx = 1;
+                omg_current_line = 812;
     v_line = _s.pop();
             }
             // fall through to 4203
@@ -27200,6 +28558,8 @@ function omg_p73(_captured, v_i) {
             }
             // fall through to 4211
             case 4211: {
+                omg_current_file_idx = 1;
+                omg_current_line = 814;
     v_start = _s.pop();
             }
             // fall through to 4212
@@ -27221,6 +28581,8 @@ function omg_p73(_captured, v_i) {
             }
             // fall through to 4216
             case 4216: {
+                omg_current_file_idx = 1;
+                omg_current_line = 815;
     _s.push("COLON");
             }
             // fall through to 4217
@@ -27267,6 +28629,8 @@ function omg_p73(_captured, v_i) {
             }
             // fall through to 4227
             case 4227: {
+                omg_current_file_idx = 1;
+                omg_current_line = 817;
     _s.push("RBRACK");
             }
             // fall through to 4228
@@ -27353,6 +28717,7 @@ function omg_p73(_captured, v_i) {
             }
             // fall through to 4248
             case 4248: {
+                omg_current_file_idx = 1;
                 omg_current_line = 821;
     if (v_end_idx === OMG_UNSET) omg_undefined("end_idx"); _s.push(v_end_idx);
             }
@@ -27362,6 +28727,8 @@ function omg_p73(_captured, v_i) {
             }
             // fall through to 4250
             case 4250: {
+                omg_current_file_idx = 1;
+                omg_current_line = 821;
     v_e = _s.pop();
             }
             // fall through to 4251
@@ -27387,6 +28754,8 @@ function omg_p73(_captured, v_i) {
             }
             // fall through to 4256
             case 4256: {
+                omg_current_file_idx = 1;
+                omg_current_line = 822;
     if (v_end_idx === OMG_UNSET) omg_undefined("end_idx"); v_end_idx = _s.pop();
             }
             // fall through to 4257
@@ -27452,10 +28821,13 @@ function omg_p73(_captured, v_i) {
             }
             // fall through to 4272
             case 4272: {
+                omg_current_file_idx = 1;
+                omg_current_line = 823;
     _ip = 4291; continue;
             }
             // fall through to 4273
             case 4273: {
+                omg_current_file_idx = 1;
                 omg_current_line = 826;
     _s.push("RBRACK");
             }
@@ -27477,6 +28849,8 @@ function omg_p73(_captured, v_i) {
             }
             // fall through to 4278
             case 4278: {
+                omg_current_file_idx = 1;
+                omg_current_line = 826;
     if (v_j === OMG_UNSET) omg_undefined("j"); v_j = _s.pop();
             }
             // fall through to 4279
@@ -27530,10 +28904,13 @@ function omg_p73(_captured, v_i) {
             }
             // fall through to 4291
             case 4291: {
+                omg_current_file_idx = 1;
+                omg_current_line = 827;
     _ip = 4343; continue;
             }
             // fall through to 4292
             case 4292: {
+                omg_current_file_idx = 1;
                 omg_current_line = 829;
     if (v_k === OMG_UNSET) omg_undefined("k"); _s.push(v_k);
             }
@@ -27568,6 +28945,8 @@ function omg_p73(_captured, v_i) {
             }
             // fall through to 4300
             case 4300: {
+                omg_current_file_idx = 1;
+                omg_current_line = 830;
     v_line = _s.pop();
             }
             // fall through to 4301
@@ -27597,6 +28976,8 @@ function omg_p73(_captured, v_i) {
             }
             // fall through to 4307
             case 4307: {
+                omg_current_file_idx = 1;
+                omg_current_line = 831;
     _s.push("ID");
             }
             // fall through to 4308
@@ -27638,6 +29019,8 @@ function omg_p73(_captured, v_i) {
             }
             // fall through to 4317
             case 4317: {
+                omg_current_file_idx = 1;
+                omg_current_line = 832;
     _s.pop();
             }
             // fall through to 4318
@@ -27646,6 +29029,7 @@ function omg_p73(_captured, v_i) {
             }
             // fall through to 4319
             case 4319: {
+                omg_current_file_idx = 1;
                 omg_current_line = 834;
     if (v_r === OMG_UNSET) omg_undefined("r"); _s.push(v_r);
             }
@@ -27671,6 +29055,8 @@ function omg_p73(_captured, v_i) {
             }
             // fall through to 4325
             case 4325: {
+                omg_current_file_idx = 1;
+                omg_current_line = 834;
     v_name = _s.pop();
             }
             // fall through to 4326
@@ -27736,6 +29122,7 @@ function omg_p73(_captured, v_i) {
             }
             // fall through to 4341
             case 4341: {
+                omg_current_file_idx = 1;
                 omg_current_line = 837;
     if (v_r === OMG_UNSET) omg_undefined("r"); _s.push(v_r);
             }
@@ -27745,10 +29132,13 @@ function omg_p73(_captured, v_i) {
             }
             // fall through to 4343
             case 4343: {
+                omg_current_file_idx = 1;
+                omg_current_line = 837;
     _ip = 4107; continue;
             }
             // fall through to 4344
             case 4344: {
+                omg_current_file_idx = 1;
                 omg_current_line = 840;
     if (v_r === OMG_UNSET) omg_undefined("r"); _s.push(v_r);
             }
@@ -27799,6 +29189,7 @@ function omg_p74(_captured, v_i) {
         try {
             switch (_ip) {
             case 4348: {
+                omg_current_file_idx = 1;
                 omg_current_line = 844;
     _s.push(v_i);
             }
@@ -27808,6 +29199,8 @@ function omg_p74(_captured, v_i) {
             }
             // fall through to 4350
             case 4350: {
+                omg_current_file_idx = 1;
+                omg_current_line = 844;
     v_k = _s.pop();
             }
             // fall through to 4351
@@ -27821,6 +29214,8 @@ function omg_p74(_captured, v_i) {
             }
             // fall through to 4353
             case 4353: {
+                omg_current_file_idx = 1;
+                omg_current_line = 845;
     v_line = _s.pop();
             }
             // fall through to 4354
@@ -27855,6 +29250,8 @@ function omg_p74(_captured, v_i) {
             }
             // fall through to 4361
             case 4361: {
+                omg_current_file_idx = 1;
+                omg_current_line = 847;
     if (v_line === OMG_UNSET) omg_undefined("line"); _s.push(v_line);
             }
             // fall through to 4362
@@ -27887,6 +29284,7 @@ function omg_p74(_captured, v_i) {
             }
             // fall through to 4369
             case 4369: {
+                omg_current_file_idx = 1;
                 omg_current_line = 849;
     if (v_k === OMG_UNSET) omg_undefined("k"); _s.push(v_k);
             }
@@ -27917,6 +29315,8 @@ function omg_p74(_captured, v_i) {
             }
             // fall through to 4376
             case 4376: {
+                omg_current_file_idx = 1;
+                omg_current_line = 850;
     if (v_line === OMG_UNSET) omg_undefined("line"); _s.push(v_line);
             }
             // fall through to 4377
@@ -27949,6 +29349,7 @@ function omg_p74(_captured, v_i) {
             }
             // fall through to 4384
             case 4384: {
+                omg_current_file_idx = 1;
                 omg_current_line = 852;
     if (v_k === OMG_UNSET) omg_undefined("k"); _s.push(v_k);
             }
@@ -27979,6 +29380,8 @@ function omg_p74(_captured, v_i) {
             }
             // fall through to 4391
             case 4391: {
+                omg_current_file_idx = 1;
+                omg_current_line = 853;
     if (v_line === OMG_UNSET) omg_undefined("line"); _s.push(v_line);
             }
             // fall through to 4392
@@ -28011,6 +29414,7 @@ function omg_p74(_captured, v_i) {
             }
             // fall through to 4399
             case 4399: {
+                omg_current_file_idx = 1;
                 omg_current_line = 855;
     if (v_k === OMG_UNSET) omg_undefined("k"); _s.push(v_k);
             }
@@ -28069,6 +29473,7 @@ function omg_p74(_captured, v_i) {
             }
             // fall through to 4413
             case 4413: {
+                omg_current_file_idx = 1;
                 omg_current_line = 858;
     if (v_k === OMG_UNSET) omg_undefined("k"); _s.push(v_k);
             }
@@ -28127,6 +29532,7 @@ function omg_p74(_captured, v_i) {
             }
             // fall through to 4427
             case 4427: {
+                omg_current_file_idx = 1;
                 omg_current_line = 861;
     if (v_k === OMG_UNSET) omg_undefined("k"); _s.push(v_k);
             }
@@ -28157,6 +29563,8 @@ function omg_p74(_captured, v_i) {
             }
             // fall through to 4434
             case 4434: {
+                omg_current_file_idx = 1;
+                omg_current_line = 862;
     if (v_line === OMG_UNSET) omg_undefined("line"); _s.push(v_line);
             }
             // fall through to 4435
@@ -28189,6 +29597,7 @@ function omg_p74(_captured, v_i) {
             }
             // fall through to 4442
             case 4442: {
+                omg_current_file_idx = 1;
                 omg_current_line = 864;
     if (v_k === OMG_UNSET) omg_undefined("k"); _s.push(v_k);
             }
@@ -28223,6 +29632,8 @@ function omg_p74(_captured, v_i) {
             }
             // fall through to 4450
             case 4450: {
+                omg_current_file_idx = 1;
+                omg_current_line = 865;
     v_r = _s.pop();
             }
             // fall through to 4451
@@ -28260,6 +29671,8 @@ function omg_p74(_captured, v_i) {
             }
             // fall through to 4459
             case 4459: {
+                omg_current_file_idx = 1;
+                omg_current_line = 866;
     { const _arr = _s.splice(_s.length - 2, 2); _s.push(_arr); }
             }
             // fall through to 4460
@@ -28272,6 +29685,7 @@ function omg_p74(_captured, v_i) {
             }
             // fall through to 4462
             case 4462: {
+                omg_current_file_idx = 1;
                 omg_current_line = 868;
     if (v_k === OMG_UNSET) omg_undefined("k"); _s.push(v_k);
             }
@@ -28306,6 +29720,8 @@ function omg_p74(_captured, v_i) {
             }
             // fall through to 4470
             case 4470: {
+                omg_current_file_idx = 1;
+                omg_current_line = 869;
     v_j = _s.pop();
             }
             // fall through to 4471
@@ -28319,6 +29735,7 @@ function omg_p74(_captured, v_i) {
             }
             // fall through to 4473
             case 4473: {
+                omg_current_file_idx = 1;
                 omg_current_line = 871;
     if (v_j === OMG_UNSET) omg_undefined("j"); _s.push(v_j);
             }
@@ -28328,6 +29745,8 @@ function omg_p74(_captured, v_i) {
             }
             // fall through to 4475
             case 4475: {
+                omg_current_file_idx = 1;
+                omg_current_line = 871;
     _s.push("RBRACK");
             }
             // fall through to 4476
@@ -28349,6 +29768,8 @@ function omg_p74(_captured, v_i) {
             }
             // fall through to 4480
             case 4480: {
+                omg_current_file_idx = 1;
+                omg_current_line = 872;
     v_r = _s.pop();
             }
             // fall through to 4481
@@ -28399,6 +29820,8 @@ function omg_p74(_captured, v_i) {
             }
             // fall through to 4492
             case 4492: {
+                omg_current_file_idx = 1;
+                omg_current_line = 874;
     if (v_j === OMG_UNSET) omg_undefined("j"); v_j = _s.pop();
             }
             // fall through to 4493
@@ -28412,6 +29835,8 @@ function omg_p74(_captured, v_i) {
             }
             // fall through to 4495
             case 4495: {
+                omg_current_file_idx = 1;
+                omg_current_line = 875;
     _s.push("COMMA");
             }
             // fall through to 4496
@@ -28441,6 +29866,8 @@ function omg_p74(_captured, v_i) {
             }
             // fall through to 4502
             case 4502: {
+                omg_current_file_idx = 1;
+                omg_current_line = 876;
     if (v_j === OMG_UNSET) omg_undefined("j"); v_j = _s.pop();
             }
             // fall through to 4503
@@ -28449,6 +29876,7 @@ function omg_p74(_captured, v_i) {
             }
             // fall through to 4504
             case 4504: {
+                omg_current_file_idx = 1;
                 omg_current_line = 877;
     if (v_j === OMG_UNSET) omg_undefined("j"); _s.push(v_j);
             }
@@ -28458,6 +29886,8 @@ function omg_p74(_captured, v_i) {
             }
             // fall through to 4506
             case 4506: {
+                omg_current_file_idx = 1;
+                omg_current_line = 877;
     _s.push("RBRACK");
             }
             // fall through to 4507
@@ -28483,6 +29913,8 @@ function omg_p74(_captured, v_i) {
             }
             // fall through to 4512
             case 4512: {
+                omg_current_file_idx = 1;
+                omg_current_line = 881;
     _s.pop();
             }
             // fall through to 4513
@@ -28491,10 +29923,13 @@ function omg_p74(_captured, v_i) {
             }
             // fall through to 4514
             case 4514: {
+                omg_current_file_idx = 1;
+                omg_current_line = 881;
     _ip = 4473; continue;
             }
             // fall through to 4515
             case 4515: {
+                omg_current_file_idx = 1;
                 omg_current_line = 884;
     _s.push("list");
             }
@@ -28536,6 +29971,7 @@ function omg_p74(_captured, v_i) {
             }
             // fall through to 4525
             case 4525: {
+                omg_current_file_idx = 1;
                 omg_current_line = 886;
     if (v_k === OMG_UNSET) omg_undefined("k"); _s.push(v_k);
             }
@@ -28570,6 +30006,8 @@ function omg_p74(_captured, v_i) {
             }
             // fall through to 4533
             case 4533: {
+                omg_current_file_idx = 1;
+                omg_current_line = 887;
     v_j = _s.pop();
             }
             // fall through to 4534
@@ -28583,6 +30021,7 @@ function omg_p74(_captured, v_i) {
             }
             // fall through to 4536
             case 4536: {
+                omg_current_file_idx = 1;
                 omg_current_line = 889;
     if (v_j === OMG_UNSET) omg_undefined("j"); _s.push(v_j);
             }
@@ -28592,6 +30031,8 @@ function omg_p74(_captured, v_i) {
             }
             // fall through to 4538
             case 4538: {
+                omg_current_file_idx = 1;
+                omg_current_line = 889;
     _s.push("RBRACE");
             }
             // fall through to 4539
@@ -28622,6 +30063,8 @@ function omg_p74(_captured, v_i) {
             }
             // fall through to 4545
             case 4545: {
+                omg_current_file_idx = 1;
+                omg_current_line = 891;
     _s.push("STR");
             }
             // fall through to 4546
@@ -28643,6 +30086,8 @@ function omg_p74(_captured, v_i) {
             }
             // fall through to 4550
             case 4550: {
+                omg_current_file_idx = 1;
+                omg_current_line = 892;
     if (v_key === OMG_UNSET) omg_undefined("key"); v_key = _s.pop();
             }
             // fall through to 4551
@@ -28668,6 +30113,7 @@ function omg_p74(_captured, v_i) {
             }
             // fall through to 4556
             case 4556: {
+                omg_current_file_idx = 1;
                 omg_current_line = 894;
     if (v_j === OMG_UNSET) omg_undefined("j"); _s.push(v_j);
             }
@@ -28677,6 +30123,8 @@ function omg_p74(_captured, v_i) {
             }
             // fall through to 4558
             case 4558: {
+                omg_current_file_idx = 1;
+                omg_current_line = 894;
     _s.push("ID");
             }
             // fall through to 4559
@@ -28698,6 +30146,8 @@ function omg_p74(_captured, v_i) {
             }
             // fall through to 4563
             case 4563: {
+                omg_current_file_idx = 1;
+                omg_current_line = 895;
     if (v_key === OMG_UNSET) omg_undefined("key"); v_key = _s.pop();
             }
             // fall through to 4564
@@ -28723,6 +30173,7 @@ function omg_p74(_captured, v_i) {
             }
             // fall through to 4569
             case 4569: {
+                omg_current_file_idx = 1;
                 omg_current_line = 898;
     _s.push("Invalid dict key");
             }
@@ -28736,10 +30187,13 @@ function omg_p74(_captured, v_i) {
             }
             // fall through to 4572
             case 4572: {
+                omg_current_file_idx = 1;
+                omg_current_line = 898;
     _s.pop();
             }
             // fall through to 4573
             case 4573: {
+                omg_current_file_idx = 1;
                 omg_current_line = 900;
     _s.push("COLON");
             }
@@ -28753,6 +30207,8 @@ function omg_p74(_captured, v_i) {
             }
             // fall through to 4576
             case 4576: {
+                omg_current_file_idx = 1;
+                omg_current_line = 900;
     if (v_j === OMG_UNSET) omg_undefined("j"); v_j = _s.pop();
             }
             // fall through to 4577
@@ -28766,6 +30222,8 @@ function omg_p74(_captured, v_i) {
             }
             // fall through to 4579
             case 4579: {
+                omg_current_file_idx = 1;
+                omg_current_line = 901;
     if (v_j === OMG_UNSET) omg_undefined("j"); v_j = _s.pop();
             }
             // fall through to 4580
@@ -28779,6 +30237,8 @@ function omg_p74(_captured, v_i) {
             }
             // fall through to 4582
             case 4582: {
+                omg_current_file_idx = 1;
+                omg_current_line = 902;
     v_v = _s.pop();
             }
             // fall through to 4583
@@ -28837,6 +30297,8 @@ function omg_p74(_captured, v_i) {
             }
             // fall through to 4596
             case 4596: {
+                omg_current_file_idx = 1;
+                omg_current_line = 904;
     if (v_j === OMG_UNSET) omg_undefined("j"); v_j = _s.pop();
             }
             // fall through to 4597
@@ -28850,6 +30312,8 @@ function omg_p74(_captured, v_i) {
             }
             // fall through to 4599
             case 4599: {
+                omg_current_file_idx = 1;
+                omg_current_line = 905;
     _s.push("COMMA");
             }
             // fall through to 4600
@@ -28879,6 +30343,8 @@ function omg_p74(_captured, v_i) {
             }
             // fall through to 4606
             case 4606: {
+                omg_current_file_idx = 1;
+                omg_current_line = 906;
     if (v_j === OMG_UNSET) omg_undefined("j"); v_j = _s.pop();
             }
             // fall through to 4607
@@ -28887,6 +30353,7 @@ function omg_p74(_captured, v_i) {
             }
             // fall through to 4608
             case 4608: {
+                omg_current_file_idx = 1;
                 omg_current_line = 907;
     if (v_j === OMG_UNSET) omg_undefined("j"); _s.push(v_j);
             }
@@ -28896,6 +30363,8 @@ function omg_p74(_captured, v_i) {
             }
             // fall through to 4610
             case 4610: {
+                omg_current_file_idx = 1;
+                omg_current_line = 907;
     _s.push("RBRACE");
             }
             // fall through to 4611
@@ -28921,6 +30390,8 @@ function omg_p74(_captured, v_i) {
             }
             // fall through to 4616
             case 4616: {
+                omg_current_file_idx = 1;
+                omg_current_line = 909;
     _s.pop();
             }
             // fall through to 4617
@@ -28929,10 +30400,13 @@ function omg_p74(_captured, v_i) {
             }
             // fall through to 4618
             case 4618: {
+                omg_current_file_idx = 1;
+                omg_current_line = 909;
     _ip = 4536; continue;
             }
             // fall through to 4619
             case 4619: {
+                omg_current_file_idx = 1;
                 omg_current_line = 912;
     _s.push("dict");
             }
@@ -28974,6 +30448,7 @@ function omg_p74(_captured, v_i) {
             }
             // fall through to 4629
             case 4629: {
+                omg_current_file_idx = 1;
                 omg_current_line = 914;
     _s.push("Unexpected token '");
             }
@@ -28987,6 +30462,8 @@ function omg_p74(_captured, v_i) {
             }
             // fall through to 4632
             case 4632: {
+                omg_current_file_idx = 1;
+                omg_current_line = 914;
     { const _b = _s.pop(); const _a = _s.pop(); _s.push(omg_add(_a, _b)); }
             }
             // fall through to 4633
@@ -29007,6 +30484,8 @@ function omg_p74(_captured, v_i) {
             }
             // fall through to 4637
             case 4637: {
+                omg_current_file_idx = 1;
+                omg_current_line = 914;
     _s.pop();
             }
             // fall through to 4638
@@ -29064,6 +30543,7 @@ function omg_p75(_captured, v_file, v_tokens) {
         try {
             switch (_ip) {
             case 5487: {
+                omg_current_file_idx = 1;
                 omg_current_line = 1116;
     _s.push(v_file);
             }
@@ -29077,6 +30557,8 @@ function omg_p75(_captured, v_file, v_tokens) {
             }
             // fall through to 5490
             case 5490: {
+                omg_current_file_idx = 1;
+                omg_current_line = 1116;
     _s.pop();
             }
             // fall through to 5491
@@ -29090,6 +30572,8 @@ function omg_p75(_captured, v_file, v_tokens) {
             }
             // fall through to 5493
             case 5493: {
+                omg_current_file_idx = 1;
+                omg_current_line = 1117;
     v_i = _s.pop();
             }
             // fall through to 5494
@@ -29103,6 +30587,7 @@ function omg_p75(_captured, v_file, v_tokens) {
             }
             // fall through to 5496
             case 5496: {
+                omg_current_file_idx = 1;
                 omg_current_line = 1119;
     if (v_i === OMG_UNSET) omg_undefined("i"); _s.push(v_i);
             }
@@ -29112,6 +30597,8 @@ function omg_p75(_captured, v_file, v_tokens) {
             }
             // fall through to 5498
             case 5498: {
+                omg_current_file_idx = 1;
+                omg_current_line = 1119;
     _s.push("EOF");
             }
             // fall through to 5499
@@ -29133,6 +30620,8 @@ function omg_p75(_captured, v_file, v_tokens) {
             }
             // fall through to 5503
             case 5503: {
+                omg_current_file_idx = 1;
+                omg_current_line = 1120;
     v_r = _s.pop();
             }
             // fall through to 5504
@@ -29183,6 +30672,8 @@ function omg_p75(_captured, v_file, v_tokens) {
             }
             // fall through to 5515
             case 5515: {
+                omg_current_file_idx = 1;
+                omg_current_line = 1122;
     if (v_i === OMG_UNSET) omg_undefined("i"); v_i = _s.pop();
             }
             // fall through to 5516
@@ -29191,6 +30682,7 @@ function omg_p75(_captured, v_file, v_tokens) {
             }
             // fall through to 5517
             case 5517: {
+                omg_current_file_idx = 1;
                 omg_current_line = 1124;
     if (v_stmts === OMG_UNSET) omg_undefined("stmts"); _s.push(v_stmts);
             }
@@ -29238,6 +30730,7 @@ function omg_p76(_captured, v_i) {
         try {
             switch (_ip) {
             case 3813: {
+                omg_current_file_idx = 1;
                 omg_current_line = 718;
     _s.push(v_i);
             }
@@ -29247,10 +30740,13 @@ function omg_p76(_captured, v_i) {
             }
             // fall through to 3815
             case 3815: {
+                omg_current_file_idx = 1;
+                omg_current_line = 718;
     v_r = _s.pop();
             }
             // fall through to 3816
             case 3816: {
+                omg_current_file_idx = 1;
                 omg_current_line = 719;
     _s.push(true);
             }
@@ -29277,6 +30773,8 @@ function omg_p76(_captured, v_i) {
             }
             // fall through to 3822
             case 3822: {
+                omg_current_file_idx = 1;
+                omg_current_line = 720;
     v_k = _s.pop();
             }
             // fall through to 3823
@@ -29319,6 +30817,7 @@ function omg_p76(_captured, v_i) {
             }
             // fall through to 3832
             case 3832: {
+                omg_current_file_idx = 1;
                 omg_current_line = 723;
     if (v_k === OMG_UNSET) omg_undefined("k"); _s.push(v_k);
             }
@@ -29348,6 +30847,7 @@ function omg_p76(_captured, v_i) {
             }
             // fall through to 3839
             case 3839: {
+                omg_current_file_idx = 1;
                 omg_current_line = 724;
     if (v_op === OMG_UNSET) omg_undefined("op"); _s.push(v_op);
             }
@@ -29378,6 +30878,7 @@ function omg_p76(_captured, v_i) {
             }
             // fall through to 3846
             case 3846: {
+                omg_current_file_idx = 1;
                 omg_current_line = 727;
     if (v_r === OMG_UNSET) omg_undefined("r"); _s.push(v_r);
             }
@@ -29395,6 +30896,8 @@ function omg_p76(_captured, v_i) {
             }
             // fall through to 3850
             case 3850: {
+                omg_current_file_idx = 1;
+                omg_current_line = 727;
     v_line = _s.pop();
             }
             // fall through to 3851
@@ -29424,6 +30927,8 @@ function omg_p76(_captured, v_i) {
             }
             // fall through to 3857
             case 3857: {
+                omg_current_file_idx = 1;
+                omg_current_line = 728;
     v_rhs = _s.pop();
             }
             // fall through to 3858
@@ -29493,6 +30998,7 @@ function omg_p76(_captured, v_i) {
             }
             // fall through to 3874
             case 3874: {
+                omg_current_file_idx = 1;
                 omg_current_line = 731;
     if (v_r === OMG_UNSET) omg_undefined("r"); _s.push(v_r);
             }
@@ -29557,6 +31063,7 @@ function omg_p77(_captured, v_i) {
         try {
             switch (_ip) {
             case 4789: {
+                omg_current_file_idx = 1;
                 omg_current_line = 961;
     _s.push(v_i);
             }
@@ -29566,6 +31073,8 @@ function omg_p77(_captured, v_i) {
             }
             // fall through to 4791
             case 4791: {
+                omg_current_file_idx = 1;
+                omg_current_line = 961;
     v_k = _s.pop();
             }
             // fall through to 4792
@@ -29579,6 +31088,8 @@ function omg_p77(_captured, v_i) {
             }
             // fall through to 4794
             case 4794: {
+                omg_current_file_idx = 1;
+                omg_current_line = 962;
     v_line = _s.pop();
             }
             // fall through to 4795
@@ -29626,6 +31137,8 @@ function omg_p77(_captured, v_i) {
             }
             // fall through to 4805
             case 4805: {
+                omg_current_file_idx = 1;
+                omg_current_line = 965;
     _s.push("ID");
             }
             // fall through to 4806
@@ -29651,6 +31164,8 @@ function omg_p77(_captured, v_i) {
             }
             // fall through to 4811
             case 4811: {
+                omg_current_file_idx = 1;
+                omg_current_line = 966;
     _s.pop();
             }
             // fall through to 4812
@@ -29659,6 +31174,7 @@ function omg_p77(_captured, v_i) {
             }
             // fall through to 4813
             case 4813: {
+                omg_current_file_idx = 1;
                 omg_current_line = 968;
     if (v_j === OMG_UNSET) omg_undefined("j"); _s.push(v_j);
             }
@@ -29668,6 +31184,8 @@ function omg_p77(_captured, v_i) {
             }
             // fall through to 4815
             case 4815: {
+                omg_current_file_idx = 1;
+                omg_current_line = 968;
     v_name = _s.pop();
             }
             // fall through to 4816
@@ -29693,6 +31211,8 @@ function omg_p77(_captured, v_i) {
             }
             // fall through to 4821
             case 4821: {
+                omg_current_file_idx = 1;
+                omg_current_line = 969;
     if (v_j === OMG_UNSET) omg_undefined("j"); v_j = _s.pop();
             }
             // fall through to 4822
@@ -29706,6 +31226,8 @@ function omg_p77(_captured, v_i) {
             }
             // fall through to 4824
             case 4824: {
+                omg_current_file_idx = 1;
+                omg_current_line = 970;
     v_r = _s.pop();
             }
             // fall through to 4825
@@ -29763,6 +31285,7 @@ function omg_p77(_captured, v_i) {
             }
             // fall through to 4838
             case 4838: {
+                omg_current_file_idx = 1;
                 omg_current_line = 973;
     if (v_k === OMG_UNSET) omg_undefined("k"); _s.push(v_k);
             }
@@ -29797,6 +31320,8 @@ function omg_p77(_captured, v_i) {
             }
             // fall through to 4846
             case 4846: {
+                omg_current_file_idx = 1;
+                omg_current_line = 974;
     v_r = _s.pop();
             }
             // fall through to 4847
@@ -29850,6 +31375,7 @@ function omg_p77(_captured, v_i) {
             }
             // fall through to 4859
             case 4859: {
+                omg_current_file_idx = 1;
                 omg_current_line = 977;
     if (v_k === OMG_UNSET) omg_undefined("k"); _s.push(v_k);
             }
@@ -29884,6 +31410,8 @@ function omg_p77(_captured, v_i) {
             }
             // fall through to 4867
             case 4867: {
+                omg_current_file_idx = 1;
+                omg_current_line = 978;
     v_r = _s.pop();
             }
             // fall through to 4868
@@ -29937,6 +31465,7 @@ function omg_p77(_captured, v_i) {
             }
             // fall through to 4880
             case 4880: {
+                omg_current_file_idx = 1;
                 omg_current_line = 981;
     if (v_k === OMG_UNSET) omg_undefined("k"); _s.push(v_k);
             }
@@ -29971,6 +31500,8 @@ function omg_p77(_captured, v_i) {
             }
             // fall through to 4888
             case 4888: {
+                omg_current_file_idx = 1;
+                omg_current_line = 982;
     _s.push("STR");
             }
             // fall through to 4889
@@ -30004,6 +31535,8 @@ function omg_p77(_captured, v_i) {
             }
             // fall through to 4896
             case 4896: {
+                omg_current_file_idx = 1;
+                omg_current_line = 983;
     _s.pop();
             }
             // fall through to 4897
@@ -30012,6 +31545,7 @@ function omg_p77(_captured, v_i) {
             }
             // fall through to 4898
             case 4898: {
+                omg_current_file_idx = 1;
                 omg_current_line = 985;
     _s.push(v_i);
             }
@@ -30029,6 +31563,8 @@ function omg_p77(_captured, v_i) {
             }
             // fall through to 4902
             case 4902: {
+                omg_current_file_idx = 1;
+                omg_current_line = 985;
     v_path = _s.pop();
             }
             // fall through to 4903
@@ -30054,6 +31590,8 @@ function omg_p77(_captured, v_i) {
             }
             // fall through to 4908
             case 4908: {
+                omg_current_file_idx = 1;
+                omg_current_line = 986;
     v_j = _s.pop();
             }
             // fall through to 4909
@@ -30067,6 +31605,8 @@ function omg_p77(_captured, v_i) {
             }
             // fall through to 4911
             case 4911: {
+                omg_current_file_idx = 1;
+                omg_current_line = 987;
     _s.push("ID");
             }
             // fall through to 4912
@@ -30092,6 +31632,8 @@ function omg_p77(_captured, v_i) {
             }
             // fall through to 4917
             case 4917: {
+                omg_current_file_idx = 1;
+                omg_current_line = 988;
     _s.pop();
             }
             // fall through to 4918
@@ -30100,6 +31642,7 @@ function omg_p77(_captured, v_i) {
             }
             // fall through to 4919
             case 4919: {
+                omg_current_file_idx = 1;
                 omg_current_line = 990;
     if (v_j === OMG_UNSET) omg_undefined("j"); _s.push(v_j);
             }
@@ -30109,6 +31652,8 @@ function omg_p77(_captured, v_i) {
             }
             // fall through to 4921
             case 4921: {
+                omg_current_file_idx = 1;
+                omg_current_line = 990;
     v_alias = _s.pop();
             }
             // fall through to 4922
@@ -30158,6 +31703,7 @@ function omg_p77(_captured, v_i) {
             }
             // fall through to 4933
             case 4933: {
+                omg_current_file_idx = 1;
                 omg_current_line = 993;
     if (v_k === OMG_UNSET) omg_undefined("k"); _s.push(v_k);
             }
@@ -30192,6 +31738,8 @@ function omg_p77(_captured, v_i) {
             }
             // fall through to 4941
             case 4941: {
+                omg_current_file_idx = 1;
+                omg_current_line = 994;
     v_r = _s.pop();
             }
             // fall through to 4942
@@ -30230,6 +31778,8 @@ function omg_p77(_captured, v_i) {
             }
             // fall through to 4950
             case 4950: {
+                omg_current_file_idx = 1;
+                omg_current_line = 996;
     v_bb = _s.pop();
             }
             // fall through to 4951
@@ -30269,6 +31819,7 @@ function omg_p77(_captured, v_i) {
             }
             // fall through to 4959
             case 4959: {
+                omg_current_file_idx = 1;
                 omg_current_line = 1000;
     if (v_j === OMG_UNSET) omg_undefined("j"); _s.push(v_j);
             }
@@ -30278,6 +31829,8 @@ function omg_p77(_captured, v_i) {
             }
             // fall through to 4961
             case 4961: {
+                omg_current_file_idx = 1;
+                omg_current_line = 1000;
     _s.push("ELIF");
             }
             // fall through to 4962
@@ -30299,6 +31852,8 @@ function omg_p77(_captured, v_i) {
             }
             // fall through to 4966
             case 4966: {
+                omg_current_file_idx = 1;
+                omg_current_line = 1001;
     v_e_line = _s.pop();
             }
             // fall through to 4967
@@ -30320,6 +31875,8 @@ function omg_p77(_captured, v_i) {
             }
             // fall through to 4971
             case 4971: {
+                omg_current_file_idx = 1;
+                omg_current_line = 1002;
     v_ec = _s.pop();
             }
             // fall through to 4972
@@ -30341,6 +31898,8 @@ function omg_p77(_captured, v_i) {
             }
             // fall through to 4976
             case 4976: {
+                omg_current_file_idx = 1;
+                omg_current_line = 1003;
     v_eb = _s.pop();
             }
             // fall through to 4977
@@ -30415,6 +31974,7 @@ function omg_p77(_captured, v_i) {
             }
             // fall through to 4994
             case 4994: {
+                omg_current_file_idx = 1;
                 omg_current_line = 1007;
     if (v_j === OMG_UNSET) omg_undefined("j"); _s.push(v_j);
             }
@@ -30424,6 +31984,8 @@ function omg_p77(_captured, v_i) {
             }
             // fall through to 4996
             case 4996: {
+                omg_current_file_idx = 1;
+                omg_current_line = 1007;
     _s.push("ELSE");
             }
             // fall through to 4997
@@ -30453,6 +32015,8 @@ function omg_p77(_captured, v_i) {
             }
             // fall through to 5003
             case 5003: {
+                omg_current_file_idx = 1;
+                omg_current_line = 1008;
     v_eb = _s.pop();
             }
             // fall through to 5004
@@ -30495,6 +32059,7 @@ function omg_p77(_captured, v_i) {
             }
             // fall through to 5013
             case 5013: {
+                omg_current_file_idx = 1;
                 omg_current_line = 1013;
     if (v_else_block === OMG_UNSET) omg_undefined("else_block"); _s.push(v_else_block);
             }
@@ -30525,6 +32090,7 @@ function omg_p77(_captured, v_i) {
             }
             // fall through to 5020
             case 5020: {
+                omg_current_file_idx = 1;
                 omg_current_line = 1015;
     if (v_idx === OMG_UNSET) omg_undefined("idx"); _s.push(v_idx);
             }
@@ -30633,6 +32199,7 @@ function omg_p77(_captured, v_i) {
             }
             // fall through to 5046
             case 5046: {
+                omg_current_file_idx = 1;
                 omg_current_line = 1020;
     _s.push("if");
             }
@@ -30682,6 +32249,7 @@ function omg_p77(_captured, v_i) {
             }
             // fall through to 5058
             case 5058: {
+                omg_current_file_idx = 1;
                 omg_current_line = 1022;
     if (v_k === OMG_UNSET) omg_undefined("k"); _s.push(v_k);
             }
@@ -30716,6 +32284,8 @@ function omg_p77(_captured, v_i) {
             }
             // fall through to 5066
             case 5066: {
+                omg_current_file_idx = 1;
+                omg_current_line = 1023;
     v_r = _s.pop();
             }
             // fall through to 5067
@@ -30737,6 +32307,8 @@ function omg_p77(_captured, v_i) {
             }
             // fall through to 5071
             case 5071: {
+                omg_current_file_idx = 1;
+                omg_current_line = 1024;
     v_body = _s.pop();
             }
             // fall through to 5072
@@ -30802,6 +32374,7 @@ function omg_p77(_captured, v_i) {
             }
             // fall through to 5087
             case 5087: {
+                omg_current_file_idx = 1;
                 omg_current_line = 1027;
     if (v_k === OMG_UNSET) omg_undefined("k"); _s.push(v_k);
             }
@@ -30845,6 +32418,8 @@ function omg_p77(_captured, v_i) {
             }
             // fall through to 5097
             case 5097: {
+                omg_current_file_idx = 1;
+                omg_current_line = 1029;
     _s.push("ID");
             }
             // fall through to 5098
@@ -30870,6 +32445,8 @@ function omg_p77(_captured, v_i) {
             }
             // fall through to 5103
             case 5103: {
+                omg_current_file_idx = 1;
+                omg_current_line = 1030;
     _s.pop();
             }
             // fall through to 5104
@@ -30878,6 +32455,7 @@ function omg_p77(_captured, v_i) {
             }
             // fall through to 5105
             case 5105: {
+                omg_current_file_idx = 1;
                 omg_current_line = 1032;
     if (v_j === OMG_UNSET) omg_undefined("j"); _s.push(v_j);
             }
@@ -30887,6 +32465,8 @@ function omg_p77(_captured, v_i) {
             }
             // fall through to 5107
             case 5107: {
+                omg_current_file_idx = 1;
+                omg_current_line = 1032;
     v_name = _s.pop();
             }
             // fall through to 5108
@@ -30912,6 +32492,8 @@ function omg_p77(_captured, v_i) {
             }
             // fall through to 5113
             case 5113: {
+                omg_current_file_idx = 1;
+                omg_current_line = 1033;
     if (v_j === OMG_UNSET) omg_undefined("j"); v_j = _s.pop();
             }
             // fall through to 5114
@@ -30925,6 +32507,8 @@ function omg_p77(_captured, v_i) {
             }
             // fall through to 5116
             case 5116: {
+                omg_current_file_idx = 1;
+                omg_current_line = 1034;
     v_r = _s.pop();
             }
             // fall through to 5117
@@ -30946,6 +32530,8 @@ function omg_p77(_captured, v_i) {
             }
             // fall through to 5121
             case 5121: {
+                omg_current_file_idx = 1;
+                omg_current_line = 1035;
     v_body = _s.pop();
             }
             // fall through to 5122
@@ -31015,6 +32601,7 @@ function omg_p77(_captured, v_i) {
             }
             // fall through to 5138
             case 5138: {
+                omg_current_file_idx = 1;
                 omg_current_line = 1038;
     if (v_k === OMG_UNSET) omg_undefined("k"); _s.push(v_k);
             }
@@ -31069,6 +32656,7 @@ function omg_p77(_captured, v_i) {
             }
             // fall through to 5151
             case 5151: {
+                omg_current_file_idx = 1;
                 omg_current_line = 1041;
     if (v_k === OMG_UNSET) omg_undefined("k"); _s.push(v_k);
             }
@@ -31123,6 +32711,7 @@ function omg_p77(_captured, v_i) {
             }
             // fall through to 5164
             case 5164: {
+                omg_current_file_idx = 1;
                 omg_current_line = 1044;
     if (v_k === OMG_UNSET) omg_undefined("k"); _s.push(v_k);
             }
@@ -31166,6 +32755,8 @@ function omg_p77(_captured, v_i) {
             }
             // fall through to 5174
             case 5174: {
+                omg_current_file_idx = 1;
+                omg_current_line = 1046;
     _s.push("ID");
             }
             // fall through to 5175
@@ -31191,6 +32782,8 @@ function omg_p77(_captured, v_i) {
             }
             // fall through to 5180
             case 5180: {
+                omg_current_file_idx = 1;
+                omg_current_line = 1047;
     _s.pop();
             }
             // fall through to 5181
@@ -31199,6 +32792,7 @@ function omg_p77(_captured, v_i) {
             }
             // fall through to 5182
             case 5182: {
+                omg_current_file_idx = 1;
                 omg_current_line = 1049;
     if (v_j === OMG_UNSET) omg_undefined("j"); _s.push(v_j);
             }
@@ -31208,6 +32802,8 @@ function omg_p77(_captured, v_i) {
             }
             // fall through to 5184
             case 5184: {
+                omg_current_file_idx = 1;
+                omg_current_line = 1049;
     v_name = _s.pop();
             }
             // fall through to 5185
@@ -31233,6 +32829,8 @@ function omg_p77(_captured, v_i) {
             }
             // fall through to 5190
             case 5190: {
+                omg_current_file_idx = 1;
+                omg_current_line = 1050;
     if (v_j === OMG_UNSET) omg_undefined("j"); v_j = _s.pop();
             }
             // fall through to 5191
@@ -31246,6 +32844,8 @@ function omg_p77(_captured, v_i) {
             }
             // fall through to 5193
             case 5193: {
+                omg_current_file_idx = 1;
+                omg_current_line = 1051;
     if (v_j === OMG_UNSET) omg_undefined("j"); v_j = _s.pop();
             }
             // fall through to 5194
@@ -31268,6 +32868,8 @@ function omg_p77(_captured, v_i) {
             }
             // fall through to 5198
             case 5198: {
+                omg_current_file_idx = 1;
+                omg_current_line = 1053;
     _s.push("RPAREN");
             }
             // fall through to 5199
@@ -31289,6 +32891,8 @@ function omg_p77(_captured, v_i) {
             }
             // fall through to 5203
             case 5203: {
+                omg_current_file_idx = 1;
+                omg_current_line = 1054;
     _s.push("ID");
             }
             // fall through to 5204
@@ -31314,6 +32918,8 @@ function omg_p77(_captured, v_i) {
             }
             // fall through to 5209
             case 5209: {
+                omg_current_file_idx = 1;
+                omg_current_line = 1055;
     _s.pop();
             }
             // fall through to 5210
@@ -31322,6 +32928,7 @@ function omg_p77(_captured, v_i) {
             }
             // fall through to 5211
             case 5211: {
+                omg_current_file_idx = 1;
                 omg_current_line = 1057;
     if (v_params === OMG_UNSET) omg_undefined("params"); _s.push(v_params);
             }
@@ -31335,6 +32942,8 @@ function omg_p77(_captured, v_i) {
             }
             // fall through to 5214
             case 5214: {
+                omg_current_file_idx = 1;
+                omg_current_line = 1057;
     { const _arr = _s.splice(_s.length - 1, 1); _s.push(_arr); }
             }
             // fall through to 5215
@@ -31364,10 +32973,13 @@ function omg_p77(_captured, v_i) {
             }
             // fall through to 5221
             case 5221: {
+                omg_current_file_idx = 1;
+                omg_current_line = 1058;
     if (v_j === OMG_UNSET) omg_undefined("j"); v_j = _s.pop();
             }
             // fall through to 5222
             case 5222: {
+                omg_current_file_idx = 1;
                 omg_current_line = 1059;
     if (v_j === OMG_UNSET) omg_undefined("j"); _s.push(v_j);
             }
@@ -31377,6 +32989,8 @@ function omg_p77(_captured, v_i) {
             }
             // fall through to 5224
             case 5224: {
+                omg_current_file_idx = 1;
+                omg_current_line = 1059;
     _s.push("COMMA");
             }
             // fall through to 5225
@@ -31406,6 +33020,8 @@ function omg_p77(_captured, v_i) {
             }
             // fall through to 5231
             case 5231: {
+                omg_current_file_idx = 1;
+                omg_current_line = 1060;
     if (v_j === OMG_UNSET) omg_undefined("j"); v_j = _s.pop();
             }
             // fall through to 5232
@@ -31419,6 +33035,8 @@ function omg_p77(_captured, v_i) {
             }
             // fall through to 5234
             case 5234: {
+                omg_current_file_idx = 1;
+                omg_current_line = 1061;
     _s.push("ID");
             }
             // fall through to 5235
@@ -31444,6 +33062,8 @@ function omg_p77(_captured, v_i) {
             }
             // fall through to 5240
             case 5240: {
+                omg_current_file_idx = 1;
+                omg_current_line = 1062;
     _s.pop();
             }
             // fall through to 5241
@@ -31452,6 +33072,7 @@ function omg_p77(_captured, v_i) {
             }
             // fall through to 5242
             case 5242: {
+                omg_current_file_idx = 1;
                 omg_current_line = 1064;
     if (v_params === OMG_UNSET) omg_undefined("params"); _s.push(v_params);
             }
@@ -31465,6 +33086,8 @@ function omg_p77(_captured, v_i) {
             }
             // fall through to 5245
             case 5245: {
+                omg_current_file_idx = 1;
+                omg_current_line = 1064;
     { const _arr = _s.splice(_s.length - 1, 1); _s.push(_arr); }
             }
             // fall through to 5246
@@ -31494,6 +33117,8 @@ function omg_p77(_captured, v_i) {
             }
             // fall through to 5252
             case 5252: {
+                omg_current_file_idx = 1;
+                omg_current_line = 1065;
     if (v_j === OMG_UNSET) omg_undefined("j"); v_j = _s.pop();
             }
             // fall through to 5253
@@ -31502,10 +33127,13 @@ function omg_p77(_captured, v_i) {
             }
             // fall through to 5254
             case 5254: {
+                omg_current_file_idx = 1;
+                omg_current_line = 1065;
     _ip = 5255; continue;
             }
             // fall through to 5255
             case 5255: {
+                omg_current_file_idx = 1;
                 omg_current_line = 1068;
     _s.push("RPAREN");
             }
@@ -31519,6 +33147,8 @@ function omg_p77(_captured, v_i) {
             }
             // fall through to 5258
             case 5258: {
+                omg_current_file_idx = 1;
+                omg_current_line = 1068;
     if (v_j === OMG_UNSET) omg_undefined("j"); v_j = _s.pop();
             }
             // fall through to 5259
@@ -31532,6 +33162,8 @@ function omg_p77(_captured, v_i) {
             }
             // fall through to 5261
             case 5261: {
+                omg_current_file_idx = 1;
+                omg_current_line = 1069;
     v_body = _s.pop();
             }
             // fall through to 5262
@@ -31593,6 +33225,7 @@ function omg_p77(_captured, v_i) {
             }
             // fall through to 5276
             case 5276: {
+                omg_current_file_idx = 1;
                 omg_current_line = 1072;
     if (v_k === OMG_UNSET) omg_undefined("k"); _s.push(v_k);
             }
@@ -31627,6 +33260,8 @@ function omg_p77(_captured, v_i) {
             }
             // fall through to 5284
             case 5284: {
+                omg_current_file_idx = 1;
+                omg_current_line = 1073;
     v_r = _s.pop();
             }
             // fall through to 5285
@@ -31680,6 +33315,7 @@ function omg_p77(_captured, v_i) {
             }
             // fall through to 5297
             case 5297: {
+                omg_current_file_idx = 1;
                 omg_current_line = 1076;
     if (v_k === OMG_UNSET) omg_undefined("k"); _s.push(v_k);
             }
@@ -31714,6 +33350,8 @@ function omg_p77(_captured, v_i) {
             }
             // fall through to 5305
             case 5305: {
+                omg_current_file_idx = 1;
+                omg_current_line = 1077;
     v_tb = _s.pop();
             }
             // fall through to 5306
@@ -31739,6 +33377,8 @@ function omg_p77(_captured, v_i) {
             }
             // fall through to 5311
             case 5311: {
+                omg_current_file_idx = 1;
+                omg_current_line = 1078;
     v_j = _s.pop();
             }
             // fall through to 5312
@@ -31761,6 +33401,8 @@ function omg_p77(_captured, v_i) {
             }
             // fall through to 5316
             case 5316: {
+                omg_current_file_idx = 1;
+                omg_current_line = 1080;
     _s.push("ID");
             }
             // fall through to 5317
@@ -31782,6 +33424,8 @@ function omg_p77(_captured, v_i) {
             }
             // fall through to 5321
             case 5321: {
+                omg_current_file_idx = 1;
+                omg_current_line = 1081;
     if (v_exc_name === OMG_UNSET) omg_undefined("exc_name"); v_exc_name = _s.pop();
             }
             // fall through to 5322
@@ -31807,6 +33451,7 @@ function omg_p77(_captured, v_i) {
             }
             // fall through to 5327
             case 5327: {
+                omg_current_file_idx = 1;
                 omg_current_line = 1084;
     if (v_j === OMG_UNSET) omg_undefined("j"); _s.push(v_j);
             }
@@ -31816,6 +33461,8 @@ function omg_p77(_captured, v_i) {
             }
             // fall through to 5329
             case 5329: {
+                omg_current_file_idx = 1;
+                omg_current_line = 1084;
     v_eb = _s.pop();
             }
             // fall through to 5330
@@ -31885,6 +33532,7 @@ function omg_p77(_captured, v_i) {
             }
             // fall through to 5346
             case 5346: {
+                omg_current_file_idx = 1;
                 omg_current_line = 1087;
     if (v_k === OMG_UNSET) omg_undefined("k"); _s.push(v_k);
             }
@@ -31919,6 +33567,8 @@ function omg_p77(_captured, v_i) {
             }
             // fall through to 5354
             case 5354: {
+                omg_current_file_idx = 1;
+                omg_current_line = 1089;
     _s.push("ASSIGN");
             }
             // fall through to 5355
@@ -31940,6 +33590,8 @@ function omg_p77(_captured, v_i) {
             }
             // fall through to 5359
             case 5359: {
+                omg_current_file_idx = 1;
+                omg_current_line = 1090;
     v_name = _s.pop();
             }
             // fall through to 5360
@@ -31961,6 +33613,8 @@ function omg_p77(_captured, v_i) {
             }
             // fall through to 5364
             case 5364: {
+                omg_current_file_idx = 1;
+                omg_current_line = 1091;
     v_r = _s.pop();
             }
             // fall through to 5365
@@ -32018,6 +33672,7 @@ function omg_p77(_captured, v_i) {
             }
             // fall through to 5378
             case 5378: {
+                omg_current_file_idx = 1;
                 omg_current_line = 1095;
     _s.push(v_i);
             }
@@ -32027,6 +33682,8 @@ function omg_p77(_captured, v_i) {
             }
             // fall through to 5380
             case 5380: {
+                omg_current_file_idx = 1;
+                omg_current_line = 1095;
     v_lv = _s.pop();
             }
             // fall through to 5381
@@ -32048,6 +33705,8 @@ function omg_p77(_captured, v_i) {
             }
             // fall through to 5385
             case 5385: {
+                omg_current_file_idx = 1;
+                omg_current_line = 1096;
     _s.push("ASSIGN");
             }
             // fall through to 5386
@@ -32085,6 +33744,8 @@ function omg_p77(_captured, v_i) {
             }
             // fall through to 5394
             case 5394: {
+                omg_current_file_idx = 1;
+                omg_current_line = 1097;
     v_r = _s.pop();
             }
             // fall through to 5395
@@ -32204,6 +33865,7 @@ function omg_p77(_captured, v_i) {
             }
             // fall through to 5423
             case 5423: {
+                omg_current_file_idx = 1;
                 omg_current_line = 1102;
     if (v_target === OMG_UNSET) omg_undefined("target"); _s.push(v_target);
             }
@@ -32302,6 +33964,7 @@ function omg_p77(_captured, v_i) {
             }
             // fall through to 5447
             case 5447: {
+                omg_current_file_idx = 1;
                 omg_current_line = 1105;
     _s.push("expr_stmt");
             }
@@ -32343,6 +34006,7 @@ function omg_p77(_captured, v_i) {
             }
             // fall through to 5457
             case 5457: {
+                omg_current_file_idx = 1;
                 omg_current_line = 1108;
     _s.push(v_i);
             }
@@ -32352,6 +34016,8 @@ function omg_p77(_captured, v_i) {
             }
             // fall through to 5459
             case 5459: {
+                omg_current_file_idx = 1;
+                omg_current_line = 1108;
     v_r = _s.pop();
             }
             // fall through to 5460
@@ -32405,6 +34071,7 @@ function omg_p77(_captured, v_i) {
             }
             // fall through to 5472
             case 5472: {
+                omg_current_file_idx = 1;
                 omg_current_line = 1111;
     _s.push("Unexpected token '");
             }
@@ -32418,6 +34085,8 @@ function omg_p77(_captured, v_i) {
             }
             // fall through to 5475
             case 5475: {
+                omg_current_file_idx = 1;
+                omg_current_line = 1111;
     { const _b = _s.pop(); const _a = _s.pop(); _s.push(omg_add(_a, _b)); }
             }
             // fall through to 5476
@@ -32438,6 +34107,8 @@ function omg_p77(_captured, v_i) {
             }
             // fall through to 5480
             case 5480: {
+                omg_current_file_idx = 1;
+                omg_current_line = 1111;
     _s.pop();
             }
             // fall through to 5481
@@ -32492,6 +34163,7 @@ function omg_p78(_captured) {
         try {
             switch (_ip) {
             case 3365: {
+                omg_current_file_idx = 1;
                 omg_current_line = 565;
     if (v___mod_1__parse_state === OMG_UNSET) omg_undefined("__mod_1__parse_state"); _s.push(v___mod_1__parse_state);
             }
@@ -32545,6 +34217,7 @@ function omg_p79(_captured, v_i) {
         try {
             switch (_ip) {
             case 4022: {
+                omg_current_file_idx = 1;
                 omg_current_line = 771;
     _s.push(v_i);
             }
@@ -32554,6 +34227,8 @@ function omg_p79(_captured, v_i) {
             }
             // fall through to 4024
             case 4024: {
+                omg_current_file_idx = 1;
+                omg_current_line = 771;
     v_k = _s.pop();
             }
             // fall through to 4025
@@ -32584,6 +34259,8 @@ function omg_p79(_captured, v_i) {
             }
             // fall through to 4031
             case 4031: {
+                omg_current_file_idx = 1;
+                omg_current_line = 773;
     v_line = _s.pop();
             }
             // fall through to 4032
@@ -32605,6 +34282,8 @@ function omg_p79(_captured, v_i) {
             }
             // fall through to 4036
             case 4036: {
+                omg_current_file_idx = 1;
+                omg_current_line = 774;
     v_r = _s.pop();
             }
             // fall through to 4037
@@ -32662,6 +34341,7 @@ function omg_p79(_captured, v_i) {
             }
             // fall through to 4050
             case 4050: {
+                omg_current_file_idx = 1;
                 omg_current_line = 777;
     if (v_k === OMG_UNSET) omg_undefined("k"); _s.push(v_k);
             }
@@ -32688,6 +34368,8 @@ function omg_p79(_captured, v_i) {
             }
             // fall through to 4056
             case 4056: {
+                omg_current_file_idx = 1;
+                omg_current_line = 778;
     v_line = _s.pop();
             }
             // fall through to 4057
@@ -32709,6 +34391,8 @@ function omg_p79(_captured, v_i) {
             }
             // fall through to 4061
             case 4061: {
+                omg_current_file_idx = 1;
+                omg_current_line = 779;
     v_r = _s.pop();
             }
             // fall through to 4062
@@ -32766,6 +34450,7 @@ function omg_p79(_captured, v_i) {
             }
             // fall through to 4075
             case 4075: {
+                omg_current_file_idx = 1;
                 omg_current_line = 782;
     if (v_k === OMG_UNSET) omg_undefined("k"); _s.push(v_k);
             }
@@ -32792,6 +34477,8 @@ function omg_p79(_captured, v_i) {
             }
             // fall through to 4081
             case 4081: {
+                omg_current_file_idx = 1;
+                omg_current_line = 783;
     v_line = _s.pop();
             }
             // fall through to 4082
@@ -32813,6 +34500,8 @@ function omg_p79(_captured, v_i) {
             }
             // fall through to 4086
             case 4086: {
+                omg_current_file_idx = 1;
+                omg_current_line = 784;
     v_r = _s.pop();
             }
             // fall through to 4087
@@ -32870,6 +34559,7 @@ function omg_p79(_captured, v_i) {
             }
             // fall through to 4100
             case 4100: {
+                omg_current_file_idx = 1;
                 omg_current_line = 787;
     _s.push(v_i);
             }
@@ -32912,6 +34602,7 @@ function omg_p80(_captured, v_path, v_cwd) {
         try {
             switch (_ip) {
             case 7484: {
+                omg_current_file_idx = 1;
                 omg_current_line = 1990;
     _s.push(v_path);
             }
@@ -32921,6 +34612,8 @@ function omg_p80(_captured, v_path, v_cwd) {
             }
             // fall through to 7486
             case 7486: {
+                omg_current_file_idx = 1;
+                omg_current_line = 1990;
     { const _c = _s.pop(); if (!omg_truthy(_c)) { _ip = 7489; continue; } }
             }
             // fall through to 7487
@@ -32933,6 +34626,8 @@ function omg_p80(_captured, v_path, v_cwd) {
             }
             // fall through to 7489
             case 7489: {
+                omg_current_file_idx = 1;
+                omg_current_line = 1990;
     _s.push(v_cwd);
             }
             // fall through to 7490
@@ -32957,6 +34652,8 @@ function omg_p80(_captured, v_path, v_cwd) {
             }
             // fall through to 7495
             case 7495: {
+                omg_current_file_idx = 1;
+                omg_current_line = 1990;
     { const _c = _s.pop(); if (!omg_truthy(_c)) { _ip = 7499; continue; } }
             }
             // fall through to 7496
@@ -32974,6 +34671,7 @@ function omg_p80(_captured, v_path, v_cwd) {
             }
             // fall through to 7499
             case 7499: {
+                omg_current_file_idx = 1;
                 omg_current_line = 1993;
     _s.push(v_cwd);
             }
@@ -33003,6 +34701,8 @@ function omg_p80(_captured, v_path, v_cwd) {
             }
             // fall through to 7506
             case 7506: {
+                omg_current_file_idx = 1;
+                omg_current_line = 1993;
     { const _c = _s.pop(); if (!omg_truthy(_c)) { _ip = 7512; continue; } }
             }
             // fall through to 7507
@@ -33028,6 +34728,7 @@ function omg_p80(_captured, v_path, v_cwd) {
             }
             // fall through to 7512
             case 7512: {
+                omg_current_file_idx = 1;
                 omg_current_line = 1996;
     _s.push(v_cwd);
             }
@@ -33087,6 +34788,7 @@ function omg_p81(_captured, v_p) {
         try {
             switch (_ip) {
             case 7158: {
+                omg_current_file_idx = 1;
                 omg_current_line = 1863;
     _s.push(v_p);
             }
@@ -33108,6 +34810,7 @@ function omg_p81(_captured, v_p) {
             }
             // fall through to 7163
             case 7163: {
+                omg_current_file_idx = 1;
                 omg_current_line = 1864;
     if (v_i === OMG_UNSET) omg_undefined("i"); _s.push(v_i);
             }
@@ -33142,6 +34845,8 @@ function omg_p81(_captured, v_p) {
             }
             // fall through to 7171
             case 7171: {
+                omg_current_file_idx = 1;
+                omg_current_line = 1865;
     { const _c = _s.pop(); if (!omg_truthy(_c)) { _ip = 7185; continue; } }
             }
             // fall through to 7172
@@ -33176,6 +34881,7 @@ function omg_p81(_captured, v_p) {
             }
             // fall through to 7179
             case 7179: {
+                omg_current_file_idx = 1;
                 omg_current_line = 1869;
     _s.push(v_p);
             }
@@ -33201,6 +34907,7 @@ function omg_p81(_captured, v_p) {
             }
             // fall through to 7185
             case 7185: {
+                omg_current_file_idx = 1;
                 omg_current_line = 1871;
     if (v_i === OMG_UNSET) omg_undefined("i"); _s.push(v_i);
             }
@@ -33222,6 +34929,7 @@ function omg_p81(_captured, v_p) {
             }
             // fall through to 7190
             case 7190: {
+                omg_current_file_idx = 1;
                 omg_current_line = 1873;
     _s.push("");
             }
@@ -33265,6 +34973,7 @@ function omg_p82(_captured, v_p) {
         try {
             switch (_ip) {
             case 7085: {
+                omg_current_file_idx = 1;
                 omg_current_line = 1844;
     _s.push(v_p);
             }
@@ -33299,6 +35008,7 @@ function omg_p82(_captured, v_p) {
             }
             // fall through to 7093
             case 7093: {
+                omg_current_file_idx = 1;
                 omg_current_line = 1847;
     _s.push(v_p);
             }
@@ -33357,10 +35067,14 @@ function omg_p82(_captured, v_p) {
             }
             // fall through to 7107
             case 7107: {
+                omg_current_file_idx = 1;
+                omg_current_line = 1848;
     _s.push(false);
             }
             // fall through to 7108
             case 7108: {
+                omg_current_file_idx = 1;
+                omg_current_line = 1848;
     { const _c = _s.pop(); if (!omg_truthy(_c)) { _ip = 7111; continue; } }
             }
             // fall through to 7109
@@ -33373,6 +35087,8 @@ function omg_p82(_captured, v_p) {
             }
             // fall through to 7111
             case 7111: {
+                omg_current_file_idx = 1;
+                omg_current_line = 1848;
     if (v_d === OMG_UNSET) omg_undefined("d"); _s.push(v_d);
             }
             // fall through to 7112
@@ -33413,10 +35129,14 @@ function omg_p82(_captured, v_p) {
             }
             // fall through to 7121
             case 7121: {
+                omg_current_file_idx = 1;
+                omg_current_line = 1848;
     _s.push(false);
             }
             // fall through to 7122
             case 7122: {
+                omg_current_file_idx = 1;
+                omg_current_line = 1848;
     _s.push(false);
             }
             // fall through to 7123
@@ -33425,6 +35145,8 @@ function omg_p82(_captured, v_p) {
             }
             // fall through to 7124
             case 7124: {
+                omg_current_file_idx = 1;
+                omg_current_line = 1848;
     { const _c = _s.pop(); if (!omg_truthy(_c)) { _ip = 7133; continue; } }
             }
             // fall through to 7125
@@ -33461,10 +35183,14 @@ function omg_p82(_captured, v_p) {
             }
             // fall through to 7133
             case 7133: {
+                omg_current_file_idx = 1;
+                omg_current_line = 1848;
     _s.push(false);
             }
             // fall through to 7134
             case 7134: {
+                omg_current_file_idx = 1;
+                omg_current_line = 1848;
     return _s.pop();
             }
             // fall through to 7135
@@ -33502,6 +35228,7 @@ function omg_p83(_captured, v_p) {
         try {
             switch (_ip) {
             case 7137: {
+                omg_current_file_idx = 1;
                 omg_current_line = 1854;
     _s.push(v_p);
             }
@@ -33539,6 +35266,8 @@ function omg_p83(_captured, v_p) {
             }
             // fall through to 7146
             case 7146: {
+                omg_current_file_idx = 1;
+                omg_current_line = 1854;
     _s.push(true);
             }
             // fall through to 7147
@@ -33551,10 +35280,14 @@ function omg_p83(_captured, v_p) {
             }
             // fall through to 7149
             case 7149: {
+                omg_current_file_idx = 1;
+                omg_current_line = 1854;
     _s.push(false);
             }
             // fall through to 7150
             case 7150: {
+                omg_current_file_idx = 1;
+                omg_current_line = 1854;
     { const _c = _s.pop(); if (!omg_truthy(_c)) { _ip = 7154; continue; } }
             }
             // fall through to 7151
@@ -33572,6 +35305,7 @@ function omg_p83(_captured, v_p) {
             }
             // fall through to 7154
             case 7154: {
+                omg_current_file_idx = 1;
                 omg_current_line = 1857;
     _s.push(v_p);
             }
@@ -33614,6 +35348,7 @@ function omg_p84(_captured, v_ch) {
         try {
             switch (_ip) {
             case 7071: {
+                omg_current_file_idx = 1;
                 omg_current_line = 1839;
     _s.push(v_ch);
             }
@@ -33639,6 +35374,8 @@ function omg_p84(_captured, v_ch) {
             }
             // fall through to 7077
             case 7077: {
+                omg_current_file_idx = 1;
+                omg_current_line = 1839;
     _s.push(v_ch);
             }
             // fall through to 7078
@@ -33659,6 +35396,8 @@ function omg_p84(_captured, v_ch) {
             }
             // fall through to 7082
             case 7082: {
+                omg_current_file_idx = 1;
+                omg_current_line = 1839;
     return _s.pop();
             }
             // fall through to 7083
@@ -33696,6 +35435,7 @@ function omg_p85(_captured, v_base, v_rel) {
         try {
             switch (_ip) {
             case 7194: {
+                omg_current_file_idx = 1;
                 omg_current_line = 1879;
     _s.push(v_rel);
             }
@@ -33705,6 +35445,8 @@ function omg_p85(_captured, v_base, v_rel) {
             }
             // fall through to 7196
             case 7196: {
+                omg_current_file_idx = 1;
+                omg_current_line = 1879;
     { const _c = _s.pop(); if (!omg_truthy(_c)) { _ip = 7199; continue; } }
             }
             // fall through to 7197
@@ -33717,6 +35459,8 @@ function omg_p85(_captured, v_base, v_rel) {
             }
             // fall through to 7199
             case 7199: {
+                omg_current_file_idx = 1;
+                omg_current_line = 1879;
     _s.push(v_base);
             }
             // fall through to 7200
@@ -33741,6 +35485,8 @@ function omg_p85(_captured, v_base, v_rel) {
             }
             // fall through to 7205
             case 7205: {
+                omg_current_file_idx = 1;
+                omg_current_line = 1879;
     { const _c = _s.pop(); if (!omg_truthy(_c)) { _ip = 7209; continue; } }
             }
             // fall through to 7206
@@ -33758,6 +35504,7 @@ function omg_p85(_captured, v_base, v_rel) {
             }
             // fall through to 7209
             case 7209: {
+                omg_current_file_idx = 1;
                 omg_current_line = 1885;
     _s.push(v_base);
             }
@@ -33787,6 +35534,8 @@ function omg_p85(_captured, v_base, v_rel) {
             }
             // fall through to 7216
             case 7216: {
+                omg_current_file_idx = 1;
+                omg_current_line = 1885;
     { const _c = _s.pop(); if (!omg_truthy(_c)) { _ip = 7222; continue; } }
             }
             // fall through to 7217
@@ -33812,6 +35561,7 @@ function omg_p85(_captured, v_base, v_rel) {
             }
             // fall through to 7222
             case 7222: {
+                omg_current_file_idx = 1;
                 omg_current_line = 1888;
     _s.push(v_base);
             }
@@ -33885,6 +35635,7 @@ function omg_p86(_captured, v_p) {
         try {
             switch (_ip) {
             case 7230: {
+                omg_current_file_idx = 1;
                 omg_current_line = 1901;
     _s.push(v_p);
             }
@@ -33928,6 +35679,7 @@ function omg_p86(_captured, v_p) {
             }
             // fall through to 7240
             case 7240: {
+                omg_current_file_idx = 1;
                 omg_current_line = 1906;
     _s.push("");
             }
@@ -33963,6 +35715,8 @@ function omg_p86(_captured, v_p) {
             }
             // fall through to 7248
             case 7248: {
+                omg_current_file_idx = 1;
+                omg_current_line = 1908;
     { const _c = _s.pop(); if (!omg_truthy(_c)) { _ip = 7283; continue; } }
             }
             // fall through to 7249
@@ -34000,6 +35754,8 @@ function omg_p86(_captured, v_p) {
             }
             // fall through to 7257
             case 7257: {
+                omg_current_file_idx = 1;
+                omg_current_line = 1909;
     _s.push(true);
             }
             // fall through to 7258
@@ -34012,10 +35768,14 @@ function omg_p86(_captured, v_p) {
             }
             // fall through to 7260
             case 7260: {
+                omg_current_file_idx = 1;
+                omg_current_line = 1909;
     _s.push(false);
             }
             // fall through to 7261
             case 7261: {
+                omg_current_file_idx = 1;
+                omg_current_line = 1909;
     { const _c = _s.pop(); if (!omg_truthy(_c)) { _ip = 7271; continue; } }
             }
             // fall through to 7262
@@ -34036,6 +35796,8 @@ function omg_p86(_captured, v_p) {
             }
             // fall through to 7266
             case 7266: {
+                omg_current_file_idx = 1;
+                omg_current_line = 1909;
     _s.push(false);
             }
             // fall through to 7267
@@ -34056,10 +35818,14 @@ function omg_p86(_captured, v_p) {
             }
             // fall through to 7271
             case 7271: {
+                omg_current_file_idx = 1;
+                omg_current_line = 1909;
     _s.push(false);
             }
             // fall through to 7272
             case 7272: {
+                omg_current_file_idx = 1;
+                omg_current_line = 1909;
     { const _c = _s.pop(); if (!omg_truthy(_c)) { _ip = 7278; continue; } }
             }
             // fall through to 7273
@@ -34086,6 +35852,7 @@ function omg_p86(_captured, v_p) {
             }
             // fall through to 7278
             case 7278: {
+                omg_current_file_idx = 1;
                 omg_current_line = 1914;
     _s.push("/");
             }
@@ -34104,10 +35871,13 @@ function omg_p86(_captured, v_p) {
             }
             // fall through to 7282
             case 7282: {
+                omg_current_file_idx = 1;
+                omg_current_line = 1915;
     _ip = 7317; continue;
             }
             // fall through to 7283
             case 7283: {
+                omg_current_file_idx = 1;
                 omg_current_line = 1917;
     _s.push(v_p);
             }
@@ -34117,6 +35887,8 @@ function omg_p86(_captured, v_p) {
             }
             // fall through to 7285
             case 7285: {
+                omg_current_file_idx = 1;
+                omg_current_line = 1917;
     { const _c = _s.pop(); if (!omg_truthy(_c)) { _ip = 7317; continue; } }
             }
             // fall through to 7286
@@ -34154,6 +35926,8 @@ function omg_p86(_captured, v_p) {
             }
             // fall through to 7294
             case 7294: {
+                omg_current_file_idx = 1;
+                omg_current_line = 1918;
     _s.push(true);
             }
             // fall through to 7295
@@ -34166,10 +35940,14 @@ function omg_p86(_captured, v_p) {
             }
             // fall through to 7297
             case 7297: {
+                omg_current_file_idx = 1;
+                omg_current_line = 1918;
     _s.push(false);
             }
             // fall through to 7298
             case 7298: {
+                omg_current_file_idx = 1;
+                omg_current_line = 1918;
     { const _c = _s.pop(); if (!omg_truthy(_c)) { _ip = 7309; continue; } }
             }
             // fall through to 7299
@@ -34216,6 +35994,7 @@ function omg_p86(_captured, v_p) {
             }
             // fall through to 7309
             case 7309: {
+                omg_current_file_idx = 1;
                 omg_current_line = 1923;
     _s.push(v_p);
             }
@@ -34246,10 +36025,13 @@ function omg_p86(_captured, v_p) {
             }
             // fall through to 7316
             case 7316: {
+                omg_current_file_idx = 1;
+                omg_current_line = 1924;
     _ip = 7317; continue;
             }
             // fall through to 7317
             case 7317: {
+                omg_current_file_idx = 1;
                 omg_current_line = 1927;
     if (v_root === OMG_UNSET) omg_undefined("root"); _s.push(v_root);
             }
@@ -34289,6 +36071,7 @@ function omg_p86(_captured, v_p) {
             }
             // fall through to 7326
             case 7326: {
+                omg_current_file_idx = 1;
                 omg_current_line = 1932;
     if (v_i === OMG_UNSET) omg_undefined("i"); _s.push(v_i);
             }
@@ -34332,6 +36115,8 @@ function omg_p86(_captured, v_p) {
             }
             // fall through to 7336
             case 7336: {
+                omg_current_file_idx = 1;
+                omg_current_line = 1934;
     { const _c = _s.pop(); if (!omg_truthy(_c)) { _ip = 7351; continue; } }
             }
             // fall through to 7337
@@ -34382,6 +36167,7 @@ function omg_p86(_captured, v_p) {
             }
             // fall through to 7348
             case 7348: {
+                omg_current_file_idx = 1;
                 omg_current_line = 1938;
     _s.push("");
             }
@@ -34395,6 +36181,7 @@ function omg_p86(_captured, v_p) {
             }
             // fall through to 7351
             case 7351: {
+                omg_current_file_idx = 1;
                 omg_current_line = 1940;
     if (v_cur === OMG_UNSET) omg_undefined("cur"); _s.push(v_cur);
             }
@@ -34412,6 +36199,7 @@ function omg_p86(_captured, v_p) {
             }
             // fall through to 7355
             case 7355: {
+                omg_current_file_idx = 1;
                 omg_current_line = 1942;
     if (v_i === OMG_UNSET) omg_undefined("i"); _s.push(v_i);
             }
@@ -34433,6 +36221,7 @@ function omg_p86(_captured, v_p) {
             }
             // fall through to 7360
             case 7360: {
+                omg_current_file_idx = 1;
                 omg_current_line = 1944;
     if (v_cur === OMG_UNSET) omg_undefined("cur"); _s.push(v_cur);
             }
@@ -34479,6 +36268,7 @@ function omg_p86(_captured, v_p) {
             }
             // fall through to 7371
             case 7371: {
+                omg_current_file_idx = 1;
                 omg_current_line = 1951;
     { const _arr = _s.splice(_s.length - 0, 0); _s.push(_arr); }
             }
@@ -34510,6 +36300,7 @@ function omg_p86(_captured, v_p) {
             }
             // fall through to 7378
             case 7378: {
+                omg_current_file_idx = 1;
                 omg_current_line = 1954;
     if (v_j === OMG_UNSET) omg_undefined("j"); _s.push(v_j);
             }
@@ -34565,6 +36356,7 @@ function omg_p86(_captured, v_p) {
             }
             // fall through to 7391
             case 7391: {
+                omg_current_file_idx = 1;
                 omg_current_line = 1958;
     if (v_seg === OMG_UNSET) omg_undefined("seg"); _s.push(v_seg);
             }
@@ -34652,10 +36444,14 @@ function omg_p86(_captured, v_p) {
             }
             // fall through to 7412
             case 7412: {
+                omg_current_file_idx = 1;
+                omg_current_line = 1960;
     _s.push(false);
             }
             // fall through to 7413
             case 7413: {
+                omg_current_file_idx = 1;
+                omg_current_line = 1960;
     { const _c = _s.pop(); if (!omg_truthy(_c)) { _ip = 7420; continue; } }
             }
             // fall through to 7414
@@ -34685,6 +36481,7 @@ function omg_p86(_captured, v_p) {
             }
             // fall through to 7420
             case 7420: {
+                omg_current_file_idx = 1;
                 omg_current_line = 1962;
     if (v_rooted === OMG_UNSET) omg_undefined("rooted"); _s.push(v_rooted);
             }
@@ -34727,10 +36524,13 @@ function omg_p86(_captured, v_p) {
             }
             // fall through to 7430
             case 7430: {
+                omg_current_file_idx = 1;
+                omg_current_line = 1963;
     _ip = 7436; continue;
             }
             // fall through to 7431
             case 7431: {
+                omg_current_file_idx = 1;
                 omg_current_line = 1966;
     if (v_stack === OMG_UNSET) omg_undefined("stack"); _s.push(v_stack);
             }
@@ -34752,6 +36552,7 @@ function omg_p86(_captured, v_p) {
             }
             // fall through to 7436
             case 7436: {
+                omg_current_file_idx = 1;
                 omg_current_line = 1968;
     if (v_j === OMG_UNSET) omg_undefined("j"); _s.push(v_j);
             }
@@ -34773,6 +36574,7 @@ function omg_p86(_captured, v_p) {
             }
             // fall through to 7441
             case 7441: {
+                omg_current_file_idx = 1;
                 omg_current_line = 1971;
     if (v_root === OMG_UNSET) omg_undefined("root"); _s.push(v_root);
             }
@@ -34804,6 +36606,7 @@ function omg_p86(_captured, v_p) {
             }
             // fall through to 7448
             case 7448: {
+                omg_current_file_idx = 1;
                 omg_current_line = 1974;
     if (v_k === OMG_UNSET) omg_undefined("k"); _s.push(v_k);
             }
@@ -34859,6 +36662,7 @@ function omg_p86(_captured, v_p) {
             }
             // fall through to 7461
             case 7461: {
+                omg_current_file_idx = 1;
                 omg_current_line = 1978;
     if (v_out === OMG_UNSET) omg_undefined("out"); _s.push(v_out);
             }
@@ -34905,6 +36709,7 @@ function omg_p86(_captured, v_p) {
             }
             // fall through to 7472
             case 7472: {
+                omg_current_file_idx = 1;
                 omg_current_line = 1981;
     if (v_out === OMG_UNSET) omg_undefined("out"); _s.push(v_out);
             }
@@ -34939,6 +36744,7 @@ function omg_p86(_captured, v_p) {
             }
             // fall through to 7480
             case 7480: {
+                omg_current_file_idx = 1;
                 omg_current_line = 1984;
     if (v_out === OMG_UNSET) omg_undefined("out"); _s.push(v_out);
             }
@@ -34981,6 +36787,7 @@ function omg_p87(_captured, v_file, v_tokens) {
         try {
             switch (_ip) {
             case 3353: {
+                omg_current_file_idx = 1;
                 omg_current_line = 557;
     _s.push(v_file);
             }
@@ -35031,6 +36838,7 @@ function omg_p88(_captured, v_i) {
         try {
             switch (_ip) {
             case 3422: {
+                omg_current_file_idx = 1;
                 omg_current_line = 591;
     _s.push(v_i);
             }
@@ -35040,6 +36848,8 @@ function omg_p88(_captured, v_i) {
             }
             // fall through to 3424
             case 3424: {
+                omg_current_file_idx = 1;
+                omg_current_line = 591;
     _s.push("NL");
             }
             // fall through to 3425
@@ -35073,6 +36883,7 @@ function omg_p88(_captured, v_i) {
             }
             // fall through to 3432
             case 3432: {
+                omg_current_file_idx = 1;
                 omg_current_line = 594;
     _s.push(v_i);
             }
@@ -35122,6 +36933,7 @@ function omg_p89(_captured, v_funcs) {
         try {
             switch (_ip) {
             case 9975: {
+                omg_current_file_idx = 1;
                 omg_current_line = 2725;
     { const _arr = _s.splice(_s.length - 0, 0); _s.push(_arr); }
             }
@@ -35153,6 +36965,7 @@ function omg_p89(_captured, v_funcs) {
             }
             // fall through to 9982
             case 9982: {
+                omg_current_file_idx = 1;
                 omg_current_line = 2728;
     if (v_i === OMG_UNSET) omg_undefined("i"); _s.push(v_i);
             }
@@ -35208,6 +37021,7 @@ function omg_p89(_captured, v_funcs) {
             }
             // fall through to 9995
             case 9995: {
+                omg_current_file_idx = 1;
                 omg_current_line = 2731;
     if (v_j === OMG_UNSET) omg_undefined("j"); _s.push(v_j);
             }
@@ -35273,10 +37087,14 @@ function omg_p89(_captured, v_funcs) {
             }
             // fall through to 10011
             case 10011: {
+                omg_current_file_idx = 1;
+                omg_current_line = 2731;
     _s.push(false);
             }
             // fall through to 10012
             case 10012: {
+                omg_current_file_idx = 1;
+                omg_current_line = 2731;
     { const _c = _s.pop(); if (!omg_truthy(_c)) { _ip = 10018; continue; } }
             }
             // fall through to 10013
@@ -35302,6 +37120,7 @@ function omg_p89(_captured, v_funcs) {
             }
             // fall through to 10018
             case 10018: {
+                omg_current_file_idx = 1;
                 omg_current_line = 2734;
     if (v_out === OMG_UNSET) omg_undefined("out"); _s.push(v_out);
             }
@@ -35414,6 +37233,7 @@ function omg_p89(_captured, v_funcs) {
             }
             // fall through to 10045
             case 10045: {
+                omg_current_file_idx = 1;
                 omg_current_line = 2739;
     if (v_out === OMG_UNSET) omg_undefined("out"); _s.push(v_out);
             }
@@ -35459,6 +37279,7 @@ function omg_p90(_captured, v_b) {
         try {
             switch (_ip) {
             case 1684: {
+                omg_current_file_idx = 1;
                 omg_current_line = 220;
     _s.push(v_b);
             }
@@ -35490,6 +37311,7 @@ function omg_p90(_captured, v_b) {
             }
             // fall through to 1691
             case 1691: {
+                omg_current_file_idx = 1;
                 omg_current_line = 224;
     if (v_i === OMG_UNSET) omg_undefined("i"); _s.push(v_i);
             }
@@ -35570,6 +37392,7 @@ function omg_p90(_captured, v_b) {
             }
             // fall through to 1710
             case 1710: {
+                omg_current_file_idx = 1;
                 omg_current_line = 228;
     _s.push(v_b);
             }
@@ -35603,6 +37426,8 @@ function omg_p90(_captured, v_b) {
             }
             // fall through to 1718
             case 1718: {
+                omg_current_file_idx = 1;
+                omg_current_line = 228;
     _s.push(v_b);
             }
             // fall through to 1719
@@ -35631,6 +37456,8 @@ function omg_p90(_captured, v_b) {
             }
             // fall through to 1725
             case 1725: {
+                omg_current_file_idx = 1;
+                omg_current_line = 228;
     { const _c = _s.pop(); if (!omg_truthy(_c)) { _ip = 1728; continue; } }
             }
             // fall through to 1726
@@ -35643,6 +37470,8 @@ function omg_p90(_captured, v_b) {
             }
             // fall through to 1728
             case 1728: {
+                omg_current_file_idx = 1;
+                omg_current_line = 228;
     _s.push(v_b);
             }
             // fall through to 1729
@@ -35671,6 +37500,8 @@ function omg_p90(_captured, v_b) {
             }
             // fall through to 1735
             case 1735: {
+                omg_current_file_idx = 1;
+                omg_current_line = 228;
     { const _c = _s.pop(); if (!omg_truthy(_c)) { _ip = 1741; continue; } }
             }
             // fall through to 1736
@@ -35696,15 +37527,19 @@ function omg_p90(_captured, v_b) {
             }
             // fall through to 1741
             case 1741: {
+                omg_current_file_idx = 1;
                 omg_current_line = 231;
     _ip = 1743; continue;
             }
             // fall through to 1742
             case 1742: {
+                omg_current_file_idx = 1;
+                omg_current_line = 231;
     _ip = 1691; continue;
             }
             // fall through to 1743
             case 1743: {
+                omg_current_file_idx = 1;
                 omg_current_line = 234;
     if (v_i === OMG_UNSET) omg_undefined("i"); _s.push(v_i);
             }
@@ -35795,10 +37630,14 @@ function omg_p90(_captured, v_b) {
             }
             // fall through to 1765
             case 1765: {
+                omg_current_file_idx = 1;
+                omg_current_line = 236;
     _s.push(false);
             }
             // fall through to 1766
             case 1766: {
+                omg_current_file_idx = 1;
+                omg_current_line = 236;
     { const _c = _s.pop(); if (!omg_truthy(_c)) { _ip = 1777; continue; } }
             }
             // fall through to 1767
@@ -35843,10 +37682,14 @@ function omg_p90(_captured, v_b) {
             }
             // fall through to 1777
             case 1777: {
+                omg_current_file_idx = 1;
+                omg_current_line = 236;
     _s.push(false);
             }
             // fall through to 1778
             case 1778: {
+                omg_current_file_idx = 1;
+                omg_current_line = 236;
     { const _c = _s.pop(); if (!omg_truthy(_c)) { _ip = 1789; continue; } }
             }
             // fall through to 1779
@@ -35891,10 +37734,14 @@ function omg_p90(_captured, v_b) {
             }
             // fall through to 1789
             case 1789: {
+                omg_current_file_idx = 1;
+                omg_current_line = 236;
     _s.push(false);
             }
             // fall through to 1790
             case 1790: {
+                omg_current_file_idx = 1;
+                omg_current_line = 236;
     { const _c = _s.pop(); if (!omg_truthy(_c)) { _ip = 1801; continue; } }
             }
             // fall through to 1791
@@ -35939,10 +37786,14 @@ function omg_p90(_captured, v_b) {
             }
             // fall through to 1801
             case 1801: {
+                omg_current_file_idx = 1;
+                omg_current_line = 236;
     _s.push(false);
             }
             // fall through to 1802
             case 1802: {
+                omg_current_file_idx = 1;
+                omg_current_line = 236;
     { const _c = _s.pop(); if (!omg_truthy(_c)) { _ip = 1813; continue; } }
             }
             // fall through to 1803
@@ -35987,10 +37838,14 @@ function omg_p90(_captured, v_b) {
             }
             // fall through to 1813
             case 1813: {
+                omg_current_file_idx = 1;
+                omg_current_line = 236;
     _s.push(false);
             }
             // fall through to 1814
             case 1814: {
+                omg_current_file_idx = 1;
+                omg_current_line = 236;
     { const _c = _s.pop(); if (!omg_truthy(_c)) { _ip = 1856; continue; } }
             }
             // fall through to 1815
@@ -36012,6 +37867,7 @@ function omg_p90(_captured, v_b) {
             }
             // fall through to 1819
             case 1819: {
+                omg_current_file_idx = 1;
                 omg_current_line = 239;
     if (v_i === OMG_UNSET) omg_undefined("i"); _s.push(v_i);
             }
@@ -36061,10 +37917,14 @@ function omg_p90(_captured, v_b) {
             }
             // fall through to 1831
             case 1831: {
+                omg_current_file_idx = 1;
+                omg_current_line = 239;
     _s.push(false);
             }
             // fall through to 1832
             case 1832: {
+                omg_current_file_idx = 1;
+                omg_current_line = 239;
     { const _c = _s.pop(); if (!omg_truthy(_c)) { _ip = 1838; continue; } }
             }
             // fall through to 1833
@@ -36090,6 +37950,7 @@ function omg_p90(_captured, v_b) {
             }
             // fall through to 1838
             case 1838: {
+                omg_current_file_idx = 1;
                 omg_current_line = 242;
     if (v_i === OMG_UNSET) omg_undefined("i"); _s.push(v_i);
             }
@@ -36145,6 +38006,7 @@ function omg_p90(_captured, v_b) {
             }
             // fall through to 1851
             case 1851: {
+                omg_current_file_idx = 1;
                 omg_current_line = 246;
     if (v_i === OMG_UNSET) omg_undefined("i"); _s.push(v_i);
             }
@@ -36166,10 +38028,13 @@ function omg_p90(_captured, v_b) {
             }
             // fall through to 1856
             case 1856: {
+                omg_current_file_idx = 1;
+                omg_current_line = 246;
     _ip = 1857; continue;
             }
             // fall through to 1857
             case 1857: {
+                omg_current_file_idx = 1;
                 omg_current_line = 250;
     _s.push(0n);
             }
@@ -36221,6 +38086,7 @@ function omg_p91(_captured, v_msg, v_i) {
         try {
             switch (_ip) {
             case 3402: {
+                omg_current_file_idx = 1;
                 omg_current_line = 586;
     _s.push(v_i);
             }
@@ -36230,6 +38096,8 @@ function omg_p91(_captured, v_msg, v_i) {
             }
             // fall through to 3404
             case 3404: {
+                omg_current_file_idx = 1;
+                omg_current_line = 586;
     v_t = _s.pop();
             }
             // fall through to 3405
@@ -36283,6 +38151,8 @@ function omg_p91(_captured, v_msg, v_i) {
             }
             // fall through to 3417
             case 3417: {
+                omg_current_file_idx = 1;
+                omg_current_line = 587;
     { const _b = _s.pop(); const _a = _s.pop(); _s.push(omg_add(_a, _b)); }
             }
             // fall through to 3418
@@ -36329,6 +38199,7 @@ function omg_p92(_captured, v_i) {
         try {
             switch (_ip) {
             case 3371: {
+                omg_current_file_idx = 1;
                 omg_current_line = 569;
     if (v___mod_1__parse_state === OMG_UNSET) omg_undefined("__mod_1__parse_state"); _s.push(v___mod_1__parse_state);
             }
@@ -36396,6 +38267,7 @@ function omg_p93(_captured, v_kind) {
         try {
             switch (_ip) {
             case 3436: {
+                omg_current_file_idx = 1;
                 omg_current_line = 616;
     if (v___mod_1__TOK_DESCRIPTIONS === OMG_UNSET) omg_undefined("__mod_1__TOK_DESCRIPTIONS"); _s.push(v___mod_1__TOK_DESCRIPTIONS);
             }
@@ -36434,6 +38306,7 @@ function omg_p93(_captured, v_kind) {
             }
             // fall through to 3445
             case 3445: {
+                omg_current_file_idx = 1;
                 omg_current_line = 619;
     _s.push(v_kind);
             }
@@ -36476,6 +38349,7 @@ function omg_p94(_captured, v_i) {
         try {
             switch (_ip) {
             case 3381: {
+                omg_current_file_idx = 1;
                 omg_current_line = 574;
     _s.push(v_i);
             }
@@ -36485,6 +38359,8 @@ function omg_p94(_captured, v_i) {
             }
             // fall through to 3383
             case 3383: {
+                omg_current_file_idx = 1;
+                omg_current_line = 574;
     _s.push(0n);
             }
             // fall through to 3384
@@ -36530,6 +38406,7 @@ function omg_p95(_captured, v_i) {
         try {
             switch (_ip) {
             case 3395: {
+                omg_current_file_idx = 1;
                 omg_current_line = 582;
     _s.push(v_i);
             }
@@ -36539,6 +38416,8 @@ function omg_p95(_captured, v_i) {
             }
             // fall through to 3397
             case 3397: {
+                omg_current_file_idx = 1;
+                omg_current_line = 582;
     _s.push(2n);
             }
             // fall through to 3398
@@ -36584,6 +38463,7 @@ function omg_p96(_captured, v_i) {
         try {
             switch (_ip) {
             case 3388: {
+                omg_current_file_idx = 1;
                 omg_current_line = 578;
     _s.push(v_i);
             }
@@ -36593,6 +38473,8 @@ function omg_p96(_captured, v_i) {
             }
             // fall through to 3390
             case 3390: {
+                omg_current_file_idx = 1;
+                omg_current_line = 578;
     _s.push(1n);
             }
             // fall through to 3391
@@ -36659,6 +38541,7 @@ function omg_p97(_captured, v_src, v_file) {
         try {
             switch (_ip) {
             case 2230: {
+                omg_current_file_idx = 1;
                 omg_current_line = 346;
     _s.push(v_src);
             }
@@ -36681,6 +38564,8 @@ function omg_p97(_captured, v_src, v_file) {
             }
             // fall through to 2235
             case 2235: {
+                omg_current_file_idx = 1;
+                omg_current_line = 347;
     v_res = _s.pop();
             }
             // fall through to 2236
@@ -36741,6 +38626,7 @@ function omg_p97(_captured, v_src, v_file) {
             }
             // fall through to 2249
             case 2249: {
+                omg_current_file_idx = 1;
                 omg_current_line = 352;
     if (v_i === OMG_UNSET) omg_undefined("i"); _s.push(v_i);
             }
@@ -36842,6 +38728,7 @@ function omg_p97(_captured, v_src, v_file) {
             }
             // fall through to 2273
             case 2273: {
+                omg_current_file_idx = 1;
                 omg_current_line = 358;
     if (v_c === OMG_UNSET) omg_undefined("c"); _s.push(v_c);
             }
@@ -36867,6 +38754,8 @@ function omg_p97(_captured, v_src, v_file) {
             }
             // fall through to 2279
             case 2279: {
+                omg_current_file_idx = 1;
+                omg_current_line = 358;
     if (v_c === OMG_UNSET) omg_undefined("c"); _s.push(v_c);
             }
             // fall through to 2280
@@ -36887,6 +38776,8 @@ function omg_p97(_captured, v_src, v_file) {
             }
             // fall through to 2284
             case 2284: {
+                omg_current_file_idx = 1;
+                omg_current_line = 358;
     { const _c = _s.pop(); if (!omg_truthy(_c)) { _ip = 2287; continue; } }
             }
             // fall through to 2285
@@ -36899,6 +38790,8 @@ function omg_p97(_captured, v_src, v_file) {
             }
             // fall through to 2287
             case 2287: {
+                omg_current_file_idx = 1;
+                omg_current_line = 358;
     if (v_c === OMG_UNSET) omg_undefined("c"); _s.push(v_c);
             }
             // fall through to 2288
@@ -36919,6 +38812,8 @@ function omg_p97(_captured, v_src, v_file) {
             }
             // fall through to 2292
             case 2292: {
+                omg_current_file_idx = 1;
+                omg_current_line = 358;
     { const _c = _s.pop(); if (!omg_truthy(_c)) { _ip = 2298; continue; } }
             }
             // fall through to 2293
@@ -36944,6 +38839,7 @@ function omg_p97(_captured, v_src, v_file) {
             }
             // fall through to 2298
             case 2298: {
+                omg_current_file_idx = 1;
                 omg_current_line = 360;
     if (v_c === OMG_UNSET) omg_undefined("c"); _s.push(v_c);
             }
@@ -37028,6 +38924,7 @@ function omg_p97(_captured, v_src, v_file) {
             }
             // fall through to 2318
             case 2318: {
+                omg_current_file_idx = 1;
                 omg_current_line = 364;
     if (v_c === OMG_UNSET) omg_undefined("c"); _s.push(v_c);
             }
@@ -37045,6 +38942,7 @@ function omg_p97(_captured, v_src, v_file) {
             }
             // fall through to 2322
             case 2322: {
+                omg_current_file_idx = 1;
                 omg_current_line = 366;
     if (v_i === OMG_UNSET) omg_undefined("i"); _s.push(v_i);
             }
@@ -37094,10 +38992,14 @@ function omg_p97(_captured, v_src, v_file) {
             }
             // fall through to 2334
             case 2334: {
+                omg_current_file_idx = 1;
+                omg_current_line = 366;
     _s.push(false);
             }
             // fall through to 2335
             case 2335: {
+                omg_current_file_idx = 1;
+                omg_current_line = 366;
     { const _c = _s.pop(); if (!omg_truthy(_c)) { _ip = 2341; continue; } }
             }
             // fall through to 2336
@@ -37123,10 +39025,13 @@ function omg_p97(_captured, v_src, v_file) {
             }
             // fall through to 2341
             case 2341: {
+                omg_current_file_idx = 1;
+                omg_current_line = 367;
     _ip = 3341; continue;
             }
             // fall through to 2342
             case 2342: {
+                omg_current_file_idx = 1;
                 omg_current_line = 369;
     if (v_c === OMG_UNSET) omg_undefined("c"); _s.push(v_c);
             }
@@ -37168,10 +39073,14 @@ function omg_p97(_captured, v_src, v_file) {
             }
             // fall through to 2352
             case 2352: {
+                omg_current_file_idx = 1;
+                omg_current_line = 369;
     _s.push(false);
             }
             // fall through to 2353
             case 2353: {
+                omg_current_file_idx = 1;
+                omg_current_line = 369;
     { const _c = _s.pop(); if (!omg_truthy(_c)) { _ip = 2425; continue; } }
             }
             // fall through to 2354
@@ -37202,6 +39111,7 @@ function omg_p97(_captured, v_src, v_file) {
             }
             // fall through to 2360
             case 2360: {
+                omg_current_file_idx = 1;
                 omg_current_line = 373;
     if (v_i === OMG_UNSET) omg_undefined("i"); _s.push(v_i);
             }
@@ -37259,6 +39169,8 @@ function omg_p97(_captured, v_src, v_file) {
             }
             // fall through to 2374
             case 2374: {
+                omg_current_file_idx = 1;
+                omg_current_line = 373;
     if (v_b === OMG_UNSET) omg_undefined("b"); _s.push(v_b);
             }
             // fall through to 2375
@@ -37295,6 +39207,8 @@ function omg_p97(_captured, v_src, v_file) {
             }
             // fall through to 2383
             case 2383: {
+                omg_current_file_idx = 1;
+                omg_current_line = 373;
     _s.push(true);
             }
             // fall through to 2384
@@ -37307,10 +39221,14 @@ function omg_p97(_captured, v_src, v_file) {
             }
             // fall through to 2386
             case 2386: {
+                omg_current_file_idx = 1;
+                omg_current_line = 373;
     _s.push(false);
             }
             // fall through to 2387
             case 2387: {
+                omg_current_file_idx = 1;
+                omg_current_line = 373;
     { const _c = _s.pop(); if (!omg_truthy(_c)) { _ip = 2404; continue; } }
             }
             // fall through to 2388
@@ -37361,6 +39279,7 @@ function omg_p97(_captured, v_src, v_file) {
             }
             // fall through to 2399
             case 2399: {
+                omg_current_file_idx = 1;
                 omg_current_line = 377;
     if (v_i === OMG_UNSET) omg_undefined("i"); _s.push(v_i);
             }
@@ -37382,6 +39301,7 @@ function omg_p97(_captured, v_src, v_file) {
             }
             // fall through to 2404
             case 2404: {
+                omg_current_file_idx = 1;
                 omg_current_line = 379;
     if (v_i === OMG_UNSET) omg_undefined("i"); _s.push(v_i);
             }
@@ -37428,6 +39348,7 @@ function omg_p97(_captured, v_src, v_file) {
             }
             // fall through to 2415
             case 2415: {
+                omg_current_file_idx = 1;
                 omg_current_line = 385;
     _s.push("SyntaxError: Unterminated block comment starting on line ");
             }
@@ -37465,10 +39386,13 @@ function omg_p97(_captured, v_src, v_file) {
             }
             // fall through to 2424
             case 2424: {
+                omg_current_file_idx = 1;
+                omg_current_line = 385;
     _ip = 3341; continue;
             }
             // fall through to 2425
             case 2425: {
+                omg_current_file_idx = 1;
                 omg_current_line = 387;
     if (v_c === OMG_UNSET) omg_undefined("c"); _s.push(v_c);
             }
@@ -37510,6 +39434,8 @@ function omg_p97(_captured, v_src, v_file) {
             }
             // fall through to 2435
             case 2435: {
+                omg_current_file_idx = 1;
+                omg_current_line = 387;
     if (v_d === OMG_UNSET) omg_undefined("d"); _s.push(v_d);
             }
             // fall through to 2436
@@ -37530,6 +39456,8 @@ function omg_p97(_captured, v_src, v_file) {
             }
             // fall through to 2440
             case 2440: {
+                omg_current_file_idx = 1;
+                omg_current_line = 387;
     _s.push(true);
             }
             // fall through to 2441
@@ -37542,10 +39470,14 @@ function omg_p97(_captured, v_src, v_file) {
             }
             // fall through to 2443
             case 2443: {
+                omg_current_file_idx = 1;
+                omg_current_line = 387;
     _s.push(false);
             }
             // fall through to 2444
             case 2444: {
+                omg_current_file_idx = 1;
+                omg_current_line = 387;
     { const _c = _s.pop(); if (!omg_truthy(_c)) { _ip = 2551; continue; } }
             }
             // fall through to 2445
@@ -37594,6 +39526,7 @@ function omg_p97(_captured, v_src, v_file) {
             }
             // fall through to 2455
             case 2455: {
+                omg_current_file_idx = 1;
                 omg_current_line = 395;
     if (v_i === OMG_UNSET) omg_undefined("i"); _s.push(v_i);
             }
@@ -37643,6 +39576,8 @@ function omg_p97(_captured, v_src, v_file) {
             }
             // fall through to 2467
             case 2467: {
+                omg_current_file_idx = 1;
+                omg_current_line = 395;
     if (v_b === OMG_UNSET) omg_undefined("b"); _s.push(v_b);
             }
             // fall through to 2468
@@ -37671,6 +39606,8 @@ function omg_p97(_captured, v_src, v_file) {
             }
             // fall through to 2474
             case 2474: {
+                omg_current_file_idx = 1;
+                omg_current_line = 395;
     _s.push(true);
             }
             // fall through to 2475
@@ -37683,10 +39620,14 @@ function omg_p97(_captured, v_src, v_file) {
             }
             // fall through to 2477
             case 2477: {
+                omg_current_file_idx = 1;
+                omg_current_line = 395;
     _s.push(false);
             }
             // fall through to 2478
             case 2478: {
+                omg_current_file_idx = 1;
+                omg_current_line = 395;
     { const _c = _s.pop(); if (!omg_truthy(_c)) { _ip = 2529; continue; } }
             }
             // fall through to 2479
@@ -37716,6 +39657,8 @@ function omg_p97(_captured, v_src, v_file) {
             }
             // fall through to 2485
             case 2485: {
+                omg_current_file_idx = 1;
+                omg_current_line = 396;
     if (v_b === OMG_UNSET) omg_undefined("b"); _s.push(v_b);
             }
             // fall through to 2486
@@ -37744,6 +39687,8 @@ function omg_p97(_captured, v_src, v_file) {
             }
             // fall through to 2492
             case 2492: {
+                omg_current_file_idx = 1;
+                omg_current_line = 396;
     { const _c = _s.pop(); if (!omg_truthy(_c)) { _ip = 2498; continue; } }
             }
             // fall through to 2493
@@ -37769,6 +39714,7 @@ function omg_p97(_captured, v_src, v_file) {
             }
             // fall through to 2498
             case 2498: {
+                omg_current_file_idx = 1;
                 omg_current_line = 399;
     if (v_bin_sig === OMG_UNSET) omg_undefined("bin_sig"); _s.push(v_bin_sig);
             }
@@ -37835,6 +39781,7 @@ function omg_p97(_captured, v_src, v_file) {
             }
             // fall through to 2514
             case 2514: {
+                omg_current_file_idx = 1;
                 omg_current_line = 402;
     if (v_bin_num === OMG_UNSET) omg_undefined("bin_num"); _s.push(v_bin_num);
             }
@@ -37897,6 +39844,7 @@ function omg_p97(_captured, v_src, v_file) {
             }
             // fall through to 2529
             case 2529: {
+                omg_current_file_idx = 1;
                 omg_current_line = 405;
     if (v_i === OMG_UNSET) omg_undefined("i"); _s.push(v_i);
             }
@@ -37955,6 +39903,7 @@ function omg_p97(_captured, v_src, v_file) {
             }
             // fall through to 2543
             case 2543: {
+                omg_current_file_idx = 1;
                 omg_current_line = 408;
     if (v_tokens === OMG_UNSET) omg_undefined("tokens"); _s.push(v_tokens);
             }
@@ -37988,6 +39937,7 @@ function omg_p97(_captured, v_src, v_file) {
             }
             // fall through to 2551
             case 2551: {
+                omg_current_file_idx = 1;
                 omg_current_line = 409;
     if (v_c === OMG_UNSET) omg_undefined("c"); _s.push(v_c);
             }
@@ -37997,6 +39947,8 @@ function omg_p97(_captured, v_src, v_file) {
             }
             // fall through to 2553
             case 2553: {
+                omg_current_file_idx = 1;
+                omg_current_line = 409;
     { const _c = _s.pop(); if (!omg_truthy(_c)) { _ip = 2805; continue; } }
             }
             // fall through to 2554
@@ -38010,6 +39962,7 @@ function omg_p97(_captured, v_src, v_file) {
             }
             // fall through to 2556
             case 2556: {
+                omg_current_file_idx = 1;
                 omg_current_line = 411;
     if (v_i === OMG_UNSET) omg_undefined("i"); _s.push(v_i);
             }
@@ -38043,6 +39996,8 @@ function omg_p97(_captured, v_src, v_file) {
             }
             // fall through to 2564
             case 2564: {
+                omg_current_file_idx = 1;
+                omg_current_line = 411;
     _s.push(true);
             }
             // fall through to 2565
@@ -38055,10 +40010,14 @@ function omg_p97(_captured, v_src, v_file) {
             }
             // fall through to 2567
             case 2567: {
+                omg_current_file_idx = 1;
+                omg_current_line = 411;
     _s.push(false);
             }
             // fall through to 2568
             case 2568: {
+                omg_current_file_idx = 1;
+                omg_current_line = 411;
     { const _c = _s.pop(); if (!omg_truthy(_c)) { _ip = 2574; continue; } }
             }
             // fall through to 2569
@@ -38084,6 +40043,7 @@ function omg_p97(_captured, v_src, v_file) {
             }
             // fall through to 2574
             case 2574: {
+                omg_current_file_idx = 1;
                 omg_current_line = 414;
     if (v_i === OMG_UNSET) omg_undefined("i"); _s.push(v_i);
             }
@@ -38151,10 +40111,14 @@ function omg_p97(_captured, v_src, v_file) {
             }
             // fall through to 2590
             case 2590: {
+                omg_current_file_idx = 1;
+                omg_current_line = 419;
     _s.push(false);
             }
             // fall through to 2591
             case 2591: {
+                omg_current_file_idx = 1;
+                omg_current_line = 419;
     { const _c = _s.pop(); if (!omg_truthy(_c)) { _ip = 2600; continue; } }
             }
             // fall through to 2592
@@ -38191,10 +40155,14 @@ function omg_p97(_captured, v_src, v_file) {
             }
             // fall through to 2600
             case 2600: {
+                omg_current_file_idx = 1;
+                omg_current_line = 419;
     _s.push(false);
             }
             // fall through to 2601
             case 2601: {
+                omg_current_file_idx = 1;
+                omg_current_line = 419;
     { const _c = _s.pop(); if (!omg_truthy(_c)) { _ip = 2611; continue; } }
             }
             // fall through to 2602
@@ -38223,6 +40191,8 @@ function omg_p97(_captured, v_src, v_file) {
             }
             // fall through to 2608
             case 2608: {
+                omg_current_file_idx = 1;
+                omg_current_line = 419;
     _s.push(true);
             }
             // fall through to 2609
@@ -38235,10 +40205,14 @@ function omg_p97(_captured, v_src, v_file) {
             }
             // fall through to 2611
             case 2611: {
+                omg_current_file_idx = 1;
+                omg_current_line = 419;
     _s.push(false);
             }
             // fall through to 2612
             case 2612: {
+                omg_current_file_idx = 1;
+                omg_current_line = 419;
     { const _c = _s.pop(); if (!omg_truthy(_c)) { _ip = 2616; continue; } }
             }
             // fall through to 2613
@@ -38256,6 +40230,7 @@ function omg_p97(_captured, v_src, v_file) {
             }
             // fall through to 2616
             case 2616: {
+                omg_current_file_idx = 1;
                 omg_current_line = 422;
     _s.push(false);
             }
@@ -38314,6 +40289,8 @@ function omg_p97(_captured, v_src, v_file) {
             }
             // fall through to 2630
             case 2630: {
+                omg_current_file_idx = 1;
+                omg_current_line = 423;
     if (v_b === OMG_UNSET) omg_undefined("b"); _s.push(v_b);
             }
             // fall through to 2631
@@ -38342,6 +40319,8 @@ function omg_p97(_captured, v_src, v_file) {
             }
             // fall through to 2637
             case 2637: {
+                omg_current_file_idx = 1;
+                omg_current_line = 423;
     _s.push(true);
             }
             // fall through to 2638
@@ -38354,10 +40333,14 @@ function omg_p97(_captured, v_src, v_file) {
             }
             // fall through to 2640
             case 2640: {
+                omg_current_file_idx = 1;
+                omg_current_line = 423;
     _s.push(false);
             }
             // fall through to 2641
             case 2641: {
+                omg_current_file_idx = 1;
+                omg_current_line = 423;
     { const _c = _s.pop(); if (!omg_truthy(_c)) { _ip = 2645; continue; } }
             }
             // fall through to 2642
@@ -38375,6 +40358,7 @@ function omg_p97(_captured, v_src, v_file) {
             }
             // fall through to 2645
             case 2645: {
+                omg_current_file_idx = 1;
                 omg_current_line = 426;
     if (v_is_float_dot === OMG_UNSET) omg_undefined("is_float_dot"); _s.push(v_is_float_dot);
             }
@@ -38392,6 +40376,8 @@ function omg_p97(_captured, v_src, v_file) {
             }
             // fall through to 2649
             case 2649: {
+                omg_current_file_idx = 1;
+                omg_current_line = 426;
     if (v_is_float_exp === OMG_UNSET) omg_undefined("is_float_exp"); _s.push(v_is_float_exp);
             }
             // fall through to 2650
@@ -38404,6 +40390,8 @@ function omg_p97(_captured, v_src, v_file) {
             }
             // fall through to 2652
             case 2652: {
+                omg_current_file_idx = 1;
+                omg_current_line = 426;
     { const _c = _s.pop(); if (!omg_truthy(_c)) { _ip = 2790; continue; } }
             }
             // fall through to 2653
@@ -38434,6 +40422,7 @@ function omg_p97(_captured, v_src, v_file) {
             }
             // fall through to 2659
             case 2659: {
+                omg_current_file_idx = 1;
                 omg_current_line = 429;
     if (v_i === OMG_UNSET) omg_undefined("i"); _s.push(v_i);
             }
@@ -38467,6 +40456,8 @@ function omg_p97(_captured, v_src, v_file) {
             }
             // fall through to 2667
             case 2667: {
+                omg_current_file_idx = 1;
+                omg_current_line = 429;
     _s.push(true);
             }
             // fall through to 2668
@@ -38479,10 +40470,14 @@ function omg_p97(_captured, v_src, v_file) {
             }
             // fall through to 2670
             case 2670: {
+                omg_current_file_idx = 1;
+                omg_current_line = 429;
     _s.push(false);
             }
             // fall through to 2671
             case 2671: {
+                omg_current_file_idx = 1;
+                omg_current_line = 429;
     { const _c = _s.pop(); if (!omg_truthy(_c)) { _ip = 2677; continue; } }
             }
             // fall through to 2672
@@ -38508,10 +40503,13 @@ function omg_p97(_captured, v_src, v_file) {
             }
             // fall through to 2677
             case 2677: {
+                omg_current_file_idx = 1;
+                omg_current_line = 430;
     _ip = 2678; continue;
             }
             // fall through to 2678
             case 2678: {
+                omg_current_file_idx = 1;
                 omg_current_line = 433;
     if (v_i === OMG_UNSET) omg_undefined("i"); _s.push(v_i);
             }
@@ -38561,6 +40559,8 @@ function omg_p97(_captured, v_src, v_file) {
             }
             // fall through to 2690
             case 2690: {
+                omg_current_file_idx = 1;
+                omg_current_line = 433;
     if (v_b === OMG_UNSET) omg_undefined("b"); _s.push(v_b);
             }
             // fall through to 2691
@@ -38589,6 +40589,8 @@ function omg_p97(_captured, v_src, v_file) {
             }
             // fall through to 2697
             case 2697: {
+                omg_current_file_idx = 1;
+                omg_current_line = 433;
     _s.push(true);
             }
             // fall through to 2698
@@ -38601,10 +40603,14 @@ function omg_p97(_captured, v_src, v_file) {
             }
             // fall through to 2700
             case 2700: {
+                omg_current_file_idx = 1;
+                omg_current_line = 433;
     _s.push(false);
             }
             // fall through to 2701
             case 2701: {
+                omg_current_file_idx = 1;
+                omg_current_line = 433;
     { const _c = _s.pop(); if (!omg_truthy(_c)) { _ip = 2778; continue; } }
             }
             // fall through to 2702
@@ -38675,6 +40681,8 @@ function omg_p97(_captured, v_src, v_file) {
             }
             // fall through to 2718
             case 2718: {
+                omg_current_file_idx = 1;
+                omg_current_line = 435;
     if (v_b === OMG_UNSET) omg_undefined("b"); _s.push(v_b);
             }
             // fall through to 2719
@@ -38703,6 +40711,8 @@ function omg_p97(_captured, v_src, v_file) {
             }
             // fall through to 2725
             case 2725: {
+                omg_current_file_idx = 1;
+                omg_current_line = 435;
     _s.push(true);
             }
             // fall through to 2726
@@ -38715,10 +40725,14 @@ function omg_p97(_captured, v_src, v_file) {
             }
             // fall through to 2728
             case 2728: {
+                omg_current_file_idx = 1;
+                omg_current_line = 435;
     _s.push(false);
             }
             // fall through to 2729
             case 2729: {
+                omg_current_file_idx = 1;
+                omg_current_line = 435;
     { const _c = _s.pop(); if (!omg_truthy(_c)) { _ip = 2735; continue; } }
             }
             // fall through to 2730
@@ -38744,6 +40758,7 @@ function omg_p97(_captured, v_src, v_file) {
             }
             // fall through to 2735
             case 2735: {
+                omg_current_file_idx = 1;
                 omg_current_line = 438;
     if (v_i === OMG_UNSET) omg_undefined("i"); _s.push(v_i);
             }
@@ -38753,6 +40768,7 @@ function omg_p97(_captured, v_src, v_file) {
             }
             // fall through to 2737
             case 2737: {
+                omg_current_file_idx = 1;
                 omg_current_line = 439;
     if (v_i === OMG_UNSET) omg_undefined("i"); _s.push(v_i);
             }
@@ -38786,6 +40802,8 @@ function omg_p97(_captured, v_src, v_file) {
             }
             // fall through to 2745
             case 2745: {
+                omg_current_file_idx = 1;
+                omg_current_line = 439;
     _s.push(true);
             }
             // fall through to 2746
@@ -38798,10 +40816,14 @@ function omg_p97(_captured, v_src, v_file) {
             }
             // fall through to 2748
             case 2748: {
+                omg_current_file_idx = 1;
+                omg_current_line = 439;
     _s.push(false);
             }
             // fall through to 2749
             case 2749: {
+                omg_current_file_idx = 1;
+                omg_current_line = 439;
     { const _c = _s.pop(); if (!omg_truthy(_c)) { _ip = 2755; continue; } }
             }
             // fall through to 2750
@@ -38827,6 +40849,7 @@ function omg_p97(_captured, v_src, v_file) {
             }
             // fall through to 2755
             case 2755: {
+                omg_current_file_idx = 1;
                 omg_current_line = 442;
     if (v_exp_start === OMG_UNSET) omg_undefined("exp_start"); _s.push(v_exp_start);
             }
@@ -38917,10 +40940,13 @@ function omg_p97(_captured, v_src, v_file) {
             }
             // fall through to 2777
             case 2777: {
+                omg_current_file_idx = 1;
+                omg_current_line = 443;
     _ip = 2778; continue;
             }
             // fall through to 2778
             case 2778: {
+                omg_current_file_idx = 1;
                 omg_current_line = 449;
     if (v_tokens === OMG_UNSET) omg_undefined("tokens"); _s.push(v_tokens);
             }
@@ -38970,6 +40996,7 @@ function omg_p97(_captured, v_src, v_file) {
             }
             // fall through to 2790
             case 2790: {
+                omg_current_file_idx = 1;
                 omg_current_line = 451;
     if (v_tokens === OMG_UNSET) omg_undefined("tokens"); _s.push(v_tokens);
             }
@@ -39011,6 +41038,8 @@ function omg_p97(_captured, v_src, v_file) {
             }
             // fall through to 2800
             case 2800: {
+                omg_current_file_idx = 1;
+                omg_current_line = 451;
     if (v_line === OMG_UNSET) omg_undefined("line"); _s.push(v_line);
             }
             // fall through to 2801
@@ -39027,10 +41056,13 @@ function omg_p97(_captured, v_src, v_file) {
             }
             // fall through to 2804
             case 2804: {
+                omg_current_file_idx = 1;
+                omg_current_line = 451;
     _ip = 3341; continue;
             }
             // fall through to 2805
             case 2805: {
+                omg_current_file_idx = 1;
                 omg_current_line = 453;
     if (v_c === OMG_UNSET) omg_undefined("c"); _s.push(v_c);
             }
@@ -39074,6 +41106,7 @@ function omg_p97(_captured, v_src, v_file) {
             }
             // fall through to 2815
             case 2815: {
+                omg_current_file_idx = 1;
                 omg_current_line = 457;
     if (v_i === OMG_UNSET) omg_undefined("i"); _s.push(v_i);
             }
@@ -39123,10 +41156,14 @@ function omg_p97(_captured, v_src, v_file) {
             }
             // fall through to 2827
             case 2827: {
+                omg_current_file_idx = 1;
+                omg_current_line = 457;
     _s.push(false);
             }
             // fall through to 2828
             case 2828: {
+                omg_current_file_idx = 1;
+                omg_current_line = 457;
     { const _c = _s.pop(); if (!omg_truthy(_c)) { _ip = 2897; continue; } }
             }
             // fall through to 2829
@@ -39188,10 +41225,14 @@ function omg_p97(_captured, v_src, v_file) {
             }
             // fall through to 2843
             case 2843: {
+                omg_current_file_idx = 1;
+                omg_current_line = 458;
     _s.push(false);
             }
             // fall through to 2844
             case 2844: {
+                omg_current_file_idx = 1;
+                omg_current_line = 458;
     { const _c = _s.pop(); if (!omg_truthy(_c)) { _ip = 2875; continue; } }
             }
             // fall through to 2845
@@ -39221,6 +41262,8 @@ function omg_p97(_captured, v_src, v_file) {
             }
             // fall through to 2851
             case 2851: {
+                omg_current_file_idx = 1;
+                omg_current_line = 459;
     v_esc = _s.pop();
             }
             // fall through to 2852
@@ -39300,6 +41343,7 @@ function omg_p97(_captured, v_src, v_file) {
             }
             // fall through to 2870
             case 2870: {
+                omg_current_file_idx = 1;
                 omg_current_line = 464;
     if (v_i === OMG_UNSET) omg_undefined("i"); _s.push(v_i);
             }
@@ -39321,6 +41365,7 @@ function omg_p97(_captured, v_src, v_file) {
             }
             // fall through to 2875
             case 2875: {
+                omg_current_file_idx = 1;
                 omg_current_line = 466;
     if (v_b === OMG_UNSET) omg_undefined("b"); _s.push(v_b);
             }
@@ -39367,6 +41412,7 @@ function omg_p97(_captured, v_src, v_file) {
             }
             // fall through to 2886
             case 2886: {
+                omg_current_file_idx = 1;
                 omg_current_line = 469;
     if (v_sb === OMG_UNSET) omg_undefined("sb"); _s.push(v_sb);
             }
@@ -39409,10 +41455,13 @@ function omg_p97(_captured, v_src, v_file) {
             }
             // fall through to 2896
             case 2896: {
+                omg_current_file_idx = 1;
+                omg_current_line = 470;
     _ip = 2815; continue;
             }
             // fall through to 2897
             case 2897: {
+                omg_current_file_idx = 1;
                 omg_current_line = 473;
     if (v_i === OMG_UNSET) omg_undefined("i"); _s.push(v_i);
             }
@@ -39471,6 +41520,7 @@ function omg_p97(_captured, v_src, v_file) {
             }
             // fall through to 2911
             case 2911: {
+                omg_current_file_idx = 1;
                 omg_current_line = 476;
     if (v_i === OMG_UNSET) omg_undefined("i"); _s.push(v_i);
             }
@@ -39525,6 +41575,7 @@ function omg_p97(_captured, v_src, v_file) {
             }
             // fall through to 2924
             case 2924: {
+                omg_current_file_idx = 1;
                 omg_current_line = 478;
     if (v_c === OMG_UNSET) omg_undefined("c"); _s.push(v_c);
             }
@@ -39534,6 +41585,8 @@ function omg_p97(_captured, v_src, v_file) {
             }
             // fall through to 2926
             case 2926: {
+                omg_current_file_idx = 1;
+                omg_current_line = 478;
     { const _c = _s.pop(); if (!omg_truthy(_c)) { _ip = 2976; continue; } }
             }
             // fall through to 2927
@@ -39547,6 +41600,7 @@ function omg_p97(_captured, v_src, v_file) {
             }
             // fall through to 2929
             case 2929: {
+                omg_current_file_idx = 1;
                 omg_current_line = 480;
     if (v_i === OMG_UNSET) omg_undefined("i"); _s.push(v_i);
             }
@@ -39580,6 +41634,8 @@ function omg_p97(_captured, v_src, v_file) {
             }
             // fall through to 2937
             case 2937: {
+                omg_current_file_idx = 1;
+                omg_current_line = 480;
     _s.push(true);
             }
             // fall through to 2938
@@ -39592,10 +41648,14 @@ function omg_p97(_captured, v_src, v_file) {
             }
             // fall through to 2940
             case 2940: {
+                omg_current_file_idx = 1;
+                omg_current_line = 480;
     _s.push(false);
             }
             // fall through to 2941
             case 2941: {
+                omg_current_file_idx = 1;
+                omg_current_line = 480;
     { const _c = _s.pop(); if (!omg_truthy(_c)) { _ip = 2947; continue; } }
             }
             // fall through to 2942
@@ -39621,6 +41681,7 @@ function omg_p97(_captured, v_src, v_file) {
             }
             // fall through to 2947
             case 2947: {
+                omg_current_file_idx = 1;
                 omg_current_line = 483;
     if (v_b === OMG_UNSET) omg_undefined("b"); _s.push(v_b);
             }
@@ -39655,6 +41716,8 @@ function omg_p97(_captured, v_src, v_file) {
             }
             // fall through to 2955
             case 2955: {
+                omg_current_file_idx = 1;
+                omg_current_line = 484;
     v_kind = _s.pop();
             }
             // fall through to 2956
@@ -39709,6 +41772,7 @@ function omg_p97(_captured, v_src, v_file) {
             }
             // fall through to 2968
             case 2968: {
+                omg_current_file_idx = 1;
                 omg_current_line = 488;
     if (v_tokens === OMG_UNSET) omg_undefined("tokens"); _s.push(v_tokens);
             }
@@ -39738,10 +41802,13 @@ function omg_p97(_captured, v_src, v_file) {
             }
             // fall through to 2975
             case 2975: {
+                omg_current_file_idx = 1;
+                omg_current_line = 488;
     _ip = 3341; continue;
             }
             // fall through to 2976
             case 2976: {
+                omg_current_file_idx = 1;
                 omg_current_line = 490;
     if (v_c === OMG_UNSET) omg_undefined("c"); _s.push(v_c);
             }
@@ -39783,10 +41850,14 @@ function omg_p97(_captured, v_src, v_file) {
             }
             // fall through to 2986
             case 2986: {
+                omg_current_file_idx = 1;
+                omg_current_line = 490;
     _s.push(false);
             }
             // fall through to 2987
             case 2987: {
+                omg_current_file_idx = 1;
+                omg_current_line = 490;
     { const _c = _s.pop(); if (!omg_truthy(_c)) { _ip = 3000; continue; } }
             }
             // fall through to 2988
@@ -39841,6 +41912,7 @@ function omg_p97(_captured, v_src, v_file) {
             }
             // fall through to 3000
             case 3000: {
+                omg_current_file_idx = 1;
                 omg_current_line = 493;
     if (v_c === OMG_UNSET) omg_undefined("c"); _s.push(v_c);
             }
@@ -39882,10 +41954,14 @@ function omg_p97(_captured, v_src, v_file) {
             }
             // fall through to 3010
             case 3010: {
+                omg_current_file_idx = 1;
+                omg_current_line = 493;
     _s.push(false);
             }
             // fall through to 3011
             case 3011: {
+                omg_current_file_idx = 1;
+                omg_current_line = 493;
     { const _c = _s.pop(); if (!omg_truthy(_c)) { _ip = 3024; continue; } }
             }
             // fall through to 3012
@@ -39940,6 +42016,7 @@ function omg_p97(_captured, v_src, v_file) {
             }
             // fall through to 3024
             case 3024: {
+                omg_current_file_idx = 1;
                 omg_current_line = 496;
     if (v_c === OMG_UNSET) omg_undefined("c"); _s.push(v_c);
             }
@@ -39981,10 +42058,14 @@ function omg_p97(_captured, v_src, v_file) {
             }
             // fall through to 3034
             case 3034: {
+                omg_current_file_idx = 1;
+                omg_current_line = 496;
     _s.push(false);
             }
             // fall through to 3035
             case 3035: {
+                omg_current_file_idx = 1;
+                omg_current_line = 496;
     { const _c = _s.pop(); if (!omg_truthy(_c)) { _ip = 3048; continue; } }
             }
             // fall through to 3036
@@ -40039,6 +42120,7 @@ function omg_p97(_captured, v_src, v_file) {
             }
             // fall through to 3048
             case 3048: {
+                omg_current_file_idx = 1;
                 omg_current_line = 499;
     if (v_c === OMG_UNSET) omg_undefined("c"); _s.push(v_c);
             }
@@ -40080,10 +42162,14 @@ function omg_p97(_captured, v_src, v_file) {
             }
             // fall through to 3058
             case 3058: {
+                omg_current_file_idx = 1;
+                omg_current_line = 499;
     _s.push(false);
             }
             // fall through to 3059
             case 3059: {
+                omg_current_file_idx = 1;
+                omg_current_line = 499;
     { const _c = _s.pop(); if (!omg_truthy(_c)) { _ip = 3072; continue; } }
             }
             // fall through to 3060
@@ -40138,6 +42224,7 @@ function omg_p97(_captured, v_src, v_file) {
             }
             // fall through to 3072
             case 3072: {
+                omg_current_file_idx = 1;
                 omg_current_line = 502;
     if (v_c === OMG_UNSET) omg_undefined("c"); _s.push(v_c);
             }
@@ -40179,10 +42266,14 @@ function omg_p97(_captured, v_src, v_file) {
             }
             // fall through to 3082
             case 3082: {
+                omg_current_file_idx = 1;
+                omg_current_line = 502;
     _s.push(false);
             }
             // fall through to 3083
             case 3083: {
+                omg_current_file_idx = 1;
+                omg_current_line = 502;
     { const _c = _s.pop(); if (!omg_truthy(_c)) { _ip = 3096; continue; } }
             }
             // fall through to 3084
@@ -40237,6 +42328,7 @@ function omg_p97(_captured, v_src, v_file) {
             }
             // fall through to 3096
             case 3096: {
+                omg_current_file_idx = 1;
                 omg_current_line = 505;
     if (v_c === OMG_UNSET) omg_undefined("c"); _s.push(v_c);
             }
@@ -40278,10 +42370,14 @@ function omg_p97(_captured, v_src, v_file) {
             }
             // fall through to 3106
             case 3106: {
+                omg_current_file_idx = 1;
+                omg_current_line = 505;
     _s.push(false);
             }
             // fall through to 3107
             case 3107: {
+                omg_current_file_idx = 1;
+                omg_current_line = 505;
     { const _c = _s.pop(); if (!omg_truthy(_c)) { _ip = 3120; continue; } }
             }
             // fall through to 3108
@@ -40336,6 +42432,7 @@ function omg_p97(_captured, v_src, v_file) {
             }
             // fall through to 3120
             case 3120: {
+                omg_current_file_idx = 1;
                 omg_current_line = 508;
     if (v_c === OMG_UNSET) omg_undefined("c"); _s.push(v_c);
             }
@@ -40377,10 +42474,14 @@ function omg_p97(_captured, v_src, v_file) {
             }
             // fall through to 3130
             case 3130: {
+                omg_current_file_idx = 1;
+                omg_current_line = 508;
     _s.push(false);
             }
             // fall through to 3131
             case 3131: {
+                omg_current_file_idx = 1;
+                omg_current_line = 508;
     { const _c = _s.pop(); if (!omg_truthy(_c)) { _ip = 3144; continue; } }
             }
             // fall through to 3132
@@ -40435,6 +42536,7 @@ function omg_p97(_captured, v_src, v_file) {
             }
             // fall through to 3144
             case 3144: {
+                omg_current_file_idx = 1;
                 omg_current_line = 511;
     if (v_c === OMG_UNSET) omg_undefined("c"); _s.push(v_c);
             }
@@ -40476,10 +42578,14 @@ function omg_p97(_captured, v_src, v_file) {
             }
             // fall through to 3154
             case 3154: {
+                omg_current_file_idx = 1;
+                omg_current_line = 511;
     _s.push(false);
             }
             // fall through to 3155
             case 3155: {
+                omg_current_file_idx = 1;
+                omg_current_line = 511;
     { const _c = _s.pop(); if (!omg_truthy(_c)) { _ip = 3168; continue; } }
             }
             // fall through to 3156
@@ -40534,6 +42640,7 @@ function omg_p97(_captured, v_src, v_file) {
             }
             // fall through to 3168
             case 3168: {
+                omg_current_file_idx = 1;
                 omg_current_line = 515;
     _s.push("");
             }
@@ -40572,6 +42679,7 @@ function omg_p97(_captured, v_src, v_file) {
             }
             // fall through to 3177
             case 3177: {
+                omg_current_file_idx = 1;
                 omg_current_line = 517;
     if (v_c === OMG_UNSET) omg_undefined("c"); _s.push(v_c);
             }
@@ -40601,6 +42709,7 @@ function omg_p97(_captured, v_src, v_file) {
             }
             // fall through to 3184
             case 3184: {
+                omg_current_file_idx = 1;
                 omg_current_line = 518;
     if (v_c === OMG_UNSET) omg_undefined("c"); _s.push(v_c);
             }
@@ -40630,6 +42739,7 @@ function omg_p97(_captured, v_src, v_file) {
             }
             // fall through to 3191
             case 3191: {
+                omg_current_file_idx = 1;
                 omg_current_line = 519;
     if (v_c === OMG_UNSET) omg_undefined("c"); _s.push(v_c);
             }
@@ -40659,6 +42769,7 @@ function omg_p97(_captured, v_src, v_file) {
             }
             // fall through to 3198
             case 3198: {
+                omg_current_file_idx = 1;
                 omg_current_line = 520;
     if (v_c === OMG_UNSET) omg_undefined("c"); _s.push(v_c);
             }
@@ -40688,6 +42799,7 @@ function omg_p97(_captured, v_src, v_file) {
             }
             // fall through to 3205
             case 3205: {
+                omg_current_file_idx = 1;
                 omg_current_line = 521;
     if (v_c === OMG_UNSET) omg_undefined("c"); _s.push(v_c);
             }
@@ -40717,6 +42829,7 @@ function omg_p97(_captured, v_src, v_file) {
             }
             // fall through to 3212
             case 3212: {
+                omg_current_file_idx = 1;
                 omg_current_line = 522;
     if (v_c === OMG_UNSET) omg_undefined("c"); _s.push(v_c);
             }
@@ -40746,6 +42859,7 @@ function omg_p97(_captured, v_src, v_file) {
             }
             // fall through to 3219
             case 3219: {
+                omg_current_file_idx = 1;
                 omg_current_line = 523;
     if (v_c === OMG_UNSET) omg_undefined("c"); _s.push(v_c);
             }
@@ -40775,6 +42889,7 @@ function omg_p97(_captured, v_src, v_file) {
             }
             // fall through to 3226
             case 3226: {
+                omg_current_file_idx = 1;
                 omg_current_line = 524;
     if (v_c === OMG_UNSET) omg_undefined("c"); _s.push(v_c);
             }
@@ -40804,6 +42919,7 @@ function omg_p97(_captured, v_src, v_file) {
             }
             // fall through to 3233
             case 3233: {
+                omg_current_file_idx = 1;
                 omg_current_line = 525;
     if (v_c === OMG_UNSET) omg_undefined("c"); _s.push(v_c);
             }
@@ -40833,6 +42949,7 @@ function omg_p97(_captured, v_src, v_file) {
             }
             // fall through to 3240
             case 3240: {
+                omg_current_file_idx = 1;
                 omg_current_line = 526;
     if (v_c === OMG_UNSET) omg_undefined("c"); _s.push(v_c);
             }
@@ -40862,6 +42979,7 @@ function omg_p97(_captured, v_src, v_file) {
             }
             // fall through to 3247
             case 3247: {
+                omg_current_file_idx = 1;
                 omg_current_line = 527;
     if (v_c === OMG_UNSET) omg_undefined("c"); _s.push(v_c);
             }
@@ -40891,6 +43009,7 @@ function omg_p97(_captured, v_src, v_file) {
             }
             // fall through to 3254
             case 3254: {
+                omg_current_file_idx = 1;
                 omg_current_line = 528;
     if (v_c === OMG_UNSET) omg_undefined("c"); _s.push(v_c);
             }
@@ -40920,6 +43039,7 @@ function omg_p97(_captured, v_src, v_file) {
             }
             // fall through to 3261
             case 3261: {
+                omg_current_file_idx = 1;
                 omg_current_line = 529;
     if (v_c === OMG_UNSET) omg_undefined("c"); _s.push(v_c);
             }
@@ -40949,6 +43069,7 @@ function omg_p97(_captured, v_src, v_file) {
             }
             // fall through to 3268
             case 3268: {
+                omg_current_file_idx = 1;
                 omg_current_line = 530;
     if (v_c === OMG_UNSET) omg_undefined("c"); _s.push(v_c);
             }
@@ -40978,6 +43099,7 @@ function omg_p97(_captured, v_src, v_file) {
             }
             // fall through to 3275
             case 3275: {
+                omg_current_file_idx = 1;
                 omg_current_line = 531;
     if (v_c === OMG_UNSET) omg_undefined("c"); _s.push(v_c);
             }
@@ -41007,6 +43129,7 @@ function omg_p97(_captured, v_src, v_file) {
             }
             // fall through to 3282
             case 3282: {
+                omg_current_file_idx = 1;
                 omg_current_line = 532;
     if (v_c === OMG_UNSET) omg_undefined("c"); _s.push(v_c);
             }
@@ -41036,6 +43159,7 @@ function omg_p97(_captured, v_src, v_file) {
             }
             // fall through to 3289
             case 3289: {
+                omg_current_file_idx = 1;
                 omg_current_line = 533;
     if (v_c === OMG_UNSET) omg_undefined("c"); _s.push(v_c);
             }
@@ -41065,6 +43189,7 @@ function omg_p97(_captured, v_src, v_file) {
             }
             // fall through to 3296
             case 3296: {
+                omg_current_file_idx = 1;
                 omg_current_line = 534;
     if (v_c === OMG_UNSET) omg_undefined("c"); _s.push(v_c);
             }
@@ -41094,6 +43219,7 @@ function omg_p97(_captured, v_src, v_file) {
             }
             // fall through to 3303
             case 3303: {
+                omg_current_file_idx = 1;
                 omg_current_line = 535;
     if (v_c === OMG_UNSET) omg_undefined("c"); _s.push(v_c);
             }
@@ -41123,6 +43249,7 @@ function omg_p97(_captured, v_src, v_file) {
             }
             // fall through to 3310
             case 3310: {
+                omg_current_file_idx = 1;
                 omg_current_line = 536;
     if (v_kind === OMG_UNSET) omg_undefined("kind"); _s.push(v_kind);
             }
@@ -41157,6 +43284,8 @@ function omg_p97(_captured, v_src, v_file) {
             }
             // fall through to 3318
             case 3318: {
+                omg_current_file_idx = 1;
+                omg_current_line = 537;
     { const _b = _s.pop(); const _a = _s.pop(); _s.push(omg_add(_a, _b)); }
             }
             // fall through to 3319
@@ -41205,6 +43334,7 @@ function omg_p97(_captured, v_src, v_file) {
             }
             // fall through to 3330
             case 3330: {
+                omg_current_file_idx = 1;
                 omg_current_line = 539;
     if (v_tokens === OMG_UNSET) omg_undefined("tokens"); _s.push(v_tokens);
             }
@@ -41251,10 +43381,13 @@ function omg_p97(_captured, v_src, v_file) {
             }
             // fall through to 3341
             case 3341: {
+                omg_current_file_idx = 1;
+                omg_current_line = 540;
     _ip = 2249; continue;
             }
             // fall through to 3342
             case 3342: {
+                omg_current_file_idx = 1;
                 omg_current_line = 543;
     if (v_tokens === OMG_UNSET) omg_undefined("tokens"); _s.push(v_tokens);
             }
@@ -41328,6 +43461,7 @@ function omg_p98(_captured, v_new_cap) {
         try {
             switch (_ip) {
             case 1482: {
+                omg_current_file_idx = 1;
                 omg_current_line = 137;
     _s.push(0n);
             }
@@ -41354,6 +43488,7 @@ function omg_p98(_captured, v_new_cap) {
             }
             // fall through to 1488
             case 1488: {
+                omg_current_file_idx = 1;
                 omg_current_line = 139;
     if (v_i === OMG_UNSET) omg_undefined("i"); _s.push(v_i);
             }
@@ -41417,6 +43552,7 @@ function omg_p98(_captured, v_new_cap) {
             }
             // fall through to 1503
             case 1503: {
+                omg_current_file_idx = 1;
                 omg_current_line = 143;
     if (v_fresh === OMG_UNSET) omg_undefined("fresh"); _s.push(v_fresh);
             }
@@ -41459,6 +43595,7 @@ function omg_p99(_captured) {
         try {
             switch (_ip) {
             case 1476: {
+                omg_current_file_idx = 1;
                 omg_current_line = 128;
     { const _arr = _s.splice(_s.length - 0, 0); _s.push(_arr); }
             }
@@ -41519,11 +43656,14 @@ function omg_p100(_captured, v_code, v_funcs, v_src_files, v_src_lines) {
         try {
             switch (_ip) {
             case 10049: {
+                omg_current_file_idx = 1;
                 omg_current_line = 2752;
     { const _argv = _s.splice(_s.length - 0, 0); omg_frame_push("wb_reset", omg_current_file_idx, omg_current_line); const _rv = omg_p99(null, ..._argv); omg_frame_pop(); _s.push(_rv); }
             }
             // fall through to 10050
             case 10050: {
+                omg_current_file_idx = 1;
+                omg_current_line = 2752;
     _s.pop();
             }
             // fall through to 10051
@@ -41541,6 +43681,8 @@ function omg_p100(_captured, v_code, v_funcs, v_src_files, v_src_lines) {
             }
             // fall through to 10054
             case 10054: {
+                omg_current_file_idx = 1;
+                omg_current_line = 2753;
     _s.pop();
             }
             // fall through to 10055
@@ -41558,6 +43700,8 @@ function omg_p100(_captured, v_code, v_funcs, v_src_files, v_src_lines) {
             }
             // fall through to 10058
             case 10058: {
+                omg_current_file_idx = 1;
+                omg_current_line = 2754;
     _s.pop();
             }
             // fall through to 10059
@@ -41575,6 +43719,8 @@ function omg_p100(_captured, v_code, v_funcs, v_src_files, v_src_lines) {
             }
             // fall through to 10062
             case 10062: {
+                omg_current_file_idx = 1;
+                omg_current_line = 2755;
     _s.pop();
             }
             // fall through to 10063
@@ -41592,6 +43738,8 @@ function omg_p100(_captured, v_code, v_funcs, v_src_files, v_src_lines) {
             }
             // fall through to 10066
             case 10066: {
+                omg_current_file_idx = 1;
+                omg_current_line = 2756;
     _s.pop();
             }
             // fall through to 10067
@@ -41605,6 +43753,8 @@ function omg_p100(_captured, v_code, v_funcs, v_src_files, v_src_lines) {
             }
             // fall through to 10069
             case 10069: {
+                omg_current_file_idx = 1;
+                omg_current_line = 2757;
     _s.pop();
             }
             // fall through to 10070
@@ -41622,6 +43772,8 @@ function omg_p100(_captured, v_code, v_funcs, v_src_files, v_src_lines) {
             }
             // fall through to 10073
             case 10073: {
+                omg_current_file_idx = 1;
+                omg_current_line = 2759;
     _s.pop();
             }
             // fall through to 10074
@@ -41648,6 +43800,7 @@ function omg_p100(_captured, v_code, v_funcs, v_src_files, v_src_lines) {
             }
             // fall through to 10079
             case 10079: {
+                omg_current_file_idx = 1;
                 omg_current_line = 2762;
     if (v_fi === OMG_UNSET) omg_undefined("fi"); _s.push(v_fi);
             }
@@ -41682,6 +43835,8 @@ function omg_p100(_captured, v_code, v_funcs, v_src_files, v_src_lines) {
             }
             // fall through to 10087
             case 10087: {
+                omg_current_file_idx = 1;
+                omg_current_line = 2763;
     _s.pop();
             }
             // fall through to 10088
@@ -41707,6 +43862,7 @@ function omg_p100(_captured, v_code, v_funcs, v_src_files, v_src_lines) {
             }
             // fall through to 10093
             case 10093: {
+                omg_current_file_idx = 1;
                 omg_current_line = 2766;
     _s.push(v_funcs);
             }
@@ -41716,6 +43872,8 @@ function omg_p100(_captured, v_code, v_funcs, v_src_files, v_src_lines) {
             }
             // fall through to 10095
             case 10095: {
+                omg_current_file_idx = 1;
+                omg_current_line = 2766;
     v_sorted = _s.pop();
             }
             // fall through to 10096
@@ -41733,6 +43891,8 @@ function omg_p100(_captured, v_code, v_funcs, v_src_files, v_src_lines) {
             }
             // fall through to 10099
             case 10099: {
+                omg_current_file_idx = 1;
+                omg_current_line = 2767;
     _s.pop();
             }
             // fall through to 10100
@@ -41759,6 +43919,7 @@ function omg_p100(_captured, v_code, v_funcs, v_src_files, v_src_lines) {
             }
             // fall through to 10105
             case 10105: {
+                omg_current_file_idx = 1;
                 omg_current_line = 2770;
     if (v_i === OMG_UNSET) omg_undefined("i"); _s.push(v_i);
             }
@@ -41810,6 +43971,8 @@ function omg_p100(_captured, v_code, v_funcs, v_src_files, v_src_lines) {
             }
             // fall through to 10117
             case 10117: {
+                omg_current_file_idx = 1;
+                omg_current_line = 2772;
     _s.pop();
             }
             // fall through to 10118
@@ -41844,6 +44007,8 @@ function omg_p100(_captured, v_code, v_funcs, v_src_files, v_src_lines) {
             }
             // fall through to 10125
             case 10125: {
+                omg_current_file_idx = 1;
+                omg_current_line = 2774;
     _s.pop();
             }
             // fall through to 10126
@@ -41870,6 +44035,7 @@ function omg_p100(_captured, v_code, v_funcs, v_src_files, v_src_lines) {
             }
             // fall through to 10131
             case 10131: {
+                omg_current_file_idx = 1;
                 omg_current_line = 2777;
     if (v_j === OMG_UNSET) omg_undefined("j"); _s.push(v_j);
             }
@@ -41904,6 +44070,8 @@ function omg_p100(_captured, v_code, v_funcs, v_src_files, v_src_lines) {
             }
             // fall through to 10139
             case 10139: {
+                omg_current_file_idx = 1;
+                omg_current_line = 2778;
     _s.pop();
             }
             // fall through to 10140
@@ -41929,6 +44097,7 @@ function omg_p100(_captured, v_code, v_funcs, v_src_files, v_src_lines) {
             }
             // fall through to 10145
             case 10145: {
+                omg_current_file_idx = 1;
                 omg_current_line = 2781;
     if (v_f === OMG_UNSET) omg_undefined("f"); _s.push(v_f);
             }
@@ -41946,6 +44115,8 @@ function omg_p100(_captured, v_code, v_funcs, v_src_files, v_src_lines) {
             }
             // fall through to 10149
             case 10149: {
+                omg_current_file_idx = 1;
+                omg_current_line = 2781;
     _s.pop();
             }
             // fall through to 10150
@@ -41967,6 +44138,8 @@ function omg_p100(_captured, v_code, v_funcs, v_src_files, v_src_lines) {
             }
             // fall through to 10154
             case 10154: {
+                omg_current_file_idx = 1;
+                omg_current_line = 2782;
     _s.pop();
             }
             // fall through to 10155
@@ -41992,6 +44165,7 @@ function omg_p100(_captured, v_code, v_funcs, v_src_files, v_src_lines) {
             }
             // fall through to 10160
             case 10160: {
+                omg_current_file_idx = 1;
                 omg_current_line = 2785;
     _s.push(v_code);
             }
@@ -42005,6 +44179,8 @@ function omg_p100(_captured, v_code, v_funcs, v_src_files, v_src_lines) {
             }
             // fall through to 10163
             case 10163: {
+                omg_current_file_idx = 1;
+                omg_current_line = 2785;
     _s.pop();
             }
             // fall through to 10164
@@ -42031,6 +44207,7 @@ function omg_p100(_captured, v_code, v_funcs, v_src_files, v_src_lines) {
             }
             // fall through to 10169
             case 10169: {
+                omg_current_file_idx = 1;
                 omg_current_line = 2788;
     if (v_i === OMG_UNSET) omg_undefined("i"); _s.push(v_i);
             }
@@ -42065,6 +44242,8 @@ function omg_p100(_captured, v_code, v_funcs, v_src_files, v_src_lines) {
             }
             // fall through to 10177
             case 10177: {
+                omg_current_file_idx = 1;
+                omg_current_line = 2789;
     _s.pop();
             }
             // fall through to 10178
@@ -42090,6 +44269,7 @@ function omg_p100(_captured, v_code, v_funcs, v_src_files, v_src_lines) {
             }
             // fall through to 10183
             case 10183: {
+                omg_current_file_idx = 1;
                 omg_current_line = 2796;
     _s.push(v_src_lines);
             }
@@ -42103,6 +44283,8 @@ function omg_p100(_captured, v_code, v_funcs, v_src_files, v_src_lines) {
             }
             // fall through to 10186
             case 10186: {
+                omg_current_file_idx = 1;
+                omg_current_line = 2796;
     _s.pop();
             }
             // fall through to 10187
@@ -42129,6 +44311,7 @@ function omg_p100(_captured, v_code, v_funcs, v_src_files, v_src_lines) {
             }
             // fall through to 10192
             case 10192: {
+                omg_current_file_idx = 1;
                 omg_current_line = 2799;
     if (v_i === OMG_UNSET) omg_undefined("i"); _s.push(v_i);
             }
@@ -42171,6 +44354,8 @@ function omg_p100(_captured, v_code, v_funcs, v_src_files, v_src_lines) {
             }
             // fall through to 10202
             case 10202: {
+                omg_current_file_idx = 1;
+                omg_current_line = 2800;
     _s.pop();
             }
             // fall through to 10203
@@ -42200,6 +44385,8 @@ function omg_p100(_captured, v_code, v_funcs, v_src_files, v_src_lines) {
             }
             // fall through to 10209
             case 10209: {
+                omg_current_file_idx = 1;
+                omg_current_line = 2801;
     _s.pop();
             }
             // fall through to 10210
@@ -42225,6 +44412,7 @@ function omg_p100(_captured, v_code, v_funcs, v_src_files, v_src_lines) {
             }
             // fall through to 10215
             case 10215: {
+                omg_current_file_idx = 1;
                 omg_current_line = 2807;
     if (v___mod_1__wb_buf === OMG_UNSET) omg_undefined("__mod_1__wb_buf"); _s.push(v___mod_1__wb_buf);
             }
@@ -42284,6 +44472,7 @@ function omg_p101(_captured, v_op, v_bytes, v_cursor) {
         try {
             switch (_ip) {
             case 11002: {
+                omg_current_file_idx = 2;
                 omg_current_line = 251;
     _s.push(v_op);
             }
@@ -42314,6 +44503,8 @@ function omg_p101(_captured, v_op, v_bytes, v_cursor) {
             }
             // fall through to 11009
             case 11009: {
+                omg_current_file_idx = 2;
+                omg_current_line = 252;
     v_r = _s.pop();
             }
             // fall through to 11010
@@ -42355,6 +44546,7 @@ function omg_p101(_captured, v_op, v_bytes, v_cursor) {
             }
             // fall through to 11019
             case 11019: {
+                omg_current_file_idx = 2;
                 omg_current_line = 255;
     _s.push(v_op);
             }
@@ -42385,6 +44577,8 @@ function omg_p101(_captured, v_op, v_bytes, v_cursor) {
             }
             // fall through to 11026
             case 11026: {
+                omg_current_file_idx = 2;
+                omg_current_line = 256;
     v_r = _s.pop();
             }
             // fall through to 11027
@@ -42426,6 +44620,7 @@ function omg_p101(_captured, v_op, v_bytes, v_cursor) {
             }
             // fall through to 11036
             case 11036: {
+                omg_current_file_idx = 2;
                 omg_current_line = 259;
     _s.push(v_op);
             }
@@ -42497,6 +44692,7 @@ function omg_p101(_captured, v_op, v_bytes, v_cursor) {
             }
             // fall through to 11053
             case 11053: {
+                omg_current_file_idx = 2;
                 omg_current_line = 263;
     _s.push(v_op);
             }
@@ -42527,6 +44723,8 @@ function omg_p101(_captured, v_op, v_bytes, v_cursor) {
             }
             // fall through to 11060
             case 11060: {
+                omg_current_file_idx = 2;
+                omg_current_line = 264;
     v_r = _s.pop();
             }
             // fall through to 11061
@@ -42572,6 +44770,7 @@ function omg_p101(_captured, v_op, v_bytes, v_cursor) {
             }
             // fall through to 11071
             case 11071: {
+                omg_current_file_idx = 2;
                 omg_current_line = 267;
     _s.push(v_op);
             }
@@ -42602,6 +44801,8 @@ function omg_p101(_captured, v_op, v_bytes, v_cursor) {
             }
             // fall through to 11078
             case 11078: {
+                omg_current_file_idx = 2;
+                omg_current_line = 268;
     v_r = _s.pop();
             }
             // fall through to 11079
@@ -42643,6 +44844,7 @@ function omg_p101(_captured, v_op, v_bytes, v_cursor) {
             }
             // fall through to 11088
             case 11088: {
+                omg_current_file_idx = 2;
                 omg_current_line = 271;
     _s.push(v_op);
             }
@@ -42673,6 +44875,8 @@ function omg_p101(_captured, v_op, v_bytes, v_cursor) {
             }
             // fall through to 11095
             case 11095: {
+                omg_current_file_idx = 2;
+                omg_current_line = 272;
     v_r = _s.pop();
             }
             // fall through to 11096
@@ -42714,6 +44918,7 @@ function omg_p101(_captured, v_op, v_bytes, v_cursor) {
             }
             // fall through to 11105
             case 11105: {
+                omg_current_file_idx = 2;
                 omg_current_line = 275;
     _s.push(v_op);
             }
@@ -42744,6 +44949,8 @@ function omg_p101(_captured, v_op, v_bytes, v_cursor) {
             }
             // fall through to 11112
             case 11112: {
+                omg_current_file_idx = 2;
+                omg_current_line = 276;
     v_r = _s.pop();
             }
             // fall through to 11113
@@ -42785,6 +44992,7 @@ function omg_p101(_captured, v_op, v_bytes, v_cursor) {
             }
             // fall through to 11122
             case 11122: {
+                omg_current_file_idx = 2;
                 omg_current_line = 279;
     _s.push(v_op);
             }
@@ -42815,6 +45023,8 @@ function omg_p101(_captured, v_op, v_bytes, v_cursor) {
             }
             // fall through to 11129
             case 11129: {
+                omg_current_file_idx = 2;
+                omg_current_line = 280;
     v_r = _s.pop();
             }
             // fall through to 11130
@@ -42856,6 +45066,7 @@ function omg_p101(_captured, v_op, v_bytes, v_cursor) {
             }
             // fall through to 11139
             case 11139: {
+                omg_current_file_idx = 2;
                 omg_current_line = 283;
     _s.push(v_op);
             }
@@ -42886,6 +45097,8 @@ function omg_p101(_captured, v_op, v_bytes, v_cursor) {
             }
             // fall through to 11146
             case 11146: {
+                omg_current_file_idx = 2;
+                omg_current_line = 284;
     v_r = _s.pop();
             }
             // fall through to 11147
@@ -42927,6 +45140,7 @@ function omg_p101(_captured, v_op, v_bytes, v_cursor) {
             }
             // fall through to 11156
             case 11156: {
+                omg_current_file_idx = 2;
                 omg_current_line = 287;
     _s.push(v_op);
             }
@@ -42960,6 +45174,7 @@ function omg_p101(_captured, v_op, v_bytes, v_cursor) {
             }
             // fall through to 11164
             case 11164: {
+                omg_current_file_idx = 2;
                 omg_current_line = 288;
     _s.push(v_op);
             }
@@ -42993,6 +45208,7 @@ function omg_p101(_captured, v_op, v_bytes, v_cursor) {
             }
             // fall through to 11172
             case 11172: {
+                omg_current_file_idx = 2;
                 omg_current_line = 289;
     _s.push(v_op);
             }
@@ -43026,6 +45242,7 @@ function omg_p101(_captured, v_op, v_bytes, v_cursor) {
             }
             // fall through to 11180
             case 11180: {
+                omg_current_file_idx = 2;
                 omg_current_line = 290;
     _s.push(v_op);
             }
@@ -43059,6 +45276,7 @@ function omg_p101(_captured, v_op, v_bytes, v_cursor) {
             }
             // fall through to 11188
             case 11188: {
+                omg_current_file_idx = 2;
                 omg_current_line = 291;
     _s.push(v_op);
             }
@@ -43092,6 +45310,7 @@ function omg_p101(_captured, v_op, v_bytes, v_cursor) {
             }
             // fall through to 11196
             case 11196: {
+                omg_current_file_idx = 2;
                 omg_current_line = 292;
     _s.push(v_op);
             }
@@ -43125,6 +45344,7 @@ function omg_p101(_captured, v_op, v_bytes, v_cursor) {
             }
             // fall through to 11204
             case 11204: {
+                omg_current_file_idx = 2;
                 omg_current_line = 293;
     _s.push(v_op);
             }
@@ -43158,6 +45378,7 @@ function omg_p101(_captured, v_op, v_bytes, v_cursor) {
             }
             // fall through to 11212
             case 11212: {
+                omg_current_file_idx = 2;
                 omg_current_line = 294;
     _s.push(v_op);
             }
@@ -43191,6 +45412,7 @@ function omg_p101(_captured, v_op, v_bytes, v_cursor) {
             }
             // fall through to 11220
             case 11220: {
+                omg_current_file_idx = 2;
                 omg_current_line = 295;
     _s.push(v_op);
             }
@@ -43224,6 +45446,7 @@ function omg_p101(_captured, v_op, v_bytes, v_cursor) {
             }
             // fall through to 11228
             case 11228: {
+                omg_current_file_idx = 2;
                 omg_current_line = 296;
     _s.push(v_op);
             }
@@ -43257,6 +45480,7 @@ function omg_p101(_captured, v_op, v_bytes, v_cursor) {
             }
             // fall through to 11236
             case 11236: {
+                omg_current_file_idx = 2;
                 omg_current_line = 297;
     _s.push(v_op);
             }
@@ -43290,6 +45514,7 @@ function omg_p101(_captured, v_op, v_bytes, v_cursor) {
             }
             // fall through to 11244
             case 11244: {
+                omg_current_file_idx = 2;
                 omg_current_line = 298;
     _s.push(v_op);
             }
@@ -43323,6 +45548,7 @@ function omg_p101(_captured, v_op, v_bytes, v_cursor) {
             }
             // fall through to 11252
             case 11252: {
+                omg_current_file_idx = 2;
                 omg_current_line = 299;
     _s.push(v_op);
             }
@@ -43356,6 +45582,7 @@ function omg_p101(_captured, v_op, v_bytes, v_cursor) {
             }
             // fall through to 11260
             case 11260: {
+                omg_current_file_idx = 2;
                 omg_current_line = 300;
     _s.push(v_op);
             }
@@ -43389,6 +45616,7 @@ function omg_p101(_captured, v_op, v_bytes, v_cursor) {
             }
             // fall through to 11268
             case 11268: {
+                omg_current_file_idx = 2;
                 omg_current_line = 301;
     _s.push(v_op);
             }
@@ -43422,6 +45650,7 @@ function omg_p101(_captured, v_op, v_bytes, v_cursor) {
             }
             // fall through to 11276
             case 11276: {
+                omg_current_file_idx = 2;
                 omg_current_line = 302;
     _s.push(v_op);
             }
@@ -43455,6 +45684,7 @@ function omg_p101(_captured, v_op, v_bytes, v_cursor) {
             }
             // fall through to 11284
             case 11284: {
+                omg_current_file_idx = 2;
                 omg_current_line = 303;
     _s.push(v_op);
             }
@@ -43488,6 +45718,7 @@ function omg_p101(_captured, v_op, v_bytes, v_cursor) {
             }
             // fall through to 11292
             case 11292: {
+                omg_current_file_idx = 2;
                 omg_current_line = 304;
     _s.push(v_op);
             }
@@ -43521,6 +45752,7 @@ function omg_p101(_captured, v_op, v_bytes, v_cursor) {
             }
             // fall through to 11300
             case 11300: {
+                omg_current_file_idx = 2;
                 omg_current_line = 305;
     _s.push(v_op);
             }
@@ -43554,6 +45786,7 @@ function omg_p101(_captured, v_op, v_bytes, v_cursor) {
             }
             // fall through to 11308
             case 11308: {
+                omg_current_file_idx = 2;
                 omg_current_line = 306;
     _s.push(v_op);
             }
@@ -43587,6 +45820,7 @@ function omg_p101(_captured, v_op, v_bytes, v_cursor) {
             }
             // fall through to 11316
             case 11316: {
+                omg_current_file_idx = 2;
                 omg_current_line = 307;
     _s.push(v_op);
             }
@@ -43620,6 +45854,7 @@ function omg_p101(_captured, v_op, v_bytes, v_cursor) {
             }
             // fall through to 11324
             case 11324: {
+                omg_current_file_idx = 2;
                 omg_current_line = 308;
     _s.push(v_op);
             }
@@ -43653,6 +45888,7 @@ function omg_p101(_captured, v_op, v_bytes, v_cursor) {
             }
             // fall through to 11332
             case 11332: {
+                omg_current_file_idx = 2;
                 omg_current_line = 309;
     _s.push(v_op);
             }
@@ -43686,6 +45922,7 @@ function omg_p101(_captured, v_op, v_bytes, v_cursor) {
             }
             // fall through to 11340
             case 11340: {
+                omg_current_file_idx = 2;
                 omg_current_line = 310;
     _s.push(v_op);
             }
@@ -43716,6 +45953,8 @@ function omg_p101(_captured, v_op, v_bytes, v_cursor) {
             }
             // fall through to 11347
             case 11347: {
+                omg_current_file_idx = 2;
+                omg_current_line = 311;
     v_r = _s.pop();
             }
             // fall through to 11348
@@ -43757,6 +45996,7 @@ function omg_p101(_captured, v_op, v_bytes, v_cursor) {
             }
             // fall through to 11357
             case 11357: {
+                omg_current_file_idx = 2;
                 omg_current_line = 314;
     _s.push(v_op);
             }
@@ -43787,6 +46027,8 @@ function omg_p101(_captured, v_op, v_bytes, v_cursor) {
             }
             // fall through to 11364
             case 11364: {
+                omg_current_file_idx = 2;
+                omg_current_line = 315;
     v_r = _s.pop();
             }
             // fall through to 11365
@@ -43828,6 +46070,7 @@ function omg_p101(_captured, v_op, v_bytes, v_cursor) {
             }
             // fall through to 11374
             case 11374: {
+                omg_current_file_idx = 2;
                 omg_current_line = 318;
     _s.push(v_op);
             }
@@ -43858,6 +46101,8 @@ function omg_p101(_captured, v_op, v_bytes, v_cursor) {
             }
             // fall through to 11381
             case 11381: {
+                omg_current_file_idx = 2;
+                omg_current_line = 319;
     v_r = _s.pop();
             }
             // fall through to 11382
@@ -43899,6 +46144,7 @@ function omg_p101(_captured, v_op, v_bytes, v_cursor) {
             }
             // fall through to 11391
             case 11391: {
+                omg_current_file_idx = 2;
                 omg_current_line = 322;
     _s.push(v_op);
             }
@@ -43929,6 +46175,8 @@ function omg_p101(_captured, v_op, v_bytes, v_cursor) {
             }
             // fall through to 11398
             case 11398: {
+                omg_current_file_idx = 2;
+                omg_current_line = 323;
     v_r = _s.pop();
             }
             // fall through to 11399
@@ -43970,6 +46218,7 @@ function omg_p101(_captured, v_op, v_bytes, v_cursor) {
             }
             // fall through to 11408
             case 11408: {
+                omg_current_file_idx = 2;
                 omg_current_line = 326;
     _s.push(v_op);
             }
@@ -44000,6 +46249,8 @@ function omg_p101(_captured, v_op, v_bytes, v_cursor) {
             }
             // fall through to 11415
             case 11415: {
+                omg_current_file_idx = 2;
+                omg_current_line = 327;
     v_nm = _s.pop();
             }
             // fall through to 11416
@@ -44025,6 +46276,8 @@ function omg_p101(_captured, v_op, v_bytes, v_cursor) {
             }
             // fall through to 11421
             case 11421: {
+                omg_current_file_idx = 2;
+                omg_current_line = 328;
     v_ac = _s.pop();
             }
             // fall through to 11422
@@ -44082,6 +46335,7 @@ function omg_p101(_captured, v_op, v_bytes, v_cursor) {
             }
             // fall through to 11435
             case 11435: {
+                omg_current_file_idx = 2;
                 omg_current_line = 331;
     _s.push(v_op);
             }
@@ -44115,6 +46369,7 @@ function omg_p101(_captured, v_op, v_bytes, v_cursor) {
             }
             // fall through to 11443
             case 11443: {
+                omg_current_file_idx = 2;
                 omg_current_line = 332;
     _s.push(v_op);
             }
@@ -44148,6 +46403,7 @@ function omg_p101(_captured, v_op, v_bytes, v_cursor) {
             }
             // fall through to 11451
             case 11451: {
+                omg_current_file_idx = 2;
                 omg_current_line = 333;
     _s.push(v_op);
             }
@@ -44181,6 +46437,7 @@ function omg_p101(_captured, v_op, v_bytes, v_cursor) {
             }
             // fall through to 11459
             case 11459: {
+                omg_current_file_idx = 2;
                 omg_current_line = 334;
     _s.push(v_op);
             }
@@ -44214,6 +46471,7 @@ function omg_p101(_captured, v_op, v_bytes, v_cursor) {
             }
             // fall through to 11467
             case 11467: {
+                omg_current_file_idx = 2;
                 omg_current_line = 335;
     _s.push(v_op);
             }
@@ -44247,6 +46505,7 @@ function omg_p101(_captured, v_op, v_bytes, v_cursor) {
             }
             // fall through to 11475
             case 11475: {
+                omg_current_file_idx = 2;
                 omg_current_line = 336;
     _s.push(v_op);
             }
@@ -44280,6 +46539,7 @@ function omg_p101(_captured, v_op, v_bytes, v_cursor) {
             }
             // fall through to 11483
             case 11483: {
+                omg_current_file_idx = 2;
                 omg_current_line = 337;
     _s.push(v_op);
             }
@@ -44310,6 +46570,8 @@ function omg_p101(_captured, v_op, v_bytes, v_cursor) {
             }
             // fall through to 11490
             case 11490: {
+                omg_current_file_idx = 2;
+                omg_current_line = 338;
     v_r = _s.pop();
             }
             // fall through to 11491
@@ -44351,6 +46613,7 @@ function omg_p101(_captured, v_op, v_bytes, v_cursor) {
             }
             // fall through to 11500
             case 11500: {
+                omg_current_file_idx = 2;
                 omg_current_line = 341;
     _s.push(v_op);
             }
@@ -44381,6 +46644,8 @@ function omg_p101(_captured, v_op, v_bytes, v_cursor) {
             }
             // fall through to 11507
             case 11507: {
+                omg_current_file_idx = 2;
+                omg_current_line = 342;
     v_r = _s.pop();
             }
             // fall through to 11508
@@ -44422,6 +46687,7 @@ function omg_p101(_captured, v_op, v_bytes, v_cursor) {
             }
             // fall through to 11517
             case 11517: {
+                omg_current_file_idx = 2;
                 omg_current_line = 345;
     _s.push(v_op);
             }
@@ -44455,6 +46721,7 @@ function omg_p101(_captured, v_op, v_bytes, v_cursor) {
             }
             // fall through to 11525
             case 11525: {
+                omg_current_file_idx = 2;
                 omg_current_line = 346;
     _s.push(v_op);
             }
@@ -44485,6 +46752,8 @@ function omg_p101(_captured, v_op, v_bytes, v_cursor) {
             }
             // fall through to 11532
             case 11532: {
+                omg_current_file_idx = 2;
+                omg_current_line = 347;
     v_r = _s.pop();
             }
             // fall through to 11533
@@ -44526,6 +46795,7 @@ function omg_p101(_captured, v_op, v_bytes, v_cursor) {
             }
             // fall through to 11542
             case 11542: {
+                omg_current_file_idx = 2;
                 omg_current_line = 350;
     _s.push(v_op);
             }
@@ -44556,6 +46826,8 @@ function omg_p101(_captured, v_op, v_bytes, v_cursor) {
             }
             // fall through to 11549
             case 11549: {
+                omg_current_file_idx = 2;
+                omg_current_line = 351;
     v_r = _s.pop();
             }
             // fall through to 11550
@@ -44597,6 +46869,7 @@ function omg_p101(_captured, v_op, v_bytes, v_cursor) {
             }
             // fall through to 11559
             case 11559: {
+                omg_current_file_idx = 2;
                 omg_current_line = 354;
     _s.push(v_op);
             }
@@ -44630,6 +46903,7 @@ function omg_p101(_captured, v_op, v_bytes, v_cursor) {
             }
             // fall through to 11567
             case 11567: {
+                omg_current_file_idx = 2;
                 omg_current_line = 355;
     _s.push(v_op);
             }
@@ -44693,6 +46967,7 @@ function omg_p101(_captured, v_op, v_bytes, v_cursor) {
             }
             // fall through to 11582
             case 11582: {
+                omg_current_file_idx = 2;
                 omg_current_line = 359;
     _s.push(v_op);
             }
@@ -44723,6 +46998,8 @@ function omg_p101(_captured, v_op, v_bytes, v_cursor) {
             }
             // fall through to 11589
             case 11589: {
+                omg_current_file_idx = 2;
+                omg_current_line = 360;
     v_r = _s.pop();
             }
             // fall through to 11590
@@ -44764,6 +47041,7 @@ function omg_p101(_captured, v_op, v_bytes, v_cursor) {
             }
             // fall through to 11599
             case 11599: {
+                omg_current_file_idx = 2;
                 omg_current_line = 363;
     _s.push("omg-vm: unknown opcode 0x");
             }
@@ -44825,6 +47103,7 @@ function omg_p102(_captured, v_dst, v_src) {
         try {
             switch (_ip) {
             case 11910: {
+                omg_current_file_idx = 2;
                 omg_current_line = 582;
     _s.push(v_src);
             }
@@ -44860,6 +47139,7 @@ function omg_p102(_captured, v_dst, v_src) {
             }
             // fall through to 11918
             case 11918: {
+                omg_current_file_idx = 2;
                 omg_current_line = 585;
     if (v_i === OMG_UNSET) omg_undefined("i"); _s.push(v_i);
             }
@@ -44939,6 +47219,8 @@ function omg_p102(_captured, v_dst, v_src) {
             }
             // fall through to 11937
             case 11937: {
+                omg_current_file_idx = 2;
+                omg_current_line = 587;
     _s.push(null);
             }
             // fall through to 11938
@@ -44972,6 +47254,7 @@ function omg_p103(_captured, v_v, v_key) {
         try {
             switch (_ip) {
             case 11719: {
+                omg_current_file_idx = 2;
                 omg_current_line = 450;
     _s.push(v_v);
             }
@@ -45023,6 +47306,7 @@ function omg_p104(_captured, v_d) {
         try {
             switch (_ip) {
             case 11939: {
+                omg_current_file_idx = 2;
                 omg_current_line = 595;
     { const _n = 0; const _items = _s.splice(_s.length - 2 * _n, 2 * _n); const _d = new Map(); for (let _i = 0; _i < _n; _i++) { _d.set(_items[2*_i], _items[2*_i + 1]); } _s.push(_d); }
             }
@@ -45045,6 +47329,8 @@ function omg_p104(_captured, v_d) {
             }
             // fall through to 11944
             case 11944: {
+                omg_current_file_idx = 2;
+                omg_current_line = 596;
     _s.pop();
             }
             // fall through to 11945
@@ -45092,6 +47378,7 @@ function omg_p105(_captured) {
         try {
             switch (_ip) {
             case 13633: {
+                omg_current_file_idx = 2;
                 omg_current_line = 1180;
     { const _n = 0; const _items = _s.splice(_s.length - 2 * _n, 2 * _n); const _d = new Map(); for (let _i = 0; _i < _n; _i++) { _d.set(_items[2*_i], _items[2*_i + 1]); } _s.push(_d); }
             }
@@ -46010,6 +48297,7 @@ function omg_p106(_captured, v_v) {
         try {
             switch (_ip) {
             case 11731: {
+                omg_current_file_idx = 2;
                 omg_current_line = 458;
     _s.push(v_v);
             }
@@ -46056,6 +48344,7 @@ function omg_p107(_captured, v_v) {
         try {
             switch (_ip) {
             case 11725: {
+                omg_current_file_idx = 2;
                 omg_current_line = 454;
     _s.push(v_v);
             }
@@ -46106,6 +48395,7 @@ function omg_p108(_captured, v_name, v_captured) {
         try {
             switch (_ip) {
             case 11611: {
+                omg_current_file_idx = 2;
                 omg_current_line = 423;
     _s.push("__omg_closure__");
             }
@@ -46127,6 +48417,8 @@ function omg_p108(_captured, v_name, v_captured) {
             }
             // fall through to 11616
             case 11616: {
+                omg_current_file_idx = 2;
+                omg_current_line = 423;
     { const _arr = _s.splice(_s.length - 3, 3); _s.push(_arr); }
             }
             // fall through to 11617
@@ -46172,6 +48464,7 @@ function omg_p109(_captured, v_op) {
         try {
             switch (_ip) {
             case 13843: {
+                omg_current_file_idx = 2;
                 omg_current_line = 1238;
     if (v___mod_2__OPNAME_TO_INT === OMG_UNSET) omg_undefined("__mod_2__OPNAME_TO_INT"); _s.push(v___mod_2__OPNAME_TO_INT);
             }
@@ -46210,6 +48503,7 @@ function omg_p109(_captured, v_op) {
             }
             // fall through to 13852
             case 13852: {
+                omg_current_file_idx = 2;
                 omg_current_line = 1241;
     _s.push(v_op);
             }
@@ -46285,6 +48579,7 @@ function omg_p110(_captured, v_bytes) {
         try {
             switch (_ip) {
             case 10644: {
+                omg_current_file_idx = 2;
                 omg_current_line = 144;
     _s.push(v_bytes);
             }
@@ -46332,6 +48627,7 @@ function omg_p110(_captured, v_bytes) {
             }
             // fall through to 10655
             case 10655: {
+                omg_current_file_idx = 2;
                 omg_current_line = 148;
     _s.push(v_bytes);
             }
@@ -46369,6 +48665,8 @@ function omg_p110(_captured, v_bytes) {
             }
             // fall through to 10664
             case 10664: {
+                omg_current_file_idx = 2;
+                omg_current_line = 148;
     _s.push(v_bytes);
             }
             // fall through to 10665
@@ -46401,6 +48699,8 @@ function omg_p110(_captured, v_bytes) {
             }
             // fall through to 10672
             case 10672: {
+                omg_current_file_idx = 2;
+                omg_current_line = 148;
     { const _c = _s.pop(); if (!omg_truthy(_c)) { _ip = 10675; continue; } }
             }
             // fall through to 10673
@@ -46413,6 +48713,8 @@ function omg_p110(_captured, v_bytes) {
             }
             // fall through to 10675
             case 10675: {
+                omg_current_file_idx = 2;
+                omg_current_line = 148;
     _s.push(v_bytes);
             }
             // fall through to 10676
@@ -46445,6 +48747,8 @@ function omg_p110(_captured, v_bytes) {
             }
             // fall through to 10683
             case 10683: {
+                omg_current_file_idx = 2;
+                omg_current_line = 148;
     { const _c = _s.pop(); if (!omg_truthy(_c)) { _ip = 10686; continue; } }
             }
             // fall through to 10684
@@ -46457,6 +48761,8 @@ function omg_p110(_captured, v_bytes) {
             }
             // fall through to 10686
             case 10686: {
+                omg_current_file_idx = 2;
+                omg_current_line = 148;
     _s.push(v_bytes);
             }
             // fall through to 10687
@@ -46489,6 +48795,8 @@ function omg_p110(_captured, v_bytes) {
             }
             // fall through to 10694
             case 10694: {
+                omg_current_file_idx = 2;
+                omg_current_line = 148;
     { const _c = _s.pop(); if (!omg_truthy(_c)) { _ip = 10699; continue; } }
             }
             // fall through to 10695
@@ -46510,6 +48818,7 @@ function omg_p110(_captured, v_bytes) {
             }
             // fall through to 10699
             case 10699: {
+                omg_current_file_idx = 2;
                 omg_current_line = 151;
     _s.push(4n);
             }
@@ -46532,6 +48841,8 @@ function omg_p110(_captured, v_bytes) {
             }
             // fall through to 10704
             case 10704: {
+                omg_current_file_idx = 2;
+                omg_current_line = 152;
     v_ver_pair = _s.pop();
             }
             // fall through to 10705
@@ -46611,6 +48922,7 @@ function omg_p110(_captured, v_bytes) {
             }
             // fall through to 10723
             case 10723: {
+                omg_current_file_idx = 2;
                 omg_current_line = 158;
     _s.push(v_bytes);
             }
@@ -46624,6 +48936,8 @@ function omg_p110(_captured, v_bytes) {
             }
             // fall through to 10726
             case 10726: {
+                omg_current_file_idx = 2;
+                omg_current_line = 158;
     v_sfc_pair = _s.pop();
             }
             // fall through to 10727
@@ -46680,6 +48994,7 @@ function omg_p110(_captured, v_bytes) {
             }
             // fall through to 10739
             case 10739: {
+                omg_current_file_idx = 2;
                 omg_current_line = 163;
     if (v_si === OMG_UNSET) omg_undefined("si"); _s.push(v_si);
             }
@@ -46710,6 +49025,8 @@ function omg_p110(_captured, v_bytes) {
             }
             // fall through to 10746
             case 10746: {
+                omg_current_file_idx = 2;
+                omg_current_line = 164;
     v_sf_pair = _s.pop();
             }
             // fall through to 10747
@@ -46781,6 +49098,7 @@ function omg_p110(_captured, v_bytes) {
             }
             // fall through to 10763
             case 10763: {
+                omg_current_file_idx = 2;
                 omg_current_line = 169;
     _s.push(v_bytes);
             }
@@ -46794,6 +49112,8 @@ function omg_p110(_captured, v_bytes) {
             }
             // fall through to 10766
             case 10766: {
+                omg_current_file_idx = 2;
+                omg_current_line = 169;
     v_fc_pair = _s.pop();
             }
             // fall through to 10767
@@ -46850,6 +49170,7 @@ function omg_p110(_captured, v_bytes) {
             }
             // fall through to 10779
             case 10779: {
+                omg_current_file_idx = 2;
                 omg_current_line = 174;
     if (v_f === OMG_UNSET) omg_undefined("f"); _s.push(v_f);
             }
@@ -46880,6 +49201,8 @@ function omg_p110(_captured, v_bytes) {
             }
             // fall through to 10786
             case 10786: {
+                omg_current_file_idx = 2;
+                omg_current_line = 175;
     v_name_pair = _s.pop();
             }
             // fall through to 10787
@@ -46931,6 +49254,8 @@ function omg_p110(_captured, v_bytes) {
             }
             // fall through to 10798
             case 10798: {
+                omg_current_file_idx = 2;
+                omg_current_line = 178;
     v_pc_pair = _s.pop();
             }
             // fall through to 10799
@@ -46987,6 +49312,7 @@ function omg_p110(_captured, v_bytes) {
             }
             // fall through to 10811
             case 10811: {
+                omg_current_file_idx = 2;
                 omg_current_line = 183;
     if (v_p === OMG_UNSET) omg_undefined("p"); _s.push(v_p);
             }
@@ -47017,6 +49343,8 @@ function omg_p110(_captured, v_bytes) {
             }
             // fall through to 10818
             case 10818: {
+                omg_current_file_idx = 2;
+                omg_current_line = 184;
     v_p_pair = _s.pop();
             }
             // fall through to 10819
@@ -47088,6 +49416,7 @@ function omg_p110(_captured, v_bytes) {
             }
             // fall through to 10835
             case 10835: {
+                omg_current_file_idx = 2;
                 omg_current_line = 189;
     _s.push(v_bytes);
             }
@@ -47101,6 +49430,8 @@ function omg_p110(_captured, v_bytes) {
             }
             // fall through to 10838
             case 10838: {
+                omg_current_file_idx = 2;
+                omg_current_line = 189;
     v_addr_pair = _s.pop();
             }
             // fall through to 10839
@@ -47135,6 +49466,8 @@ function omg_p110(_captured, v_bytes) {
             }
             // fall through to 10846
             case 10846: {
+                omg_current_file_idx = 2;
+                omg_current_line = 191;
     v_sfi_pair = _s.pop();
             }
             // fall through to 10847
@@ -47222,6 +49555,7 @@ function omg_p110(_captured, v_bytes) {
             }
             // fall through to 10867
             case 10867: {
+                omg_current_file_idx = 2;
                 omg_current_line = 196;
     _s.push(v_bytes);
             }
@@ -47235,6 +49569,8 @@ function omg_p110(_captured, v_bytes) {
             }
             // fall through to 10870
             case 10870: {
+                omg_current_file_idx = 2;
+                omg_current_line = 196;
     v_cl_pair = _s.pop();
             }
             // fall through to 10871
@@ -47291,6 +49627,7 @@ function omg_p110(_captured, v_bytes) {
             }
             // fall through to 10883
             case 10883: {
+                omg_current_file_idx = 2;
                 omg_current_line = 201;
     if (v_k === OMG_UNSET) omg_undefined("k"); _s.push(v_k);
             }
@@ -47350,6 +49687,7 @@ function omg_p110(_captured, v_bytes) {
             }
             // fall through to 10897
             case 10897: {
+                omg_current_file_idx = 2;
                 omg_current_line = 205;
     _s.push(v_bytes);
             }
@@ -47401,6 +49739,8 @@ function omg_p110(_captured, v_bytes) {
             }
             // fall through to 10909
             case 10909: {
+                omg_current_file_idx = 2;
+                omg_current_line = 207;
     v_instr = _s.pop();
             }
             // fall through to 10910
@@ -47472,6 +49812,7 @@ function omg_p110(_captured, v_bytes) {
             }
             // fall through to 10926
             case 10926: {
+                omg_current_file_idx = 2;
                 omg_current_line = 215;
     _s.push(v_bytes);
             }
@@ -47485,6 +49826,8 @@ function omg_p110(_captured, v_bytes) {
             }
             // fall through to 10929
             case 10929: {
+                omg_current_file_idx = 2;
+                omg_current_line = 215;
     v_ml_pair = _s.pop();
             }
             // fall through to 10930
@@ -47541,6 +49884,7 @@ function omg_p110(_captured, v_bytes) {
             }
             // fall through to 10942
             case 10942: {
+                omg_current_file_idx = 2;
                 omg_current_line = 220;
     if (v_mi === OMG_UNSET) omg_undefined("mi"); _s.push(v_mi);
             }
@@ -47571,6 +49915,8 @@ function omg_p110(_captured, v_bytes) {
             }
             // fall through to 10949
             case 10949: {
+                omg_current_file_idx = 2;
+                omg_current_line = 221;
     v_fi_pair = _s.pop();
             }
             // fall through to 10950
@@ -47605,6 +49951,8 @@ function omg_p110(_captured, v_bytes) {
             }
             // fall through to 10957
             case 10957: {
+                omg_current_file_idx = 2;
+                omg_current_line = 223;
     v_ln_pair = _s.pop();
             }
             // fall through to 10958
@@ -47692,6 +50040,7 @@ function omg_p110(_captured, v_bytes) {
             }
             // fall through to 10978
             case 10978: {
+                omg_current_file_idx = 2;
                 omg_current_line = 228;
     if (v_code === OMG_UNSET) omg_undefined("code"); _s.push(v_code);
             }
@@ -47753,6 +50102,7 @@ function omg_p111(_captured, v_bytes, v_i) {
         try {
             switch (_ip) {
             case 10588: {
+                omg_current_file_idx = 2;
                 omg_current_line = 114;
     _s.push(v_bytes);
             }
@@ -47766,6 +50116,8 @@ function omg_p111(_captured, v_bytes, v_i) {
             }
             // fall through to 10591
             case 10591: {
+                omg_current_file_idx = 2;
+                omg_current_line = 114;
     v_lo_pair = _s.pop();
             }
             // fall through to 10592
@@ -47791,6 +50143,8 @@ function omg_p111(_captured, v_bytes, v_i) {
             }
             // fall through to 10597
             case 10597: {
+                omg_current_file_idx = 2;
+                omg_current_line = 115;
     v_hi_pair = _s.pop();
             }
             // fall through to 10598
@@ -47898,6 +50252,7 @@ function omg_p112(_captured, v_bytes, v_i) {
         try {
             switch (_ip) {
             case 10616: {
+                omg_current_file_idx = 2;
                 omg_current_line = 122;
     _s.push(v_bytes);
             }
@@ -47911,6 +50266,8 @@ function omg_p112(_captured, v_bytes, v_i) {
             }
             // fall through to 10619
             case 10619: {
+                omg_current_file_idx = 2;
+                omg_current_line = 122;
     v_len_pair = _s.pop();
             }
             // fall through to 10620
@@ -48041,6 +50398,7 @@ function omg_p113(_captured, v_bytes, v_i) {
         try {
             switch (_ip) {
             case 10552: {
+                omg_current_file_idx = 2;
                 omg_current_line = 104;
     _s.push(v_bytes);
             }
@@ -48212,6 +50570,7 @@ function omg_p114(_captured, v_v, v_default_val) {
         try {
             switch (_ip) {
             case 12091: {
+                omg_current_file_idx = 2;
                 omg_current_line = 666;
     _s.push(v_v);
             }
@@ -48221,6 +50580,8 @@ function omg_p114(_captured, v_v, v_default_val) {
             }
             // fall through to 12093
             case 12093: {
+                omg_current_file_idx = 2;
+                omg_current_line = 666;
     { const _c = _s.pop(); if (!omg_truthy(_c)) { _ip = 12097; continue; } }
             }
             // fall through to 12094
@@ -48238,6 +50599,7 @@ function omg_p114(_captured, v_v, v_default_val) {
             }
             // fall through to 12097
             case 12097: {
+                omg_current_file_idx = 2;
                 omg_current_line = 669;
     _s.push(v_v);
             }
@@ -48285,6 +50647,7 @@ function omg_p115(_captured) {
         try {
             switch (_ip) {
             case 13531: {
+                omg_current_file_idx = 2;
                 omg_current_line = 1122;
     if (v___mod_2__vm_halted === OMG_UNSET) omg_undefined("__mod_2__vm_halted"); _s.push(v___mod_2__vm_halted);
             }
@@ -48330,10 +50693,14 @@ function omg_p115(_captured) {
             }
             // fall through to 13542
             case 13542: {
+                omg_current_file_idx = 2;
+                omg_current_line = 1122;
     _s.push(false);
             }
             // fall through to 13543
             case 13543: {
+                omg_current_file_idx = 2;
+                omg_current_line = 1122;
     { const _c = _s.pop(); if (!omg_truthy(_c)) { _ip = 13631; continue; } }
             }
             // fall through to 13544
@@ -48343,6 +50710,7 @@ function omg_p115(_captured) {
             }
             // fall through to 13545
             case 13545: {
+                omg_current_file_idx = 2;
                 omg_current_line = 1124;
     if (v___mod_2__vm_halted === OMG_UNSET) omg_undefined("__mod_2__vm_halted"); _s.push(v___mod_2__vm_halted);
             }
@@ -48388,10 +50756,14 @@ function omg_p115(_captured) {
             }
             // fall through to 13556
             case 13556: {
+                omg_current_file_idx = 2;
+                omg_current_line = 1124;
     _s.push(false);
             }
             // fall through to 13557
             case 13557: {
+                omg_current_file_idx = 2;
+                omg_current_line = 1124;
     { const _c = _s.pop(); if (!omg_truthy(_c)) { _ip = 13563; continue; } }
             }
             // fall through to 13558
@@ -48410,6 +50782,8 @@ function omg_p115(_captured) {
             }
             // fall through to 13561
             case 13561: {
+                omg_current_file_idx = 2;
+                omg_current_line = 1131;
     _s.pop();
             }
             // fall through to 13562
@@ -48418,6 +50792,8 @@ function omg_p115(_captured) {
             }
             // fall through to 13563
             case 13563: {
+                omg_current_file_idx = 2;
+                omg_current_line = 1131;
     _eh.pop();
             }
             // fall through to 13564
@@ -48426,6 +50802,8 @@ function omg_p115(_captured) {
             }
             // fall through to 13565
             case 13565: {
+                omg_current_file_idx = 2;
+                omg_current_line = 1131;
     v_err = _s.pop();
             }
             // fall through to 13566
@@ -48518,10 +50896,14 @@ function omg_p115(_captured) {
             }
             // fall through to 13587
             case 13587: {
+                omg_current_file_idx = 2;
+                omg_current_line = 1137;
     _s.push(false);
             }
             // fall through to 13588
             case 13588: {
+                omg_current_file_idx = 2;
+                omg_current_line = 1137;
     { const _c = _s.pop(); if (!omg_truthy(_c)) { _ip = 13595; continue; } }
             }
             // fall through to 13589
@@ -48551,6 +50933,7 @@ function omg_p115(_captured) {
             }
             // fall through to 13595
             case 13595: {
+                omg_current_file_idx = 2;
                 omg_current_line = 1140;
     if (v_err === OMG_UNSET) omg_undefined("err"); _s.push(v_err);
             }
@@ -48560,6 +50943,7 @@ function omg_p115(_captured) {
             }
             // fall through to 13597
             case 13597: {
+                omg_current_file_idx = 2;
                 omg_current_line = 1143;
     if (v___mod_2__vm_pending_error === OMG_UNSET) omg_undefined("__mod_2__vm_pending_error"); _s.push(v___mod_2__vm_pending_error);
             }
@@ -48629,6 +51013,8 @@ function omg_p115(_captured) {
             }
             // fall through to 13613
             case 13613: {
+                omg_current_file_idx = 2;
+                omg_current_line = 1147;
     _s.pop();
             }
             // fall through to 13614
@@ -48637,6 +51023,7 @@ function omg_p115(_captured) {
             }
             // fall through to 13615
             case 13615: {
+                omg_current_file_idx = 2;
                 omg_current_line = 1149;
     _s.push(true);
             }
@@ -48680,6 +51067,7 @@ function omg_p115(_captured) {
             }
             // fall through to 13625
             case 13625: {
+                omg_current_file_idx = 2;
                 omg_current_line = 1158;
     if (v___mod_2__vm_err_pc === OMG_UNSET) omg_undefined("__mod_2__vm_err_pc"); _s.push(v___mod_2__vm_err_pc);
             }
@@ -48693,18 +51081,26 @@ function omg_p115(_captured) {
             }
             // fall through to 13628
             case 13628: {
+                omg_current_file_idx = 2;
+                omg_current_line = 1158;
     if (v___mod_2__vm_pending_error === OMG_UNSET) omg_undefined("__mod_2__vm_pending_error"); v___mod_2__vm_pending_error = _s.pop();
             }
             // fall through to 13629
             case 13629: {
+                omg_current_file_idx = 2;
+                omg_current_line = 1158;
     _ip = 13630; continue;
             }
             // fall through to 13630
             case 13630: {
+                omg_current_file_idx = 2;
+                omg_current_line = 1158;
     _ip = 13531; continue;
             }
             // fall through to 13631
             case 13631: {
+                omg_current_file_idx = 2;
+                omg_current_line = 1158;
     _s.push(null);
             }
             // fall through to 13632
@@ -48738,6 +51134,7 @@ function omg_p116(_captured, v_msg) {
         try {
             switch (_ip) {
             case 12101: {
+                omg_current_file_idx = 2;
                 omg_current_line = 687;
     if (v___mod_2__vm_pc === OMG_UNSET) omg_undefined("__mod_2__vm_pc"); _s.push(v___mod_2__vm_pc);
             }
@@ -48793,11 +51190,14 @@ function omg_p117(_captured) {
         try {
             switch (_ip) {
             case 12306: {
+                omg_current_file_idx = 2;
                 omg_current_line = 769;
     { const _argv = _s.splice(_s.length - 0, 0); omg_frame_push("step_inner", omg_current_file_idx, omg_current_line); const _rv = omg_p118(null, ..._argv); omg_frame_pop(); _s.push(_rv); }
             }
             // fall through to 12307
             case 12307: {
+                omg_current_file_idx = 2;
+                omg_current_line = 769;
     _s.pop();
             }
             // fall through to 12308
@@ -48886,6 +51286,7 @@ function omg_p118(_captured) {
         try {
             switch (_ip) {
             case 12310: {
+                omg_current_file_idx = 2;
                 omg_current_line = 777;
     if (v___mod_2__vm_code === OMG_UNSET) omg_undefined("__mod_2__vm_code"); _s.push(v___mod_2__vm_code);
             }
@@ -48970,6 +51371,8 @@ function omg_p118(_captured) {
             }
             // fall through to 12330
             case 12330: {
+                omg_current_file_idx = 2;
+                omg_current_line = 782;
     _s.pop();
             }
             // fall through to 12331
@@ -48986,6 +51389,7 @@ function omg_p118(_captured) {
             }
             // fall through to 12334
             case 12334: {
+                omg_current_file_idx = 2;
                 omg_current_line = 783;
     if (v_op === OMG_UNSET) omg_undefined("op"); _s.push(v_op);
             }
@@ -49019,6 +51423,8 @@ function omg_p118(_captured) {
             }
             // fall through to 12342
             case 12342: {
+                omg_current_file_idx = 2;
+                omg_current_line = 783;
     _s.pop();
             }
             // fall through to 12343
@@ -49035,6 +51441,7 @@ function omg_p118(_captured) {
             }
             // fall through to 12346
             case 12346: {
+                omg_current_file_idx = 2;
                 omg_current_line = 784;
     if (v_op === OMG_UNSET) omg_undefined("op"); _s.push(v_op);
             }
@@ -49068,6 +51475,8 @@ function omg_p118(_captured) {
             }
             // fall through to 12354
             case 12354: {
+                omg_current_file_idx = 2;
+                omg_current_line = 784;
     _s.pop();
             }
             // fall through to 12355
@@ -49084,6 +51493,7 @@ function omg_p118(_captured) {
             }
             // fall through to 12358
             case 12358: {
+                omg_current_file_idx = 2;
                 omg_current_line = 785;
     if (v_op === OMG_UNSET) omg_undefined("op"); _s.push(v_op);
             }
@@ -49117,6 +51527,8 @@ function omg_p118(_captured) {
             }
             // fall through to 12366
             case 12366: {
+                omg_current_file_idx = 2;
+                omg_current_line = 785;
     _s.pop();
             }
             // fall through to 12367
@@ -49133,6 +51545,7 @@ function omg_p118(_captured) {
             }
             // fall through to 12370
             case 12370: {
+                omg_current_file_idx = 2;
                 omg_current_line = 786;
     if (v_op === OMG_UNSET) omg_undefined("op"); _s.push(v_op);
             }
@@ -49158,6 +51571,8 @@ function omg_p118(_captured) {
             }
             // fall through to 12376
             case 12376: {
+                omg_current_file_idx = 2;
+                omg_current_line = 786;
     _s.pop();
             }
             // fall through to 12377
@@ -49174,6 +51589,7 @@ function omg_p118(_captured) {
             }
             // fall through to 12380
             case 12380: {
+                omg_current_file_idx = 2;
                 omg_current_line = 789;
     if (v_op === OMG_UNSET) omg_undefined("op"); _s.push(v_op);
             }
@@ -49207,10 +51623,14 @@ function omg_p118(_captured) {
             }
             // fall through to 12388
             case 12388: {
+                omg_current_file_idx = 2;
+                omg_current_line = 789;
     { const _argv = _s.splice(_s.length - 1, 1); omg_frame_push("vm_push", omg_current_file_idx, omg_current_line); const _rv = omg_p141(null, ..._argv); omg_frame_pop(); _s.push(_rv); }
             }
             // fall through to 12389
             case 12389: {
+                omg_current_file_idx = 2;
+                omg_current_line = 789;
     _s.pop();
             }
             // fall through to 12390
@@ -49227,6 +51647,7 @@ function omg_p118(_captured) {
             }
             // fall through to 12393
             case 12393: {
+                omg_current_file_idx = 2;
                 omg_current_line = 790;
     if (v_op === OMG_UNSET) omg_undefined("op"); _s.push(v_op);
             }
@@ -49260,10 +51681,14 @@ function omg_p118(_captured) {
             }
             // fall through to 12401
             case 12401: {
+                omg_current_file_idx = 2;
+                omg_current_line = 790;
     { const _argv = _s.splice(_s.length - 2, 2); omg_frame_push("vm_store", omg_current_file_idx, omg_current_line); const _rv = omg_p148(null, ..._argv); omg_frame_pop(); _s.push(_rv); }
             }
             // fall through to 12402
             case 12402: {
+                omg_current_file_idx = 2;
+                omg_current_line = 790;
     _s.pop();
             }
             // fall through to 12403
@@ -49280,6 +51705,7 @@ function omg_p118(_captured) {
             }
             // fall through to 12406
             case 12406: {
+                omg_current_file_idx = 2;
                 omg_current_line = 791;
     if (v_op === OMG_UNSET) omg_undefined("op"); _s.push(v_op);
             }
@@ -49313,10 +51739,14 @@ function omg_p118(_captured) {
             }
             // fall through to 12414
             case 12414: {
+                omg_current_file_idx = 2;
+                omg_current_line = 791;
     { const _argv = _s.splice(_s.length - 2, 2); omg_frame_push("vm_store_local", omg_current_file_idx, omg_current_line); const _rv = omg_p149(null, ..._argv); omg_frame_pop(); _s.push(_rv); }
             }
             // fall through to 12415
             case 12415: {
+                omg_current_file_idx = 2;
+                omg_current_line = 791;
     _s.pop();
             }
             // fall through to 12416
@@ -49333,6 +51763,7 @@ function omg_p118(_captured) {
             }
             // fall through to 12419
             case 12419: {
+                omg_current_file_idx = 2;
                 omg_current_line = 794;
     if (v_op === OMG_UNSET) omg_undefined("op"); _s.push(v_op);
             }
@@ -49354,6 +51785,8 @@ function omg_p118(_captured) {
             }
             // fall through to 12424
             case 12424: {
+                omg_current_file_idx = 2;
+                omg_current_line = 794;
     v_b = _s.pop();
             }
             // fall through to 12425
@@ -49362,6 +51795,8 @@ function omg_p118(_captured) {
             }
             // fall through to 12426
             case 12426: {
+                omg_current_file_idx = 2;
+                omg_current_line = 794;
     v_a = _s.pop();
             }
             // fall through to 12427
@@ -49382,6 +51817,8 @@ function omg_p118(_captured) {
             }
             // fall through to 12431
             case 12431: {
+                omg_current_file_idx = 2;
+                omg_current_line = 794;
     _s.pop();
             }
             // fall through to 12432
@@ -49398,6 +51835,7 @@ function omg_p118(_captured) {
             }
             // fall through to 12435
             case 12435: {
+                omg_current_file_idx = 2;
                 omg_current_line = 795;
     if (v_op === OMG_UNSET) omg_undefined("op"); _s.push(v_op);
             }
@@ -49419,6 +51857,8 @@ function omg_p118(_captured) {
             }
             // fall through to 12440
             case 12440: {
+                omg_current_file_idx = 2;
+                omg_current_line = 795;
     v_b = _s.pop();
             }
             // fall through to 12441
@@ -49427,6 +51867,8 @@ function omg_p118(_captured) {
             }
             // fall through to 12442
             case 12442: {
+                omg_current_file_idx = 2;
+                omg_current_line = 795;
     v_a = _s.pop();
             }
             // fall through to 12443
@@ -49447,6 +51889,8 @@ function omg_p118(_captured) {
             }
             // fall through to 12447
             case 12447: {
+                omg_current_file_idx = 2;
+                omg_current_line = 795;
     _s.pop();
             }
             // fall through to 12448
@@ -49463,6 +51907,7 @@ function omg_p118(_captured) {
             }
             // fall through to 12451
             case 12451: {
+                omg_current_file_idx = 2;
                 omg_current_line = 796;
     if (v_op === OMG_UNSET) omg_undefined("op"); _s.push(v_op);
             }
@@ -49484,6 +51929,8 @@ function omg_p118(_captured) {
             }
             // fall through to 12456
             case 12456: {
+                omg_current_file_idx = 2;
+                omg_current_line = 796;
     v_b = _s.pop();
             }
             // fall through to 12457
@@ -49492,6 +51939,8 @@ function omg_p118(_captured) {
             }
             // fall through to 12458
             case 12458: {
+                omg_current_file_idx = 2;
+                omg_current_line = 796;
     v_a = _s.pop();
             }
             // fall through to 12459
@@ -49512,6 +51961,8 @@ function omg_p118(_captured) {
             }
             // fall through to 12463
             case 12463: {
+                omg_current_file_idx = 2;
+                omg_current_line = 796;
     _s.pop();
             }
             // fall through to 12464
@@ -49528,6 +51979,7 @@ function omg_p118(_captured) {
             }
             // fall through to 12467
             case 12467: {
+                omg_current_file_idx = 2;
                 omg_current_line = 797;
     if (v_op === OMG_UNSET) omg_undefined("op"); _s.push(v_op);
             }
@@ -49549,6 +52001,8 @@ function omg_p118(_captured) {
             }
             // fall through to 12472
             case 12472: {
+                omg_current_file_idx = 2;
+                omg_current_line = 797;
     v_b = _s.pop();
             }
             // fall through to 12473
@@ -49557,6 +52011,8 @@ function omg_p118(_captured) {
             }
             // fall through to 12474
             case 12474: {
+                omg_current_file_idx = 2;
+                omg_current_line = 797;
     v_a = _s.pop();
             }
             // fall through to 12475
@@ -49577,6 +52033,8 @@ function omg_p118(_captured) {
             }
             // fall through to 12479
             case 12479: {
+                omg_current_file_idx = 2;
+                omg_current_line = 797;
     _s.pop();
             }
             // fall through to 12480
@@ -49593,6 +52051,7 @@ function omg_p118(_captured) {
             }
             // fall through to 12483
             case 12483: {
+                omg_current_file_idx = 2;
                 omg_current_line = 798;
     if (v_op === OMG_UNSET) omg_undefined("op"); _s.push(v_op);
             }
@@ -49614,6 +52073,8 @@ function omg_p118(_captured) {
             }
             // fall through to 12488
             case 12488: {
+                omg_current_file_idx = 2;
+                omg_current_line = 798;
     v_b = _s.pop();
             }
             // fall through to 12489
@@ -49622,6 +52083,8 @@ function omg_p118(_captured) {
             }
             // fall through to 12490
             case 12490: {
+                omg_current_file_idx = 2;
+                omg_current_line = 798;
     v_a = _s.pop();
             }
             // fall through to 12491
@@ -49642,6 +52105,8 @@ function omg_p118(_captured) {
             }
             // fall through to 12495
             case 12495: {
+                omg_current_file_idx = 2;
+                omg_current_line = 798;
     _s.pop();
             }
             // fall through to 12496
@@ -49658,6 +52123,7 @@ function omg_p118(_captured) {
             }
             // fall through to 12499
             case 12499: {
+                omg_current_file_idx = 2;
                 omg_current_line = 799;
     if (v_op === OMG_UNSET) omg_undefined("op"); _s.push(v_op);
             }
@@ -49679,6 +52145,8 @@ function omg_p118(_captured) {
             }
             // fall through to 12504
             case 12504: {
+                omg_current_file_idx = 2;
+                omg_current_line = 799;
     v_b = _s.pop();
             }
             // fall through to 12505
@@ -49687,6 +52155,8 @@ function omg_p118(_captured) {
             }
             // fall through to 12506
             case 12506: {
+                omg_current_file_idx = 2;
+                omg_current_line = 799;
     v_a = _s.pop();
             }
             // fall through to 12507
@@ -49707,6 +52177,8 @@ function omg_p118(_captured) {
             }
             // fall through to 12511
             case 12511: {
+                omg_current_file_idx = 2;
+                omg_current_line = 799;
     _s.pop();
             }
             // fall through to 12512
@@ -49723,6 +52195,7 @@ function omg_p118(_captured) {
             }
             // fall through to 12515
             case 12515: {
+                omg_current_file_idx = 2;
                 omg_current_line = 800;
     if (v_op === OMG_UNSET) omg_undefined("op"); _s.push(v_op);
             }
@@ -49744,6 +52217,8 @@ function omg_p118(_captured) {
             }
             // fall through to 12520
             case 12520: {
+                omg_current_file_idx = 2;
+                omg_current_line = 800;
     v_v = _s.pop();
             }
             // fall through to 12521
@@ -49760,6 +52235,8 @@ function omg_p118(_captured) {
             }
             // fall through to 12524
             case 12524: {
+                omg_current_file_idx = 2;
+                omg_current_line = 800;
     _s.pop();
             }
             // fall through to 12525
@@ -49776,6 +52253,7 @@ function omg_p118(_captured) {
             }
             // fall through to 12528
             case 12528: {
+                omg_current_file_idx = 2;
                 omg_current_line = 803;
     if (v_op === OMG_UNSET) omg_undefined("op"); _s.push(v_op);
             }
@@ -49797,6 +52275,8 @@ function omg_p118(_captured) {
             }
             // fall through to 12533
             case 12533: {
+                omg_current_file_idx = 2;
+                omg_current_line = 803;
     v_b = _s.pop();
             }
             // fall through to 12534
@@ -49805,6 +52285,8 @@ function omg_p118(_captured) {
             }
             // fall through to 12535
             case 12535: {
+                omg_current_file_idx = 2;
+                omg_current_line = 803;
     v_a = _s.pop();
             }
             // fall through to 12536
@@ -49825,6 +52307,8 @@ function omg_p118(_captured) {
             }
             // fall through to 12540
             case 12540: {
+                omg_current_file_idx = 2;
+                omg_current_line = 803;
     _s.pop();
             }
             // fall through to 12541
@@ -49841,6 +52325,7 @@ function omg_p118(_captured) {
             }
             // fall through to 12544
             case 12544: {
+                omg_current_file_idx = 2;
                 omg_current_line = 804;
     if (v_op === OMG_UNSET) omg_undefined("op"); _s.push(v_op);
             }
@@ -49862,6 +52347,8 @@ function omg_p118(_captured) {
             }
             // fall through to 12549
             case 12549: {
+                omg_current_file_idx = 2;
+                omg_current_line = 804;
     v_b = _s.pop();
             }
             // fall through to 12550
@@ -49870,6 +52357,8 @@ function omg_p118(_captured) {
             }
             // fall through to 12551
             case 12551: {
+                omg_current_file_idx = 2;
+                omg_current_line = 804;
     v_a = _s.pop();
             }
             // fall through to 12552
@@ -49890,6 +52379,8 @@ function omg_p118(_captured) {
             }
             // fall through to 12556
             case 12556: {
+                omg_current_file_idx = 2;
+                omg_current_line = 804;
     _s.pop();
             }
             // fall through to 12557
@@ -49906,6 +52397,7 @@ function omg_p118(_captured) {
             }
             // fall through to 12560
             case 12560: {
+                omg_current_file_idx = 2;
                 omg_current_line = 805;
     if (v_op === OMG_UNSET) omg_undefined("op"); _s.push(v_op);
             }
@@ -49927,6 +52419,8 @@ function omg_p118(_captured) {
             }
             // fall through to 12565
             case 12565: {
+                omg_current_file_idx = 2;
+                omg_current_line = 805;
     v_b = _s.pop();
             }
             // fall through to 12566
@@ -49935,6 +52429,8 @@ function omg_p118(_captured) {
             }
             // fall through to 12567
             case 12567: {
+                omg_current_file_idx = 2;
+                omg_current_line = 805;
     v_a = _s.pop();
             }
             // fall through to 12568
@@ -49955,6 +52451,8 @@ function omg_p118(_captured) {
             }
             // fall through to 12572
             case 12572: {
+                omg_current_file_idx = 2;
+                omg_current_line = 805;
     _s.pop();
             }
             // fall through to 12573
@@ -49971,6 +52469,7 @@ function omg_p118(_captured) {
             }
             // fall through to 12576
             case 12576: {
+                omg_current_file_idx = 2;
                 omg_current_line = 806;
     if (v_op === OMG_UNSET) omg_undefined("op"); _s.push(v_op);
             }
@@ -49992,6 +52491,8 @@ function omg_p118(_captured) {
             }
             // fall through to 12581
             case 12581: {
+                omg_current_file_idx = 2;
+                omg_current_line = 806;
     v_b = _s.pop();
             }
             // fall through to 12582
@@ -50000,6 +52501,8 @@ function omg_p118(_captured) {
             }
             // fall through to 12583
             case 12583: {
+                omg_current_file_idx = 2;
+                omg_current_line = 806;
     v_a = _s.pop();
             }
             // fall through to 12584
@@ -50020,6 +52523,8 @@ function omg_p118(_captured) {
             }
             // fall through to 12588
             case 12588: {
+                omg_current_file_idx = 2;
+                omg_current_line = 806;
     _s.pop();
             }
             // fall through to 12589
@@ -50036,6 +52541,7 @@ function omg_p118(_captured) {
             }
             // fall through to 12592
             case 12592: {
+                omg_current_file_idx = 2;
                 omg_current_line = 807;
     if (v_op === OMG_UNSET) omg_undefined("op"); _s.push(v_op);
             }
@@ -50057,6 +52563,8 @@ function omg_p118(_captured) {
             }
             // fall through to 12597
             case 12597: {
+                omg_current_file_idx = 2;
+                omg_current_line = 807;
     v_b = _s.pop();
             }
             // fall through to 12598
@@ -50065,6 +52573,8 @@ function omg_p118(_captured) {
             }
             // fall through to 12599
             case 12599: {
+                omg_current_file_idx = 2;
+                omg_current_line = 807;
     v_a = _s.pop();
             }
             // fall through to 12600
@@ -50085,6 +52595,8 @@ function omg_p118(_captured) {
             }
             // fall through to 12604
             case 12604: {
+                omg_current_file_idx = 2;
+                omg_current_line = 807;
     _s.pop();
             }
             // fall through to 12605
@@ -50101,6 +52613,7 @@ function omg_p118(_captured) {
             }
             // fall through to 12608
             case 12608: {
+                omg_current_file_idx = 2;
                 omg_current_line = 808;
     if (v_op === OMG_UNSET) omg_undefined("op"); _s.push(v_op);
             }
@@ -50122,6 +52635,8 @@ function omg_p118(_captured) {
             }
             // fall through to 12613
             case 12613: {
+                omg_current_file_idx = 2;
+                omg_current_line = 808;
     v_b = _s.pop();
             }
             // fall through to 12614
@@ -50130,6 +52645,8 @@ function omg_p118(_captured) {
             }
             // fall through to 12615
             case 12615: {
+                omg_current_file_idx = 2;
+                omg_current_line = 808;
     v_a = _s.pop();
             }
             // fall through to 12616
@@ -50150,6 +52667,8 @@ function omg_p118(_captured) {
             }
             // fall through to 12620
             case 12620: {
+                omg_current_file_idx = 2;
+                omg_current_line = 808;
     _s.pop();
             }
             // fall through to 12621
@@ -50166,6 +52685,7 @@ function omg_p118(_captured) {
             }
             // fall through to 12624
             case 12624: {
+                omg_current_file_idx = 2;
                 omg_current_line = 811;
     if (v_op === OMG_UNSET) omg_undefined("op"); _s.push(v_op);
             }
@@ -50187,6 +52707,8 @@ function omg_p118(_captured) {
             }
             // fall through to 12629
             case 12629: {
+                omg_current_file_idx = 2;
+                omg_current_line = 811;
     v_b = _s.pop();
             }
             // fall through to 12630
@@ -50195,6 +52717,8 @@ function omg_p118(_captured) {
             }
             // fall through to 12631
             case 12631: {
+                omg_current_file_idx = 2;
+                omg_current_line = 811;
     v_a = _s.pop();
             }
             // fall through to 12632
@@ -50215,6 +52739,8 @@ function omg_p118(_captured) {
             }
             // fall through to 12636
             case 12636: {
+                omg_current_file_idx = 2;
+                omg_current_line = 811;
     _s.pop();
             }
             // fall through to 12637
@@ -50231,6 +52757,7 @@ function omg_p118(_captured) {
             }
             // fall through to 12640
             case 12640: {
+                omg_current_file_idx = 2;
                 omg_current_line = 812;
     if (v_op === OMG_UNSET) omg_undefined("op"); _s.push(v_op);
             }
@@ -50252,6 +52779,8 @@ function omg_p118(_captured) {
             }
             // fall through to 12645
             case 12645: {
+                omg_current_file_idx = 2;
+                omg_current_line = 812;
     v_b = _s.pop();
             }
             // fall through to 12646
@@ -50260,6 +52789,8 @@ function omg_p118(_captured) {
             }
             // fall through to 12647
             case 12647: {
+                omg_current_file_idx = 2;
+                omg_current_line = 812;
     v_a = _s.pop();
             }
             // fall through to 12648
@@ -50280,6 +52811,8 @@ function omg_p118(_captured) {
             }
             // fall through to 12652
             case 12652: {
+                omg_current_file_idx = 2;
+                omg_current_line = 812;
     _s.pop();
             }
             // fall through to 12653
@@ -50296,6 +52829,7 @@ function omg_p118(_captured) {
             }
             // fall through to 12656
             case 12656: {
+                omg_current_file_idx = 2;
                 omg_current_line = 813;
     if (v_op === OMG_UNSET) omg_undefined("op"); _s.push(v_op);
             }
@@ -50317,6 +52851,8 @@ function omg_p118(_captured) {
             }
             // fall through to 12661
             case 12661: {
+                omg_current_file_idx = 2;
+                omg_current_line = 813;
     v_b = _s.pop();
             }
             // fall through to 12662
@@ -50325,6 +52861,8 @@ function omg_p118(_captured) {
             }
             // fall through to 12663
             case 12663: {
+                omg_current_file_idx = 2;
+                omg_current_line = 813;
     v_a = _s.pop();
             }
             // fall through to 12664
@@ -50345,6 +52883,8 @@ function omg_p118(_captured) {
             }
             // fall through to 12668
             case 12668: {
+                omg_current_file_idx = 2;
+                omg_current_line = 813;
     _s.pop();
             }
             // fall through to 12669
@@ -50361,6 +52901,7 @@ function omg_p118(_captured) {
             }
             // fall through to 12672
             case 12672: {
+                omg_current_file_idx = 2;
                 omg_current_line = 814;
     if (v_op === OMG_UNSET) omg_undefined("op"); _s.push(v_op);
             }
@@ -50382,6 +52923,8 @@ function omg_p118(_captured) {
             }
             // fall through to 12677
             case 12677: {
+                omg_current_file_idx = 2;
+                omg_current_line = 814;
     v_b = _s.pop();
             }
             // fall through to 12678
@@ -50390,6 +52933,8 @@ function omg_p118(_captured) {
             }
             // fall through to 12679
             case 12679: {
+                omg_current_file_idx = 2;
+                omg_current_line = 814;
     v_a = _s.pop();
             }
             // fall through to 12680
@@ -50410,6 +52955,8 @@ function omg_p118(_captured) {
             }
             // fall through to 12684
             case 12684: {
+                omg_current_file_idx = 2;
+                omg_current_line = 814;
     _s.pop();
             }
             // fall through to 12685
@@ -50426,6 +52973,7 @@ function omg_p118(_captured) {
             }
             // fall through to 12688
             case 12688: {
+                omg_current_file_idx = 2;
                 omg_current_line = 815;
     if (v_op === OMG_UNSET) omg_undefined("op"); _s.push(v_op);
             }
@@ -50447,6 +52995,8 @@ function omg_p118(_captured) {
             }
             // fall through to 12693
             case 12693: {
+                omg_current_file_idx = 2;
+                omg_current_line = 815;
     v_b = _s.pop();
             }
             // fall through to 12694
@@ -50455,6 +53005,8 @@ function omg_p118(_captured) {
             }
             // fall through to 12695
             case 12695: {
+                omg_current_file_idx = 2;
+                omg_current_line = 815;
     v_a = _s.pop();
             }
             // fall through to 12696
@@ -50475,6 +53027,8 @@ function omg_p118(_captured) {
             }
             // fall through to 12700
             case 12700: {
+                omg_current_file_idx = 2;
+                omg_current_line = 815;
     _s.pop();
             }
             // fall through to 12701
@@ -50491,6 +53045,7 @@ function omg_p118(_captured) {
             }
             // fall through to 12704
             case 12704: {
+                omg_current_file_idx = 2;
                 omg_current_line = 816;
     if (v_op === OMG_UNSET) omg_undefined("op"); _s.push(v_op);
             }
@@ -50512,6 +53067,8 @@ function omg_p118(_captured) {
             }
             // fall through to 12709
             case 12709: {
+                omg_current_file_idx = 2;
+                omg_current_line = 816;
     v_b = _s.pop();
             }
             // fall through to 12710
@@ -50520,6 +53077,8 @@ function omg_p118(_captured) {
             }
             // fall through to 12711
             case 12711: {
+                omg_current_file_idx = 2;
+                omg_current_line = 816;
     v_a = _s.pop();
             }
             // fall through to 12712
@@ -50548,14 +53107,20 @@ function omg_p118(_captured) {
             }
             // fall through to 12718
             case 12718: {
+                omg_current_file_idx = 2;
+                omg_current_line = 816;
     _s.push(false);
             }
             // fall through to 12719
             case 12719: {
+                omg_current_file_idx = 2;
+                omg_current_line = 816;
     { const _argv = _s.splice(_s.length - 1, 1); omg_frame_push("vm_push", omg_current_file_idx, omg_current_line); const _rv = omg_p141(null, ..._argv); omg_frame_pop(); _s.push(_rv); }
             }
             // fall through to 12720
             case 12720: {
+                omg_current_file_idx = 2;
+                omg_current_line = 816;
     _s.pop();
             }
             // fall through to 12721
@@ -50572,6 +53137,7 @@ function omg_p118(_captured) {
             }
             // fall through to 12724
             case 12724: {
+                omg_current_file_idx = 2;
                 omg_current_line = 817;
     if (v_op === OMG_UNSET) omg_undefined("op"); _s.push(v_op);
             }
@@ -50593,6 +53159,8 @@ function omg_p118(_captured) {
             }
             // fall through to 12729
             case 12729: {
+                omg_current_file_idx = 2;
+                omg_current_line = 817;
     v_b = _s.pop();
             }
             // fall through to 12730
@@ -50601,6 +53169,8 @@ function omg_p118(_captured) {
             }
             // fall through to 12731
             case 12731: {
+                omg_current_file_idx = 2;
+                omg_current_line = 817;
     v_a = _s.pop();
             }
             // fall through to 12732
@@ -50621,6 +53191,8 @@ function omg_p118(_captured) {
             }
             // fall through to 12736
             case 12736: {
+                omg_current_file_idx = 2;
+                omg_current_line = 817;
     if (v_b === OMG_UNSET) omg_undefined("b"); _s.push(v_b);
             }
             // fall through to 12737
@@ -50633,10 +53205,14 @@ function omg_p118(_captured) {
             }
             // fall through to 12739
             case 12739: {
+                omg_current_file_idx = 2;
+                omg_current_line = 817;
     { const _argv = _s.splice(_s.length - 1, 1); omg_frame_push("vm_push", omg_current_file_idx, omg_current_line); const _rv = omg_p141(null, ..._argv); omg_frame_pop(); _s.push(_rv); }
             }
             // fall through to 12740
             case 12740: {
+                omg_current_file_idx = 2;
+                omg_current_line = 817;
     _s.pop();
             }
             // fall through to 12741
@@ -50653,6 +53229,7 @@ function omg_p118(_captured) {
             }
             // fall through to 12744
             case 12744: {
+                omg_current_file_idx = 2;
                 omg_current_line = 818;
     if (v_op === OMG_UNSET) omg_undefined("op"); _s.push(v_op);
             }
@@ -50674,6 +53251,8 @@ function omg_p118(_captured) {
             }
             // fall through to 12749
             case 12749: {
+                omg_current_file_idx = 2;
+                omg_current_line = 818;
     v_v = _s.pop();
             }
             // fall through to 12750
@@ -50690,6 +53269,8 @@ function omg_p118(_captured) {
             }
             // fall through to 12753
             case 12753: {
+                omg_current_file_idx = 2;
+                omg_current_line = 818;
     _s.pop();
             }
             // fall through to 12754
@@ -50706,6 +53287,7 @@ function omg_p118(_captured) {
             }
             // fall through to 12757
             case 12757: {
+                omg_current_file_idx = 2;
                 omg_current_line = 821;
     if (v_op === OMG_UNSET) omg_undefined("op"); _s.push(v_op);
             }
@@ -50728,6 +53310,8 @@ function omg_p118(_captured) {
             }
             // fall through to 12762
             case 12762: {
+                omg_current_file_idx = 2;
+                omg_current_line = 822;
     _s.pop();
             }
             // fall through to 12763
@@ -50745,6 +53329,7 @@ function omg_p118(_captured) {
             }
             // fall through to 12766
             case 12766: {
+                omg_current_file_idx = 2;
                 omg_current_line = 825;
     if (v_op === OMG_UNSET) omg_undefined("op"); _s.push(v_op);
             }
@@ -50767,6 +53352,8 @@ function omg_p118(_captured) {
             }
             // fall through to 12771
             case 12771: {
+                omg_current_file_idx = 2;
+                omg_current_line = 826;
     omg_emit(_s.pop());
             }
             // fall through to 12772
@@ -50784,6 +53371,7 @@ function omg_p118(_captured) {
             }
             // fall through to 12775
             case 12775: {
+                omg_current_file_idx = 2;
                 omg_current_line = 829;
     if (v_op === OMG_UNSET) omg_undefined("op"); _s.push(v_op);
             }
@@ -50823,6 +53411,7 @@ function omg_p118(_captured) {
             }
             // fall through to 12784
             case 12784: {
+                omg_current_file_idx = 2;
                 omg_current_line = 835;
     if (v_op === OMG_UNSET) omg_undefined("op"); _s.push(v_op);
             }
@@ -50870,6 +53459,7 @@ function omg_p118(_captured) {
             }
             // fall through to 12795
             case 12795: {
+                omg_current_file_idx = 2;
                 omg_current_line = 839;
     if (v_op === OMG_UNSET) omg_undefined("op"); _s.push(v_op);
             }
@@ -50892,6 +53482,8 @@ function omg_p118(_captured) {
             }
             // fall through to 12800
             case 12800: {
+                omg_current_file_idx = 2;
+                omg_current_line = 842;
     v_cond = _s.pop();
             }
             // fall through to 12801
@@ -50909,6 +53501,7 @@ function omg_p118(_captured) {
             }
             // fall through to 12804
             case 12804: {
+                omg_current_file_idx = 2;
                 omg_current_line = 847;
     if (v_instr === OMG_UNSET) omg_undefined("instr"); _s.push(v_instr);
             }
@@ -50926,6 +53519,7 @@ function omg_p118(_captured) {
             }
             // fall through to 12808
             case 12808: {
+                omg_current_file_idx = 2;
                 omg_current_line = 849;
     _s.push(false);
             }
@@ -50939,6 +53533,7 @@ function omg_p118(_captured) {
             }
             // fall through to 12811
             case 12811: {
+                omg_current_file_idx = 2;
                 omg_current_line = 853;
     if (v_op === OMG_UNSET) omg_undefined("op"); _s.push(v_op);
             }
@@ -50973,6 +53568,8 @@ function omg_p118(_captured) {
             }
             // fall through to 12819
             case 12819: {
+                omg_current_file_idx = 2;
+                omg_current_line = 854;
     v_items = _s.pop();
             }
             // fall through to 12820
@@ -50986,6 +53583,8 @@ function omg_p118(_captured) {
             }
             // fall through to 12822
             case 12822: {
+                omg_current_file_idx = 2;
+                omg_current_line = 855;
     _s.pop();
             }
             // fall through to 12823
@@ -51003,6 +53602,7 @@ function omg_p118(_captured) {
             }
             // fall through to 12826
             case 12826: {
+                omg_current_file_idx = 2;
                 omg_current_line = 858;
     if (v_op === OMG_UNSET) omg_undefined("op"); _s.push(v_op);
             }
@@ -51064,6 +53664,7 @@ function omg_p118(_captured) {
             }
             // fall through to 12840
             case 12840: {
+                omg_current_file_idx = 2;
                 omg_current_line = 863;
     if (v_i === OMG_UNSET) omg_undefined("i"); _s.push(v_i);
             }
@@ -51086,6 +53687,8 @@ function omg_p118(_captured) {
             }
             // fall through to 12845
             case 12845: {
+                omg_current_file_idx = 2;
+                omg_current_line = 864;
     v_v = _s.pop();
             }
             // fall through to 12846
@@ -51095,6 +53698,8 @@ function omg_p118(_captured) {
             }
             // fall through to 12847
             case 12847: {
+                omg_current_file_idx = 2;
+                omg_current_line = 865;
     v_k = _s.pop();
             }
             // fall through to 12848
@@ -51149,6 +53754,7 @@ function omg_p118(_captured) {
             }
             // fall through to 12860
             case 12860: {
+                omg_current_file_idx = 2;
                 omg_current_line = 869;
     _s.push(0n);
             }
@@ -51158,6 +53764,7 @@ function omg_p118(_captured) {
             }
             // fall through to 12862
             case 12862: {
+                omg_current_file_idx = 2;
                 omg_current_line = 870;
     if (v_j === OMG_UNSET) omg_undefined("j"); _s.push(v_j);
             }
@@ -51245,6 +53852,7 @@ function omg_p118(_captured) {
             }
             // fall through to 12883
             case 12883: {
+                omg_current_file_idx = 2;
                 omg_current_line = 874;
     if (v_d === OMG_UNSET) omg_undefined("d"); _s.push(v_d);
             }
@@ -51254,6 +53862,8 @@ function omg_p118(_captured) {
             }
             // fall through to 12885
             case 12885: {
+                omg_current_file_idx = 2;
+                omg_current_line = 874;
     _s.pop();
             }
             // fall through to 12886
@@ -51271,6 +53881,7 @@ function omg_p118(_captured) {
             }
             // fall through to 12889
             case 12889: {
+                omg_current_file_idx = 2;
                 omg_current_line = 877;
     if (v_op === OMG_UNSET) omg_undefined("op"); _s.push(v_op);
             }
@@ -51293,6 +53904,8 @@ function omg_p118(_captured) {
             }
             // fall through to 12894
             case 12894: {
+                omg_current_file_idx = 2;
+                omg_current_line = 878;
     v_idx = _s.pop();
             }
             // fall through to 12895
@@ -51302,6 +53915,8 @@ function omg_p118(_captured) {
             }
             // fall through to 12896
             case 12896: {
+                omg_current_file_idx = 2;
+                omg_current_line = 879;
     v_base = _s.pop();
             }
             // fall through to 12897
@@ -51323,6 +53938,8 @@ function omg_p118(_captured) {
             }
             // fall through to 12901
             case 12901: {
+                omg_current_file_idx = 2;
+                omg_current_line = 880;
     _s.pop();
             }
             // fall through to 12902
@@ -51340,6 +53957,7 @@ function omg_p118(_captured) {
             }
             // fall through to 12905
             case 12905: {
+                omg_current_file_idx = 2;
                 omg_current_line = 883;
     if (v_op === OMG_UNSET) omg_undefined("op"); _s.push(v_op);
             }
@@ -51362,6 +53980,8 @@ function omg_p118(_captured) {
             }
             // fall through to 12910
             case 12910: {
+                omg_current_file_idx = 2;
+                omg_current_line = 884;
     v_v = _s.pop();
             }
             // fall through to 12911
@@ -51371,6 +53991,8 @@ function omg_p118(_captured) {
             }
             // fall through to 12912
             case 12912: {
+                omg_current_file_idx = 2;
+                omg_current_line = 885;
     v_idx = _s.pop();
             }
             // fall through to 12913
@@ -51380,6 +54002,8 @@ function omg_p118(_captured) {
             }
             // fall through to 12914
             case 12914: {
+                omg_current_file_idx = 2;
+                omg_current_line = 886;
     v_base = _s.pop();
             }
             // fall through to 12915
@@ -51414,6 +54038,7 @@ function omg_p118(_captured) {
             }
             // fall through to 12922
             case 12922: {
+                omg_current_file_idx = 2;
                 omg_current_line = 890;
     if (v_op === OMG_UNSET) omg_undefined("op"); _s.push(v_op);
             }
@@ -51436,6 +54061,8 @@ function omg_p118(_captured) {
             }
             // fall through to 12927
             case 12927: {
+                omg_current_file_idx = 2;
+                omg_current_line = 891;
     v_end_v = _s.pop();
             }
             // fall through to 12928
@@ -51445,6 +54072,8 @@ function omg_p118(_captured) {
             }
             // fall through to 12929
             case 12929: {
+                omg_current_file_idx = 2;
+                omg_current_line = 892;
     v_start_v = _s.pop();
             }
             // fall through to 12930
@@ -51454,6 +54083,8 @@ function omg_p118(_captured) {
             }
             // fall through to 12931
             case 12931: {
+                omg_current_file_idx = 2;
+                omg_current_line = 893;
     v_base = _s.pop();
             }
             // fall through to 12932
@@ -51484,6 +54115,8 @@ function omg_p118(_captured) {
             }
             // fall through to 12938
             case 12938: {
+                omg_current_file_idx = 2;
+                omg_current_line = 895;
     v_start = _s.pop();
             }
             // fall through to 12939
@@ -51501,6 +54134,8 @@ function omg_p118(_captured) {
             }
             // fall through to 12942
             case 12942: {
+                omg_current_file_idx = 2;
+                omg_current_line = 896;
     v_end = _s.pop();
             }
             // fall through to 12943
@@ -51526,6 +54161,8 @@ function omg_p118(_captured) {
             }
             // fall through to 12948
             case 12948: {
+                omg_current_file_idx = 2;
+                omg_current_line = 897;
     _s.pop();
             }
             // fall through to 12949
@@ -51543,6 +54180,7 @@ function omg_p118(_captured) {
             }
             // fall through to 12952
             case 12952: {
+                omg_current_file_idx = 2;
                 omg_current_line = 900;
     if (v_op === OMG_UNSET) omg_undefined("op"); _s.push(v_op);
             }
@@ -51565,6 +54203,8 @@ function omg_p118(_captured) {
             }
             // fall through to 12957
             case 12957: {
+                omg_current_file_idx = 2;
+                omg_current_line = 901;
     v_obj = _s.pop();
             }
             // fall through to 12958
@@ -51594,6 +54234,8 @@ function omg_p118(_captured) {
             }
             // fall through to 12964
             case 12964: {
+                omg_current_file_idx = 2;
+                omg_current_line = 902;
     _s.pop();
             }
             // fall through to 12965
@@ -51611,6 +54253,7 @@ function omg_p118(_captured) {
             }
             // fall through to 12968
             case 12968: {
+                omg_current_file_idx = 2;
                 omg_current_line = 905;
     if (v_op === OMG_UNSET) omg_undefined("op"); _s.push(v_op);
             }
@@ -51633,6 +54276,8 @@ function omg_p118(_captured) {
             }
             // fall through to 12973
             case 12973: {
+                omg_current_file_idx = 2;
+                omg_current_line = 906;
     v_av = _s.pop();
             }
             // fall through to 12974
@@ -51642,6 +54287,8 @@ function omg_p118(_captured) {
             }
             // fall through to 12975
             case 12975: {
+                omg_current_file_idx = 2;
+                omg_current_line = 907;
     v_obj = _s.pop();
             }
             // fall through to 12976
@@ -51684,6 +54331,7 @@ function omg_p118(_captured) {
             }
             // fall through to 12985
             case 12985: {
+                omg_current_file_idx = 2;
                 omg_current_line = 913;
     if (v_op === OMG_UNSET) omg_undefined("op"); _s.push(v_op);
             }
@@ -51706,6 +54354,8 @@ function omg_p118(_captured) {
             }
             // fall through to 12990
             case 12990: {
+                omg_current_file_idx = 2;
+                omg_current_line = 914;
     v_v = _s.pop();
             }
             // fall through to 12991
@@ -51732,6 +54382,7 @@ function omg_p118(_captured) {
             }
             // fall through to 12996
             case 12996: {
+                omg_current_file_idx = 2;
                 omg_current_line = 921;
     if (v___mod_2__vm_pc === OMG_UNSET) omg_undefined("__mod_2__vm_pc"); _s.push(v___mod_2__vm_pc);
             }
@@ -51758,6 +54409,8 @@ function omg_p118(_captured) {
             }
             // fall through to 13002
             case 13002: {
+                omg_current_file_idx = 2;
+                omg_current_line = 922;
     _s.pop();
             }
             // fall through to 13003
@@ -51775,6 +54428,7 @@ function omg_p118(_captured) {
             }
             // fall through to 13006
             case 13006: {
+                omg_current_file_idx = 2;
                 omg_current_line = 925;
     if (v_op === OMG_UNSET) omg_undefined("op"); _s.push(v_op);
             }
@@ -51797,6 +54451,8 @@ function omg_p118(_captured) {
             }
             // fall through to 13011
             case 13011: {
+                omg_current_file_idx = 2;
+                omg_current_line = 926;
     v_msg = _s.pop();
             }
             // fall through to 13012
@@ -51869,6 +54525,8 @@ function omg_p118(_captured) {
             }
             // fall through to 13028
             case 13028: {
+                omg_current_file_idx = 2;
+                omg_current_line = 931;
     _s.pop();
             }
             // fall through to 13029
@@ -51877,6 +54535,7 @@ function omg_p118(_captured) {
             }
             // fall through to 13030
             case 13030: {
+                omg_current_file_idx = 2;
                 omg_current_line = 932;
     if (v_kind === OMG_UNSET) omg_undefined("kind"); _s.push(v_kind);
             }
@@ -51911,6 +54570,8 @@ function omg_p118(_captured) {
             }
             // fall through to 13038
             case 13038: {
+                omg_current_file_idx = 2;
+                omg_current_line = 933;
     _s.pop();
             }
             // fall through to 13039
@@ -51919,6 +54580,7 @@ function omg_p118(_captured) {
             }
             // fall through to 13040
             case 13040: {
+                omg_current_file_idx = 2;
                 omg_current_line = 934;
     if (v_kind === OMG_UNSET) omg_undefined("kind"); _s.push(v_kind);
             }
@@ -51953,6 +54615,8 @@ function omg_p118(_captured) {
             }
             // fall through to 13048
             case 13048: {
+                omg_current_file_idx = 2;
+                omg_current_line = 935;
     _s.pop();
             }
             // fall through to 13049
@@ -51961,6 +54625,7 @@ function omg_p118(_captured) {
             }
             // fall through to 13050
             case 13050: {
+                omg_current_file_idx = 2;
                 omg_current_line = 936;
     if (v_kind === OMG_UNSET) omg_undefined("kind"); _s.push(v_kind);
             }
@@ -51995,6 +54660,8 @@ function omg_p118(_captured) {
             }
             // fall through to 13058
             case 13058: {
+                omg_current_file_idx = 2;
+                omg_current_line = 937;
     _s.pop();
             }
             // fall through to 13059
@@ -52003,6 +54670,7 @@ function omg_p118(_captured) {
             }
             // fall through to 13060
             case 13060: {
+                omg_current_file_idx = 2;
                 omg_current_line = 938;
     if (v_kind === OMG_UNSET) omg_undefined("kind"); _s.push(v_kind);
             }
@@ -52037,6 +54705,8 @@ function omg_p118(_captured) {
             }
             // fall through to 13068
             case 13068: {
+                omg_current_file_idx = 2;
+                omg_current_line = 939;
     _s.pop();
             }
             // fall through to 13069
@@ -52045,6 +54715,7 @@ function omg_p118(_captured) {
             }
             // fall through to 13070
             case 13070: {
+                omg_current_file_idx = 2;
                 omg_current_line = 941;
     _s.push("RuntimeError: ");
             }
@@ -52062,10 +54733,13 @@ function omg_p118(_captured) {
             }
             // fall through to 13074
             case 13074: {
+                omg_current_file_idx = 2;
+                omg_current_line = 941;
     _s.pop();
             }
             // fall through to 13075
             case 13075: {
+                omg_current_file_idx = 2;
                 omg_current_line = 943;
     _s.push(false);
             }
@@ -52079,6 +54753,7 @@ function omg_p118(_captured) {
             }
             // fall through to 13078
             case 13078: {
+                omg_current_file_idx = 2;
                 omg_current_line = 947;
     if (v_op === OMG_UNSET) omg_undefined("op"); _s.push(v_op);
             }
@@ -52148,6 +54823,8 @@ function omg_p118(_captured) {
             }
             // fall through to 13094
             case 13094: {
+                omg_current_file_idx = 2;
+                omg_current_line = 956;
     if (v_captured === OMG_UNSET) omg_undefined("captured"); v_captured = _s.pop();
             }
             // fall through to 13095
@@ -52156,6 +54833,7 @@ function omg_p118(_captured) {
             }
             // fall through to 13096
             case 13096: {
+                omg_current_file_idx = 2;
                 omg_current_line = 958;
     if (v_mf_name === OMG_UNSET) omg_undefined("mf_name"); _s.push(v_mf_name);
             }
@@ -52169,6 +54847,8 @@ function omg_p118(_captured) {
             }
             // fall through to 13099
             case 13099: {
+                omg_current_file_idx = 2;
+                omg_current_line = 958;
     v_closure = _s.pop();
             }
             // fall through to 13100
@@ -52211,6 +54891,7 @@ function omg_p118(_captured) {
             }
             // fall through to 13109
             case 13109: {
+                omg_current_file_idx = 2;
                 omg_current_line = 963;
     if (v___mod_2__vm_env === OMG_UNSET) omg_undefined("__mod_2__vm_env"); _s.push(v___mod_2__vm_env);
             }
@@ -52241,6 +54922,8 @@ function omg_p118(_captured) {
             }
             // fall through to 13116
             case 13116: {
+                omg_current_file_idx = 2;
+                omg_current_line = 970;
     v_bare = _s.pop();
             }
             // fall through to 13117
@@ -52287,6 +54970,7 @@ function omg_p118(_captured) {
             }
             // fall through to 13127
             case 13127: {
+                omg_current_file_idx = 2;
                 omg_current_line = 975;
     _s.push(false);
             }
@@ -52300,6 +54984,7 @@ function omg_p118(_captured) {
             }
             // fall through to 13130
             case 13130: {
+                omg_current_file_idx = 2;
                 omg_current_line = 977;
     if (v_op === OMG_UNSET) omg_undefined("op"); _s.push(v_op);
             }
@@ -52364,6 +55049,8 @@ function omg_p118(_captured) {
             }
             // fall through to 13145
             case 13145: {
+                omg_current_file_idx = 2;
+                omg_current_line = 983;
     _s.push(false);
             }
             // fall through to 13146
@@ -52401,6 +55088,7 @@ function omg_p118(_captured) {
             }
             // fall through to 13154
             case 13154: {
+                omg_current_file_idx = 2;
                 omg_current_line = 986;
     if (v___mod_2__vm_funcs === OMG_UNSET) omg_undefined("__mod_2__vm_funcs"); _s.push(v___mod_2__vm_funcs);
             }
@@ -52448,6 +55136,8 @@ function omg_p118(_captured) {
             }
             // fall through to 13165
             case 13165: {
+                omg_current_file_idx = 2;
+                omg_current_line = 988;
     v_call_args = _s.pop();
             }
             // fall through to 13166
@@ -52473,6 +55163,8 @@ function omg_p118(_captured) {
             }
             // fall through to 13171
             case 13171: {
+                omg_current_file_idx = 2;
+                omg_current_line = 989;
     _s.pop();
             }
             // fall through to 13172
@@ -52507,6 +55199,8 @@ function omg_p118(_captured) {
             }
             // fall through to 13179
             case 13179: {
+                omg_current_file_idx = 2;
+                omg_current_line = 992;
     if (v___mod_2__vm_frames === OMG_UNSET) omg_undefined("__mod_2__vm_frames"); v___mod_2__vm_frames = _s.pop();
             }
             // fall through to 13180
@@ -52515,6 +55209,7 @@ function omg_p118(_captured) {
             }
             // fall through to 13181
             case 13181: {
+                omg_current_file_idx = 2;
                 omg_current_line = 994;
     if (v___mod_2__vm_frames === OMG_UNSET) omg_undefined("__mod_2__vm_frames"); _s.push(v___mod_2__vm_frames);
             }
@@ -52570,6 +55265,7 @@ function omg_p118(_captured) {
             }
             // fall through to 13194
             case 13194: {
+                omg_current_file_idx = 2;
                 omg_current_line = 998;
     if (v_op === OMG_UNSET) omg_undefined("op"); _s.push(v_op);
             }
@@ -52617,6 +55313,8 @@ function omg_p118(_captured) {
             }
             // fall through to 13205
             case 13205: {
+                omg_current_file_idx = 2;
+                omg_current_line = 1005;
     _s.push(false);
             }
             // fall through to 13206
@@ -52654,6 +55352,7 @@ function omg_p118(_captured) {
             }
             // fall through to 13214
             case 13214: {
+                omg_current_file_idx = 2;
                 omg_current_line = 1008;
     if (v___mod_2__vm_funcs === OMG_UNSET) omg_undefined("__mod_2__vm_funcs"); _s.push(v___mod_2__vm_funcs);
             }
@@ -52701,6 +55400,8 @@ function omg_p118(_captured) {
             }
             // fall through to 13225
             case 13225: {
+                omg_current_file_idx = 2;
+                omg_current_line = 1010;
     v_call_args = _s.pop();
             }
             // fall through to 13226
@@ -52736,6 +55437,7 @@ function omg_p118(_captured) {
             }
             // fall through to 13233
             case 13233: {
+                omg_current_file_idx = 2;
                 omg_current_line = 1014;
     if (v_p === OMG_UNSET) omg_undefined("p"); _s.push(v_p);
             }
@@ -52811,6 +55513,7 @@ function omg_p118(_captured) {
             }
             // fall through to 13251
             case 13251: {
+                omg_current_file_idx = 2;
                 omg_current_line = 1018;
     if (v_new_env === OMG_UNSET) omg_undefined("new_env"); _s.push(v_new_env);
             }
@@ -52916,6 +55619,7 @@ function omg_p118(_captured) {
             }
             // fall through to 13276
             case 13276: {
+                omg_current_file_idx = 2;
                 omg_current_line = 1024;
     _s.push(false);
             }
@@ -52929,6 +55633,7 @@ function omg_p118(_captured) {
             }
             // fall through to 13279
             case 13279: {
+                omg_current_file_idx = 2;
                 omg_current_line = 1026;
     if (v_op === OMG_UNSET) omg_undefined("op"); _s.push(v_op);
             }
@@ -52989,6 +55694,8 @@ function omg_p118(_captured) {
             }
             // fall through to 13293
             case 13293: {
+                omg_current_file_idx = 2;
+                omg_current_line = 1029;
     v_cv_args = _s.pop();
             }
             // fall through to 13294
@@ -52998,6 +55705,8 @@ function omg_p118(_captured) {
             }
             // fall through to 13295
             case 13295: {
+                omg_current_file_idx = 2;
+                omg_current_line = 1030;
     v_callable = _s.pop();
             }
             // fall through to 13296
@@ -53038,6 +55747,8 @@ function omg_p118(_captured) {
             }
             // fall through to 13304
             case 13304: {
+                omg_current_file_idx = 2;
+                omg_current_line = 1034;
     { const _c = _s.pop(); if (!omg_truthy(_c)) { _ip = 13320; continue; } }
             }
             // fall through to 13305
@@ -53106,6 +55817,7 @@ function omg_p118(_captured) {
             }
             // fall through to 13320
             case 13320: {
+                omg_current_file_idx = 2;
                 omg_current_line = 1039;
     _s.push("");
             }
@@ -53164,6 +55876,7 @@ function omg_p118(_captured) {
             }
             // fall through to 13334
             case 13334: {
+                omg_current_file_idx = 2;
                 omg_current_line = 1043;
     if (v_fname === OMG_UNSET) omg_undefined("fname"); _s.push(v_fname);
             }
@@ -53185,6 +55898,8 @@ function omg_p118(_captured) {
             }
             // fall through to 13339
             case 13339: {
+                omg_current_file_idx = 2;
+                omg_current_line = 1043;
     _s.pop();
             }
             // fall through to 13340
@@ -53219,6 +55934,8 @@ function omg_p118(_captured) {
             }
             // fall through to 13347
             case 13347: {
+                omg_current_file_idx = 2;
+                omg_current_line = 1045;
     if (v___mod_2__vm_frames === OMG_UNSET) omg_undefined("__mod_2__vm_frames"); v___mod_2__vm_frames = _s.pop();
             }
             // fall through to 13348
@@ -53227,6 +55944,7 @@ function omg_p118(_captured) {
             }
             // fall through to 13349
             case 13349: {
+                omg_current_file_idx = 2;
                 omg_current_line = 1047;
     if (v___mod_2__vm_frames === OMG_UNSET) omg_undefined("__mod_2__vm_frames"); _s.push(v___mod_2__vm_frames);
             }
@@ -53282,6 +56000,7 @@ function omg_p118(_captured) {
             }
             // fall through to 13362
             case 13362: {
+                omg_current_file_idx = 2;
                 omg_current_line = 1051;
     if (v_op === OMG_UNSET) omg_undefined("op"); _s.push(v_op);
             }
@@ -53304,6 +56023,8 @@ function omg_p118(_captured) {
             }
             // fall through to 13367
             case 13367: {
+                omg_current_file_idx = 2;
+                omg_current_line = 1052;
     v_rv = _s.pop();
             }
             // fall through to 13368
@@ -53414,6 +56135,7 @@ function omg_p118(_captured) {
             }
             // fall through to 13393
             case 13393: {
+                omg_current_file_idx = 2;
                 omg_current_line = 1062;
     if (v_rv === OMG_UNSET) omg_undefined("rv"); _s.push(v_rv);
             }
@@ -53423,6 +56145,8 @@ function omg_p118(_captured) {
             }
             // fall through to 13395
             case 13395: {
+                omg_current_file_idx = 2;
+                omg_current_line = 1062;
     _s.pop();
             }
             // fall through to 13396
@@ -53440,6 +56164,7 @@ function omg_p118(_captured) {
             }
             // fall through to 13399
             case 13399: {
+                omg_current_file_idx = 2;
                 omg_current_line = 1067;
     if (v_op === OMG_UNSET) omg_undefined("op"); _s.push(v_op);
             }
@@ -53517,6 +56242,8 @@ function omg_p118(_captured) {
             }
             // fall through to 13417
             case 13417: {
+                omg_current_file_idx = 2;
+                omg_current_line = 1071;
     v_bargs = _s.pop();
             }
             // fall through to 13418
@@ -53538,6 +56265,8 @@ function omg_p118(_captured) {
             }
             // fall through to 13422
             case 13422: {
+                omg_current_file_idx = 2;
+                omg_current_line = 1072;
     _s.pop();
             }
             // fall through to 13423
@@ -53555,6 +56284,7 @@ function omg_p118(_captured) {
             }
             // fall through to 13426
             case 13426: {
+                omg_current_file_idx = 2;
                 omg_current_line = 1077;
     if (v_op === OMG_UNSET) omg_undefined("op"); _s.push(v_op);
             }
@@ -53634,6 +56364,7 @@ function omg_p118(_captured) {
             }
             // fall through to 13445
             case 13445: {
+                omg_current_file_idx = 2;
                 omg_current_line = 1081;
     if (v_op === OMG_UNSET) omg_undefined("op"); _s.push(v_op);
             }
@@ -53706,6 +56437,7 @@ function omg_p118(_captured) {
             }
             // fall through to 13462
             case 13462: {
+                omg_current_file_idx = 2;
                 omg_current_line = 1087;
     _s.push("omg-vm: unhandled opcode '");
             }
@@ -53771,6 +56503,7 @@ function omg_p119(_captured, v_name) {
         try {
             switch (_ip) {
             case 11621: {
+                omg_current_file_idx = 2;
                 omg_current_line = 431;
     _s.push(v_name);
             }
@@ -53813,6 +56546,7 @@ function omg_p119(_captured, v_name) {
             }
             // fall through to 11631
             case 11631: {
+                omg_current_file_idx = 2;
                 omg_current_line = 433;
     _s.push(v_name);
             }
@@ -53854,6 +56588,7 @@ function omg_p119(_captured, v_name) {
             }
             // fall through to 11641
             case 11641: {
+                omg_current_file_idx = 2;
                 omg_current_line = 434;
     _s.push(6n);
             }
@@ -53863,6 +56598,7 @@ function omg_p119(_captured, v_name) {
             }
             // fall through to 11643
             case 11643: {
+                omg_current_file_idx = 2;
                 omg_current_line = 435;
     if (v_i === OMG_UNSET) omg_undefined("i"); _s.push(v_i);
             }
@@ -53912,10 +56648,14 @@ function omg_p119(_captured, v_name) {
             }
             // fall through to 11655
             case 11655: {
+                omg_current_file_idx = 2;
+                omg_current_line = 435;
     _s.push(false);
             }
             // fall through to 11656
             case 11656: {
+                omg_current_file_idx = 2;
+                omg_current_line = 435;
     { const _c = _s.pop(); if (!omg_truthy(_c)) { _ip = 11665; continue; } }
             }
             // fall through to 11657
@@ -53952,10 +56692,14 @@ function omg_p119(_captured, v_name) {
             }
             // fall through to 11665
             case 11665: {
+                omg_current_file_idx = 2;
+                omg_current_line = 435;
     _s.push(false);
             }
             // fall through to 11666
             case 11666: {
+                omg_current_file_idx = 2;
+                omg_current_line = 435;
     { const _c = _s.pop(); if (!omg_truthy(_c)) { _ip = 11672; continue; } }
             }
             // fall through to 11667
@@ -53981,6 +56725,7 @@ function omg_p119(_captured, v_name) {
             }
             // fall through to 11672
             case 11672: {
+                omg_current_file_idx = 2;
                 omg_current_line = 438;
     if (v_i === OMG_UNSET) omg_undefined("i"); _s.push(v_i);
             }
@@ -54010,6 +56755,7 @@ function omg_p119(_captured, v_name) {
             }
             // fall through to 11679
             case 11679: {
+                omg_current_file_idx = 2;
                 omg_current_line = 439;
     if (v_i === OMG_UNSET) omg_undefined("i"); _s.push(v_i);
             }
@@ -54047,6 +56793,7 @@ function omg_p119(_captured, v_name) {
             }
             // fall through to 11688
             case 11688: {
+                omg_current_file_idx = 2;
                 omg_current_line = 440;
     _s.push(v_name);
             }
@@ -54096,6 +56843,7 @@ function omg_p119(_captured, v_name) {
             }
             // fall through to 11700
             case 11700: {
+                omg_current_file_idx = 2;
                 omg_current_line = 441;
     _s.push(v_name);
             }
@@ -54158,6 +56906,7 @@ function omg_p119(_captured, v_name) {
             }
             // fall through to 11715
             case 11715: {
+                omg_current_file_idx = 2;
                 omg_current_line = 443;
     if (v_bare === OMG_UNSET) omg_undefined("bare"); _s.push(v_bare);
             }
@@ -54200,6 +56949,7 @@ function omg_p120(_captured, v_tag, v_value, v_cur) {
         try {
             switch (_ip) {
             case 10986: {
+                omg_current_file_idx = 2;
                 omg_current_line = 238;
     _s.push(v_tag);
             }
@@ -54258,6 +57008,7 @@ function omg_p121(_captured, v_tag, v_cur) {
         try {
             switch (_ip) {
             case 10994: {
+                omg_current_file_idx = 2;
                 omg_current_line = 243;
     _s.push(v_tag);
             }
@@ -54323,6 +57074,7 @@ function omg_p122(_captured, v_err) {
         try {
             switch (_ip) {
             case 13471: {
+                omg_current_file_idx = 2;
                 omg_current_line = 1096;
     if (v___mod_2__vm_block_stack === OMG_UNSET) omg_undefined("__mod_2__vm_block_stack"); _s.push(v___mod_2__vm_block_stack);
             }
@@ -54467,6 +57219,7 @@ function omg_p122(_captured, v_err) {
             }
             // fall through to 13505
             case 13505: {
+                omg_current_file_idx = 2;
                 omg_current_line = 1106;
     if (v___mod_2__vm_env_stack_top === OMG_UNSET) omg_undefined("__mod_2__vm_env_stack_top"); _s.push(v___mod_2__vm_env_stack_top);
             }
@@ -54522,6 +57275,7 @@ function omg_p122(_captured, v_err) {
             }
             // fall through to 13518
             case 13518: {
+                omg_current_file_idx = 2;
                 omg_current_line = 1110;
     if (v_saved_ret_depth === OMG_UNSET) omg_undefined("saved_ret_depth"); _s.push(v_saved_ret_depth);
             }
@@ -54558,6 +57312,8 @@ function omg_p122(_captured, v_err) {
             }
             // fall through to 13526
             case 13526: {
+                omg_current_file_idx = 2;
+                omg_current_line = 1113;
     _s.pop();
             }
             // fall through to 13527
@@ -54606,6 +57362,7 @@ function omg_p123(_captured) {
         try {
             switch (_ip) {
             case 14083: {
+                omg_current_file_idx = 2;
                 omg_current_line = 1380;
     if (v_args === OMG_UNSET) omg_undefined("args"); _s.push(v_args);
             }
@@ -54644,6 +57401,7 @@ function omg_p123(_captured) {
             }
             // fall through to 14092
             case 14092: {
+                omg_current_file_idx = 2;
                 omg_current_line = 1382;
     if (v_i === OMG_UNSET) omg_undefined("i"); _s.push(v_i);
             }
@@ -54694,6 +57452,8 @@ function omg_p123(_captured) {
             }
             // fall through to 14104
             case 14104: {
+                omg_current_file_idx = 2;
+                omg_current_line = 1383;
     if (v_p === OMG_UNSET) omg_undefined("p"); _s.push(v_p);
             }
             // fall through to 14105
@@ -54722,6 +57482,8 @@ function omg_p123(_captured) {
             }
             // fall through to 14111
             case 14111: {
+                omg_current_file_idx = 2;
+                omg_current_line = 1383;
     { const _c = _s.pop(); if (!omg_truthy(_c)) { _ip = 14120; continue; } }
             }
             // fall through to 14112
@@ -54759,6 +57521,7 @@ function omg_p123(_captured) {
             }
             // fall through to 14120
             case 14120: {
+                omg_current_file_idx = 2;
                 omg_current_line = 1386;
     if (v_i === OMG_UNSET) omg_undefined("i"); _s.push(v_i);
             }
@@ -54780,6 +57543,7 @@ function omg_p123(_captured) {
             }
             // fall through to 14125
             case 14125: {
+                omg_current_file_idx = 2;
                 omg_current_line = 1388;
     if (v_p === OMG_UNSET) omg_undefined("p"); _s.push(v_p);
             }
@@ -54822,6 +57586,7 @@ function omg_p124(_captured) {
         try {
             switch (_ip) {
             case 14042: {
+                omg_current_file_idx = 2;
                 omg_current_line = 1348;
     _s.push("");
             }
@@ -54874,6 +57639,7 @@ function omg_p125(_captured, v_mangled) {
         try {
             switch (_ip) {
             case 12164: {
+                omg_current_file_idx = 2;
                 omg_current_line = 711;
     _s.push(v_mangled);
             }
@@ -54883,6 +57649,8 @@ function omg_p125(_captured, v_mangled) {
             }
             // fall through to 12166
             case 12166: {
+                omg_current_file_idx = 2;
+                omg_current_line = 711;
     v_bare = _s.pop();
             }
             // fall through to 12167
@@ -54917,6 +57685,7 @@ function omg_p125(_captured, v_mangled) {
             }
             // fall through to 12174
             case 12174: {
+                omg_current_file_idx = 2;
                 omg_current_line = 715;
     if (v_bare === OMG_UNSET) omg_undefined("bare"); _s.push(v_bare);
             }
@@ -54962,6 +57731,7 @@ function omg_p126(_captured, v_new_chunk) {
         try {
             switch (_ip) {
             case 13856: {
+                omg_current_file_idx = 2;
                 omg_current_line = 1245;
     if (v___mod_2__OPNAME_TO_INT === OMG_UNSET) omg_undefined("__mod_2__OPNAME_TO_INT"); _s.push(v___mod_2__OPNAME_TO_INT);
             }
@@ -54984,6 +57754,8 @@ function omg_p126(_captured, v_new_chunk) {
             }
             // fall through to 13861
             case 13861: {
+                omg_current_file_idx = 2;
+                omg_current_line = 1246;
     _s.pop();
             }
             // fall through to 13862
@@ -54992,6 +57764,7 @@ function omg_p126(_captured, v_new_chunk) {
             }
             // fall through to 13863
             case 13863: {
+                omg_current_file_idx = 2;
                 omg_current_line = 1248;
     _s.push(0n);
             }
@@ -55014,6 +57787,7 @@ function omg_p126(_captured, v_new_chunk) {
             }
             // fall through to 13868
             case 13868: {
+                omg_current_file_idx = 2;
                 omg_current_line = 1250;
     if (v_i === OMG_UNSET) omg_undefined("i"); _s.push(v_i);
             }
@@ -55069,6 +57843,8 @@ function omg_p126(_captured, v_new_chunk) {
             }
             // fall through to 13881
             case 13881: {
+                omg_current_file_idx = 2;
+                omg_current_line = 1252;
     if (v_instr === OMG_UNSET) omg_undefined("instr"); _s.push(v_instr);
             }
             // fall through to 13882
@@ -55118,6 +57894,8 @@ function omg_p126(_captured, v_new_chunk) {
             }
             // fall through to 13893
             case 13893: {
+                omg_current_file_idx = 2;
+                omg_current_line = 1253;
     _s.push(null);
             }
             // fall through to 13894
@@ -55159,6 +57937,7 @@ function omg_p127(_captured, v_new_files, v_new_lines) {
         try {
             switch (_ip) {
             case 13914: {
+                omg_current_file_idx = 2;
                 omg_current_line = 1286;
     if (v___mod_2__vm_src_files === OMG_UNSET) omg_undefined("__mod_2__vm_src_files"); _s.push(v___mod_2__vm_src_files);
             }
@@ -55194,6 +57973,7 @@ function omg_p127(_captured, v_new_files, v_new_lines) {
             }
             // fall through to 13922
             case 13922: {
+                omg_current_file_idx = 2;
                 omg_current_line = 1289;
     if (v_i === OMG_UNSET) omg_undefined("i"); _s.push(v_i);
             }
@@ -55261,6 +58041,7 @@ function omg_p127(_captured, v_new_files, v_new_lines) {
             }
             // fall through to 13938
             case 13938: {
+                omg_current_file_idx = 2;
                 omg_current_line = 1293;
     _s.push(0n);
             }
@@ -55283,6 +58064,7 @@ function omg_p127(_captured, v_new_files, v_new_lines) {
             }
             // fall through to 13943
             case 13943: {
+                omg_current_file_idx = 2;
                 omg_current_line = 1295;
     if (v_j === OMG_UNSET) omg_undefined("j"); _s.push(v_j);
             }
@@ -55401,6 +58183,7 @@ function omg_p127(_captured, v_new_files, v_new_lines) {
             }
             // fall through to 13971
             case 13971: {
+                omg_current_file_idx = 2;
                 omg_current_line = 1302;
     if (v___mod_2__vm_src_lines === OMG_UNSET) omg_undefined("__mod_2__vm_src_lines"); _s.push(v___mod_2__vm_src_lines);
             }
@@ -55438,6 +58221,7 @@ function omg_p127(_captured, v_new_files, v_new_lines) {
             }
             // fall through to 13980
             case 13980: {
+                omg_current_file_idx = 2;
                 omg_current_line = 1304;
     if (v_j === OMG_UNSET) omg_undefined("j"); _s.push(v_j);
             }
@@ -55459,6 +58243,8 @@ function omg_p127(_captured, v_new_files, v_new_lines) {
             }
             // fall through to 13985
             case 13985: {
+                omg_current_file_idx = 2;
+                omg_current_line = 1304;
     _s.push(null);
             }
             // fall through to 13986
@@ -55500,6 +58286,7 @@ function omg_p128(_captured, v_err_pc, v_msg) {
         try {
             switch (_ip) {
             case 12178: {
+                omg_current_file_idx = 2;
                 omg_current_line = 727;
     _s.push("Traceback (most recent call last):\n");
             }
@@ -55569,6 +58356,8 @@ function omg_p128(_captured, v_err_pc, v_msg) {
             }
             // fall through to 12194
             case 12194: {
+                omg_current_file_idx = 2;
+                omg_current_line = 732;
     v_loc = _s.pop();
             }
             // fall through to 12195
@@ -55642,6 +58431,7 @@ function omg_p128(_captured, v_err_pc, v_msg) {
             }
             // fall through to 12212
             case 12212: {
+                omg_current_file_idx = 2;
                 omg_current_line = 737;
     _s.push(1n);
             }
@@ -55651,6 +58441,7 @@ function omg_p128(_captured, v_err_pc, v_msg) {
             }
             // fall through to 12214
             case 12214: {
+                omg_current_file_idx = 2;
                 omg_current_line = 738;
     if (v_i === OMG_UNSET) omg_undefined("i"); _s.push(v_i);
             }
@@ -55701,6 +58492,8 @@ function omg_p128(_captured, v_err_pc, v_msg) {
             }
             // fall through to 12226
             case 12226: {
+                omg_current_file_idx = 2;
+                omg_current_line = 739;
     v_caller_name = _s.pop();
             }
             // fall through to 12227
@@ -55730,6 +58523,8 @@ function omg_p128(_captured, v_err_pc, v_msg) {
             }
             // fall through to 12233
             case 12233: {
+                omg_current_file_idx = 2;
+                omg_current_line = 740;
     v_loc = _s.pop();
             }
             // fall through to 12234
@@ -55836,6 +58631,7 @@ function omg_p128(_captured, v_err_pc, v_msg) {
             }
             // fall through to 12259
             case 12259: {
+                omg_current_file_idx = 2;
                 omg_current_line = 746;
     _s.push("<top-level>");
             }
@@ -55895,6 +58691,8 @@ function omg_p128(_captured, v_err_pc, v_msg) {
             }
             // fall through to 12273
             case 12273: {
+                omg_current_file_idx = 2;
+                omg_current_line = 748;
     if (v_cur_fn === OMG_UNSET) omg_undefined("cur_fn"); v_cur_fn = _s.pop();
             }
             // fall through to 12274
@@ -55903,6 +58701,7 @@ function omg_p128(_captured, v_err_pc, v_msg) {
             }
             // fall through to 12275
             case 12275: {
+                omg_current_file_idx = 2;
                 omg_current_line = 750;
     _s.push(v_err_pc);
             }
@@ -55912,6 +58711,8 @@ function omg_p128(_captured, v_err_pc, v_msg) {
             }
             // fall through to 12277
             case 12277: {
+                omg_current_file_idx = 2;
+                omg_current_line = 750;
     v_site = _s.pop();
             }
             // fall through to 12278
@@ -56056,6 +58857,7 @@ function omg_p129(_captured) {
         try {
             switch (_ip) {
             case 14033: {
+                omg_current_file_idx = 2;
                 omg_current_line = 1340;
     if (v___mod_2__vm_code === OMG_UNSET) omg_undefined("__mod_2__vm_code"); _s.push(v___mod_2__vm_code);
             }
@@ -56102,6 +58904,7 @@ function omg_p130(_captured) {
         try {
             switch (_ip) {
             case 14038: {
+                omg_current_file_idx = 2;
                 omg_current_line = 1344;
     if (v___mod_2__vm_pending_error === OMG_UNSET) omg_undefined("__mod_2__vm_pending_error"); _s.push(v___mod_2__vm_pending_error);
             }
@@ -56144,6 +58947,7 @@ function omg_p131(_captured) {
         try {
             switch (_ip) {
             case 14054: {
+                omg_current_file_idx = 2;
                 omg_current_line = 1360;
     if (v___mod_2__vm_globals === OMG_UNSET) omg_undefined("__mod_2__vm_globals"); _s.push(v___mod_2__vm_globals);
             }
@@ -56191,6 +58995,7 @@ function omg_p132(_captured, v_xs) {
         try {
             switch (_ip) {
             case 11755: {
+                omg_current_file_idx = 2;
                 omg_current_line = 491;
     _s.push(v_xs);
             }
@@ -56234,6 +59039,7 @@ function omg_p132(_captured, v_xs) {
             }
             // fall through to 11765
             case 11765: {
+                omg_current_file_idx = 2;
                 omg_current_line = 495;
     _s.push(v_xs);
             }
@@ -56293,6 +59099,7 @@ function omg_p133(_captured) {
         try {
             switch (_ip) {
             case 11607: {
+                omg_current_file_idx = 2;
                 omg_current_line = 418;
     _s.push(0n);
             }
@@ -56342,6 +59149,7 @@ function omg_p134(_captured, v_name, v_call_args, v_captured, v_self_closure) {
         try {
             switch (_ip) {
             case 11949: {
+                omg_current_file_idx = 2;
                 omg_current_line = 606;
     if (v___mod_2__vm_funcs === OMG_UNSET) omg_undefined("__mod_2__vm_funcs"); _s.push(v___mod_2__vm_funcs);
             }
@@ -56355,6 +59163,8 @@ function omg_p134(_captured, v_name, v_call_args, v_captured, v_self_closure) {
             }
             // fall through to 11952
             case 11952: {
+                omg_current_file_idx = 2;
+                omg_current_line = 606;
     _s.push(false);
             }
             // fall through to 11953
@@ -56392,6 +59202,7 @@ function omg_p134(_captured, v_name, v_call_args, v_captured, v_self_closure) {
             }
             // fall through to 11961
             case 11961: {
+                omg_current_file_idx = 2;
                 omg_current_line = 609;
     if (v___mod_2__vm_funcs === OMG_UNSET) omg_undefined("__mod_2__vm_funcs"); _s.push(v___mod_2__vm_funcs);
             }
@@ -56533,6 +59344,7 @@ function omg_p134(_captured, v_name, v_call_args, v_captured, v_self_closure) {
             }
             // fall through to 11995
             case 11995: {
+                omg_current_file_idx = 2;
                 omg_current_line = 615;
     { const _n = 0; const _items = _s.splice(_s.length - 2 * _n, 2 * _n); const _d = new Map(); for (let _i = 0; _i < _n; _i++) { _d.set(_items[2*_i], _items[2*_i + 1]); } _s.push(_d); }
             }
@@ -56551,6 +59363,8 @@ function omg_p134(_captured, v_name, v_call_args, v_captured, v_self_closure) {
             }
             // fall through to 11999
             case 11999: {
+                omg_current_file_idx = 2;
+                omg_current_line = 616;
     _s.push(false);
             }
             // fall through to 12000
@@ -56576,6 +59390,8 @@ function omg_p134(_captured, v_name, v_call_args, v_captured, v_self_closure) {
             }
             // fall through to 12005
             case 12005: {
+                omg_current_file_idx = 2;
+                omg_current_line = 620;
     _s.pop();
             }
             // fall through to 12006
@@ -56584,6 +59400,7 @@ function omg_p134(_captured, v_name, v_call_args, v_captured, v_self_closure) {
             }
             // fall through to 12007
             case 12007: {
+                omg_current_file_idx = 2;
                 omg_current_line = 622;
     _s.push(v_self_closure);
             }
@@ -56668,10 +59485,13 @@ function omg_p134(_captured, v_name, v_call_args, v_captured, v_self_closure) {
             }
             // fall through to 12027
             case 12027: {
+                omg_current_file_idx = 2;
+                omg_current_line = 631;
     _ip = 12028; continue;
             }
             // fall through to 12028
             case 12028: {
+                omg_current_file_idx = 2;
                 omg_current_line = 634;
     _s.push(0n);
             }
@@ -56694,6 +59514,7 @@ function omg_p134(_captured, v_name, v_call_args, v_captured, v_self_closure) {
             }
             // fall through to 12033
             case 12033: {
+                omg_current_file_idx = 2;
                 omg_current_line = 636;
     if (v_p === OMG_UNSET) omg_undefined("p"); _s.push(v_p);
             }
@@ -56769,6 +59590,7 @@ function omg_p134(_captured, v_name, v_call_args, v_captured, v_self_closure) {
             }
             // fall through to 12051
             case 12051: {
+                omg_current_file_idx = 2;
                 omg_current_line = 643;
     if (v___mod_2__vm_env_stack_top === OMG_UNSET) omg_undefined("__mod_2__vm_env_stack_top"); _s.push(v___mod_2__vm_env_stack_top);
             }
@@ -56799,6 +59621,8 @@ function omg_p134(_captured, v_name, v_call_args, v_captured, v_self_closure) {
             }
             // fall through to 12058
             case 12058: {
+                omg_current_file_idx = 2;
+                omg_current_line = 644;
     if (v___mod_2__vm_env_stack === OMG_UNSET) omg_undefined("__mod_2__vm_env_stack"); v___mod_2__vm_env_stack = _s.pop();
             }
             // fall through to 12059
@@ -56807,6 +59631,7 @@ function omg_p134(_captured, v_name, v_call_args, v_captured, v_self_closure) {
             }
             // fall through to 12060
             case 12060: {
+                omg_current_file_idx = 2;
                 omg_current_line = 646;
     if (v___mod_2__vm_env_stack === OMG_UNSET) omg_undefined("__mod_2__vm_env_stack"); _s.push(v___mod_2__vm_env_stack);
             }
@@ -56871,6 +59696,8 @@ function omg_p134(_captured, v_name, v_call_args, v_captured, v_self_closure) {
             }
             // fall through to 12075
             case 12075: {
+                omg_current_file_idx = 2;
+                omg_current_line = 652;
     if (v___mod_2__vm_ret_stack === OMG_UNSET) omg_undefined("__mod_2__vm_ret_stack"); v___mod_2__vm_ret_stack = _s.pop();
             }
             // fall through to 12076
@@ -56879,6 +59706,7 @@ function omg_p134(_captured, v_name, v_call_args, v_captured, v_self_closure) {
             }
             // fall through to 12077
             case 12077: {
+                omg_current_file_idx = 2;
                 omg_current_line = 654;
     if (v___mod_2__vm_ret_stack === OMG_UNSET) omg_undefined("__mod_2__vm_ret_stack"); _s.push(v___mod_2__vm_ret_stack);
             }
@@ -56965,11 +59793,14 @@ function omg_p135(_captured) {
         try {
             switch (_ip) {
             case 14129: {
+                omg_current_file_idx = 2;
                 omg_current_line = 1397;
     { const _argv = _s.splice(_s.length - 0, 0); omg_frame_push("vm_argv0_basename", omg_current_file_idx, omg_current_line); const _rv = omg_p123(null, ..._argv); omg_frame_pop(); _s.push(_rv); }
             }
             // fall through to 14130
             case 14130: {
+                omg_current_file_idx = 2;
+                omg_current_line = 1397;
     v_bn = _s.pop();
             }
             // fall through to 14131
@@ -56999,6 +59830,8 @@ function omg_p135(_captured) {
             }
             // fall through to 14137
             case 14137: {
+                omg_current_file_idx = 2;
+                omg_current_line = 1401;
     if (v_bn === OMG_UNSET) omg_undefined("bn"); _s.push(v_bn);
             }
             // fall through to 14138
@@ -57019,6 +59852,8 @@ function omg_p135(_captured) {
             }
             // fall through to 14142
             case 14142: {
+                omg_current_file_idx = 2;
+                omg_current_line = 1401;
     { const _c = _s.pop(); if (!omg_truthy(_c)) { _ip = 14145; continue; } }
             }
             // fall through to 14143
@@ -57031,6 +59866,8 @@ function omg_p135(_captured) {
             }
             // fall through to 14145
             case 14145: {
+                omg_current_file_idx = 2;
+                omg_current_line = 1401;
     if (v_bn === OMG_UNSET) omg_undefined("bn"); _s.push(v_bn);
             }
             // fall through to 14146
@@ -57051,6 +59888,8 @@ function omg_p135(_captured) {
             }
             // fall through to 14150
             case 14150: {
+                omg_current_file_idx = 2;
+                omg_current_line = 1401;
     return _s.pop();
             }
             // fall through to 14151
@@ -57088,6 +59927,7 @@ function omg_p136(_captured, v_name) {
         try {
             switch (_ip) {
             case 11815: {
+                omg_current_file_idx = 2;
                 omg_current_line = 531;
     if (v___mod_2__vm_env === OMG_UNSET) omg_undefined("__mod_2__vm_env"); _s.push(v___mod_2__vm_env);
             }
@@ -57101,6 +59941,8 @@ function omg_p136(_captured, v_name) {
             }
             // fall through to 11818
             case 11818: {
+                omg_current_file_idx = 2;
+                omg_current_line = 531;
     { const _c = _s.pop(); if (!omg_truthy(_c)) { _ip = 11826; continue; } }
             }
             // fall through to 11819
@@ -57134,6 +59976,7 @@ function omg_p136(_captured, v_name) {
             }
             // fall through to 11826
             case 11826: {
+                omg_current_file_idx = 2;
                 omg_current_line = 535;
     if (v___mod_2__vm_globals === OMG_UNSET) omg_undefined("__mod_2__vm_globals"); _s.push(v___mod_2__vm_globals);
             }
@@ -57147,6 +59990,8 @@ function omg_p136(_captured, v_name) {
             }
             // fall through to 11829
             case 11829: {
+                omg_current_file_idx = 2;
+                omg_current_line = 535;
     { const _c = _s.pop(); if (!omg_truthy(_c)) { _ip = 11835; continue; } }
             }
             // fall through to 11830
@@ -57172,6 +60017,7 @@ function omg_p136(_captured, v_name) {
             }
             // fall through to 11835
             case 11835: {
+                omg_current_file_idx = 2;
                 omg_current_line = 538;
     _s.push("UndefinedIdentError: ");
             }
@@ -57229,6 +60075,7 @@ function omg_p137(_captured, v_pc) {
         try {
             switch (_ip) {
             case 12108: {
+                omg_current_file_idx = 2;
                 omg_current_line = 696;
     _s.push(v_pc);
             }
@@ -57254,6 +60101,8 @@ function omg_p137(_captured, v_pc) {
             }
             // fall through to 12114
             case 12114: {
+                omg_current_file_idx = 2;
+                omg_current_line = 696;
     _s.push(v_pc);
             }
             // fall through to 12115
@@ -57278,6 +60127,8 @@ function omg_p137(_captured, v_pc) {
             }
             // fall through to 12120
             case 12120: {
+                omg_current_file_idx = 2;
+                omg_current_line = 696;
     { const _c = _s.pop(); if (!omg_truthy(_c)) { _ip = 12126; continue; } }
             }
             // fall through to 12121
@@ -57303,6 +60154,7 @@ function omg_p137(_captured, v_pc) {
             }
             // fall through to 12126
             case 12126: {
+                omg_current_file_idx = 2;
                 omg_current_line = 699;
     if (v___mod_2__vm_src_lines === OMG_UNSET) omg_undefined("__mod_2__vm_src_lines"); _s.push(v___mod_2__vm_src_lines);
             }
@@ -57379,6 +60231,8 @@ function omg_p137(_captured, v_pc) {
             }
             // fall through to 12144
             case 12144: {
+                omg_current_file_idx = 2;
+                omg_current_line = 702;
     if (v_fi === OMG_UNSET) omg_undefined("fi"); _s.push(v_fi);
             }
             // fall through to 12145
@@ -57403,6 +60257,8 @@ function omg_p137(_captured, v_pc) {
             }
             // fall through to 12150
             case 12150: {
+                omg_current_file_idx = 2;
+                omg_current_line = 702;
     { const _c = _s.pop(); if (!omg_truthy(_c)) { _ip = 12156; continue; } }
             }
             // fall through to 12151
@@ -57428,6 +60284,7 @@ function omg_p137(_captured, v_pc) {
             }
             // fall through to 12156
             case 12156: {
+                omg_current_file_idx = 2;
                 omg_current_line = 705;
     if (v___mod_2__vm_src_files === OMG_UNSET) omg_undefined("__mod_2__vm_src_files"); _s.push(v___mod_2__vm_src_files);
             }
@@ -57488,6 +60345,7 @@ function omg_p138(_captured, v_s, v_suffix) {
         try {
             switch (_ip) {
             case 14059: {
+                omg_current_file_idx = 2;
                 omg_current_line = 1368;
     _s.push(v_s);
             }
@@ -57544,6 +60402,7 @@ function omg_p138(_captured, v_s, v_suffix) {
             }
             // fall through to 14072
             case 14072: {
+                omg_current_file_idx = 2;
                 omg_current_line = 1373;
     _s.push(v_s);
             }
@@ -57614,6 +60473,7 @@ function omg_p139(_captured) {
         try {
             switch (_ip) {
             case 11773: {
+                omg_current_file_idx = 2;
                 omg_current_line = 499;
     if (v___mod_2__vm_stack_top === OMG_UNSET) omg_undefined("__mod_2__vm_stack_top"); _s.push(v___mod_2__vm_stack_top);
             }
@@ -57684,6 +60544,7 @@ function omg_p140(_captured, v_n) {
         try {
             switch (_ip) {
             case 11783: {
+                omg_current_file_idx = 2;
                 omg_current_line = 508;
     { const _arr = _s.splice(_s.length - 0, 0); _s.push(_arr); }
             }
@@ -57719,6 +60580,7 @@ function omg_p140(_captured, v_n) {
             }
             // fall through to 11791
             case 11791: {
+                omg_current_file_idx = 2;
                 omg_current_line = 511;
     if (v_i === OMG_UNSET) omg_undefined("i"); _s.push(v_i);
             }
@@ -57794,6 +60656,7 @@ function omg_p140(_captured, v_n) {
             }
             // fall through to 11809
             case 11809: {
+                omg_current_file_idx = 2;
                 omg_current_line = 515;
     if (v_base === OMG_UNSET) omg_undefined("base"); _s.push(v_base);
             }
@@ -57845,6 +60708,7 @@ function omg_p141(_captured, v_v) {
         try {
             switch (_ip) {
             case 11736: {
+                omg_current_file_idx = 2;
                 omg_current_line = 478;
     if (v___mod_2__vm_stack_top === OMG_UNSET) omg_undefined("__mod_2__vm_stack_top"); _s.push(v___mod_2__vm_stack_top);
             }
@@ -57875,6 +60739,8 @@ function omg_p141(_captured, v_v) {
             }
             // fall through to 11743
             case 11743: {
+                omg_current_file_idx = 2;
+                omg_current_line = 479;
     if (v___mod_2__vm_stack === OMG_UNSET) omg_undefined("__mod_2__vm_stack"); v___mod_2__vm_stack = _s.pop();
             }
             // fall through to 11744
@@ -57883,6 +60749,7 @@ function omg_p141(_captured, v_v) {
             }
             // fall through to 11745
             case 11745: {
+                omg_current_file_idx = 2;
                 omg_current_line = 481;
     if (v___mod_2__vm_stack === OMG_UNSET) omg_undefined("__mod_2__vm_stack"); _s.push(v___mod_2__vm_stack);
             }
@@ -57950,6 +60817,7 @@ function omg_p142(_captured) {
         try {
             switch (_ip) {
             case 13987: {
+                omg_current_file_idx = 2;
                 omg_current_line = 1313;
     { const _arr = _s.splice(_s.length - 0, 0); _s.push(_arr); }
             }
@@ -58154,6 +61022,7 @@ function omg_p143(_captured, v_name, v_val) {
         try {
             switch (_ip) {
             case 14048: {
+                omg_current_file_idx = 2;
                 omg_current_line = 1353;
     if (v___mod_2__vm_globals === OMG_UNSET) omg_undefined("__mod_2__vm_globals"); _s.push(v___mod_2__vm_globals);
             }
@@ -58204,6 +61073,7 @@ function omg_p144(_captured, v_funcs_dict) {
         try {
             switch (_ip) {
             case 13904: {
+                omg_current_file_idx = 2;
                 omg_current_line = 1269;
     _s.push(v_funcs_dict);
             }
@@ -58246,6 +61116,7 @@ function omg_p145(_captured, v_name, v_params, v_addr, v_source_file_idx) {
         try {
             switch (_ip) {
             case 13895: {
+                omg_current_file_idx = 2;
                 omg_current_line = 1262;
     if (v___mod_2__vm_funcs === OMG_UNSET) omg_undefined("__mod_2__vm_funcs"); _s.push(v___mod_2__vm_funcs);
             }
@@ -58308,6 +61179,7 @@ function omg_p146(_captured, v_pc) {
         try {
             switch (_ip) {
             case 14027: {
+                omg_current_file_idx = 2;
                 omg_current_line = 1335;
     _s.push(v_pc);
             }
@@ -58359,6 +61231,7 @@ function omg_p147(_captured, v_files, v_lines) {
         try {
             switch (_ip) {
             case 13908: {
+                omg_current_file_idx = 2;
                 omg_current_line = 1277;
     _s.push(v_files);
             }
@@ -58410,6 +61283,7 @@ function omg_p148(_captured, v_name, v_v) {
         try {
             switch (_ip) {
             case 11842: {
+                omg_current_file_idx = 2;
                 omg_current_line = 542;
     if (v___mod_2__vm_env_stack_top === OMG_UNSET) omg_undefined("__mod_2__vm_env_stack_top"); _s.push(v___mod_2__vm_env_stack_top);
             }
@@ -58440,6 +61314,8 @@ function omg_p148(_captured, v_name, v_v) {
             }
             // fall through to 11849
             case 11849: {
+                omg_current_file_idx = 2;
+                omg_current_line = 543;
     { const _c = _s.pop(); if (!omg_truthy(_c)) { _ip = 11857; continue; } }
             }
             // fall through to 11850
@@ -58474,6 +61350,7 @@ function omg_p148(_captured, v_name, v_v) {
             }
             // fall through to 11857
             case 11857: {
+                omg_current_file_idx = 2;
                 omg_current_line = 547;
     _s.push("UndefinedIdentError: ");
             }
@@ -58499,6 +61376,7 @@ function omg_p148(_captured, v_name, v_v) {
             }
             // fall through to 11863
             case 11863: {
+                omg_current_file_idx = 2;
                 omg_current_line = 549;
     if (v___mod_2__vm_env === OMG_UNSET) omg_undefined("__mod_2__vm_env"); _s.push(v___mod_2__vm_env);
             }
@@ -58512,6 +61390,8 @@ function omg_p148(_captured, v_name, v_v) {
             }
             // fall through to 11866
             case 11866: {
+                omg_current_file_idx = 2;
+                omg_current_line = 549;
     { const _c = _s.pop(); if (!omg_truthy(_c)) { _ip = 11876; continue; } }
             }
             // fall through to 11867
@@ -58554,6 +61434,7 @@ function omg_p148(_captured, v_name, v_v) {
             }
             // fall through to 11876
             case 11876: {
+                omg_current_file_idx = 2;
                 omg_current_line = 556;
     if (v___mod_2__vm_globals === OMG_UNSET) omg_undefined("__mod_2__vm_globals"); _s.push(v___mod_2__vm_globals);
             }
@@ -58567,6 +61448,8 @@ function omg_p148(_captured, v_name, v_v) {
             }
             // fall through to 11879
             case 11879: {
+                omg_current_file_idx = 2;
+                omg_current_line = 556;
     { const _c = _s.pop(); if (!omg_truthy(_c)) { _ip = 11887; continue; } }
             }
             // fall through to 11880
@@ -58601,6 +61484,7 @@ function omg_p148(_captured, v_name, v_v) {
             }
             // fall through to 11887
             case 11887: {
+                omg_current_file_idx = 2;
                 omg_current_line = 560;
     _s.push("UndefinedIdentError: ");
             }
@@ -58655,6 +61539,7 @@ function omg_p149(_captured, v_name, v_v) {
         try {
             switch (_ip) {
             case 11894: {
+                omg_current_file_idx = 2;
                 omg_current_line = 564;
     if (v___mod_2__vm_env_stack_top === OMG_UNSET) omg_undefined("__mod_2__vm_env_stack_top"); _s.push(v___mod_2__vm_env_stack_top);
             }
@@ -58693,6 +61578,7 @@ function omg_p149(_captured, v_name, v_v) {
             }
             // fall through to 11903
             case 11903: {
+                omg_current_file_idx = 2;
                 omg_current_line = 571;
     if (v___mod_2__vm_env === OMG_UNSET) omg_undefined("__mod_2__vm_env"); _s.push(v___mod_2__vm_env);
             }
@@ -58714,6 +61600,8 @@ function omg_p149(_captured, v_name, v_v) {
             }
             // fall through to 11908
             case 11908: {
+                omg_current_file_idx = 2;
+                omg_current_line = 571;
     _s.push(null);
             }
             // fall through to 11909
@@ -58749,6 +61637,7 @@ function omg_p150(_captured, v_funcs_list) {
         try {
             switch (_ip) {
             case 14153: {
+                omg_current_file_idx = 0;
                 omg_current_line = 34;
     _s.push(0n);
             }
@@ -58758,6 +61647,7 @@ function omg_p150(_captured, v_funcs_list) {
             }
             // fall through to 14155
             case 14155: {
+                omg_current_file_idx = 0;
                 omg_current_line = 35;
     if (v_i === OMG_UNSET) omg_undefined("i"); _s.push(v_i);
             }
@@ -58857,6 +61747,8 @@ function omg_p150(_captured, v_funcs_list) {
             }
             // fall through to 14179
             case 14179: {
+                omg_current_file_idx = 0;
+                omg_current_line = 38;
     _s.pop();
             }
             // fall through to 14180
@@ -58882,6 +61774,8 @@ function omg_p150(_captured, v_funcs_list) {
             }
             // fall through to 14185
             case 14185: {
+                omg_current_file_idx = 0;
+                omg_current_line = 39;
     _s.push(null);
             }
             // fall through to 14186
@@ -58915,6 +61809,7 @@ function omg_p151(_captured, v_hosted_args, v_hosted_module_file) {
         try {
             switch (_ip) {
             case 14187: {
+                omg_current_file_idx = 0;
                 omg_current_line = 44;
     if (v_vm === OMG_UNSET) omg_undefined("vm"); _s.push(v_vm);
             }
@@ -58936,6 +61831,8 @@ function omg_p151(_captured, v_hosted_args, v_hosted_module_file) {
             }
             // fall through to 14192
             case 14192: {
+                omg_current_file_idx = 0;
+                omg_current_line = 44;
     _s.pop();
             }
             // fall through to 14193
@@ -58961,6 +61858,8 @@ function omg_p151(_captured, v_hosted_args, v_hosted_module_file) {
             }
             // fall through to 14198
             case 14198: {
+                omg_current_file_idx = 0;
+                omg_current_line = 45;
     _s.pop();
             }
             // fall through to 14199
@@ -58986,6 +61885,8 @@ function omg_p151(_captured, v_hosted_args, v_hosted_module_file) {
             }
             // fall through to 14204
             case 14204: {
+                omg_current_file_idx = 0;
+                omg_current_line = 46;
     _s.pop();
             }
             // fall through to 14205
@@ -59175,6 +62076,7 @@ try {
         try {
             switch (_ip) {
             case 0: {
+                omg_current_file_idx = 1;
                 omg_current_line = 35;
     _s.push(0n);
             }
@@ -61512,6 +64414,8 @@ try {
             }
             // fall through to 454
             case 454: {
+                omg_current_file_idx = 1;
+                omg_current_line = 2986;
     { const _c = _s.pop(); if (!omg_truthy(_c)) { _ip = 462; continue; } }
             }
             // fall through to 455
@@ -61544,10 +64448,14 @@ try {
             }
             // fall through to 462
             case 462: {
+                omg_current_file_idx = 1;
+                omg_current_line = 2986;
     _s.push(false);
             }
             // fall through to 463
             case 463: {
+                omg_current_file_idx = 1;
+                omg_current_line = 2986;
     { const _c = _s.pop(); if (!omg_truthy(_c)) { _ip = 472; continue; } }
             }
             // fall through to 464
@@ -61572,6 +64480,8 @@ try {
             }
             // fall through to 469
             case 469: {
+                omg_current_file_idx = 1;
+                omg_current_line = 2986;
     _s.push(true);
             }
             // fall through to 470
@@ -61584,10 +64494,14 @@ try {
             }
             // fall through to 472
             case 472: {
+                omg_current_file_idx = 1;
+                omg_current_line = 2986;
     _s.push(false);
             }
             // fall through to 473
             case 473: {
+                omg_current_file_idx = 1;
+                omg_current_line = 2986;
     { const _c = _s.pop(); if (!omg_truthy(_c)) { _ip = 483; continue; } }
             }
             // fall through to 474
@@ -61621,6 +64535,8 @@ try {
             }
             // fall through to 481
             case 481: {
+                omg_current_file_idx = 1;
+                omg_current_line = 2987;
     _s.pop();
             }
             // fall through to 482
@@ -61629,6 +64545,8 @@ try {
             }
             // fall through to 483
             case 483: {
+                omg_current_file_idx = 0;
+                omg_current_line = 2987;
     _s.push("OP_PUSH_INT");
             }
             // fall through to 484
@@ -63137,6 +66055,7 @@ try {
             }
             // fall through to 860
             case 860: {
+                omg_current_file_idx = 2;
                 omg_current_line = 40;
     _s.push(0n);
             }
@@ -63854,6 +66773,8 @@ try {
             }
             // fall through to 1013
             case 1013: {
+                omg_current_file_idx = 2;
+                omg_current_line = 420;
     v___mod_2__vm_none = _s.pop();
             }
             // fall through to 1014
@@ -64200,6 +67121,8 @@ try {
             }
             // fall through to 1058
             case 1058: {
+                omg_current_file_idx = 2;
+                omg_current_line = 1404;
     { const _c = _s.pop(); if (!omg_truthy(_c)) { _ip = 1066; continue; } }
             }
             // fall through to 1059
@@ -64232,10 +67155,14 @@ try {
             }
             // fall through to 1066
             case 1066: {
+                omg_current_file_idx = 2;
+                omg_current_line = 1404;
     _s.push(false);
             }
             // fall through to 1067
             case 1067: {
+                omg_current_file_idx = 2;
+                omg_current_line = 1404;
     { const _c = _s.pop(); if (!omg_truthy(_c)) { _ip = 1076; continue; } }
             }
             // fall through to 1068
@@ -64260,6 +67187,8 @@ try {
             }
             // fall through to 1073
             case 1073: {
+                omg_current_file_idx = 2;
+                omg_current_line = 1404;
     _s.push(true);
             }
             // fall through to 1074
@@ -64272,10 +67201,14 @@ try {
             }
             // fall through to 1076
             case 1076: {
+                omg_current_file_idx = 2;
+                omg_current_line = 1404;
     _s.push(false);
             }
             // fall through to 1077
             case 1077: {
+                omg_current_file_idx = 2;
+                omg_current_line = 1404;
     { const _c = _s.pop(); if (!omg_truthy(_c)) { _ip = 1141; continue; } }
             }
             // fall through to 1078
@@ -64349,6 +67282,8 @@ try {
             }
             // fall through to 1094
             case 1094: {
+                omg_current_file_idx = 2;
+                omg_current_line = 1410;
     v___mod_2__parsed = _s.pop();
             }
             // fall through to 1095
@@ -64501,6 +67436,8 @@ try {
             }
             // fall through to 1130
             case 1130: {
+                omg_current_file_idx = 2;
+                omg_current_line = 1426;
     _s.pop();
             }
             // fall through to 1131
@@ -64543,10 +67480,14 @@ try {
             }
             // fall through to 1140
             case 1140: {
+                omg_current_file_idx = 2;
+                omg_current_line = 1434;
     _ip = 1141; continue;
             }
             // fall through to 1141
             case 1141: {
+                omg_current_file_idx = 0;
+                omg_current_line = 1434;
     _s.push("OP_PUSH_INT");
             }
             // fall through to 1142
@@ -65597,6 +68538,7 @@ try {
             }
             // fall through to 1401
             case 1401: {
+                omg_current_file_idx = 0;
                 omg_current_line = 53;
     if (v_args === OMG_UNSET) omg_undefined("args"); _s.push(v_args);
             }
@@ -65648,6 +68590,8 @@ try {
             }
             // fall through to 1413
             case 1413: {
+                omg_current_file_idx = 0;
+                omg_current_line = 56;
     _s.pop();
             }
             // fall through to 1414
@@ -65673,6 +68617,8 @@ try {
             }
             // fall through to 1419
             case 1419: {
+                omg_current_file_idx = 0;
+                omg_current_line = 57;
     v_compiled = _s.pop();
             }
             // fall through to 1420
@@ -65690,6 +68636,8 @@ try {
             }
             // fall through to 1423
             case 1423: {
+                omg_current_file_idx = 0;
+                omg_current_line = 59;
     _s.pop();
             }
             // fall through to 1424
@@ -65719,6 +68667,8 @@ try {
             }
             // fall through to 1430
             case 1430: {
+                omg_current_file_idx = 0;
+                omg_current_line = 60;
     _s.pop();
             }
             // fall through to 1431
@@ -65740,6 +68690,8 @@ try {
             }
             // fall through to 1435
             case 1435: {
+                omg_current_file_idx = 0;
+                omg_current_line = 61;
     _s.pop();
             }
             // fall through to 1436
@@ -65781,6 +68733,8 @@ try {
             }
             // fall through to 1445
             case 1445: {
+                omg_current_file_idx = 0;
+                omg_current_line = 62;
     _s.pop();
             }
             // fall through to 1446
@@ -65810,6 +68764,8 @@ try {
             }
             // fall through to 1452
             case 1452: {
+                omg_current_file_idx = 0;
+                omg_current_line = 63;
     _s.pop();
             }
             // fall through to 1453
@@ -65831,6 +68787,8 @@ try {
             }
             // fall through to 1457
             case 1457: {
+                omg_current_file_idx = 0;
+                omg_current_line = 64;
     _s.pop();
             }
             // fall through to 1458
@@ -65848,6 +68806,8 @@ try {
             }
             // fall through to 1461
             case 1461: {
+                omg_current_file_idx = 0;
+                omg_current_line = 65;
     _s.pop();
             }
             // fall through to 1462
@@ -65865,6 +68825,8 @@ try {
             }
             // fall through to 1465
             case 1465: {
+                omg_current_file_idx = 0;
+                omg_current_line = 68;
     v_err = _s.pop();
             }
             // fall through to 1466
@@ -65907,6 +68869,8 @@ try {
             }
             // fall through to 1475
             case 1475: {
+                omg_current_file_idx = 0;
+                omg_current_line = 70;
     return;
             }
             // fall through to 1476
