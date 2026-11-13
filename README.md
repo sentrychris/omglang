@@ -779,6 +779,12 @@ Always available, no import needed.
 | `window_draw(win, pixels, width)` | show a picture: a list with one int per pixel (`red * 65536 + green * 256 + blue`), in rows of `width`; scaled to fit the window |
 | `window_poll(win)`             | what happened to the window: `false`, `["key", name]`, `["resize", w, h]` or `["close"]`; never waits |
 | `window_close(win)`            | close the window                                      |
+| **Sound**                      | (as the window; see [docs/10-video.md](docs/10-video.md#sound)) |
+| `audio_open(rate, channels)`   | open the loudspeakers for 16-bit sound, 1 or 2 channels; returns a handle |
+| `audio_write(a, samples, from)` | hand over ints from -32768 to 32767, starting at `samples[from]`; takes what there is room for and returns how many; never waits |
+| `audio_played(a)`              | how many moments of sound have been heard: the clock to show pictures by |
+| `audio_pause(a, on)`           | hold the sound, or let it go on                       |
+| `audio_close(a)`               | stop at once and let go of the device                 |
 | **Process control**            |                                                       |
 | `subprocess([cmd, args...])`   | run a child process; returns its exit code (a program that cannot be started raises `ValueError`) |
 | `exit(code)`                   | exit the current process with the given status       |
@@ -973,9 +979,11 @@ Some interesting starting points:
   a paged on-disk format, a recursive-descent SQL parser, and a SQLite-style
   REPL. See [`tools/db/README.md`](tools/db/README.md).
 - [`tools/video/`](tools/video/): a **video player** written in OMG: an MP4
-  reader, an H.264 decoder that matches ffmpeg bit for bit, and a window
-  opened by speaking X11 (Linux) or calling user32 (Windows) directly,
-  with no library in between. See [`docs/10-video.md`](docs/10-video.md).
+  reader, an H.264 decoder that matches ffmpeg bit for bit, an AAC
+  decoder for the sound, a window opened by speaking X11 (Linux) or
+  calling user32 (Windows) directly, and sound sent to PulseAudio or
+  PipeWire (Linux) or winmm (Windows) the same way, with no library in
+  between. See [`docs/10-video.md`](docs/10-video.md).
 
 ---
 

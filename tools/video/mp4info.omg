@@ -11,7 +11,8 @@
 # The checksums are the ones `ffmpeg -i clip.mp4 -f framecrc -` prints
 # (as decimal numbers here), which is how the decoder is tested: H.264
 # decoding is exact, so every decoder must produce the same pictures.
-# A raw H.264 stream (.h264, .264) is taken too.
+# A raw H.264 stream (.h264, .264) is taken too. For the sound track
+# there is aacinfo.omg.
 
 import "mp4.omg" as mp4
 import "h264.omg" as h264
@@ -99,8 +100,13 @@ proc main() {
         alloc milli := m.count * m.timescale * 1000 // m.duration
         rate := "" + (milli // 1000) + "." + ((milli % 1000) // 100)
     }
-    emit "# video: " + m.codec + " " + m.width + "x" + m.height + ", " + m.count + " frames, " + seconds(m.duration, m.timescale) + " s, " + rate + " frames a second"
-    if m.audio != "" {
+    if m.codec != "" {
+        emit "# video: " + m.codec + " " + m.width + "x" + m.height + ", " + m.count + " frames, " + seconds(m.duration, m.timescale) + " s, " + rate + " frames a second"
+    }
+    if m.sound != false {
+        alloc s := m.sound
+        emit "# audio: " + s.codec + " " + s.rate + " Hz, " + s.channels + " channels, " + s.count + " blocks, " + seconds(s.duration, s.timescale) + " s"
+    } elif m.audio != "" {
         emit "# audio: " + m.audio
     }
     if length(args) > 2 and args[2] == "--frames" {

@@ -23,9 +23,9 @@ Windows, and then the C runtime in detail.
 | ---- | ----: | ------------- |
 | `core.omg`     | ~1900 | Memory, reference counts, strings, output, errors and tracebacks, closures, lists, dicts, equality, arithmetic, indexing, start-up |
 | `float.omg`    | ~750  | Floats to text and back, exactly, using its own big-number arithmetic |
-| `builtins.omg` | ~2050 | Every builtin, one `bi_` proc each, and the table `call_builtin` uses |
-| `linux.omg`    | ~1600 | The `os_*` procs on Linux system calls, and a window by speaking X11 to the display's socket |
-| `windows.omg`  | ~1350 | The same `os_*` procs on `kernel32.dll` and `ws2_32.dll`, and a window through `user32.dll` and `gdi32.dll` |
+| `builtins.omg` | ~2150 | Every builtin, one `bi_` proc each, and the table `call_builtin` uses |
+| `linux.omg`    | ~2100 | The `os_*` procs on Linux system calls, a window by speaking X11 to the display's socket, and sound by speaking to the sound server's |
+| `windows.omg`  | ~1550 | The same `os_*` procs on `kernel32.dll` and `ws2_32.dll`, a window through `user32.dll` and `gdi32.dll`, and sound through `winmm.dll` |
 
 `omg` joins `core`, `float`, `builtins` and one of the system files
 into a single unit, compiles it with the ordinary compiler, and hands
@@ -179,10 +179,11 @@ Everything above is written against about sixty procs named `os_*`:
 `os_subprocess`, `os_tcp_connect`, `os_read_key` and so on.
 `linux.omg` implements them with system calls made directly
 (`__syscall`), `windows.omg` with calls into `kernel32.dll` and
-`ws2_32.dll`. The four `os_win_*` procs behind the `window_` builtins
-are the one place where the two differ in kind: on Linux there is no
-system call for a window, so `linux.omg` carries a small X11 client
-([10-video.md](10-video.md)). Porting the runtime to another x86-64 system means
+`ws2_32.dll`. The `os_win_*` procs behind the `window_` builtins and
+the `os_snd_*` procs behind the `audio_` builtins are where the two
+differ in kind: on Linux there is no system call for a window or for
+sound, so `linux.omg` carries a small X11 client and a small client
+for the sound server ([10-video.md](10-video.md)). Porting the runtime to another x86-64 system means
 writing a third file like these, and teaching the back end that
 system's executable format.
 

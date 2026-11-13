@@ -1,7 +1,7 @@
 # Test clips for tools/video
 
-Five small H.264 videos, and for each the checksum of every decoded
-picture. `tests/video.sh` decodes them with `tools/video/h264.omg` and
+Small H.264 videos, and for each the checksum of every decoded
+picture; and two clips with AAC sound ([below](#sound)). `tests/video.sh` decodes them with `tools/video/h264.omg` and
 compares.
 
 The clips and the checksums both come from ffmpeg, so the referee is a
@@ -53,4 +53,38 @@ To check a clip of your own the same way:
 
 ```sh
 omg tools/video/mp4info.omg your.mp4 --frames
+```
+
+## Sound
+
+| File | What it is |
+| ---- | ---------- |
+| `sound.mp4` | 82x66, 12 pictures, with a sound track: AAC-LC, two channels at 48000 Hz, 39 blocks. Left a rising tone with bursts of noise (so the encoder switches to short blocks), right a tone that starts and stops |
+| `mono.m4a` | sound only: AAC-LC, one channel at 22050 Hz, 14 blocks, decaying notes over noise, coded with noise substitution |
+| `*.sound` | per block of sound: its number, and the Adler-32 checksum of its samples as 16-bit little-endian bytes |
+
+AAC decoding is not exact as H.264 decoding is: two correct decoders
+may differ in the last bit of a sample. So the `.sound` files hold what
+`tools/video/aac.omg` itself gives (`tools/video/aacinfo.omg` prints
+them), and `tests/video.sh` checks that every back end reproduces
+them. That they are right was checked once, against ffmpeg, allowing
+for that last bit:
+
+```sh
+ffmpeg -f lavfi -i "testsrc2=size=82x66:rate=15" \
+    -f lavfi -i "aevalsrc=0.4*sin(2*PI*(300+900*t)*t)+0.3*random(0)*lt(mod(t\,0.2)\,0.02)|0.4*sin(2*PI*440*t)*gt(mod(t\,0.25)\,0.12):s=48000" \
+    -t 0.8 -c:v libx264 -profile:v baseline -pix_fmt yuv420p -g 10 -crf 32 \
+    -c:a aac -b:a 96k -movflags +faststart sound.mp4
+
+ffmpeg -f lavfi -i "aevalsrc=0.5*sin(2*PI*220*t)*exp(-3*mod(t\,0.3))+0.1*random(1):s=22050" \
+    -t 0.6 -c:a aac -b:a 32k -aac_pns 1 mono.m4a
+
+# the comparison: both decoders' samples, which may differ by 1 at most
+omg tools/video/aacinfo.omg sound.mp4 --pcm ours.raw
+ffmpeg -ignore_editlist 1 -i sound.mp4 -vn -f s16le theirs.raw
+python3 -c "
+import numpy as np
+a = np.fromfile('ours.raw', '<i2').astype(int)
+b = np.fromfile('theirs.raw', '<i2').astype(int)
+print(len(a), len(b), abs(a - b).max())"     # 79872 79872 1
 ```

@@ -19,7 +19,7 @@ VM, the back ends and the runtimes are put together.
 | ...debug something that's gone wrong               | [07-debugging.md](07-debugging.md) |
 | ...use it on Windows                               | [08-windows.md](08-windows.md) |
 | ...serve web pages from an OMG program             | [09-http-server.md](09-http-server.md) |
-| ...open a window, or play a video                  | [10-video.md](10-video.md) |
+| ...open a window, play sound, or play a video      | [10-video.md](10-video.md) |
 
 ## TL;DR
 

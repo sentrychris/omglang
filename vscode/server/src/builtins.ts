@@ -1085,6 +1085,86 @@ export const BUILTINS: readonly BuiltinDoc[] = [
         see: ['window_open']
     }),
 
+    // --- Sound --------------------------------------------------------------
+    b({
+        name: 'audio_open',
+        category: 'Sound',
+        signatures: ['audio_open(rate, channels)'],
+        params: [
+            { name: 'rate', doc: 'Moments of sound a second, from 4000 to 192000: 44100 and 48000 are the usual ones.' },
+            { name: 'channels', doc: '`1`, or `2` for left and right.' }
+        ],
+        minArgs: 2, maxArgs: 2,
+        summary: 'Opens the loudspeakers to play sound on.',
+        details: 'A program has one stream of sound at a time. On Linux the runtime speaks to the sound server (PulseAudio, or PipeWire, which answers the same way) over its socket; on Windows it asks winmm. Nothing is linked in for either. Only in a program run by `omg` or built to machine code: built through C or as JavaScript, it raises a `ValueError`, as it does when there is nothing to play sound on.',
+        returns: 'A handle for the other `audio_` builtins.',
+        returnType: 'int',
+        example: 'alloc out := audio_open(44100, 1)\n# half a second of a 441 Hz saw wave\nalloc samples := []\nalloc i := 0\nloop i < 22050 {\n    append(samples, (i % 100) * 100 - 5000)\n    i := i + 1\n}\nalloc at := 0\nloop audio_played(out) < 22050 {\n    at := at + audio_write(out, samples, at)\n    sleep_ms(10)\n}\naudio_close(out)',
+        runnable: false,
+        see: ['audio_write', 'audio_played', 'audio_pause', 'audio_close']
+    }),
+    b({
+        name: 'audio_write',
+        category: 'Sound',
+        signatures: ['audio_write(audio, samples, from)'],
+        params: [
+            { name: 'audio', doc: 'A handle from `audio_open`.' },
+            { name: 'samples', doc: 'A list of ints from -32768 to 32767 (anything beyond is clipped). With two channels: left, right, left, right.' },
+            { name: 'from', doc: 'Where in the list to start.' }
+        ],
+        minArgs: 3, maxArgs: 3,
+        summary: 'Hands sound over to be played, as much as there is room for.',
+        details: 'It never waits. About half a second of sound can be waiting to be played; when that is full it takes nothing and returns `0`. So a program keeps a position in its samples, adds what each call returns, and calls again a little later. Sound that was written is played even when no more follows.',
+        returns: 'How many samples it took, from `from` on.',
+        returnType: 'int',
+        example: 'alloc out := audio_open(48000, 2)\nalloc samples := list_repeat(0, 2 * 48000)\nalloc at := 0\nloop at < length(samples) {\n    at := at + audio_write(out, samples, at)\n    sleep_ms(10)\n}',
+        runnable: false,
+        see: ['audio_open', 'audio_played']
+    }),
+    b({
+        name: 'audio_played',
+        category: 'Sound',
+        signatures: ['audio_played(audio)'],
+        params: [{ name: 'audio', doc: 'A handle from `audio_open`.' }],
+        minArgs: 1, maxArgs: 1,
+        summary: 'How much of the sound has been heard so far.',
+        details: 'Counted in moments since `audio_open`: divide by the rate for seconds. It never goes back and never passes what was written. It is the clock to show pictures by: sound devices do not run at exactly the speed the computer\'s clock says.',
+        returns: 'The number of moments heard.',
+        returnType: 'int',
+        example: 'alloc out := audio_open(48000, 2)\nalloc seconds := audio_played(out) / 48000',
+        runnable: false,
+        see: ['audio_write', 'audio_pause']
+    }),
+    b({
+        name: 'audio_pause',
+        category: 'Sound',
+        signatures: ['audio_pause(audio, on)'],
+        params: [
+            { name: 'audio', doc: 'A handle from `audio_open`.' },
+            { name: 'on', doc: '`true` to hold the sound, `false` to let it go on.' }
+        ],
+        minArgs: 2, maxArgs: 2,
+        summary: 'Holds the sound where it is, or lets it go on.',
+        details: 'While held, `audio_played` stands still and what was written stays waiting.',
+        returns: 'Nothing.',
+        example: 'alloc out := audio_open(48000, 2)\naudio_pause(out, true)\nsleep_ms(1000)\naudio_pause(out, false)',
+        runnable: false,
+        see: ['audio_played']
+    }),
+    b({
+        name: 'audio_close',
+        category: 'Sound',
+        signatures: ['audio_close(audio)'],
+        params: [{ name: 'audio', doc: 'A handle from `audio_open`.' }],
+        minArgs: 1, maxArgs: 1,
+        summary: 'Stops the sound at once and lets go of the device.',
+        details: 'Sound that was written and not yet heard is thrown away: to let it finish, wait until `audio_played` has reached what was written. After it another stream can be opened, which is also how to jump to another place in a piece of music.',
+        returns: 'Nothing.',
+        example: 'alloc out := audio_open(48000, 2)\naudio_close(out)',
+        runnable: false,
+        see: ['audio_open']
+    }),
+
     // --- Reflection ---------------------------------------------------------
     b({
         name: 'call_builtin',

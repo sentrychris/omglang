@@ -3782,6 +3782,30 @@ static Value omg_builtin_window_close(Value win) {
     return omg_builtin_window_unavailable("window_close");
 }
 
+/* audio_open / audio_write / audio_played / audio_pause / audio_close:
+ * sound, like the window, comes from OMG's own runtime, which speaks
+ * to the sound server itself. A program built through C has none. */
+static Value omg_builtin_audio_open(Value rate, Value channels) {
+    (void)rate; (void)channels;
+    return omg_builtin_window_unavailable("audio_open");
+}
+static Value omg_builtin_audio_write(Value a, Value samples, Value from) {
+    (void)a; (void)samples; (void)from;
+    return omg_builtin_window_unavailable("audio_write");
+}
+static Value omg_builtin_audio_played(Value a) {
+    (void)a;
+    return omg_builtin_window_unavailable("audio_played");
+}
+static Value omg_builtin_audio_pause(Value a, Value on) {
+    (void)a; (void)on;
+    return omg_builtin_window_unavailable("audio_pause");
+}
+static Value omg_builtin_audio_close(Value a) {
+    (void)a;
+    return omg_builtin_window_unavailable("audio_close");
+}
+
 /* tcp_poll(reads, writes, timeout_ms): wait until a socket in `reads`
  * has something to take (data, the end of the stream, or for a
  * listener a connection), or one in `writes` has room to send, or the
@@ -3966,6 +3990,8 @@ static Value omg_call_builtin(Value name, Value args) {
         if (strcmp(n, "tcp_peer") == 0)        return omg_builtin_tcp_peer(a[0]);
         if (strcmp(n, "window_poll") == 0)     return omg_builtin_window_poll(a[0]);
         if (strcmp(n, "window_close") == 0)    return omg_builtin_window_close(a[0]);
+        if (strcmp(n, "audio_played") == 0)    return omg_builtin_audio_played(a[0]);
+        if (strcmp(n, "audio_close") == 0)     return omg_builtin_audio_close(a[0]);
         if (strcmp(n, "file_size") == 0)       return omg_builtin_file_size(a[0]);
         if (strcmp(n, "file_mtime") == 0)      return omg_builtin_file_mtime(a[0]);
     }
@@ -4006,6 +4032,8 @@ static Value omg_call_builtin(Value name, Value args) {
         if (strcmp(n, "tcp_nonblocking") == 0) return omg_builtin_tcp_nonblocking(a[0], a[1]);
         if (strcmp(n, "file_read") == 0)   return omg_builtin_file_read2(a[0], a[1]);
         if (strcmp(n, "pty_write") == 0)   return omg_builtin_pty_write(a[0], a[1]);
+        if (strcmp(n, "audio_open") == 0)  return omg_builtin_audio_open(a[0], a[1]);
+        if (strcmp(n, "audio_pause") == 0) return omg_builtin_audio_pause(a[0], a[1]);
     }
     if (argc == 3) {
         if (strcmp(n, "pty_resize") == 0) return omg_builtin_pty_resize(a[0], a[1], a[2]);
@@ -4013,6 +4041,7 @@ static Value omg_call_builtin(Value name, Value args) {
         if (strcmp(n, "tcp_poll") == 0)   return omg_builtin_tcp_poll(a[0], a[1], a[2]);
         if (strcmp(n, "window_open") == 0) return omg_builtin_window_open(a[0], a[1], a[2]);
         if (strcmp(n, "window_draw") == 0) return omg_builtin_window_draw(a[0], a[1], a[2]);
+        if (strcmp(n, "audio_write") == 0) return omg_builtin_audio_write(a[0], a[1], a[2]);
     }
     omg_panicf("TypeError", "unknown builtin: %s", n);
     return omg_none(); /* unreachable */

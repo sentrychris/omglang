@@ -326,6 +326,13 @@ run by `omg` or built to machine code.
 [10-video.md](10-video.md) has the details, and a video player built
 on them.
 
+**Sound**
+`audio_open(rate, channels)`, `audio_write(audio, samples, from)`
+(16-bit ints; takes what there is room for, returns how many, never
+waits), `audio_played(audio)` (moments heard so far: a clock),
+`audio_pause(audio, on)`, `audio_close(audio)`. Where the window
+works. [10-video.md](10-video.md#sound) has the details.
+
 **Process control**
 `interrupted()` (how many times the program has been asked to stop by
 Ctrl-C or SIGTERM; from the first call on they are counted instead of

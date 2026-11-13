@@ -210,6 +210,11 @@ proc emit_builtin(name, argc) {
     if name == "window_draw"      and argc == 3 { return emit_builtin3("omg_window_draw") }
     if name == "window_poll"      and argc == 1 { return emit_builtin1("omg_window_poll") }
     if name == "window_close"     and argc == 1 { return emit_builtin1("omg_window_close") }
+    if name == "audio_open"       and argc == 2 { return emit_builtin2("omg_audio_open") }
+    if name == "audio_write"      and argc == 3 { return emit_builtin3("omg_audio_write") }
+    if name == "audio_played"     and argc == 1 { return emit_builtin1("omg_audio_played") }
+    if name == "audio_pause"      and argc == 2 { return emit_builtin2("omg_audio_pause") }
+    if name == "audio_close"      and argc == 1 { return emit_builtin1("omg_audio_close") }
 
     panic("native-js: builtin '" + name + "' (argc=" + argc + ") not implemented yet")
 }

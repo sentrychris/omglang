@@ -1,0 +1,143 @@
+;;;omg
+
+# tools/video/aacinfo.omg
+#
+# Decodes the sound track of an MP4 file (AAC, as aac.omg decodes it)
+# and prints a checksum for every block of it, or writes the samples
+# to a file.
+#
+#     omg tools/video/aacinfo.omg clip.mp4                  # a checksum for every block of sound
+#     omg tools/video/aacinfo.omg clip.mp4 --pcm out.raw    # the sound, as 16-bit little-endian samples
+#     omg tools/video/aacinfo.omg clip.mp4 --all out.raw    # every channel as decoded, not mixed down to two
+#
+# The checksums are Adler-32 over a block's samples as bytes. Unlike
+# H.264, AAC decoding is not exact: two correct decoders may differ in
+# the last bit of a sample, because the standard leaves the rounding
+# of its arithmetic open. So the test for aac.omg is in two parts: its
+# samples were compared with ffmpeg's (none differs by more than 1,
+# see tests/video/README.md), and its own checksums are kept, which
+# every way of running OMG has to reproduce.
+
+import "mp4.omg" as mp4
+import "aac.omg" as aac
+
+proc seconds(ticks, scale) {
+    alloc ms := ticks * 1000 // scale
+    alloc frac := "" + (ms % 1000)
+    loop length(frac) < 3 {
+        frac := "0" + frac
+    }
+    return "" + (ms // 1000) + "." + frac
+}
+
+# Every channel of the block just decoded, side by side.
+proc all_channels() {
+    alloc n := aac.channels_decoded()
+    alloc pcm := list_repeat(0, 1024 * n)
+    alloc c := 0
+    loop c < n {
+        alloc one := aac.channel(c)
+        alloc i := 0
+        loop i < 1024 {
+            pcm[i * n + c] := one[i]
+            i := i + 1
+        }
+        c := c + 1
+    }
+    return pcm
+}
+
+# Decode the sound track. With a path, the samples go there; without,
+# a checksum of every block is printed.
+proc sound(m, out_path, unmixed) {
+    alloc s := m.sound
+    if s == false or s.codec != "mp4a" {
+        emit "there is no AAC sound track to decode"
+        exit(1)
+    }
+    aac.set_config(s.config)
+    alloc out := false
+    if out_path != "" {
+        out := file_open(out_path, "wb")
+    }
+    alloc took := 0
+    alloc bytes := list_repeat(0, 4096)
+    alloc i := 0
+    loop i < s.count {
+        alloc data := mp4.read_sound(m, i)
+        alloc t0 := time_ms()
+        alloc pcm := aac.decode(data)
+        took := took + (time_ms() - t0)
+        if unmixed {
+            pcm := all_channels()
+        }
+        alloc n := length(pcm)
+        if out != false {
+            if length(bytes) != 2 * n {
+                bytes := list_repeat(0, 2 * n)
+            }
+            alloc k := 0
+            loop k < n {
+                alloc v := pcm[k] & 65535
+                bytes[2 * k] := v & 255
+                bytes[2 * k + 1] := v >> 8
+                k := k + 1
+            }
+            file_write(out, bytes)
+        } else {
+            # Adler-32 of the samples as little-endian bytes
+            alloc a := 1
+            alloc b := 0
+            alloc k := 0
+            loop k < n {
+                alloc v := pcm[k] & 65535
+                a := (a + (v & 255)) % 65521
+                b := (b + a) % 65521
+                a := (a + (v >> 8)) % 65521
+                b := (b + a) % 65521
+                k := k + 1
+            }
+            emit "" + i + " " + (b * 65536 + a)
+        }
+        i := i + 1
+    }
+    if out != false {
+        file_close(out)
+    }
+    alloc about := aac.info()
+    alloc speed := "?"
+    if took > 0 {
+        speed := "" + (s.count * 1024 * 1000 // about.rate // took)
+    }
+    emit "# " + s.count + " blocks of sound decoded in " + took + " ms (" + speed + " times as fast as it plays)"
+    return false
+}
+
+proc main() {
+    if length(args) < 2 or length(args) == 3 or length(args) > 4 {
+        emit "usage: aacinfo <file.mp4> [--pcm <file> | --all <file>]"
+        exit(2)
+    }
+    alloc m := mp4.open(args[1])
+    alloc s := m.sound
+    if s != false {
+        emit "# audio: " + s.codec + " " + s.rate + " Hz, " + s.channels + " channels, " + s.count + " blocks, " + seconds(s.duration, s.timescale) + " s"
+    }
+    if length(args) == 2 {
+        sound(m, "", false)
+    } elif args[2] == "--pcm" or args[2] == "--all" {
+        sound(m, args[3], args[2] == "--all")
+    } else {
+        emit "usage: aacinfo <file.mp4> [--pcm <file> | --all <file>]"
+        exit(2)
+    }
+    mp4.close(m)
+    return false
+}
+
+try {
+    main()
+} except err {
+    emit "aacinfo: " + err
+    exit(1)
+}

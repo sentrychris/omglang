@@ -1,27 +1,30 @@
-# 10. A window, and a video player
+# 10. A window, sound, and a video player
 
-`tools/video/play.omg` plays the video of an MP4 file in a window:
+`tools/video/play.omg` plays an MP4 file, pictures and sound:
 
 ```sh
 omg --build tools/video/play.omg play
 ./play clip.mp4
 ```
 
-Everything between the file and the screen is OMG. The MP4 reader and
-the H.264 decoder are OMG programs, and the window is opened by the
-runtime, itself OMG, speaking to the system directly. No library is
-linked in and no other program is started: `play` is one executable of
-about 1.4 MB, and `--target windows-x64` gives the same thing for
-Windows from Linux.
+Everything between the file and the screen and loudspeakers is OMG.
+The MP4 reader, the H.264 decoder and the AAC decoder are OMG programs,
+and the window and the sound are opened by the runtime, itself OMG,
+speaking to the system directly. No library is linked in and no other
+program is started: `play` is one executable of about 1.8 MB, and
+`--target windows-x64` gives the same thing for Windows from Linux.
 
-This page covers the four builtins that give a program a window, then
-the video tools built on them.
+This page covers the four builtins that give a program a window and
+the five that give it sound, then the video tools built on them.
 
 - [A window](#a-window)
 - [How the window gets on the screen](#how-the-window-gets-on-the-screen)
+- [Sound](#sound)
+- [How the sound gets to the loudspeakers](#how-the-sound-gets-to-the-loudspeakers)
 - [The player](#the-player)
 - [Reading an MP4 file](#reading-an-mp4-file)
 - [Decoding H.264](#decoding-h264)
+- [Decoding AAC](#decoding-aac)
 - [How fast it is](#how-fast-it-is)
 - [How it is tested](#how-it-is-tested)
 - [What is not there](#what-is-not-there)
@@ -99,9 +102,9 @@ Call `window_poll` often, in a loop until it returns `false`. It is
 also what keeps the window alive: a program that stops calling it has
 a window the system reports as not responding.
 
-**Limits.** One window at a time. There is no mouse, no text drawing
-and no sound: it is a surface for pictures, and what a video player or
-a simple game needs. A program that has a window is still a console
+**Limits.** One window at a time. There is no mouse and no text
+drawing: it is a surface for pictures, and what a video player or a
+simple game needs. A program that has a window is still a console
 program: `emit` goes to the terminal it was started from.
 
 **Where it works.** In a program run by `omg` or built with
@@ -143,11 +146,110 @@ pixels in the form both systems take, is in
 program is built or interpreted, so `window_draw` costs the same either
 way.
 
+## Sound
+
+| Builtin | What it does |
+| ------- | ------------ |
+| `audio_open(rate, channels)` | Open the loudspeakers for sound at `rate` moments a second, with 1 or 2 channels. Returns a handle. |
+| `audio_write(audio, samples, from)` | Hand over samples from position `from` of a list, as many as there is room for. Returns how many it took. Never waits. |
+| `audio_played(audio)` | How many moments have been heard so far. |
+| `audio_pause(audio, on)` | Hold the sound where it is (`true`), or let it go on (`false`). |
+| `audio_close(audio)` | Stop at once and let go of the device. |
+
+A complete program, which plays a note that dies away:
+
+```omg
+alloc rate := 44100
+alloc out := audio_open(rate, 1)
+
+# one second: a 441 Hz saw wave, getting quieter
+alloc samples := list_repeat(0, rate)
+alloc i := 0
+loop i < rate {
+    samples[i] := ((i % 100) * 200 - 10000) * (rate - i) // rate
+    i := i + 1
+}
+
+# hand it over a piece at a time, until all of it has been heard
+alloc at := 0
+loop audio_played(out) < rate {
+    at := at + audio_write(out, samples, at)
+    sleep_ms(10)
+}
+audio_close(out)
+```
+
+**The samples.** Sound is a list of ints from -32768 to 32767 (what is
+beyond is clipped), `rate` of them for every second. With two channels
+they alternate, left then right, and a "moment" is one of each: a
+second of stereo at 48000 is a list of 96000.
+
+**Writing never waits.** About half a second of sound can be waiting
+to be played. `audio_write` takes what fits of the list from `from`
+on, and returns how many samples that was; when nothing fits it
+returns 0. So a program keeps its place in its samples, adds what each
+call returned, does something else (draws a picture, sleeps a few
+milliseconds) and calls again. Whatever was written is played, even if
+no more follows.
+
+**The count is a clock.** `audio_played` says how many moments have
+come out of the loudspeakers since `audio_open`: divide by the rate for
+seconds. It never goes back and never passes what was written. A
+program that shows pictures to sound should go by this count and not
+by `time_ms()`: a sound device runs at its own speed, a little off the
+computer's clock, and over a film the two drift apart by more than a
+picture. While paused the count stands still.
+
+**Stopping.** `audio_close` throws away what has not been heard yet.
+To let a sound finish, wait until `audio_played` has reached what was
+written, as the program above does. To jump to another place in a
+piece, close and open again.
+
+**Limits.** One stream at a time, 16 bits, one or two channels, to the
+device the system has chosen. There is no recording and no volume
+control (scale the samples).
+
+**Where it works.** As the window: in a program run by `omg` or built
+with `omg --build` for Linux or Windows, and as a `ValueError` that
+says so when built through C or as JavaScript. `audio_open` raises a
+`ValueError` too when there is nothing to play on: on Linux when no
+sound server answers, on Windows when there is no sound device.
+
+## How the sound gets to the loudspeakers
+
+**Linux** (`src/runtime/x64/linux.omg`). Programs on a Linux desktop do
+not open the sound card; they talk to a sound server that mixes
+everybody's sound. For years that was PulseAudio, and its successor
+PipeWire still answers PulseAudio's protocol on PulseAudio's socket,
+so one protocol covers the desktops there are (and WSL, which runs a
+PulseAudio server for Windows to listen to). The runtime connects to
+the socket (`$XDG_RUNTIME_DIR/pulse/native`, or what `PULSE_SERVER`
+names), shows the cookie from `~/.config/pulse/cookie`, and creates a
+playback stream, each a command it lays out itself: a 20-byte header,
+then values each with a one-letter tag in front. The server then says
+how many bytes it wants (that is the "room" `audio_write` goes by),
+sound goes over as the same header with the samples behind it, and for
+`audio_played` the server is asked how far it has read and how long
+its own pipe to the loudspeaker is. A machine with bare ALSA and no
+sound server is not covered.
+
+**Windows** (`src/runtime/x64/windows.omg`). Nine functions of
+`winmm.dll`, imported like the window's: `waveOutOpen`, then blocks of
+samples handed over with `waveOutWrite`, 32 of them of a thirty-second
+of a second each, used in a ring. Windows marks each block when it has
+played it, and looking at those marks tells how much room there is, so
+nothing waits and Windows never has to call back into the program.
+`waveOutGetPosition` is the count. Only a program that uses sound
+imports this library.
+
+Clipping the samples to 16 bits and packing them is in
+`src/runtime/x64/builtins.omg`, the same for both.
+
 ## The player
 
 ```sh
 omg --build tools/video/play.omg play        # or: play.exe --target windows-x64
-./play clip.mp4 [--loop] [--scale N] [--fast]
+./play clip.mp4 [--loop] [--scale N] [--fast] [--mute]
 ```
 
 | Key | Does |
@@ -161,7 +263,17 @@ omg --build tools/video/play.omg play        # or: play.exe --target windows-x64
 `--loop` starts again at the end. `--scale N` opens the window N times
 the size of the video (small videos get 2 or 3 by default). `--fast`
 does not wait for each picture's time, which measures how fast the
-machine can go.
+machine can go; it plays no sound, and neither does `--mute`.
+
+**Sound keeps the time.** The player decodes the sound a little ahead
+and keeps half a second of it waiting in the device. A picture is
+shown when `audio_played` says the sound has reached its moment, so
+the two cannot drift apart however long the film. Pausing holds the
+sound; a jump closes the stream and opens it again at the new place.
+A file without sound, or with sound that cannot be played (another
+codec, no sound server), is shown by the computer's clock, and the
+player says why there is no sound. A file with sound and no video is
+played without a window, until its end or Ctrl+C.
 
 Pictures are shown at the times the file gives them. A file stores
 them in the order they are needed for decoding, which is not always the
@@ -174,21 +286,25 @@ and must be decoded, but many files also hold pictures that nothing is
 built from (`h264.droppable(sample)` tells): those are not decoded at
 all. Where drawing takes long next to decoding, some pictures are
 decoded but not drawn. If all that is not enough, the video runs slow
-rather than freezes. At the end the player prints what happened:
+rather than freezes. Sound cannot run slow. When the pictures fall
+half a second behind it, the sound is started again from where the
+pictures are, and the third time that happens the player gives the
+sound up and goes on without. At the end the player prints what
+happened:
 
 ```
 flower.mp4: 960x540, 150 pictures, 29.9 a second
-(its sound, mp4a, is not played)
-84 pictures shown in 5.9 s: 14.2 a second
-decoding took 57.5 ms a picture, drawing 11.9 ms
-66 pictures were left out, to keep up
-the video ran 0.5 s behind: this machine decodes it too slowly
+sound: AAC, 48000 Hz, two channels
+103 pictures shown in 5.0 s: 20.4 a second
+decoding took 38.7 ms a picture, drawing 8.4 ms
+47 pictures were left out, to keep up
 ```
 
 Run interpreted (`omg tools/video/play.omg clip.mp4`) it works, but
 far too slowly for anything larger than a postage stamp: build it.
 
-The player is 450 lines. It is three modules put together:
+The player is 830 lines. Without the timing it is a few modules put
+together:
 
 ```omg
 import "mp4.omg" as mp4
@@ -212,7 +328,8 @@ loop i < m.count {
 ```
 
 (which shows the pictures as fast as they come, in the order they are
-stored; `play.omg` adds the timing, the order of showing and the keys.)
+stored; `play.omg` adds the timing, the order of showing, the sound
+and the keys.)
 
 ## Reading an MP4 file
 
@@ -236,19 +353,28 @@ it is decoded and shown, and whether decoding can start there.
 | `dts`, `pts` | per sample: when to decode it, when to show it, in ticks |
 | `sync` | per sample: 1 when decoding can start there |
 | `order` | sample numbers in the order they are shown |
+| `start` | the tick at which the film begins, when the file says its first pictures are not shown |
 | `audio` | codec of the sound track, `""` when there is none |
+| `sound` | the sound track, or `false`: a dict with `codec` (`"mp4a"` for AAC), `config` (the `esds` box), `rate`, `channels`, and `timescale`, `duration`, `count`, `sizes`, `offsets`, `dts` and `start` as above |
 
-`mp4.read_sample(m, i)` seeks and reads one sample as a list of bytes;
+`mp4.read_sample(m, i)` seeks and reads one sample of the video as a
+list of bytes, `mp4.read_sound(m, i)` one of the sound track;
 `mp4.close(m)` closes the file. The file is never read whole, so its
-size does not matter.
+size does not matter. A file with sound and no video opens too, with
+`codec` `""` and `count` 0.
 
 `tools/video/mp4info.omg` prints what a file holds, and with `--frames`
 decodes it and prints a checksum for every picture:
 
 ```
-$ omg tools/video/mp4info.omg tests/video/clip.mp4
-# video: avc1 82x66, 20 frames, 1.333 s, 15.0 frames a second
+$ omg tools/video/mp4info.omg tests/video/sound.mp4
+# video: avc1 82x66, 12 frames, 0.800 s, 15.0 frames a second
+# audio: mp4a 48000 Hz, 2 channels, 39 blocks, 0.821 s
 ```
+
+`tools/video/aacinfo.omg` does the same for the sound track: a
+checksum for every block, or with `--pcm out.raw` the samples
+themselves, to listen to or to compare with another decoder's.
 
 ## Decoding H.264
 
@@ -316,6 +442,53 @@ sections:
 All of it is integer arithmetic, and the standard pins down every
 step, so there is one right answer for every pixel.
 
+## Decoding AAC
+
+`tools/video/aac.omg`, 2,000 lines of which a third are the
+standard's tables, decodes the sound MP4 files nearly always carry:
+AAC in its Low Complexity profile, at any sampling rate.
+
+| Proc | Does |
+| ---- | ---- |
+| `set_config(bytes)` | Take the `esds` box of an MP4 sound track. |
+| `decode(sample)` | Decode one sample: 1024 moments of sound, as a list `audio_write` takes. |
+| `info()` | `{rate, channels, out_channels, sbr, block}` |
+| `reset()` | Forget what came before, after a jump. |
+
+AAC does not store the wave. It stores, for every 1024 moments, how
+much of each pitch there is, as coarsely as the ear lets it get away
+with. A block on its way through:
+
+1. **Bits.** A block holds one element per channel or pair of
+   channels. For each, the pitches are divided into some forty bands,
+   and for every band the block says which of eleven code books its
+   numbers are written in and how loud the band is.
+2. **Numbers.** The values are read with the band's code book, in twos
+   or fours, and scaled: a stored `n` stands for `n` to the power 4/3,
+   times the band's loudness.
+3. **Stereo.** Left and right are often nearly the same, so a band may
+   store their sum and difference instead, or only one channel and a
+   note of where between the two loudspeakers it sits.
+4. **Noise.** A band that sounds like hiss is not stored at all, only
+   how loud it is; the decoder makes up noise of that loudness.
+5. **Shaping.** A sharp sound, a click or a consonant, would smear over
+   its whole block. A small filter along the pitches undoes that; and
+   where there are many sharp sounds the encoder switches to eight
+   short blocks of 128.
+6. **Back to a wave.** The inverse of the transform the encoder used
+   (an MDCT) turns 1024 amounts of pitch into 2048 moments, each block
+   overlapping half of the one before it, faded in and out so that the
+   two halves add up. It is computed with a 512-point Fourier
+   transform.
+
+More than two channels (5.1 sound) are decoded and mixed down to two.
+
+Unlike H.264, the arithmetic is floating point and the standard does
+not pin down its rounding, so two correct decoders may differ in the
+last bit of a sample. This one uses only `+ - * /` and `sqrt`, which
+every processor rounds the same way, and works out its own sines for
+the tables, so it gives the same samples through every back end.
+
 ## How fast it is
 
 Built with `omg --build`, on one core of a 2.3 GHz Xeon server, in
@@ -364,6 +537,9 @@ in the file and sixteen in an OMG list, so a 1280x720 picture is 22 MB
 of list; a list of bytes that took one byte each would be the next
 large step, and that is a change to the language, not to the back end.
 
+Sound costs little next to that. A second of stereo at 48000 Hz
+decodes in 22 to 26 ms, so playing it takes a fortieth of one core.
+
 Run by the interpreter instead of built, decoding is about 250 times
 slower.
 
@@ -396,6 +572,31 @@ memory, when it is installed: a program opens a window, draws, polls
 and closes, and the player plays a clip to its end. On Windows the
 same checks run against the real desktop.
 
+AAC decoding is not exact, so the comparison with ffmpeg allows for
+the last bit: over 45 files, no sample of `aacinfo --all` differed
+from ffmpeg's by more than 1. Those were thirty-four made for the
+purpose (twelve sampling rates from 8000 to 96000, bit rates from 16
+to 256 thousand a second, one, two, three, six and eight channels,
+each coding tool switched on and off), streams from the standard's own
+conformance set, and files from the web. Two small clips are checked
+in with the checksums this decoder gives for them, and `tests/video.sh`
+checks that the interpreter, the machine code, the C and the
+JavaScript all reproduce those exactly. Not met in any of those files:
+noise substitution in a band that is also coded as sum and difference,
+and a channel layout described inside the stream.
+
+The sound builtins are tested like the window: with PulseAudio
+installed, the tests start a server of their own that plays into
+nothing, and a program writes two seconds of sound, watches the count
+arrive at exactly that, pauses and goes on; the player plays a clip
+with sound, and a file with sound only. While they were written, what
+came out of the server was recorded and compared sample by sample
+with what went in, on PulseAudio, on PipeWire, and for the Windows
+side under Wine. They have not been run on a machine with real
+loudspeakers, or on Windows itself: that sound and picture are in step
+to the ear is measured (the picture is within a few milliseconds of
+the count) but not heard.
+
 ## What is not there
 
 - **The rarer kinds of H.264.** Interlaced video (television formats),
@@ -410,10 +611,19 @@ same checks run against the real desktop.
   `ffmpeg -i in.mp4 -vf scale=640:-2 -an out.mp4`.
 - **Other codecs** (H.265, AV1, VP9). `mp4.open` reads the file and
   names the codec; nothing decodes it.
-- **Sound.** The player says when a file has a sound track and does
-  not play it.
+- **Other sound.** MP3, AC-3 and Opus tracks are named and not played.
+  Of AAC, the Main, SSR and LTP profiles are refused by name. HE-AAC,
+  which low bit rate files use, carries its top octave in an extra
+  layer that is not decoded: such a file plays, at half its sampling
+  rate, sounding dull, and the player says so.
+- **Sound without a sound server.** On Linux the runtime speaks to
+  PulseAudio or PipeWire; a machine with neither (bare ALSA) plays
+  the pictures only.
+- **Sound for pictures that are too large.** Sound cannot slow down,
+  so where the pictures cannot keep up (1280x720 and beyond, on the
+  machine above) the player ends up without it.
 - **Fragmented MP4 files** (the kind streaming sites send in pieces).
-- **macOS.** `omg` goes through C there, and the window builtins exist
-  only in the machine-code runtime.
+- **macOS.** `omg` goes through C there, and the window and sound
+  builtins exist only in the machine-code runtime.
 - On Windows the video stops while the window is being dragged or
   resized, and goes on when the mouse is let go.

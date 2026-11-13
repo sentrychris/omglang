@@ -62,7 +62,8 @@ Set-Alias omg "$PWD\bin\omg.exe"   # or just an alias, for this session
 
 An executable made by `--build` is one file of a few tens of
 kilobytes. It imports from `kernel32.dll` (and `ws2_32.dll` if it uses
-TCP, `user32.dll` and `gdi32.dll` if it opens a window), which are part
+TCP, `user32.dll` and `gdi32.dll` if it opens a window, `winmm.dll` if
+it plays sound), which are part
 of Windows, and from nothing else: no C runtime DLL, no OMG. You can copy it to another machine as it is.
 
 ## Rebuilding the toolchain
@@ -101,6 +102,7 @@ places where Windows shows through.
 | `interrupted()` | Counts Ctrl-C and Ctrl-Break in the console, where elsewhere it counts SIGINT and SIGTERM. A `tcp_poll` in progress notices within a tenth of a second. |
 | Sockets | The `tcp_*` builtins, `tcp_poll` included, behave as elsewhere, so the [HTTP server](09-http-server.md) serves many connections at once here too. |
 | A window | The `window_` builtins work as on Linux. An executable that uses them imports `user32.dll` and `gdi32.dll` beside `kernel32.dll`; others do not. While the user drags or resizes the window the program waits inside `window_poll`. See [10-video.md](10-video.md). |
+| Sound | The `audio_` builtins work as on Linux, through the `waveOut` functions of `winmm.dll`, which only an executable that uses them imports. See [10-video.md](10-video.md#sound). |
 | `pty_spawn`, `pty_write` | Raise a catchable `ValueError`. `pty_read` returns `false`; `pty_close` and `pty_resize` do nothing. |
 | Paths | `/` and `\` both work as separators, and `C:\dir` and `\\server\share` are absolute. `current_dir` and `executable_path()` are spelled the way Windows spells them, with backslashes. |
 | Files | Always bytes. Nothing turns `\n` into `\r\n` on the way out or back on the way in, for files or for standard input and output. |
@@ -125,8 +127,8 @@ Two pieces, both OMG:
 - [`src/runtime/x64/windows.omg`](../src/runtime/x64/windows.omg) is
   the system layer of the runtime: about sixty `os_*` procedures
   (open, read, write, directory listing, clock, sleep, subprocess,
-  sockets, console, a window) written against `kernel32.dll` and, for
-  TCP, `ws2_32.dll`, and for a window `user32.dll` and `gdi32.dll`. [`linux.omg`](../src/runtime/x64/linux.omg) next to it
+  sockets, console, a window, sound) written against `kernel32.dll` and, for
+  TCP, `ws2_32.dll`, for a window `user32.dll` and `gdi32.dll`, and for sound `winmm.dll`. [`linux.omg`](../src/runtime/x64/linux.omg) next to it
   is the same interface on Linux system calls. The rest of the runtime
   (values, memory, strings, builtins, errors) is shared and knows
   nothing about either system.

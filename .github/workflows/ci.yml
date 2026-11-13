@@ -152,14 +152,27 @@ jobs:
       #                  answering requests
       #   * db         — the database in tools/db
       #   * video      — the H.264 decoder in tools/video against
-      #                  checksums from ffmpeg; a window opened,
-      #                  drawn in and closed, and the player run
-      #                  (Linux: on Xvfb; Windows: on the desktop)
+      #                  checksums from ffmpeg, the AAC decoder against
+      #                  its own on every back end; a window opened,
+      #                  drawn in and closed, sound written and
+      #                  counted, and the player run (Linux: on Xvfb
+      #                  and a PulseAudio that plays into nothing;
+      #                  Windows: on the desktop, which has no sound
+      #                  device on these machines)
       #   * parity     — the compiler gives the same bytes as machine
       #                  code and on the OMG VM; every example prints
       #                  the same interpreted, built, through C and as
       #                  JavaScript; the toolchain rebuilds itself and
       #                  writes the same binary again
+      # The sound checks in tests/video.sh start a PulseAudio of their
+      # own, and skip themselves where there is none: so a failure to
+      # install it here costs those checks and nothing else.
+      - name: PulseAudio, for the sound checks
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update -qq || true
+          sudo apt-get install -y -qq --no-install-recommends pulseaudio || true
+
       - name: Run end-to-end test suite
         run: tests/run.sh 2>&1 | tee tests.log
 

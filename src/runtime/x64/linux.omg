@@ -40,6 +40,7 @@ alloc SYS_MKDIR := 83
 alloc SYS_READLINK := 89
 alloc SYS_CHMOD := 90
 alloc SYS_GETRLIMIT := 97
+alloc SYS_GETUID := 102
 alloc SYS_SETSID := 112
 alloc SYS_SETRLIMIT := 160
 alloc SYS_GETDENTS64 := 217
@@ -1607,5 +1608,508 @@ proc os_win_event(out) {
 proc os_win_close() {
     xw_drop()
     xw_lost := 0
+    return 0
+}
+
+# --- sound ---------------------------------------------------------------------
+#
+# Sound goes to the sound server, over its Unix socket, in the server's
+# own protocol: PulseAudio's "native" protocol, which PipeWire speaks
+# as well (pipewire-pulse), so this covers the desktops there are, and
+# WSL. Nothing is linked in: the protocol is a few commands, each a
+# 20-byte header (length, channel, three words unused here) and a body
+# of tagged values ('L' and four bytes for a number, 't' and a C string,
+# and so on). Sound itself is the same header with the stream's channel
+# number, and the samples as the body.
+#
+# The server says how many bytes it wants (REQUEST), and only that many
+# are ever sent, which is what keeps audio_write from waiting.
+
+alloc PA_NONE := 4294967295
+alloc PA_TARGET_MS := 500      # how much sound waits in the server
+
+alloc pa_fd := -1
+alloc pa_tag := 0              # commands are numbered; the reply names the number
+alloc pa_channel := 0          # the stream, as the server numbers it
+alloc pa_credit := 0           # bytes asked for and not sent yet
+alloc pa_sent := 0             # bytes sent in all
+alloc pa_heard := 0            # bytes heard, as last worked out
+alloc pa_frame := 0            # bytes for one moment: 2 a channel
+alloc pa_rate := 0             # bytes a second
+alloc pa_head := 0             # 20 bytes
+alloc pa_body := 0             # the body of the packet last read
+alloc pa_body_size := 0
+alloc pa_body_len := 0
+alloc pa_wrote_at := 0         # when sound was last sent, in ms
+alloc pa_told := 1             # has the server been told to play out what it holds?
+alloc pa_paused := 0
+
+proc pa_drop() {
+    if pa_fd >= 0 {
+        os_close(pa_fd)
+    }
+    pa_fd := -1
+    return 0
+}
+
+proc pa_raw32(b, v) {
+    rt_buf_byte(b, (v >> 24) & 255)
+    rt_buf_byte(b, (v >> 16) & 255)
+    rt_buf_byte(b, (v >> 8) & 255)
+    rt_buf_byte(b, v & 255)
+    return 0
+}
+
+proc pa_u32(b, v) {
+    rt_buf_byte(b, 76)                           # 'L'
+    return pa_raw32(b, v)
+}
+
+proc pa_string(b, s) {
+    rt_buf_byte(b, 116)                          # 't'
+    rt_buf_str(b, s)
+    return rt_buf_byte(b, 0)
+}
+
+proc pa_bool(b, v) {
+    if v {
+        return rt_buf_byte(b, 49)                # '1'
+    }
+    return rt_buf_byte(b, 48)                    # '0'
+}
+
+# A list of properties with one entry, which is all that is needed.
+proc pa_props(b, key, value) {
+    alloc n := __peek64(value + S_BYTES) + 1
+    rt_buf_byte(b, 80)                           # 'P'
+    pa_string(b, key)
+    pa_u32(b, n)
+    rt_buf_byte(b, 120)                          # 'x'
+    pa_raw32(b, n)
+    rt_buf_str(b, value)
+    rt_buf_byte(b, 0)
+    return rt_buf_byte(b, 78)                    # 'N': no more
+}
+
+# Start a command: the header, then its number and its tag.
+proc pa_begin(cmd) {
+    alloc b := rt_buf_new()
+    pa_raw32(b, 0)
+    pa_raw32(b, PA_NONE)
+    pa_raw32(b, 0)
+    pa_raw32(b, 0)
+    pa_raw32(b, 0)
+    pa_tag := pa_tag + 1
+    pa_u32(b, cmd)
+    pa_u32(b, pa_tag)
+    return b
+}
+
+proc pa_send(b) {
+    alloc p := __peek64(b)
+    alloc n := __peek64(b + 8)
+    alloc len := n - 20
+    __poke8(p, (len >> 24) & 255)
+    __poke8(p + 1, (len >> 16) & 255)
+    __poke8(p + 2, (len >> 8) & 255)
+    __poke8(p + 3, len & 255)
+    alloc r := -1
+    if pa_fd >= 0 {
+        r := os_tcp_write(pa_fd, p, n)
+    }
+    rt_free(p, __peek64(b + 16))
+    rt_free(b, 24)
+    if r < 0 {
+        pa_drop()
+        return -1
+    }
+    return 0
+}
+
+proc pa_be32(p) {
+    return (__peek8(p) << 24) | (__peek8(p + 1) << 16) | (__peek8(p + 2) << 8) | __peek8(p + 3)
+}
+
+proc pa_read(p, n) {
+    loop n > 0 {
+        alloc r := os_read(pa_fd, p, n)
+        if r <= 0 {
+            return -1
+        }
+        p := p + r
+        n := n - r
+    }
+    return 0
+}
+
+# Read one packet into pa_body. Returns the command it carries, -1 when
+# the server has gone, -2 for a packet that is not a command.
+proc pa_packet() {
+    if pa_fd < 0 or pa_read(pa_head, 20) < 0 {
+        pa_drop()
+        return -1
+    }
+    alloc len := pa_be32(pa_head)
+    if len > 1048576 {
+        pa_drop()
+        return -1
+    }
+    if len > pa_body_size {
+        if pa_body != 0 {
+            rt_free(pa_body, pa_body_size)
+        }
+        pa_body_size := len + 256
+        pa_body := rt_alloc(pa_body_size)
+    }
+    pa_body_len := len
+    if pa_read(pa_body, len) < 0 {
+        pa_drop()
+        return -1
+    }
+    if pa_be32(pa_head + 4) != PA_NONE or len < 10 {
+        return -2
+    }
+    alloc cmd := pa_be32(pa_body + 1)
+    if cmd == 61 and len >= 20 {                 # REQUEST: the server wants more
+        if pa_be32(pa_body + 11) == pa_channel {
+            pa_credit := pa_credit + pa_be32(pa_body + 16)
+        }
+    } elif cmd == 64 {                           # the stream was killed
+        pa_drop()
+        return -1
+    }
+    return cmd
+}
+
+# Take in whatever the server has sent, without waiting.
+proc pa_pump() {
+    loop pa_fd >= 0 {
+        __poke32(pa_head, pa_fd)
+        __poke16(pa_head + 4, POLLIN)
+        __poke16(pa_head + 6, 0)
+        if os_sys3(SYS_POLL, pa_head, 1, 0) <= 0 {
+            break
+        }
+        pa_packet()
+    }
+    return 0
+}
+
+# Wait for the reply to the command just sent. 0, or -1 when the server
+# said no, went away, or has said nothing for three seconds.
+proc pa_reply() {
+    loop true {
+        __poke32(pa_head, pa_fd)
+        __poke16(pa_head + 4, POLLIN)
+        __poke16(pa_head + 6, 0)
+        if pa_fd < 0 or os_sys3(SYS_POLL, pa_head, 1, 3000) == 0 {
+            pa_drop()
+            return -1
+        }
+        alloc cmd := pa_packet()
+        if cmd == -1 {
+            return -1
+        }
+        if cmd == 0 or cmd == 2 {                # ERROR, REPLY
+            if pa_be32(pa_body + 6) == pa_tag {
+                if cmd == 0 {
+                    return -1
+                }
+                return 0
+            }
+        }
+    }
+    return -1
+}
+
+proc pa_connect_path(p, n) {
+    if n > 100 {
+        return -1
+    }
+    alloc sa := rt_alloc(128)
+    __memset(sa, 0, 128)
+    __poke16(sa, 1)                              # AF_UNIX
+    __memcpy(sa + 2, p, n)
+    alloc s := os_sys3(SYS_SOCKET, 1, 524289, 0) # SOCK_STREAM | SOCK_CLOEXEC
+    if s >= 0 {
+        if os_sys3(SYS_CONNECT, s, sa, 3 + n) < 0 {
+            os_close(s)
+            s := -1
+        }
+    }
+    rt_free(sa, 128)
+    return s
+}
+
+# The socket is named by PULSE_SERVER (as unix:/path or /path), or is
+# pulse/native under PULSE_RUNTIME_PATH's or XDG_RUNTIME_DIR's folder,
+# or under /run/user/<user number>.
+proc pa_connect() {
+    alloc env := os_getenv("PULSE_SERVER=")
+    if env != 0 and __peek8(env) != 0 {
+        if __memcmp(env, "unix:" + S_DATA, 5) == 0 {
+            env := env + 5
+        }
+        if __peek8(env) != 47 {
+            return -1                            # a server on another machine
+        }
+        return pa_connect_path(env, os_cstr_len(env))
+    }
+    alloc b := rt_buf_new()
+    env := os_getenv("PULSE_RUNTIME_PATH=")
+    if env != 0 and __peek8(env) != 0 {
+        rt_buf_add(b, env, os_cstr_len(env))
+        rt_buf_str(b, "/native")
+    } else {
+        env := os_getenv("XDG_RUNTIME_DIR=")
+        if env != 0 and __peek8(env) != 0 {
+            rt_buf_add(b, env, os_cstr_len(env))
+        } else {
+            rt_buf_str(b, "/run/user/")
+            rt_buf_int(b, os_sys1(SYS_GETUID, 0))
+        }
+        rt_buf_str(b, "/pulse/native")
+    }
+    alloc s := pa_connect_path(__peek64(b), __peek64(b + 8))
+    rt_free(__peek64(b), __peek64(b + 16))
+    rt_free(b, 24)
+    return s
+}
+
+# The secret that says this program may use the server: 256 bytes in a
+# file named by PULSE_COOKIE, or ~/.config/pulse/cookie, or
+# ~/.pulse-cookie. A server that asks for none takes whatever is sent.
+proc pa_cookie(out) {
+    __memset(out, 0, 256)
+    alloc pass := 0
+    loop pass < 3 {
+        alloc path := 0
+        if pass == 0 {
+            alloc env := os_getenv("PULSE_COOKIE=")
+            if env != 0 and __peek8(env) != 0 {
+                path := rt_str_from_c(env)
+            }
+        } else {
+            alloc home := os_getenv("HOME=")
+            if home != 0 {
+                alloc b := rt_buf_new()
+                rt_buf_add(b, home, os_cstr_len(home))
+                if pass == 1 {
+                    rt_buf_str(b, "/.config/pulse/cookie")
+                } else {
+                    rt_buf_str(b, "/.pulse-cookie")
+                }
+                path := rt_buf_finish(b)
+            }
+        }
+        if path != 0 {
+            alloc fd := os_open(path, 0)
+            rt_drop(T_STR, path)
+            if fd >= 0 {
+                alloc got := os_read(fd, out, 256)
+                os_close(fd)
+                if got == 256 {
+                    return 0
+                }
+                __memset(out, 0, 256)
+            }
+        }
+        pass := pass + 1
+    }
+    return 0
+}
+
+# Open a stream. Returns 0, or a string that says what went wrong.
+proc os_snd_open(rate, channels) {
+    if pa_head == 0 {
+        pa_head := rt_alloc(32)
+    }
+    pa_fd := pa_connect()
+    if pa_fd < 0 {
+        return "no sound server answers (PulseAudio or PipeWire, at $XDG_RUNTIME_DIR/pulse/native or $PULSE_SERVER)"
+    }
+    pa_tag := 0
+    # who we are: protocol version 13 (the oldest with these commands), and the cookie
+    alloc b := pa_begin(8)                       # AUTH
+    pa_u32(b, 13)
+    alloc cookie := rt_alloc(256)
+    pa_cookie(cookie)
+    rt_buf_byte(b, 120)                          # 'x'
+    pa_raw32(b, 256)
+    rt_buf_add(b, cookie, 256)
+    rt_free(cookie, 256)
+    if pa_send(b) < 0 or pa_reply() < 0 {
+        pa_drop()
+        return "the sound server turned the program away"
+    }
+    b := pa_begin(9)                             # SET_CLIENT_NAME
+    pa_props(b, "application.name", "OMG")
+    if pa_send(b) < 0 or pa_reply() < 0 {
+        pa_drop()
+        return "the sound server turned the program away"
+    }
+    pa_frame := 2 * channels
+    pa_rate := rate * pa_frame
+    alloc want := pa_rate * PA_TARGET_MS // 1000
+    b := pa_begin(3)                             # CREATE_PLAYBACK_STREAM
+    rt_buf_byte(b, 97)                           # 'a': 16 bits little-endian, channels, rate
+    rt_buf_byte(b, 3)
+    rt_buf_byte(b, channels)
+    pa_raw32(b, rate)
+    rt_buf_byte(b, 109)                          # 'm': mono, or left and right
+    rt_buf_byte(b, channels)
+    if channels == 1 {
+        rt_buf_byte(b, 0)
+    } else {
+        rt_buf_byte(b, 1)
+        rt_buf_byte(b, 2)
+    }
+    pa_u32(b, PA_NONE)                           # any device
+    rt_buf_byte(b, 78)                           # 'N': no device name
+    pa_u32(b, PA_NONE)                           # the most the server may hold: its choice
+    pa_bool(b, 0)                                # not paused
+    pa_u32(b, want)                              # how much it should like to hold
+    pa_u32(b, want // 4)                         # how much before it starts (again)
+    pa_u32(b, pa_rate // 50)                     # ask again for every fiftieth of a second played
+    pa_u32(b, 0)
+    rt_buf_byte(b, 118)                          # 'v': volume of each channel, 0x10000 = as it is
+    rt_buf_byte(b, channels)
+    pa_raw32(b, 65536)
+    if channels == 2 {
+        pa_raw32(b, 65536)
+    }
+    alloc i := 0
+    loop i < 8 {                                 # seven flags, and "muted": all off
+        pa_bool(b, 0)
+        i := i + 1
+    }
+    pa_bool(b, 1)                                # count the device's own delay in the total
+    pa_props(b, "media.name", "OMG")
+    if pa_send(b) < 0 or pa_reply() < 0 {
+        pa_drop()
+        return "the sound server refused the stream"
+    }
+    # The reply: command and tag, then the stream's number, the server's
+    # number for it, and how much it wants.
+    alloc p := pa_body + 10
+    pa_channel := pa_be32(p + 1)
+    pa_credit := pa_be32(p + 11)
+    pa_sent := 0
+    pa_heard := 0
+    pa_told := 1
+    pa_paused := 0
+    return 0
+}
+
+# A server keeps back sound that is too short to be worth starting on:
+# PulseAudio at the start of a stream (it waits for a share of what it
+# was asked to hold), PipeWire whenever less is left than it plays in
+# one go, which is always so at the end. Both play all they hold once
+# told that the stream is draining; so they are told when nothing has
+# been written for a fifth of a second. No answer is waited for (it
+# comes when the sound is out, and is passed over like any other
+# packet that is not being waited for).
+proc pa_finish() {
+    if pa_told or pa_paused or pa_fd < 0 or os_time_ms() - pa_wrote_at < 200 {
+        return 0
+    }
+    pa_told := 1
+    alloc b := pa_begin(12)                      # DRAIN_PLAYBACK_STREAM
+    pa_u32(b, pa_channel)
+    return pa_send(b)
+}
+
+# How many bytes the stream will take now; -1 when it has gone.
+proc os_snd_room() {
+    pa_pump()
+    pa_finish()
+    if pa_fd < 0 {
+        return -1
+    }
+    return pa_credit
+}
+
+proc os_snd_write(p, n) {
+    if pa_fd < 0 {
+        return -1
+    }
+    alloc h := pa_head
+    __poke8(h, (n >> 24) & 255)
+    __poke8(h + 1, (n >> 16) & 255)
+    __poke8(h + 2, (n >> 8) & 255)
+    __poke8(h + 3, n & 255)
+    __poke8(h + 4, (pa_channel >> 24) & 255)
+    __poke8(h + 5, (pa_channel >> 16) & 255)
+    __poke8(h + 6, (pa_channel >> 8) & 255)
+    __poke8(h + 7, pa_channel & 255)
+    __memset(h + 8, 0, 12)
+    if os_tcp_write(pa_fd, h, 20) < 0 or os_tcp_write(pa_fd, p, n) < 0 {
+        pa_drop()
+        return -1
+    }
+    pa_credit := pa_credit - n
+    pa_sent := pa_sent + n
+    pa_wrote_at := os_time_ms()
+    pa_told := 0
+    return n
+}
+
+proc pa_be64(p) {
+    return (pa_be32(p) << 32) | pa_be32(p + 4)
+}
+
+# How many moments of sound have been heard. The server is asked: it
+# answers with how far it has read into what it was sent, and how long
+# what it has read takes to reach the loudspeaker.
+proc os_snd_played() {
+    pa_pump()
+    pa_finish()
+    if pa_fd < 0 {
+        return pa_heard // pa_frame
+    }
+    alloc b := pa_begin(14)                      # GET_PLAYBACK_LATENCY
+    pa_u32(b, pa_channel)
+    rt_buf_byte(b, 84)                           # 'T': the time here, which is only sent back
+    pa_raw32(b, 0)
+    pa_raw32(b, 0)
+    if pa_send(b) < 0 or pa_reply() < 0 or pa_body_len < 65 {
+        return pa_heard // pa_frame
+    }
+    # 'U' delay in the device, 'U' unused, whether it is playing, two
+    # times, 'R' bytes written, 'R' bytes read
+    alloc delay := pa_be64(pa_body + 11)
+    alloc playing := __peek8(pa_body + 28) == 49
+    alloc read := pa_be64(pa_body + 57)
+    alloc heard := read - delay * pa_rate // 1000000
+    if playing == 0 and read >= pa_sent {
+        heard := pa_sent                         # it has run dry: all of it was heard
+    }
+    if heard > pa_sent {
+        heard := pa_sent
+    }
+    heard := heard - heard % pa_frame
+    if heard > pa_heard {
+        pa_heard := heard
+    }
+    return pa_heard // pa_frame
+}
+
+proc os_snd_pause(on) {
+    if pa_fd < 0 {
+        return -1
+    }
+    alloc b := pa_begin(41)                      # CORK_PLAYBACK_STREAM
+    pa_u32(b, pa_channel)
+    pa_bool(b, on)
+    if pa_send(b) < 0 {
+        return -1
+    }
+    pa_paused := on
+    pa_wrote_at := os_time_ms()
+    return pa_reply()
+}
+
+proc os_snd_close() {
+    pa_drop()
     return 0
 }

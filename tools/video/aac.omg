@@ -1,0 +1,2035 @@
+;;;omg
+
+# tools/video/aac.omg
+#
+# An AAC audio decoder, for the sound track of an MP4 file.
+#
+#     import "aac.omg" as aac
+#     aac.set_config(esds_bytes)           # the esds box of the track
+#     alloc pcm := aac.decode(sample)      # one MP4 sample -> 1024 moments of sound
+#     alloc about := aac.info()            # rate, channels, ...
+#
+# What it decodes: the Low Complexity profile (AAC-LC), which is what
+# MP4 files nearly always carry: any sampling rate, long and short
+# blocks, both window shapes, mid/side and intensity stereo, noise
+# substitution, temporal noise shaping and pulses. One, two or more
+# channels go in; one or two come out (more than two are mixed down).
+#
+# decode() gives 16-bit numbers, -32768 to 32767, 1024 for each channel
+# that comes out; with two channels left and right alternate.
+#
+# Not decoded: the Main, SSR and LTP profiles (refused by name), and the
+# extra layer of HE-AAC ("spectral band replication"): such a file
+# plays, at half its sampling rate and without the top half of its
+# frequencies. info().sbr says when the file declares that layer.
+#
+# The arithmetic is floating point, but only + - * / and sqrt are used,
+# which give the same bits everywhere; the sines the tables need are
+# worked out here for the same reason. So the output is the same on
+# every back end, and a test can keep a checksum of it.
+#
+# The tables below are those of the standard, ISO/IEC 14496-3.
+
+# The code for a change of scale factor: its length in bits, and its bits.
+alloc SF_LEN := [
+    18, 18, 18, 18, 19, 19, 19, 19, 19, 19, 19, 19, 19, 19, 19, 19,
+    19, 19, 19, 18, 19, 18, 17, 17, 16, 17, 16, 16, 16, 16, 15, 15,
+    14, 14, 14, 14, 14, 14, 13, 13, 12, 12, 12, 11, 12, 11, 10, 10,
+    10, 9, 9, 8, 8, 8, 7, 6, 6, 5, 4, 3, 1, 4, 4, 5,
+    6, 6, 7, 7, 8, 8, 9, 9, 10, 10, 10, 11, 11, 11, 11, 12,
+    12, 13, 13, 13, 14, 14, 16, 15, 16, 15, 18, 19, 19, 19, 19, 19,
+    19, 19, 19, 19, 19, 19, 19, 19, 19, 19, 19, 19, 19, 19, 19, 19,
+    19, 19, 19, 19, 19, 19, 19, 19, 19
+]
+alloc SF_CODE := [
+    262120, 262118, 262119, 262117, 524277, 524273, 524269, 524278, 524270, 524271,
+    524272, 524284, 524285, 524287, 524286, 524279, 524280, 524283, 524281, 262116,
+    524282, 262115, 131055, 131056, 65525, 131054, 65522, 65523, 65524, 65521,
+    32758, 32759, 16377, 16373, 16375, 16371, 16374, 16370, 8183, 8181,
+    4089, 4087, 4086, 2041, 4084, 2040, 1017, 1015, 1013, 504,
+    503, 250, 248, 246, 121, 58, 56, 26, 11, 4,
+    0, 10, 12, 27, 57, 59, 120, 122, 247, 249,
+    502, 505, 1012, 1014, 1016, 2037, 2036, 2038, 2039, 4085,
+    4088, 8180, 8182, 8184, 16376, 16372, 65520, 32756, 65526, 32757,
+    262114, 524249, 524250, 524251, 524252, 524253, 524254, 524248, 524242, 524243,
+    524244, 524245, 524246, 524274, 524255, 524263, 524264, 524265, 524266, 524267,
+    524262, 524256, 524257, 524258, 524259, 524260, 524261, 524247, 524268, 524276,
+    524275
+]
+
+alloc CB1_LEN := [
+    11, 9, 11, 10, 7, 10, 11, 9, 11, 10, 7, 10, 7, 5, 7, 9,
+    7, 10, 11, 9, 11, 9, 7, 9, 11, 9, 11, 9, 7, 9, 7, 5,
+    7, 9, 7, 9, 7, 5, 7, 5, 1, 5, 7, 5, 7, 9, 7, 9,
+    7, 5, 7, 9, 7, 9, 11, 9, 11, 9, 7, 9, 11, 9, 11, 10,
+    7, 9, 7, 5, 7, 9, 7, 10, 11, 9, 11, 10, 7, 9, 11, 9,
+    11
+]
+alloc CB1_CODE := [
+    2040, 497, 2045, 1013, 104, 1008, 2039, 492, 2037, 1009, 114, 1012,
+    116, 17, 118, 491, 108, 1014, 2044, 481, 2033, 496, 97, 502,
+    2034, 490, 2043, 498, 105, 493, 119, 23, 111, 486, 100, 485,
+    103, 21, 98, 18, 0, 20, 101, 22, 109, 489, 99, 484,
+    107, 19, 113, 483, 112, 499, 2046, 487, 2035, 495, 96, 494,
+    2032, 482, 2042, 1011, 106, 488, 117, 16, 115, 500, 110, 1015,
+    2038, 480, 2041, 1010, 102, 501, 2047, 503, 2036
+]
+
+alloc CB2_LEN := [
+    9, 7, 9, 8, 6, 8, 9, 8, 9, 8, 6, 7, 6, 5, 6, 7,
+    6, 8, 9, 7, 8, 8, 6, 8, 9, 7, 9, 8, 6, 7, 6, 5,
+    6, 7, 6, 8, 6, 5, 6, 5, 3, 5, 6, 5, 6, 8, 6, 7,
+    6, 5, 6, 8, 6, 8, 9, 7, 9, 8, 6, 8, 8, 7, 9, 8,
+    6, 7, 6, 4, 6, 8, 6, 7, 9, 7, 9, 7, 6, 8, 9, 7,
+    9
+]
+alloc CB2_CODE := [
+    499, 111, 509, 235, 35, 234, 503, 232, 506, 242, 45, 112,
+    32, 6, 43, 110, 40, 233, 505, 102, 248, 231, 27, 241,
+    500, 107, 501, 236, 42, 108, 44, 10, 39, 103, 26, 245,
+    36, 8, 31, 9, 0, 7, 29, 11, 48, 239, 28, 100,
+    30, 12, 41, 243, 47, 240, 508, 113, 498, 244, 33, 230,
+    247, 104, 504, 238, 34, 101, 49, 2, 38, 237, 37, 106,
+    507, 114, 510, 105, 46, 246, 511, 109, 502
+]
+
+alloc CB3_LEN := [
+    1, 4, 8, 4, 5, 8, 9, 9, 10, 4, 6, 9, 6, 6, 9, 9,
+    9, 10, 9, 10, 13, 9, 9, 11, 11, 10, 12, 4, 6, 10, 6, 7,
+    10, 10, 10, 12, 5, 7, 11, 6, 7, 10, 9, 9, 11, 9, 10, 13,
+    8, 9, 12, 10, 11, 12, 8, 10, 15, 9, 11, 15, 13, 14, 16, 8,
+    10, 14, 9, 10, 14, 12, 12, 15, 11, 12, 16, 10, 11, 15, 12, 12,
+    15
+]
+alloc CB3_CODE := [
+    0, 9, 239, 11, 25, 240, 491, 486, 1010, 10, 53, 495,
+    52, 55, 489, 493, 487, 1011, 494, 1005, 8186, 492, 498, 2041,
+    2040, 1016, 4088, 8, 56, 1014, 54, 117, 1009, 1003, 1004, 4084,
+    24, 118, 2036, 57, 116, 1007, 499, 500, 2038, 488, 1002, 8188,
+    242, 497, 4091, 1013, 2035, 4092, 238, 1015, 32766, 496, 2037, 32765,
+    8187, 16378, 65535, 241, 1008, 16380, 490, 1006, 16379, 4086, 4090, 32764,
+    2034, 4085, 65534, 1012, 2039, 32763, 4087, 4089, 32762
+]
+
+alloc CB4_LEN := [
+    4, 5, 8, 5, 4, 8, 9, 8, 11, 5, 5, 8, 5, 4, 8, 8,
+    7, 10, 9, 8, 11, 8, 8, 10, 11, 10, 11, 4, 5, 8, 4, 4,
+    8, 8, 8, 10, 4, 4, 8, 4, 4, 7, 8, 7, 9, 8, 8, 10,
+    7, 7, 9, 10, 9, 10, 8, 8, 11, 8, 7, 10, 11, 10, 12, 8,
+    7, 10, 7, 7, 9, 10, 9, 11, 11, 10, 12, 10, 9, 11, 11, 10,
+    11
+]
+alloc CB4_CODE := [
+    7, 22, 246, 24, 8, 239, 495, 243, 2040, 25, 23, 237,
+    21, 1, 226, 240, 112, 1008, 494, 241, 2042, 238, 228, 1010,
+    2038, 1007, 2045, 5, 20, 242, 9, 4, 229, 244, 232, 1012,
+    6, 2, 231, 3, 0, 107, 227, 105, 499, 235, 230, 1014,
+    110, 106, 500, 1004, 496, 1017, 245, 236, 2043, 234, 111, 1015,
+    2041, 1011, 4095, 233, 109, 1016, 108, 104, 501, 1006, 498, 2036,
+    2039, 1009, 4094, 1005, 497, 2037, 2046, 1013, 2044
+]
+
+alloc CB5_LEN := [
+    13, 12, 11, 11, 10, 11, 11, 12, 13, 12, 11, 10, 9, 8, 9, 10,
+    11, 12, 12, 10, 9, 8, 7, 8, 9, 10, 11, 11, 9, 8, 5, 4,
+    5, 8, 9, 11, 10, 8, 7, 4, 1, 4, 7, 8, 11, 11, 9, 8,
+    5, 4, 5, 8, 9, 11, 11, 10, 9, 8, 7, 8, 9, 10, 11, 12,
+    11, 10, 9, 8, 9, 10, 11, 12, 13, 12, 12, 11, 10, 10, 11, 12,
+    13
+]
+alloc CB5_CODE := [
+    8191, 4087, 2036, 2024, 1009, 2030, 2041, 4088, 8189, 4093, 2033, 1000,
+    488, 240, 492, 1006, 2034, 4090, 4084, 1007, 498, 232, 112, 236,
+    496, 1002, 2035, 2027, 491, 234, 26, 8, 25, 238, 495, 2029,
+    1008, 242, 115, 11, 0, 10, 113, 243, 2025, 2031, 494, 239,
+    24, 9, 27, 235, 489, 2028, 2038, 1003, 499, 237, 114, 233,
+    497, 1005, 2039, 4086, 2032, 1001, 493, 241, 490, 1004, 2040, 4089,
+    8188, 4092, 4085, 2026, 1011, 1010, 2037, 4091, 8190
+]
+
+alloc CB6_LEN := [
+    11, 10, 9, 9, 9, 9, 9, 10, 11, 10, 9, 8, 7, 7, 7, 8,
+    9, 10, 9, 8, 6, 6, 6, 6, 6, 8, 9, 9, 7, 6, 4, 4,
+    4, 6, 7, 9, 9, 7, 6, 4, 4, 4, 6, 7, 9, 9, 7, 6,
+    4, 4, 4, 6, 7, 9, 9, 8, 6, 6, 6, 6, 6, 8, 9, 10,
+    9, 8, 7, 7, 7, 7, 8, 10, 11, 10, 9, 9, 9, 9, 9, 10,
+    11
+]
+alloc CB6_CODE := [
+    2046, 1021, 497, 491, 500, 490, 496, 1020, 2045, 1014, 485, 234,
+    108, 113, 104, 240, 486, 1015, 499, 239, 50, 39, 40, 38,
+    49, 235, 503, 488, 111, 46, 8, 4, 6, 41, 107, 494,
+    495, 114, 45, 2, 0, 3, 47, 115, 506, 487, 110, 43,
+    7, 1, 5, 44, 109, 492, 505, 238, 48, 36, 42, 37,
+    51, 236, 498, 1016, 484, 237, 106, 112, 105, 116, 241, 1018,
+    2047, 1017, 502, 493, 504, 489, 501, 1019, 2044
+]
+
+alloc CB7_LEN := [
+    1, 3, 6, 7, 8, 9, 10, 11, 3, 4, 6, 7, 8, 8, 9, 9,
+    6, 6, 7, 8, 8, 9, 9, 10, 7, 7, 8, 8, 9, 9, 10, 10,
+    8, 8, 9, 9, 10, 10, 10, 11, 9, 8, 9, 9, 10, 10, 11, 11,
+    10, 9, 9, 10, 10, 11, 12, 12, 11, 10, 10, 10, 11, 11, 12, 12
+]
+alloc CB7_CODE := [
+    0, 5, 55, 116, 242, 491, 1005, 2039, 4, 12, 53, 113,
+    236, 238, 494, 501, 54, 52, 114, 234, 241, 489, 499, 1013,
+    115, 112, 235, 240, 497, 496, 1004, 1018, 243, 237, 488, 495,
+    1007, 1009, 1017, 2043, 493, 239, 490, 498, 1011, 1016, 2041, 2044,
+    1006, 492, 500, 1012, 1015, 2040, 4093, 4094, 2038, 1008, 1010, 1014,
+    2042, 2045, 4092, 4095
+]
+
+alloc CB8_LEN := [
+    5, 4, 5, 6, 7, 8, 9, 10, 4, 3, 4, 5, 6, 7, 7, 8,
+    5, 4, 4, 5, 6, 7, 7, 8, 6, 5, 5, 6, 6, 7, 8, 8,
+    7, 6, 6, 6, 7, 7, 8, 9, 8, 7, 6, 7, 7, 8, 8, 10,
+    9, 7, 7, 8, 8, 8, 9, 9, 10, 8, 8, 8, 9, 9, 9, 10
+]
+alloc CB8_CODE := [
+    14, 5, 16, 48, 111, 241, 506, 1022, 3, 0, 4, 18,
+    44, 106, 117, 248, 15, 2, 6, 20, 46, 105, 114, 245,
+    47, 17, 19, 42, 50, 108, 236, 250, 113, 43, 45, 49,
+    109, 112, 242, 505, 239, 104, 51, 107, 110, 238, 249, 1020,
+    504, 116, 115, 237, 240, 246, 502, 509, 1021, 243, 244, 247,
+    503, 507, 508, 1023
+]
+
+alloc CB9_LEN := [
+    1, 3, 6, 8, 9, 10, 10, 11, 11, 12, 12, 13, 13, 3, 4, 6,
+    7, 8, 8, 9, 10, 10, 10, 11, 12, 12, 6, 6, 7, 8, 8, 9,
+    10, 10, 10, 11, 12, 12, 12, 8, 7, 8, 9, 9, 10, 10, 11, 11,
+    11, 12, 12, 13, 9, 8, 9, 9, 10, 10, 11, 11, 11, 12, 12, 12,
+    13, 10, 9, 9, 10, 11, 11, 11, 12, 11, 12, 12, 13, 13, 11, 9,
+    10, 11, 11, 11, 12, 12, 12, 12, 13, 13, 13, 11, 10, 10, 11, 11,
+    12, 12, 13, 13, 13, 13, 13, 13, 11, 10, 10, 11, 11, 11, 12, 12,
+    13, 13, 14, 13, 14, 11, 10, 11, 11, 12, 12, 12, 12, 13, 13, 14,
+    14, 14, 12, 11, 11, 12, 12, 12, 13, 13, 13, 14, 14, 14, 15, 12,
+    11, 12, 12, 12, 13, 13, 13, 13, 14, 14, 15, 15, 13, 12, 12, 12,
+    13, 13, 13, 13, 14, 14, 14, 14, 15
+]
+alloc CB9_CODE := [
+    0, 5, 55, 231, 478, 974, 985, 1992, 1997, 4040, 4061, 8164,
+    8172, 4, 12, 53, 114, 234, 237, 482, 977, 979, 992, 2008,
+    4047, 4053, 54, 52, 113, 232, 236, 481, 975, 989, 987, 2000,
+    4039, 4052, 4068, 230, 112, 233, 477, 483, 978, 988, 1996, 1994,
+    2014, 4056, 4074, 8155, 479, 235, 476, 486, 981, 990, 1995, 2013,
+    2012, 4045, 4066, 4071, 8161, 976, 480, 484, 982, 1989, 2001, 2011,
+    4050, 2016, 4057, 4075, 8163, 8169, 1988, 485, 983, 1990, 1999, 2010,
+    4043, 4058, 4067, 4073, 8166, 8179, 8183, 2003, 984, 993, 2004, 2009,
+    4051, 4062, 8157, 8153, 8162, 8170, 8177, 8182, 2002, 980, 986, 1991,
+    2007, 2018, 4046, 4059, 8152, 8174, 16368, 8180, 16370, 2017, 991, 1993,
+    2006, 4042, 4048, 4069, 4070, 8171, 8175, 16371, 16372, 16373, 4064, 1998,
+    2005, 4038, 4049, 4065, 8160, 8168, 8176, 16369, 16376, 16374, 32764, 4072,
+    2015, 4041, 4055, 4060, 8156, 8159, 8173, 8181, 16377, 16379, 32765, 32766,
+    8167, 4044, 4054, 4063, 8158, 8154, 8165, 8178, 16378, 16375, 16380, 16381,
+    32767
+]
+
+alloc CB10_LEN := [
+    6, 5, 6, 6, 7, 8, 9, 10, 10, 10, 11, 11, 12, 5, 4, 4,
+    5, 6, 7, 7, 8, 8, 9, 10, 10, 11, 6, 4, 5, 5, 6, 6,
+    7, 8, 8, 9, 9, 10, 10, 6, 5, 5, 5, 6, 7, 7, 8, 8,
+    9, 9, 10, 10, 7, 6, 6, 6, 6, 7, 7, 8, 8, 9, 9, 10,
+    10, 8, 7, 6, 7, 7, 7, 8, 8, 8, 9, 10, 10, 11, 9, 7,
+    7, 7, 7, 8, 8, 9, 9, 9, 10, 10, 11, 9, 8, 8, 8, 8,
+    8, 9, 9, 9, 10, 10, 11, 11, 9, 8, 8, 8, 8, 8, 9, 9,
+    10, 10, 10, 11, 11, 10, 9, 9, 9, 9, 9, 9, 10, 10, 10, 11,
+    11, 12, 10, 9, 9, 9, 9, 10, 10, 10, 10, 11, 11, 11, 12, 11,
+    10, 9, 10, 10, 10, 10, 10, 11, 11, 11, 11, 12, 11, 10, 10, 10,
+    10, 10, 10, 11, 11, 12, 12, 12, 12
+]
+alloc CB10_CODE := [
+    34, 8, 29, 38, 95, 211, 463, 976, 983, 1005, 2032, 2038,
+    4093, 7, 0, 1, 9, 32, 84, 96, 213, 220, 468, 973,
+    990, 2023, 28, 2, 6, 12, 30, 40, 91, 205, 217, 462,
+    476, 985, 1009, 37, 11, 10, 13, 36, 87, 97, 204, 221,
+    460, 478, 979, 999, 93, 33, 31, 35, 39, 89, 100, 216,
+    223, 466, 482, 989, 1006, 209, 85, 41, 86, 88, 98, 206,
+    224, 226, 474, 980, 995, 2027, 457, 94, 90, 92, 99, 202,
+    218, 455, 458, 480, 987, 1000, 2028, 483, 210, 203, 208, 215,
+    219, 454, 469, 472, 970, 986, 2026, 2033, 481, 212, 207, 214,
+    222, 225, 464, 470, 977, 981, 1010, 2030, 2043, 1001, 461, 456,
+    459, 465, 471, 479, 975, 992, 1007, 2022, 2040, 4090, 1003, 477,
+    467, 473, 475, 978, 972, 988, 1002, 2029, 2035, 2041, 4089, 2034,
+    974, 484, 971, 984, 982, 994, 997, 2024, 2036, 2037, 2039, 4091,
+    2042, 1004, 991, 993, 996, 998, 1008, 2025, 2031, 4088, 4094, 4092,
+    4095
+]
+
+alloc CB11_LEN := [
+    4, 5, 6, 7, 8, 8, 9, 10, 10, 10, 11, 11, 12, 11, 12, 12,
+    10, 5, 4, 5, 6, 7, 7, 8, 8, 9, 9, 9, 10, 10, 10, 10,
+    11, 8, 6, 5, 5, 6, 7, 7, 8, 8, 8, 9, 9, 9, 10, 10,
+    10, 10, 8, 7, 6, 6, 6, 7, 7, 8, 8, 8, 9, 9, 9, 10,
+    10, 10, 10, 8, 8, 7, 7, 7, 7, 8, 8, 8, 8, 9, 9, 9,
+    10, 10, 10, 10, 8, 8, 7, 7, 7, 7, 8, 8, 8, 9, 9, 9,
+    9, 10, 10, 10, 10, 8, 9, 8, 8, 8, 8, 8, 8, 8, 9, 9,
+    9, 10, 10, 10, 10, 10, 8, 9, 8, 8, 8, 8, 8, 8, 9, 9,
+    9, 10, 10, 10, 10, 10, 10, 8, 10, 9, 8, 8, 9, 9, 9, 9,
+    9, 10, 10, 10, 10, 10, 10, 11, 8, 10, 9, 9, 9, 9, 9, 9,
+    9, 10, 10, 10, 10, 10, 10, 11, 11, 8, 11, 9, 9, 9, 9, 9,
+    9, 10, 10, 10, 10, 10, 11, 10, 11, 11, 8, 11, 10, 9, 9, 10,
+    9, 10, 10, 10, 10, 10, 11, 11, 11, 11, 11, 8, 11, 10, 10, 10,
+    10, 10, 10, 10, 10, 10, 10, 11, 11, 11, 11, 11, 9, 11, 10, 9,
+    9, 10, 10, 10, 10, 10, 10, 11, 11, 11, 11, 11, 11, 9, 11, 10,
+    10, 10, 10, 10, 10, 10, 10, 10, 11, 11, 11, 11, 11, 11, 9, 12,
+    10, 10, 10, 10, 10, 10, 10, 11, 11, 11, 11, 11, 11, 12, 12, 9,
+    9, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 9,
+    5
+]
+alloc CB11_CODE := [
+    0, 6, 25, 61, 156, 198, 423, 912, 962, 991, 2022, 2035,
+    4091, 2028, 4090, 4094, 910, 5, 1, 8, 20, 55, 66, 146,
+    175, 401, 421, 437, 926, 960, 930, 973, 2006, 174, 23, 7,
+    9, 24, 57, 64, 142, 163, 184, 409, 428, 449, 945, 918,
+    958, 970, 157, 60, 21, 22, 26, 59, 68, 145, 165, 190,
+    406, 430, 441, 929, 913, 933, 981, 148, 154, 54, 56, 58,
+    65, 140, 155, 176, 195, 414, 427, 444, 927, 911, 937, 975,
+    147, 191, 62, 63, 67, 69, 158, 167, 185, 404, 418, 442,
+    451, 934, 935, 955, 980, 159, 416, 143, 141, 144, 152, 166,
+    182, 196, 415, 431, 447, 921, 959, 948, 969, 999, 168, 438,
+    171, 164, 170, 178, 194, 197, 408, 420, 440, 908, 932, 964,
+    966, 989, 1000, 173, 943, 402, 189, 188, 398, 407, 410, 419,
+    433, 909, 920, 951, 979, 977, 987, 2013, 180, 990, 425, 411,
+    412, 417, 426, 429, 435, 907, 946, 952, 974, 993, 992, 2002,
+    2021, 183, 2019, 443, 424, 422, 432, 434, 439, 923, 922, 954,
+    949, 982, 2007, 996, 2008, 2026, 186, 2024, 928, 445, 436, 906,
+    452, 914, 938, 944, 956, 983, 2004, 2012, 2011, 2005, 2032, 193,
+    2043, 968, 931, 917, 925, 940, 942, 965, 984, 994, 998, 2020,
+    2023, 2016, 2025, 2039, 400, 2034, 915, 446, 448, 916, 919, 941,
+    963, 961, 978, 2010, 2009, 2015, 2027, 2036, 2042, 405, 2040, 957,
+    924, 939, 936, 947, 953, 976, 995, 997, 2018, 2014, 2029, 2033,
+    2041, 2044, 403, 4093, 988, 950, 967, 972, 971, 985, 986, 2003,
+    2017, 2030, 2031, 2037, 2038, 4092, 4095, 413, 450, 181, 161, 150,
+    151, 149, 153, 160, 162, 172, 169, 177, 179, 187, 192, 399,
+    4
+]
+
+# Where each scale factor band starts, by sampling rate (in the order of RATES).
+alloc SWB_LONG_96 := [
+    0, 4, 8, 12, 16, 20, 24, 28, 32, 36, 40, 44, 48, 52, 56, 64,
+    72, 80, 88, 96, 108, 120, 132, 144, 156, 172, 188, 212, 240, 276, 320, 384,
+    448, 512, 576, 640, 704, 768, 832, 896, 960, 1024
+]
+alloc SWB_LONG_64 := [
+    0, 4, 8, 12, 16, 20, 24, 28, 32, 36, 40, 44, 48, 52, 56, 64,
+    72, 80, 88, 100, 112, 124, 140, 156, 172, 192, 216, 240, 268, 304, 344, 384,
+    424, 464, 504, 544, 584, 624, 664, 704, 744, 784, 824, 864, 904, 944, 984, 1024
+]
+alloc SWB_LONG_48 := [
+    0, 4, 8, 12, 16, 20, 24, 28, 32, 36, 40, 48, 56, 64, 72, 80,
+    88, 96, 108, 120, 132, 144, 160, 176, 196, 216, 240, 264, 292, 320, 352, 384,
+    416, 448, 480, 512, 544, 576, 608, 640, 672, 704, 736, 768, 800, 832, 864, 896,
+    928, 1024
+]
+alloc SWB_LONG_32 := [
+    0, 4, 8, 12, 16, 20, 24, 28, 32, 36, 40, 48, 56, 64, 72, 80,
+    88, 96, 108, 120, 132, 144, 160, 176, 196, 216, 240, 264, 292, 320, 352, 384,
+    416, 448, 480, 512, 544, 576, 608, 640, 672, 704, 736, 768, 800, 832, 864, 896,
+    928, 960, 992, 1024
+]
+alloc SWB_LONG_24 := [
+    0, 4, 8, 12, 16, 20, 24, 28, 32, 36, 40, 44, 52, 60, 68, 76,
+    84, 92, 100, 108, 116, 124, 136, 148, 160, 172, 188, 204, 220, 240, 260, 284,
+    308, 336, 364, 396, 432, 468, 508, 552, 600, 652, 704, 768, 832, 896, 960, 1024
+]
+alloc SWB_LONG_16 := [
+    0, 8, 16, 24, 32, 40, 48, 56, 64, 72, 80, 88, 100, 112, 124, 136,
+    148, 160, 172, 184, 196, 212, 228, 244, 260, 280, 300, 320, 344, 368, 396, 424,
+    456, 492, 532, 572, 616, 664, 716, 772, 832, 896, 960, 1024
+]
+alloc SWB_LONG_8 := [
+    0, 12, 24, 36, 48, 60, 72, 84, 96, 108, 120, 132, 144, 156, 172, 188,
+    204, 220, 236, 252, 268, 288, 308, 328, 348, 372, 396, 420, 448, 476, 508, 544,
+    580, 620, 664, 712, 764, 820, 880, 944, 1024
+]
+alloc SWB_SHORT_96 := [
+    0, 4, 8, 12, 16, 20, 24, 32, 40, 48, 64, 92, 128
+]
+alloc SWB_SHORT_48 := [
+    0, 4, 8, 12, 16, 20, 28, 36, 44, 56, 68, 80, 96, 112, 128
+]
+alloc SWB_SHORT_24 := [
+    0, 4, 8, 12, 16, 20, 24, 28, 36, 44, 52, 64, 76, 92, 108, 128
+]
+alloc SWB_SHORT_16 := [
+    0, 4, 8, 12, 16, 20, 24, 28, 32, 40, 48, 60, 72, 88, 108, 128
+]
+alloc SWB_SHORT_8 := [
+    0, 4, 8, 12, 16, 20, 24, 28, 36, 44, 52, 60, 72, 88, 108, 128
+]
+alloc SWB_LONG := [SWB_LONG_96, SWB_LONG_96, SWB_LONG_64, SWB_LONG_48, SWB_LONG_48, SWB_LONG_32, SWB_LONG_24, SWB_LONG_24, SWB_LONG_16, SWB_LONG_16, SWB_LONG_16, SWB_LONG_8, SWB_LONG_8]
+alloc SWB_SHORT := [SWB_SHORT_96, SWB_SHORT_96, SWB_SHORT_96, SWB_SHORT_48, SWB_SHORT_48, SWB_SHORT_48, SWB_SHORT_24, SWB_SHORT_24, SWB_SHORT_16, SWB_SHORT_16, SWB_SHORT_16, SWB_SHORT_8, SWB_SHORT_8]
+alloc TNS_MAX_LONG := [
+    31, 31, 34, 40, 42, 51, 46, 46, 42, 42, 42, 39, 39
+]
+alloc TNS_MAX_SHORT := [
+    9, 9, 10, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14
+]
+
+# Sampling rates, in the order the standard numbers them.
+alloc RATES := [96000, 88200, 64000, 48000, 44100, 32000, 24000, 22050, 16000, 12000, 11025, 8000, 7350]
+
+proc fail(msg) {
+    raise("aac: " + msg)
+}
+
+# === Reading bits ==============================================================
+#
+# For every byte position the four bytes from there on are kept as one
+# number, so that a read of up to 25 bits is one list access.
+
+alloc br_w := list_repeat(0, 2048)
+alloc br_pos := 0              # in bits
+alloc br_end := 0
+
+proc br_load(data, from) {
+    alloc n := length(data)
+    if length(br_w) < n + 8 {
+        br_w := list_repeat(0, n * 2 + 8)
+    }
+    alloc w := br_w
+    w[n] := 0
+    w[n + 1] := 0
+    w[n + 2] := 0
+    w[n + 3] := 0
+    alloc acc := 0
+    alloc i := n - 1
+    loop i >= from {
+        acc := (acc >> 8) | (data[i] << 24)
+        w[i] := acc
+        i := i - 1
+    }
+    br_pos := from * 8
+    br_end := n * 8
+    return false
+}
+
+proc br_bit() {
+    alloc p := br_pos
+    br_pos := p + 1
+    return (br_w[p >> 3] >> (31 - (p & 7))) & 1
+}
+
+# The next n bits, 1 <= n <= 25.
+proc br_bits(n) {
+    alloc p := br_pos
+    br_pos := p + n
+    return (br_w[p >> 3] >> (32 - n - (p & 7))) & ((1 << n) - 1)
+}
+
+# A table for decoding a prefix code of up to 24 bits, eight bits at a
+# time. An entry above 0 is symbol * 32 + code length; a negative entry
+# -k says the code is longer and the next eight bits index the 256
+# entries from k on.
+proc vlc_build(lens, codes) {
+    alloc tab := list_repeat(0, 256)
+    alloc i := 0
+    loop i < length(lens) {
+        alloc n := lens[i]
+        alloc c := codes[i]
+        alloc base := 0
+        loop n > 8 {
+            alloc hi := (c >> (n - 8)) & 255
+            if tab[base + hi] == 0 {
+                tab[base + hi] := 0 - length(tab)
+                alloc k := 0
+                loop k < 256 {
+                    append(tab, 0)
+                    k := k + 1
+                }
+            }
+            base := 0 - tab[base + hi]
+            n := n - 8
+        }
+        alloc lo := (c << (8 - n)) & 255
+        alloc e := i * 32 + lens[i]
+        alloc k := 0
+        loop k < (1 << (8 - n)) {
+            tab[base + lo + k] := e
+            k := k + 1
+        }
+        i := i + 1
+    }
+    return tab
+}
+
+proc vlc_read(tab) {
+    alloc p := br_pos
+    alloc v := (br_w[p >> 3] >> (8 - (p & 7))) & 16777215
+    alloc e := tab[v >> 16]
+    if e < 0 {
+        e := tab[((v >> 8) & 255) - e]
+        if e < 0 {
+            e := tab[(v & 255) - e]
+        }
+    }
+    if e == 0 {
+        fail("a code that is in no table")
+    }
+    br_pos := p + (e & 31)
+    return e >> 5
+}
+
+# === Tables worked out once ====================================================
+
+alloc PI := 3.141592653589793
+
+# sin and cos from their series, for an angle between -pi and pi. Only
+# + - * /, so every machine gives the same bits.
+proc sin_series(x) {
+    alloc x2 := x * x
+    alloc term := x
+    alloc sum := x
+    alloc k := 1
+    loop k < 12 {
+        term := 0.0 - term * x2 / ((2 * k) * (2 * k + 1))
+        sum := sum + term
+        k := k + 1
+    }
+    return sum
+}
+
+proc cos_series(x) {
+    alloc x2 := x * x
+    alloc term := 1.0
+    alloc sum := 1.0
+    alloc k := 1
+    loop k < 12 {
+        term := 0.0 - term * x2 / ((2 * k - 1) * (2 * k))
+        sum := sum + term
+        k := k + 1
+    }
+    return sum
+}
+
+proc sine(x) {
+    if x < 0.0 {
+        return 0.0 - sine(0.0 - x)
+    }
+    if x > PI / 2 {
+        x := PI - x
+    }
+    if x <= PI / 4 {
+        return sin_series(x)
+    }
+    return cos_series(PI / 2 - x)
+}
+
+proc cosine(x) {
+    if x < 0.0 {
+        x := 0.0 - x
+    }
+    if x > PI / 2 {
+        return 0.0 - cosine(PI - x)
+    }
+    if x <= PI / 4 {
+        return cos_series(x)
+    }
+    return sin_series(PI / 2 - x)
+}
+
+alloc ready := false
+alloc vlc_sf := []
+alloc vlc_cb := []             # by codebook number, 1 to 11
+alloc P43 := []                # n to the power 4/3
+alloc GAIN := []               # 2 to the power (i - GAIN_ZERO) / 4
+alloc GAIN_ZERO := 400
+alloc WIN_LONG := []           # [sine, Kaiser-Bessel]: the rising half, 1024 values
+alloc WIN_SHORT := []          # the same, 128 values
+alloc TNS_SIN := []            # by 2 * compress + resolution: the value of each code
+alloc FFT_COS := []            # cos and sin of 2 pi k / 512
+alloc FFT_SIN := []
+alloc REV_512 := []            # the place of each element with its bits reversed
+alloc REV_64 := []
+alloc TW_LONG := []            # [cos, sin, cos / m, sin / m] of pi (n + 1/8) / m, m = 1024
+alloc TW_SHORT := []           # the same for m = 128
+alloc f_re := list_repeat(0.0, 512)
+alloc f_im := list_repeat(0.0, 512)
+alloc u_buf := list_repeat(0.0, 1024)
+alloc x_buf := list_repeat(0.0, 2048)
+alloc s_buf := list_repeat(0.0, 2048)
+alloc q_buf := list_repeat(0, 1024)
+
+# Half of a Kaiser-Bessel derived window of 2n values.
+proc kbd_window(alpha, n) {
+    alloc a2 := (alpha * PI / n) * (alpha * PI / n)
+    alloc w := list_repeat(0.0, n)
+    alloc sum := 0.0
+    alloc i := 0
+    loop i < n {
+        alloc tmp := i * (n - i) * a2
+        alloc bessel := 1.0
+        alloc j := 50
+        loop j > 0 {
+            bessel := bessel * tmp / (j * j) + 1
+            j := j - 1
+        }
+        sum := sum + bessel
+        w[i] := sum
+        i := i + 1
+    }
+    sum := sum + 1
+    i := 0
+    loop i < n {
+        w[i] := sqrt(w[i] / sum)
+        i := i + 1
+    }
+    return w
+}
+
+proc sine_window(n) {
+    alloc w := list_repeat(0.0, n)
+    alloc i := 0
+    loop i < n {
+        w[i] := sine(PI * (i + 0.5) / (2 * n))
+        i := i + 1
+    }
+    return w
+}
+
+proc bit_reversal(n, bits) {
+    alloc rev := list_repeat(0, n)
+    alloc i := 0
+    loop i < n {
+        alloc r := 0
+        alloc b := 0
+        loop b < bits {
+            if ((i >> b) & 1) == 1 {
+                r := r | (1 << (bits - 1 - b))
+            }
+            b := b + 1
+        }
+        rev[i] := r
+        i := i + 1
+    }
+    return rev
+}
+
+proc twiddles(m) {
+    alloc h := m >> 1
+    alloc c := list_repeat(0.0, h)
+    alloc s := list_repeat(0.0, h)
+    alloc cm := list_repeat(0.0, h)
+    alloc sm := list_repeat(0.0, h)
+    alloc i := 0
+    loop i < h {
+        alloc a := PI * (i + 0.125) / m
+        c[i] := cosine(a)
+        s[i] := sine(a)
+        cm[i] := c[i] / m
+        sm[i] := s[i] / m
+        i := i + 1
+    }
+    return [c, s, cm, sm]
+}
+
+proc init() {
+    if ready {
+        return false
+    }
+    vlc_sf := vlc_build(SF_LEN, SF_CODE)
+    vlc_cb := [[], vlc_build(CB1_LEN, CB1_CODE), vlc_build(CB2_LEN, CB2_CODE),
+               vlc_build(CB3_LEN, CB3_CODE), vlc_build(CB4_LEN, CB4_CODE),
+               vlc_build(CB5_LEN, CB5_CODE), vlc_build(CB6_LEN, CB6_CODE),
+               vlc_build(CB7_LEN, CB7_CODE), vlc_build(CB8_LEN, CB8_CODE),
+               vlc_build(CB9_LEN, CB9_CODE), vlc_build(CB10_LEN, CB10_CODE),
+               vlc_build(CB11_LEN, CB11_CODE)]
+
+    # n ^ (4/3) = n * cbrt(n); the cube root by Newton's method from
+    # the root before it, which is close.
+    P43 := list_repeat(0.0, 8192)
+    alloc y := 1.0
+    alloc n := 1
+    loop n < 8192 {
+        alloc k := 0
+        loop k < 4 {
+            y := (2 * y + n / (y * y)) / 3
+            k := k + 1
+        }
+        P43[n] := n * y
+        n := n + 1
+    }
+
+    # 2 ^ (i / 4), for i from -GAIN_ZERO up.
+    GAIN := list_repeat(0.0, 2 * GAIN_ZERO + 1)
+    alloc quarter := [1.0, 1.189207115002721, 1.4142135623730951, 1.681792830507429]
+    alloc i := 0
+    loop i <= 2 * GAIN_ZERO {
+        alloc e := i - GAIN_ZERO
+        alloc g := quarter[e & 3]
+        alloc whole := e >> 2
+        loop whole > 0 {
+            g := g * 2
+            whole := whole - 1
+        }
+        loop whole < 0 {
+            g := g / 2
+            whole := whole + 1
+        }
+        GAIN[i] := g
+        i := i + 1
+    }
+
+    WIN_LONG := [sine_window(1024), kbd_window(4.0, 1024)]
+    WIN_SHORT := [sine_window(128), kbd_window(6.0, 128)]
+
+    # Noise shaping: a code of 3 or 4 bits is a reflection coefficient.
+    TNS_SIN := [[], [], [], []]
+    alloc res := 0
+    loop res < 2 {
+        alloc bits := res + 3
+        alloc half := 1 << (bits - 1)
+        alloc compress := 0
+        loop compress < 2 {
+            alloc t := list_repeat(0.0, 16)
+            alloc v := 0
+            loop v < 16 {
+                # the code as sent has (bits - compress) bits and a sign
+                alloc sent := bits - compress
+                alloc c := v & ((1 << sent) - 1)
+                if c >= (1 << (sent - 1)) {
+                    c := c - (1 << sent)
+                }
+                if c >= 0 {
+                    t[v] := sine(c * (PI / 2) / (half - 0.5))
+                } else {
+                    t[v] := sine(c * (PI / 2) / (half + 0.5))
+                }
+                v := v + 1
+            }
+            TNS_SIN[2 * compress + res] := t
+            compress := compress + 1
+        }
+        res := res + 1
+    }
+
+    FFT_COS := list_repeat(0.0, 256)
+    FFT_SIN := list_repeat(0.0, 256)
+    i := 0
+    loop i < 256 {
+        FFT_COS[i] := cosine(2 * PI * i / 512)
+        FFT_SIN[i] := sine(2 * PI * i / 512)
+        i := i + 1
+    }
+    REV_512 := bit_reversal(512, 9)
+    REV_64 := bit_reversal(64, 6)
+    TW_LONG := twiddles(1024)
+    TW_SHORT := twiddles(128)
+    ready := true
+    return false
+}
+
+# === What the file says about itself ===========================================
+
+alloc cfg_type := 0            # the kind of AAC: 2 is Low Complexity
+alloc cfg_ri := 4              # index into RATES
+alloc cfg_rate := 44100
+alloc cfg_channels := 0        # as the header counts them; 0 = see the stream
+alloc cfg_sbr := false
+alloc chans := []              # the state of each channel, in the order they first arrive
+alloc kinds := []              # of each: 0 a channel alone, 1 the left of a pair, 2 the right, 3 low frequency effects
+alloc slots := {}              # "kind of element:its tag" -> the number of its (first) channel
+alloc noise_state := 523124044
+
+proc read_rate() {
+    alloc i := br_bits(4)
+    if i == 15 {
+        alloc rate := br_bits(24)
+        # the nearest rate with tables
+        alloc best := 0
+        alloc k := 0
+        loop k < length(RATES) {
+            if abs(RATES[k] - rate) < abs(RATES[best] - rate) {
+                best := k
+            }
+            k := k + 1
+        }
+        return [best, rate]
+    }
+    if i > 12 {
+        fail("a sampling rate the standard does not name")
+    }
+    return [i, RATES[i]]
+}
+
+proc read_object_type() {
+    alloc t := br_bits(5)
+    if t == 31 {
+        t := 32 + br_bits(6)
+    }
+    return t
+}
+
+# A description of the channels kept in the stream itself; only how
+# many there are is used. Returns the number of channels.
+proc read_program_config() {
+    br_bits(4)
+    br_bits(2)
+    br_bits(4)
+    alloc front := br_bits(4)
+    alloc side := br_bits(4)
+    alloc back := br_bits(4)
+    alloc lfe := br_bits(2)
+    alloc assoc := br_bits(3)
+    alloc cc := br_bits(4)
+    if br_bit() == 1 {
+        br_bits(4)
+    }
+    if br_bit() == 1 {
+        br_bits(4)
+    }
+    if br_bit() == 1 {
+        br_bits(3)
+    }
+    alloc count := lfe
+    alloc i := 0
+    loop i < front + side + back {
+        count := count + 1 + br_bit()
+        br_bits(4)
+        i := i + 1
+    }
+    br_bits(4 * lfe)
+    i := 0
+    loop i < assoc {
+        br_bits(4)
+        i := i + 1
+    }
+    i := 0
+    loop i < cc {
+        br_bits(5)
+        i := i + 1
+    }
+    br_pos := (br_pos + 7) & ~7
+    alloc bytes := br_bits(8)
+    br_pos := br_pos + 8 * bytes
+    return count
+}
+
+# The AudioSpecificConfig: a few bytes that say what kind of AAC this is.
+proc set_asc(asc) {
+    init()
+    br_load(asc, 0)
+    cfg_sbr := false
+    cfg_type := read_object_type()
+    alloc r := read_rate()
+    cfg_ri := r[0]
+    cfg_rate := r[1]
+    cfg_channels := br_bits(4)
+    if cfg_type == 5 or cfg_type == 29 {
+        # HE-AAC said outright: the rate of the extra layer, then what is underneath
+        cfg_sbr := true
+        read_rate()
+        cfg_type := read_object_type()
+    }
+    if cfg_type == 1 {
+        fail("the Main profile is not supported")
+    }
+    if cfg_type == 3 {
+        fail("the SSR profile is not supported")
+    }
+    if cfg_type == 4 {
+        fail("the LTP profile is not supported")
+    }
+    if cfg_type != 2 {
+        fail("audio object type " + cfg_type + " is not supported (only AAC-LC is)")
+    }
+    if br_bit() == 1 {
+        fail("blocks of 960 samples are not supported")
+    }
+    if br_bit() == 1 {
+        br_bits(14)
+    }
+    alloc extension := br_bit()
+    if cfg_channels == 0 {
+        cfg_channels := read_program_config()
+    } elif cfg_channels == 7 {
+        cfg_channels := 8
+    } elif cfg_channels > 7 {
+        fail("channel layout " + cfg_channels + " is not supported")
+    }
+    # HE-AAC said the compatible way: after the part old decoders read
+    if cfg_sbr == false and br_end - br_pos >= 16 {
+        if br_bits(11) == 695 {
+            if read_object_type() == 5 and br_bit() == 1 {
+                cfg_sbr := true
+            }
+        }
+    }
+    reset()
+    return false
+}
+
+proc desc_length(b, p) {
+    # a length in up to four bytes, seven bits each; returns [length, next position]
+    alloc n := 0
+    alloc k := 0
+    loop k < 4 and p < length(b) {
+        alloc v := b[p]
+        p := p + 1
+        n := (n << 7) | (v & 127)
+        if (v & 128) == 0 {
+            break
+        }
+        k := k + 1
+    }
+    return [n, p]
+}
+
+# The esds box of an MP4 sound track: descriptors inside descriptors,
+# the innermost of which is the AudioSpecificConfig.
+proc set_config(esds) {
+    alloc p := 4
+    alloc n := length(esds)
+    if p >= n or esds[p] != 3 {
+        fail("the sound track's description (esds) is not understood")
+    }
+    alloc l := desc_length(esds, p + 1)
+    p := l[1]
+    alloc flags := esds[p + 2]
+    p := p + 3
+    if (flags & 128) != 0 {
+        p := p + 2
+    }
+    if (flags & 64) != 0 {
+        p := p + 1 + esds[p]
+    }
+    if (flags & 32) != 0 {
+        p := p + 2
+    }
+    if p >= n or esds[p] != 4 {
+        fail("the sound track's description (esds) is not understood")
+    }
+    l := desc_length(esds, p + 1)
+    p := l[1]
+    alloc kind := esds[p]
+    if kind == 105 or kind == 107 {
+        fail("the sound is MP3, not AAC")
+    }
+    if kind != 64 and kind != 102 and kind != 103 and kind != 104 {
+        fail("the sound is of a kind (" + kind + ") that is not AAC")
+    }
+    p := p + 13
+    if p >= n or esds[p] != 5 {
+        fail("the sound track's description (esds) is not understood")
+    }
+    l := desc_length(esds, p + 1)
+    p := l[1]
+    return set_asc(esds[p:p + l[0]])
+}
+
+proc info() {
+    alloc out := cfg_channels
+    if out > 2 {
+        out := 2
+    }
+    return {rate: cfg_rate, channels: cfg_channels, out_channels: out, sbr: cfg_sbr, block: 1024}
+}
+
+proc new_channel() {
+    return {
+        ws: 0, shape: 0, prev_shape: 0, max_sfb: 0, ngroups: 1, nwin: 1,
+        glen: list_repeat(1, 8), swb: SWB_LONG[cfg_ri], nswb: 0,
+        cb: list_repeat(0, 128), sf: list_repeat(0, 128), gain: 0,
+        pulses: [], tns: [],
+        coef: list_repeat(0.0, 1024), overlap: list_repeat(0.0, 1024),
+        out: list_repeat(0.0, 1024), live: false
+    }
+}
+
+# Forget what came before: after a jump to another place in the file.
+proc reset() {
+    chans := []
+    kinds := []
+    slots := {}
+    noise_state := 523124044
+    return false
+}
+
+# === One channel's part of a block =============================================
+
+# How the block is cut up: one long transform or eight short ones,
+# which window shape, how many bands carry anything.
+proc read_ics_info(ch) {
+    br_bit()
+    alloc ws := br_bits(2)
+    ch.ws := ws
+    ch.shape := br_bit()
+    alloc glen := ch.glen
+    ch.ngroups := 1
+    glen[0] := 1
+    if ws == 2 {
+        ch.max_sfb := br_bits(4)
+        alloc grouping := br_bits(7)
+        alloc g := 0
+        alloc i := 0
+        loop i < 7 {
+            if (grouping & (64 >> i)) != 0 {
+                glen[g] := glen[g] + 1
+            } else {
+                g := g + 1
+                glen[g] := 1
+            }
+            i := i + 1
+        }
+        ch.ngroups := g + 1
+        ch.nwin := 8
+        ch.swb := SWB_SHORT[cfg_ri]
+    } else {
+        ch.max_sfb := br_bits(6)
+        if br_bit() == 1 {
+            fail("prediction between blocks (the Main and LTP profiles) is not supported")
+        }
+        ch.nwin := 1
+        ch.swb := SWB_LONG[cfg_ri]
+    }
+    ch.nswb := length(ch.swb) - 1
+    if ch.max_sfb > ch.nswb {
+        fail("more bands than the sampling rate has")
+    }
+    return false
+}
+
+proc copy_ics_info(from, to) {
+    to.ws := from.ws
+    to.shape := from.shape
+    to.max_sfb := from.max_sfb
+    to.ngroups := from.ngroups
+    to.nwin := from.nwin
+    to.swb := from.swb
+    to.nswb := from.nswb
+    alloc i := 0
+    loop i < 8 {
+        to.glen[i] := from.glen[i]
+        i := i + 1
+    }
+    return false
+}
+
+# Which codebook each band uses: runs of bands that share one.
+proc read_sections(ch) {
+    alloc bits := 5
+    if ch.ws == 2 {
+        bits := 3
+    }
+    alloc esc := (1 << bits) - 1
+    alloc cbs := ch.cb
+    alloc max_sfb := ch.max_sfb
+    alloc g := 0
+    loop g < ch.ngroups {
+        alloc k := 0
+        loop k < max_sfb {
+            alloc cb := br_bits(4)
+            alloc len := 0
+            alloc inc := br_bits(bits)
+            loop inc == esc {
+                len := len + inc
+                inc := br_bits(bits)
+            }
+            len := len + inc
+            if cb == 12 {
+                fail("a codebook that does not exist")
+            }
+            if len == 0 or k + len > max_sfb {
+                fail("a run of bands that does not fit")
+            }
+            alloc i := 0
+            loop i < len {
+                cbs[g * 16 + k] := cb
+                k := k + 1
+                i := i + 1
+            }
+        }
+        g := g + 1
+    }
+    return false
+}
+
+# One number for each band: how loud (a scale factor), or for a band of
+# noise its energy, or for an intensity band where the sound sits
+# between left and right. Each is sent as the change from the last of
+# its kind.
+proc read_scale_factors(ch) {
+    alloc cbs := ch.cb
+    alloc sfs := ch.sf
+    alloc tab := vlc_sf
+    alloc sf := ch.gain
+    alloc is_pos := 0
+    alloc noise := ch.gain - 90
+    alloc first_noise := true
+    alloc max_sfb := ch.max_sfb
+    alloc g := 0
+    loop g < ch.ngroups {
+        alloc k := 0
+        loop k < max_sfb {
+            alloc at := g * 16 + k
+            alloc cb := cbs[at]
+            if cb == 0 {
+                sfs[at] := 0
+            } elif cb >= 14 {
+                is_pos := is_pos + vlc_read(tab) - 60
+                if is_pos < -155 or is_pos > 100 {
+                    fail("an intensity position out of range")
+                }
+                sfs[at] := is_pos
+            } elif cb == 13 {
+                if first_noise {
+                    first_noise := false
+                    noise := noise + br_bits(9) - 256
+                } else {
+                    noise := noise + vlc_read(tab) - 60
+                }
+                if noise < -100 {
+                    noise := -100
+                }
+                if noise > 155 {
+                    noise := 155
+                }
+                sfs[at] := noise
+            } else {
+                sf := sf + vlc_read(tab) - 60
+                if sf < 0 or sf > 255 {
+                    fail("a scale factor out of range")
+                }
+                sfs[at] := sf
+            }
+            k := k + 1
+        }
+        g := g + 1
+    }
+    return false
+}
+
+# A few single values made larger: [position, amount, ...].
+proc read_pulses(ch) {
+    alloc out := []
+    alloc count := br_bits(2) + 1
+    alloc start := br_bits(6)
+    if ch.ws == 2 {
+        fail("pulses in a block of short transforms")
+    }
+    if start >= ch.nswb {
+        fail("pulses that start beyond the last band")
+    }
+    alloc pos := ch.swb[start]
+    alloc i := 0
+    loop i < count {
+        pos := pos + br_bits(5)
+        alloc amp := br_bits(4)
+        if pos > 1023 {
+            fail("a pulse beyond the last value")
+        }
+        append(out, pos)
+        append(out, amp)
+        i := i + 1
+    }
+    return out
+}
+
+# Temporal noise shaping: for each window, filters to run along the
+# frequencies. A filter is [bands it spans, order, direction, coefficients].
+proc read_tns(ch) {
+    alloc out := []
+    alloc short := ch.ws == 2
+    alloc w := 0
+    loop w < ch.nwin {
+        alloc filters := []
+        alloc n := 0
+        if short {
+            n := br_bit()
+        } else {
+            n := br_bits(2)
+        }
+        if n > 0 {
+            alloc res := br_bit()
+            alloc f := 0
+            loop f < n {
+                alloc len := 0
+                alloc order := 0
+                if short {
+                    len := br_bits(4)
+                    order := br_bits(3)
+                } else {
+                    len := br_bits(6)
+                    order := br_bits(5)
+                }
+                if order > 12 or (short and order > 7) {
+                    fail("a noise-shaping filter of too high an order")
+                }
+                alloc direction := 0
+                alloc lpc := []
+                if order > 0 {
+                    direction := br_bit()
+                    alloc compress := br_bit()
+                    alloc bits := res + 3 - compress
+                    alloc map := TNS_SIN[2 * compress + res]
+                    # reflection coefficients to those of the filter
+                    lpc := list_repeat(0.0, order)
+                    alloc i := 0
+                    loop i < order {
+                        alloc r := map[br_bits(bits)]
+                        lpc[i] := r
+                        alloc j := 0
+                        loop j < ((i + 1) >> 1) {
+                            alloc a := lpc[j]
+                            alloc b := lpc[i - 1 - j]
+                            lpc[j] := a + r * b
+                            lpc[i - 1 - j] := b + r * a
+                            j := j + 1
+                        }
+                        i := i + 1
+                    }
+                }
+                append(filters, [len, order, direction, lpc])
+                f := f + 1
+            }
+        }
+        append(out, filters)
+        w := w + 1
+    }
+    return out
+}
+
+# An escape: a value too large for the table follows in a code of its own.
+proc read_escape() {
+    alloc n := 4
+    loop br_bit() == 1 {
+        n := n + 1
+        if n > 12 {
+            fail("an escape that is too long")
+        }
+    }
+    return (1 << n) + br_bits(n)
+}
+
+# The whole numbers of one band of one window, into q_buf from `pos`.
+proc read_band(cb, pos, width) {
+    alloc q := q_buf
+    alloc tab := vlc_cb[cb]
+    alloc end := pos + width
+    if cb <= 2 {
+        loop pos < end {
+            alloc i := vlc_read(tab)
+            q[pos] := i // 27 - 1
+            q[pos + 1] := (i // 9) % 3 - 1
+            q[pos + 2] := (i // 3) % 3 - 1
+            q[pos + 3] := i % 3 - 1
+            pos := pos + 4
+        }
+    } elif cb <= 4 {
+        loop pos < end {
+            alloc i := vlc_read(tab)
+            alloc a := i // 27
+            alloc b := (i // 9) % 3
+            alloc c := (i // 3) % 3
+            alloc d := i % 3
+            if a != 0 and br_bit() == 1 { a := 0 - a }
+            if b != 0 and br_bit() == 1 { b := 0 - b }
+            if c != 0 and br_bit() == 1 { c := 0 - c }
+            if d != 0 and br_bit() == 1 { d := 0 - d }
+            q[pos] := a
+            q[pos + 1] := b
+            q[pos + 2] := c
+            q[pos + 3] := d
+            pos := pos + 4
+        }
+    } elif cb <= 6 {
+        loop pos < end {
+            alloc i := vlc_read(tab)
+            q[pos] := i // 9 - 4
+            q[pos + 1] := i % 9 - 4
+            pos := pos + 2
+        }
+    } else {
+        alloc side := 8
+        if cb >= 9 { side := 13 }
+        if cb == 11 { side := 17 }
+        loop pos < end {
+            alloc i := vlc_read(tab)
+            alloc a := i // side
+            alloc b := i % side
+            alloc na := false
+            alloc nb := false
+            if a != 0 and br_bit() == 1 { na := true }
+            if b != 0 and br_bit() == 1 { nb := true }
+            if cb == 11 {
+                if a == 16 { a := read_escape() }
+                if b == 16 { b := read_escape() }
+            }
+            if na { a := 0 - a }
+            if nb { b := 0 - b }
+            q[pos] := a
+            q[pos + 1] := b
+            pos := pos + 2
+        }
+    }
+    return false
+}
+
+# The next number of the noise generator: 32 bits, with a sign.
+proc noise_next() {
+    alloc s := (noise_state * 1664525 + 1013904223) & 4294967295
+    if s >= 2147483648 {
+        s := s - 4294967296
+    }
+    noise_state := s
+    return s
+}
+
+# Read the values of every band and turn them into amplitudes:
+# value ^ (4/3) times the band's gain. A band of noise is made here.
+proc read_spectrum(ch) {
+    alloc q := q_buf
+    alloc co := ch.coef
+    alloc cbs := ch.cb
+    alloc sfs := ch.sf
+    alloc swb := ch.swb
+    alloc glen := ch.glen
+    alloc max_sfb := ch.max_sfb
+    alloc p43 := P43
+    alloc gains := GAIN
+    alloc pulses := ch.pulses
+    alloc i := 0
+    loop i < 1024 {
+        q[i] := 0
+        co[i] := 0.0
+        i := i + 1
+    }
+    # the numbers
+    alloc w0 := 0
+    alloc g := 0
+    loop g < ch.ngroups {
+        alloc k := 0
+        loop k < max_sfb {
+            alloc cb := cbs[g * 16 + k]
+            if cb > 0 and cb < 12 {
+                alloc start := swb[k]
+                alloc width := swb[k + 1] - start
+                alloc w := w0
+                loop w < w0 + glen[g] {
+                    read_band(cb, w * 128 + start, width)
+                    w := w + 1
+                }
+            }
+            k := k + 1
+        }
+        w0 := w0 + glen[g]
+        g := g + 1
+    }
+    # pulses, on bands that carry numbers (long blocks only)
+    i := 0
+    loop i < length(pulses) {
+        alloc pos := pulses[i]
+        alloc band := 0
+        loop swb[band + 1] <= pos {
+            band := band + 1
+        }
+        if band < max_sfb and cbs[band] > 0 and cbs[band] < 12 {
+            if q[pos] > 0 {
+                q[pos] := q[pos] + pulses[i + 1]
+            } else {
+                q[pos] := q[pos] - pulses[i + 1]
+            }
+        }
+        i := i + 2
+    }
+    # amplitudes
+    w0 := 0
+    g := 0
+    loop g < ch.ngroups {
+        alloc k := 0
+        loop k < max_sfb {
+            alloc cb := cbs[g * 16 + k]
+            alloc start := swb[k]
+            alloc width := swb[k + 1] - start
+            if cb > 0 and cb < 12 {
+                alloc gain := gains[sfs[g * 16 + k] - 100 + GAIN_ZERO]
+                alloc w := w0
+                loop w < w0 + glen[g] {
+                    alloc at := w * 128 + start
+                    alloc end := at + width
+                    loop at < end {
+                        alloc v := q[at]
+                        if v > 0 {
+                            if v > 8191 {
+                                fail("a value too large")
+                            }
+                            co[at] := p43[v] * gain
+                        } elif v < 0 {
+                            if v < -8191 {
+                                fail("a value too large")
+                            }
+                            co[at] := 0.0 - p43[0 - v] * gain
+                        }
+                        at := at + 1
+                    }
+                    w := w + 1
+                }
+            } elif cb == 13 {
+                alloc level := gains[sfs[g * 16 + k] + GAIN_ZERO]
+                alloc w := w0
+                loop w < w0 + glen[g] {
+                    alloc at := w * 128 + start
+                    alloc end := at + width
+                    alloc energy := 0.0
+                    loop at < end {
+                        alloc r := float(noise_next())
+                        co[at] := r
+                        energy := energy + r * r
+                        at := at + 1
+                    }
+                    alloc scale := level / sqrt(energy)
+                    at := w * 128 + start
+                    loop at < end {
+                        co[at] := co[at] * scale
+                        at := at + 1
+                    }
+                    w := w + 1
+                }
+            }
+            k := k + 1
+        }
+        w0 := w0 + glen[g]
+        g := g + 1
+    }
+    return false
+}
+
+proc read_channel(ch, common) {
+    ch.gain := br_bits(8)
+    if common == false {
+        read_ics_info(ch)
+    }
+    read_sections(ch)
+    read_scale_factors(ch)
+    ch.pulses := []
+    if br_bit() == 1 {
+        ch.pulses := read_pulses(ch)
+    }
+    ch.tns := []
+    if br_bit() == 1 {
+        ch.tns := read_tns(ch)
+    }
+    if br_bit() == 1 {
+        fail("gain control (the SSR profile) is not supported")
+    }
+    read_spectrum(ch)
+    return false
+}
+
+# === Left and right ============================================================
+
+# Bands sent as sum and difference become left and right again.
+proc apply_mid_side(l, r, mask) {
+    alloc a := l.coef
+    alloc b := r.coef
+    alloc swb := l.swb
+    alloc glen := l.glen
+    alloc w0 := 0
+    alloc g := 0
+    loop g < l.ngroups {
+        alloc k := 0
+        loop k < l.max_sfb {
+            alloc at := g * 16 + k
+            if mask[at] == 1 and l.cb[at] < 13 and r.cb[at] < 13 {
+                alloc w := w0
+                loop w < w0 + glen[g] {
+                    alloc i := w * 128 + swb[k]
+                    alloc end := w * 128 + swb[k + 1]
+                    loop i < end {
+                        alloc m := a[i]
+                        alloc s := b[i]
+                        a[i] := m + s
+                        b[i] := m - s
+                        i := i + 1
+                    }
+                    w := w + 1
+                }
+            }
+            k := k + 1
+        }
+        w0 := w0 + glen[g]
+        g := g + 1
+    }
+    return false
+}
+
+# Intensity bands: the right channel is the left one, louder or
+# quieter, sometimes upside down. `invert` is the mid/side mask when it
+# was sent band by band.
+proc apply_intensity(l, r, mask, invert) {
+    alloc a := l.coef
+    alloc b := r.coef
+    alloc swb := l.swb
+    alloc glen := l.glen
+    alloc w0 := 0
+    alloc g := 0
+    loop g < l.ngroups {
+        alloc k := 0
+        loop k < l.max_sfb {
+            alloc at := g * 16 + k
+            alloc cb := r.cb[at]
+            if cb >= 14 {
+                alloc scale := GAIN[GAIN_ZERO - r.sf[at]]
+                if cb == 14 {
+                    scale := 0.0 - scale
+                }
+                if invert and mask[at] == 1 {
+                    scale := 0.0 - scale
+                }
+                alloc w := w0
+                loop w < w0 + glen[g] {
+                    alloc i := w * 128 + swb[k]
+                    alloc end := w * 128 + swb[k + 1]
+                    loop i < end {
+                        b[i] := a[i] * scale
+                        i := i + 1
+                    }
+                    w := w + 1
+                }
+            }
+            k := k + 1
+        }
+        w0 := w0 + glen[g]
+        g := g + 1
+    }
+    return false
+}
+
+# === Noise shaping =============================================================
+
+proc apply_tns(ch) {
+    alloc tns := ch.tns
+    if length(tns) == 0 {
+        return false
+    }
+    alloc co := ch.coef
+    alloc swb := ch.swb
+    alloc limit := TNS_MAX_LONG[cfg_ri]
+    if ch.ws == 2 {
+        limit := TNS_MAX_SHORT[cfg_ri]
+    }
+    if ch.max_sfb < limit {
+        limit := ch.max_sfb
+    }
+    alloc w := 0
+    loop w < ch.nwin {
+        alloc bottom := ch.nswb
+        for f in tns[w] {
+            alloc top := bottom
+            bottom := top - f[0]
+            if bottom < 0 {
+                bottom := 0
+            }
+            alloc order := f[1]
+            if order == 0 {
+                continue
+            }
+            alloc lpc := f[3]
+            alloc lo := bottom
+            if lo > limit { lo := limit }
+            alloc hi := top
+            if hi > limit { hi := limit }
+            alloc start := swb[lo]
+            alloc size := swb[hi] - start
+            if size <= 0 {
+                continue
+            }
+            alloc inc := 1
+            if f[2] == 1 {
+                inc := -1
+                start := swb[hi] - 1
+            }
+            start := start + w * 128
+            alloc m := 0
+            loop m < size {
+                alloc n := order
+                if m < n { n := m }
+                alloc v := co[start]
+                alloc i := 1
+                loop i <= n {
+                    v := v - co[start - i * inc] * lpc[i - 1]
+                    i := i + 1
+                }
+                co[start] := v
+                start := start + inc
+                m := m + 1
+            }
+        }
+        w := w + 1
+    }
+    return false
+}
+
+# === From frequencies back to sound ============================================
+
+# A Fourier transform of n complex numbers in f_re and f_im, n a power
+# of two up to 512.
+proc fft(n, rev) {
+    alloc re := f_re
+    alloc im := f_im
+    alloc i := 0
+    loop i < n {
+        alloc j := rev[i]
+        if j > i {
+            alloc t := re[i]
+            re[i] := re[j]
+            re[j] := t
+            t := im[i]
+            im[i] := im[j]
+            im[j] := t
+        }
+        i := i + 1
+    }
+    # the first two rounds need no multiplying
+    i := 0
+    loop i < n {
+        alloc ar := re[i]
+        alloc ai := im[i]
+        alloc br := re[i + 1]
+        alloc bi := im[i + 1]
+        alloc cr := re[i + 2]
+        alloc ci := im[i + 2]
+        alloc dr := re[i + 3]
+        alloc di := im[i + 3]
+        alloc pr := ar + br
+        alloc pi := ai + bi
+        alloc qr := ar - br
+        alloc qi := ai - bi
+        alloc rr := cr + dr
+        alloc ri := ci + di
+        alloc sr := cr - dr
+        alloc si := ci - di
+        re[i] := pr + rr
+        im[i] := pi + ri
+        re[i + 2] := pr - rr
+        im[i + 2] := pi - ri
+        re[i + 1] := qr + si
+        im[i + 1] := qi - sr
+        re[i + 3] := qr - si
+        im[i + 3] := qi + sr
+        i := i + 4
+    }
+    alloc cs := FFT_COS
+    alloc sn := FFT_SIN
+    alloc len := 8
+    loop len <= n {
+        alloc half := len >> 1
+        alloc step := 512 // len
+        alloc k := 0
+        loop k < half {
+            alloc wr := cs[k * step]
+            alloc wi := sn[k * step]
+            alloc a := k
+            loop a < n {
+                alloc b := a + half
+                alloc xr := re[b] * wr + im[b] * wi
+                alloc xi := im[b] * wr - re[b] * wi
+                alloc yr := re[a]
+                alloc yi := im[a]
+                re[b] := yr - xr
+                im[b] := yi - xi
+                re[a] := yr + xr
+                im[a] := yi + xi
+                a := a + len
+            }
+            k := k + 1
+        }
+        len := len << 1
+    }
+    return false
+}
+
+# The inverse transform of the m values co[base..]: the 2m values it
+# stands for, into x_buf[at..].
+proc imdct(co, base, m, at) {
+    alloc h := m >> 1
+    alloc tw := TW_LONG
+    alloc rev := REV_512
+    if m == 128 {
+        tw := TW_SHORT
+        rev := REV_64
+    }
+    alloc tc := tw[0]
+    alloc ts := tw[1]
+    alloc re := f_re
+    alloc im := f_im
+    alloc n := 0
+    loop n < h {
+        alloc a := co[base + 2 * n]
+        alloc b := co[base + m - 1 - 2 * n]
+        alloc c := tc[n]
+        alloc s := ts[n]
+        re[n] := a * c + b * s
+        im[n] := b * c - a * s
+        n := n + 1
+    }
+    fft(h, rev)
+    tc := tw[2]
+    ts := tw[3]
+    alloc u := u_buf
+    n := 0
+    loop n < h {
+        alloc a := re[n]
+        alloc b := im[n]
+        alloc c := tc[n]
+        alloc s := ts[n]
+        u[2 * n] := a * c + b * s
+        u[m - 1 - 2 * n] := a * s - b * c
+        n := n + 1
+    }
+    # the 2m values are the m of u, folded
+    alloc x := x_buf
+    n := 0
+    loop n < h {
+        x[at + n] := u[n + h]
+        x[at + h + n] := 0.0 - u[m - 1 - n]
+        x[at + m + n] := 0.0 - u[h - 1 - n]
+        x[at + m + h + n] := 0.0 - u[n]
+        n := n + 1
+    }
+    return false
+}
+
+# One channel: transform, shape with the windows, and add the half
+# kept from the block before. 1024 new samples land in ch.out.
+proc filterbank(ch) {
+    alloc co := ch.coef
+    alloc ov := ch.overlap
+    alloc out := ch.out
+    alloc x := x_buf
+    alloc ws := ch.ws
+    alloc long_prev := WIN_LONG[ch.prev_shape]
+    alloc long_cur := WIN_LONG[ch.shape]
+    alloc short_prev := WIN_SHORT[ch.prev_shape]
+    alloc short_cur := WIN_SHORT[ch.shape]
+    alloc i := 0
+    if ws == 2 {
+        # eight short transforms, each overlapping the next by half
+        alloc s := s_buf
+        i := 0
+        loop i < 2048 {
+            s[i] := 0.0
+            i := i + 1
+        }
+        alloc w := 0
+        loop w < 8 {
+            imdct(co, w * 128, 128, 0)
+            alloc rise := short_cur
+            if w == 0 {
+                rise := short_prev
+            }
+            alloc at := 448 + 128 * w
+            i := 0
+            loop i < 128 {
+                s[at + i] := s[at + i] + x[i] * rise[i]
+                s[at + 128 + i] := s[at + 128 + i] + x[128 + i] * short_cur[127 - i]
+                i := i + 1
+            }
+            w := w + 1
+        }
+        i := 0
+        loop i < 1024 {
+            out[i] := ov[i] + s[i]
+            ov[i] := s[1024 + i]
+            i := i + 1
+        }
+    } else {
+        imdct(co, 0, 1024, 0)
+        # the first half, rising
+        if ws == 3 {
+            # after short blocks: flat, then a short rise, then full
+            i := 0
+            loop i < 448 {
+                out[i] := ov[i]
+                i := i + 1
+            }
+            loop i < 576 {
+                out[i] := ov[i] + x[i] * short_prev[i - 448]
+                i := i + 1
+            }
+            loop i < 1024 {
+                out[i] := ov[i] + x[i]
+                i := i + 1
+            }
+        } else {
+            i := 0
+            loop i < 1024 {
+                out[i] := ov[i] + x[i] * long_prev[i]
+                i := i + 1
+            }
+        }
+        # the second half, falling: kept for the next block
+        if ws == 1 {
+            # before short blocks: full, then a short fall, then nothing
+            i := 0
+            loop i < 448 {
+                ov[i] := x[1024 + i]
+                i := i + 1
+            }
+            loop i < 576 {
+                ov[i] := x[1024 + i] * short_cur[575 - i]
+                i := i + 1
+            }
+            loop i < 1024 {
+                ov[i] := 0.0
+                i := i + 1
+            }
+        } else {
+            i := 0
+            loop i < 1024 {
+                ov[i] := x[1024 + i] * long_cur[1023 - i]
+                i := i + 1
+            }
+        }
+    }
+    ch.prev_shape := ch.shape
+    return false
+}
+
+# === A block ===================================================================
+
+# The channel an element of the stream speaks for. Elements carry a
+# tag, and it is the tag that says which is which: their order may
+# change from block to block.
+proc slot_of(id, tag) {
+    alloc key := "" + id + ":" + tag
+    if has_key(slots, key) {
+        return slots[key]
+    }
+    alloc n := length(chans)
+    if n >= 16 {
+        fail("more channels than can be told apart")
+    }
+    slots[key] := n
+    append(chans, new_channel())
+    if id == 1 {
+        append(chans, new_channel())
+        append(kinds, 1)
+        append(kinds, 2)
+    } elif id == 0 {
+        append(kinds, 0)
+    } else {
+        append(kinds, 3)
+    }
+    return n
+}
+
+alloc ms_mask := list_repeat(0, 128)
+
+# A pair of channels, which may share their layout and be sent as sum
+# and difference.
+proc read_pair() {
+    alloc n := slot_of(1, br_bits(4))
+    alloc l := chans[n]
+    alloc r := chans[n + 1]
+    l.live := true
+    r.live := true
+    alloc common := br_bit() == 1
+    alloc ms := 0
+    if common {
+        read_ics_info(l)
+        copy_ics_info(l, r)
+        ms := br_bits(2)
+        if ms == 3 {
+            fail("a reserved kind of mid/side stereo")
+        }
+        alloc g := 0
+        loop g < l.ngroups {
+            alloc k := 0
+            loop k < l.max_sfb {
+                if ms == 1 {
+                    ms_mask[g * 16 + k] := br_bit()
+                } else {
+                    ms_mask[g * 16 + k] := ms >> 1
+                }
+                k := k + 1
+            }
+            g := g + 1
+        }
+    }
+    read_channel(l, common)
+    read_channel(r, common)
+    if common {
+        if ms > 0 {
+            apply_mid_side(l, r, ms_mask)
+        }
+        apply_intensity(l, r, ms_mask, ms == 1)
+    }
+    return false
+}
+
+# One sample of the track: a block of 1024 moments for every channel.
+# Returns them as 16-bit numbers, left and right alternating when there
+# is more than one channel.
+proc decode(data) {
+    if ready == false {
+        fail("decode() before set_config()")
+    }
+    br_load(data, 0)
+    for c in chans {
+        c.live := false
+    }
+    loop true {
+        if br_pos + 3 > br_end {
+            break
+        }
+        alloc id := br_bits(3)
+        if id == 7 {
+            break
+        }
+        if id == 0 or id == 3 {
+            # a channel alone, or the low frequency effects
+            alloc ch := chans[slot_of(id, br_bits(4))]
+            ch.live := true
+            read_channel(ch, false)
+        } elif id == 1 {
+            read_pair()
+        } elif id == 2 {
+            fail("coupling channels are not supported")
+        } elif id == 4 {
+            # data for someone else
+            br_bits(4)
+            alloc align := br_bit()
+            alloc count := br_bits(8)
+            if count == 255 {
+                count := count + br_bits(8)
+            }
+            if align == 1 {
+                br_pos := (br_pos + 7) & ~7
+            }
+            br_pos := br_pos + 8 * count
+        } elif id == 5 {
+            read_program_config()
+        } else {
+            # filler; the extra layer of HE-AAC travels here
+            alloc count := br_bits(4)
+            if count == 15 {
+                count := count + br_bits(8) - 1
+            }
+            br_pos := br_pos + 8 * count
+        }
+        if br_pos > br_end {
+            fail("a block that ends in the middle of something")
+        }
+    }
+    alloc n := length(chans)
+    if n == 0 {
+        fail("a block with no sound in it")
+    }
+    for c in chans {
+        if c.live {
+            apply_tns(c)
+            filterbank(c)
+        } else {
+            # a channel this block says nothing about is silent
+            alloc i := 0
+            loop i < 1024 {
+                c.out[i] := c.overlap[i]
+                c.overlap[i] := 0.0
+                i := i + 1
+            }
+        }
+    }
+    return mix(n)
+}
+
+proc to_16(v) {
+    alloc s := floor(v + 0.5)
+    if s > 32767 {
+        return 32767
+    }
+    if s < -32768 {
+        return -32768
+    }
+    return s
+}
+
+# One channel comes out alone; two as they are; more are mixed down to
+# two: a channel sent alone goes to both sides, pairs after the first
+# go to their own side, both at 0.707, and the low frequency effects
+# are left out.
+proc mix(n) {
+    if n == 1 {
+        alloc a := chans[0].out
+        alloc pcm := list_repeat(0, 1024)
+        alloc i := 0
+        loop i < 1024 {
+            pcm[i] := to_16(a[i])
+            i := i + 1
+        }
+        return pcm
+    }
+    alloc pcm := list_repeat(0, 2048)
+    if n == 2 and kinds[0] == 1 {
+        alloc a := chans[0].out
+        alloc b := chans[1].out
+        alloc i := 0
+        loop i < 1024 {
+            pcm[2 * i] := to_16(a[i])
+            pcm[2 * i + 1] := to_16(b[i])
+            i := i + 1
+        }
+        return pcm
+    }
+    alloc left := list_repeat(0.0, 1024)
+    alloc right := list_repeat(0.0, 1024)
+    alloc total := 0.0
+    alloc pairs := 0
+    alloc c := 0
+    loop c < n {
+        alloc src := chans[c].out
+        alloc weight := 0.7071067811865476
+        alloc i := 0
+        if kinds[c] == 0 {
+            loop i < 1024 {
+                left[i] := left[i] + src[i] * weight
+                right[i] := right[i] + src[i] * weight
+                i := i + 1
+            }
+            total := total + weight
+        } elif kinds[c] == 1 or kinds[c] == 2 {
+            if pairs == 0 {
+                weight := 1.0
+            }
+            alloc side := left
+            if kinds[c] == 2 {
+                side := right
+                pairs := pairs + 1
+                total := total + weight
+            }
+            loop i < 1024 {
+                side[i] := side[i] + src[i] * weight
+                i := i + 1
+            }
+        }
+        c := c + 1
+    }
+    if total < 1.0 {
+        total := 1.0
+    }
+    alloc i := 0
+    loop i < 1024 {
+        pcm[2 * i] := to_16(left[i] / total)
+        pcm[2 * i + 1] := to_16(right[i] / total)
+        i := i + 1
+    }
+    return pcm
+}
+
+# The samples of channel c of the last block, before any mixing.
+proc channel(c) {
+    alloc src := chans[c].out
+    alloc pcm := list_repeat(0, 1024)
+    alloc i := 0
+    loop i < 1024 {
+        pcm[i] := to_16(src[i])
+        i := i + 1
+    }
+    return pcm
+}
+
+proc channels_decoded() {
+    return length(chans)
+}

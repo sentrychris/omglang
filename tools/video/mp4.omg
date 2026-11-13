@@ -3,7 +3,7 @@
 # tools/video/mp4.omg
 #
 # Reads MP4 files (ISO base media file format): finds the video track
-# and hands out its samples one at a time.
+# and the sound track, and hands out their samples one at a time.
 #
 #     import "mp4.omg" as mp4
 #     alloc m := mp4.open("clip.mp4")
@@ -24,7 +24,17 @@
 #     dts, pts     per sample: when to decode it, when to show it
 #     sync         per sample: 1 when decoding can start there
 #     order        sample numbers in the order they are shown
+#     start        the time (in ticks) of the moment the film begins:
+#                  a file may say that its first pictures are not shown
 #     audio        codec of the audio track, "" when there is none
+#     sound        the sound track, or false: a dict with codec, config
+#                  (for mp4a, the esds box), channels, rate, timescale,
+#                  duration, count, sizes, offsets, dts and start, which
+#                  mean for it what they mean above
+#
+#     alloc bytes := mp4.read_sound(m, 0)       # a sample of the sound track
+#
+# A file with sound and no video opens too: codec is "" and count 0.
 #
 # The file is never read whole: only the index (the moov box) is kept
 # in memory, and read_sample() seeks.
@@ -127,7 +137,7 @@ proc sort_by_pts(pts) {
 proc read_tables(b, stbl, m) {
     alloc x := find(b, stbl[1], stbl[2], "stsz")
     if x == false {
-        raise("mp4: the video track has no sample size table")
+        raise("mp4: a track has no sample size table")
     }
     alloc p := x[1]
     alloc fixed := u32(b, p + 4)
@@ -155,7 +165,7 @@ proc read_tables(b, stbl, m) {
     } else {
         x := find(b, stbl[1], stbl[2], "co64")
         if x == false {
-            raise("mp4: the video track has no chunk offset table")
+            raise("mp4: a track has no chunk offset table")
         }
         p := x[1]
         alloc n := u32(b, p + 4)
@@ -169,7 +179,7 @@ proc read_tables(b, stbl, m) {
     # how many samples each chunk holds: runs of chunks
     x := find(b, stbl[1], stbl[2], "stsc")
     if x == false {
-        raise("mp4: the video track has no sample-to-chunk table")
+        raise("mp4: a track has no sample-to-chunk table")
     }
     p := x[1]
     alloc runs := u32(b, p + 4)
@@ -269,7 +279,80 @@ proc read_tables(b, stbl, m) {
     return false
 }
 
-# Open a file and index its video track.
+# When a track's time is counted: its ticks per second, its length, and
+# from its edit list the time at which the film begins.
+proc read_times(b, trak, t) {
+    alloc mdhd := descend(b, trak[1], trak[2], ["mdia", "mdhd"])
+    if mdhd != false {
+        if b[mdhd[1]] == 1 {
+            t.timescale := u32(b, mdhd[1] + 20)
+            t.duration := u64(b, mdhd[1] + 24)
+        } else {
+            t.timescale := u32(b, mdhd[1] + 12)
+            t.duration := u32(b, mdhd[1] + 16)
+        }
+    }
+    if t.timescale < 1 {
+        t.timescale := 1
+    }
+    alloc elst := descend(b, trak[1], trak[2], ["edts", "elst"])
+    if elst != false {
+        alloc p := elst[1]
+        alloc n := u32(b, p + 4)
+        alloc i := 0
+        loop i < n {
+            alloc at := -1
+            if b[p] == 1 {
+                if p + 8 + i * 20 + 16 > elst[2] {
+                    break
+                }
+                at := u64(b, p + 16 + i * 20)
+            } else {
+                if p + 8 + i * 12 + 8 > elst[2] {
+                    break
+                }
+                at := s32(b, p + 12 + i * 12)
+            }
+            if at >= 0 {
+                t.start := at
+                break
+            }
+            i := i + 1
+        }
+    }
+    return false
+}
+
+# The sound track: what open() keeps of it.
+proc read_sound_track(b, trak, stbl, entry, entry_end, codec) {
+    alloc s := {codec: codec, config: [], channels: u16(b, entry + 24), rate: u16(b, entry + 32),
+                timescale: 1, duration: 0, start: 0, count: 0, sizes: [], offsets: [],
+                dts: [], pts: [], sync: [], order: []}
+    # the codec's own box follows the sample entry, which comes in
+    # three lengths; QuickTime wraps it in a "wave" box
+    alloc from := entry + 36
+    alloc version := u16(b, entry + 16)
+    if version == 1 {
+        from := from + 16
+    } elif version == 2 {
+        from := from + 36
+    }
+    for x in boxes(b, from, entry_end) {
+        if x[0] == "esds" {
+            s.config := b[x[1]:x[2]]
+        } elif x[0] == "wave" {
+            alloc inner := find(b, x[1], x[2], "esds")
+            if inner != false {
+                s.config := b[inner[1]:inner[2]]
+            }
+        }
+    }
+    read_times(b, trak, s)
+    read_tables(b, stbl, s)
+    return s
+}
+
+# Open a file and index its video track and its sound track.
 proc open(path) {
     if file_exists(path) == false {
         raise("mp4: no such file: " + path)
@@ -322,7 +405,7 @@ proc open(path) {
 
     alloc m := {file: f, path: path, codec: "", config: [], width: 0, height: 0,
                 timescale: 1, duration: 0, count: 0, sizes: [], offsets: [],
-                dts: [], pts: [], sync: [], order: [], audio: ""}
+                dts: [], pts: [], sync: [], order: [], start: 0, audio: "", sound: false}
     alloc found := false
     for trak in boxes(moov, 0, length(moov)) {
         if trak[0] != "trak" {
@@ -343,6 +426,12 @@ proc open(path) {
         alloc codec := fourcc(moov, entry + 4)
         if handler == "soun" and m.audio == "" {
             m.audio := codec
+            # a sound track that cannot be read does not stop the pictures
+            try {
+                m.sound := read_sound_track(moov, trak, stbl, entry, entry_end, codec)
+            } except err {
+                m.sound := false
+            }
         }
         if handler != "vide" or found {
             continue
@@ -357,26 +446,14 @@ proc open(path) {
                 m.config := moov[x[1]:x[2]]
             }
         }
-        alloc mdhd := descend(moov, trak[1], trak[2], ["mdia", "mdhd"])
-        if mdhd != false {
-            if moov[mdhd[1]] == 1 {
-                m.timescale := u32(moov, mdhd[1] + 20)
-                m.duration := u64(moov, mdhd[1] + 24)
-            } else {
-                m.timescale := u32(moov, mdhd[1] + 12)
-                m.duration := u32(moov, mdhd[1] + 16)
-            }
-        }
-        if m.timescale < 1 {
-            m.timescale := 1
-        }
+        read_times(moov, trak, m)
         read_tables(moov, stbl, m)
     }
-    if found == false {
+    if found == false and m.sound == false {
         file_close(f)
         raise("mp4: " + path + " has no video track")
     }
-    if m.count == 0 and (fragmented or find(moov, 0, length(moov), "mvex") != false) {
+    if m.count == 0 and m.sound == false and (fragmented or find(moov, 0, length(moov), "mvex") != false) {
         file_close(f)
         raise("mp4: " + path + " is a fragmented MP4 file, which is not supported")
     }
@@ -386,6 +463,11 @@ proc open(path) {
 proc read_sample(m, i) {
     file_seek(m.file, m.offsets[i])
     return file_read(m.file, m.sizes[i])
+}
+
+proc read_sound(m, i) {
+    file_seek(m.file, m.sound.offsets[i])
+    return file_read(m.file, m.sound.sizes[i])
 }
 
 proc close(m) {

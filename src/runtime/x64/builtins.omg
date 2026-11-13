@@ -1886,6 +1886,141 @@ proc bi_window_close(t, h) {
     return 0
 }
 
+# --- sound ---------------------------------------------------------------------------------
+#
+# One stream of sound at a time, as 16-bit samples; with two channels
+# left and right alternate. The parts that differ by system are in
+# os_snd_*; turning a list of numbers into bytes is here.
+
+alloc rt_snd_on := 0
+alloc rt_snd_channels := 0
+alloc rt_snd_buf := 0
+alloc rt_snd_buf_size := 0
+
+proc rt_snd_check(t, h, what) {
+    if t != T_INT {
+        return rt_throw("TypeError", rt_str_concat(what, " expects a sound stream"))
+    }
+    if h != 1 or rt_snd_on == 0 {
+        return rt_throw("ValueError", rt_str_concat(what, ": no such sound stream"))
+    }
+    return 0
+}
+
+# audio_open(rate, channels): start a stream of `rate` moments a second,
+# each one sample (channels = 1) or two. Returns the stream, a number.
+proc bi_audio_open(rt, rate, ct, channels) {
+    if rt != T_INT or ct != T_INT {
+        return rt_type_error("audio_open() expects (rate: int, channels: int)")
+    }
+    if rate < 4000 or rate > 192000 {
+        return rt_value_error("audio_open: the rate must be between 4000 and 192000 a second")
+    }
+    if channels != 1 and channels != 2 {
+        return rt_value_error("audio_open: the channels must be 1 or 2")
+    }
+    if rt_snd_on {
+        return rt_value_error("audio_open: a sound stream is already open (one at a time)")
+    }
+    alloc err := os_snd_open(rate, channels)
+    if err != 0 {
+        return rt_throw("ValueError", rt_str_concat("audio_open: ", err))
+    }
+    rt_snd_on := 1
+    rt_snd_channels := channels
+    rt_tag := T_INT
+    return 1
+}
+
+# audio_write(audio, samples, from): hand over samples[from:], as many
+# as the system will take without making the program wait. Returns how
+# many it took (whole moments only), which may be none.
+proc bi_audio_write(t, h, st, samples, ft, from) {
+    rt_snd_check(t, h, "audio_write()")
+    if st != T_LIST or ft != T_INT {
+        return rt_type_error("audio_write() expects (audio, samples: [int], from: int)")
+    }
+    alloc n := __peek64(samples + L_LEN)
+    if from < 0 or from > n {
+        return rt_value_error("audio_write: `from` is outside the samples")
+    }
+    alloc room := os_snd_room()
+    if room < 0 {
+        return rt_value_error("audio_write: the sound device has gone")
+    }
+    alloc take := n - from
+    if take > room // 2 {
+        take := room // 2
+    }
+    take := take - take % rt_snd_channels
+    rt_tag := T_INT
+    if take <= 0 {
+        return 0
+    }
+    if rt_snd_buf_size < take * 2 {
+        if rt_snd_buf != 0 {
+            rt_free(rt_snd_buf, rt_snd_buf_size)
+        }
+        rt_snd_buf_size := take * 2 + 4096
+        rt_snd_buf := rt_alloc(rt_snd_buf_size)
+    }
+    alloc src := __peek64(samples + L_ITEMS) + from * 16
+    alloc dst := rt_snd_buf
+    alloc bad := 0
+    alloc i := 0
+    loop i < take {
+        alloc v := __peek64(src)
+        bad := bad | __peek64(src + 8)
+        if v > 32767 {
+            v := 32767
+        }
+        if v < -32768 {
+            v := -32768
+        }
+        __poke16(dst, v & 65535)
+        src := src + 16
+        dst := dst + 2
+        i := i + 1
+    }
+    if bad != T_INT {
+        return rt_type_error("audio_write() expects every sample to be an integer")
+    }
+    if os_snd_write(rt_snd_buf, take * 2) < 0 {
+        return rt_value_error("audio_write: the sound device has gone")
+    }
+    rt_tag := T_INT
+    return take
+}
+
+# audio_played(audio): how many moments of what was written have been
+# heard by now.
+proc bi_audio_played(t, h) {
+    rt_snd_check(t, h, "audio_played()")
+    rt_tag := T_INT
+    return os_snd_played()
+}
+
+# audio_pause(audio, on): stop the sound where it is, or let it go on.
+proc bi_audio_pause(t, h, bt, on) {
+    rt_snd_check(t, h, "audio_pause()")
+    if bt != T_BOOL {
+        return rt_type_error("audio_pause() expects (audio, on: bool)")
+    }
+    os_snd_pause(on)
+    rt_tag := T_NONE
+    return 0
+}
+
+# audio_close(audio): stop at once; what was written and not yet heard
+# is dropped.
+proc bi_audio_close(t, h) {
+    rt_snd_check(t, h, "audio_close()")
+    os_snd_close()
+    rt_snd_on := 0
+    rt_tag := T_NONE
+    return 0
+}
+
 # --- calling a builtin by name -------------------------------------------------------------
 #
 # call_builtin(name, args) is how a program written in OMG that runs
@@ -1989,6 +2124,11 @@ proc rt_bi_init() {
     rt_bi_add("window_draw", bi_window_draw, 3)
     rt_bi_add("window_poll", bi_window_poll, 1)
     rt_bi_add("window_close", bi_window_close, 1)
+    rt_bi_add("audio_open", bi_audio_open, 2)
+    rt_bi_add("audio_write", bi_audio_write, 3)
+    rt_bi_add("audio_played", bi_audio_played, 1)
+    rt_bi_add("audio_pause", bi_audio_pause, 2)
+    rt_bi_add("audio_close", bi_audio_close, 1)
     rt_bi_add("call_builtin", bi_call_builtin, 2)
     return 0
 }

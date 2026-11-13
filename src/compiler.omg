@@ -1263,6 +1263,7 @@ alloc cc_builtins := [
     "tcp_nonblocking", "tcp_poll", "tcp_peer",
     "file_size", "file_mtime", "interrupted",
     "window_open", "window_draw", "window_poll", "window_close",
+    "audio_open", "audio_write", "audio_played", "audio_pause", "audio_close",
     "fork"
 ]
 

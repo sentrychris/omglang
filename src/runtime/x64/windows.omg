@@ -1363,3 +1363,165 @@ proc os_win_close() {
     }
     return 0
 }
+
+# --- sound ---------------------------------------------------------------------
+#
+# Sound goes out through winmm.dll's waveOut functions, the oldest and
+# plainest way Windows has: blocks of samples are handed over
+# (waveOutWrite) and Windows plays them one after another on a thread
+# of its own. Each block has a header in which Windows sets a flag when
+# it has finished with it; looking at those flags tells how much room
+# there is, so nothing here waits and nothing of ours is called back.
+#
+# There are SO_BLOCKS blocks of a thirty-second of a second each: about
+# a second of sound can wait.
+
+alloc SO_BLOCKS := 32
+alloc SO_HDR := 48             # sizeof(WAVEHDR)
+
+alloc so_dev := 0              # the HWAVEOUT
+alloc so_hdrs := 0             # SO_BLOCKS headers, then their data
+alloc so_size := 0             # bytes allocated at so_hdrs
+alloc so_block := 0            # bytes of data a block holds
+alloc so_next := 0             # the block to fill next
+alloc so_frame := 0            # bytes for one moment
+alloc so_rate := 0
+alloc so_cell := 0             # 16 bytes for small answers
+
+# Is block i free: never used, or played to its end?
+proc so_free(i) {
+    alloc flags := __peek32(so_hdrs + i * SO_HDR + 24)
+    return (flags & 16) == 0                     # not WHDR_INQUEUE
+}
+
+# Open a stream. Returns 0, or a string that says what went wrong.
+proc os_snd_open(rate, channels) {
+    if so_cell == 0 {
+        so_cell := rt_alloc(32)
+    }
+    so_frame := 2 * channels
+    so_rate := rate
+    # WAVEFORMATEX: plain PCM, 16 bits
+    alloc fmt := so_cell
+    __memset(fmt, 0, 32)
+    __poke16(fmt, 1)
+    __poke16(fmt + 2, channels)
+    __poke32(fmt + 4, rate)
+    __poke32(fmt + 8, rate * so_frame)
+    __poke16(fmt + 12, so_frame)
+    __poke16(fmt + 14, 16)
+    alloc cell := so_cell + 24
+    __poke64(cell, 0)
+    # device 4294967295 is WAVE_MAPPER: whichever the user has chosen
+    alloc r := os_u32(__wincall6(__import("winmm.dll!waveOutOpen"), cell, 4294967295, fmt, 0, 0, 0))
+    if r != 0 {
+        return "Windows has no device to play sound on"
+    }
+    so_dev := __peek64(cell)
+    so_block := (rate // 32) * so_frame
+    so_size := SO_BLOCKS * (SO_HDR + so_block)
+    so_hdrs := rt_alloc(so_size)
+    __memset(so_hdrs, 0, so_size)
+    so_next := 0
+    return 0
+}
+
+# How many bytes the stream will take now; -1 when it has gone. Blocks
+# are used in a ring, so that sound is always handed over in order: the
+# room is the run of free blocks from the next one on.
+proc os_snd_room() {
+    if so_dev == 0 {
+        return -1
+    }
+    alloc free := 0
+    loop free < SO_BLOCKS and so_free((so_next + free) % SO_BLOCKS) {
+        free := free + 1
+    }
+    return free * so_block
+}
+
+proc os_snd_write(p, n) {
+    if so_dev == 0 {
+        return -1
+    }
+    alloc left := n
+    loop left > 0 and so_free(so_next) {
+        alloc h := so_hdrs + so_next * SO_HDR
+        alloc data := so_hdrs + SO_BLOCKS * SO_HDR + so_next * so_block
+        if (__peek32(h + 24) & 2) != 0 {         # WHDR_PREPARED, from its last use
+            __wincall3(__import("winmm.dll!waveOutUnprepareHeader"), so_dev, h, SO_HDR)
+        }
+        alloc step := left
+        if step > so_block {
+            step := so_block
+        }
+        __memcpy(data, p, step)
+        __memset(h, 0, SO_HDR)
+        __poke64(h, data)
+        __poke32(h + 8, step)
+        __wincall3(__import("winmm.dll!waveOutPrepareHeader"), so_dev, h, SO_HDR)
+        if os_u32(__wincall3(__import("winmm.dll!waveOutWrite"), so_dev, h, SO_HDR)) != 0 {
+            return -1
+        }
+        so_next := (so_next + 1) % SO_BLOCKS
+        p := p + step
+        left := left - step
+    }
+    return n - left
+}
+
+# How many moments of sound have been heard: Windows keeps count.
+proc os_snd_played() {
+    if so_dev == 0 {
+        return 0
+    }
+    # MMTIME: what kind of answer is wanted (2 = samples), then the answer
+    alloc t := so_cell
+    __memset(t, 0, 16)
+    __poke32(t, 2)
+    if os_u32(__wincall3(__import("winmm.dll!waveOutGetPosition"), so_dev, t, 12)) != 0 {
+        return 0
+    }
+    alloc kind := __peek32(t)
+    alloc v := __peek32(t + 4)
+    if kind == 4 {                               # it answered in bytes
+        return v // so_frame
+    }
+    if kind == 1 {                               # in milliseconds
+        return v * so_rate // 1000
+    }
+    return v
+}
+
+proc os_snd_pause(on) {
+    if so_dev == 0 {
+        return -1
+    }
+    if on {
+        __wincall1(__import("winmm.dll!waveOutPause"), so_dev)
+    } else {
+        __wincall1(__import("winmm.dll!waveOutRestart"), so_dev)
+    }
+    return 0
+}
+
+proc os_snd_close() {
+    if so_dev == 0 {
+        return 0
+    }
+    # give every block back, then let go of them
+    __wincall1(__import("winmm.dll!waveOutReset"), so_dev)
+    alloc i := 0
+    loop i < SO_BLOCKS {
+        alloc h := so_hdrs + i * SO_HDR
+        if (__peek32(h + 24) & 2) != 0 {
+            __wincall3(__import("winmm.dll!waveOutUnprepareHeader"), so_dev, h, SO_HDR)
+        }
+        i := i + 1
+    }
+    __wincall1(__import("winmm.dll!waveOutClose"), so_dev)
+    rt_free(so_hdrs, so_size)
+    so_hdrs := 0
+    so_dev := 0
+    return 0
+}

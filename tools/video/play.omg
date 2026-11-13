@@ -2,7 +2,8 @@
 
 # tools/video/play.omg
 #
-# A video player: opens a window and plays the video of an MP4 file.
+# A video player: opens a window and plays an MP4 file, pictures and
+# sound.
 #
 #     omg --build tools/video/play.omg play
 #     ./play clip.mp4
@@ -23,8 +24,18 @@
 #     --loop         start again at the end
 #     --scale N      open the window N times the size of the video
 #     --fast         do not wait: show every picture as soon as it is decoded
+#                    (without sound)
+#     --mute         play without sound
 #
-# The video must be H.264 as h264.omg decodes it. Sound is not played.
+# The video must be H.264 as h264.omg decodes it, the sound AAC as
+# aac.omg decodes it. A file whose sound cannot be played is played
+# without, and the player says why. A file with sound and no video is
+# played without a window; Ctrl+C stops it.
+#
+# The sound is what keeps time. It is handed to the sound device half a
+# second ahead, the device says how much of it has been heard
+# (audio_played), and a picture is shown when the sound has reached its
+# moment: so the two cannot drift apart, however long the film.
 #
 # When pictures cannot be decoded as fast as the file wants them shown,
 # the player first leaves out what it can: pictures that no other
@@ -40,6 +51,7 @@
 
 import "mp4.omg" as mp4
 import "h264.omg" as h264
+import "aac.omg" as aac
 
 alloc m := false            # the open file
 alloc win := 0
@@ -61,6 +73,26 @@ alloc have_picture := false
 alloc opt_loop := false
 alloc opt_fast := false
 alloc opt_scale := 0
+alloc opt_mute := false
+
+alloc snd := false          # the file's sound track while it is being played
+alloc au := 0               # the sound device; 0 when there is no sound
+alloc snd_rate := 0         # moments a second
+alloc snd_channels := 0
+alloc snd_next := 0         # the next sample of the sound track to decode
+alloc pcm := []             # decoded sound not yet handed over
+alloc pcm_at := 0           # how much of pcm has been
+alloc snd_base := 0         # the film's time, in ms, at the first moment handed over
+alloc snd_given := 0        # moments handed over
+alloc snd_seen := 0         # the count of moments heard, as last read
+alloc snd_seen_at := 0      # and when it last changed
+alloc snd_film := 0         # the film's time by the sound, as last worked out
+alloc snd_film_at := 0      # and when that was
+alloc snd_leapt := false    # the device's count went ahead by a leap, not in step with the clock
+alloc v0 := 0               # the film's time, in ms, at the first picture
+alloc snd_note := ""        # why there is no sound, when there is none
+alloc snd_restarts := 0     # times the sound was started again to wait for the pictures
+alloc stepped := false      # pictures were shown one by one while paused
 
 alloc n_drawn := 0
 alloc n_skipped := 0
@@ -137,12 +169,252 @@ proc seek(ms) {
     shown := rank[best]
     clock0 := time_ms() - due_ms(shown)
     resync := true
+    sound_from(picture_ms())
+    stepped := false
     if paused {
         paused_at := time_ms()
         step := true
     }
     changed := true
     return false
+}
+
+# --- sound ---------------------------------------------------------------------
+
+# The film's time, in ms, at the picture that is shown next. The film
+# begins at 0 even when its first picture comes a little after that.
+proc picture_ms() {
+    if shown == 0 and v0 > 0 {
+        return 0
+    }
+    return v0 + due_ms(shown)
+}
+
+# What an error says, without the name of its kind in front.
+proc plain(err) {
+    alloc s := "" + err
+    alloc i := 0
+    loop i < length(s) and i < 30 {
+        if s[i] == " " {
+            break
+        }
+        if s[i] == ":" and i + 2 < length(s) {
+            # "ValueError: audio_open: no sound server answers": both go
+            return plain(s[i + 2:])
+        }
+        i := i + 1
+    }
+    return s
+}
+
+# When sample k of the sound track begins, in ms of the film.
+proc sound_ms(k) {
+    return (snd.dts[k] - snd.start) * 1000 // snd.timescale
+}
+
+# Go on without sound, and remember why.
+proc sound_off(why) {
+    if au != 0 {
+        try {
+            audio_close(au)
+        } except err {
+        }
+    }
+    au := 0
+    pcm := []
+    pcm_at := 0
+    if snd_note == "" {
+        snd_note := why
+    }
+    resync := true
+    return false
+}
+
+# Hand decoded sound to the device, as much as it takes now, decoding
+# more as it is needed. Never waits.
+proc feed() {
+    if au == 0 {
+        return false
+    }
+    try {
+        loop true {
+            if pcm_at >= length(pcm) {
+                if snd_next >= snd.count {
+                    break
+                }
+                pcm := aac.decode(mp4.read_sound(m, snd_next))
+                pcm_at := 0
+                snd_next := snd_next + 1
+                if length(pcm) != 1024 * snd_channels {
+                    raise("the sound changes its number of channels on the way")
+                }
+            }
+            alloc took := audio_write(au, pcm, pcm_at)
+            if took == 0 {
+                break
+            }
+            pcm_at := pcm_at + took
+            snd_given := snd_given + took // snd_channels
+        }
+    } except err {
+        sound_off(plain(err))
+    }
+    return false
+}
+
+# Start the sound at the film's time `ms`: the device is opened afresh
+# (which throws away what it was still holding), and decoding goes on
+# from the sample of the track that holds that time.
+proc sound_from(ms) {
+    if snd == false or au == 0 and snd_note != "" {
+        return false
+    }
+    try {
+        if au != 0 {
+            audio_close(au)
+            au := 0
+        }
+        alloc k := 0
+        alloc lo := 0
+        alloc hi := snd.count - 1
+        loop lo <= hi {
+            alloc mid := (lo + hi) // 2
+            if sound_ms(mid) <= ms {
+                k := mid
+                lo := mid + 1
+            } else {
+                hi := mid - 1
+            }
+        }
+        aac.reset()
+        if k > 0 {
+            # a block leans on the one before it: decode that one too, and drop it
+            aac.decode(mp4.read_sound(m, k - 1))
+        }
+        snd_next := k
+        snd_base := sound_ms(k)
+        snd_given := 0
+        snd_seen := 0
+        snd_seen_at := time_ms()
+        snd_film := snd_base
+        snd_film_at := snd_seen_at
+        pcm := []
+        pcm_at := 0
+        au := audio_open(snd_rate, snd_channels)
+        if paused {
+            audio_pause(au, true)
+        }
+        feed()
+    } except err {
+        au := 0
+        sound_off(plain(err))
+    }
+    return false
+}
+
+# Set the clock by the sound: the film is where the sound is. Between
+# two answers of the device the clock of the machine carries on, for a
+# fifth of a second at most; when the sound stands still, so does the
+# film.
+proc steer() {
+    if au == 0 {
+        return false
+    }
+    alloc heard := 0
+    try {
+        heard := audio_played(au)
+    } except err {
+        sound_off(plain(err))
+        return false
+    }
+    alloc t := time_ms()
+    if heard != snd_seen {
+        snd_seen := heard
+        snd_seen_at := t
+    }
+    alloc quiet := t - snd_seen_at
+    if snd_next >= snd.count and pcm_at >= length(pcm) and (heard >= snd_given or quiet > 500) {
+        # the sound track has ended: the clock of the machine takes over
+        try {
+            audio_close(au)
+        } except err {
+        }
+        au := 0
+        return false
+    }
+    if quiet > 4000 and paused == false {
+        sound_off("the sound device takes sound and does not play it")
+        return false
+    }
+    alloc film := snd_base + heard * 1000 // snd_rate
+    if heard > 0 and paused == false {
+        if quiet > 200 {
+            quiet := 200
+        }
+        film := film + quiet
+    }
+    if film < snd_film {
+        film := snd_film
+    }
+    if film - snd_film > 300 and t - snd_film_at < 150 {
+        snd_leapt := true
+    }
+    snd_film := film
+    snd_film_at := t
+    clock0 := t - film + v0
+    return false
+}
+
+# Find out whether the file's sound can be played, and start it.
+proc sound_open() {
+    snd := m.sound
+    if snd == false {
+        if m.audio != "" {
+            snd_note := "its sound track (" + m.audio + ") could not be read"
+        }
+        return false
+    }
+    if opt_mute or opt_fast {
+        snd := false
+        return false
+    }
+    if snd.codec != "mp4a" {
+        snd_note := "its sound is " + snd.codec + ", not AAC"
+        snd := false
+        return false
+    }
+    if snd.count == 0 {
+        snd := false
+        return false
+    }
+    try {
+        aac.set_config(snd.config)
+        alloc info := aac.info()
+        snd_rate := info.rate
+        snd_channels := info.out_channels
+        au := audio_open(snd_rate, snd_channels)
+        audio_close(au)
+        au := 0
+    } except err {
+        au := 0
+        snd_note := plain(err)
+        snd := false
+        return false
+    }
+    alloc line := "sound: AAC, " + snd_rate + " Hz, "
+    alloc info := aac.info()
+    if info.channels == 1 {
+        line := line + "one channel"
+    } elif info.channels == 2 {
+        line := line + "two channels"
+    } else {
+        line := line + info.channels + " channels, played as two"
+    }
+    if info.sbr {
+        line := line + " (HE-AAC: its lower half is played, the top of the pitch range is missing)"
+    }
+    emit line
+    return true
 }
 
 proc redraw() {
@@ -160,13 +432,27 @@ proc key(name) {
             clock0 := clock0 + (time_ms() - paused_at)
             resync := true
             paused := false
+            if au != 0 {
+                if stepped and shown < m.count {
+                    # the pictures have moved on: the sound goes on from where they are
+                    sound_from(picture_ms())
+                } else {
+                    audio_pause(au, false)
+                    snd_seen_at := time_ms()
+                }
+            }
+            stepped := false
         } else {
             paused := true
             paused_at := time_ms()
+            if au != 0 {
+                audio_pause(au, true)
+            }
         }
     } elif name == "." {
         if paused {
             step := true
+            stepped := true
         }
     } elif name == "left" or name == "right" or name == "home" {
         alloc now := 0
@@ -208,6 +494,7 @@ proc events() {
 # Decode the next sample of the file. When the player is late, a
 # picture nothing depends on is left out instead.
 proc decode_one() {
+    feed()
     alloc data := mp4.read_sample(m, next)
     if behind > frame_ms and step == false and h264.droppable(data) {
         n_dropped := n_dropped + 1
@@ -261,11 +548,13 @@ proc play() {
     alloc skipped_in_a_row := 0
     clock0 := time_ms()
     resync := true
+    sound_from(picture_ms())
     loop quit == false {
         events()
         if quit {
             break
         }
+        feed()
         if paused and step == false {
             sleep_ms(10)
             continue
@@ -284,38 +573,76 @@ proc play() {
         }
         alloc late := 0
         if opt_fast == false and step == false {
+            alloc wait := true
             if resync {
-                clock0 := time_ms() - due_ms(shown)
+                # the first picture after a start or a jump is shown at once
                 resync := false
-            }
-            # wait until the picture is due: decode ahead if there is
-            # time for that, and listen meanwhile
-            alloc due := clock0 + due_ms(shown)
-            alloc now := time_ms()
-            changed := false
-            loop now < due and changed == false {
-                alloc left := due - now
-                if left > est_ms + 2 and n_ready < 5 and next < m.count {
-                    decode_one()
+                if au != 0 {
+                    wait := false
                 } else {
-                    if left > 10 {
-                        left := 10
-                    }
-                    sleep_ms(left)
+                    clock0 := time_ms() - due_ms(shown)
                 }
-                events()
-                now := time_ms()
             }
-            if changed {
-                continue
+            if wait {
+                # wait until the picture is due: decode ahead if there is
+                # time for that, keep the sound fed, and listen meanwhile
+                snd_leapt := false
+                steer()
+                alloc due := clock0 + due_ms(shown)
+                alloc now := time_ms()
+                changed := false
+                loop now < due and changed == false {
+                    alloc left := due - now
+                    if left > est_ms + 2 and n_ready < 5 and next < m.count {
+                        decode_one()
+                    } else {
+                        if left > 10 {
+                            left := 10
+                        }
+                        sleep_ms(left)
+                    }
+                    events()
+                    feed()
+                    steer()
+                    due := clock0 + due_ms(shown)
+                    now := time_ms()
+                }
+                if changed {
+                    continue
+                }
+                late := now - due
             }
-            late := now - due
         }
         behind := late
         if late > 500 {
             # hopeless: play slower than the file asks
-            clock0 := clock0 + late
-            ms_slid := ms_slid + late
+            if au != 0 and snd_leapt {
+                # Not the pictures' doing: the sound device said nothing
+                # for a while and then that it was well on its way (some
+                # do when they wake up). The sound starts again from
+                # where the pictures are.
+                sound_from(picture_ms())
+                if au == 0 {
+                    clock0 := time_ms() - due_ms(shown)
+                }
+            } elif au != 0 {
+                # The sound cannot be slowed. Twice it is started again
+                # from where the pictures are; after that the film goes
+                # on without it.
+                snd_restarts := snd_restarts + 1
+                if snd_restarts <= 2 {
+                    sound_from(picture_ms())
+                } else {
+                    sound_off("the pictures could not keep up with it")
+                }
+                if au == 0 {
+                    clock0 := time_ms() - due_ms(shown)
+                }
+                ms_slid := ms_slid + late
+            } else {
+                clock0 := clock0 + late
+                ms_slid := ms_slid + late
+            }
             late := 0
         }
         # Not drawing a decoded picture saves the less, the longer decoding
@@ -361,11 +688,36 @@ proc report(took) {
     if ms_slid > 0 {
         emit "the video ran " + tenths(ms_slid, 1000) + " s behind: this machine decodes it too slowly"
     }
+    if snd != false and snd_note != "" {
+        emit "the sound was turned off: " + snd_note
+    }
+    return false
+}
+
+# A file with sound only: play it to its end, or until Ctrl+C.
+proc play_sound_only() {
+    interrupted()
+    sound_from(0)
+    alloc t0 := time_ms()
+    loop au != 0 and interrupted() == 0 {
+        feed()
+        steer()
+        sleep_ms(10)
+    }
+    if au != 0 {
+        audio_close(au)
+        au := 0
+    }
+    if snd_note != "" {
+        emit "play: " + snd_note
+        exit(1)
+    }
+    emit "" + tenths(time_ms() - t0, 1000) + " s of sound played"
     return false
 }
 
 proc usage() {
-    emit "usage: play <file.mp4> [--loop] [--scale N] [--fast]"
+    emit "usage: play <file.mp4> [--loop] [--scale N] [--fast] [--mute]"
     exit(2)
 }
 
@@ -378,6 +730,8 @@ proc main() {
             opt_loop := true
         } elif a == "--fast" {
             opt_fast := true
+        } elif a == "--mute" {
+            opt_mute := true
         } elif a == "--scale" and i + 1 < length(args) {
             i := i + 1
             opt_scale := int(args[i])
@@ -393,6 +747,19 @@ proc main() {
     }
 
     m := mp4.open(path)
+    if m.codec == "" and m.count == 0 and m.sound != false {
+        emit base_name(path) + ": sound only"
+        if sound_open() == false {
+            if snd_note == "" {
+                snd_note := "nothing to play"
+            }
+            emit "play: " + snd_note
+            exit(1)
+        }
+        play_sound_only()
+        mp4.close(m)
+        return false
+    }
     if m.codec != "avc1" and m.codec != "avc3" {
         emit "play: the video in " + path + " is " + m.codec + ", not H.264"
         exit(1)
@@ -428,8 +795,10 @@ proc main() {
         line := line + ", " + tenths(m.count * m.timescale, m.duration) + " a second"
     }
     emit line
-    if m.audio != "" {
-        emit "(its sound, " + m.audio + ", is not played)"
+    v0 := (m.pts[m.order[0]] - m.start) * 1000 // m.timescale
+    if sound_open() == false and snd_note != "" {
+        emit "(no sound: " + snd_note + ")"
+        snd_note := ""
     }
     win := window_open(base_name(path) + " - OMG", vw * scale, vh * scale)
 
@@ -441,6 +810,10 @@ proc main() {
         problem := "" + err
     }
     alloc took := time_ms() - t0
+    if au != 0 {
+        audio_close(au)
+        au := 0
+    }
     window_close(win)
     mp4.close(m)
     if problem != "" {
