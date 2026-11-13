@@ -27,10 +27,16 @@
 # The video must be H.264 as h264.omg decodes it. Sound is not played.
 #
 # When pictures cannot be decoded as fast as the file wants them shown,
-# the player first stops drawing some of them (decoding cannot be
-# skipped: later pictures are built from earlier ones), and if that is
-# not enough it lets the video run slow. What happened is printed at
-# the end.
+# the player first leaves out what it can: pictures that no other
+# picture is built from are not decoded at all, and where drawing takes
+# long next to decoding, some pictures are decoded but not drawn. If
+# that is not enough it lets the video run slow. What happened is
+# printed at the end.
+#
+# Pictures are decoded a few ahead of the one on show, in the time spent
+# waiting for it to be due: a file stores them in the order they are
+# needed for decoding, which is not the order they are shown in, so now
+# and then two or three must be decoded before the next can be shown.
 
 import "mp4.omg" as mp4
 import "h264.omg" as h264
@@ -58,6 +64,13 @@ alloc opt_scale := 0
 
 alloc n_drawn := 0
 alloc n_skipped := 0
+alloc n_dropped := 0
+alloc behind := 0           # how late the last picture was, in ms
+alloc n_ready := 0          # decoded pictures waiting to be shown
+alloc est_ms := 0           # what decoding a picture takes, of late
+alloc est_draw := 0         # and drawing one
+alloc resync := true        # the next picture shown sets the clock
+alloc frame_ms := 40        # the time between two pictures
 alloc n_decoded := 0
 alloc ms_decode := 0
 alloc ms_draw := 0
@@ -97,6 +110,7 @@ proc drop_ready() {
         }
         i := i + 1
     }
+    n_ready := 0
     return false
 }
 
@@ -122,6 +136,7 @@ proc seek(ms) {
     next := best
     shown := rank[best]
     clock0 := time_ms() - due_ms(shown)
+    resync := true
     if paused {
         paused_at := time_ms()
         step := true
@@ -143,6 +158,7 @@ proc key(name) {
     } elif name == "space" {
         if paused {
             clock0 := clock0 + (time_ms() - paused_at)
+            resync := true
             paused := false
         } else {
             paused := true
@@ -189,19 +205,33 @@ proc events() {
     return false
 }
 
+# Decode the next sample of the file. When the player is late, a
+# picture nothing depends on is left out instead.
+proc decode_one() {
+    alloc data := mp4.read_sample(m, next)
+    if behind > frame_ms and step == false and h264.droppable(data) {
+        n_dropped := n_dropped + 1
+    } else {
+        alloc t0 := time_ms()
+        alloc pic := h264.decode(data)
+        alloc took := time_ms() - t0
+        ms_decode := ms_decode + took
+        n_decoded := n_decoded + 1
+        est_ms := (est_ms * 3 + took) // 4
+        if pic != false {
+            ready[next] := pic
+            n_ready := n_ready + 1
+        }
+    }
+    next := next + 1
+    return false
+}
+
 # Decode samples until the picture that is to be shown next is there.
 proc decode_ahead() {
     alloc want := m.order[shown]
-    loop ready[want] == false and next < m.count {
-        alloc data := mp4.read_sample(m, next)
-        alloc t0 := time_ms()
-        alloc pic := h264.decode(data)
-        ms_decode := ms_decode + (time_ms() - t0)
-        n_decoded := n_decoded + 1
-        if pic != false {
-            ready[next] := pic
-        }
-        next := next + 1
+    loop next <= want and next < m.count {
+        decode_one()
     }
     return ready[want]
 }
@@ -210,19 +240,22 @@ proc show(pic) {
     alloc t0 := time_ms()
     h264.to_rgb(pic, rgb)
     window_draw(win, rgb, vw)
-    ms_draw := ms_draw + (time_ms() - t0)
+    alloc took := time_ms() - t0
+    ms_draw := ms_draw + took
+    est_draw := (est_draw * 3 + took) // 4
     n_drawn := n_drawn + 1
     have_picture := true
     return false
 }
 
 proc play() {
-    alloc frame_ms := 40
+    frame_ms := 40
     if m.count > 1 {
         frame_ms := due_ms(m.count - 1) // (m.count - 1)
     }
     alloc skipped_in_a_row := 0
     clock0 := time_ms()
+    resync := true
     loop quit == false {
         events()
         if quit {
@@ -246,16 +279,25 @@ proc play() {
         }
         alloc late := 0
         if opt_fast == false and step == false {
-            # wait until the picture is due, and listen meanwhile
+            if resync {
+                clock0 := time_ms() - due_ms(shown)
+                resync := false
+            }
+            # wait until the picture is due: decode ahead if there is
+            # time for that, and listen meanwhile
             alloc due := clock0 + due_ms(shown)
             alloc now := time_ms()
             changed := false
             loop now < due and changed == false {
                 alloc left := due - now
-                if left > 10 {
-                    left := 10
+                if left > est_ms + 2 and n_ready < 5 and next < m.count {
+                    decode_one()
+                } else {
+                    if left > 10 {
+                        left := 10
+                    }
+                    sleep_ms(left)
                 }
-                sleep_ms(left)
                 events()
                 now := time_ms()
             }
@@ -264,13 +306,23 @@ proc play() {
             }
             late := now - due
         }
+        behind := late
         if late > 500 {
             # hopeless: play slower than the file asks
             clock0 := clock0 + late
             ms_slid := ms_slid + late
             late := 0
         }
-        if late > frame_ms and skipped_in_a_row < 3 {
+        # Not drawing a decoded picture saves the less, the longer decoding
+        # takes next to drawing: up to three in a row when they cost the same.
+        alloc may_skip := 3
+        if est_ms > 0 {
+            may_skip := (3 * est_draw) // est_ms
+            if may_skip > 3 {
+                may_skip := 3
+            }
+        }
+        if late > frame_ms and skipped_in_a_row < may_skip {
             skipped_in_a_row := skipped_in_a_row + 1
             n_skipped := n_skipped + 1
         } else {
@@ -279,6 +331,7 @@ proc play() {
         }
         h264.release(pic)
         ready[m.order[shown]] := false
+        n_ready := n_ready - 1
         shown := shown + 1
         step := false
     }
@@ -293,6 +346,9 @@ proc report(took) {
             line := line + ", drawing " + tenths(ms_draw, n_drawn) + " ms"
         }
         emit line
+    }
+    if n_dropped > 0 {
+        emit "" + n_dropped + " pictures were left out, to keep up"
     }
     if n_skipped > 0 {
         emit "" + n_skipped + " pictures were decoded but not drawn, to keep up"
