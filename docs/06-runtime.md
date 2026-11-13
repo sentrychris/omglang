@@ -23,9 +23,9 @@ Windows, and then the C runtime in detail.
 | ---- | ----: | ------------- |
 | `core.omg`     | ~1900 | Memory, reference counts, strings, output, errors and tracebacks, closures, lists, dicts, equality, arithmetic, indexing, start-up |
 | `float.omg`    | ~750  | Floats to text and back, exactly, using its own big-number arithmetic |
-| `builtins.omg` | ~1500 | Every builtin, one `bi_` proc each, and the table `call_builtin` uses |
-| `linux.omg`    | ~850  | The `os_*` procs on Linux system calls |
-| `windows.omg`  | ~1000 | The same `os_*` procs on `kernel32.dll` and `ws2_32.dll` |
+| `builtins.omg` | ~1800 | Every builtin, one `bi_` proc each, and the table `call_builtin` uses |
+| `linux.omg`    | ~1050 | The `os_*` procs on Linux system calls |
+| `windows.omg`  | ~1200 | The same `os_*` procs on `kernel32.dll` and `ws2_32.dll` |
 
 `omg` joins `core`, `float`, `builtins` and one of the system files
 into a single unit, compiles it with the ordinary compiler, and hands

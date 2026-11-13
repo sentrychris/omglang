@@ -1,35 +1,77 @@
 ;;;omg
 
-# A static-file HTTP server written in OMG. Most of the work lives in
-# the http library at tools/lib/http.omg; this file is just a
-# driver: parse args, optionally add custom routes, hand control off.
+# A static-file web server written in OMG.
 #
 # Usage:
-#   omg tools/site/http_server.omg                       # webroot=current directory, port=9876
-#   omg tools/site/http_server.omg path/to/webroot
-#   omg tools/site/http_server.omg path/to/webroot 8000
+#   omg tools/site/http_server.omg [webroot] [port] [options]
+#
+#   webroot           the directory to serve (default: the current one)
+#   port              the port to listen on (default: 9876)
+#   --host ADDRESS    the address to listen on (default: 127.0.0.1, this
+#                     machine only; 0.0.0.0 for every network interface)
+#   --list            show a listing for a directory that has no index.html
+#   --cache SECONDS   let browsers keep a file this long without asking
+#                     again (default: they ask every time, and get a
+#                     short "not modified" when nothing changed)
+#   --quiet           no access log
+#
+# Ctrl-C stops it: requests in flight are finished first.
+#
+# All the work is in the library at tools/lib/http.omg, which is one
+# loop serving every connection at once. This file reads the arguments
+# and hands over. For a server with routes of its own, see
+# tools/site/demo_app.omg and docs/09-http-server.md.
 
 import "../lib/http.omg" as http
 
-alloc webroot := "."
-alloc port := 9876
-if length(args) > 1 { webroot := args[1] }
-if length(args) > 2 { port := int(args[2]) }
-
-# Custom handler: serves a built-in /slow route (busy-loops for ~half a
-# second, useful for verifying fork-per-accept concurrency on Linux and
-# macOS; on Windows requests are served one at a time) and falls through
-# to static file serving for everything else.
-proc handle(client, method, path) {
-    if path == "/slow" {
-        alloc n := 0
-        loop n < 5000000 { n := n + 1 }
-        http.respond_html(client, "200 OK",
-            "<!doctype html><title>slow</title><h1>finished after " + n + " iterations</h1><p><a href=\"/\">back</a></p>")
-        return false
-    }
-    http.handle_static(client, method, path, webroot)
+proc usage() {
+    emit "usage: http_server [webroot] [port] [--host ADDRESS] [--list] [--cache SECONDS] [--quiet]"
+    exit(2)
 }
 
+alloc webroot := "."
+alloc port := 9876
+alloc host := "127.0.0.1"
+alloc listing := false
+alloc cache := "no-cache"
+alloc quiet := false
+
+alloc positional := 0
+alloc i := 1
+loop i < length(args) {
+    alloc arg := args[i]
+    if arg == "--host" and i + 1 < length(args) {
+        host := args[i + 1]
+        i := i + 1
+    } elif arg == "--cache" and i + 1 < length(args) {
+        cache := "public, max-age=" + int(args[i + 1])
+        i := i + 1
+    } elif arg == "--list" {
+        listing := true
+    } elif arg == "--quiet" {
+        quiet := true
+    } elif length(arg) > 1 and arg[0:2] == "--" {
+        usage()
+    } elif positional == 0 {
+        webroot := arg
+        positional := 1
+    } elif positional == 1 {
+        port := int(arg)
+        positional := 2
+    } else {
+        usage()
+    }
+    i := i + 1
+}
+
+if not is_dir(webroot) {
+    emit "http_server: " + webroot + " is not a directory"
+    exit(1)
+}
+
+alloc app := http.server({host: host, port: port, log: not quiet})
+app.files("/", webroot, {listing: listing, cache_control: cache})
+
 emit "serving files from " + webroot
-http.serve("127.0.0.1", port, handle)
+app.listen()
+emit "stopped"

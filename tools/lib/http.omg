@@ -1,284 +1,2201 @@
 ;;;omg
 
-# tools/lib/http.omg — a tiny HTTP/1.0 server library for OMG.
+# tools/lib/http.omg: an HTTP/1.1 server for OMG programs.
 #
-# Wraps the TCP + file + fork builtins into an accept loop so callers
-# never have to write socket boilerplate. Two layers:
-#
-#   serve_static(host, port, webroot)
-#       The shortest path to a working static-file server.
-#
-#   serve(host, port, handler)
-#       The general form. `handler` is any proc with the signature
-#       handler(client, method, path); call the http.respond_* /
-#       http.serve_file helpers from inside it. Compose your own routes
-#       and call http.handle_static at the end to fall through to
-#       static-file serving.
-#
-# Example:
+# One process, one loop, many connections. Every socket is non-blocking
+# and the loop sleeps in tcp_poll until one of them can be read or
+# written, so a slow client holds up nobody else: a thousand browsers
+# keeping connections open cost a thousand small records, not a
+# thousand processes. The same code runs on Linux, macOS and Windows.
 #
 #     import "../lib/http.omg" as http
 #
-#     proc handle(client, method, path) {
-#         if path == "/api/time" {
-#             http.respond(client, "200 OK", "text/plain", "now\n")
-#             return false
-#         }
-#         http.handle_static(client, method, path, "/var/www/html")
+#     alloc app := http.server({port: 8080})
+#
+#     proc hello(req) {
+#         return http.text(200, "hello, " + req.params.name + "\n")
 #     }
-#     http.serve("127.0.0.1", 9876, handle)
+#     app.get("/hello/:name", hello)
+#     app.files("/", "public", {})
+#     app.listen()
 #
-# Concurrency: on Linux and macOS serve() forks after each accept. The
-# child handles the request and exits; SIGCHLD is set to SIG_IGN inside
-# fork() so children auto-reap. Each request runs in its own address
-# space — there is no shared in-process state between requests.
+# A handler takes a request and returns a response.
 #
-# Windows has no fork(), so there serve() handles requests in the one
-# process, one at a time. Everything else behaves the same; a slow
-# request simply holds up the ones behind it.
+# The request is a dict:
+#     method        "GET", "POST", ...
+#     target        the request target as sent: "/a%20b?x=1"
+#     path          decoded and tidied: "/a b" (no "." or ".." left in it)
+#     query_string  "x=1"
+#     query         {x: "1"}
+#     params        what the route pattern captured: {name: "world"}
+#     headers       names in lower case: req.headers["content-type"]
+#     body          a list of bytes (see http.body_text, http.form)
+#     version       "1.1" or "1.0"
+#     peer          "127.0.0.1:53012"
+#
+# The response is a dict {status, headers, body}; body is a string or a
+# list of bytes. http.text, http.html, http.json, http.bytes,
+# http.redirect and http.send_file build the usual ones.
+#
+# What the server does for you:
+#   * keep-alive and pipelining, with a cap on requests per connection;
+#   * request bodies by Content-Length or chunked, Expect: 100-continue;
+#   * limits on header size, body size and open connections, and
+#     timeouts for slow headers, slow bodies, stalled writes, idle
+#     connections and handlers that never answer;
+#   * routing with :parameters and a trailing *rest, 404 and 405 (with
+#     Allow), HEAD from GET, OPTIONS;
+#   * static files: content types, index files, directory listings,
+#     ETag and Last-Modified with 304, byte ranges with 206 and 416,
+#     large files streamed from disk a piece at a time;
+#   * answers that come later (http.pending, app.respond) and answers
+#     sent in pieces (http.stream, app.send, app.finish), with timers
+#     (app.timer, app.every) to drive them;
+#   * an access log in Common Log Format;
+#   * a clean stop on Ctrl-C or SIGTERM: stop accepting, finish what is
+#     in flight, then return from app.listen().
+#
+# Handlers run inside the loop, one at a time. A handler that computes
+# for a second holds every other connection up for that second; one
+# that has to wait for something should return http.pending() and
+# answer from a timer.
+#
+# The whole reference is docs/09-http-server.md.
 
-# === request parsing ===================================================
+alloc CR := 13
+alloc LF := 10
 
-# Find the first occurrence of `needle` (a string) in `bytes` (a list of
-# byte ints), or -1 if absent. Used to spot the end-of-headers marker.
-proc find_in_bytes(bytes, needle) {
-    alloc nlen := length(needle)
-    alloc blen := length(bytes)
-    if nlen == 0 { return 0 }
-    alloc i := 0
-    loop i + nlen <= blen {
-        alloc j := 0
-        alloc match := true
-        loop j < nlen {
-            if bytes[i + j] != ascii(needle[j]) {
-                match := false
-                break
-            }
-            j := j + 1
-        }
-        if match { return i }
+# What a connection is doing.
+alloc ST_HEAD := 0        # waiting for a request, or part-way through its head
+alloc ST_BODY := 1        # reading a body whose length was announced
+alloc ST_CHUNKED := 2     # reading a chunked body
+alloc ST_WAITING := 3     # the handler has the request and has not answered yet
+alloc ST_SENDING := 4     # a complete answer is on its way out
+alloc ST_STREAM := 5      # an answer in pieces is open
+alloc ST_LINGER := 6      # answered; reading and dropping what still arrives
+alloc ST_CLOSED := 7
+
+alloc READ_SMALL := 16384     # bytes asked of the socket while reading a head
+alloc READ_LARGE := 65536     # ... and while reading a body
+alloc PIECE := 65536          # the size a large answer is cut into
+alloc LINGER_MS := 500
+alloc LINGER_BYTES := 1048576
+
+alloc STATUS_TEXT := {
+    "100": "Continue", "101": "Switching Protocols",
+    "200": "OK", "201": "Created", "202": "Accepted", "204": "No Content",
+    "206": "Partial Content",
+    "301": "Moved Permanently", "302": "Found", "303": "See Other",
+    "304": "Not Modified", "307": "Temporary Redirect", "308": "Permanent Redirect",
+    "400": "Bad Request", "401": "Unauthorized", "403": "Forbidden",
+    "404": "Not Found", "405": "Method Not Allowed", "406": "Not Acceptable",
+    "408": "Request Timeout", "409": "Conflict", "410": "Gone",
+    "411": "Length Required", "412": "Precondition Failed",
+    "413": "Content Too Large", "414": "URI Too Long",
+    "415": "Unsupported Media Type", "416": "Range Not Satisfiable",
+    "417": "Expectation Failed", "418": "I'm a teapot",
+    "422": "Unprocessable Content", "429": "Too Many Requests",
+    "431": "Request Header Fields Too Large",
+    "500": "Internal Server Error", "501": "Not Implemented",
+    "502": "Bad Gateway", "503": "Service Unavailable",
+    "504": "Gateway Timeout", "505": "HTTP Version Not Supported"
+}
+
+alloc MIME_TYPES := {
+    html: "text/html; charset=utf-8", htm: "text/html; charset=utf-8",
+    css: "text/css; charset=utf-8", js: "text/javascript; charset=utf-8",
+    mjs: "text/javascript; charset=utf-8", json: "application/json",
+    map: "application/json", txt: "text/plain; charset=utf-8",
+    md: "text/markdown; charset=utf-8", csv: "text/csv; charset=utf-8",
+    xml: "application/xml", omg: "text/plain; charset=utf-8",
+    svg: "image/svg+xml", png: "image/png", jpg: "image/jpeg",
+    jpeg: "image/jpeg", gif: "image/gif", webp: "image/webp",
+    avif: "image/avif", ico: "image/x-icon", bmp: "image/bmp",
+    woff: "font/woff", woff2: "font/woff2", ttf: "font/ttf", otf: "font/otf",
+    mp3: "audio/mpeg", wav: "audio/wav", ogg: "audio/ogg",
+    mp4: "video/mp4", webm: "video/webm",
+    pdf: "application/pdf", zip: "application/zip", gz: "application/gzip",
+    tar: "application/x-tar", wasm: "application/wasm"
+}
+
+alloc DAY_NAMES := ["Thu", "Fri", "Sat", "Sun", "Mon", "Tue", "Wed"]
+alloc MONTH_NAMES := ["Jan", "Feb", "Mar", "Apr", "May", "Jun",
+                      "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+
+# === Text and bytes =========================================================
+
+# Which bytes may appear in a header name (RFC 9110 "token").
+proc build_token_table() {
+    alloc t := list_repeat(false, 256)
+    alloc i := 48
+    loop i <= 57 { t[i] := true i := i + 1 }
+    i := 65
+    loop i <= 90 { t[i] := true i := i + 1 }
+    i := 97
+    loop i <= 122 { t[i] := true i := i + 1 }
+    for ch in "!#$%&'*+-.^_`|~" { t[ascii(ch)] := true }
+    return t
+}
+
+alloc TOKEN := build_token_table()
+
+# The first index at or after `from` where the list holds `value`, or -1.
+proc index_of(buf, value, from) {
+    alloc n := length(buf)
+    alloc i := from
+    loop i < n {
+        if buf[i] == value { return i }
         i := i + 1
     }
     return -1
 }
 
-# Read from `client` until we see "\r\n\r\n" (end of headers) or hit EOF.
-# Returns the request as a UTF-8 string; HTTP headers are ASCII so the
-# decode is safe. Caps the buffer at 64 KiB to defeat naive OOM peers.
-proc read_request(client) {
-    alloc buf := []
-    alloc end := -1
-    loop end < 0 {
-        alloc chunk := tcp_read(client, 4096)
-        if length(chunk) == 0 { break }
-        buf := buf + chunk
-        end := find_in_bytes(buf, "\r\n\r\n")
-        if length(buf) > 65536 { break }
+# The same for a character in a string.
+proc find_char(s, ch, from) {
+    alloc n := length(s)
+    alloc i := from
+    loop i < n {
+        if s[i] == ch { return i }
+        i := i + 1
     }
-    return bytes_to_string(buf)
+    return -1
 }
 
-# Pull the request line ("GET /path HTTP/1.1") out of the raw text and
-# return [method, path]. The version is discarded.
-proc parse_request_line(text) {
-    alloc i := 0
-    alloc n := length(text)
-    loop i < n and text[i] != " " { i := i + 1 }
-    alloc method := text[0:i]
-    i := i + 1
-    alloc start := i
-    loop i < n and text[i] != " " and text[i] != "\r" { i := i + 1 }
-    alloc path := text[start:i]
-    return [method, path]
+proc starts_with(s, prefix) {
+    alloc n := length(prefix)
+    return length(s) >= n and s[0:n] == prefix
 }
 
-# === path helpers ======================================================
+proc ends_with(s, suffix) {
+    alloc n := length(s)
+    alloc k := length(suffix)
+    return n >= k and s[n - k:n] == suffix
+}
 
-# Reject any URL path containing the literal substring "..". Crude but
-# effective — keeps escapes like /../etc/passwd from reaching disk.
-proc is_safe_path(p) {
+# ASCII letters to lower case.
+proc lower(s) {
+    alloc bs := string_bytes(s)
+    alloc n := length(bs)
+    alloc changed := false
     alloc i := 0
-    alloc n := length(p)
-    loop i < n - 1 {
-        if p[i] == "." and p[i + 1] == "." {
-            return false
+    loop i < n {
+        alloc b := bs[i]
+        if b >= 65 and b <= 90 {
+            bs[i] := b + 32
+            changed := true
         }
         i := i + 1
     }
-    return true
+    if changed { return bytes_to_string(bs) }
+    return s
 }
 
-# Strip a query string off the URL path. We don't expose query params
-# anywhere, but tolerating them means links like /style.css?v=2 still
-# resolve to /style.css.
-proc strip_query(p) {
+# Without the blanks and tabs at either end.
+proc trim(s) {
+    alloc a := 0
+    alloc b := length(s)
+    loop a < b and (s[a] == " " or s[a] == "\t") { a := a + 1 }
+    loop b > a and (s[b - 1] == " " or s[b - 1] == "\t") { b := b - 1 }
+    return s[a:b]
+}
+
+# The pieces of s between occurrences of the character sep.
+proc split(s, sep) {
+    alloc out := []
+    alloc n := length(s)
+    alloc start := 0
     alloc i := 0
-    alloc n := length(p)
-    loop i < n and p[i] != "?" { i := i + 1 }
-    return p[0:i]
-}
-
-# Map a URL path to a filesystem path under `root`. "/" → "<root>/index.html".
-proc resolve_fs_path(root, url_path) {
-    alloc clean := strip_query(url_path)
-    if clean == "/" or clean == "" {
-        clean := "/index.html"
+    loop i < n {
+        if s[i] == sep {
+            append(out, s[start:i])
+            start := i + 1
+        }
+        i := i + 1
     }
-    if length(clean) > 0 and clean[0] == "/" {
-        clean := clean[1:length(clean)]
+    append(out, s[start:n])
+    return out
+}
+
+# How many bytes a string is on the wire (length() counts characters).
+proc byte_length(s) {
+    return length(string_bytes(s))
+}
+
+proc hex_val(b) {
+    if b >= 48 and b <= 57 { return b - 48 }
+    if b >= 97 and b <= 102 { return b - 87 }
+    if b >= 65 and b <= 70 { return b - 55 }
+    return -1
+}
+
+proc two_digits(n) {
+    if n < 10 { return "0" + n }
+    return "" + n
+}
+
+# d[key] when it is there, otherwise dflt.
+proc get(d, key, dflt) {
+    if has_key(d, key) { return d[key] }
+    return dflt
+}
+
+# "%41" to "A", and with `plus` a "+" to a blank, as in a query string
+# or a form. Sequences that are not valid stay as they are.
+proc url_decode(s, plus) {
+    alloc bs := string_bytes(s)
+    alloc n := length(bs)
+    alloc out := []
+    alloc i := 0
+    loop i < n {
+        alloc b := bs[i]
+        if b == 37 and i + 2 < n and hex_val(bs[i + 1]) >= 0 and hex_val(bs[i + 2]) >= 0 {
+            b := hex_val(bs[i + 1]) * 16 + hex_val(bs[i + 2])
+            i := i + 2
+        } elif b == 43 and plus {
+            b := 32
+        }
+        append(out, b)
+        i := i + 1
     }
-    return root + "/" + clean
+    return bytes_to_string(out)
 }
 
-# True iff `s` ends with `suffix`.
-proc ends_with(s, suffix) {
-    alloc sl := length(s)
-    alloc el := length(suffix)
-    if el > sl { return false }
-    return s[sl - el:sl] == suffix
+# A path with everything but letters, digits and -._~/ percent-encoded.
+proc url_encode_path(s) {
+    alloc digits := "0123456789ABCDEF"
+    alloc out := ""
+    for b in string_bytes(s) {
+        alloc plain := (b >= 48 and b <= 57) or (b >= 65 and b <= 90) or (b >= 97 and b <= 122)
+        if plain or b == 45 or b == 46 or b == 95 or b == 126 or b == 47 {
+            out := out + chr(b)
+        } else {
+            out := out + "%" + digits[b // 16] + digits[b % 16]
+        }
+    }
+    return out
 }
 
-# Content-Type by file extension. Anything not in the table is sent as
-# application/octet-stream so the browser will download rather than guess.
-proc content_type_for(path) {
-    if ends_with(path, ".html")  { return "text/html; charset=utf-8" }
-    if ends_with(path, ".htm")   { return "text/html; charset=utf-8" }
-    if ends_with(path, ".css")   { return "text/css; charset=utf-8" }
-    if ends_with(path, ".js")    { return "application/javascript; charset=utf-8" }
-    if ends_with(path, ".json")  { return "application/json; charset=utf-8" }
-    if ends_with(path, ".txt")   { return "text/plain; charset=utf-8" }
-    if ends_with(path, ".svg")   { return "image/svg+xml" }
-    if ends_with(path, ".png")   { return "image/png" }
-    if ends_with(path, ".jpg")   { return "image/jpeg" }
-    if ends_with(path, ".jpeg")  { return "image/jpeg" }
-    if ends_with(path, ".gif")   { return "image/gif" }
-    if ends_with(path, ".ico")   { return "image/x-icon" }
-    if ends_with(path, ".woff")  { return "font/woff" }
-    if ends_with(path, ".woff2") { return "font/woff2" }
+proc html_escape(s) {
+    alloc out := ""
+    for ch in s {
+        if ch == "&" {
+            out := out + "&amp;"
+        } elif ch == "<" {
+            out := out + "&lt;"
+        } elif ch == ">" {
+            out := out + "&gt;"
+        } elif ch == "\"" {
+            out := out + "&quot;"
+        } else {
+            out := out + ch
+        }
+    }
+    return out
+}
+
+# "a=1&b=two+words" to {a: "1", b: "two words"}. A name given twice
+# keeps its last value.
+proc parse_query(qs) {
+    alloc out := {}
+    if qs == "" { return out }
+    for pair in split(qs, "&") {
+        if pair == "" { continue }
+        alloc eq := find_char(pair, "=", 0)
+        if eq < 0 {
+            out[url_decode(pair, true)] := ""
+        } else {
+            out[url_decode(pair[0:eq], true)] := url_decode(pair[eq + 1:], true)
+        }
+    }
+    return out
+}
+
+# === Dates ==================================================================
+
+# [year, month, day] of a count of days since 1970-01-01.
+proc civil_from_days(days) {
+    alloc z := days + 719468
+    alloc era := z // 146097
+    alloc doe := z - era * 146097
+    alloc yoe := (doe - doe // 1460 + doe // 36524 - doe // 146096) // 365
+    alloc y := yoe + era * 400
+    alloc doy := doe - (365 * yoe + yoe // 4 - yoe // 100)
+    alloc mp := (5 * doy + 2) // 153
+    alloc d := doy - (153 * mp + 2) // 5 + 1
+    alloc m := mp + 3
+    if mp >= 10 { m := mp - 9 }
+    if m <= 2 { y := y + 1 }
+    return [y, m, d]
+}
+
+proc days_from_civil(y, m, d) {
+    if m <= 2 { y := y - 1 }
+    alloc era := y // 400
+    alloc yoe := y - era * 400
+    alloc mp := m - 3
+    if m <= 2 { mp := m + 9 }
+    alloc doy := (153 * mp + 2) // 5 + d - 1
+    alloc doe := yoe * 365 + yoe // 4 - yoe // 100 + doy
+    return era * 146097 + doe - 719468
+}
+
+# "Sun, 06 Nov 1994 08:49:37 GMT" for a time in milliseconds since 1970.
+proc http_date(ms) {
+    alloc secs := ms // 1000
+    alloc days := secs // 86400
+    alloc rem := secs % 86400
+    alloc ymd := civil_from_days(days)
+    return DAY_NAMES[days % 7] + ", " + two_digits(ymd[2]) + " " + MONTH_NAMES[ymd[1] - 1] + " " + ymd[0] + " " + two_digits(rem // 3600) + ":" + two_digits((rem % 3600) // 60) + ":" + two_digits(rem % 60) + " GMT"
+}
+
+# "06/Nov/1994:08:49:37 +0000", the form the access log uses.
+proc log_date(ms) {
+    alloc secs := ms // 1000
+    alloc days := secs // 86400
+    alloc rem := secs % 86400
+    alloc ymd := civil_from_days(days)
+    return two_digits(ymd[2]) + "/" + MONTH_NAMES[ymd[1] - 1] + "/" + ymd[0] + ":" + two_digits(rem // 3600) + ":" + two_digits((rem % 3600) // 60) + ":" + two_digits(rem % 60) + " +0000"
+}
+
+# Seconds since 1970 for a date in the form http_date writes, or -1.
+proc parse_http_date(value) {
+    if length(value) != 29 or value[25:] != " GMT" { return -1 }
+    alloc month := 0
+    alloc i := 0
+    loop i < 12 {
+        if MONTH_NAMES[i] == value[8:11] { month := i + 1 }
+        i := i + 1
+    }
+    if month == 0 { return -1 }
+    alloc secs := -1
+    try {
+        alloc day := int(value[5:7])
+        alloc year := int(value[12:16])
+        alloc hh := int(value[17:19])
+        alloc mm := int(value[20:22])
+        alloc ss := int(value[23:25])
+        secs := days_from_civil(year, month, day) * 86400 + hh * 3600 + mm * 60 + ss
+    } except err {
+        secs := -1
+    }
+    return secs
+}
+
+# === Reading a request ======================================================
+
+proc bad(status, why) {
+    return {error: status, why: why}
+}
+
+# The index just past the blank line that ends a request head, looking
+# from `from`; -1 when the head is not all there yet. Lines may end in
+# CR LF or in LF alone.
+proc find_head_end(buf, from) {
+    alloc n := length(buf)
+    alloc i := from
+    loop i < n {
+        if buf[i] == LF {
+            if i + 1 < n and buf[i + 1] == LF { return i + 2 }
+            if i + 2 < n and buf[i + 1] == CR and buf[i + 2] == LF { return i + 3 }
+        }
+        i := i + 1
+    }
+    return -1
+}
+
+# Decode the %XX of buf[from:to] and take out "." and ".." segments and
+# doubled slashes. Returns the path as a string, or false when it is
+# malformed or climbs above the root.
+proc normalize_path(buf, from, to) {
+    alloc dec := []
+    alloc i := from
+    loop i < to {
+        alloc ch := buf[i]
+        if ch == 37 {
+            if i + 2 >= to { return false }
+            alloc hi := hex_val(buf[i + 1])
+            alloc lo := hex_val(buf[i + 2])
+            if hi < 0 or lo < 0 { return false }
+            ch := hi * 16 + lo
+            i := i + 2
+        }
+        if ch == 0 { return false }
+        append(dec, ch)
+        i := i + 1
+    }
+    alloc n := length(dec)
+    alloc segs := []              # [start, end) of each segment kept
+    alloc open_end := true        # does the path end in a slash?
+    alloc start := 1
+    i := 1
+    loop i <= n {
+        if i == n or dec[i] == 47 {
+            alloc size := i - start
+            open_end := true
+            if size == 2 and dec[start] == 46 and dec[start + 1] == 46 {
+                if length(segs) == 0 { return false }
+                segs := segs[0:length(segs) - 1]
+            } elif size > 1 or (size == 1 and dec[start] != 46) {
+                append(segs, [start, i])
+                open_end := i < n
+            }
+            start := i + 1
+        }
+        i := i + 1
+    }
+    alloc out := []
+    for seg in segs {
+        append(out, 47)
+        out := out + dec[seg[0]:seg[1]]
+    }
+    if open_end { append(out, 47) }
+    return bytes_to_string(out)
+}
+
+# The request target at buf[from:to]: what was sent, the tidied path
+# and the query string.
+proc parse_target(buf, from, to) {
+    alloc q := -1                 # where "?" or "#" is
+    alloc plain := true           # nothing in the path to decode or tidy
+    alloc i := from
+    loop i < to {
+        alloc ch := buf[i]
+        if ch <= 32 or ch == 127 { return bad(400, "malformed request target") }
+        if q < 0 {
+            if ch == 63 or ch == 35 {
+                q := i
+            } elif ch == 37 {
+                plain := false
+            } elif ch == 47 and i + 1 < to and (buf[i + 1] == 47 or buf[i + 1] == 46) {
+                plain := false
+            }
+        }
+        i := i + 1
+    }
+    alloc raw := bytes_to_string(buf[from:to])
+    alloc path_end := to
+    if q >= 0 { path_end := q }
+    alloc path := ""
+    if buf[from] != 47 {
+        if raw == "*" {
+            path := "*"
+        } else {
+            # Absolute form: "http://host/path". Only the path matters.
+            alloc low := lower(raw)
+            alloc skip := 0
+            if starts_with(low, "http://") { skip := 7 }
+            if starts_with(low, "https://") { skip := 8 }
+            if skip == 0 { return bad(400, "malformed request target") }
+            alloc slash := index_of(buf, 47, from + skip)
+            if slash < 0 or slash >= path_end {
+                path := "/"
+            } else {
+                from := slash
+                plain := false
+            }
+        }
+    }
+    if path == "" {
+        if plain {
+            path := bytes_to_string(buf[from:path_end])
+        } else {
+            path := normalize_path(buf, from, path_end)
+            if path == false { return bad(400, "malformed path") }
+        }
+    }
+    alloc query_string := ""
+    if q >= 0 and buf[q] == 63 {
+        alloc qend := index_of(buf, 35, q)
+        if qend < 0 or qend > to { qend := to }
+        query_string := bytes_to_string(buf[q + 1:qend])
+    }
+    return {target: raw, path: path, query_string: query_string}
+}
+
+# Does a comma-separated header value (already in lower case) list `word`?
+proc has_token(value, word) {
+    if value == word { return true }
+    for part in split(value, ",") {
+        if trim(part) == word { return true }
+    }
+    return false
+}
+
+# Turn the head at buf[0:end] into a request. Returns the request, or
+# {error: status, why: text}. Header names are lower-cased in place.
+proc parse_head(buf, end) {
+    alloc eol := index_of(buf, LF, 0)
+    alloc stop := eol
+    if stop > 0 and buf[stop - 1] == CR { stop := stop - 1 }
+
+    # METHOD SP target SP HTTP/1.x
+    alloc a := 0
+    loop a < stop and buf[a] != 32 { a := a + 1 }
+    if a == 0 or a > 16 or a >= stop { return bad(400, "malformed request line") }
+    alloc i := 0
+    loop i < a {
+        if buf[i] < 65 or buf[i] > 90 { return bad(400, "malformed method") }
+        i := i + 1
+    }
+    alloc b := a + 1
+    loop b < stop and buf[b] != 32 { b := b + 1 }
+    if b == a + 1 or b >= stop { return bad(400, "malformed request line") }
+    alloc version := bytes_to_string(buf[b + 1:stop])
+    if version != "HTTP/1.1" and version != "HTTP/1.0" {
+        if starts_with(version, "HTTP/") { return bad(505, "only HTTP/1.0 and HTTP/1.1 are spoken here") }
+        return bad(400, "malformed request line")
+    }
+    alloc req := parse_target(buf, a + 1, b)
+    if has_key(req, "error") { return req }
+    req.method := bytes_to_string(buf[0:a])
+    req.version := version[5:]
+
+    alloc headers := {}
+    alloc count := 0
+    alloc p := eol + 1
+    loop p < end {
+        alloc q := index_of(buf, LF, p)
+        alloc lend := q
+        if lend > p and buf[lend - 1] == CR { lend := lend - 1 }
+        if lend == p { break }
+        if buf[p] == 32 or buf[p] == 9 { return bad(400, "folded header line") }
+        alloc k := p
+        loop k < lend and buf[k] != 58 {
+            alloc ch := buf[k]
+            if not TOKEN[ch] { return bad(400, "malformed header name") }
+            if ch >= 65 and ch <= 90 { buf[k] := ch + 32 }
+            k := k + 1
+        }
+        if k == p or k == lend { return bad(400, "malformed header line") }
+        alloc vs := k + 1
+        loop vs < lend and (buf[vs] == 32 or buf[vs] == 9) { vs := vs + 1 }
+        alloc ve := lend
+        loop ve > vs and (buf[ve - 1] == 32 or buf[ve - 1] == 9) { ve := ve - 1 }
+        alloc j := vs
+        loop j < ve {
+            if (buf[j] < 32 and buf[j] != 9) or buf[j] == 127 {
+                return bad(400, "control character in a header")
+            }
+            j := j + 1
+        }
+        alloc name := bytes_to_string(buf[p:k])
+        alloc value := bytes_to_string(buf[vs:ve])
+        if has_key(headers, name) {
+            # A header sent twice is the same as one with both values,
+            # except where two values can only mean trouble.
+            if name == "host" or name == "transfer-encoding" {
+                return bad(400, "duplicate " + name + " header")
+            }
+            if name == "content-length" {
+                if headers[name] != value { return bad(400, "conflicting content-length headers") }
+            } elif name == "cookie" {
+                headers[name] := headers[name] + "; " + value
+            } else {
+                headers[name] := headers[name] + ", " + value
+            }
+        } else {
+            headers[name] := value
+        }
+        count := count + 1
+        if count > 100 { return bad(431, "too many headers") }
+        p := q + 1
+    }
+    if req.version == "1.1" and not has_key(headers, "host") {
+        return bad(400, "missing host header")
+    }
+    req.headers := headers
+    req.params := {}
+    req.query := parse_query(req.query_string)
+    req.body := []
+
+    # Does the client want the connection kept open after this?
+    alloc tokens := ""
+    if has_key(headers, "connection") { tokens := lower(headers.connection) }
+    if req.version == "1.1" {
+        req.keep_alive := not has_token(tokens, "close")
+    } else {
+        req.keep_alive := has_token(tokens, "keep-alive")
+    }
+    return req
+}
+
+# === Working with a request =================================================
+
+# A request header by name (any case), or "" when it was not sent.
+proc header(req, name) {
+    alloc key := lower(name)
+    if has_key(req.headers, key) { return req.headers[key] }
+    return ""
+}
+
+# The body as text.
+proc body_text(req) {
+    return bytes_to_string(req.body)
+}
+
+# The fields of a body sent by an HTML form
+# (application/x-www-form-urlencoded).
+proc form(req) {
+    return parse_query(bytes_to_string(req.body))
+}
+
+# The cookies the client sent, by name.
+proc cookies(req) {
+    alloc out := {}
+    alloc raw := header(req, "cookie")
+    if raw == "" { return out }
+    for part in split(raw, ";") {
+        alloc item := trim(part)
+        alloc eq := find_char(item, "=", 0)
+        if eq > 0 {
+            out[item[0:eq]] := item[eq + 1:]
+        }
+    }
+    return out
+}
+
+# === Building a response ====================================================
+
+proc reason(status) {
+    alloc key := "" + status
+    if has_key(STATUS_TEXT, key) { return STATUS_TEXT[key] }
+    return "Status " + status
+}
+
+proc response(status, headers, body) {
+    return {status: status, headers: headers, body: body}
+}
+
+proc text(status, body) {
+    return {status: status, headers: {"Content-Type": "text/plain; charset=utf-8"}, body: body}
+}
+
+proc html(status, body) {
+    return {status: status, headers: {"Content-Type": "text/html; charset=utf-8"}, body: body}
+}
+
+# `body` is JSON text; this only labels it.
+proc json(status, body) {
+    return {status: status, headers: {"Content-Type": "application/json"}, body: body}
+}
+
+# A list of bytes with the content type given.
+proc bytes(status, content_type, body) {
+    return {status: status, headers: {"Content-Type": content_type}, body: body}
+}
+
+proc empty(status) {
+    return {status: status, headers: {}, body: ""}
+}
+
+# 302 is the usual status; 301 and 308 are remembered by browsers.
+proc redirect(status, location) {
+    return {
+        status: status,
+        headers: {"Location": location, "Content-Type": "text/plain; charset=utf-8"},
+        body: "See " + location + "\n"
+    }
+}
+
+# A small page for a status, as the server itself sends for errors.
+proc error_page(status, detail) {
+    alloc title := status + " " + reason(status)
+    alloc page := "<!doctype html>\n<title>" + title + "</title>\n<h1>" + title + "</h1>\n"
+    if detail != "" {
+        page := page + "<p>" + html_escape(detail) + "</p>\n"
+    }
+    return {status: status, headers: {"Content-Type": "text/html; charset=utf-8"}, body: page}
+}
+
+# "The answer comes later": return this from a handler, keep the
+# request, and call app.respond(req, response) when there is one.
+proc pending() {
+    return {pending: true}
+}
+
+# An answer sent in pieces: return this from a handler (or give it to
+# app.respond), then app.send(req, data) as often as needed and
+# app.finish(req).
+proc stream(status, headers) {
+    return {status: status, headers: headers, stream: true}
+}
+
+# === Static files ===========================================================
+
+proc content_type_for(path, extra) {
+    alloc n := length(path)
+    alloc i := n - 1
+    loop i >= 0 and path[i] != "." and path[i] != "/" and path[i] != "\\" { i := i - 1 }
+    if i < 0 or path[i] != "." { return "application/octet-stream" }
+    alloc ext := lower(path[i + 1:])
+    if has_key(extra, ext) { return extra[ext] }
+    if has_key(MIME_TYPES, ext) { return MIME_TYPES[ext] }
     return "application/octet-stream"
 }
 
-# === response writers ==================================================
-
-# Generic responder: emit status line, content-type, content-length, then
-# the body. `body` is a string or a byte list — tcp_write handles both.
-proc respond(client, status, content_type, body) {
-    alloc hdr := "HTTP/1.0 " + status + "\r\n"
-    hdr := hdr + "Content-Type: " + content_type + "\r\n"
-    hdr := hdr + "Content-Length: " + length(body) + "\r\n"
-    hdr := hdr + "Connection: close\r\n\r\n"
-    tcp_write(client, hdr)
-    tcp_write(client, body)
-}
-
-# Shorthand for an HTML response.
-proc respond_html(client, status, body) {
-    respond(client, status, "text/html; charset=utf-8", body)
-}
-
-# Read the file at `fs_path` in binary mode and send it with the
-# extension-derived Content-Type. Caller must have verified the file
-# exists; this raises if it doesn't.
-proc serve_file(client, fs_path) {
-    alloc h := file_open(fs_path, "rb")
-    alloc body := file_read(h)
-    file_close(h)
-    respond(client, "200 OK", content_type_for(fs_path), body)
-}
-
-# === built-in handlers =================================================
-
-# Static-file handler. Refuses non-GET/HEAD with 405, traversal attempts
-# with 400, missing files with 404; otherwise serves the file under
-# `webroot`. Composable: call this from your own handler as a fallthrough.
-proc handle_static(client, method, path, webroot) {
-    if method != "GET" and method != "HEAD" {
-        respond_html(client, "405 Method Not Allowed",
-            "<!doctype html><title>405</title><h1>405 Method Not Allowed</h1>")
+# What "Range: bytes=..." asks of a file of `size` bytes: [first, last],
+# or [] when it asks for nothing the file has, or false when it is not
+# a single range we understand (the whole file is then sent).
+proc parse_range(value, size) {
+    if not starts_with(value, "bytes=") { return false }
+    alloc spec := trim(value[6:])
+    if find_char(spec, ",", 0) >= 0 { return false }
+    alloc dash := find_char(spec, "-", 0)
+    if dash < 0 { return false }
+    alloc first := trim(spec[0:dash])
+    alloc last := trim(spec[dash + 1:])
+    alloc a := 0
+    alloc b := size - 1
+    try {
+        if first == "" {
+            # "-N": the last N bytes.
+            if last == "" { return false }
+            alloc count := int(last)
+            if count <= 0 { return [] }
+            a := size - count
+            if a < 0 { a := 0 }
+        } else {
+            a := int(first)
+            if last != "" {
+                b := int(last)
+                if b < a { return false }
+            }
+        }
+    } except err {
         return false
     }
-    if is_safe_path(path) == false {
-        respond_html(client, "400 Bad Request",
-            "<!doctype html><title>400</title><h1>400 Bad Request</h1>")
-        return false
+    if a < 0 { return false }
+    if a >= size { return [] }
+    if b > size - 1 { b := size - 1 }
+    return [a, b]
+}
+
+# Does an If-None-Match value name this ETag? Weak or strong is all one
+# here.
+proc etag_matches(value, etag) {
+    if trim(value) == "*" { return true }
+    for part in split(value, ",") {
+        alloc tag := trim(part)
+        if starts_with(tag, "W/") { tag := tag[2:] }
+        if tag == etag { return true }
     }
-    alloc fs_path := resolve_fs_path(webroot, path)
-    if file_exists(fs_path) == false or is_dir(fs_path) {
-        respond_html(client, "404 Not Found",
-            "<!doctype html><title>404</title><h1>404 Not Found</h1><p>No file at " + path + "</p>")
-        return false
+    return false
+}
+
+# A page listing the directory at fs_path, for the URL path given.
+proc listing_page(fs_path, url_path) {
+    alloc title := "Index of " + html_escape(url_path)
+    alloc page := "<!doctype html>\n<meta charset=\"utf-8\">\n<title>" + title + "</title>\n<h1>" + title + "</h1>\n<ul>\n"
+    if url_path != "/" {
+        page := page + "<li><a href=\"../\">../</a></li>\n"
     }
-    serve_file(client, fs_path)
+    for name in read_dir(fs_path) {
+        if starts_with(name, ".") { continue }
+        alloc shown := name
+        if is_dir(fs_path + "/" + name) { shown := name + "/" }
+        page := page + "<li><a href=\"" + url_encode_path(shown) + "\">" + html_escape(shown) + "</a></li>\n"
+    }
+    return html(200, page + "</ul>\n")
+}
+
+proc static_options(given) {
+    alloc opts := {
+        index: "index.html",        # served for a directory; "" for none
+        listing: false,             # list a directory that has no index
+        dotfiles: false,            # serve names that start with "."
+        cache_control: "no-cache",  # "" to send none
+        types: {}                   # extension -> content type, added to the table
+    }
+    for key in dict_keys(given) {
+        if not has_key(opts, key) { raise("http: unknown files option '" + key + "'") }
+        opts[key] := given[key]
+    }
+    return opts
+}
+
+# The response for the file at fs_path: 200, or 304 when the client
+# already has it, or 206 for the part it asked for. Nothing is read
+# here; the server streams the file when it sends the response.
+proc file_response(req, fs_path, opts) {
+    alloc size := file_size(fs_path)
+    alloc mtime := file_mtime(fs_path)
+    alloc etag := "\"" + hex(mtime) + "-" + hex(size) + "\""
+    alloc modified := http_date(mtime)
+    alloc headers := {
+        "Content-Type": content_type_for(fs_path, opts.types),
+        "ETag": etag,
+        "Last-Modified": modified,
+        "Accept-Ranges": "bytes"
+    }
+    if opts.cache_control != "" { headers["Cache-Control"] := opts.cache_control }
+
+    alloc inm := header(req, "if-none-match")
+    if inm != "" {
+        if etag_matches(inm, etag) { return {status: 304, headers: headers} }
+    } else {
+        alloc since := parse_http_date(header(req, "if-modified-since"))
+        if since >= 0 and mtime // 1000 <= since { return {status: 304, headers: headers} }
+    }
+
+    alloc offset := 0
+    alloc count := size
+    alloc status := 200
+    alloc wanted := header(req, "range")
+    if wanted != "" {
+        alloc cond := header(req, "if-range")
+        if cond == "" or cond == etag or cond == modified {
+            alloc r := parse_range(wanted, size)
+            if r != false {
+                if length(r) == 0 {
+                    alloc res := error_page(416, "the file is " + size + " bytes long")
+                    res.headers["Content-Range"] := "bytes */" + size
+                    return res
+                }
+                offset := r[0]
+                count := r[1] - r[0] + 1
+                status := 206
+                headers["Content-Range"] := "bytes " + r[0] + "-" + r[1] + "/" + size
+            }
+        }
+    }
+    return {status: status, headers: headers, file: fs_path, offset: offset, length: count}
+}
+
+# Send one file from a handler: `return http.send_file(req, "report.pdf")`.
+proc send_file(req, fs_path) {
+    if not file_exists(fs_path) or is_dir(fs_path) {
+        return error_page(404, "")
+    }
+    return file_response(req, fs_path, static_options({}))
+}
+
+# The response for `rest` (the part of the URL path below the mount
+# point, already decoded and tidied) under the directory `root`.
+proc static_response(req, root, rest, opts) {
+    if req.method != "GET" and req.method != "HEAD" {
+        alloc res := error_page(405, "")
+        res.headers["Allow"] := "GET, HEAD"
+        return res
+    }
+    # ".." is gone already (the request parser removed it). What is
+    # left to refuse are names that mean something else on Windows, and
+    # hidden files.
+    for seg in split(rest, "/") {
+        if find_char(seg, "\\", 0) >= 0 or find_char(seg, ":", 0) >= 0 {
+            return error_page(404, "")
+        }
+        if not opts.dotfiles and starts_with(seg, ".") {
+            return error_page(404, "")
+        }
+    }
+    alloc fs_path := root
+    if rest != "" { fs_path := root + "/" + rest }
+    if is_dir(fs_path) {
+        if not ends_with(req.path, "/") {
+            alloc to := url_encode_path(req.path) + "/"
+            if req.query_string != "" { to := to + "?" + req.query_string }
+            return redirect(301, to)
+        }
+        alloc dir := fs_path
+        if not ends_with(dir, "/") { dir := dir + "/" }
+        alloc index := dir + opts.index
+        if opts.index != "" and file_exists(index) and not is_dir(index) {
+            fs_path := index
+        } elif opts.listing {
+            return listing_page(fs_path, req.path)
+        } else {
+            return error_page(404, "")
+        }
+    } elif not file_exists(fs_path) {
+        return error_page(404, "")
+    }
+    return file_response(req, fs_path, opts)
+}
+
+# === Routes =================================================================
+
+# "/users/:id/files/*rest" as a list of parts: [0, "users"] is a
+# literal, [1, "id"] one segment captured, [2, "rest"] everything left.
+proc compile_pattern(pattern) {
+    if pattern == "" or pattern[0] != "/" {
+        raise("http: a route pattern starts with '/': " + pattern)
+    }
+    alloc parts := []
+    alloc segs := split(pattern[1:], "/")
+    alloc i := 0
+    loop i < length(segs) {
+        alloc seg := segs[i]
+        if starts_with(seg, ":") and length(seg) > 1 {
+            append(parts, [1, seg[1:]])
+        } elif starts_with(seg, "*") {
+            if i != length(segs) - 1 { raise("http: '*' is only for the end of a pattern: " + pattern) }
+            alloc name := "rest"
+            if length(seg) > 1 { name := seg[1:] }
+            append(parts, [2, name])
+        } else {
+            append(parts, [0, seg])
+        }
+        i := i + 1
+    }
+    return parts
+}
+
+# The parameters captured when the pattern parts match the path
+# segments, or false.
+proc match_parts(parts, segs) {
+    alloc np := length(parts)
+    alloc ns := length(segs)
+    alloc params := {}
+    alloc i := 0
+    loop i < np {
+        alloc part := parts[i]
+        if part[0] == 2 {
+            alloc rest := ""
+            alloc k := i
+            loop k < ns {
+                if k > i { rest := rest + "/" }
+                rest := rest + segs[k]
+                k := k + 1
+            }
+            params[part[1]] := rest
+            return params
+        }
+        if i >= ns { return false }
+        if part[0] == 0 {
+            if part[1] != segs[i] { return false }
+        } else {
+            if segs[i] == "" { return false }
+            params[part[1]] := segs[i]
+        }
+        i := i + 1
+    }
+    if ns != np { return false }
+    return params
+}
+
+proc add_route(s, method, pattern, handler) {
+    append(s.routes, {method: method, parts: compile_pattern(pattern), handler: handler})
     return true
 }
 
-# === accept loop =======================================================
+# Find the route for a request and run its handler.
+proc route_request(s, req) {
+    for hook in s.before {
+        alloc early := hook(req)
+        if has_key(early, "status") or has_key(early, "pending") { return early }
+    }
+    alloc method := req.method
+    if req.path == "*" {
+        if method == "OPTIONS" {
+            return {status: 204, headers: {"Allow": "GET, HEAD, POST, PUT, PATCH, DELETE, OPTIONS"}}
+        }
+        return error_page(400, "")
+    }
+    alloc segs := split(req.path[1:], "/")
+    alloc allowed := []
+    alloc fallback := false           # a GET route that can answer a HEAD
+    alloc fallback_params := false
+    for route in s.routes {
+        alloc params := match_parts(route.parts, segs)
+        if params == false { continue }
+        if route.method == method or route.method == "*" {
+            req.params := params
+            return route.handler(req)
+        }
+        if method == "HEAD" and route.method == "GET" and fallback == false {
+            fallback := route
+            fallback_params := params
+        }
+        alloc seen := false
+        for m in allowed {
+            if m == route.method { seen := true }
+        }
+        if not seen { append(allowed, route.method) }
+    }
+    if fallback != false {
+        req.params := fallback_params
+        return fallback.handler(req)
+    }
+    if length(allowed) > 0 {
+        alloc list := ""
+        alloc has_get := false
+        for m in allowed {
+            if list != "" { list := list + ", " }
+            list := list + m
+            if m == "GET" { has_get := true }
+        }
+        if has_get { list := list + ", HEAD" }
+        list := list + ", OPTIONS"
+        if method == "OPTIONS" {
+            return {status: 204, headers: {"Allow": list}}
+        }
+        alloc res := error_page(405, "")
+        res.headers["Allow"] := list
+        return res
+    }
+    if s.not_found != false {
+        return s.not_found(req)
+    }
+    return error_page(404, "Nothing at " + req.path)
+}
 
-# Read one request from `client` and hand it to `handler`. A failure
-# while reading, parsing or handling is logged and does not take the
-# server down.
-proc handle_connection(client, handler) {
-    try {
-        alloc text := read_request(client)
-        alloc parts := parse_request_line(text)
-        alloc method := parts[0]
-        alloc path := parts[1]
-        emit method + " " + path
-        handler(client, method, path)
-    } except err {
-        emit "request error: " + err
+# === The server =============================================================
+
+proc default_options() {
+    return {
+        host: "127.0.0.1",
+        port: 8080,
+        max_connections: 512,               # more than this wait their turn to be accepted
+        max_header_bytes: 16384,            # request line and headers together
+        max_body_bytes: 1048576,
+        max_requests_per_connection: 1000,
+        idle_timeout_ms: 15000,             # an open connection with no request on it
+        header_timeout_ms: 10000,           # from a request's first byte to the end of its headers
+        body_timeout_ms: 30000,             # to the end of its body
+        write_timeout_ms: 30000,            # a client that stops reading the answer
+        handler_timeout_ms: 60000,          # an http.pending() that is never answered
+        shutdown_timeout_ms: 10000,         # how long a stop waits for requests in flight
+        handle_signals: true,               # stop cleanly on Ctrl-C and SIGTERM
+        server_name: "omg-http",            # the Server header; "" to send none
+        log: true                           # true: access log on standard output;
+                                            # false: none; or a proc(line)
     }
 }
 
-# Generic serve loop. Listens on host:port; for each accepted connection
-# it parses the request line and invokes handler(client, method, path).
-# The handler is responsible for writing a response (use the respond_* /
-# serve_file helpers).
-#
-# Where the platform has fork() (Linux, macOS), each connection gets its
-# own child process: the child handles the request, closes the socket
-# and exits, while the parent goes straight back to tcp_accept. Children
-# auto-reap (SIGCHLD = SIG_IGN inside fork()).
-#
-# Where it does not (Windows), fork() raises an error. The first time
-# that happens the loop switches to handling each request in this
-# process, one after another, and stays that way.
-proc serve(host, port, handler) {
-    alloc server := tcp_listen(host, port)
-    emit "listening on http://" + host + ":" + port
-    alloc can_fork := true
-    loop true {
-        alloc client := tcp_accept(server)
-        alloc pid := -1
-        if can_fork {
-            try {
-                pid := fork()
-            } except err {
-                can_fork := false
-                emit "fork() is not available here; serving one request at a time"
+proc new_state(given) {
+    alloc opts := default_options()
+    for key in dict_keys(given) {
+        if not has_key(opts, key) { raise("http: unknown server option '" + key + "'") }
+        opts[key] := given[key]
+    }
+    return {
+        opts: opts,
+        routes: [],
+        before: [],
+        after: [],
+        not_found: false,
+        on_error: false,
+        listener: 0,
+        conns: [],                # by socket handle; false where there is none
+        nconns: 0,
+        ready: [],                # handles with input waiting that no poll will announce
+        timers: [],               # [due, proc, interval or 0, id]
+        next_timer: 1,
+        serial: 0,
+        now: time_ms(),
+        clock_sec: -1,
+        date_http: "",
+        date_clf: "",
+        running: false,
+        draining: false,
+        drain_deadline: 0,
+        accept_after: 0,          # no accepting before this time (after an accept failed)
+        interrupts: 0,
+        requests: 0,
+        accepted: 0
+    }
+}
+
+# Bring s.now and the two date strings up to date.
+proc srv_clock(s) {
+    alloc now := time_ms()
+    s.now := now
+    alloc sec := now // 1000
+    if sec != s.clock_sec {
+        s.clock_sec := sec
+        s.date_http := http_date(now)
+        s.date_clf := log_date(now)
+    }
+    return now
+}
+
+proc srv_log(s, line) {
+    alloc sink := s.opts.log
+    if sink == true {
+        emit line
+    } elif sink != false {
+        sink(line)
+    }
+    return true
+}
+
+# Something went wrong that the operator should hear about.
+proc srv_note(s, message) {
+    if s.opts.log != false {
+        srv_log(s, "http: " + message)
+    }
+    return true
+}
+
+# --- connections ------------------------------------------------------------
+
+proc conn_new(s, h, peer) {
+    alloc c := {
+        h: h,
+        peer: peer,
+        state: ST_HEAD,
+        inbuf: [],
+        scan: 0,                  # where to go on looking for the end of the head
+        req: false,
+        serial: 0,                # of the request being served
+        body_need: 0,
+        body: [],                 # the chunked body so far
+        chunk_state: 0,
+        chunk_left: 0,
+        out: [],                  # [data, bytes] still to send
+        out_i: 0,
+        out_off: 0,
+        file: 0,                  # a file being streamed, or 0
+        file_left: 0,
+        chunked: false,           # is the open stream chunked?
+        want_read: true,
+        want_write: false,
+        deadline: s.now + s.opts.idle_timeout_ms,
+        started: 0,               # when the current request's first byte came
+        served: 0,
+        status: 0,
+        body_bytes: 0,
+        eof: false,               # the client will send nothing more
+        close_after: false,
+        linger: false,
+        linger_left: 0
+    }
+    loop length(s.conns) <= h { append(s.conns, false) }
+    s.conns[h] := c
+    s.nconns := s.nconns + 1
+    return c
+}
+
+proc conn_close(s, c) {
+    if c.state == ST_CLOSED { return false }
+    c.state := ST_CLOSED
+    c.want_read := false
+    c.want_write := false
+    c.deadline := 0
+    if c.file != 0 {
+        try { file_close(c.file) } except err { }
+        c.file := 0
+    }
+    try { tcp_close(c.h) } except err { }
+    s.conns[c.h] := false
+    s.nconns := s.nconns - 1
+    return true
+}
+
+# The connection a request arrived on, if it is still there and still
+# on that request.
+proc conn_of(s, req) {
+    alloc h := req.conn
+    if h >= length(s.conns) { return false }
+    alloc c := s.conns[h]
+    if c == false { return false }
+    if c.serial != req.serial { return false }
+    return c
+}
+
+proc conn_queue(c, data, nbytes) {
+    append(c.out, [data, nbytes])
+    return true
+}
+
+# Send what is queued, refilling from the file being streamed, until
+# the socket is full or there is nothing left; then move the connection
+# on. Never raises: a connection that fails is closed.
+proc conn_pump(s, c) {
+    alloc drained := false
+    alloc moved := false
+    try {
+        loop true {
+            loop c.out_i < length(c.out) {
+                alloc item := c.out[c.out_i]
+                alloc n := tcp_write(c.h, item[0], c.out_off)
+                if n > 0 { moved := true }
+                c.out_off := c.out_off + n
+                if c.out_off < item[1] { break }
+                c.out_i := c.out_i + 1
+                c.out_off := 0
+            }
+            if c.out_i < length(c.out) { break }
+            c.out := []
+            c.out_i := 0
+            if c.file == 0 {
+                drained := true
+                break
+            }
+            alloc want := c.file_left
+            if want > PIECE { want := PIECE }
+            alloc piece := file_read(c.file, want)
+            if length(piece) == 0 {
+                # The file is shorter than it was when its length was
+                # announced. Nothing honest can follow.
+                raise("file shrank while it was being sent")
+            }
+            c.file_left := c.file_left - length(piece)
+            append(c.out, [piece, length(piece)])
+            if c.file_left <= 0 {
+                file_close(c.file)
+                c.file := 0
             }
         }
-        if pid == 0 {
-            # Child: serve this one connection and exit.
-            tcp_close(server)
-            handle_connection(client, handler)
-            tcp_close(client)
-            exit(0)
-        }
-        if pid < 0 {
-            # No fork: serve it here before accepting the next one.
-            handle_connection(client, handler)
-        }
-        tcp_close(client)
+    } except err {
+        conn_close(s, c)
+        return false
     }
+    if not drained {
+        c.want_write := true
+        if moved or c.deadline == 0 { c.deadline := s.now + s.opts.write_timeout_ms }
+        return true
+    }
+    c.want_write := false
+    if c.state == ST_SENDING {
+        conn_response_done(s, c)
+    } elif c.state == ST_STREAM {
+        c.deadline := 0
+    }
+    return true
 }
 
-# Convenience: a pure static-file server in one call. Equivalent to
-# defining a one-line closure that delegates to handle_static and
-# passing it to serve().
-proc serve_static(host, port, webroot) {
-    proc handler(client, method, path) {
-        handle_static(client, method, path, webroot)
+# One line of access log for the response just sent.
+proc conn_log(s, c) {
+    if s.opts.log == false { return false }
+    alloc req := c.req
+    alloc host := c.peer
+    alloc colon := length(host) - 1
+    loop colon > 0 and host[colon] != ":" { colon := colon - 1 }
+    if colon > 0 { host := host[0:colon] }
+    alloc took := s.now - c.started
+    if c.started == 0 { took := 0 }
+    srv_log(s, host + " - - [" + s.date_clf + "] \"" + req.method + " " + req.target + " HTTP/" + req.version + "\" " + c.status + " " + c.body_bytes + " " + took + "ms")
+    return true
+}
+
+# The whole response has gone out.
+proc conn_response_done(s, c) {
+    conn_log(s, c)
+    s.requests := s.requests + 1
+    c.served := c.served + 1
+    if c.close_after or c.eof or s.draining {
+        if c.linger and not c.eof {
+            # The client may still be sending the request we refused.
+            # Closing now could reset the connection before it reads
+            # the answer, so take in and drop what comes for a moment.
+            c.state := ST_LINGER
+            c.want_read := true
+            c.linger_left := LINGER_BYTES
+            c.deadline := s.now + LINGER_MS
+            c.inbuf := []
+        } else {
+            conn_close(s, c)
+        }
+        return true
     }
-    serve(host, port, handler)
+    c.state := ST_HEAD
+    c.req := false
+    c.serial := 0
+    c.scan := 0
+    c.started := 0
+    c.status := 0
+    c.body_bytes := 0
+    c.want_read := true
+    c.deadline := s.now + s.opts.idle_timeout_ms
+    if length(c.inbuf) > 0 {
+        # The next request is here already (pipelining). No poll will
+        # announce it, so ask the loop to come back.
+        append(s.ready, c.h)
+    }
+    return true
+}
+
+# A header's lines for the response head. A value may be a list of
+# strings, for a header that is sent several times (Set-Cookie).
+proc header_lines(name, value) {
+    if ("" + value) == value {
+        return name + ": " + checked(value) + "\r\n"
+    }
+    alloc many := true
+    try {
+        alloc n := length(value)
+    } except err {
+        many := false
+    }
+    if not many { return name + ": " + value + "\r\n" }
+    alloc out := ""
+    for item in value {
+        out := out + name + ": " + checked("" + item) + "\r\n"
+    }
+    return out
+}
+
+# A header value must stay on its line, or a client could be told
+# things the program never said.
+proc checked(value) {
+    for ch in value {
+        if ch == "\r" or ch == "\n" { raise("http: a header value contains a line break") }
+    }
+    return value
+}
+
+# Write the response `res` for the request the connection is on. May
+# raise (a file that cannot be opened, a body of the wrong type) before
+# anything has been queued.
+proc conn_send(s, c, res) {
+    alloc req := c.req
+    alloc status := res.status
+    alloc bodyless := status < 200 or status == 204 or status == 304
+    alloc head_only := bodyless or req.method == "HEAD"
+    alloc close := c.close_after or c.eof or s.draining or not req.keep_alive
+    if c.served + 1 >= s.opts.max_requests_per_connection { close := true }
+
+    alloc lines := ""
+    alloc typed := false
+    if has_key(res, "headers") {
+        alloc given := res.headers
+        for name in dict_keys(given) {
+            alloc key := lower(name)
+            if key == "connection" {
+                if has_token(lower("" + given[name]), "close") { close := true }
+                continue
+            }
+            # The server works these out itself.
+            if key == "content-length" or key == "transfer-encoding" or key == "date" { continue }
+            if key == "content-type" { typed := true }
+            lines := lines + header_lines(checked(name), given[name])
+        }
+    }
+
+    alloc is_file := has_key(res, "file")
+    alloc is_stream := has_key(res, "stream")
+    alloc body := ""
+    alloc nbody := 0
+    alloc textual := true
+    if is_file {
+        nbody := res.length
+    } elif not is_stream and has_key(res, "body") {
+        body := res.body
+        if body[0:0] == "" {
+            nbody := byte_length(body)
+        } else {
+            nbody := length(body)
+            textual := false
+        }
+    }
+
+    alloc head := "HTTP/1.1 " + status + " " + reason(status) + "\r\n"
+    if s.opts.server_name != "" { head := head + "Server: " + s.opts.server_name + "\r\n" }
+    head := head + "Date: " + s.date_http + "\r\n" + lines
+    if not typed and not bodyless and (nbody > 0 or is_stream) {
+        if textual {
+            head := head + "Content-Type: text/plain; charset=utf-8\r\n"
+        } else {
+            head := head + "Content-Type: application/octet-stream\r\n"
+        }
+    }
+    alloc chunked := false
+    if is_stream {
+        if req.version == "1.1" {
+            if not bodyless {
+                chunked := true
+                head := head + "Transfer-Encoding: chunked\r\n"
+            }
+        } else {
+            # HTTP/1.0 knows no chunks: the end of the answer is the
+            # end of the connection.
+            close := true
+        }
+    } elif not bodyless {
+        head := head + "Content-Length: " + nbody + "\r\n"
+    }
+    if close {
+        head := head + "Connection: close\r\n"
+    } elif req.version == "1.0" {
+        head := head + "Connection: keep-alive\r\n"
+    }
+    head := head + "\r\n"
+    alloc nhead := byte_length(head)
+
+    # Everything that can fail has to happen before the state changes.
+    alloc fh := 0
+    alloc first := []
+    if is_file and not head_only and nbody > 0 {
+        fh := file_open(res.file, "rb")
+        try {
+            if res.offset > 0 { file_seek(fh, res.offset) }
+            alloc want := nbody
+            if want > PIECE { want := PIECE }
+            first := file_read(fh, want)
+        } except err {
+            file_close(fh)
+            raise(err)
+        }
+        if length(first) == 0 {
+            file_close(fh)
+            raise("file is shorter than expected")
+        }
+    }
+
+    c.close_after := close
+    c.status := status
+    c.body_bytes := 0
+    c.state := ST_SENDING
+    c.want_read := not c.eof and length(c.inbuf) < s.opts.max_header_bytes
+    c.deadline := s.now + s.opts.write_timeout_ms
+    if head_only {
+        conn_queue(c, head, nhead)
+        if is_stream {
+            # Nothing will follow the head; app.send and app.finish
+            # see a stream that has ended.
+            c.chunked := false
+        }
+    } elif is_file {
+        c.body_bytes := nbody
+        if nbody == 0 {
+            conn_queue(c, head, nhead)
+        } else {
+            # The head and the first piece of the file in one write.
+            conn_queue(c, string_bytes(head) + first, nhead + length(first))
+            c.file_left := nbody - length(first)
+            if c.file_left > 0 {
+                c.file := fh
+            } else {
+                file_close(fh)
+            }
+        }
+    } elif is_stream {
+        conn_queue(c, head, nhead)
+        c.state := ST_STREAM
+        c.chunked := chunked
+    } else {
+        c.body_bytes := nbody
+        if textual {
+            if nbody <= PIECE {
+                conn_queue(c, head + body, nhead + nbody)
+            } else {
+                conn_queue(c, head, nhead)
+                conn_queue(c, body, nbody)
+            }
+        } elif nbody <= PIECE {
+            conn_queue(c, string_bytes(head) + body, nhead + nbody)
+        } else {
+            # A list is turned into bytes each time it is handed to the
+            # socket, so a long one goes in pieces.
+            conn_queue(c, head, nhead)
+            alloc at := 0
+            loop at < nbody {
+                alloc upto := at + PIECE
+                if upto > nbody { upto := nbody }
+                conn_queue(c, body[at:upto], upto - at)
+                at := upto
+            }
+        }
+    }
+    return true
+}
+
+# Answer the request the connection is on with `res`, whatever it takes.
+proc conn_respond(s, c, res) {
+    for hook in s.after {
+        try {
+            alloc changed := hook(c.req, res)
+            if has_key(changed, "status") { res := changed }
+        } except err {
+            srv_note(s, "an after hook failed: " + err)
+        }
+    }
+    if not has_key(res, "status") {
+        srv_note(s, "the handler for " + c.req.method + " " + c.req.path + " returned no response")
+        res := error_page(500, "")
+    }
+    try {
+        conn_send(s, c, res)
+    } except err {
+        srv_note(s, "cannot send the response for " + c.req.method + " " + c.req.path + ": " + err)
+        try {
+            conn_send(s, c, error_page(500, ""))
+        } except err2 {
+            conn_close(s, c)
+            return false
+        }
+    }
+    conn_pump(s, c)
+    return true
+}
+
+# Refuse the request being read: answer with an error and close.
+proc conn_fail(s, c, status, why) {
+    if c.req == false {
+        c.req := {
+            method: "-", target: "-", path: "-", query_string: "", version: "1.1",
+            keep_alive: false, headers: {}, params: {}, query: {}, body: [],
+            peer: c.peer, conn: c.h, serial: 0
+        }
+    }
+    if c.started == 0 { c.started := s.now }
+    c.close_after := true
+    c.linger := true
+    c.inbuf := []
+    conn_respond(s, c, error_page(status, why))
+    return false
+}
+
+# Run the handler for the request that has just been read in full.
+proc conn_dispatch(s, c) {
+    alloc req := c.req
+    c.state := ST_WAITING
+    c.deadline := s.now + s.opts.handler_timeout_ms
+    c.want_read := not c.eof and length(c.inbuf) < s.opts.max_header_bytes
+    alloc res := false
+    try {
+        res := route_request(s, req)
+    } except err {
+        srv_note(s, req.method + " " + req.path + " failed: " + err)
+        res := error_page(500, "")
+        if s.on_error != false {
+            try {
+                alloc custom := s.on_error(req, err)
+                if has_key(custom, "status") { res := custom }
+            } except err2 {
+                srv_note(s, "the error handler failed too: " + err2)
+            }
+        }
+    }
+    # The handler may have answered already through app.respond, or the
+    # connection may be gone.
+    if c.state != ST_WAITING or c.serial != req.serial { return false }
+    if has_key(res, "pending") { return true }
+    conn_respond(s, c, res)
+    return true
+}
+
+# Take the head of a request out of the input, if all of it is there.
+# true when the connection has moved on to the body.
+proc conn_take_head(s, c) {
+    alloc buf := c.inbuf
+    alloc n := length(buf)
+    if c.scan == 0 {
+        # Blank lines before a request are to be ignored.
+        alloc skip := 0
+        loop skip < n and (buf[skip] == CR or buf[skip] == LF) { skip := skip + 1 }
+        if skip > 0 {
+            buf := buf[skip:]
+            c.inbuf := buf
+            n := length(buf)
+        }
+    }
+    if n == 0 { return false }
+    if c.started == 0 {
+        c.started := s.now
+        c.deadline := s.now + s.opts.header_timeout_ms
+    }
+    alloc limit := s.opts.max_header_bytes
+    alloc end := find_head_end(buf, c.scan)
+    if end < 0 {
+        if n > limit { return conn_fail(s, c, 431, "the request headers are too large") }
+        c.scan := n - 2
+        if c.scan < 0 { c.scan := 0 }
+        return false
+    }
+    if end > limit { return conn_fail(s, c, 431, "the request headers are too large") }
+    alloc req := false
+    try {
+        req := parse_head(buf, end)
+    } except err {
+        req := bad(400, "malformed request")
+    }
+    c.inbuf := buf[end:]
+    c.scan := 0
+    if has_key(req, "error") { return conn_fail(s, c, req.error, req.why) }
+    s.serial := s.serial + 1
+    req.serial := s.serial
+    req.conn := c.h
+    req.peer := c.peer
+    c.req := req
+    c.serial := req.serial
+
+    # How long is the body?
+    alloc headers := req.headers
+    c.body_need := 0
+    c.state := ST_BODY
+    if has_key(headers, "transfer-encoding") {
+        if has_key(headers, "content-length") {
+            return conn_fail(s, c, 400, "both transfer-encoding and content-length")
+        }
+        if lower(headers["transfer-encoding"]) != "chunked" {
+            return conn_fail(s, c, 501, "the only transfer-encoding understood is chunked")
+        }
+        if req.version != "1.1" {
+            return conn_fail(s, c, 400, "chunked needs HTTP/1.1")
+        }
+        c.state := ST_CHUNKED
+        c.body := []
+        c.chunk_state := 0
+        c.chunk_left := 0
+    } elif has_key(headers, "content-length") {
+        alloc digits := headers["content-length"]
+        alloc size := -1
+        if length(digits) > 0 and length(digits) <= 15 {
+            size := 0
+            for ch in digits {
+                if ch < "0" or ch > "9" {
+                    size := -1
+                    break
+                }
+                size := size * 10 + (ascii(ch) - 48)
+            }
+        }
+        if size < 0 { return conn_fail(s, c, 400, "malformed content-length") }
+        if size > s.opts.max_body_bytes {
+            return conn_fail(s, c, 413, "the body may be " + s.opts.max_body_bytes + " bytes at most")
+        }
+        c.body_need := size
+    }
+    if has_key(headers, "expect") {
+        if lower(headers.expect) != "100-continue" {
+            return conn_fail(s, c, 417, "")
+        }
+        if req.version == "1.1" and (c.state == ST_CHUNKED or length(c.inbuf) < c.body_need) {
+            # The client is waiting to hear that the body is welcome.
+            try {
+                tcp_write(c.h, "HTTP/1.1 100 Continue\r\n\r\n")
+            } except err {
+                conn_close(s, c)
+                return false
+            }
+        }
+    }
+    c.deadline := s.now + s.opts.body_timeout_ms
+    return true
+}
+
+# Decode as much of a chunked body as has arrived. 1 when the body is
+# complete, 0 when more is needed, -1 when the request was refused.
+proc conn_take_chunks(s, c) {
+    alloc buf := c.inbuf
+    alloc n := length(buf)
+    alloc p := 0
+    alloc done := 0
+    loop done == 0 {
+        if c.chunk_state == 0 {
+            # The size of the next chunk, in hex, on a line of its own.
+            alloc q := index_of(buf, LF, p)
+            if q < 0 {
+                if n - p > 1024 {
+                    conn_fail(s, c, 400, "malformed chunk")
+                    return -1
+                }
+                break
+            }
+            alloc size := 0
+            alloc digits := 0
+            alloc k := p
+            loop k < q and hex_val(buf[k]) >= 0 and digits < 13 {
+                size := size * 16 + hex_val(buf[k])
+                digits := digits + 1
+                k := k + 1
+            }
+            # After the number: the end of the line, or ";extension".
+            alloc sane := digits > 0 and (k == q or buf[k] == CR or buf[k] == 59 or buf[k] == 32 or buf[k] == 9)
+            if not sane {
+                conn_fail(s, c, 400, "malformed chunk size")
+                return -1
+            }
+            p := q + 1
+            if size == 0 {
+                c.chunk_state := 3
+            } else {
+                if length(c.body) + size > s.opts.max_body_bytes {
+                    conn_fail(s, c, 413, "the body may be " + s.opts.max_body_bytes + " bytes at most")
+                    return -1
+                }
+                c.chunk_left := size
+                c.chunk_state := 1
+            }
+        } elif c.chunk_state == 1 {
+            alloc take := n - p
+            if take > c.chunk_left { take := c.chunk_left }
+            if take == 0 { break }
+            c.body := c.body + buf[p:p + take]
+            p := p + take
+            c.chunk_left := c.chunk_left - take
+            if c.chunk_left == 0 { c.chunk_state := 2 }
+        } elif c.chunk_state == 2 {
+            # The line end after a chunk's data.
+            if p >= n { break }
+            if buf[p] == LF {
+                p := p + 1
+            } elif buf[p] == CR {
+                if p + 1 >= n { break }
+                if buf[p + 1] != LF {
+                    conn_fail(s, c, 400, "malformed chunk")
+                    return -1
+                }
+                p := p + 2
+            } else {
+                conn_fail(s, c, 400, "malformed chunk")
+                return -1
+            }
+            c.chunk_state := 0
+        } else {
+            # After the last chunk: trailer lines, which are dropped,
+            # up to an empty one.
+            alloc q := index_of(buf, LF, p)
+            if q < 0 {
+                if n - p > s.opts.max_header_bytes {
+                    conn_fail(s, c, 431, "the trailers are too large")
+                    return -1
+                }
+                break
+            }
+            alloc blank := q == p or (q == p + 1 and buf[p] == CR)
+            p := q + 1
+            if blank { done := 1 }
+        }
+    }
+    if p > 0 { c.inbuf := buf[p:] }
+    return done
+}
+
+# Look at the input a connection has collected and act on at most one
+# request.
+proc conn_process(s, c) {
+    if c.state == ST_HEAD {
+        if not conn_take_head(s, c) { return false }
+    }
+    if c.state == ST_BODY {
+        alloc need := c.body_need
+        if length(c.inbuf) < need { return false }
+        if need > 0 {
+            c.req.body := c.inbuf[0:need]
+            c.inbuf := c.inbuf[need:]
+        }
+        conn_dispatch(s, c)
+        return true
+    }
+    if c.state == ST_CHUNKED {
+        if conn_take_chunks(s, c) == 1 {
+            c.req.body := c.body
+            c.body := []
+            conn_dispatch(s, c)
+            return true
+        }
+    }
+    return false
+}
+
+# The socket has something for us.
+proc conn_readable(s, c) {
+    alloc max := READ_SMALL
+    if c.state == ST_BODY or c.state == ST_CHUNKED { max := READ_LARGE }
+    alloc data := false
+    try {
+        data := tcp_read(c.h, max)
+    } except err {
+        conn_close(s, c)
+        return false
+    }
+    if data == false { return false }
+    if length(data) == 0 {
+        # The client has finished sending. If a request is being
+        # answered it may well still be listening, so the answer goes
+        # on and the connection closes after it.
+        c.eof := true
+        c.want_read := false
+        if c.state <= ST_CHUNKED or c.state == ST_LINGER { conn_close(s, c) }
+        return false
+    }
+    if c.state == ST_LINGER {
+        c.linger_left := c.linger_left - length(data)
+        if c.linger_left <= 0 { conn_close(s, c) }
+        return false
+    }
+    if length(c.inbuf) == 0 {
+        c.inbuf := data
+    } else {
+        c.inbuf := c.inbuf + data
+    }
+    if c.state >= ST_WAITING {
+        # Busy with a request: this is the start of the next one. Hold
+        # on to it, but not without limit.
+        if length(c.inbuf) >= s.opts.max_header_bytes { c.want_read := false }
+        return false
+    }
+    conn_process(s, c)
+    return true
+}
+
+# Its time is up.
+proc conn_expire(s, c) {
+    if c.state == ST_HEAD {
+        if c.started == 0 or s.draining {
+            conn_close(s, c)
+        } else {
+            conn_fail(s, c, 408, "the request headers took too long")
+        }
+    } elif c.state == ST_BODY or c.state == ST_CHUNKED {
+        conn_fail(s, c, 408, "the request body took too long")
+    } elif c.state == ST_WAITING {
+        srv_note(s, c.req.method + " " + c.req.path + " was never answered")
+        c.close_after := true
+        conn_respond(s, c, error_page(503, "the server took too long to answer"))
+    } else {
+        conn_close(s, c)
+    }
+    return true
+}
+
+# --- the loop ---------------------------------------------------------------
+
+proc srv_start(s) {
+    if s.listener != 0 { return true }
+    s.listener := tcp_listen(s.opts.host, s.opts.port)
+    tcp_nonblocking(s.listener, true)
+    s.running := true
+    s.draining := false
+    srv_clock(s)
+    return true
+}
+
+# Take the connections that are waiting, up to the limit.
+proc srv_accept(s) {
+    alloc taken := 0
+    loop taken < 64 and s.nconns < s.opts.max_connections {
+        alloc h := false
+        try {
+            h := tcp_accept(s.listener)
+        } except err {
+            # Out of descriptors, most likely. Leave the rest in the
+            # system's queue and try again shortly.
+            srv_note(s, "cannot accept a connection: " + err)
+            s.accept_after := s.now + 100
+            return false
+        }
+        if h == false { return true }
+        alloc peer := "-"
+        try {
+            tcp_nonblocking(h, true)
+            peer := tcp_peer(h)
+        } except err { }
+        conn_new(s, h, peer)
+        s.accepted := s.accepted + 1
+        taken := taken + 1
+    }
+    return true
+}
+
+# Stop taking connections; the ones with a request in flight finish it.
+proc srv_drain(s) {
+    if s.draining { return false }
+    s.draining := true
+    s.drain_deadline := s.now + s.opts.shutdown_timeout_ms
+    if s.listener != 0 {
+        try { tcp_close(s.listener) } except err { }
+        s.listener := 0
+    }
+    for c in s.conns {
+        if c == false { continue }
+        if c.state == ST_HEAD and c.started == 0 {
+            conn_close(s, c)
+        } else {
+            c.close_after := true
+        }
+    }
+    return true
+}
+
+# Close everything, now.
+proc srv_halt(s) {
+    if s.listener != 0 {
+        try { tcp_close(s.listener) } except err { }
+        s.listener := 0
+    }
+    for c in s.conns {
+        if c != false { conn_close(s, c) }
+    }
+    s.running := false
+    s.draining := false
+    return true
+}
+
+proc srv_run_timers(s) {
+    alloc due := []
+    alloc keep := []
+    for t in s.timers {
+        if t[0] <= s.now {
+            append(due, t)
+            if t[2] > 0 {
+                append(keep, [s.now + t[2], t[1], t[2], t[3]])
+            }
+        } else {
+            append(keep, t)
+        }
+    }
+    s.timers := keep
+    for t in due {
+        try {
+            alloc fn := t[1]
+            fn()
+        } except err {
+            srv_note(s, "a timer failed: " + err)
+        }
+    }
+    return true
+}
+
+# One turn of the loop: wait up to max_wait ms for something to do, and
+# do it. false once the server has stopped.
+proc srv_turn(s, max_wait) {
+    if not s.running { return false }
+    alloc now := srv_clock(s)
+
+    if s.opts.handle_signals {
+        alloc asked := interrupted()
+        if asked > s.interrupts {
+            s.interrupts := asked
+            if s.draining {
+                srv_note(s, "stopping now")
+                srv_halt(s)
+                return false
+            }
+            srv_drain(s)
+            if s.nconns == 0 {
+                srv_note(s, "stopping")
+            } else {
+                srv_note(s, "stopping: " + s.nconns + " connection(s) still busy; interrupt again to stop at once")
+            }
+        }
+    }
+    if s.draining and (s.nconns == 0 or now >= s.drain_deadline) {
+        srv_halt(s)
+        return false
+    }
+
+    # Who are we waiting for, and how long at most?
+    alloc reads := []
+    alloc writes := []
+    alloc wake := now + max_wait
+    if max_wait < 0 { wake := now + 3600000 }
+    if s.listener != 0 and s.nconns < s.opts.max_connections {
+        if now >= s.accept_after {
+            append(reads, s.listener)
+        } elif s.accept_after < wake {
+            wake := s.accept_after
+        }
+    }
+    alloc conns := s.conns
+    alloc n := length(conns)
+    alloc i := 0
+    loop i < n {
+        alloc c := conns[i]
+        if c != false {
+            if c.want_read { append(reads, i) }
+            if c.want_write { append(writes, i) }
+            alloc d := c.deadline
+            if d > 0 and d < wake { wake := d }
+        }
+        i := i + 1
+    }
+    for t in s.timers {
+        if t[0] < wake { wake := t[0] }
+    }
+    if s.draining and s.drain_deadline < wake { wake := s.drain_deadline }
+    alloc wait := wake - now
+    if wait < 0 or length(s.ready) > 0 { wait := 0 }
+
+    alloc got := tcp_poll(reads, writes, wait)
+    now := srv_clock(s)
+
+    for h in got[0] {
+        if h == s.listener {
+            srv_accept(s)
+        } else {
+            alloc c := s.conns[h]
+            if c != false { conn_readable(s, c) }
+        }
+    }
+    for h in got[1] {
+        alloc c := s.conns[h]
+        if c != false and c.want_write { conn_pump(s, c) }
+    }
+    if length(s.ready) > 0 {
+        alloc again := s.ready
+        s.ready := []
+        for h in again {
+            alloc c := s.conns[h]
+            if c != false and c.state <= ST_CHUNKED { conn_process(s, c) }
+        }
+    }
+    if now >= wake {
+        i := 0
+        n := length(s.conns)
+        loop i < n {
+            alloc c := s.conns[i]
+            if c != false and c.deadline > 0 and c.deadline <= now { conn_expire(s, c) }
+            i := i + 1
+        }
+        if length(s.timers) > 0 { srv_run_timers(s) }
+    }
+    return true
+}
+
+# --- answers that come later ------------------------------------------------
+
+proc srv_respond(s, req, res) {
+    alloc c := conn_of(s, req)
+    if c == false or c.state != ST_WAITING { return false }
+    srv_clock(s)
+    conn_respond(s, c, res)
+    return true
+}
+
+proc srv_send(s, req, data) {
+    alloc c := conn_of(s, req)
+    if c == false or c.state != ST_STREAM { return false }
+    if req.method == "HEAD" { return true }
+    alloc textual := data[0:0] == ""
+    alloc n := 0
+    if textual { n := byte_length(data) } else { n := length(data) }
+    if n == 0 { return true }
+    c.body_bytes := c.body_bytes + n
+    if c.chunked {
+        alloc pre := hex(n) + "\r\n"
+        if textual {
+            conn_queue(c, pre + data + "\r\n", length(pre) + n + 2)
+        } else {
+            conn_queue(c, string_bytes(pre) + data + [CR, LF], length(pre) + n + 2)
+        }
+    } else {
+        conn_queue(c, data, n)
+    }
+    conn_pump(s, c)
+    return c.state == ST_STREAM
+}
+
+proc srv_finish(s, req) {
+    alloc c := conn_of(s, req)
+    if c == false or c.state != ST_STREAM { return false }
+    if c.chunked { conn_queue(c, "0\r\n\r\n", 5) }
+    c.state := ST_SENDING
+    srv_clock(s)
+    conn_pump(s, c)
+    return true
+}
+
+# Bytes queued for a stream that the client has not taken yet.
+proc srv_backlog(s, req) {
+    alloc c := conn_of(s, req)
+    if c == false { return 0 }
+    alloc total := 0
+    alloc i := c.out_i
+    loop i < length(c.out) {
+        total := total + c.out[i][1]
+        i := i + 1
+    }
+    return total - c.out_off
+}
+
+proc srv_add_timer(s, ms, fn, repeat) {
+    alloc id := s.next_timer
+    s.next_timer := id + 1
+    alloc interval := 0
+    if repeat { interval := ms }
+    if repeat and ms < 1 { interval := 1 }
+    append(s.timers, [time_ms() + ms, fn, interval, id])
+    return id
+}
+
+proc srv_cancel_timer(s, id) {
+    alloc keep := []
+    alloc found := false
+    for t in s.timers {
+        if t[3] == id { found := true } else { append(keep, t) }
+    }
+    s.timers := keep
+    return found
+}
+
+# === The public face ========================================================
+
+# A server. `options` overrides the defaults in default_options();
+# {} takes them all. Returns the object whose procs are described in
+# docs/09-http-server.md:
+#
+#   routes     get post put patch delete any route files
+#   hooks      before after not_found on_error
+#   running    listen start poll stop running
+#   later      respond send finish backlog timer every cancel
+#   looking    stats options
+proc server(options) {
+    alloc s := new_state(options)
+
+    proc add(method, pattern, handler) { return add_route(s, method, pattern, handler) }
+    proc on_get(pattern, handler) { return add_route(s, "GET", pattern, handler) }
+    proc on_post(pattern, handler) { return add_route(s, "POST", pattern, handler) }
+    proc on_put(pattern, handler) { return add_route(s, "PUT", pattern, handler) }
+    proc on_patch(pattern, handler) { return add_route(s, "PATCH", pattern, handler) }
+    proc on_delete(pattern, handler) { return add_route(s, "DELETE", pattern, handler) }
+    proc on_any(pattern, handler) { return add_route(s, "*", pattern, handler) }
+
+    # Serve the directory `root` under the URL prefix (see
+    # static_options for what `given` may hold).
+    proc mount(prefix, root, given) {
+        alloc opts := static_options(given)
+        alloc base := prefix
+        loop length(base) > 0 and ends_with(base, "/") { base := base[0:length(base) - 1] }
+        alloc dir := root
+        loop length(dir) > 1 and (ends_with(dir, "/") or ends_with(dir, "\\")) { dir := dir[0:length(dir) - 1] }
+        proc serve(req) {
+            return static_response(req, dir, req.params.rest, opts)
+        }
+        return add_route(s, "*", base + "/*rest", serve)
+    }
+
+    proc add_before(hook) { append(s.before, hook) return true }
+    proc add_after(hook) { append(s.after, hook) return true }
+    proc set_not_found(handler) { s.not_found := handler return true }
+    proc set_on_error(handler) { s.on_error := handler return true }
+
+    proc start() { return srv_start(s) }
+    proc poll(max_wait) { return srv_turn(s, max_wait) }
+    proc listen() {
+        srv_start(s)
+        srv_note(s, "listening on http://" + s.opts.host + ":" + s.opts.port)
+        loop srv_turn(s, 1000) { }
+        return true
+    }
+    proc stop() {
+        if s.draining { return srv_halt(s) }
+        srv_clock(s)
+        return srv_drain(s)
+    }
+    proc is_running() { return s.running }
+
+    proc respond(req, res) { return srv_respond(s, req, res) }
+    proc send(req, data) { return srv_send(s, req, data) }
+    proc finish(req) { return srv_finish(s, req) }
+    proc backlog(req) { return srv_backlog(s, req) }
+    proc timer(ms, fn) { return srv_add_timer(s, ms, fn, false) }
+    proc every(ms, fn) { return srv_add_timer(s, ms, fn, true) }
+    proc cancel(id) { return srv_cancel_timer(s, id) }
+
+    proc stats() {
+        return {connections: s.nconns, accepted: s.accepted, requests: s.requests, draining: s.draining}
+    }
+    proc options_now() { return s.opts }
+
+    return freeze({
+        route: add, get: on_get, post: on_post, put: on_put, patch: on_patch,
+        delete: on_delete, any: on_any, files: mount,
+        before: add_before, after: add_after, not_found: set_not_found, on_error: set_on_error,
+        start: start, poll: poll, listen: listen, stop: stop, running: is_running,
+        respond: respond, send: send, finish: finish, backlog: backlog,
+        timer: timer, every: every, cancel: cancel,
+        stats: stats, options: options_now
+    })
+}
+
+# The shortest way to a file server: serve `webroot` on host:port until
+# stopped.
+proc serve_static(host, port, webroot) {
+    alloc app := server({host: host, port: port})
+    app.files("/", webroot, {})
+    return app.listen()
 }

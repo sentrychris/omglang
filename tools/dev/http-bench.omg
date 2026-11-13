@@ -1,0 +1,417 @@
+;;;omg
+
+# http-bench: a load generator for HTTP servers, written in OMG.
+#
+# Usage:
+#   omg tools/dev/http-bench.omg [options] http://host[:port]/path
+#
+#   -c N        connections kept busy at once (default 10)
+#   -n N        requests to make in all (default 1000)
+#   -t SECONDS  run for this long instead of counting requests
+#   --close     a new connection for every request (no keep-alive)
+#   --quiet     print one line: requests per second
+#
+# It opens the connections, keeps a request in flight on each, and
+# reports how many were answered per second and how long answers took.
+# Like the server in tools/lib/http.omg it is one loop around tcp_poll,
+# so it is also the shortest example of a non-blocking client.
+#
+# Times are whole milliseconds (that is what time_ms() gives), so an
+# answer that took under a millisecond counts as 0.
+
+proc usage() {
+    emit "usage: http-bench [-c connections] [-n requests] [-t seconds] [--close] [--quiet] http://host[:port]/path"
+    exit(2)
+}
+
+proc find_char(s, ch, from) {
+    alloc n := length(s)
+    alloc i := from
+    loop i < n {
+        if s[i] == ch { return i }
+        i := i + 1
+    }
+    return -1
+}
+
+proc lower(s) {
+    alloc bs := string_bytes(s)
+    alloc i := 0
+    loop i < length(bs) {
+        if bs[i] >= 65 and bs[i] <= 90 { bs[i] := bs[i] + 32 }
+        i := i + 1
+    }
+    return bytes_to_string(bs)
+}
+
+proc trim(s) {
+    alloc a := 0
+    alloc b := length(s)
+    loop a < b and (s[a] == " " or s[a] == "\t" or s[a] == "\r") { a := a + 1 }
+    loop b > a and (s[b - 1] == " " or s[b - 1] == "\t" or s[b - 1] == "\r") { b := b - 1 }
+    return s[a:b]
+}
+
+# --- arguments ---------------------------------------------------------------
+
+alloc connections := 10
+alloc total := 1000
+alloc seconds := 0
+alloc keep_alive := true
+alloc quiet := false
+alloc url := ""
+
+alloc ai := 1
+loop ai < length(args) {
+    alloc arg := args[ai]
+    if arg == "-c" and ai + 1 < length(args) {
+        connections := int(args[ai + 1])
+        ai := ai + 1
+    } elif arg == "-n" and ai + 1 < length(args) {
+        total := int(args[ai + 1])
+        ai := ai + 1
+    } elif arg == "-t" and ai + 1 < length(args) {
+        seconds := int(args[ai + 1])
+        ai := ai + 1
+    } elif arg == "--close" {
+        keep_alive := false
+    } elif arg == "--quiet" {
+        quiet := true
+    } elif url == "" and length(arg) > 7 and arg[0:7] == "http://" {
+        url := arg
+    } else {
+        usage()
+    }
+    ai := ai + 1
+}
+if url == "" or connections < 1 or total < 1 { usage() }
+if seconds > 0 { total := 0 }
+
+# http://host[:port]/path
+alloc rest := url[7:]
+alloc slash := find_char(rest, "/", 0)
+alloc authority := rest
+alloc path := "/"
+if slash >= 0 {
+    authority := rest[0:slash]
+    path := rest[slash:]
+}
+alloc host := authority
+alloc port := 80
+alloc colon := find_char(authority, ":", 0)
+if colon >= 0 {
+    host := authority[0:colon]
+    port := int(authority[colon + 1:])
+}
+
+alloc request := "GET " + path + " HTTP/1.1\r\nHost: " + authority + "\r\nUser-Agent: omg-http-bench\r\nAccept: */*\r\n"
+if not keep_alive { request := request + "Connection: close\r\n" }
+request := request + "\r\n"
+alloc request_bytes := length(string_bytes(request))
+
+# --- one connection ----------------------------------------------------------
+#
+# state: 0 nothing in flight, 1 sending the request, 2 reading the head,
+# 3 reading a body of known length, 4 reading to the end of the
+# connection, 5 reading a chunked body.
+
+alloc clients := []           # by socket handle; false where there is none
+alloc open_count := 0
+alloc issued := 0             # requests started
+alloc finished := 0           # answers read in full
+alloc failed := 0             # connections that broke mid-request
+alloc bad_status := 0         # answers that were not 2xx or 3xx
+alloc bytes_in := 0
+alloc slowest := 0
+alloc fastest := -1
+alloc time_sum := 0
+alloc HIST_MAX := 60000
+alloc hist := list_repeat(0, HIST_MAX + 1)    # answers by whole milliseconds taken
+alloc deadline := 0
+
+proc more_wanted() {
+    if seconds > 0 { return time_ms() < deadline }
+    return issued < total
+}
+
+proc client_open() {
+    alloc h := tcp_connect(host, port)
+    tcp_nonblocking(h, true)
+    loop length(clients) <= h { append(clients, false) }
+    clients[h] := {h: h, state: 0, sent: 0, inbuf: [], scan: 0, need: 0, t0: 0, close: false, chunk_left: -1}
+    open_count := open_count + 1
+    return clients[h]
+}
+
+proc client_close(c) {
+    tcp_close(c.h)
+    clients[c.h] := false
+    open_count := open_count - 1
+    return true
+}
+
+# Put a request in flight on c.
+proc client_begin(c) {
+    issued := issued + 1
+    c.t0 := time_ms()
+    c.sent := 0
+    c.state := 1
+    c.inbuf := []
+    c.scan := 0
+    c.close := not keep_alive
+    c.chunk_left := -1
+    return client_write(c)
+}
+
+proc client_write(c) {
+    c.sent := c.sent + tcp_write(c.h, request, c.sent)
+    if c.sent >= request_bytes { c.state := 2 }
+    return true
+}
+
+# An answer has been read in full.
+proc client_done(c) {
+    alloc took := time_ms() - c.t0
+    finished := finished + 1
+    time_sum := time_sum + took
+    if took > slowest { slowest := took }
+    if fastest < 0 or took < fastest { fastest := took }
+    if took > HIST_MAX { took := HIST_MAX }
+    hist[took] := hist[took] + 1
+    c.state := 0
+    if c.close {
+        client_close(c)
+    }
+    return true
+}
+
+proc client_broken(c) {
+    if c.state != 0 { failed := failed + 1 }
+    client_close(c)
+    return true
+}
+
+# The index just past the blank line that ends the head, or -1.
+proc head_end(buf, from) {
+    alloc n := length(buf)
+    alloc i := from
+    loop i + 3 < n {
+        if buf[i] == 13 and buf[i + 1] == 10 and buf[i + 2] == 13 and buf[i + 3] == 10 { return i + 4 }
+        i := i + 1
+    }
+    return -1
+}
+
+# Work through a chunked body; true once the last chunk has been seen.
+proc client_chunks(c) {
+    alloc buf := c.inbuf
+    alloc n := length(buf)
+    alloc p := 0
+    alloc ended := false
+    loop true {
+        if c.chunk_left < 0 {
+            # A size line.
+            alloc q := p
+            loop q < n and buf[q] != 10 { q := q + 1 }
+            if q >= n { break }
+            alloc size := 0
+            alloc k := p
+            loop k < q {
+                alloc b := buf[k]
+                alloc v := -1
+                if b >= 48 and b <= 57 { v := b - 48 }
+                if b >= 97 and b <= 102 { v := b - 87 }
+                if b >= 65 and b <= 70 { v := b - 55 }
+                if v < 0 { break }
+                size := size * 16 + v
+                k := k + 1
+            }
+            if size == 0 {
+                # The last chunk; a blank line follows it. If that has
+                # not arrived, leave the size line for the next look.
+                alloc after := q + 1
+                loop after < n and buf[after] != 10 { after := after + 1 }
+                if after < n { ended := true }
+                break
+            }
+            p := q + 1
+            c.chunk_left := size + 2
+        } else {
+            alloc take := n - p
+            if take > c.chunk_left { take := c.chunk_left }
+            if take == 0 { break }
+            p := p + take
+            c.chunk_left := c.chunk_left - take
+            if c.chunk_left == 0 { c.chunk_left := -1 }
+        }
+    }
+    if ended {
+        c.inbuf := []
+    } elif p > 0 {
+        c.inbuf := buf[p:]
+    }
+    return ended
+}
+
+proc client_read(c) {
+    alloc data := tcp_read(c.h, 65536)
+    if data == false { return false }
+    if length(data) == 0 {
+        if c.state == 4 {
+            c.close := true
+            client_done(c)
+        } else {
+            client_broken(c)
+        }
+        return false
+    }
+    bytes_in := bytes_in + length(data)
+    if c.state == 3 {
+        c.need := c.need - length(data)
+        if c.need <= 0 { client_done(c) }
+        return true
+    }
+    if c.state == 4 { return true }
+    if length(c.inbuf) == 0 { c.inbuf := data } else { c.inbuf := c.inbuf + data }
+    if c.state == 5 {
+        if client_chunks(c) { client_done(c) }
+        return true
+    }
+    # Still in the head.
+    alloc end := head_end(c.inbuf, c.scan)
+    if end < 0 {
+        c.scan := length(c.inbuf) - 3
+        if c.scan < 0 { c.scan := 0 }
+        return true
+    }
+    alloc head := bytes_to_string(c.inbuf[0:end])
+    alloc body_have := length(c.inbuf) - end
+    alloc status := int(head[9:12])
+    if status < 200 or status >= 400 { bad_status := bad_status + 1 }
+    alloc size := -1
+    alloc chunked := false
+    alloc line_start := 0
+    loop line_start < length(head) {
+        alloc nl := find_char(head, "\n", line_start)
+        if nl < 0 { break }
+        alloc line := lower(trim(head[line_start:nl]))
+        if length(line) > 15 and line[0:15] == "content-length:" {
+            size := int(trim(line[15:]))
+        } elif length(line) > 18 and line[0:18] == "transfer-encoding:" {
+            chunked := true
+        } elif line == "connection: close" {
+            c.close := true
+        }
+        line_start := nl + 1
+    }
+    if chunked {
+        c.inbuf := c.inbuf[end:]
+        c.state := 5
+        if client_chunks(c) { client_done(c) }
+    } elif size >= 0 {
+        c.inbuf := []
+        if body_have >= size {
+            client_done(c)
+        } else {
+            c.need := size - body_have
+            c.state := 3
+        }
+    } else {
+        c.inbuf := []
+        c.state := 4
+    }
+    return true
+}
+
+# --- the run -----------------------------------------------------------------
+
+proc run_all() {
+    loop true {
+        # Keep every connection busy while there is work left to hand out.
+        if more_wanted() {
+            loop open_count < connections and more_wanted() {
+                alloc fresh := false
+                try {
+                    fresh := client_open()
+                } except err {
+                    emit "http-bench: " + err
+                    exit(1)
+                }
+                client_begin(fresh)
+            }
+            for c in clients {
+                if c != false and c.state == 0 and more_wanted() {
+                    try { client_begin(c) } except err { client_broken(c) }
+                }
+            }
+        }
+        alloc reads := []
+        alloc writes := []
+        for c in clients {
+            if c == false { continue }
+            if c.state == 1 { append(writes, c.h) }
+            if c.state >= 2 { append(reads, c.h) }
+        }
+        if length(reads) == 0 and length(writes) == 0 {
+            if not more_wanted() { break }
+            continue
+        }
+        alloc got := tcp_poll(reads, writes, 1000)
+        for h in got[1] {
+            alloc c := clients[h]
+            if c != false and c.state == 1 {
+                try { client_write(c) } except err { client_broken(c) }
+            }
+        }
+        for h in got[0] {
+            alloc c := clients[h]
+            if c != false and c.state >= 2 {
+                try { client_read(c) } except err { client_broken(c) }
+            }
+        }
+    }
+    for c in clients {
+        if c != false { client_close(c) }
+    }
+    return true
+}
+
+alloc started := time_ms()
+if seconds > 0 { deadline := started + seconds * 1000 }
+run_all()
+
+alloc elapsed := time_ms() - started
+if elapsed < 1 { elapsed := 1 }
+
+# The time that `share` percent of answers came in under.
+proc percentile(share) {
+    alloc target := (finished * share + 99) // 100
+    if target < 1 { target := 1 }
+    alloc seen := 0
+    alloc ms := 0
+    loop ms <= HIST_MAX {
+        seen := seen + hist[ms]
+        if seen >= target { return ms }
+        ms := ms + 1
+    }
+    return HIST_MAX
+}
+
+alloc per_second := finished * 1000 // elapsed
+if quiet {
+    emit per_second
+} else {
+    emit "target:        " + url
+    emit "connections:   " + connections
+    emit "time:          " + elapsed + " ms"
+    emit "answered:      " + finished + "  (" + per_second + " per second)"
+    emit "failed:        " + failed
+    emit "not 2xx/3xx:   " + bad_status
+    emit "received:      " + bytes_in + " bytes  (" + (bytes_in * 1000 // elapsed // 1024) + " KiB per second)"
+    if finished > 0 {
+        emit "time per answer, ms:"
+        emit "  fastest " + fastest + "   mean " + (time_sum // finished) + "   slowest " + slowest
+        emit "  50% within " + percentile(50) + "   90% within " + percentile(90) + "   99% within " + percentile(99)
+    }
+}
+if failed > 0 or finished == 0 { exit(1) }

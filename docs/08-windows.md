@@ -97,7 +97,9 @@ places where Windows shows through.
 
 | Area | On Windows |
 | ---- | ---------- |
-| `fork()` | Raises a catchable `ValueError`; Windows has no `fork`. Use `subprocess()`. (`tools/lib/http.omg` catches this and serves one request at a time.) |
+| `fork()` | Raises a catchable `ValueError`; Windows has no `fork`. Use `subprocess()`. |
+| `interrupted()` | Counts Ctrl-C and Ctrl-Break in the console, where elsewhere it counts SIGINT and SIGTERM. A `tcp_poll` in progress notices within a tenth of a second. |
+| Sockets | The `tcp_*` builtins, `tcp_poll` included, behave as elsewhere, so the [HTTP server](09-http-server.md) serves many connections at once here too. |
 | `pty_spawn`, `pty_write` | Raise a catchable `ValueError`. `pty_read` returns `false`; `pty_close` and `pty_resize` do nothing. |
 | Paths | `/` and `\` both work as separators, and `C:\dir` and `\\server\share` are absolute. `current_dir` and `executable_path()` are spelled the way Windows spells them, with backslashes. |
 | Files | Always bytes. Nothing turns `\n` into `\r\n` on the way out or back on the way in, for files or for standard input and output. |
