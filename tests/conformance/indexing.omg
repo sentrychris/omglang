@@ -1,0 +1,209 @@
+# Reading and writing list elements, and shifts: the cases the machine
+# code back end handles in line, and each way out of them.
+
+proc show(label, v) {
+    emit label + ": " + v
+}
+
+proc attempt(label, f) {
+    try {
+        show(label, f())
+    } except e {
+        show(label, "raised " + e)
+    }
+}
+
+# The kind of error only: the wording of these differs between runtimes.
+proc attempt_kind(label, f) {
+    try {
+        show(label, f())
+    } except e {
+        alloc text := "" + e
+        alloc n := 0
+        loop n < length(text) and text[n] != ":" {
+            n := n + 1
+        }
+        show(label, "raised " + text[0:n])
+    }
+}
+
+alloc nums := [10, 20, 30, 40]
+alloc mixed := [1, "two", [3, 4], {k: 5}, 2.5, true, false]
+alloc g_list := [100, 200, 300]
+
+# --- reading ---------------------------------------------------------------
+proc reads() {
+    alloc xs := nums
+    alloc i := 2
+    show("const index", xs[1])
+    show("variable index", xs[i])
+    show("computed index", xs[i + 1])
+    show("negative index", xs[-1])
+    show("negative variable", xs[0 - i])
+    show("element of element", mixed[2][1])
+    show("string element", mixed[1])
+    show("char of string element", mixed[1][0])
+    show("dict in list", mixed[3]["k"])
+    show("global list", g_list[2])
+    show("index from a list", xs[mixed[0]])
+    show("nested arithmetic", xs[xs[0] // 10] + xs[i - 2] * 2)
+    show("list literal", [7, 8, 9][2])
+    show("string", "hello"[1])
+    alloc by_number := {}
+    by_number[1] := "one"
+    show("dict by int key", by_number[1])
+    alloc total := 0
+    alloc k := 0
+    loop k < length(xs) {
+        total := total + xs[k]
+        k := k + 1
+    }
+    show("sum", total)
+    return false
+}
+reads()
+
+proc past_end() { return nums[4] }
+proc before_start() { return nums[-5] }
+proc float_index() { return nums[1.0] }
+proc bool_index() { return nums[true] }
+proc string_index() { return nums["1"] }
+proc index_int() { alloc n := 5  return n[0] }
+proc unset_container() {
+    if length(nums) > 100 { alloc later := [1] }
+    return later[0]
+}
+proc unset_index() {
+    if length(nums) > 100 { alloc where := 1 }
+    return nums[where]
+}
+attempt("past the end", past_end)
+attempt("before the start", before_start)
+attempt_kind("float index", float_index)
+attempt_kind("bool index", bool_index)
+attempt_kind("string index", string_index)
+attempt("index an int", index_int)
+attempt("unset container", unset_container)
+attempt("unset index", unset_index)
+
+# An element that is a heap object is shared, not copied, and survives
+# the list it came from.
+proc keeps() {
+    alloc outer := [[1, 2], "text"]
+    alloc inner := outer[0]
+    alloc s := outer[1]
+    outer := false
+    append(inner, 3)
+    return "" + inner + " " + s
+}
+show("element outlives its list", keeps())
+
+proc from_temporary() {
+    proc make() { return [["a"], ["b"]] }
+    alloc x := make()[1]
+    return x[0]
+}
+show("element of a temporary list", from_temporary())
+
+# --- writing ---------------------------------------------------------------
+proc writes() {
+    alloc xs := [0, 0, 0, 0, 0]
+    alloc i := 1
+    xs[0] := 5
+    xs[i] := i + 10
+    xs[i + 1] := xs[0] * xs[i]
+    xs[-1] := 99
+    xs[3] := -7
+    show("ints", xs)
+    xs[0] := 1.5
+    xs[1] := true
+    xs[2] := false
+    show("float, bools", xs)
+    xs[3] := 9223372036854775807
+    show("large", xs[3])
+    xs[0] := "text"
+    xs[1] := [1, 2]
+    xs[2] := {a: 1}
+    show("heap values in", xs)
+    xs[0] := 0
+    xs[1] := xs[2]
+    xs[2] := 7
+    show("heap values out", xs)
+    alloc a := [1, 2, 3]
+    alloc b := a
+    b[1] := 20
+    show("seen through both names", a)
+    g_list[0] := g_list[1] + g_list[2]
+    show("global list", g_list)
+    alloc grid := [[0, 0], [0, 0]]
+    grid[1][0] := 4
+    grid[i][i] := 5
+    show("nested", grid)
+    alloc d := {}
+    d["k"] := 1
+    d[2] := "two"
+    show("dict", d["k"] + " " + d[2])
+    alloc n := 0
+    alloc sq := list_repeat(0, 6)
+    loop n < 6 {
+        sq[n] := n * n
+        n := n + 1
+    }
+    show("loop", sq)
+    return false
+}
+writes()
+
+proc write_past_end() { alloc xs := [1]  xs[1] := 2  return xs }
+proc write_before_start() { alloc xs := [1]  xs[-2] := 2  return xs }
+proc write_float_index() { alloc xs := [1]  xs[0.0] := 2  return xs }
+proc write_to_int() { alloc n := 5  n[0] := 1  return n }
+proc write_to_string() { alloc s := "abc"  s[0] := "x"  return s }
+proc write_unset() {
+    alloc xs := [1]
+    if length(xs) > 100 { alloc never := 1 }
+    xs[0] := never
+    return xs
+}
+attempt("write past the end", write_past_end)
+attempt("write before the start", write_before_start)
+attempt_kind("write with float index", write_float_index)
+attempt_kind("write into an int", write_to_int)
+attempt_kind("write into a string", write_to_string)
+attempt("write an unset variable", write_unset)
+
+# --- shifts ----------------------------------------------------------------
+proc shifts() {
+    alloc one := 1
+    alloc n := 5
+    alloc neg := -40
+    show("1 << 5", one << 5)
+    show("1 << n", one << n)
+    show("neg >> 3", neg >> 3)
+    show("neg >> n", neg >> n)
+    show("-1 >> 63", -1 >> 63)
+    show("1 << 63", one << 63)
+    show("1 << 62", one << 62)
+    show("wraps", (one << 62) << 2)
+    show("x << 0", n << 0)
+    show("x >> 0", neg >> 0)
+    show("in an expression", ((n << 16) | (n << 8) | n) >> 4)
+    show("element shifted", nums[1] << 2)
+    show("shift by element", 256 >> mixed[0])
+    show("true << 1", true << 1)
+    return false
+}
+shifts()
+
+proc shift_64() { alloc one := 1  return one << 64 }
+proc shift_var_64() { alloc one := 1  alloc n := 64  return one >> n }
+proc shift_negative() { alloc one := 1  alloc n := -1  return one << n }
+proc shift_float() { alloc x := 1.5  return x << 1 }
+proc shift_by_float() { alloc x := 4  return x >> 1.0 }
+proc shift_string() { alloc s := "a"  return s << 1 }
+attempt("shift by 64", shift_64)
+attempt("shift by a variable 64", shift_var_64)
+attempt("shift by -1", shift_negative)
+attempt("shift a float", shift_float)
+attempt("shift by a float", shift_by_float)
+attempt_kind("shift a string", shift_string)

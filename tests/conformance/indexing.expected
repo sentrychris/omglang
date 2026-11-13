@@ -1,0 +1,62 @@
+const index: 20
+variable index: 30
+computed index: 40
+negative index: 40
+negative variable: 30
+element of element: 4
+string element: two
+char of string element: t
+dict in list: 5
+global list: 300
+index from a list: 20
+nested arithmetic: 40
+list literal: 9
+string: e
+dict by int key: one
+sum: 100
+past the end: raised IndexError: index 4 out of range for length 4
+before the start: raised IndexError: index -5 out of range for length 4
+float index: raised TypeError
+bool index: raised TypeError
+string index: raised TypeError
+index an int: raised TypeError: 5 is not indexable
+unset container: raised UndefinedIdentError: later
+unset index: raised UndefinedIdentError: where
+element outlives its list: [1, 2, 3] text
+element of a temporary list: b
+ints: [5, 11, 55, -7, 99]
+float, bools: [1.5, true, false, -7, 99]
+large: 9223372036854775807
+heap values in: [text, [1, 2], {a: 1}, 9223372036854775807, 99]
+heap values out: [0, {a: 1}, 7, 9223372036854775807, 99]
+seen through both names: [1, 20, 3]
+global list: [500, 200, 300]
+nested: [[0, 0], [4, 5]]
+dict: 1 two
+loop: [0, 1, 4, 9, 16, 25]
+write past the end: raised IndexError: index 1 out of range for length 1
+write before the start: raised IndexError: index -2 out of range for length 1
+write with float index: raised TypeError
+write into an int: raised TypeError
+write into a string: raised TypeError
+write an unset variable: raised UndefinedIdentError: never
+1 << 5: 32
+1 << n: 32
+neg >> 3: -5
+neg >> n: -2
+-1 >> 63: -1
+1 << 63: -9223372036854775808
+1 << 62: 4611686018427387904
+wraps: 0
+x << 0: 5
+x >> 0: -40
+in an expression: 20560
+element shifted: 80
+shift by element: 128
+true << 1: 2
+shift by 64: raised ValueError: shift count out of range: 64
+shift by a variable 64: raised ValueError: shift count out of range: 64
+shift by -1: raised ValueError: shift count out of range: -1
+shift a float: raised TypeError: operator '<<' is not defined for floats
+shift by a float: raised TypeError: operator '>>' is not defined for floats
+shift a string: raised TypeError

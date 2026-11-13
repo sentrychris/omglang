@@ -168,10 +168,15 @@ Emit              call rt_emit
 Halt              leave the main body; the runtime exits with 0
 ```
 
-Integer arithmetic and comparisons are done in line like this whenever
-the tags allow, with a call into the runtime as the fallback. Anything
-bigger (string concatenation, indexing, dictionaries, builtins) is a
-call into the runtime.
+Integer arithmetic, shifts and comparisons are done in line like this
+whenever the tags allow, with a call into the runtime as the fallback.
+So are the two things a loop over numbers does most: reading
+`list[i]`, and writing `list[i] := v` when neither the new value nor
+the one it replaces is a heap object. In line that is a check that the
+container is a list and the index an Int inside it, then a load or a
+store; a negative index, a dict, a string or an error takes the call.
+Anything bigger (string concatenation, dictionaries, builtins) is
+always a call into the runtime.
 
 **2. It compiles the runtime ("raw mode").** The runtime is OMG source
 too ([`src/runtime/x64/`](../src/runtime/x64/)), but in a restricted

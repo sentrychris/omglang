@@ -3031,6 +3031,253 @@ proc mg_arith(op) {
     return false
 }
 
+# --- lists and shifts, in line ------------------------------------------------
+#
+# Reading and writing list elements is most of what a loop over numbers
+# does, so the usual case is done here: the container is a list, the
+# index an Int inside it. Everything else (negative indexes, dicts,
+# strings, errors) jumps to the runtime call, placed after the body.
+
+# Compare the entry's tag with `tag`. RAX and RDX are left alone.
+proc mg_tag_cmp(e, off, tag) {
+    if e[0] == VK_ACC {
+        x_alu_ri(ALU_CMP, RDX, tag)
+    } elif e[0] == VK_VAR {
+        x_alu_mi(ALU_CMP, e[1], e[2] + 8, tag)
+    } else {
+        x_alu_mi(ALU_CMP, RSP, off + 8, tag)
+    }
+}
+
+# Can an entry be the index of the fast path?
+proc mg_index_ok(e) {
+    alloc k := e[0]
+    if k == VK_INT {
+        return e[1] >= 0 and x_fits32(e[1])
+    }
+    if k == VK_VAR {
+        return true
+    }
+    if k == VK_STK or k == VK_ACC {
+        return e[1] != TY_BOOL
+    }
+    return false
+}
+
+# Give back the count of a list that was an operand: `e` is its entry,
+# RCX holds it. RAX and RDX survive.
+proc mg_drop_list(e, off) {
+    if e[0] == VK_ACC {
+        x_push_i(TAG_LIST)
+        x_push(RCX)
+        x_mov_rr(RDI, RSP)
+        x_call(mg_stub_release)
+        x_alu_ri(ALU_ADD, RSP, 16)
+    } elif mg_needs_drop(e) {
+        # usually someone else holds it too
+        x_alu_mi(ALU_CMP, RCX, 0, 1)
+        alloc p := x_jcc_short(CC_E)
+        x_dec_m(RCX, 0)
+        alloc q := x_jmp_short()
+        x_patch_short(p)
+        x_lea(RDI, RSP, off)
+        x_call(mg_stub_release)
+        x_patch_short(q)
+    }
+}
+
+# INDEX: base[idx]
+proc mg_index() {
+    mg_free_acc(2)
+    alloc l := mg_vs[mg_vn - 2]
+    alloc r := mg_vs[mg_vn - 1]
+    alloc lk := l[0]
+    if (lk != VK_VAR and lk != VK_STK and lk != VK_ACC) or mg_ty(l) != TY_ANY or mg_index_ok(r) == false {
+        return mg_generic("rt_index", 2, [], TY_ANY)
+    }
+    alloc offs := mg_pair_offs(l, r)
+    alloc slow := x_new_label()
+    alloc back := x_new_label()
+    mg_tag_cmp(l, offs[1], TAG_LIST)
+    x_jcc(CC_NE, slow)
+    if mg_ty(r) != TY_INT {
+        mg_int_check(r, offs[2], slow)
+    }
+    mg_load(RCX, mg_loc(l, offs[1]))
+    mg_load(RSI, mg_loc(r, offs[2]))
+    # unsigned, so a negative index is too large as well
+    x_alu_rm(ALU_CMP, RSI, RCX, 8)
+    x_jcc(CC_AE, slow)
+    x_load(RDI, RCX, 24)
+    x_shl_i(RSI, 4)
+    x_load_x(RDX, RDI, RSI, 0, 8)
+    x_load_x(RAX, RDI, RSI, 0, 0)
+    mg_inc_if_heap(RAX, RDX)
+    mg_drop_list(l, offs[1])
+    if offs[0] > 0 {
+        x_lea(RSP, RSP, 16 * offs[0])
+    }
+    mg_forget(2)
+    x_bind(back)
+    append(mg_deferred, ["helper", slow, mg_at, "rt_index", [l, r], [], TY_ANY, 0, back, -1])
+    mg_push_acc(TY_ANY)
+    return false
+}
+
+# Is the entry certainly not a heap object?
+proc mg_plain(e) {
+    alloc k := e[0]
+    if k == VK_INT or k == VK_BOOL or k == VK_NONE or k == VK_FLOAT {
+        return true
+    }
+    if k == VK_STK or k == VK_ACC {
+        return e[1] != TY_ANY
+    }
+    return false
+}
+
+# STORE_INDEX: base[idx] := value, where neither the value nor what it
+# replaces is a heap object, so that no count changes.
+proc mg_store_index() {
+    mg_free_acc(3)
+    alloc b := mg_vs[mg_vn - 3]
+    alloc x := mg_vs[mg_vn - 2]
+    alloc v := mg_vs[mg_vn - 1]
+    alloc bk := b[0]
+    if (bk != VK_VAR and bk != VK_STK and bk != VK_ACC) or mg_ty(b) != TY_ANY or mg_index_ok(x) == false or v[0] == VK_STR {
+        return mg_generic("rt_store_index", 3, [], -1)
+    }
+    if v[0] == VK_VAR and v[4] {
+        # an unset variable must not get into the list
+        mg_check_var(b)
+        mg_check_var(x)
+        mg_check_var(v)
+    }
+    # where the three are, when they are on the machine stack
+    alloc nstk := 0
+    for e in [b, x, v] {
+        if e[0] == VK_STK { nstk := nstk + 1 }
+    }
+    alloc boff := 16 * (nstk - 1)
+    alloc xoff := 16 * (nstk - 2)
+    alloc voff := 0
+    alloc slow := x_new_label()
+    alloc back := x_new_label()
+    mg_tag_cmp(b, boff, TAG_LIST)
+    x_jcc(CC_NE, slow)
+    if mg_ty(x) != TY_INT {
+        mg_int_check(x, xoff, slow)
+    }
+    if mg_plain(v) == false {
+        mg_tag_cmp(v, voff, 8)
+        x_jcc(CC_AE, slow)
+    }
+    mg_load(RCX, mg_loc(b, boff))
+    mg_load(RSI, mg_loc(x, xoff))
+    x_alu_rm(ALU_CMP, RSI, RCX, 8)
+    x_jcc(CC_AE, slow)
+    x_load(RDI, RCX, 24)
+    x_shl_i(RSI, 4)
+    x_alu_rr(ALU_ADD, RDI, RSI)
+    x_alu_mi(ALU_CMP, RDI, 8, 8)
+    x_jcc(CC_AE, slow)
+    alloc vk := v[0]
+    alloc tag := mg_const_tag(v)
+    if vk == VK_ACC {
+        x_store(RDI, 0, RAX)
+    } elif vk == VK_VAR or vk == VK_STK {
+        mg_load(RSI, mg_loc(v, voff))
+        x_store(RDI, 0, RSI)
+    } elif vk == VK_NONE {
+        x_store_i(RDI, 0, 0)
+    } elif x_fits32(v[1]) {
+        x_store_i(RDI, 0, v[1])
+    } else {
+        x_mov_ri(RSI, v[1])
+        x_store(RDI, 0, RSI)
+    }
+    if tag >= 0 {
+        x_store_i(RDI, 8, tag)
+    } elif vk == VK_ACC {
+        x_store(RDI, 8, RDX)
+    } elif vk == VK_VAR {
+        x_load(RSI, v[1], v[2] + 8)
+        x_store(RDI, 8, RSI)
+    } else {
+        x_load(RSI, RSP, voff + 8)
+        x_store(RDI, 8, RSI)
+    }
+    mg_drop_list(b, boff)
+    if nstk > 0 {
+        x_lea(RSP, RSP, 16 * nstk)
+    }
+    mg_forget(3)
+    x_bind(back)
+    append(mg_deferred, ["helper", slow, mg_at, "rt_store_index", [b, x, v], [], -1, 0, back, -1])
+    return false
+}
+
+# SHL and SHR of two Ints, the count from 0 to 63.
+proc mg_shift(op) {
+    mg_free_acc(2)
+    alloc l := mg_vs[mg_vn - 2]
+    alloc r := mg_vs[mg_vn - 1]
+    alloc helper := MG_HELPERS[op]
+    alloc lt := mg_ty(l)
+    alloc rt := mg_ty(r)
+    alloc lok := l[0] == VK_INT or l[0] == VK_VAR or ((l[0] == VK_STK or l[0] == VK_ACC) and mg_intish(lt))
+    alloc rok := r[0] == VK_VAR or ((r[0] == VK_STK or r[0] == VK_ACC) and mg_intish(rt))
+    if r[0] == VK_INT {
+        rok := r[1] >= 0 and r[1] < 64
+    }
+    if lok == false or rok == false or (l[0] == VK_INT and r[0] == VK_INT) {
+        return mg_generic(helper, 2, [], TY_INT)
+    }
+    alloc offs := mg_pair_offs(l, r)
+    alloc need_check := lt != TY_INT or rt != TY_INT
+    alloc slow := -1
+    alloc back := -1
+    if need_check or r[0] != VK_INT {
+        slow := x_new_label()
+        back := x_new_label()
+    }
+    if need_check {
+        mg_int_check2(l, offs[1], r, offs[2], slow)
+    }
+    if r[0] == VK_INT {
+        if l[0] != VK_ACC {
+            mg_load(RAX, mg_loc(l, offs[1]))
+        }
+        if op == "SHL" {
+            x_shl_i(RAX, r[1])
+        } else {
+            x_sar_i(RAX, r[1])
+        }
+    } else {
+        mg_load(RCX, mg_loc(r, offs[2]))
+        x_alu_ri(ALU_CMP, RCX, 64)
+        x_jcc(CC_AE, slow)
+        if l[0] != VK_ACC {
+            mg_load(RAX, mg_loc(l, offs[1]))
+        }
+        if op == "SHL" {
+            x_shl_cl(RAX)
+        } else {
+            x_sar_cl(RAX)
+        }
+    }
+    if offs[0] > 0 {
+        x_lea(RSP, RSP, 16 * offs[0])
+    }
+    mg_forget(2)
+    if slow >= 0 {
+        x_bind(back)
+        append(mg_deferred, ["helper", slow, mg_at, helper, [l, r], [], TY_INT, 0, back, -1])
+    }
+    mg_push_acc(TY_INT)
+    return false
+}
+
 proc mg_cc_for(op) {
     if op == "EQ" { return CC_E }
     if op == "NE" { return CC_NE }
@@ -3996,7 +4243,7 @@ proc mg_body(name, lo, hi, label) {
         } elif op == "ADD" or op == "SUB" or op == "MUL" or op == "BAND" or op == "BOR" or op == "BXOR" {
             mg_arith(op)
         } elif op == "INDEX" {
-            mg_generic("rt_index", 2, [], TY_ANY)
+            mg_index()
         } elif op == "BUILTIN" {
             mg_builtin(arg[0], arg[1])
         } elif op == "CALL_VALUE" {
@@ -4043,7 +4290,7 @@ proc mg_body(name, lo, hi, label) {
             }
             mg_forget(1)
         } elif op == "STORE_INDEX" {
-            mg_generic("rt_store_index", 3, [], -1)
+            mg_store_index()
         } elif op == "STORE_ATTR" {
             mg_generic("rt_store_attr", 2, [[1, arg]], -1)
         } elif op == "SLICE" {
@@ -4055,7 +4302,7 @@ proc mg_body(name, lo, hi, label) {
         } elif op == "DIV" or op == "FLOOR_DIV" or op == "MOD" {
             mg_generic(MG_HELPERS[op], 2, [], TY_NOHEAP)
         } elif op == "SHL" or op == "SHR" {
-            mg_generic(MG_HELPERS[op], 2, [], TY_INT)
+            mg_shift(op)
         } elif op == "AND" or op == "OR" {
             mg_generic(MG_HELPERS[op], 2, [], TY_BOOL)
         } elif op == "NEG" or op == "NOT" {

@@ -308,12 +308,14 @@ the same, though not always.
 
 Where the time goes in a built program:
 
-- Calls into the runtime: string building, indexing, dictionaries
+- Calls into the runtime: string building, dictionaries (attribute
+  access included), slices, indexing anything but a list by a number
 - Reference count updates
 - `emit` (formatting and a system call per line; don't `emit` in hot loops)
 
-Integer arithmetic, comparisons, local variables and calls between
-your own procs are compiled in line and are cheap.
+Integer arithmetic, shifts, comparisons, local variables, reading and
+writing the elements of a list of numbers, and calls between your own
+procs are compiled in line and are cheap.
 
 ### Common perf wins
 
