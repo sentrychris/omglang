@@ -1223,7 +1223,7 @@ alloc RW_INTRINSICS := {
     __fsin: 1, __fcos: 1, __ftan: 1, __flog: 1, __fpow: 2,
     __syscall: 7,
     __icall0: 1, __icall1: 2, __icall2: 3, __icall3: 4, __icall4: 5,
-    __icall5: 6, __icall6: 7,
+    __icall5: 6, __icall6: 7, __icall8: 9, __icall10: 11,
     __rsp: 0, __rbp: 0, __unwind: 5, __sym: 1, __brk: 0,
     __import: 1,
     __wincall0: 1, __wincall1: 2, __wincall2: 3, __wincall3: 4,
@@ -2036,7 +2036,7 @@ proc rw_intrinsic(name) {
         x_syscall()
         return rw_push([RK_REG, RAX, 0])
     }
-    if length(name) == 8 and name[0:7] == "__icall" {
+    if length(name) >= 8 and name[0:7] == "__icall" {
         alloc nargs := RW_INTRINSICS[name] - 1
         rw_flush()
         x_load(R11, RSP, 8 * nargs)
