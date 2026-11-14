@@ -552,9 +552,11 @@ between a sixth and a third less time.
 What the time goes on now is the number of instructions, not memory,
 and no one place has much of it. Under a profiler the largest in
 1280x720 video, with a sixth of the decoder's instructions, is
-averaging the two predictions of a picture that is predicted twice;
-smoothing the edges of blocks, working out the samples between
-samples, and reading the bits follow with less than a tenth each. And
+averaging two blocks of samples, which is how a position a quarter of
+a sample along is made and how the two predictions of a picture that
+is predicted twice are joined; smoothing the edges of blocks, working
+out the samples between samples, and reading the bits follow with
+less than a tenth each. And
 for a picture that is easy to decode, such as those of the first
 table, converting it for the window and drawing it now takes as long
 as decoding it.
