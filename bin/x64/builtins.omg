@@ -575,6 +575,72 @@ proc bi_bytes_repeat(t, v, ct, count) {
     return b
 }
 
+# bytes_copy(src, from, dst, to, count): `count` bytes of one byte list,
+# from index `from` on, written into another at index `to` on. The two
+# may be the same list, and the runs may overlap. Nothing grows: both
+# runs have to lie inside their lists.
+proc bi_bytes_copy(st, s, ft, from, dt, d, tt, to, ct, count) {
+    if st != T_BYTES or dt != T_BYTES or ft != T_INT or tt != T_INT or ct != T_INT {
+        return rt_type_error("bytes_copy() expects (byte list, int, byte list, int, int)")
+    }
+    if count < 0 {
+        return rt_throw2("ValueError", "bytes_copy() count must be non-negative, got ", T_INT, count)
+    }
+    alloc sn := __peek64(s + L_LEN)
+    if from < 0 or from > sn or count > sn - from {
+        return rt_bytes_copy_error(count, " from index ", from, sn)
+    }
+    alloc dn := __peek64(d + L_LEN)
+    if to < 0 or to > dn or count > dn - to {
+        return rt_bytes_copy_error(count, " to index ", to, dn)
+    }
+    alloc sp := __peek64(s + L_ITEMS) + from
+    alloc dp := __peek64(d + L_ITEMS) + to
+    rt_tag := T_NONE
+    # The sizes a picture is cut into, in one or two moves. Reading
+    # all of it before writing any makes overlap harmless.
+    if count == 16 {
+        alloc lo := __peek64(sp)
+        alloc hi := __peek64(sp + 8)
+        __poke64(dp, lo)
+        __poke64(dp + 8, hi)
+        return 0
+    }
+    if count == 8 {
+        __poke64(dp, __peek64(sp))
+        return 0
+    }
+    if count == 4 {
+        __poke32(dp, __peek32(sp))
+        return 0
+    }
+    if dp > sp and dp < sp + count {
+        # The destination starts inside the source: from the far end.
+        alloc i := count
+        loop i > 0 {
+            i := i - 1
+            __poke8(dp + i, __peek8(sp + i))
+        }
+        return 0
+    }
+    if count > 0 {
+        __memcpy(dp, sp, count)
+    }
+    return 0
+}
+
+proc rt_bytes_copy_error(count, text, at, len) {
+    alloc b := rt_buf_new()
+    rt_buf_str(b, "bytes_copy(): ")
+    rt_buf_int(b, count)
+    rt_buf_str(b, " bytes")
+    rt_buf_str(b, text)
+    rt_buf_int(b, at)
+    rt_buf_str(b, " do not fit in a byte list of ")
+    rt_buf_int(b, len)
+    return rt_throw("IndexError", rt_buf_finish(b))
+}
+
 # to_bytes(x): a new byte list holding the numbers of a list, the
 # UTF-8 bytes of a string, or a copy of another byte list.
 proc bi_to_bytes(t, v) {
@@ -2119,6 +2185,7 @@ proc rt_bi_init() {
     rt_bi_add("append", bi_append, 2)
     rt_bi_add("bytes_repeat", bi_bytes_repeat, 2)
     rt_bi_add("to_bytes", bi_to_bytes, 1)
+    rt_bi_add("bytes_copy", bi_bytes_copy, 5)
     rt_bi_add("panic", bi_panic, 1)
     rt_bi_add("raise", bi_raise, 1)
     rt_bi_add("exit_with_error", bi_exit_with_error, 1)
@@ -2215,5 +2282,11 @@ proc bi_call_builtin(nt, name, lt, list) {
     if n == 2 {
         return __icall4(fn, __peek64(a + 8), __peek64(a), __peek64(a + 24), __peek64(a + 16))
     }
-    return __icall6(fn, __peek64(a + 8), __peek64(a), __peek64(a + 24), __peek64(a + 16), __peek64(a + 40), __peek64(a + 32))
+    if n == 3 {
+        return __icall6(fn, __peek64(a + 8), __peek64(a), __peek64(a + 24), __peek64(a + 16), __peek64(a + 40), __peek64(a + 32))
+    }
+    if n == 4 {
+        return __icall8(fn, __peek64(a + 8), __peek64(a), __peek64(a + 24), __peek64(a + 16), __peek64(a + 40), __peek64(a + 32), __peek64(a + 56), __peek64(a + 48))
+    }
+    return __icall10(fn, __peek64(a + 8), __peek64(a), __peek64(a + 24), __peek64(a + 16), __peek64(a + 40), __peek64(a + 32), __peek64(a + 56), __peek64(a + 48), __peek64(a + 72), __peek64(a + 64))
 }
