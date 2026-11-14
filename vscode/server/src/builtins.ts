@@ -51,9 +51,9 @@ export const BUILTINS: readonly BuiltinDoc[] = [
         name: 'length',
         category: 'Strings and collections',
         signatures: ['length(x)'],
-        params: [{ name: 'x', doc: 'A string, a list or a dict.' }],
+        params: [{ name: 'x', doc: 'A string, a list, a byte list or a dict.' }],
         minArgs: 1, maxArgs: 1,
-        summary: 'Number of characters in a string, items in a list, or entries in a dict.',
+        summary: 'Number of characters in a string, items in a list or byte list, or entries in a dict.',
         details: 'Strings are counted in characters (Unicode code points), not bytes. Use `length(string_bytes(s))` for the byte count.',
         returns: 'An int.',
         returnType: 'int',
@@ -93,20 +93,20 @@ export const BUILTINS: readonly BuiltinDoc[] = [
         signatures: ['string_bytes(s)'],
         params: [{ name: 's', doc: 'A string.' }],
         minArgs: 1, maxArgs: 1,
-        summary: 'The UTF-8 bytes of a string, as a list of ints (0 to 255).',
-        details: 'Indexing a string walks it from the start, so scanning a long text is much faster over its bytes.',
-        returns: 'A list of ints.',
+        summary: 'The UTF-8 bytes of a string, as a byte list.',
+        details: 'Indexing a string walks it from the start, so scanning a long text is much faster over its bytes. The result is a byte list: it reads like a list of ints, and holds nothing but whole numbers from 0 to 255. `to_bytes(s)` gives the same.',
+        returns: 'A byte list.',
         returnType: 'list',
         example: 'emit string_bytes("hé")       # → [104, 195, 169]',
-        see: ['bytes_to_string']
+        see: ['bytes_to_string', 'to_bytes']
     }),
     b({
         name: 'bytes_to_string',
         category: 'Strings and collections',
         signatures: ['bytes_to_string(bytes)'],
-        params: [{ name: 'bytes', doc: 'A list of ints, each 0 to 255.' }],
+        params: [{ name: 'bytes', doc: 'A byte list, or a list of ints, each 0 to 255.' }],
         minArgs: 1, maxArgs: 1,
-        summary: 'Builds a string from a list of UTF-8 bytes.',
+        summary: 'Builds a string from UTF-8 bytes.',
         details: 'The inverse of `string_bytes`.',
         returns: 'A string.',
         returnType: 'string',
@@ -329,17 +329,20 @@ export const BUILTINS: readonly BuiltinDoc[] = [
         category: 'Strings and collections',
         signatures: ['append(list, item)'],
         params: [
-            { name: 'list', doc: 'The list to grow.' },
+            { name: 'list', doc: 'The list or byte list to grow.' },
             { name: 'item', doc: 'The value to add at the end.' }
         ],
         minArgs: 2, maxArgs: 2,
-        summary: 'Adds an item to the end of a list, in place.',
+        summary: 'Adds an item to the end of a list or a byte list, in place.',
         details: 'Prefer it to `xs := xs + [v]`, which copies the whole list each time.',
         returns: 'Nothing.',
         returnType: 'none',
-        raises: ['TypeError: the first argument is not a list.'],
+        raises: [
+            'TypeError: the first argument is not a list or a byte list.',
+            'ValueError: a byte list is given a number outside 0 to 255 (TypeError for anything that is not an int).'
+        ],
         example: 'alloc xs := [1]\nappend(xs, 2)\nemit xs                       # → [1, 2]',
-        see: ['list_repeat']
+        see: ['list_repeat', 'bytes_repeat']
     }),
     b({
         name: 'list_repeat',
@@ -356,7 +359,44 @@ export const BUILTINS: readonly BuiltinDoc[] = [
         returnType: 'list',
         raises: ['ValueError: `count` is negative.'],
         example: 'emit list_repeat(0, 3)        # → [0, 0, 0]',
-        see: ['append']
+        see: ['append', 'bytes_repeat']
+    }),
+    b({
+        name: 'bytes_repeat',
+        category: 'Strings and collections',
+        signatures: ['bytes_repeat(value, count)'],
+        params: [
+            { name: 'value', doc: 'The number for every slot: an int from 0 to 255.' },
+            { name: 'count', doc: 'How many slots. Zero or more.' }
+        ],
+        minArgs: 2, maxArgs: 2,
+        summary: 'A new byte list holding `value` `count` times.',
+        details: 'A byte list is a list that holds only whole numbers from 0 to 255 and spends one byte on each, where a list spends sixteen. Everything that reads a list reads a byte list the same way: indexing, `length`, `for`, slices, `+`, `==`, `emit`. Storing is stricter: `b[i] := v` and `append(b, v)` raise unless `v` is an int from 0 to 255. Use one for pictures, sound, files and anything else that is bytes by nature.',
+        returns: 'A byte list.',
+        returnType: 'list',
+        raises: [
+            'ValueError: `count` is negative, or `value` is outside 0 to 255.',
+            'TypeError: `value` or `count` is not an int.'
+        ],
+        example: 'alloc buf := bytes_repeat(0, 4)\nbuf[1] := 255\nemit buf                      # → [0, 255, 0, 0]',
+        see: ['to_bytes', 'list_repeat', 'append']
+    }),
+    b({
+        name: 'to_bytes',
+        category: 'Strings and collections',
+        signatures: ['to_bytes(x)'],
+        params: [{ name: 'x', doc: 'A list of ints from 0 to 255, a string, or a byte list.' }],
+        minArgs: 1, maxArgs: 1,
+        summary: 'A new byte list from a list of numbers, from the UTF-8 bytes of a string, or as a copy of another byte list.',
+        details: 'For the way back, `[] + b` is a plain list with the same numbers, and `bytes_to_string(b)` is the text.',
+        returns: 'A byte list.',
+        returnType: 'list',
+        raises: [
+            'ValueError: a number in the list is outside 0 to 255.',
+            'TypeError: an item of the list is not an int, or `x` is none of the three.'
+        ],
+        example: 'alloc b := to_bytes([79, 77, 71])\nemit bytes_to_string(b)       # → OMG\nemit b == [79, 77, 71]        # → true',
+        see: ['bytes_repeat', 'string_bytes', 'bytes_to_string']
     }),
     b({
         name: 'dict_keys',
@@ -444,8 +484,8 @@ export const BUILTINS: readonly BuiltinDoc[] = [
         ],
         minArgs: 1, maxArgs: 2,
         summary: 'Reads from an open file: everything that is left, or at most `max` bytes.',
-        details: 'A text-mode handle gives a string, a binary one a list of bytes. At the end of the file the result is empty.',
-        returns: 'A string or a list of bytes.',
+        details: 'A text-mode handle gives a string, a binary one a byte list. At the end of the file the result is empty.',
+        returns: 'A string or a byte list.',
         returnType: 'any',
         raises: ['ValueError: the handle is not open.'],
         example: 'alloc h := file_open("photo.jpg", "rb")\nalloc first := file_read(h, 16)\nfile_close(h)',
@@ -458,7 +498,7 @@ export const BUILTINS: readonly BuiltinDoc[] = [
         signatures: ['file_write(handle, data)'],
         params: [
             { name: 'handle', doc: 'A handle from `file_open`, opened for writing.' },
-            { name: 'data', doc: 'A string for a text handle; a list of bytes for a binary one.' }
+            { name: 'data', doc: 'A string for a text handle; a byte list or a list of bytes for a binary one.' }
         ],
         minArgs: 2, maxArgs: 2,
         summary: 'Writes to an open file.',
@@ -647,8 +687,8 @@ export const BUILTINS: readonly BuiltinDoc[] = [
         signatures: ['stdin_read_bytes()'],
         params: [],
         minArgs: 0, maxArgs: 0,
-        summary: 'Reads all of standard input, up to its end, as a list of bytes.',
-        returns: 'A list of ints (0 to 255).',
+        summary: 'Reads all of standard input, up to its end, as a byte list.',
+        returns: 'A byte list.',
         returnType: 'list',
         see: ['stdin_read'],
         example: '# omg size.omg < photo.jpg\nalloc data := stdin_read_bytes()\nemit length(data) + " bytes"'
@@ -937,8 +977,8 @@ export const BUILTINS: readonly BuiltinDoc[] = [
         ],
         minArgs: 2, maxArgs: 2,
         summary: 'Reads up to `max` bytes from a connection.',
-        details: 'Three different results to tell apart: a list with bytes; `[]` once the other side has closed; `false` when the socket is non-blocking and nothing has arrived yet. Compare with `== false` to separate the last two.',
-        returns: 'A list of bytes, or `false`.',
+        details: 'Three different results to tell apart: a byte list with what arrived; an empty one once the other side has closed; `false` when the socket is non-blocking and nothing has arrived yet. Compare with `== false` to separate the last two.',
+        returns: 'A byte list, or `false`.',
         returnType: 'any',
         example: 'alloc data := tcp_read(conn, 4096)\nif data == false {\n    # nothing yet\n} elif length(data) == 0 {\n    tcp_close(conn)\n} else {\n    emit bytes_to_string(data)\n}',
         runnable: false,
@@ -950,7 +990,7 @@ export const BUILTINS: readonly BuiltinDoc[] = [
         signatures: ['tcp_write(handle, data)', 'tcp_write(handle, data, offset)'],
         params: [
             { name: 'handle', doc: 'A connection handle.' },
-            { name: 'data', doc: 'A string or a list of bytes.' },
+            { name: 'data', doc: 'A string, a byte list or a list of bytes.' },
             { name: 'offset', doc: 'Start this many bytes into `data`: for carrying on after a partial write.' }
         ],
         minArgs: 2, maxArgs: 3,

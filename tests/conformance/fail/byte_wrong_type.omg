@@ -1,0 +1,8 @@
+;;;omg
+# expect: TypeError
+alloc b := to_bytes([1, 2, 3])
+emit b
+append(b, 4)
+emit b
+append(b, "five")
+emit "not reached"

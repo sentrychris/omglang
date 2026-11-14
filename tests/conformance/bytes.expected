@@ -1,0 +1,85 @@
+zeros: [0, 0, 0, 0]
+length: 4
+filled: [255, 255, 255]
+none: []
+from a list: [1, 2, 3]
+from a string: [104, 195, 169, 108, 108, 111]
+from nothing: []
+a copy is its own: [0, 9]
+a name is not a copy: [0, 8, 0, 0]
+string_bytes: [97, 98, 99]
+and back: héllo
+and back from a list: hi
+too big: ValueError
+negative: ValueError
+a string inside: TypeError
+a float inside: TypeError
+a bool inside: TypeError
+from a number: TypeError
+from a dict: TypeError
+fill too big: ValueError
+fill a string: TypeError
+negative count: ValueError
+count a string: TypeError
+reads, bytes: [30, 50, 60, -10, 80, 120, 80, 14, 20, 40]
+reads, list: [30, 50, 60, -10, 80, 120, 80, 14, 20, 40]
+reads, bytes again: [30, 70, 60, -10, 80, 140, 100, 17, 30, 40]
+reads, string: [12, 23, 6, -1, 8, 82020, 224, 14, 2, 4]
+reads, list again: [30, 70, 60, -10, 80, 140, 100, 17, 30, 40]
+read errors: [IndexError, IndexError, IndexError, TypeError, TypeError, TypeError, TypeError, TypeError, TypeError, 8, 8]
+writes, bytes: [1, 7, 8, 14, 7, 8, 0, 250]
+writes, list: [1, 7, 8, 14, 7, 8, 0, 250]
+writes, bytes again: [1, 100, 101, 200, 100, 101, 0, 250]
+writes, list again: [1, 100, 101, 200, 100, 101, 0, 250]
+write errors, 255: [ok, ValueError, IndexError, IndexError, TypeError, TypeError, TypeError, TypeError, ValueError, ValueError, TypeError, TypeError, TypeError, TypeError, TypeError, ValueError, TypeError]
+write errors, 300: [ValueError, ValueError, IndexError, IndexError, TypeError, TypeError, TypeError, TypeError, ValueError, ValueError, TypeError, TypeError, TypeError, TypeError, TypeError, ValueError, TypeError]
+write errors, -5: [ValueError, ValueError, IndexError, IndexError, TypeError, TypeError, TypeError, TypeError, ValueError, ValueError, TypeError, TypeError, TypeError, TypeError, TypeError, ValueError, TypeError]
+a refused write changes nothing: [3, 3, 3, 3]
+blur list to list: [0, 100, 150, 100, 38, 89, 204, 0]
+blur bytes to bytes: [0, 100, 150, 100, 38, 89, 204, 0]
+blur list to bytes: [0, 100, 150, 100, 38, 89, 204, 0]
+blur bytes to list: [0, 100, 150, 100, 38, 89, 204, 0]
+blur list to list: [0, 100, 150, 100, 38, 89, 204, 0]
+blur strings: TypeError
+blur too big: ValueError
+blur bytes to bytes: [0, 100, 150, 100, 38, 89, 204, 0]
+total, bytes: 7000
+total, list: 7000
+total, bytes: 960
+bytes + bytes: [1, 2, 3, 255, 0, 7]
+bytes + list: [1, 2, 3, 9, x]
+list + bytes: [true, 1, 2, 3]
+empty + bytes: [1, 2, 3]
+in text: got [1, 2, 3]
+equal to a list: true
+a list equal to it: true
+equal to bytes: true
+equal to floats: true
+not equal: false
+shorter: true
+not a string: false
+not a number: false
+inside lists: true
+inside dicts: true
+slice: [2, 3]
+slice from the end: [2, 3]
+empty slice: []
+whole slice: [1, 2, 3]
+slice equals: true
+a slice is a copy: [1, 77]
+append: [1, 2, 3, 200]
+for: 412
+truthy: yes
+empty: falsy
+not a dict: false
+in a dict: {b: [1, 2]}
+in a list: [[1, 2], [[3, 200]]]
+grown: 100000
+picked: 414
+start: [0, 1, 2]
+summed: 12742320
+doubled: 200000
+joined to a list: 100001
+churn: 426876
+top level: [1, 11, 21, 31, 41, 51]
+top level again: 12

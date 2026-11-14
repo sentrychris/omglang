@@ -20,7 +20,7 @@ proc bi_length(t, v) {
     if t == T_STR {
         return __peek64(v + S_CHARS)
     }
-    if t == T_LIST or t == T_DICT {
+    if t == T_LIST or t == T_DICT or t == T_BYTES {
         return __peek64(v + L_LEN)
     }
     return rt_type_error("length() expects list, string or dict (type mismatch)")
@@ -146,18 +146,8 @@ proc bi_string_bytes(t, v) {
     if t != T_STR {
         return rt_type_error("string_bytes() expects a string")
     }
-    alloc n := __peek64(v + S_BYTES)
-    alloc l := rt_list_alloc(n)
-    alloc items := __peek64(l + L_ITEMS)
-    alloc i := 0
-    loop i < n {
-        __poke64(items + i * 16, __peek8(v + S_DATA + i))
-        __poke64(items + i * 16 + 8, T_INT)
-        i := i + 1
-    }
-    __poke64(l + L_LEN, n)
-    rt_tag := T_LIST
-    return l
+    rt_tag := T_BYTES
+    return rt_bytes_from(v + S_DATA, __peek64(v + S_BYTES))
 }
 
 # The bytes of a list of integers 0-255, as a new string that is not
@@ -180,6 +170,10 @@ proc rt_list_bytes(l, what) {
 }
 
 proc bi_bytes_to_string(t, v) {
+    if t == T_BYTES {
+        rt_tag := T_STR
+        return rt_str_from(__peek64(v + L_ITEMS), __peek64(v + L_LEN))
+    }
     if t != T_LIST {
         return rt_type_error("bytes_to_string() expects a list of bytes")
     }
@@ -563,7 +557,62 @@ proc bi_list_repeat(t, v, ct, count) {
     return l
 }
 
+# bytes_repeat(value, count): a byte list of `count` items, each `value`.
+proc bi_bytes_repeat(t, v, ct, count) {
+    if ct != T_INT {
+        return rt_type_error("bytes_repeat() expects (int, int)")
+    }
+    if count < 0 {
+        return rt_throw2("ValueError", "bytes_repeat() count must be non-negative, got ", T_INT, count)
+    }
+    rt_byte_check(t, v)
+    alloc b := rt_bytes_alloc(count)
+    if count > 0 {
+        __memset(__peek64(b + L_ITEMS), v, count)
+    }
+    __poke64(b + L_LEN, count)
+    rt_tag := T_BYTES
+    return b
+}
+
+# to_bytes(x): a new byte list holding the numbers of a list, the
+# UTF-8 bytes of a string, or a copy of another byte list.
+proc bi_to_bytes(t, v) {
+    rt_tag := T_BYTES
+    if t == T_BYTES {
+        return rt_bytes_from(__peek64(v + L_ITEMS), __peek64(v + L_LEN))
+    }
+    if t == T_STR {
+        return rt_bytes_from(v + S_DATA, __peek64(v + S_BYTES))
+    }
+    if t != T_LIST {
+        return rt_type_error("to_bytes() expects a list, a string or a byte list")
+    }
+    alloc n := __peek64(v + L_LEN)
+    alloc b := rt_bytes_alloc(n)
+    alloc dst := __peek64(b + L_ITEMS)
+    alloc i := 0
+    loop i < n {
+        alloc it := __peek64(v + L_ITEMS) + i * 16
+        alloc x := __peek64(it)
+        if __peek64(it + 8) != T_INT or x < 0 or x > 255 {
+            rt_drop(T_BYTES, b)
+            return rt_byte_check(__peek64(it + 8), x)
+        }
+        __poke8(dst + i, x)
+        i := i + 1
+    }
+    __poke64(b + L_LEN, n)
+    rt_tag := T_BYTES
+    return b
+}
+
 proc bi_append(lt, l, t, v) {
+    if lt == T_BYTES {
+        rt_bytes_push(l, rt_byte_check(t, v))
+        rt_tag := T_NONE
+        return 0
+    }
     if lt != T_LIST {
         return rt_type_error("append() expects (list, any)")
     }
@@ -835,30 +884,12 @@ proc rt_read_all(fd) {
     return b
 }
 
-# A byte buffer as a list of integers; the buffer is freed.
-proc rt_buf_to_list(b) {
-    alloc n := __peek64(b + 8)
-    alloc p := __peek64(b)
-    alloc l := rt_list_alloc(n)
-    alloc items := __peek64(l + L_ITEMS)
-    alloc i := 0
-    loop i < n {
-        __poke64(items + i * 16, __peek8(p + i))
-        __poke64(items + i * 16 + 8, T_INT)
-        i := i + 1
-    }
-    __poke64(l + L_LEN, n)
-    rt_free(p, __peek64(b + 16))
-    rt_free(b, 24)
-    return l
-}
-
 proc bi_file_read_1(t, h) {
     alloc e := rt_file_entry(t, h, "file_read()")
     alloc b := rt_read_all(__peek64(e) - 1)
     if __peek64(e + 8) {
-        rt_tag := T_LIST
-        return rt_buf_to_list(b)
+        rt_tag := T_BYTES
+        return rt_buf_to_bytes(b)
     }
     rt_tag := T_STR
     return rt_buf_finish(b)
@@ -891,8 +922,8 @@ proc bi_file_read_2(t, h, mt, max) {
         left := left - got
     }
     if __peek64(e + 8) {
-        rt_tag := T_LIST
-        return rt_buf_to_list(b)
+        rt_tag := T_BYTES
+        return rt_buf_to_bytes(b)
     }
     rt_tag := T_STR
     return rt_buf_finish(b)
@@ -930,6 +961,14 @@ proc bi_file_write(t, h, dt, data) {
     alloc fd := __peek64(e) - 1
     rt_tag := T_INT
     if __peek64(e + 8) {
+        if dt == T_BYTES {
+            alloc n := __peek64(data + L_LEN)
+            alloc r := os_write_all(fd, __peek64(data + L_ITEMS), n)
+            if r < 0 {
+                return rt_os_error("file_write", 0, 0 - r)
+            }
+            return n
+        }
         if dt != T_LIST {
             return rt_type_error("file_write() binary handle expects list")
         }
@@ -1194,8 +1233,8 @@ proc bi_stdin_read() {
 
 proc bi_stdin_read_bytes() {
     alloc b := rt_in_rest()
-    rt_tag := T_LIST
-    return rt_buf_to_list(b)
+    rt_tag := T_BYTES
+    return rt_buf_to_bytes(b)
 }
 
 proc bi_stdin_set_raw(t, v) {
@@ -1430,8 +1469,8 @@ proc bi_tcp_read(t, h, mt, max) {
         return rt_os_error("tcp_read", 0, 0 - got)
     }
     __poke64(b + 8, got)
-    rt_tag := T_LIST
-    return rt_buf_to_list(b)
+    rt_tag := T_BYTES
+    return rt_buf_to_bytes(b)
 }
 
 # tcp_write(h, data) and tcp_write(h, data, offset): send the bytes of
@@ -1439,7 +1478,7 @@ proc bi_tcp_read(t, h, mt, max) {
 # many were sent: all of them on a blocking socket, as many as the
 # system had room for (possibly none) on a non-blocking one.
 proc rt_tcp_write(t, h, dt, data, off) {
-    if t != T_INT or (dt != T_STR and dt != T_LIST) {
+    if t != T_INT or (dt != T_STR and dt != T_LIST and dt != T_BYTES) {
         return rt_type_error("tcp_write() expects (handle: int, data: str | [int])")
     }
     alloc e := rt_sock_entry(h, 0, "tcp_write")
@@ -1450,6 +1489,12 @@ proc rt_tcp_write(t, h, dt, data, off) {
             return rt_value_error("tcp_write: offset is outside the data")
         }
         r := os_tcp_write(__peek64(e) - 1, data + S_DATA + off, total - off)
+    } elif dt == T_BYTES {
+        alloc total := __peek64(data + L_LEN)
+        if off < 0 or off > total {
+            return rt_value_error("tcp_write: offset is outside the data")
+        }
+        r := os_tcp_write(__peek64(e) - 1, __peek64(data + L_ITEMS) + off, total - off)
     } else {
         alloc n := __peek64(data + L_LEN)
         if off < 0 or off > n {
@@ -2072,6 +2117,8 @@ proc rt_bi_init() {
     rt_bi_add("has_key", bi_has_key, 2)
     rt_bi_add("list_repeat", bi_list_repeat, 2)
     rt_bi_add("append", bi_append, 2)
+    rt_bi_add("bytes_repeat", bi_bytes_repeat, 2)
+    rt_bi_add("to_bytes", bi_to_bytes, 1)
     rt_bi_add("panic", bi_panic, 1)
     rt_bi_add("raise", bi_raise, 1)
     rt_bi_add("exit_with_error", bi_exit_with_error, 1)

@@ -604,6 +604,19 @@ proc x_alu_xi(op, base, index, scale_bits, disp, imm) {
     append(x_code, imm & 255)
 }
 
+# dst := the byte at [base + index], zero-extended, and the store form.
+proc x_load8_x(dst, base, index) {
+    x_rex_sib(dst, base, index)
+    x_bytes2(15, 182)
+    x_sib(dst, base, index, 0, 0)
+}
+
+proc x_store8_x(base, index, src) {
+    x_rex_sib(src, base, index)
+    append(x_code, 136)
+    x_sib(src, base, index, 0, 0)
+}
+
 proc x_lea_x(dst, base, index, scale_bits, disp) {
     x_rex_sib(dst, base, index)
     append(x_code, 141)
@@ -2375,6 +2388,7 @@ proc rw_emit_init() {
 #         4 (unset)           a variable nothing has been stored into
 #         8 Str               pointer to the object
 #         9 List, 10 Dict, 11 Closure, 12 Cell (a captured variable)
+#        13 Byte list
 #
 # In memory the payload comes first and the tag eight bytes after it.
 # Every heap object starts with its reference count. "Owned" below
@@ -2413,6 +2427,7 @@ alloc TAG_LIST := 9
 alloc TAG_DICT := 10
 alloc TAG_CLOSURE := 11
 alloc TAG_CELL := 12
+alloc TAG_BYTES := 13
 
 alloc VK_INT := 0       # [kind, value]
 alloc VK_BOOL := 1      # [kind, 0 | 1]
@@ -2649,8 +2664,10 @@ proc mg_check_var(e) {
 # --- the fast version and the careful one ------------------------------------
 
 # A fact is [displacement of a local's slot, the tag it certainly
-# holds]: Int, or List. A set of them is a dict; the key is the
-# displacement for an Int and one more than it for a List.
+# holds], and the only tag is Int. A set of them is a dict keyed by the
+# displacement. (What a variable that is indexed holds is not a fact:
+# it may be a list on one call and a byte list on the next, so every
+# INDEX looks, which costs one compare.)
 proc mg_copy_facts(f) {
     alloc c := {}
     for k in dict_keys(f) {
@@ -2679,20 +2696,8 @@ proc mg_learn(e) {
     return false
 }
 
-# Is the entry a local variable known to hold a list?
-proc mg_is_list(e) {
-    return mg_fast and e[0] == VK_VAR and e[1] == RBP and has_key(mg_facts, e[2] + 1)
-}
-
-proc mg_learn_list(e) {
-    if e[0] == VK_VAR and e[1] == RBP {
-        mg_facts[e[2] + 1] := [e[2], TAG_LIST]
-    }
-    return false
-}
-
 proc mg_unlearn(disp) {
-    if has_key(mg_facts, disp) or has_key(mg_facts, disp + 1) {
+    if has_key(mg_facts, disp) {
         alloc c := {}
         for k in dict_keys(mg_facts) {
             if mg_facts[k][0] != disp {
@@ -2864,7 +2869,6 @@ proc mg_label_facts(i) {
         if mg_reach and joined == false {
             for g in mg_loop_guess[i] {
                 alloc key := g[0]
-                if g[1] == TAG_LIST { key := key + 1 }
                 if has_key(k, key) == false {
                     x_alu_mi(ALU_CMP, RBP, g[0] + 8, g[1])
                     x_jcc(CC_NE, mg_slow_jl[i])
@@ -2954,21 +2958,6 @@ proc mg_find_loops(lo, hi, targets, cover, depths) {
                     if disp != false and has_key(stored, disp) == false and has_key(seen, disp) == false {
                         seen[disp] := true
                         append(guesses, [disp, TAG_INT])
-                    }
-                }
-            }
-            if has_key(mg_spec_index, k) and cover[k - lo] <= cover[end - lo] {
-                # The list it reads: what was loaded two operands down.
-                alloc want := depths[k - lo] - 2
-                alloc j := k - 1
-                loop j > t and depths[j - lo] != want {
-                    j := j - 1
-                }
-                if j > t and mg_code[j][0] == "LOAD" {
-                    alloc disp := mg_plain_slot(mg_code[j][1])
-                    if disp != false and has_key(stored, disp) == false and has_key(seen, disp + 1) == false {
-                        seen[disp + 1] := true
-                        append(guesses, [disp, TAG_LIST])
                     }
                 }
             }
@@ -3488,11 +3477,12 @@ proc mg_index_ok(e) {
     return false
 }
 
-# Give back the count of a list that was an operand: `e` is its entry,
-# RCX holds it. RAX and RDX survive.
-proc mg_drop_list(e, off) {
+# Give back the count of a list or byte list that was an operand: `e`
+# is its entry, RCX holds it, `tag` says which it is. RAX and RDX
+# survive.
+proc mg_drop_seq(e, off, tag) {
     if e[0] == VK_ACC {
-        x_push_i(TAG_LIST)
+        x_push_i(tag)
         x_push(RCX)
         x_mov_rr(RDI, RSP)
         x_call(mg_stub_release)
@@ -3522,24 +3512,21 @@ proc mg_index() {
     }
     alloc offs := mg_pair_offs(l, r)
     # In the fast version, an element that goes straight into
-    # arithmetic is guessed to be an Int in a list.
+    # arithmetic is guessed to be an Int.
     alloc spec := mg_fast and has_key(mg_spec_index, mg_at)
     alloc slow := -1
-    alloc back := -1
+    alloc back := x_new_label()
     if spec {
         slow := mg_deopt()
     } else {
         slow := x_new_label()
-        back := x_new_label()
     }
-    if mg_is_list(l) == false {
-        mg_tag_cmp(l, offs[1], TAG_LIST)
-        x_jcc(CC_NE, slow)
-        if spec {
-            mg_learn_list(l)
-        }
-    }
-    if mg_ty(r) != TY_INT {
+    # Not a list: a byte list is read after the body (mg_index_bytes).
+    alloc other := x_new_label()
+    alloc rint := mg_ty(r) == TY_INT
+    mg_tag_cmp(l, offs[1], TAG_LIST)
+    x_jcc(CC_NE, other)
+    if rint == false {
         mg_int_check(r, offs[2], slow)
         if spec {
             mg_learn(r)
@@ -3584,18 +3571,61 @@ proc mg_index() {
         x_load_x(RAX, RDI, RSI, 3, 0)
         mg_inc_if_heap(RAX, RDX)
     }
-    mg_drop_list(l, offs[1])
+    mg_drop_seq(l, offs[1], TAG_LIST)
     if offs[0] > 0 {
         x_lea(RSP, RSP, 16 * offs[0])
     }
     mg_forget(2)
+    x_bind(back)
+    append(mg_deferred, ["bindex", other, mg_at, l, r, offs, spec, rint, slow, back])
     if spec {
         mg_push_acc(TY_INT)
         return false
     }
-    x_bind(back)
     append(mg_deferred, ["helper", slow, mg_at, "rt_index", [l, r], [], TY_ANY, 0, back, -1])
     mg_push_acc(TY_ANY)
+    return false
+}
+
+# INDEX when the container is not a list: the same for a byte list,
+# whose item is one byte and always an Int. `d` is the note mg_index
+# left; the operands are where they were when it began.
+proc mg_index_bytes(d) {
+    alloc l := d[3]
+    alloc r := d[4]
+    alloc offs := d[5]
+    alloc slow := d[8]
+    mg_tag_cmp(l, offs[1], TAG_BYTES)
+    x_jcc(CC_NE, slow)
+    if d[7] == false {
+        mg_int_check(r, offs[2], slow)
+    }
+    mg_load(RCX, mg_loc(l, offs[1]))
+    if r[0] == VK_INT and r[1] < 1048576 {
+        x_alu_mi(ALU_CMP, RCX, 8, r[1])
+        x_jcc(CC_BE, slow)
+        x_load(RDI, RCX, 24)
+        x_load8(RAX, RDI, r[1])
+    } elif r[0] == VK_ACC {
+        x_alu_rm(ALU_CMP, RAX, RCX, 8)
+        x_jcc(CC_AE, slow)
+        x_load(RDI, RCX, 24)
+        x_load8_x(RAX, RDI, RAX)
+    } else {
+        mg_load(RSI, mg_loc(r, offs[2]))
+        x_alu_rm(ALU_CMP, RSI, RCX, 8)
+        x_jcc(CC_AE, slow)
+        x_load(RDI, RCX, 24)
+        x_load8_x(RAX, RDI, RSI)
+    }
+    if d[6] == false {
+        x_mov_ri(RDX, TAG_INT)
+    }
+    mg_drop_seq(l, offs[1], TAG_BYTES)
+    if offs[0] > 0 {
+        x_lea(RSP, RSP, 16 * offs[0])
+    }
+    x_jmp(d[9])
     return false
 }
 
@@ -3730,11 +3760,13 @@ proc mg_store_index() {
     alloc voff := 0
     alloc slow := x_new_label()
     alloc back := x_new_label()
-    if mg_is_list(b) == false {
-        mg_tag_cmp(b, boff, TAG_LIST)
-        x_jcc(CC_NE, slow)
-    }
-    if mg_ty(x) != TY_INT {
+    # Not a list: a byte list is written after the body (mg_store_bytes).
+    alloc other := x_new_label()
+    alloc xint := mg_ty(x) == TY_INT
+    alloc vtag := mg_const_tag(v)
+    mg_tag_cmp(b, boff, TAG_LIST)
+    x_jcc(CC_NE, other)
+    if xint == false {
         mg_int_check(x, xoff, slow)
     }
     if mg_plain(v) == false {
@@ -3776,13 +3808,63 @@ proc mg_store_index() {
         x_load(RSI, RSP, voff + 8)
         x_store(RDI, 8, RSI)
     }
-    mg_drop_list(b, boff)
+    mg_drop_seq(b, boff, TAG_LIST)
     if nstk > 0 {
         x_lea(RSP, RSP, 16 * nstk)
     }
     mg_forget(3)
     x_bind(back)
+    append(mg_deferred, ["bstore", other, mg_at, b, x, v, [nstk, boff, xoff, voff], xint, vtag, slow, back])
     append(mg_deferred, ["helper", slow, mg_at, "rt_store_index", [b, x, v], [], -1, 0, back, -1])
+    return false
+}
+
+# STORE_INDEX when the container is not a list: the same for a byte
+# list, which takes an Int from 0 to 255 and nothing else. `d` is the
+# note mg_store_index left.
+proc mg_store_bytes(d) {
+    alloc b := d[3]
+    alloc x := d[4]
+    alloc v := d[5]
+    alloc o := d[6]
+    alloc slow := d[9]
+    alloc vk := v[0]
+    mg_tag_cmp(b, o[1], TAG_BYTES)
+    x_jcc(CC_NE, slow)
+    if (d[8] >= 0 and d[8] != TAG_INT) or (vk == VK_INT and (v[1] < 0 or v[1] > 255)) {
+        # nothing a byte list holds: the runtime says so
+        x_jmp(slow)
+        return false
+    }
+    if d[7] == false {
+        mg_int_check(x, o[2], slow)
+    }
+    if d[8] < 0 {
+        mg_int_check(v, o[3], slow)
+    }
+    mg_load(RCX, mg_loc(b, o[1]))
+    mg_load(RSI, mg_loc(x, o[2]))
+    x_alu_rm(ALU_CMP, RSI, RCX, 8)
+    x_jcc(CC_AE, slow)
+    x_load(RDI, RCX, 24)
+    if vk == VK_ACC {
+        x_alu_ri(ALU_CMP, RAX, 255)
+        x_jcc(CC_A, slow)
+        x_store8_x(RDI, RSI, RAX)
+    } else {
+        x_alu_rr(ALU_ADD, RDI, RSI)
+        mg_load(RSI, mg_loc(v, o[3]))
+        if vk != VK_INT {
+            x_alu_ri(ALU_CMP, RSI, 255)
+            x_jcc(CC_A, slow)
+        }
+        x_store8(RDI, 0, RSI)
+    }
+    mg_drop_seq(b, o[1], TAG_BYTES)
+    if o[0] > 0 {
+        x_lea(RSP, RSP, 16 * o[0])
+    }
+    x_jmp(d[10])
     return false
 }
 
@@ -4504,27 +4586,24 @@ proc mg_builtin(name, argc) {
     return false
 }
 
-# length(xs) of a variable that holds a list is one load, which is
+# length(xs) of a variable that holds a list or a byte list is one load, which is
 # what the condition of most loops is made of. Anything else asks the
 # runtime and comes back.
 proc mg_length() {
     mg_free_acc(1)
     alloc e := mg_vs[mg_vn - 1]
-    alloc slow := -1
-    alloc back := -1
-    if mg_is_list(e) == false {
-        slow := x_new_label()
-        back := x_new_label()
-        mg_tag_cmp(e, 0, TAG_LIST)
-        x_jcc(CC_NE, slow)
-    }
+    alloc slow := x_new_label()
+    alloc back := x_new_label()
+    mg_tag_cmp(e, 0, TAG_LIST)
+    alloc p := x_jcc_short(CC_E)
+    mg_tag_cmp(e, 0, TAG_BYTES)
+    x_jcc(CC_NE, slow)
+    x_patch_short(p)
     mg_load(RCX, mg_loc(e, 0))
     x_load(RAX, RCX, 8)
     mg_forget(1)
-    if slow >= 0 {
-        x_bind(back)
-        append(mg_deferred, ["helper", slow, mg_at, "bi_length", [e], [], TY_INT, 0, back, -1])
-    }
+    x_bind(back)
+    append(mg_deferred, ["helper", slow, mg_at, "bi_length", [e], [], TY_INT, 0, back, -1])
     mg_push_acc(TY_INT)
     return false
 }
@@ -4696,6 +4775,10 @@ proc mg_emit_deferred() {
             x_load(R10, BSS, rw_global("rt_call_closure"))
             x_call_r(RAX)
             x_jmp(d[4])
+        } elif kind == "bindex" {
+            mg_index_bytes(d)
+        } elif kind == "bstore" {
+            mg_store_bytes(d)
         } else {
             mg_helper(d[3], d[4], d[5], d[6])
             if d[7] == 1 {

@@ -1,0 +1,271 @@
+;;;omg
+# Byte lists: a list that holds only whole numbers from 0 to 255, one
+# byte each. Reading one is the same as reading a list; storing is
+# stricter. The machine code back end reads and writes them in line,
+# so every shape of operand it tells apart is here.
+
+proc show(label, v) {
+    emit label + ": " + v
+}
+
+# The kind of an error only: the wording differs between runtimes.
+proc kind(e) {
+    alloc text := "" + e
+    alloc n := 0
+    loop n < length(text) and text[n] != ":" {
+        n := n + 1
+    }
+    return text[0:n]
+}
+
+alloc G := to_bytes([10, 20, 30, 40, 50, 60, 70, 80])
+alloc GL := [10, 20, 30, 40, 50, 60, 70, 80]
+
+proc mk() { return to_bytes([1, 2, 3, 4]) }
+proc mkl() { return [1, 2, 3, 4] }
+proc two() { return 2 }
+
+# --- making -----------------------------------------------------------------
+proc making() {
+    alloc b := bytes_repeat(0, 4)
+    show("zeros", b)
+    show("length", length(b))
+    show("filled", bytes_repeat(255, 3))
+    show("none", bytes_repeat(7, 0))
+    show("from a list", to_bytes([1, 2, 3]))
+    show("from a string", to_bytes("héllo"))
+    show("from nothing", to_bytes([]))
+    alloc copy := to_bytes(b)
+    copy[0] := 9
+    show("a copy is its own", [b[0], copy[0]])
+    alloc same := b
+    same[1] := 8
+    show("a name is not a copy", b)
+    show("string_bytes", string_bytes("abc"))
+    show("and back", bytes_to_string(to_bytes("héllo")))
+    show("and back from a list", bytes_to_string([104, 105]))
+    try { show("too big", to_bytes([1, 300])) } except e { show("too big", kind(e)) }
+    try { show("negative", to_bytes([-1])) } except e { show("negative", kind(e)) }
+    try { show("a string inside", to_bytes([1, "a"])) } except e { show("a string inside", kind(e)) }
+    try { show("a float inside", to_bytes([1.0])) } except e { show("a float inside", kind(e)) }
+    try { show("a bool inside", to_bytes([true])) } except e { show("a bool inside", kind(e)) }
+    try { show("from a number", to_bytes(5)) } except e { show("from a number", kind(e)) }
+    try { show("from a dict", to_bytes({a: 1})) } except e { show("from a dict", kind(e)) }
+    try { show("fill too big", bytes_repeat(256, 2)) } except e { show("fill too big", kind(e)) }
+    try { show("fill a string", bytes_repeat("a", 2)) } except e { show("fill a string", kind(e)) }
+    try { show("negative count", bytes_repeat(1, -2)) } except e { show("negative count", kind(e)) }
+    try { show("count a string", bytes_repeat(1, "2")) } except e { show("count a string", kind(e)) }
+    return false
+}
+making()
+
+# --- reading: the same proc on a byte list, a list and a string --------------
+proc reads(s, i) {
+    alloc a := s[0] + s[1]
+    alloc b := s[i] + s[i + 1]
+    alloc c := s[two()] * 2
+    alloc d := s[i - 1] - s[i]
+    alloc e := s[-1]
+    alloc f := s[length(s) - 1] + G[i] + GL[i]
+    alloc p := {y: s}
+    alloc g := p.y[i] + p.y[1] + p.y[i + 2]
+    alloc h := mk()[i] + mk()[3] + mkl()[i] + mk()[i + 1] + mk()[two()]
+    alloc x := s[i]
+    alloc y := s[3]
+    return [a, b, c, d, e, f, g, h, x, y]
+}
+show("reads, bytes", reads(G, 1))
+show("reads, list", reads(GL, 1))
+show("reads, bytes again", reads(G, 2))
+show("reads, string", reads("12345678", 1))
+show("reads, list again", reads(GL, 2))
+
+proc read_errors(d, i) {
+    alloc r := []
+    try { append(r, d[99]) } except e { append(r, kind(e)) }
+    try { append(r, d[-99]) } except e { append(r, kind(e)) }
+    try { append(r, d[i + 100] + 1) } except e { append(r, kind(e)) }
+    try { append(r, d[1.0]) } except e { append(r, kind(e)) }
+    try { append(r, d["k"]) } except e { append(r, kind(e)) }
+    try { append(r, d[true]) } except e { append(r, kind(e)) }
+    try { append(r, d.name) } except e { append(r, kind(e)) }
+    try { append(r, d < d) } except e { append(r, kind(e)) }
+    try { append(r, int(d)) } except e { append(r, kind(e)) }
+    append(r, d[-1])
+    append(r, d[0 - i])
+    return r
+}
+show("read errors", read_errors(to_bytes([5, 6, 7, 8]), 1))
+
+# --- writing ----------------------------------------------------------------
+proc writes(d, i, v) {
+    d[0] := 1
+    d[i] := v
+    d[i + 1] := v + 1
+    d[two()] := d[0] + d[1]
+    d[i + 2] := d[i] & 15
+    d[-1] := 250
+    alloc w := v * 2
+    d[3] := w
+    alloc p := {y: d}
+    p.y[4] := v
+    p.y[i + 4] := v + i
+    return d
+}
+show("writes, bytes", writes(bytes_repeat(0, 8), 1, 7))
+show("writes, list", writes(list_repeat(0, 8), 1, 7))
+show("writes, bytes again", writes(bytes_repeat(0, 8), 1, 100))
+show("writes, list again", writes(list_repeat(0, 8), 1, 100))
+
+proc write_errors(d, i, v) {
+    alloc r := []
+    try { d[i] := v  append(r, "ok") } except e { append(r, kind(e)) }
+    try { d[i] := v + 1  append(r, "ok") } except e { append(r, kind(e)) }
+    try { d[99] := 1  append(r, "ok") } except e { append(r, kind(e)) }
+    try { d[-99] := 1  append(r, "ok") } except e { append(r, kind(e)) }
+    try { d[i] := true  append(r, "ok") } except e { append(r, kind(e)) }
+    try { d[i] := 2.5  append(r, "ok") } except e { append(r, kind(e)) }
+    try { d[i] := 2.0  append(r, "ok") } except e { append(r, kind(e)) }
+    try { d[i] := "s"  append(r, "ok") } except e { append(r, kind(e)) }
+    try { d[i] := 256  append(r, "ok") } except e { append(r, kind(e)) }
+    try { d[i] := -1  append(r, "ok") } except e { append(r, kind(e)) }
+    try { d[i] := r  append(r, "ok") } except e { append(r, kind(e)) }
+    try { d[i] := d  append(r, "ok") } except e { append(r, kind(e)) }
+    try { d[1.5] := 1  append(r, "ok") } except e { append(r, kind(e)) }
+    try { d["a"] := 1  append(r, "ok") } except e { append(r, kind(e)) }
+    try { d.name := 1  append(r, "ok") } except e { append(r, kind(e)) }
+    try { append(d, 999)  append(r, "ok") } except e { append(r, kind(e)) }
+    try { append(d, "x")  append(r, "ok") } except e { append(r, kind(e)) }
+    return r
+}
+show("write errors, 255", write_errors(bytes_repeat(0, 4), 1, 255))
+show("write errors, 300", write_errors(bytes_repeat(0, 4), 1, 300))
+show("write errors, -5", write_errors(bytes_repeat(0, 4), 1, -5))
+alloc kept := bytes_repeat(3, 4)
+write_errors(kept, 1, 300)
+show("a refused write changes nothing", kept)
+
+# --- one proc, lists and byte lists in turn: both versions of its code ----
+proc blur(s, d, n) {
+    alloc i := 1
+    loop i < n - 1 {
+        d[i] := (s[i - 1] + 2 * s[i] + s[i + 1] + 2) >> 2
+        i := i + 1
+    }
+    return d
+}
+alloc sb := to_bytes([0, 100, 200, 100, 0, 50, 255, 255])
+alloc sl := [0, 100, 200, 100, 0, 50, 255, 255]
+show("blur list to list", blur(sl, list_repeat(0, 8), 8))
+show("blur bytes to bytes", blur(sb, bytes_repeat(0, 8), 8))
+show("blur list to bytes", blur(sl, bytes_repeat(0, 8), 8))
+show("blur bytes to list", blur(sb, list_repeat(0, 8), 8))
+show("blur list to list", blur(sl, list_repeat(0, 8), 8))
+try { show("blur strings", blur(["a", 1, 2, 3, 4, 5, 6, 7], bytes_repeat(0, 8), 8)) } except e { show("blur strings", kind(e)) }
+try { show("blur too big", blur([9000, 1, 2, 3, 4, 5, 6, 7], bytes_repeat(0, 8), 8)) } except e { show("blur too big", kind(e)) }
+show("blur bytes to bytes", blur(sb, bytes_repeat(0, 8), 8))
+
+proc total(xs) {
+    alloc t := 0
+    alloc k := 0
+    loop k < length(xs) {
+        t := t + xs[k]
+        k := k + 1
+    }
+    return t
+}
+show("total, bytes", total(bytes_repeat(7, 1000)))
+show("total, list", total(list_repeat(7, 1000)))
+show("total, bytes", total(sb))
+
+# --- everything a list does ---------------------------------------------------
+proc like_a_list() {
+    alloc c := to_bytes([1, 2, 3])
+    alloc b := to_bytes([255, 0, 7])
+    show("bytes + bytes", c + b)
+    show("bytes + list", c + [9, "x"])
+    show("list + bytes", [true] + c)
+    show("empty + bytes", [] + c)
+    show("in text", "got " + c)
+    show("equal to a list", c == [1, 2, 3])
+    show("a list equal to it", [1, 2, 3] == c)
+    show("equal to bytes", c == to_bytes([1, 2, 3]))
+    show("equal to floats", c == [1.0, 2.0, 3.0])
+    show("not equal", c == [1, 2, 4])
+    show("shorter", c != [1, 2])
+    show("not a string", c == "[1, 2, 3]")
+    show("not a number", c == 1)
+    show("inside lists", [c, [c]] == [[1, 2, 3], [[1, 2, 3]]])
+    show("inside dicts", {a: c} == {a: [1, 2, 3]})
+    show("slice", c[1:])
+    show("slice from the end", c[-2:])
+    show("empty slice", c[2:1])
+    show("whole slice", c[0:])
+    show("slice equals", c[1:] == [2, 3])
+    alloc sl := c[0:2]
+    sl[0] := 77
+    show("a slice is a copy", [c[0], sl[0]])
+    append(c, 200)
+    show("append", c)
+    alloc n := 0
+    for x in c {
+        n := n + x * 2
+    }
+    show("for", n)
+    if c { show("truthy", "yes") }
+    if bytes_repeat(1, 0) { show("empty", "truthy") } else { show("empty", "falsy") }
+    show("not a dict", has_key(c, "a"))
+    alloc d := {}
+    d.b := c[0:2]
+    show("in a dict", d)
+    show("in a list", [c[0:2], [c[2:4]]])
+    return false
+}
+like_a_list()
+
+# --- growing, and many made and dropped ----------------------------------------
+proc grow() {
+    alloc g := bytes_repeat(0, 0)
+    alloc k := 0
+    loop k < 100000 {
+        append(g, k & 255)
+        k := k + 1
+    }
+    show("grown", length(g))
+    show("picked", g[99999] + g[255] + g[256])
+    show("start", g[0:3])
+    alloc cnt := 0
+    for x in g {
+        cnt := cnt + x
+    }
+    show("summed", cnt)
+    show("doubled", length(g + g))
+    show("joined to a list", length(g + [1]))
+    return false
+}
+grow()
+
+proc churn(n) {
+    alloc t := 0
+    alloc i := 0
+    loop i < n {
+        alloc b := bytes_repeat(i & 255, 1000)
+        alloc c := b[10:20] + b[0:5]
+        t := t + c[3] + length(c) + mk()[1]
+        append(c, 5)
+        i := i + 1
+    }
+    return t
+}
+show("churn", churn(3000))
+
+# --- at the top level, where names are globals ---------------------------------
+alloc top := bytes_repeat(1, 6)
+alloc ti := 0
+loop ti < length(top) {
+    top[ti] := top[ti] + ti * 10
+    ti := ti + 1
+}
+show("top level", top)
+top[2] := top[1] + top[0]
+show("top level again", top[2])
