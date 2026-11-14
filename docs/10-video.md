@@ -257,7 +257,9 @@ omg --build tools/video/play.omg play        # or: play.exe --target windows-x64
 | space | pause, and go on |
 | `.` | while paused: show the next picture |
 | left, right | jump five seconds back or forward |
-| home | back to the start |
+| down, up | jump a minute back or forward |
+| `1` to `9` | jump to a tenth, two tenths, ... of the way through |
+| home, `0` | back to the start |
 | `q`, escape | quit (so does closing the window) |
 
 `--loop` starts again at the end. `--scale N` opens the window N times
@@ -274,6 +276,10 @@ A file without sound, or with sound that cannot be played (another
 codec, no sound server), is shown by the computer's clock, and the
 player says why there is no sound. A file with sound and no video is
 played without a window, until its end or Ctrl+C.
+
+A jump lands on the last picture before the place asked for that is
+complete in itself, since decoding can only start at one of those;
+files have one every second or every few seconds.
 
 Pictures are shown at the times the file gives them. A file stores
 them in the order they are needed for decoding, which is not always the

@@ -16,7 +16,9 @@
 #     space          pause, and go on
 #     .              while paused: show the next picture
 #     left, right    jump five seconds back or forward
-#     home           back to the start
+#     down, up       jump a minute back or forward
+#     1 to 9         jump to a tenth, two tenths, ... of the way through
+#     home, 0        back to the start
 #     q, escape      quit
 #
 # Options, after the file name:
@@ -454,7 +456,7 @@ proc key(name) {
             step := true
             stepped := true
         }
-    } elif name == "left" or name == "right" or name == "home" {
+    } elif name == "left" or name == "right" or name == "up" or name == "down" or name == "home" {
         alloc now := 0
         if shown < m.count {
             now := due_ms(shown)
@@ -465,9 +467,16 @@ proc key(name) {
             seek(now - 5000)
         } elif name == "right" {
             seek(now + 5000)
+        } elif name == "down" {
+            seek(now - 60000)
+        } elif name == "up" {
+            seek(now + 60000)
         } else {
             seek(0)
         }
+    } elif length(name) == 1 and name >= "0" and name <= "9" {
+        # a tenth of the way through the film for every number
+        seek(due_ms(m.count - 1) * int(name) // 10)
     } else {
         return false
     }
