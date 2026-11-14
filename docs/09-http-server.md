@@ -89,7 +89,7 @@ to *wait* for something should
 | `query`        | `{x: "1"}`              | Decoded. A name given twice keeps its last value. |
 | `params`       | `{name: "world"}`       | What the route's pattern captured. |
 | `headers`      | `{"content-type": "…"}` | Names in lower case. A header sent twice has its values joined with `, ` (`; ` for `Cookie`). |
-| `body`         | `[104, 105]`            | A list of bytes; `[]` when there is none. |
+| `body`         | `[104, 105]`            | A byte list; empty when there is none. |
 | `version`      | `"1.1"`                 | Or `"1.0"`. |
 | `peer`         | `"127.0.0.1:53012"`     | Who is asking. |
 
@@ -104,14 +104,14 @@ to *wait* for something should
 ## The response
 
 A response is a dict: `{status: 200, headers: {...}, body: ...}`. The
-body is a string or a list of bytes. These build the usual ones:
+body is a string, a byte list or a list of bytes. These build the usual ones:
 
 | Builder                                 | Gives |
 | --------------------------------------- | ----- |
 | `http.text(status, body)`               | `text/plain; charset=utf-8` |
 | `http.html(status, body)`               | `text/html; charset=utf-8` |
 | `http.json(status, body)`               | `application/json`. `body` is JSON text you have made; this labels it. |
-| `http.bytes(status, content_type, body)`| A list of bytes with the type you name. |
+| `http.bytes(status, content_type, body)`| A byte list (or a list of bytes) with the type you name. |
 | `http.empty(status)`                    | No body: `204`, say. |
 | `http.redirect(status, location)`       | `302` is the usual status. |
 | `http.error_page(status, detail)`       | The small page the server itself sends for errors. |
@@ -253,7 +253,7 @@ proc countdown(req) {
 | Streams                       | |
 | ----------------------------- | --- |
 | `http.stream(status, headers)`| Returned from a handler (or given to `app.respond`): the head goes out now and the body is whatever follows. |
-| `app.send(req, data)`         | One more piece: a string or a list of bytes. `false` if the client has gone. |
+| `app.send(req, data)`         | One more piece: a string, a byte list or a list of bytes. `false` if the client has gone. |
 | `app.finish(req)`             | The end of the answer. |
 | `app.backlog(req)`            | Bytes sent but not yet taken by the client. A producer faster than its reader should wait for this to fall. |
 
@@ -395,8 +395,11 @@ sharing it, the server built with `omg --build`:
 | The same, built through C (`--target c`)          | 13,000 |
 | The same, interpreted (`omg app.omg`)             | 800 |
 
-A 300 KB file goes out at about 68 MB a second. Build a server before
-putting load on it: interpreted is for trying things.
+A 300 KB file goes out about 10,000 times a second, which is 3 GB a
+second: the pieces of a file are byte lists from `file_read` to
+`tcp_write`, so sending one is a copy. (With ordinary lists it was
+68 MB a second.) Build a server before putting load on it: interpreted
+is for trying things.
 
 ## The builtins underneath
 
@@ -408,8 +411,8 @@ of socket builtins, available on every system OMG runs on:
 | `tcp_listen(host, port)`             | A listening socket. |
 | `tcp_accept(listener)`               | The next connection. |
 | `tcp_connect(host, port)`            | A connection to somewhere else. |
-| `tcp_read(h, max)`                   | Up to `max` bytes, as a list; `[]` when the other side has closed. |
-| `tcp_write(h, data)`                 | Send a string or a list of bytes. Returns the number of bytes sent. |
+| `tcp_read(h, max)`                   | Up to `max` bytes, as a byte list; empty when the other side has closed. |
+| `tcp_write(h, data)`                 | Send a string, a byte list or a list of bytes. Returns the number of bytes sent. |
 | `tcp_write(h, data, offset)`         | The same, starting `offset` bytes in: for carrying on after a partial write. |
 | `tcp_close(h)`                       | |
 | `tcp_nonblocking(h, on)`             | With it on, `tcp_accept` and `tcp_read` return `false` instead of waiting when there is nothing, and `tcp_write` sends what fits and says how much that was. |

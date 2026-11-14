@@ -351,7 +351,7 @@ it is decoded and shown, and whether decoding can start there.
 | Key | What it holds |
 | --- | ------------- |
 | `codec` | `"avc1"` for H.264; whatever the file says otherwise |
-| `config` | the decoder's configuration (for H.264 the `avcC` box), a list of bytes |
+| `config` | the decoder's configuration (for H.264 the `avcC` box), a byte list |
 | `width`, `height` | of the video |
 | `timescale`, `duration` | ticks in a second; length of the track in ticks |
 | `count` | number of samples (pictures) |
@@ -364,7 +364,7 @@ it is decoded and shown, and whether decoding can start there.
 | `sound` | the sound track, or `false`: a dict with `codec` (`"mp4a"` for AAC), `config` (the `esds` box), `rate`, `channels`, and `timescale`, `duration`, `count`, `sizes`, `offsets`, `dts` and `start` as above |
 
 `mp4.read_sample(m, i)` seeks and reads one sample of the video as a
-list of bytes, `mp4.read_sound(m, i)` one of the sound track;
+byte list, `mp4.read_sound(m, i)` one of the sound track;
 `mp4.close(m)` closes the file. The file is never read whole, so its
 size does not matter. A file with sound and no video opens too, with
 `codec` `""` and `count` 0.

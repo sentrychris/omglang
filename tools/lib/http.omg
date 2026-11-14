@@ -29,12 +29,12 @@
 #     query         {x: "1"}
 #     params        what the route pattern captured: {name: "world"}
 #     headers       names in lower case: req.headers["content-type"]
-#     body          a list of bytes (see http.body_text, http.form)
+#     body          a byte list (see http.body_text, http.form)
 #     version       "1.1" or "1.0"
 #     peer          "127.0.0.1:53012"
 #
-# The response is a dict {status, headers, body}; body is a string or a
-# list of bytes. http.text, http.html, http.json, http.bytes,
+# The response is a dict {status, headers, body}; body is a string, a
+# byte list or a list of bytes. http.text, http.html, http.json, http.bytes,
 # http.redirect and http.send_file build the usual ones.
 #
 # What the server does for you:
@@ -244,7 +244,7 @@ proc get(d, key, dflt) {
 proc url_decode(s, plus) {
     alloc bs := string_bytes(s)
     alloc n := length(bs)
-    alloc out := []
+    alloc out := to_bytes([])
     alloc i := 0
     loop i < n {
         alloc b := bs[i]
@@ -407,7 +407,7 @@ proc find_head_end(buf, from) {
 # doubled slashes. Returns the path as a string, or false when it is
 # malformed or climbs above the root.
 proc normalize_path(buf, from, to) {
-    alloc dec := []
+    alloc dec := to_bytes([])
     alloc i := from
     loop i < to {
         alloc ch := buf[i]
@@ -443,7 +443,7 @@ proc normalize_path(buf, from, to) {
         }
         i := i + 1
     }
-    alloc out := []
+    alloc out := to_bytes([])
     for seg in segs {
         append(out, 47)
         out := out + dec[seg[0]:seg[1]]
@@ -606,7 +606,7 @@ proc parse_head(buf, end) {
     req.headers := headers
     req.params := {}
     req.query := parse_query(req.query_string)
-    req.body := []
+    req.body := to_bytes([])
 
     # Does the client want the connection kept open after this?
     alloc tokens := ""
@@ -679,7 +679,7 @@ proc json(status, body) {
     return {status: status, headers: {"Content-Type": "application/json"}, body: body}
 }
 
-# A list of bytes with the content type given.
+# A byte list (or a list of bytes) with the content type given.
 proc bytes(status, content_type, body) {
     return {status: status, headers: {"Content-Type": content_type}, body: body}
 }
@@ -1139,7 +1139,7 @@ proc conn_new(s, h, peer) {
         req: false,
         serial: 0,                # of the request being served
         body_need: 0,
-        body: [],                 # the chunked body so far
+        body: to_bytes([]),       # the chunked body so far
         chunk_state: 0,
         chunk_left: 0,
         out: [],                  # [data, bytes] still to send
@@ -1626,7 +1626,7 @@ proc conn_take_head(s, c) {
             return conn_fail(s, c, 400, "chunked needs HTTP/1.1")
         }
         c.state := ST_CHUNKED
-        c.body := []
+        c.body := to_bytes([])
         c.chunk_state := 0
         c.chunk_left := 0
     } elif has_key(headers, "content-length") {
@@ -1773,7 +1773,7 @@ proc conn_process(s, c) {
     if c.state == ST_CHUNKED {
         if conn_take_chunks(s, c) == 1 {
             c.req.body := c.body
-            c.body := []
+            c.body := to_bytes([])
             conn_dispatch(s, c)
             return true
         }
@@ -2060,7 +2060,7 @@ proc srv_send(s, req, data) {
         if textual {
             conn_queue(c, pre + data + "\r\n", length(pre) + n + 2)
         } else {
-            conn_queue(c, string_bytes(pre) + data + [CR, LF], length(pre) + n + 2)
+            conn_queue(c, string_bytes(pre) + data + string_bytes("\r\n"), length(pre) + n + 2)
         }
     } else {
         conn_queue(c, data, n)
