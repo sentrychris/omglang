@@ -54,11 +54,16 @@ bin/omg src/omg.omg --compile src/compiler.omg /tmp/compiler.omgb
 
 | Source                                 | Becomes               | Role |
 | -------------------------------------- | --------------------- | ---- |
-| [`browser/omg-web.omg`](browser/omg-web.omg)           | `web/omg-web.js`      | The playground: compiler + VM. |
-| [`browser/omg-explorer.omg`](browser/omg-explorer.omg) | `web/omg-explorer.js` | The compiler explorer: compiler + VM + the C and JS back ends, so the page can show every stage. |
+| [`browser/omg-web.omg`](browser/omg-web.omg)           | `omg-web.js`      | The playground: compiler + VM. |
+| [`browser/omg-explorer.omg`](browser/omg-explorer.omg) | `omg-explorer.js` | The compiler explorer: compiler + VM + the C and JS back ends, so the page can show every stage. |
 
 Both are built by [`scripts/build-web.sh`](../scripts/build-web.sh), which is
-`omg --compile` followed by `omg --emit-js`.
+`omg --compile` followed by `omg --emit-js`, into `build/web/`. They
+are not checked in. The page that loads them is the
+[playground](https://versyx.digital/omglang/playground/) on the site,
+which is kept in another repository:
+[`scripts/update-site.sh`](../scripts/update-site.sh) copies them there
+([`docs/toolchain.md`](../docs/toolchain.md#the-browser-builds)).
 
 ## Runtime files
 
@@ -109,8 +114,8 @@ may only use language features the checked-in `bin/omg` already
 understands ([`docs/05-extending.md`](../docs/05-extending.md#the-bootstrap-rule)).
 
 After changing anything in this directory, rebuild and commit
-`bin/` (and `web/` after `scripts/build-web.sh`): both are
-checked in, and CI fails when they are stale
-([`scripts/check-bin.sh`](../scripts/check-bin.sh)). `bin/` holds
+`bin/`: it is checked in, and CI fails when it is stale
+([`scripts/check-bin.sh`](../scripts/check-bin.sh)). Then
+`scripts/update-site.sh` brings the playground on the site up to date. `bin/` holds
 two binaries, `omg` for Linux x86-64 and `omg.exe` for Windows x86-64,
 and a build on Linux writes both.

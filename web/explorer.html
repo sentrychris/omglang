@@ -1,252 +1,30 @@
 <!doctype html>
 <html lang="en">
 <head>
-  <meta charset="utf-8">
-  <title>OMG · compiler explorer</title>
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="description" content="Inspect every stage of the self-hosted OMG compiler: lexer, parser, bytecode, native-C, native-JS, and live execution — all running client-side, with the compiler itself transpiled from OMG.">
-  <meta name="keywords" content="OMG language, compiler explorer, godbolt, lexer, parser, bytecode, transpiler, self-hosting, native C, native JS">
-  <meta name="author" content="Chris Rowles">
-  <meta name="theme-color" content="#1e1e2e">
+<meta charset="utf-8">
+<title>The OMG compiler explorer has moved</title>
+<meta name="robots" content="noindex">
+<link rel="canonical" href="https://versyx.digital/omglang/playground/">
+<!--
+  The compiler explorer used to live here, served by GitHub Pages from this
+  folder. It is part of the playground on the site now, and this page only
+  forwards to it so that old links keep working. A shared program
+  travels in the part of the address after "#" ("#code=..."), which the
+  site's playground reads in the same way, so it is passed along.
 
-  <meta property="og:type" content="website">
-  <meta property="og:title" content="OMG compiler explorer">
-  <meta property="og:description" content="Watch your OMG program flow through every compiler stage in the browser.">
-
-  <link rel="icon" href="favicon.ico">
-
-  <script>
-    (function () {
-      try {
-        var t = localStorage.getItem('omg-theme');
-        if (t === 'dark' || t === 'light') {
-          document.documentElement.setAttribute('data-theme', t);
-        } else if (window.matchMedia && window.matchMedia('(prefers-color-scheme: light)').matches) {
-          document.documentElement.setAttribute('data-theme', 'light');
-        } else {
-          document.documentElement.setAttribute('data-theme', 'dark');
-        }
-      } catch (_) {
-        document.documentElement.setAttribute('data-theme', 'dark');
-      }
-      try {
-        var sb = localStorage.getItem('omg-sidebar');
-        if (sb !== 'open' && sb !== 'closed') {
-          sb = (window.innerWidth >= 980) ? 'open' : 'closed';
-        }
-        document.documentElement.setAttribute('data-sidebar', sb);
-      } catch (_) {
-        document.documentElement.setAttribute('data-sidebar', 'open');
-      }
-    })();
-  </script>
-
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link
-    href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap"
-    rel="stylesheet">
-
-  <link rel="stylesheet" href="style.css">
+  Nothing else belongs in web/. The files the playground loads are
+  built by scripts/build-web.sh and copied into the site by
+  scripts/update-site.sh (docs/toolchain.md, "The browser builds").
+-->
+<script>
+  location.replace('https://versyx.digital/omglang/playground/' + location.hash);
+</script>
+<noscript>
+  <meta http-equiv="refresh" content="0; url=https://versyx.digital/omglang/playground/">
+</noscript>
 </head>
 <body>
-
-<div class="app">
-
-  <!-- ========================== Top bar ========================== -->
-  <header class="topbar">
-    <a class="brand" href="index.html" aria-label="OMG home">
-      <span class="brand-mark" aria-hidden="true">⟨⟩</span>
-      <span class="brand-name">OMG</span>
-    </a>
-    <span class="brand-sep" aria-hidden="true"></span>
-    <span class="brand-tag"><em>compiler</em> · explorer</span>
-
-    <nav class="navtabs" aria-label="Site sections">
-      <a class="navtab" href="index.html">Playground</a>
-      <a class="navtab is-active" href="explorer.html">Explorer</a>
-    </nav>
-
-    <span class="topbar-spacer"></span>
-
-    <div class="topbar-actions">
-      <select id="example" class="select" aria-label="Example program"></select>
-      <button id="share" class="btn" type="button" title="Copy a shareable link">
-        <svg class="ico" viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
-          <circle cx="4" cy="8" r="2"/>
-          <circle cx="12" cy="3.5" r="2"/>
-          <circle cx="12" cy="12.5" r="2"/>
-          <path d="M5.7 7 L10.3 4.5"/>
-          <path d="M5.7 9 L10.3 11.5"/>
-        </svg>
-        Share
-      </button>
-      <button id="run" class="btn btn-primary" type="button" title="Explore (Ctrl+Enter)">
-        <svg class="ico" viewBox="0 0 12 12" aria-hidden="true">
-          <path d="M3 1.8 L10.2 6 L3 10.2 Z" fill="currentColor"/>
-        </svg>
-        Explore
-        <span class="kbd">⌘↵</span>
-      </button>
-      <button id="sidebarToggle" class="theme-toggle" type="button" aria-label="Toggle reference" title="Toggle reference">
-        <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
-          <path d="M2.5 2.5h5a2 2 0 0 1 2 2v9a1.5 1.5 0 0 0-1.5-1.5h-5.5z"/>
-          <path d="M13.5 2.5h-5a2 2 0 0 0-2 2v9a1.5 1.5 0 0 1 1.5-1.5h5.5z"/>
-        </svg>
-      </button>
-      <button id="themeToggle" class="theme-toggle" type="button" aria-label="Toggle theme">
-        <span class="iconStack" aria-hidden="true">
-          <svg class="sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
-            <circle cx="12" cy="12" r="4"/>
-            <path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41"/>
-          </svg>
-          <svg class="moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
-            <path d="M21 12.79A9 9 0 1 1 11.21 3a7 7 0 0 0 9.79 9.79z"/>
-          </svg>
-        </span>
-      </button>
-    </div>
-  </header>
-
-  <!-- ========================= Workspace ========================= -->
-  <main class="workspace">
-
-    <!-- Reference sidebar -->
-    <aside class="pane sidebar" id="sidebar" aria-label="Language reference">
-      <div class="pane-head">
-        <span class="pane-title">
-          <svg class="file-icon" viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-            <path d="M2.5 2.5h5a2 2 0 0 1 2 2v9a1.5 1.5 0 0 0-1.5-1.5h-5.5z"/>
-            <path d="M13.5 2.5h-5a2 2 0 0 0-2 2v9a1.5 1.5 0 0 1 1.5-1.5h5.5z"/>
-          </svg>
-          reference
-        </span>
-        <span class="pane-head-spacer"></span>
-        <button id="sidebarClose" class="sb-close" type="button" aria-label="Hide reference" title="Hide">
-          <svg viewBox="0 0 12 12" width="10" height="10" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round">
-            <path d="M2 2 L10 10 M10 2 L2 10"/>
-          </svg>
-        </button>
-      </div>
-      <div class="sidebar-body" id="sidebarBody"></div>
-    </aside>
-
-    <!-- Source editor -->
-    <section class="pane source-pane" id="sourcePane">
-      <div class="pane-head">
-        <span class="pane-title">
-          <svg class="file-icon" viewBox="0 0 16 16" width="13" height="13" fill="currentColor" aria-hidden="true">
-            <path d="M3 1.75A1.75 1.75 0 0 1 4.75 0h6.5l3 3v11.25A1.75 1.75 0 0 1 12.5 16h-7.75A1.75 1.75 0 0 1 3 14.25V1.75Z"/>
-          </svg>
-          main.omg
-        </span>
-        <span class="pane-head-spacer"></span>
-        <span class="pane-head-meta" id="sourceMeta">— lines · — chars</span>
-      </div>
-      <div class="editor">
-        <pre id="source-gutter" class="gutter" aria-hidden="true">1</pre>
-        <div class="editor-area">
-          <pre id="source-hl" class="editor-hl" aria-hidden="true"></pre>
-          <textarea id="source" class="editor-src"
-            spellcheck="false"
-            autocomplete="off"
-            autocorrect="off"
-            autocapitalize="off"
-            aria-label="OMG source code"></textarea>
-        </div>
-      </div>
-    </section>
-
-    <!-- Stage explorer -->
-    <section class="pane">
-      <div class="tabbar" id="tabBar" role="tablist">
-        <button class="tab is-active" data-stage="tokens" role="tab">
-          <span class="tab-num">i</span> tokens
-          <span class="tab-size" data-size></span>
-        </button>
-        <button class="tab" data-stage="ast" role="tab">
-          <span class="tab-num">ii</span> ast
-          <span class="tab-size" data-size></span>
-        </button>
-        <button class="tab" data-stage="bytecode" role="tab">
-          <span class="tab-num">iii</span> bytecode
-          <span class="tab-size" data-size></span>
-        </button>
-        <button class="tab" data-stage="c" role="tab">
-          <span class="tab-num">iv</span> c
-          <span class="tab-size" data-size></span>
-        </button>
-        <button class="tab" data-stage="js" role="tab">
-          <span class="tab-num">v</span> js
-          <span class="tab-size" data-size></span>
-        </button>
-        <button class="tab" data-stage="run" role="tab">
-          <span class="tab-num">vi</span> run
-          <span class="tab-size" data-size></span>
-        </button>
-      </div>
-      <pre class="pane-body stage-pane is-active is-empty" data-stage="tokens" id="pane-tokens">Loading the meta-circular OMG compiler…</pre>
-      <pre class="pane-body stage-pane is-empty"          data-stage="ast"      id="pane-ast"></pre>
-      <pre class="pane-body stage-pane is-empty"          data-stage="bytecode" id="pane-bytecode"></pre>
-      <pre class="pane-body stage-pane is-empty"          data-stage="c"        id="pane-c"></pre>
-      <pre class="pane-body stage-pane is-empty"          data-stage="js"       id="pane-js"></pre>
-      <pre class="pane-body stage-pane is-empty"          data-stage="run"      id="pane-run"></pre>
-    </section>
-  </main>
-
-  <!-- ========================= Status bar ======================== -->
-  <footer class="statusbar">
-    <span class="sb-item sb-accent">
-      <span class="sb-dot" id="statusDot"></span>
-      <span id="statusLabel">starting</span>
-    </span>
-    <span class="sb-sep"></span>
-    <span class="sb-item" id="statusDetail"></span>
-    <span class="sb-sep"></span>
-    <span class="pipeline" id="pipeline" aria-label="Compiler pipeline">
-      <span class="pstep" data-stage="tokens">tokens</span>
-      <span class="arrow">→</span>
-      <span class="pstep" data-stage="ast">ast</span>
-      <span class="arrow">→</span>
-      <span class="pstep" data-stage="bytecode">bc</span>
-      <span class="arrow">→</span>
-      <span class="pstep" data-stage="c">c</span>
-      <span class="pstep" data-stage="js">js</span>
-      <span class="arrow">→</span>
-      <span class="pstep" data-stage="run">run</span>
-    </span>
-    <span class="sb-spacer"></span>
-    <span class="sb-item" title="Bundle size">
-      <svg viewBox="0 0 12 12" width="10" height="10" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1">
-        <rect x="1" y="2" width="10" height="8" rx="1"/>
-        <line x1="1" y1="5" x2="11" y2="5"/>
-      </svg>
-      <span id="bundleSize">—</span>
-    </span>
-    <span class="sb-sep"></span>
-    <a class="sb-item sb-link" href="https://github.com/sentrychris/omglang" target="_blank" rel="noopener">
-      <svg viewBox="0 0 16 16" width="11" height="11" aria-hidden="true" fill="currentColor">
-        <path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38v-1.32c-2.22.48-2.69-1.07-2.69-1.07-.36-.92-.89-1.17-.89-1.17-.73-.5.05-.49.05-.49.81.06 1.23.83 1.23.83.72 1.23 1.88.88 2.34.67.07-.52.28-.88.51-1.08-1.77-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.01.08-2.11 0 0 .67-.22 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.91.08 2.11.51.56.82 1.28.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48v2.2c0 .21.15.46.55.38A8.013 8.013 0 0 0 16 8c0-4.42-3.58-8-8-8z"/>
-      </svg>
-      sentrychris/omglang
-    </a>
-  </footer>
-</div>
-
-<script>
-  (function () {
-    var btn = document.getElementById('themeToggle');
-    if (!btn) return;
-    btn.addEventListener('click', function () {
-      var cur = document.documentElement.getAttribute('data-theme') || 'dark';
-      var next = cur === 'dark' ? 'light' : 'dark';
-      document.documentElement.setAttribute('data-theme', next);
-      try { localStorage.setItem('omg-theme', next); } catch (_) {}
-    });
-  })();
-</script>
-<script src="share.js"></script>
-<script src="reference.js"></script>
-<script src="explorer.app.js"></script>
+<p>The OMG compiler explorer is now part of the playground, at
+<a href="https://versyx.digital/omglang/playground/">versyx.digital/omglang/playground</a>.</p>
 </body>
 </html>

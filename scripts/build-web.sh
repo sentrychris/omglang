@@ -1,39 +1,46 @@
 #!/bin/bash
-# Build the static assets for web/.
+# Build the three files that put OMG in a browser.
 #
-# Primary artifact:
-#   web/omg-web.js — the OMG-in-OMG compiler + VM + driver, compiled
-#                    to a single JS bundle. This is what the playground
-#                    actually loads and re-evaluates per Run click;
-#                    user-typed source goes in via globalThis.args[1],
-#                    output comes back through the redirected omg_emit.
+#   omg-web.js       the compiler, the VM and a small driver, compiled
+#                    to one JavaScript file: runs a program
+#   omg-explorer.js  the same plus the C and JS back ends: reports
+#                    every stage (tokens, AST, bytecode, C, JavaScript)
+#                    and then runs the program
+#   omg-rt.js        src/runtime/omg_rt.js under the name a page asks
+#                    for: the runtime that goes in front of JavaScript
+#                    the explorer generated, so that it can be run
 #
-# Also filled in here (web/examples/):
-#   <name>.omg + manifest.json — copies of a few programs from
-#                                examples/, and the list of them, for
-#                                the "Examples" dropdown of the two
-#                                pages.
+# They are written to build/web/, or to the directory given:
+#
+#     scripts/build-web.sh [out-dir]
+#
+# Nothing here is checked in. The playground that loads these files is
+# the one on the site (https://versyx.digital/omglang/playground/),
+# which lives in another repository: scripts/update-site.sh builds
+# them, tests them and copies them there. tests/web.sh builds and
+# tests them as part of the suite.
 
 set -e
 cd "$(dirname "$0")/.."
 
-WEB_OUT=web/examples
-mkdir -p "$WEB_OUT"
+OUT=${1:-build/web}
+mkdir -p "$OUT"
 WORK=$(mktemp -d)
 trap 'rm -rf "$WORK"' EXIT
 
-# Pick a toolchain: the native `omg` (omg.exe on Windows). If none
-# runs on this host (the checked-in ones are for Linux and Windows on
-# x86-64; on macOS or ARM, scripts/build.sh makes one) and someone has
-# built the frozen Rust runtime by hand, that works as well: it
-# compiles to the same bytecode and runs the same OMG-written JS back
-# end through the same driver, src/omg.omg.
+# Pick a toolchain: the native `omg` (omg.exe on Windows), or the one
+# named by OMG_NATIVE, as in the tests. If none runs on this host (the
+# checked-in ones are for Linux and Windows on x86-64; on macOS or
+# ARM, scripts/build.sh makes one) and someone has built the frozen
+# Rust runtime by hand, that works as well: it compiles to the same
+# bytecode and runs the same OMG-written JS back end through the same
+# driver, src/omg.omg.
 can_emit_js() {
     [ -x "$1" ] && "$1" --help 2>/dev/null | grep -q -- '--emit-js'
 }
-NATIVE_OMG=bin/omg
+NATIVE_OMG=${OMG_NATIVE:-bin/omg}
 case "$(uname -s)" in
-    MINGW*|MSYS*) NATIVE_OMG=bin/omg.exe ;;
+    MINGW*|MSYS*) [ -f "$NATIVE_OMG.exe" ] && NATIVE_OMG="$NATIVE_OMG.exe" ;;
 esac
 RUST_OMG=rust/target/release/omg
 if [ ! -x "$RUST_OMG" ] && [ -x "$RUST_OMG.exe" ]; then
@@ -69,59 +76,20 @@ strip_root() {
         "$1" > "$1.tmp" && mv -f "$1.tmp" "$1"
 }
 
-# === Primary: the meta-circular bundle ====================================
+# One bundle: src/browser/<name>.omg to bytecode, bytecode to
+# JavaScript. The JS back end inlines every module the driver imports,
+# so the compiler and the VM come along.
+bundle() {
+    echo "Building $OUT/$1.js ($2) ..."
+    omg_compile "src/browser/$1.omg" "$WORK/$1.omgb"
+    omg_to_js "$WORK/$1.omgb" "$WORK/$1.js"
+    strip_root "$WORK/$1.js"
+    mv -f "$WORK/$1.js" "$OUT/$1.js"
+    echo "  $(wc -c < "$OUT/$1.js" | tr -d ' ') bytes"
+}
 
-echo "Building web/omg-web.js (compiler + VM + driver) ..."
-omg_compile src/browser/omg-web.omg "$WORK/omg-web.omgb"
-omg_to_js "$WORK/omg-web.omgb" web/omg-web.js
-strip_root web/omg-web.js
-echo "  $(wc -c < web/omg-web.js | tr -d ' ') bytes"
+bundle omg-web      "compiler + VM + driver"
+bundle omg-explorer "compiler + VM + the C and JS back ends + driver"
 
-# === Compiler Explorer bundle =============================================
-# Same shape as omg-web.js but the driver also imports native-c.omg and
-# native-js.omg, so the bundle exposes both back ends to the
-# browser (web/explorer.html). Bigger bundle (~3.5 MB) — only loaded on
-# the explorer page.
-
-echo "Building web/omg-explorer.js (compiler + VM + transpilers + driver) ..."
-omg_compile src/browser/omg-explorer.omg "$WORK/omg-explorer.omgb"
-omg_to_js "$WORK/omg-explorer.omgb" web/omg-explorer.js
-strip_root web/omg-explorer.js
-echo "  $(wc -c < web/omg-explorer.js | tr -d ' ') bytes"
-
-# === Examples for the dropdown =============================================
-# The pages fetch these as plain source and compile them in the browser
-# like anything else that is typed in, so nothing is built here: they
-# are copies.
-
-EXAMPLES=(
-    assignment bitwise dictionaries floats hex_to_rgb
-    higher_order matrix_ops maze_solver merge_sort
-    permissions prime_sieve rot_13 stack_vm stack_vm_and_asm
-    tabula_recta
-)
-
-count=0
-manifest_entries=()
-for name in "${EXAMPLES[@]}"; do
-    src="examples/$name.omg"
-    if [ ! -f "$src" ]; then
-        continue
-    fi
-    cp "$src" "$WEB_OUT/$name.omg"
-    manifest_entries+=("\"$name\"")
-    count=$((count + 1))
-done
-
-# Manifest consumed by web/app.js and web/explorer.app.js to populate the
-# "Examples" dropdown. Single source of truth — names come from the
-# EXAMPLES array above, filtered to what actually exists on disk.
-manifest_csv=$(IFS=,; echo "${manifest_entries[*]}")
-printf '[%s]\n' "$manifest_csv" > "$WEB_OUT/manifest.json"
-
-echo "Copied $count examples to $WEB_OUT/ (+ manifest.json)"
-
-echo
-echo "Serve the playground:"
-echo "  cd web && python3 -m http.server"
-echo "  open http://localhost:8000"
+cp src/runtime/omg_rt.js "$OUT/omg-rt.js"
+echo "Copied src/runtime/omg_rt.js to $OUT/omg-rt.js"

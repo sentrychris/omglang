@@ -339,10 +339,12 @@ existing opcodes over inventing one.
 
 ### Step D — The editor and the web
 
-Syntax has two more homes outside the toolchain: the VS Code extension
-in `vscode/`, and the playground's keyword reference in
-`web/reference.js`. And `scripts/build-web.sh` rebuilds the web
-bundles, which contain the compiler.
+Syntax has one more home outside the toolchain: the VS Code extension
+in `vscode/`. And the playground on the site runs a copy of the
+compiler, so it goes on compiling the old syntax until
+`scripts/update-site.sh` has been run and the site deployed
+([toolchain.md](toolchain.md#the-browser-builds)). The site's own
+pages teach the language too, and are edited there.
 
 The extension's language server carries a port of the lexer and the
 parser (`vscode/server/src/lexer.ts`, `parser.ts`), the scope rules
@@ -409,10 +411,14 @@ rules are at the top of part 3 of `native-x64.omg`, and
 
 ### Checked-in artefacts
 
-`bin/` and the `web/*.js` bundles are generated and checked in. After
-a change under `src/`, rebuild both (`scripts/build.sh`,
-`scripts/build-web.sh`) and commit them, in a commit of their own. CI
-fails when either has fallen behind its sources.
+`bin/` is generated and checked in. After a change under `src/`,
+rebuild it (`scripts/build.sh`) and commit it, in a commit of its own.
+CI fails when it has fallen behind its sources.
+
+The browser bundles are generated too, and are not checked in here:
+`scripts/update-site.sh` builds them and copies them into the site,
+which is where the playground lives
+([toolchain.md](toolchain.md#the-browser-builds)).
 
 ---
 

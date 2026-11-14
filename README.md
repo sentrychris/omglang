@@ -10,6 +10,11 @@ OMG has the usual stuff every language has: variables, math, strings, lists,
 dictionaries, conditionals, loops, functions, files etc. There's nothing flashy 
 or industrial about it. It exists so I could see what it takes to build a working programming language, all the way up to writing OMG's own compiler **in OMG**.
 
+You can try it without installing anything: the
+[playground](https://versyx.digital/omglang/playground/) runs OMG in
+your browser, and shows what the compiler makes of your program at
+every stage.
+
 ## Contents
 
 - [Get it running](#get-it-running)
@@ -942,14 +947,15 @@ omglang/
 ├── scripts/         build and check scripts
 │   ├── build.sh         builds bin/omg and bin/omg.exe from src/
 │   ├── build.ps1        the same build for Windows PowerShell (builds omg.exe)
-│   └── build-web.sh     builds the web/ bundles from src/
+│   ├── build-web.sh     builds the browser bundles from src/, into build/web/
+│   └── update-site.sh   builds them, tests them, and copies them into the site
 ├── rust/            the Rust runtime OMG started from. Frozen: kept as the way to
 │                    rebuild OMG from source alone, no longer built or needed
 ├── examples/        programs to read and run: one language feature each
 │   └── games/           interactive terminal games (snake, pong, tetris, rogue)
 ├── tests/           shell-driven test suite (conformance, parity, regression, REPL, builtins)
 ├── tools/           programs written in OMG (wc, grep, sort, omgdb, an editor, a web server, a video player)
-├── web/             browser playground + compiler explorer (static site)
+├── web/             two pages that forward old playground links to the site
 ├── docs/            the manual: quickstart, language tour, architecture, extending, Windows
 └── vscode/          VS Code extension (highlighting, themes, language server)
 ```
@@ -1031,7 +1037,9 @@ Windows `omg.exe` that is checked in was written by the Linux `omg`.
 - [`rust/README.md`](rust/README.md): the frozen Rust runtime, and how
   to bootstrap OMG from it.
 - [`tools/README.md`](tools/README.md): the OMG-in-OMG tools.
-- [`web/README.md`](web/README.md): the browser playground and compiler explorer.
+- [The playground](https://versyx.digital/omglang/playground/), in your browser. It
+  is part of the site, which is kept in another repository;
+  [`docs/toolchain.md`](docs/toolchain.md#the-browser-builds) says how the two meet.
 - [`vscode/README.md`](vscode/README.md): VS Code extension.
 
 ---

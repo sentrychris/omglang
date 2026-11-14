@@ -102,8 +102,8 @@ Everything is in `src/`:
 | `runtime/x64/*.omg` | The runtime for machine code, written in OMG: values, memory, strings, floats, builtins, errors (`core`, `float`, `builtins`), and one file per system for talking to it (`linux`, `windows`). Compiled into every executable `--build` writes. | everything `native-x64.omg` produces |
 | `runtime/omg_rt.h`  | The same job in C. Pasted at the top of every generated C file. | everything `native-c.omg` produces |
 | `runtime/omg_rt.js` | The same job for JavaScript. | everything `native-js.omg` produces |
-| `browser/omg-web.omg` | The playground's driver: compiler + VM, for the browser. | `web/omg-web.js` |
-| `browser/omg-explorer.omg` | The compiler explorer's driver: compiler + VM + the C and JS back ends, so the page can show every stage. | `web/omg-explorer.js` |
+| `browser/omg-web.omg` | The playground's driver: compiler + VM, for the browser. | `omg-web.js`, on the site |
+| `browser/omg-explorer.omg` | The compiler explorer's driver: compiler + VM + the C and JS back ends, so the page can show every stage. | `omg-explorer.js`, on the site |
 
 The runtime files are also installed next to the binary (`bin/x64/`,
 `bin/omg_rt.h`, `bin/omg_rt.js`), because `omg` reads them from the
@@ -121,8 +121,8 @@ exist the tests build every program both ways and compare.
 
 **JS: yes, for the browser.** The playground and the compiler explorer
 are the OMG compiler and VM put through the JS back end
-(`scripts/build-web.sh`). Nothing else depends on it, so it costs
-nothing when you are not using it.
+([the browser builds](#the-browser-builds)). Nothing else depends on
+it, so it costs nothing when you are not using it.
 
 **`vm.omg`: yes.** It runs a program without building it first, and it
 is the REPL.
@@ -143,6 +143,59 @@ systems without the machine-code back end, and 4 exists for the web.
 The conformance corpus in `tests/conformance/` runs on all four and
 requires the same output.
 
+## The browser builds
+
+OMG runs in a browser as the compiler and the VM themselves, put
+through the JS back end. `scripts/build-web.sh` makes three files, in
+`build/web/`:
+
+| File | What it is |
+| ---- | ---------- |
+| `omg-web.js` (about 2.4 MB) | `src/browser/omg-web.omg`: the compiler, the VM and a driver that takes the program's text from `args[1]` in place of reading a file. Runs a program. |
+| `omg-explorer.js` (about 4 MB) | `src/browser/omg-explorer.omg`: the same plus the C and JS back ends. Prints the tokens, the AST, the bytecode, the C and the JavaScript for a program, each after a marker line, and then runs it. The x86-64 back end is not in it. |
+| `omg-rt.js` | A copy of `src/runtime/omg_rt.js`, so that a page can put it in front of the JavaScript the explorer printed and run that too. |
+
+```
+the text in the editor
+        │
+        ▼
+omg-web.js  (compiler.omg + vm.omg + driver, all as JavaScript)
+        │
+        ├── compile_source → bytecode
+        ├── vm.run on that bytecode
+        ▼
+emit → the page's output pane
+```
+
+None of this is checked in, and there is no page for it here. The
+page is the [playground](https://versyx.digital/omglang/playground/)
+on the site, which is kept in another repository. After a change under
+`src/`:
+
+```sh
+scripts/build.sh                 # the toolchain itself
+scripts/update-site.sh           # the three files, built, tested, copied into the site
+```
+
+A playground used to be served from `web/` here, by GitHub Pages.
+What is left in that folder is two pages that forward its old
+addresses, shared programs included, to the playground on the site.
+
+`update-site.sh` takes the site's folder as its argument (or from
+`OMG_SITE`; the default is `../rowles-portfolio/public/omglang`), and
+only writes the three files. Committing and deploying the site is done
+there.
+
+The two repositories meet at five lines. A bundle is a script that
+reads its input from `let` lines at the top of `omg_rt.js`: `args`,
+`_omg_write`, `_omg_print_raw`, `_omg_exit` and `_omg_fs`. The page
+rewrites exactly those lines to read from an object of its own, and
+runs the result as the body of a function, once per run, so every run
+starts clean. Change one of the five and the playground stops loading.
+`tests/web-bundles.mjs` holds a copy of the site's list and fails
+first, and `update-site.sh` runs the same test through the site's own
+loader before it copies anything.
+
 ## What has to stay in step
 
 A few things are written more than once on purpose, and each has a
@@ -153,7 +206,8 @@ check that fails when they drift:
 | Builtins and value semantics: `vm.omg`, `runtime/x64/`, `omg_rt.h`, `omg_rt.js` | the conformance corpus (every program states what it must print, and runs every way), `tests/builtins.sh`, `tests/parity.sh` |
 | Opcode numbers and the format version: the tables in `compiler.omg`, `vm.omg` and `bytecode.omg` | `tests/driver.sh` compares the three tables line for line, and `omg --disasm` against a fixed listing |
 | The compiler against itself: `omg` compiling `compiler.omg`, and that compiler (run from source) compiling it again, must give the same bytes | `tests/parity.sh` |
-| The checked-in `bin/omg`, `bin/omg.exe` and `web/*.js` against their sources | `scripts/check-bin.sh` and the web bundle check, both in CI |
+| The checked-in `bin/omg` and `bin/omg.exe` against their sources | `scripts/check-bin.sh`, in CI |
+| The browser bundles against the page that loads them, which is in another repository | `tests/web.sh` loads and runs them the way the site does; `scripts/update-site.sh` does it with the site's own loader before it copies anything |
 | The toolchain against itself: rebuilding `omg` twice must give the same file | `tests/parity.sh`, `tests/standalone.sh` |
 
 [`docs/05-extending.md`](05-extending.md) walks through
@@ -165,4 +219,3 @@ changing each of these.
 - How `omg foo.omg` runs, step by step: [compilation-pipeline.md](compilation-pipeline.md).
 - The manual, page by page: [README.md](README.md).
 - The frozen Rust runtime: [rust/README.md](../rust/README.md).
-- The browser builds: [web/README.md](../web/README.md).

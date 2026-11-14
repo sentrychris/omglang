@@ -1,6 +1,6 @@
 ;;;omg
 
-# omg-web.omg  →  web/omg-web.js (via scripts/build-web.sh)
+# omg-web.omg  →  omg-web.js (via scripts/build-web.sh)
 #
 # Driver for the browser playground.
 #
@@ -18,7 +18,7 @@
 #
 # Whatever the hosted program emits goes through `omg_emit` in
 # omg_rt.js, which the playground page redirects into its <pre>
-# output pane (see web/app.js).
+# output pane (see docs/toolchain.md, "The browser builds").
 #
 # Usage from JS (after eval-ing the bundle):
 #   args = ["<playground>", userSourceText, ...userArgs];

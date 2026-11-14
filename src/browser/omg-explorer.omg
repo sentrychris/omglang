@@ -1,15 +1,15 @@
 ;;;omg
 
-# omg-explorer.omg  →  web/omg-explorer.js (via scripts/build-web.sh)
+# omg-explorer.omg  →  omg-explorer.js (via scripts/build-web.sh)
 #
 # Driver for the in-browser Compiler Explorer. Reads OMG source from
 # args[2] and walks it through every stage of the toolchain — lex,
 # parse, compile, native-C transpile, native-JS transpile, execute —
-# emitting each stage's result framed by a one-line marker. The
-# frontend at web/explorer.app.js splits stdout on those markers to
+# emitting each stage's result framed by a one-line marker. The page
+# (the playground on the site) splits the output on those markers to
 # fill the per-stage panes.
 #
-# args layout (set by web/explorer.app.js before re-evaluating the
+# args layout (set by the page before re-evaluating the
 # bundle):
 #   args[0]  "<omg-explorer>"   keeps native-{c,js} from auto-firing
 #                               their main dispatches

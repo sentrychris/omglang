@@ -159,6 +159,9 @@ jobs:
       #                  and a PulseAudio that plays into nothing;
       #                  Windows: on the desktop, which has no sound
       #                  device on these machines)
+      #   * web        — the browser bundles (the compiler and the VM
+      #                  as JavaScript), built here and then loaded and
+      #                  run the way the site's playground does it
       #   * parity     — the compiler gives the same bytes as machine
       #                  code and on the OMG VM; every example prints
       #                  the same interpreted, built, through C and as
@@ -191,28 +194,10 @@ jobs:
             diff tests/smoke/regressions.expected aot.out
           } 2>&1 | tee regressions.log
 
-      # The checked-in browser bundle (compiler + VM + both transpilers,
-      # transpiled to JS) must still drive every explorer stage.
-      - name: Web explorer bundle
-        run: node web/test-explorer.mjs 2>&1 | tee explorer.log
-
-      # web/ holds generated bundles (the compiler and VM transpiled to
-      # JS). The build is deterministic, so a rebuild that changes
-      # anything means they were not regenerated after a change to
-      # their sources.
-      - name: Checked-in web bundles are current
-        if: runner.os == 'Linux'
-        run: |
-          scripts/build-web.sh 2>&1 | tee web-build.log
-          git diff --stat --exit-code -- web || {
-            echo "::error title=web bundles are stale::Run scripts/build-web.sh and commit web/"
-            exit 1
-          }
-
       - name: Summarise failure
         if: failure()
         run: |
-          for f in check-bin.log native-build.log native-rebuild.log tests.log regressions.log explorer.log web-build.log; do
+          for f in check-bin.log native-build.log native-rebuild.log tests.log regressions.log; do
             [ -f "$f" ] || continue
             {
               echo "### ${{ matrix.os }}: tail of $f"
@@ -223,7 +208,7 @@ jobs:
           done
           # Annotate with the tail of the *last* log written — the step
           # that failed.
-          last=$(ls -t native-build.log native-rebuild.log tests.log regressions.log explorer.log 2>/dev/null | head -n 1 || true)
+          last=$(ls -t native-build.log native-rebuild.log tests.log regressions.log 2>/dev/null | head -n 1 || true)
           if [ -n "$last" ]; then
             msg=$(tail -n 60 "$last" | sed 's/%/%25/g' | awk '{printf "%s%%0A", $0}')
             echo "::error title=${{ matrix.os }} $last::$msg"
