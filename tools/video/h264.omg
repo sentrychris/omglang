@@ -3483,11 +3483,7 @@ proc pred_block(pl, o, st, n, mode) {
     alloc x := 0
     if mode == 0 {
         loop y < n {
-            x := 0
-            loop x < n {
-                pl[o + y * st + x] := pl[o - st + x]
-                x := x + 1
-            }
+            bytes_copy(pl, o - st, pl, o + y * st, n)
             y := y + 1
         }
         return false
@@ -3657,8 +3653,8 @@ proc pred_chroma_plane(pl, mode) {
 # === Motion compensation ============================================================
 
 alloc mc_tmp := list_repeat(0, 16 * 22)        # rows of unrounded half samples
-alloc mc_tmp2 := list_repeat(0, 256)           # a second prediction to average with
-alloc mc_edge := list_repeat(0, 32 * 24)       # a block that reaches outside the picture
+alloc mc_tmp2 := bytes_repeat(0, 256)          # a second prediction to average with
+alloc mc_edge := bytes_repeat(0, 32 * 24)      # a block that reaches outside the picture
 
 # Copy the w x h region at (x0, y0) of a reference plane into mc_edge
 # (32 samples per row), repeating the border samples outside it.
@@ -3687,11 +3683,7 @@ proc mc_edge_fill(s, x0, y0, w, h, stride, pw, ph) {
 proc mc_copy(s, so, ss, d, dp, ds, w, h) {
     alloc y := 0
     loop y < h {
-        alloc x := 0
-        loop x < w {
-            d[dp + x] := s[so + x]
-            x := x + 1
-        }
+        bytes_copy(s, so, d, dp, w)
         so := so + ss
         dp := dp + ds
         y := y + 1
@@ -4252,8 +4244,8 @@ proc part_mv(list, bx, by, w4, h4, dir) {
 
 # --- building the prediction ---------------------------------------------------------
 
-alloc mc_bi := list_repeat(0, 256)     # the prediction from the second list, luma
-alloc mc_bic := list_repeat(0, 64)     # and chroma
+alloc mc_bi := bytes_repeat(0, 256)    # the prediction from the second list, luma
+alloc mc_bic := bytes_repeat(0, 64)    # and chroma
 
 # d := d * wt / 2^ld + o
 proc weigh_one(d, dp, ds, w, h, wt, ld, o) {
