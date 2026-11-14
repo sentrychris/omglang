@@ -93,6 +93,9 @@ typedef enum {
     OMG_LIST,
     OMG_DICT,
     OMG_FLOAT,
+    /* A byte list: a list that holds only whole numbers from 0 to 255,
+     * one byte each. Reads like a list everywhere. */
+    OMG_BYTES,
     /* Not an OMG value: the state of a variable slot that nothing has
      * been stored into yet. LOAD and STORE check for it and raise
      * UndefinedIdentError, the way the VMs do when a name is missing
@@ -104,6 +107,7 @@ typedef enum {
 struct OmgClosure;
 struct OmgList;
 struct OmgDict;
+struct OmgBytes;
 
 typedef struct {
     omg_tag tag;
@@ -114,6 +118,7 @@ typedef struct {
         struct OmgClosure *c;
         struct OmgList *l;
         struct OmgDict *d;
+        struct OmgBytes *y;
         double f;
     } v;
 } Value;
@@ -230,6 +235,7 @@ static inline Value omg_closure(OmgFn fn, const char *name, Value *captured, int
 /* Forward-declared so omg_truthy / omg_emit can poke at sizes. */
 static int omg_list_len(struct OmgList *l);
 static int omg_dict_len(struct OmgDict *d);
+static int omg_bytes_len(struct OmgBytes *b);
 
 /* Forward declaration so omg_raise can stringify any Value. Defined
  * later, alongside the rest of the string utilities. */
@@ -583,6 +589,8 @@ static inline int omg_truthy(Value v) {
         case OMG_CLOSURE: return 1;
         case OMG_LIST:    return omg_list_len(v.v.l) != 0;
         case OMG_DICT:    return omg_dict_len(v.v.d) != 0;
+        case OMG_BYTES:   return omg_bytes_len(v.v.y) != 0;
+        default: break;
     }
     return 0;
 }
@@ -650,9 +658,11 @@ static void omg_emit(Value v) {
         case OMG_CLOSURE: printf("<proc>\n"); break;
         case OMG_LIST:
         case OMG_DICT:
+        case OMG_BYTES:
             omg_print_value(v);
             putchar('\n');
             break;
+        default: break;
     }
     OMG_EMIT_DONE();
 }
@@ -709,6 +719,7 @@ static inline int64_t omg_as_int(Value v) {
             return (int64_t)n;
         }
         case OMG_LIST:
+        case OMG_BYTES:
             omg_panic("TypeError",
                       "cannot convert list to int (use length() instead)");
         case OMG_DICT:
@@ -741,6 +752,7 @@ static inline double omg_as_double(Value v) {
             return d;
         }
         case OMG_LIST:
+        case OMG_BYTES:
             omg_panic("TypeError",
                       "cannot convert list to float (use length() instead)");
         case OMG_DICT:
@@ -820,12 +832,17 @@ static inline Value omg_neg(Value a) {
 /* Forward declarations for structural compare of collections. */
 static int omg_list_eq(struct OmgList *a, struct OmgList *b);
 static int omg_dict_eq(struct OmgDict *a, struct OmgDict *b);
+static int omg_bytes_eq(struct OmgBytes *a, struct OmgBytes *b);
+static int omg_bytes_eq_list(struct OmgBytes *b, struct OmgList *l);
 
 static int omg_values_equal(Value a, Value b) {
     /* Cross-type numeric: int ↔ float compare by value. Mirrors the
      * OMG VM, where `5 == 5.0` is true. */
     if (a.tag == OMG_INT && b.tag == OMG_FLOAT) return ((double)a.v.i) == b.v.f;
     if (a.tag == OMG_FLOAT && b.tag == OMG_INT) return a.v.f == ((double)b.v.i);
+    /* A byte list and a list are equal when they hold the same numbers. */
+    if (a.tag == OMG_BYTES && b.tag == OMG_LIST) return omg_bytes_eq_list(a.v.y, b.v.l);
+    if (a.tag == OMG_LIST && b.tag == OMG_BYTES) return omg_bytes_eq_list(b.v.y, a.v.l);
     if (a.tag != b.tag) return 0;
     switch (a.tag) {
         case OMG_INT:     return a.v.i == b.v.i;
@@ -836,6 +853,8 @@ static int omg_values_equal(Value a, Value b) {
         case OMG_CLOSURE: return a.v.c == b.v.c;
         case OMG_LIST:    return omg_list_eq(a.v.l, b.v.l);
         case OMG_DICT:    return omg_dict_eq(a.v.d, b.v.d);
+        case OMG_BYTES:   return omg_bytes_eq(a.v.y, b.v.y);
+        default: break;
     }
     return 0;
 }
@@ -942,7 +961,9 @@ static const char *omg_value_to_cstr(Value v, char *buf, size_t bufsize) {
         case OMG_NONE:    return "";
         case OMG_CLOSURE: return "<proc>";
         case OMG_LIST:
+        case OMG_BYTES:
         case OMG_DICT:    return omg_compound_to_cstr(v);
+        default: break;
     }
     return "";
 }
@@ -1154,7 +1175,13 @@ static Value omg_list_repeat(Value item, Value count) {
 /* append(list, item) — push `item` onto the end of `list` in place, in
  * amortised constant time. The builtin protocol borrows its arguments,
  * so the list takes its own reference to the item. */
+static void omg_bytes_push(struct OmgBytes *b, unsigned char c);
+static unsigned char omg_byte_check(Value v);
 static Value omg_builtin_append(Value list, Value item) {
+    if (list.tag == OMG_BYTES) {
+        omg_bytes_push(list.v.y, omg_byte_check(item));
+        return omg_none();
+    }
     if (list.tag != OMG_LIST) {
         omg_panic("TypeError", "append() expects (list, any)");
     }
@@ -1290,6 +1317,148 @@ static int omg_list_eq(OmgList *a, OmgList *b) {
     return 1;
 }
 
+/* === Byte lists ==========================================================
+ * A list that can hold nothing but whole numbers from 0 to 255, one
+ * byte each. Whatever reads a list reads a byte list the same way;
+ * only storing is stricter. */
+
+typedef struct OmgBytes {
+    int rc;
+    int len;
+    int cap;
+    unsigned char *data;
+} OmgBytes;
+
+static OmgBytes *omg_bytes_alloc(int cap) {
+    OmgBytes *b = (OmgBytes *)malloc(sizeof(OmgBytes));
+    if (!b) { fprintf(stderr, "out of memory\n"); exit(1); }
+    b->rc = 1;
+    b->len = 0;
+    b->cap = cap < 0 ? 0 : cap;
+    b->data = b->cap > 0 ? (unsigned char *)malloc((size_t)b->cap) : NULL;
+    if (b->cap > 0 && !b->data) { fprintf(stderr, "out of memory\n"); exit(1); }
+    return b;
+}
+
+static int omg_bytes_len(OmgBytes *b) { return b ? b->len : 0; }
+
+/* A new byte list holding the n bytes at p. */
+static Value omg_bytes_from(const void *p, size_t n) {
+    Value v;
+    v.tag = OMG_BYTES;
+    v.v.y = omg_bytes_alloc((int)n);
+    if (n > 0) memcpy(v.v.y->data, p, n);
+    v.v.y->len = (int)n;
+    return v;
+}
+
+/* The value as something a byte list can hold, or an error. */
+static unsigned char omg_byte_check(Value v) {
+    if (v.tag != OMG_INT) {
+        char buf[64];
+        omg_panicf("TypeError", "a byte list holds whole numbers from 0 to 255, not %s",
+                   omg_value_to_cstr(v, buf, sizeof(buf)));
+    }
+    if (v.v.i < 0 || v.v.i > 255) {
+        omg_panicf("ValueError", "a byte list holds whole numbers from 0 to 255, not %lld",
+                   (long long)v.v.i);
+    }
+    return (unsigned char)v.v.i;
+}
+
+static void omg_bytes_push(OmgBytes *b, unsigned char c) {
+    if (b->len == b->cap) {
+        int newcap = b->cap < 16 ? 16 : b->cap * 2;
+        unsigned char *data = (unsigned char *)realloc(b->data, (size_t)newcap);
+        if (!data) { fprintf(stderr, "out of memory\n"); exit(1); }
+        b->data = data;
+        b->cap = newcap;
+    }
+    b->data[b->len++] = c;
+}
+
+static int omg_bytes_eq(OmgBytes *a, OmgBytes *b) {
+    if (a == b) return 1;
+    if (a->len != b->len) return 0;
+    return a->len == 0 || memcmp(a->data, b->data, (size_t)a->len) == 0;
+}
+
+static int omg_bytes_eq_list(OmgBytes *b, OmgList *l) {
+    if (b->len != l->len) return 0;
+    for (int i = 0; i < b->len; i++) {
+        if (!omg_values_equal(omg_int((int64_t)b->data[i]), l->items[i])) return 0;
+    }
+    return 1;
+}
+
+/* A list and a byte list joined, either way round: a list. */
+static Value omg_mixed_concat(Value a, Value b) {
+    Value v;
+    v.tag = OMG_LIST;
+    v.v.l = omg_list_alloc(0);
+    for (int k = 0; k < 2; k++) {
+        Value src = k == 0 ? a : b;
+        if (src.tag == OMG_BYTES) {
+            for (int i = 0; i < src.v.y->len; i++) {
+                omg_list_push(v.v.l, omg_int((int64_t)src.v.y->data[i]));
+            }
+        } else {
+            for (int i = 0; i < src.v.l->len; i++) {
+                omg_inc(src.v.l->items[i]);
+                omg_list_push(v.v.l, src.v.l->items[i]);
+            }
+        }
+    }
+    return v;
+}
+
+static Value omg_bytes_concat(OmgBytes *a, OmgBytes *b) {
+    Value v;
+    v.tag = OMG_BYTES;
+    v.v.y = omg_bytes_alloc(a->len + b->len);
+    if (a->len > 0) memcpy(v.v.y->data, a->data, (size_t)a->len);
+    if (b->len > 0) memcpy(v.v.y->data + a->len, b->data, (size_t)b->len);
+    v.v.y->len = a->len + b->len;
+    return v;
+}
+
+/* bytes_repeat(value, count): a byte list of `count` items, each `value`. */
+static Value omg_builtin_bytes_repeat(Value item, Value count) {
+    if (count.tag != OMG_INT) {
+        omg_panic("TypeError", "bytes_repeat() expects (int, int)");
+    }
+    if (count.v.i < 0) {
+        omg_panicf("ValueError",
+                   "bytes_repeat() count must be non-negative, got %lld",
+                   (long long)count.v.i);
+    }
+    unsigned char c = omg_byte_check(item);
+    Value v;
+    v.tag = OMG_BYTES;
+    v.v.y = omg_bytes_alloc((int)count.v.i);
+    if (count.v.i > 0) memset(v.v.y->data, c, (size_t)count.v.i);
+    v.v.y->len = (int)count.v.i;
+    return v;
+}
+
+/* to_bytes(x): a new byte list holding the numbers of a list, the
+ * UTF-8 bytes of a string, or a copy of another byte list. */
+static Value omg_builtin_to_bytes(Value x) {
+    if (x.tag == OMG_BYTES) return omg_bytes_from(x.v.y->data, (size_t)x.v.y->len);
+    if (x.tag == OMG_STR)   return omg_bytes_from(x.v.s, strlen(x.v.s));
+    if (x.tag != OMG_LIST) {
+        omg_panic("TypeError", "to_bytes() expects a list, a string or a byte list");
+    }
+    Value v;
+    v.tag = OMG_BYTES;
+    v.v.y = omg_bytes_alloc(x.v.l->len);
+    for (int i = 0; i < x.v.l->len; i++) {
+        v.v.y->data[i] = omg_byte_check(x.v.l->items[i]);
+    }
+    v.v.y->len = x.v.l->len;
+    return v;
+}
+
 /* === Dicts ===============================================================
  * Phase 5: parallel keys[]/vals[] arrays, linear lookup. Plenty fast for
  * the OMG corpus (dicts tend to be small) and trivially correct. The
@@ -1340,6 +1509,7 @@ static void omg_inc(Value v) {
         case OMG_LIST:    v.v.l->rc++; break;
         case OMG_DICT:    v.v.d->rc++; break;
         case OMG_CLOSURE: v.v.c->rc++; break;
+        case OMG_BYTES:   v.v.y->rc++; break;
         default: break;
     }
 }
@@ -1369,6 +1539,14 @@ static void omg_dec(Value v) {
                 free(d->hashes);
                 free(d->vals);
                 free(d);
+            }
+            break;
+        }
+        case OMG_BYTES: {
+            OmgBytes *b = v.v.y;
+            if (--b->rc == 0) {
+                free(b->data);
+                free(b);
             }
             break;
         }
@@ -1621,6 +1799,16 @@ static void omg_out_value(OmgOut *out, Value v) {
             omg_print_depth--;
             break;
         }
+        case OMG_BYTES: {
+            omg_out_write(out, "[", 1);
+            for (int i = 0; i < v.v.y->len; i++) {
+                if (i) omg_out_write(out, ", ", 2);
+                snprintf(buf, sizeof(buf), "%d", (int)v.v.y->data[i]);
+                omg_out_puts(out, buf);
+            }
+            omg_out_write(out, "]", 1);
+            break;
+        }
         case OMG_DICT: {
             if (!omg_print_enter(v.v.d)) { omg_out_puts(out, "{...}"); break; }
             omg_out_write(out, "{", 1);
@@ -1634,6 +1822,7 @@ static void omg_out_value(OmgOut *out, Value v) {
             omg_print_depth--;
             break;
         }
+        default: break;
     }
 }
 
@@ -1662,6 +1851,9 @@ static char *omg_compound_to_cstr(Value v) {
 static Value omg_index(Value base, Value idx) {
     if (base.tag == OMG_STR && idx.tag == OMG_INT) return omg_str_index(base, idx.v.i);
     if (base.tag == OMG_LIST && idx.tag == OMG_INT) return omg_list_index(base.v.l, idx.v.i);
+    if (base.tag == OMG_BYTES && idx.tag == OMG_INT) {
+        return omg_int((int64_t)base.v.y->data[omg_normalise_index(idx.v.i, base.v.y->len, "list")]);
+    }
     if (base.tag == OMG_DICT) {
         char buf[64];
         const char *k = omg_value_to_cstr(idx, buf, sizeof(buf));
@@ -1698,10 +1890,25 @@ static Value omg_list_slice(OmgList *l, Value start_v, Value end_v) {
     return out;
 }
 
+static Value omg_bytes_slice(OmgBytes *b, Value start_v, Value end_v) {
+    int total = b->len;
+    int64_t start = start_v.tag == OMG_NONE ? 0     : start_v.v.i;
+    int64_t end   = end_v.tag   == OMG_NONE ? total : end_v.v.i;
+    if (start < 0) start += total;
+    if (end   < 0) end   += total;
+    if (start < 0)     start = 0;
+    if (end   < 0)     end   = 0;
+    if (start > total) start = total;
+    if (end   > total) end   = total;
+    if (end   < start) end   = start;
+    return omg_bytes_from(b->data + start, (size_t)(end - start));
+}
+
 #undef omg_slice
 static Value omg_slice(Value base, Value start, Value end) {
     if (base.tag == OMG_STR)  return omg_str_slice(base, start, end);
     if (base.tag == OMG_LIST) return omg_list_slice(base.v.l, start, end);
+    if (base.tag == OMG_BYTES) return omg_bytes_slice(base.v.y, start, end);
     omg_panic("TypeError", "cannot slice this value");
     return omg_none(); /* unreachable */
 }
@@ -1710,6 +1917,11 @@ static Value omg_slice(Value base, Value start, Value end) {
 static void omg_store_index(Value base, Value idx, Value v) {
     if (base.tag == OMG_LIST && idx.tag == OMG_INT) {
         omg_list_set_index(base.v.l, idx.v.i, v);
+        return;
+    }
+    if (base.tag == OMG_BYTES && idx.tag == OMG_INT) {
+        int64_t real = omg_normalise_index(idx.v.i, base.v.y->len, "list");
+        base.v.y->data[real] = omg_byte_check(v);
         return;
     }
     if (base.tag == OMG_DICT) {
@@ -1746,6 +1958,7 @@ static Value omg_length(Value v) {
     switch (v.tag) {
         case OMG_STR:  return omg_int((int64_t)omg_str_char_count(v.v.s));
         case OMG_LIST: return omg_int((int64_t)v.v.l->len);
+        case OMG_BYTES: return omg_int((int64_t)v.v.y->len);
         case OMG_DICT: return omg_int((int64_t)omg_dict_len(v.v.d));
         default: break;
     }
@@ -1758,6 +1971,10 @@ static Value omg_length(Value v) {
 static inline Value omg_add(Value a, Value b) {
     if (a.tag == OMG_STR  || b.tag == OMG_STR)  return omg_str_concat(a, b);
     if (a.tag == OMG_LIST && b.tag == OMG_LIST) return omg_list_concat(a.v.l, b.v.l);
+    if (a.tag == OMG_BYTES && b.tag == OMG_BYTES) return omg_bytes_concat(a.v.y, b.v.y);
+    if ((a.tag == OMG_LIST || a.tag == OMG_BYTES) && (b.tag == OMG_LIST || b.tag == OMG_BYTES)) {
+        return omg_mixed_concat(a, b);
+    }
     if (omg_is_float(a) || omg_is_float(b)) return omg_float(omg_as_double(a) + omg_as_double(b));
     return omg_int(a.v.i + b.v.i);
 }
@@ -1932,21 +2149,20 @@ static Value omg_builtin_binary2(Value n, Value w) {
     return omg_binary_format(n.v.i, 1, w.v.i);
 }
 
-/* string_bytes(s) -> list of UTF-8 byte values. */
+/* string_bytes(s) -> byte list of the UTF-8 byte values. */
 static Value omg_builtin_string_bytes(Value v) {
     if (v.tag != OMG_STR) omg_panic("TypeError", "string_bytes() expects a string");
-    size_t n = strlen(v.v.s);
-    Value out;
-    out.tag = OMG_LIST;
-    out.v.l = omg_list_alloc((int)n);
-    for (size_t i = 0; i < n; i++) {
-        omg_list_push(out.v.l, omg_int((unsigned char)v.v.s[i]));
-    }
-    return out;
+    return omg_bytes_from(v.v.s, strlen(v.v.s));
 }
 
 /* bytes_to_string([bytes]) -> string. */
 static Value omg_builtin_bytes_to_string(Value v) {
+    if (v.tag == OMG_BYTES) {
+        char *text = omg_str_alloc((size_t)v.v.y->len + 1);
+        if (v.v.y->len > 0) memcpy(text, v.v.y->data, (size_t)v.v.y->len);
+        text[v.v.y->len] = 0;
+        return omg_str(text);
+    }
     if (v.tag != OMG_LIST) omg_panic("TypeError", "bytes_to_string() expects a list of bytes");
     OmgList *l = v.v.l;
     char *buf = omg_str_alloc((size_t)l->len + 1);
@@ -2332,11 +2548,11 @@ static Value omg_builtin_stdin_read(void) {
  * file_read(). Empty list on no input. */
 static Value omg_builtin_stdin_read_bytes(void) {
     Value v;
-    v.tag = OMG_LIST;
-    v.v.l = omg_list_alloc(0);
+    v.tag = OMG_BYTES;
+    v.v.y = omg_bytes_alloc(0);
     int c;
     while ((c = fgetc(stdin)) != EOF) {
-        omg_list_push(v.v.l, omg_int((int64_t)(unsigned char)c));
+        omg_bytes_push(v.v.y, (unsigned char)c);
     }
     return v;
 }
@@ -3041,12 +3257,7 @@ static Value omg_builtin_file_read(Value h) {
     size_t len;
     omg_slurp_file(e->fp, &buf, &len);
     if (e->binary) {
-        Value out;
-        out.tag = OMG_LIST;
-        out.v.l = omg_list_alloc((int)len);
-        for (size_t i = 0; i < len; i++) {
-            omg_list_push(out.v.l, omg_int((unsigned char)buf[i]));
-        }
+        Value out = omg_bytes_from(buf, len);
         free(buf);
         return out;
     }
@@ -3078,12 +3289,7 @@ static Value omg_builtin_file_read2(Value h, Value maxbytes) {
         if (got < step) break;
     }
     if (e->binary) {
-        Value out;
-        out.tag = OMG_LIST;
-        out.v.l = omg_list_alloc(len > 0 ? (int)len : 1);
-        for (size_t i = 0; i < len; i++) {
-            omg_list_push(out.v.l, omg_int((unsigned char)buf[i]));
-        }
+        Value out = omg_bytes_from(buf, len);
         free(buf);
         return out;
     }
@@ -3120,6 +3326,10 @@ static Value omg_builtin_file_write(Value h, Value data) {
     OmgFileEntry *e = omg_file_get((int)h.v.i);
     if (!e) omg_panic("ValueError", "invalid file handle");
     if (e->binary) {
+        if (data.tag == OMG_BYTES) {
+            size_t n = (size_t)data.v.y->len;
+            return omg_int((int64_t)(n > 0 ? fwrite(data.v.y->data, 1, n, e->fp) : 0));
+        }
         if (data.tag != OMG_LIST) omg_panic("TypeError", "file_write() binary handle expects list");
         OmgList *l = data.v.l;
         unsigned char *buf = NULL;
@@ -3553,10 +3763,7 @@ static Value omg_builtin_tcp_read(Value h, Value maxbytes) {
     if (!e) omg_panic("ValueError", "tcp_read: invalid tcp handle");
     if (e->is_listener) omg_panic("ValueError", "tcp_read: handle is a listener, not a stream");
     size_t cap = (size_t)maxbytes.v.i;
-    Value out;
-    out.tag = OMG_LIST;
-    out.v.l = omg_list_alloc(cap > 0 ? (int)cap : 1);
-    if (cap == 0) return out;
+    if (cap == 0) return omg_bytes_from("", 0);
     unsigned char *buf = (unsigned char *)malloc(cap);
     if (!buf) { fprintf(stderr, "out of memory\n"); exit(1); }
     int64_t n;
@@ -3570,9 +3777,7 @@ static Value omg_builtin_tcp_read(Value h, Value maxbytes) {
         if (OMG_SOCK_WOULD_BLOCK()) return omg_bool(0);
         omg_panicf("ValueError", "tcp_read: %s", omg_sock_errstr());
     }
-    for (int64_t i = 0; i < n; i++) {
-        omg_list_push(out.v.l, omg_int((int64_t)buf[i]));
-    }
+    Value out = omg_bytes_from(buf, (size_t)n);
     free(buf);
     return out;
 }
@@ -3598,6 +3803,11 @@ static Value omg_builtin_tcp_write3(Value h, Value data, Value offset) {
         size_t all = strlen(data.v.s);
         if (off < 0 || (size_t)off > all) omg_panic("ValueError", "tcp_write: offset is outside the data");
         buf = (const unsigned char *)data.v.s + off;
+        len = all - (size_t)off;
+    } else if (data.tag == OMG_BYTES) {
+        size_t all = (size_t)data.v.y->len;
+        if (off < 0 || (size_t)off > all) omg_panic("ValueError", "tcp_write: offset is outside the data");
+        buf = data.v.y->data + off;
         len = all - (size_t)off;
     } else if (data.tag == OMG_LIST) {
         OmgList *l = data.v.l;
@@ -3970,6 +4180,7 @@ static Value omg_call_builtin(Value name, Value args) {
         if (strcmp(n, "binary") == 0)          return omg_builtin_binary1(a[0]);
         if (strcmp(n, "string_bytes") == 0)    return omg_builtin_string_bytes(a[0]);
         if (strcmp(n, "bytes_to_string") == 0) return omg_builtin_bytes_to_string(a[0]);
+        if (strcmp(n, "to_bytes") == 0)        return omg_builtin_to_bytes(a[0]);
         if (strcmp(n, "float_bits") == 0)      return omg_builtin_float_bits(a[0]);
         if (strcmp(n, "bits_to_float") == 0)   return omg_builtin_bits_to_float(a[0]);
         if (strcmp(n, "file_read") == 0)       return omg_builtin_file_read(a[0]);
@@ -4019,6 +4230,7 @@ static Value omg_call_builtin(Value name, Value args) {
         if (strcmp(n, "binary") == 0)     return omg_builtin_binary2(a[0], a[1]);
         if (strcmp(n, "has_key") == 0)    return omg_has_key(a[0], a[1]);
         if (strcmp(n, "list_repeat") == 0) return omg_list_repeat(a[0], a[1]);
+        if (strcmp(n, "bytes_repeat") == 0) return omg_builtin_bytes_repeat(a[0], a[1]);
         if (strcmp(n, "append") == 0)     return omg_builtin_append(a[0], a[1]);
         if (strcmp(n, "chmod") == 0)      return omg_builtin_chmod(a[0], a[1]);
         if (strcmp(n, "file_open") == 0)  return omg_builtin_file_open(a[0], a[1]);
