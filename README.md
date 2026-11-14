@@ -476,6 +476,25 @@ raises `ValueError`, and storing anything that is not an Int raises
 byte lists with `+` gives a byte list; joining a byte list and an
 ordinary list gives an ordinary list.
 
+`bytes_copy(src, from, dst, to, count)` copies a run of bytes from one
+byte list into another in one step, where a loop would store them one
+at a time:
+
+```omg
+;;;omg
+
+alloc row := to_bytes([1, 2, 3, 4])
+alloc picture := bytes_repeat(0, 8)
+bytes_copy(row, 0, picture, 2, 4)       # 4 bytes of row, from index 0, to index 2
+emit picture            # [0, 0, 1, 2, 3, 4, 0, 0]
+
+bytes_copy(picture, 2, picture, 3, 4)   # within one list, even overlapping
+emit picture            # [0, 0, 1, 1, 2, 3, 4, 0]
+```
+
+Nothing grows: both runs have to lie inside their lists, or it raises
+`IndexError`.
+
 Everything that hands you raw bytes hands you a byte list:
 `file_read` on a binary handle, `tcp_read`, `stdin_read_bytes` and
 `string_bytes`. `file_write`, `tcp_write` and `bytes_to_string` take
@@ -783,6 +802,7 @@ Always available, no import needed.
 | `list_repeat(item, n)`         | a new list holding `item` `n` times                   |
 | `bytes_repeat(value, n)`       | a new byte list holding `value` (0–255) `n` times     |
 | `to_bytes(x)`                  | a new byte list from a list of integers 0–255, from the UTF-8 bytes of a string, or a copy of a byte list |
+| `bytes_copy(src, from, dst, to, count)` | copy `count` bytes of byte list `src`, from index `from`, into byte list `dst` at index `to` |
 | **File I/O**                   |                                                       |
 | `read_file(path)`              | read a text file in one shot, or `false` on error     |
 | `file_open(path, mode)`        | open and return a handle (`r`, `rb`, `w`, `wb`, `a`, `ab`) |

@@ -91,6 +91,24 @@ function omg_bytes_repeat(item, count) {
     return new OmgBytes(a, n);
 }
 
+function omg_bytes_copy(src, from, dst, to, count) {
+    if (!(src instanceof OmgBytes) || !(dst instanceof OmgBytes) ||
+        typeof from !== 'bigint' || typeof to !== 'bigint' || typeof count !== 'bigint') {
+        omg_panic('TypeError', 'bytes_copy() expects (byte list, int, byte list, int, int)');
+    }
+    if (count < 0n) omg_panic('ValueError', 'bytes_copy() count must be non-negative, got ' + count);
+    if (from < 0n || from > BigInt(src.n) || count > BigInt(src.n) - from) {
+        omg_panic('IndexError', 'bytes_copy(): ' + count + ' bytes from index ' + from + ' do not fit in a byte list of ' + src.n);
+    }
+    if (to < 0n || to > BigInt(dst.n) || count > BigInt(dst.n) - to) {
+        omg_panic('IndexError', 'bytes_copy(): ' + count + ' bytes to index ' + to + ' do not fit in a byte list of ' + dst.n);
+    }
+    const f = Number(from), t = Number(to), n = Number(count);
+    if (src === dst) dst.a.copyWithin(t, f, f + n);
+    else dst.a.set(src.a.subarray(f, f + n), t);
+    return null;
+}
+
 function omg_to_bytes(x) {
     if (x instanceof OmgBytes) return new OmgBytes(x.a.slice(0, x.n), x.n);
     if (typeof x === 'string') return omg_bytes_from(new TextEncoder().encode(x));
@@ -1092,6 +1110,7 @@ const _omg_builtins = {
     list_repeat: omg_list_repeat,
     bytes_repeat: omg_bytes_repeat,
     to_bytes: omg_to_bytes,
+    bytes_copy: omg_bytes_copy,
     append: omg_append,
     chmod: omg_chmod,
     string_bytes: omg_string_bytes,

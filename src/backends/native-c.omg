@@ -132,6 +132,11 @@ proc emit_builtin3(c_func) {
     return "    { Value c = stack[--sp]; Value b = stack[--sp]; Value a = stack[--sp]; Value r = " + c_func + "(a, b, c); omg_dec(a); omg_dec(b); omg_dec(c); stack[sp++] = r; }\n"
 }
 
+# Five arguments, a to e.
+proc emit_builtin5(c_func) {
+    return "    { Value e = stack[--sp]; Value d = stack[--sp]; Value c = stack[--sp]; Value b = stack[--sp]; Value a = stack[--sp]; Value r = " + c_func + "(a, b, c, d, e); omg_dec(a); omg_dec(b); omg_dec(c); omg_dec(d); omg_dec(e); stack[sp++] = r; }\n"
+}
+
 proc emit_builtin(name, argc) {
     if name == "length"   and argc == 1 { return emit_builtin1("omg_length") }
     if name == "chr"      and argc == 1 { return emit_builtin1("omg_chr") }
@@ -142,6 +147,7 @@ proc emit_builtin(name, argc) {
     if name == "list_repeat" and argc == 2 { return emit_builtin2("omg_list_repeat") }
     if name == "bytes_repeat" and argc == 2 { return emit_builtin2("omg_builtin_bytes_repeat") }
     if name == "to_bytes"  and argc == 1 { return emit_builtin1("omg_builtin_to_bytes") }
+    if name == "bytes_copy" and argc == 5 { return emit_builtin5("omg_builtin_bytes_copy") }
     if name == "append"    and argc == 2 { return emit_builtin2("omg_builtin_append") }
     if name == "chmod"     and argc == 2 { return emit_builtin2("omg_builtin_chmod") }
 

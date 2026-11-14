@@ -1459,6 +1459,29 @@ static Value omg_builtin_to_bytes(Value x) {
     return v;
 }
 
+/* bytes_copy(src, from, dst, to, count): `count` bytes of one byte list
+ * written into another, or into the same one; the runs may overlap.
+ * Nothing grows: both runs have to lie inside their lists. */
+static Value omg_builtin_bytes_copy(Value src, Value from, Value dst, Value to, Value count) {
+    if (src.tag != OMG_BYTES || dst.tag != OMG_BYTES ||
+        from.tag != OMG_INT || to.tag != OMG_INT || count.tag != OMG_INT) {
+        omg_panic("TypeError", "bytes_copy() expects (byte list, int, byte list, int, int)");
+    }
+    long long n = (long long)count.v.i, f = (long long)from.v.i, t = (long long)to.v.i;
+    long long sn = src.v.y->len, dn = dst.v.y->len;
+    if (n < 0) {
+        omg_panicf("ValueError", "bytes_copy() count must be non-negative, got %lld", n);
+    }
+    if (f < 0 || f > sn || n > sn - f) {
+        omg_panicf("IndexError", "bytes_copy(): %lld bytes from index %lld do not fit in a byte list of %lld", n, f, sn);
+    }
+    if (t < 0 || t > dn || n > dn - t) {
+        omg_panicf("IndexError", "bytes_copy(): %lld bytes to index %lld do not fit in a byte list of %lld", n, t, dn);
+    }
+    if (n > 0) memmove(dst.v.y->data + t, src.v.y->data + f, (size_t)n);
+    return omg_none();
+}
+
 /* === Dicts ===============================================================
  * Phase 5: parallel keys[]/vals[] arrays, linear lookup. Plenty fast for
  * the OMG corpus (dicts tend to be small) and trivially correct. The
@@ -4254,6 +4277,9 @@ static Value omg_call_builtin(Value name, Value args) {
         if (strcmp(n, "window_open") == 0) return omg_builtin_window_open(a[0], a[1], a[2]);
         if (strcmp(n, "window_draw") == 0) return omg_builtin_window_draw(a[0], a[1], a[2]);
         if (strcmp(n, "audio_write") == 0) return omg_builtin_audio_write(a[0], a[1], a[2]);
+    }
+    if (argc == 5) {
+        if (strcmp(n, "bytes_copy") == 0) return omg_builtin_bytes_copy(a[0], a[1], a[2], a[3], a[4]);
     }
     omg_panicf("TypeError", "unknown builtin: %s", n);
     return omg_none(); /* unreachable */

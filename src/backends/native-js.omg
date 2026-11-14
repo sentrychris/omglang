@@ -110,6 +110,9 @@ proc emit_builtin2(js_func) {
 proc emit_builtin3(js_func) {
     return "    { const _c = _s.pop(); const _b = _s.pop(); const _a = _s.pop(); _s.push(" + js_func + "(_a, _b, _c)); }\n"
 }
+proc emit_builtin5(js_func) {
+    return "    { const _e = _s.pop(); const _d = _s.pop(); const _c = _s.pop(); const _b = _s.pop(); const _a = _s.pop(); _s.push(" + js_func + "(_a, _b, _c, _d, _e)); }\n"
+}
 proc emit_builtin0(js_func) {
     return "    _s.push(" + js_func + "());\n"
 }
@@ -127,6 +130,7 @@ proc emit_builtin(name, argc) {
     if name == "list_repeat"   and argc == 2 { return emit_builtin2("omg_list_repeat") }
     if name == "bytes_repeat"  and argc == 2 { return emit_builtin2("omg_bytes_repeat") }
     if name == "to_bytes"      and argc == 1 { return emit_builtin1("omg_to_bytes") }
+    if name == "bytes_copy"    and argc == 5 { return emit_builtin5("omg_bytes_copy") }
     if name == "append"        and argc == 2 { return emit_builtin2("omg_append") }
     if name == "chmod"         and argc == 2 { return emit_builtin2("omg_chmod") }
     if name == "int"           and argc == 1 { return emit_builtin1("omg_int") }
