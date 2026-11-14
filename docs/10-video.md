@@ -11,7 +11,7 @@ Everything between the file and the screen and loudspeakers is OMG.
 The MP4 reader, the H.264 decoder and the AAC decoder are OMG programs,
 and the window and the sound are opened by the runtime, itself OMG,
 speaking to the system directly. No library is linked in and no other
-program is started: `play` is one executable of about 1.8 MB, and
+program is started: `play` is one executable of about 1.9 MB, and
 `--target windows-x64` gives the same thing for Windows from Linux.
 
 This page covers the four builtins that give a program a window and
@@ -301,9 +301,10 @@ happened:
 ```
 flower.mp4: 960x540, 150 pictures, 29.9 a second
 sound: AAC, 48000 Hz, two channels
-103 pictures shown in 5.0 s: 20.4 a second
-decoding took 38.7 ms a picture, drawing 8.4 ms
-47 pictures were left out, to keep up
+138 pictures shown in 4.9 s: 27.6 a second
+decoding took 23.4 ms a picture, drawing 7.3 ms
+10 pictures were left out, to keep up
+2 pictures were decoded but not drawn, to keep up
 ```
 
 Run interpreted (`omg tools/video/play.omg clip.mp4`) it works, but
@@ -502,10 +503,10 @@ milliseconds a picture (`play --fast` prints these):
 
 | Video | Decoding | Converting and drawing | Pictures a second |
 | ----- | -------- | ---------------------- | ----------------- |
-| 176x144 | 0.8 | 1.1 | 470 |
-| 320x240, a Mandelbrot zoom (hard to compress) | 4.6 | 3.8 | 115 |
-| 640x480 | 8.3 | 5.0 | 75 |
-| 1280x720 | 24 | 16 | 25 |
+| 176x144 | 0.5 | 1.0 | 620 |
+| 320x240, a Mandelbrot zoom (hard to compress) | 2.7 | 2.8 | 180 |
+| 640x480 | 3.5 | 4.4 | 126 |
+| 1280x720 | 11 | 13 | 42 |
 
 Those are clips made for the purpose, in the Baseline profile. Files
 from the web are harder work: more of each picture moves, and a B
@@ -514,34 +515,49 @@ pictures a second:
 
 | Video | Decoding | Converting and drawing | Pictures a second |
 | ----- | -------- | ---------------------- | ----------------- |
-| 640x360 | 13 | 4 | 59 |
-| 640x360, an animated film | 15 | 4 | 52 |
-| 960x540 | 42 | 9 | 19 |
-| 1280x720 | 62 | 16 | 13 |
-| 1920x1080 | 165 | 37 | 4.9 |
+| 640x360 | 6.6 | 3.3 | 100 |
+| 640x360, an animated film | 9.0 | 3.1 | 82 |
+| 960x540 | 24 | 7.6 | 32 |
+| 1280x720 | 32 | 13 | 22 |
+| 1920x1080 | 108 | 36 | 6.9 |
 
 So video up to about 640x360 plays at its proper speed, every picture
-shown. At 960x540 the player keeps time by leaving out the pictures
-nothing depends on and shows a little over half; at 1280x720 it shows
-a third and falls behind as well. Full HD is beyond it.
+shown, with time to spare. At 960x540 there is hardly any to spare:
+the player shows nine pictures in ten or more and stays with the
+sound. At 1280x720 it keeps time, and its sound, by showing nearly
+half of the pictures, which is watchable and not smooth. Full HD is
+beyond it: the pictures fall behind and the sound is given up.
 
-For scale: ffmpeg decodes the same files 20 to 40 times faster on one
+For scale: ffmpeg decodes the same files 13 to 23 times faster on one
 core, with inner loops written by hand in assembly. The OMG decoder is ordinary
-OMG; nothing in it is special to the compiler. Three things in the
-back end made it this fast, and they help every OMG program that loops
-over lists of numbers ([04-pipeline.md](04-pipeline.md) shows the
-code). Reading and writing list elements, and shifts, are compiled in
-line instead of as calls into the runtime: before that the figures
-above were 2.4 times higher for decoding and 5 times for converting.
-And each proc has a fast version that takes its numbers to be Ints
-until one is not, which leaves out most of the checking. That last
-step took four instructions in ten out of the decoder, and yet only
-10 to 25 percent off these times: a modern processor runs such checks
-alongside the real work, nearly for nothing. What the time goes on now
-is memory and branches that cannot be predicted. A sample is one byte
-in the file and sixteen in an OMG list, so a 1280x720 picture is 22 MB
-of list; a list of bytes that took one byte each would be the next
-large step, and that is a change to the language, not to the back end.
+OMG; nothing in it is special to the compiler. Four things in the
+language and its back end made it this fast, and they help every OMG
+program that loops over numbers ([04-pipeline.md](04-pipeline.md)
+shows the code). Reading and writing list elements, and shifts, are
+compiled in line instead of as calls into the runtime: that made
+decoding 2.4 times as fast and converting 5 times. Each proc has a
+fast version that takes its numbers to be Ints until one is not, which
+leaves out most of the checking. That step took four instructions in
+ten out of the decoder, and yet only 10 to 25 percent off its time: a
+modern processor runs such checks alongside the real work, nearly for
+nothing. The samples of a picture are kept in
+[byte lists](03-language-tour.md#byte-lists), one byte each as in the
+file, where a list spends sixteen. And a block that is taken unchanged
+from an earlier picture is copied by one call of `bytes_copy`, not a
+sample at a time. A 1280x720 picture was 22 MB of list and is 1.4 MB
+now; the player needs a third of the memory it did (105 MB for the
+1280x720 file above, 310 MB before), and decoding the five files takes
+between a sixth and a third less time.
+
+What the time goes on now is the number of instructions, not memory,
+and no one place has much of it. Under a profiler the largest in
+1280x720 video, with a sixth of the decoder's instructions, is
+averaging the two predictions of a picture that is predicted twice;
+smoothing the edges of blocks, working out the samples between
+samples, and reading the bits follow with less than a tenth each. And
+for a picture that is easy to decode, such as those of the first
+table, converting it for the window and drawing it now takes as long
+as decoding it.
 
 Sound costs little next to that. A second of stereo at 48000 Hz
 decodes in 22 to 26 ms, so playing it takes a fortieth of one core.
@@ -612,8 +628,9 @@ the count) but not heard.
   profiles that hardly any encoder uses (slice groups, data
   partitioning, switching slices).
 - **Speed for large pictures.** See [above](#how-fast-it-is): beyond
-  about 640x360 the player cannot show every picture. To watch a
-  larger file smoothly, make it smaller first:
+  about 960x540 the player shows half of the pictures or fewer, and
+  beyond 1280x720 it cannot keep the sound. To watch a larger file
+  smoothly, make it smaller first:
   `ffmpeg -i in.mp4 -vf scale=640:-2 -an out.mp4`.
 - **Other codecs** (H.265, AV1, VP9). `mp4.open` reads the file and
   names the codec; nothing decodes it.
