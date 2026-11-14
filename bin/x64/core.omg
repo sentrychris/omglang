@@ -31,6 +31,7 @@ alloc T_LIST := 9
 alloc T_DICT := 10
 alloc T_CLOSURE := 11
 alloc T_CELL := 12
+alloc T_BYTES := 13
 
 # String:  [0] count [8] characters [16] bytes [24] hash [32] data, NUL,
 #          zero padding to a multiple of 8
@@ -44,6 +45,8 @@ alloc L_LEN := 8
 alloc L_CAP := 16
 alloc L_ITEMS := 24
 alloc L_SIZE := 32
+# Byte list: the same four words as a list, but the items are one byte
+#          each: whole numbers from 0 to 255, with no tag
 # Dict:    [0] count [8] length [16] capacity [24] entries [32] index
 #          [40] index mask [48] frozen
 #          entry (32 bytes): key string, hash, value payload, value tag
@@ -200,6 +203,14 @@ proc rt_destroy(tag, v) {
         alloc cap := __peek64(v + L_CAP)
         if cap > 0 {
             rt_free(items, cap * 16)
+        }
+        rt_free(v, L_SIZE)
+        return 0
+    }
+    if tag == T_BYTES {
+        alloc cap := __peek64(v + L_CAP)
+        if cap > 0 {
+            rt_free(__peek64(v + L_ITEMS), cap)
         }
         rt_free(v, L_SIZE)
         return 0
@@ -585,6 +596,19 @@ proc rt_buf_value(b, tag, v) {
         rt_buf_byte(b, 93)
         rt_print_depth := rt_print_depth - 1
         return 0
+    }
+    if tag == T_BYTES {
+        rt_buf_byte(b, 91)
+        alloc n := __peek64(v + L_LEN)
+        alloc i := 0
+        loop i < n {
+            if i > 0 {
+                rt_buf_str(b, ", ")
+            }
+            rt_buf_int(b, __peek8(__peek64(v + L_ITEMS) + i))
+            i := i + 1
+        }
+        return rt_buf_byte(b, 93)
     }
     if tag == T_DICT {
         if rt_print_enter(v) == 0 {
@@ -1086,6 +1110,166 @@ proc rt_list_concat(a, b) {
     return r
 }
 
+# === Byte lists =======================================================================
+#
+# A list that can hold nothing but whole numbers from 0 to 255, and
+# spends one byte on each. Whatever reads a list reads a byte list the
+# same way; only storing is stricter.
+
+proc rt_bytes_alloc(cap) {
+    alloc b := rt_alloc(L_SIZE)
+    __poke64(b, 1)
+    __poke64(b + L_LEN, 0)
+    __poke64(b + L_CAP, cap)
+    if cap > 0 {
+        __poke64(b + L_ITEMS, rt_alloc(cap))
+    } else {
+        __poke64(b + L_ITEMS, 0)
+    }
+    return b
+}
+
+# A new byte list holding the n bytes at p.
+proc rt_bytes_from(p, n) {
+    alloc b := rt_bytes_alloc(n)
+    if n > 0 {
+        __memcpy(__peek64(b + L_ITEMS), p, n)
+    }
+    __poke64(b + L_LEN, n)
+    return b
+}
+
+# A byte buffer (rt_buf_new) as a byte list, which takes over its
+# memory; the buffer is gone.
+proc rt_buf_to_bytes(buf) {
+    alloc b := rt_alloc(L_SIZE)
+    __poke64(b, 1)
+    __poke64(b + L_LEN, __peek64(buf + 8))
+    __poke64(b + L_CAP, __peek64(buf + 16))
+    __poke64(b + L_ITEMS, __peek64(buf))
+    rt_free(buf, 24)
+    return b
+}
+
+# The value as something a byte list can hold, or an error.
+proc rt_byte_check(tag, v) {
+    if tag != T_INT {
+        return rt_throw2("TypeError", "a byte list holds whole numbers from 0 to 255, not ", tag, v)
+    }
+    if v < 0 or v > 255 {
+        return rt_throw2("ValueError", "a byte list holds whole numbers from 0 to 255, not ", tag, v)
+    }
+    return v
+}
+
+proc rt_bytes_push(b, v) {
+    alloc n := __peek64(b + L_LEN)
+    alloc cap := __peek64(b + L_CAP)
+    if n == cap {
+        alloc ncap := cap * 2
+        if ncap < 16 { ncap := 16 }
+        alloc ni := rt_alloc(ncap)
+        if cap > 0 {
+            __memcpy(ni, __peek64(b + L_ITEMS), n)
+            rt_free(__peek64(b + L_ITEMS), cap)
+        }
+        __poke64(b + L_ITEMS, ni)
+        __poke64(b + L_CAP, ncap)
+    }
+    __poke8(__peek64(b + L_ITEMS) + n, v)
+    __poke64(b + L_LEN, n + 1)
+    return 0
+}
+
+# A new byte list with items [start, end) of b.
+proc rt_bytes_sub(b, start, end) {
+    return rt_bytes_from(__peek64(b + L_ITEMS) + start, end - start)
+}
+
+proc rt_bytes_concat(a, b) {
+    alloc na := __peek64(a + L_LEN)
+    alloc nb := __peek64(b + L_LEN)
+    alloc r := rt_bytes_alloc(na + nb)
+    if na > 0 {
+        __memcpy(__peek64(r + L_ITEMS), __peek64(a + L_ITEMS), na)
+    }
+    if nb > 0 {
+        __memcpy(__peek64(r + L_ITEMS) + na, __peek64(b + L_ITEMS), nb)
+    }
+    __poke64(r + L_LEN, na + nb)
+    return r
+}
+
+proc rt_bytes_eq(a, b) {
+    if a == b {
+        return 1
+    }
+    alloc n := __peek64(a + L_LEN)
+    if n != __peek64(b + L_LEN) {
+        return 0
+    }
+    if n == 0 {
+        return 1
+    }
+    return __memcmp(__peek64(a + L_ITEMS), __peek64(b + L_ITEMS), n) == 0
+}
+
+# A byte list and a list are equal when they hold the same numbers.
+proc rt_bytes_eq_list(b, l) {
+    alloc n := __peek64(b + L_LEN)
+    if n != __peek64(l + L_LEN) {
+        return 0
+    }
+    alloc i := 0
+    loop i < n {
+        alloc y := __peek64(l + L_ITEMS) + i * 16
+        if rt_values_equal(T_INT, __peek8(__peek64(b + L_ITEMS) + i), __peek64(y + 8), __peek64(y)) == 0 {
+            return 0
+        }
+        i := i + 1
+    }
+    return 1
+}
+
+# A list and a byte list joined, either way round: a list.
+proc rt_mixed_concat(at, a, bt, b) {
+    alloc na := __peek64(a + L_LEN)
+    alloc nb := __peek64(b + L_LEN)
+    alloc r := rt_list_alloc(na + nb)
+    alloc dst := __peek64(r + L_ITEMS)
+    alloc k := 0
+    loop k < 2 {
+        alloc st := at
+        alloc src := __peek64(a + L_ITEMS)
+        alloc n := na
+        if k == 1 {
+            st := bt
+            src := __peek64(b + L_ITEMS)
+            n := nb
+        }
+        alloc i := 0
+        loop i < n {
+            if st == T_BYTES {
+                __poke64(dst, __peek8(src + i))
+                __poke64(dst + 8, T_INT)
+            } else {
+                alloc t := __peek64(src + i * 16 + 8)
+                alloc v := __peek64(src + i * 16)
+                if t >= T_STR {
+                    __poke64(v, __peek64(v) + 1)
+                }
+                __poke64(dst, v)
+                __poke64(dst + 8, t)
+            }
+            dst := dst + 16
+            i := i + 1
+        }
+        k := k + 1
+    }
+    __poke64(r + L_LEN, na + nb)
+    return r
+}
+
 # === Dicts ============================================================================
 
 proc rt_dict_new() {
@@ -1289,7 +1473,7 @@ proc rt_truthy(tag, v) {
     if tag == T_STR {
         return __peek64(v + S_BYTES) != 0
     }
-    if tag == T_LIST or tag == T_DICT {
+    if tag == T_LIST or tag == T_DICT or tag == T_BYTES {
         return __peek64(v + L_LEN) != 0
     }
     if tag == T_FLOAT {
@@ -1310,6 +1494,12 @@ proc rt_values_equal(at, a, bt, b) {
         if at == T_FLOAT and bt == T_INT {
             return __feq(a, __i2f(b))
         }
+        if at == T_BYTES and bt == T_LIST {
+            return rt_bytes_eq_list(a, b)
+        }
+        if at == T_LIST and bt == T_BYTES {
+            return rt_bytes_eq_list(b, a)
+        }
         return 0
     }
     if at == T_INT or at == T_BOOL {
@@ -1323,6 +1513,9 @@ proc rt_values_equal(at, a, bt, b) {
     }
     if at == T_NONE {
         return 1
+    }
+    if at == T_BYTES {
+        return rt_bytes_eq(a, b)
     }
     if at == T_LIST {
         if a == b {
@@ -1390,7 +1583,7 @@ alloc INT_MIN := -9223372036854775807
 
 proc rt_convert_error(tag, target) {
     alloc what := "none"
-    if tag == T_LIST { what := "list" }
+    if tag == T_LIST or tag == T_BYTES { what := "list" }
     if tag == T_DICT { what := "dict" }
     if tag == T_CLOSURE { what := "function" }
     alloc b := rt_buf_new()
@@ -1502,6 +1695,14 @@ proc rt_add(at, a, bt, b) {
     if at == T_LIST and bt == T_LIST {
         rt_tag := T_LIST
         return rt_list_concat(a, b)
+    }
+    if at == T_BYTES and bt == T_BYTES {
+        rt_tag := T_BYTES
+        return rt_bytes_concat(a, b)
+    }
+    if (at == T_LIST or at == T_BYTES) and (bt == T_LIST or bt == T_BYTES) {
+        rt_tag := T_LIST
+        return rt_mixed_concat(at, a, bt, b)
     }
     if at == T_FLOAT or bt == T_FLOAT {
         alloc x := rt_as_float(at, a)
@@ -1762,6 +1963,11 @@ proc rt_index(bt, base, it, idx) {
         rt_tag := t
         return v
     }
+    if bt == T_BYTES and it == T_INT {
+        alloc real := rt_norm_index(idx, __peek64(base + L_LEN))
+        rt_tag := T_INT
+        return __peek8(__peek64(base + L_ITEMS) + real)
+    }
     if bt == T_DICT {
         if it == T_STR {
             return rt_dict_get(base, idx)
@@ -1785,7 +1991,7 @@ proc rt_index(bt, base, it, idx) {
         rt_tag := T_STR
         return rt_str_char_at(base, real)
     }
-    if (bt == T_LIST or bt == T_STR) and it == T_FLOAT {
+    if (bt == T_LIST or bt == T_STR or bt == T_BYTES) and it == T_FLOAT {
         return rt_type_error("list/string index must be an integer, not a float")
     }
     return rt_throw3("TypeError", "", bt, base, " is not indexable")
@@ -1821,6 +2027,11 @@ proc rt_store_index(bt, base, it, idx, vt, v) {
         if ot >= T_STR {
             rt_drop(ot, ov)
         }
+        return 0
+    }
+    if bt == T_BYTES and it == T_INT {
+        alloc real := rt_norm_index(idx, __peek64(base + L_LEN))
+        __poke8(__peek64(base + L_ITEMS) + real, rt_byte_check(vt, v))
         return 0
     }
     if bt == T_DICT {
@@ -1860,7 +2071,7 @@ proc rt_slice_bound(tag, v, dflt, total) {
 
 # base[start:end]: an owned value, tag in rt_tag.
 proc rt_slice(bt, base, st, start, et, end) {
-    if bt != T_STR and bt != T_LIST {
+    if bt != T_STR and bt != T_LIST and bt != T_BYTES {
         return rt_type_error("cannot slice this value")
     }
     alloc total := __peek64(base + 8)
@@ -1876,6 +2087,9 @@ proc rt_slice(bt, base, st, start, et, end) {
             return base
         }
         return rt_str_sub(base, a, b)
+    }
+    if bt == T_BYTES {
+        return rt_bytes_sub(base, a, b)
     }
     return rt_list_sub(base, a, b)
 }
