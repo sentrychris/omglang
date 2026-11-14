@@ -248,6 +248,13 @@ as on a list. The differences:
   0..255, from the UTF-8 bytes of a string, or as a copy of a byte
   list. There is no builtin for the other direction; `[] + b` gives
   an ordinary list with the same numbers.
+- `bytes_copy(src, from, dst, to, count)` copies `count` bytes of
+  `src`, starting at index `from`, into `dst` starting at index `to`.
+  Both are byte lists and may be the same one, with the runs
+  overlapping. It never grows `dst`: a run that does not lie inside
+  its list is an `IndexError`, and indexes do not count from the end.
+  Use it for any copy of more than a few bytes: it is one move where a
+  loop is a store per byte.
 
 ## Dicts
 
@@ -326,7 +333,9 @@ The full list, grouped by area. Argument counts in parens.
 `freeze(d)` (makes a dict immutable), `dict_keys(d)`, `has_key(d, k)`,
 `append(list, item)` (in place), `list_repeat(item, n)`,
 `bytes_repeat(value, n)` (a byte list of `n` times `value`),
-`to_bytes(x)` (a new byte list from a list, a string or a byte list)
+`to_bytes(x)` (a new byte list from a list, a string or a byte list),
+`bytes_copy(src, from, dst, to, count)` (a run of bytes from one byte
+list into another)
 
 **File I/O**
 `read_file(path)` (returns string),

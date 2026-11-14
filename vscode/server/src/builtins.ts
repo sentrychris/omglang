@@ -379,7 +379,7 @@ export const BUILTINS: readonly BuiltinDoc[] = [
             'TypeError: `value` or `count` is not an int.'
         ],
         example: 'alloc buf := bytes_repeat(0, 4)\nbuf[1] := 255\nemit buf                      # → [0, 255, 0, 0]',
-        see: ['to_bytes', 'list_repeat', 'append']
+        see: ['to_bytes', 'bytes_copy', 'list_repeat', 'append']
     }),
     b({
         name: 'to_bytes',
@@ -396,7 +396,31 @@ export const BUILTINS: readonly BuiltinDoc[] = [
             'TypeError: an item of the list is not an int, or `x` is none of the three.'
         ],
         example: 'alloc b := to_bytes([79, 77, 71])\nemit bytes_to_string(b)       # → OMG\nemit b == [79, 77, 71]        # → true',
-        see: ['bytes_repeat', 'string_bytes', 'bytes_to_string']
+        see: ['bytes_repeat', 'string_bytes', 'bytes_to_string', 'bytes_copy']
+    }),
+    b({
+        name: 'bytes_copy',
+        category: 'Strings and collections',
+        signatures: ['bytes_copy(src, from, dst, to, count)'],
+        params: [
+            { name: 'src', doc: 'The byte list to copy from.' },
+            { name: 'from', doc: 'Index of the first byte to copy.' },
+            { name: 'dst', doc: 'The byte list to copy into. It may be `src` itself.' },
+            { name: 'to', doc: 'Index in `dst` where the first byte goes.' },
+            { name: 'count', doc: 'How many bytes.' }
+        ],
+        minArgs: 5, maxArgs: 5,
+        summary: 'Copies a run of bytes from one byte list into another, in place.',
+        details: 'One call in place of a loop that stores byte by byte, and many times as fast. Nothing grows: both runs must lie inside their lists, and indexes do not count from the end. The two lists may be the same and the runs may overlap; the result is as if the bytes were read first and written after.',
+        returns: 'Nothing.',
+        returnType: 'none',
+        raises: [
+            'IndexError: a run starts below 0 or reaches past the end of its list.',
+            'ValueError: `count` is negative.',
+            'TypeError: `src` or `dst` is not a byte list, or a number is not an int.'
+        ],
+        example: 'alloc row := to_bytes([1, 2, 3, 4])\nalloc pic := bytes_repeat(0, 8)\nbytes_copy(row, 0, pic, 2, 4)\nemit pic                      # → [0, 0, 1, 2, 3, 4, 0, 0]',
+        see: ['bytes_repeat', 'to_bytes']
     }),
     b({
         name: 'dict_keys',

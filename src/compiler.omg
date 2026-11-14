@@ -1251,7 +1251,7 @@ alloc cc_builtins := [
     "sqrt", "pow", "log", "sin", "cos", "tan",
     "float_bits", "bits_to_float", "bytes_to_string", "dict_keys",
     "has_key",
-    "list_repeat", "bytes_repeat", "to_bytes",
+    "list_repeat", "bytes_repeat", "to_bytes", "bytes_copy",
     "append", "chmod",
     "exit_with_error", "exit", "getpid", "subprocess",
     "stdin_readline", "stdin_read", "stdin_read_bytes",

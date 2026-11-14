@@ -1,0 +1,70 @@
+0 bytes: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+1 bytes: [0, 20, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+2 bytes: [0, 19, 20, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+3 bytes: [0, 18, 19, 20, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+4 bytes: [0, 17, 18, 19, 20, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+5 bytes: [0, 16, 17, 18, 19, 20, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+7 bytes: [0, 14, 15, 16, 17, 18, 19, 20, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+8 bytes: [0, 13, 14, 15, 16, 17, 18, 19, 20, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+9 bytes: [0, 12, 13, 14, 15, 16, 17, 18, 19, 20, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+15 bytes: [0, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 0, 0, 0, 0, 0, 0]
+16 bytes: [0, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 0, 0, 0, 0, 0]
+17 bytes: [0, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 0, 0, 0, 0]
+20 bytes: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 0]
+what it gives back: true
+twice into one: [1, 2, 3, 1, 2, 3]
+the end of one to the end of the other: [1, 2, 3, 18, 19, 20]
+nothing, from the end to the end: [1, 2, 3, 18, 19, 20]
+1 up by three: [1, 2, 3, 1, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20]
+1 down by three: [4, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20]
+1 up by one: [1, 1, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20]
+1 onto itself: true
+3 up by three: [1, 2, 3, 1, 2, 3, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20]
+3 down by three: [4, 5, 6, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20]
+3 up by one: [1, 1, 2, 3, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20]
+3 onto itself: true
+4 up by three: [1, 2, 3, 1, 2, 3, 4, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20]
+4 down by three: [4, 5, 6, 7, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20]
+4 up by one: [1, 1, 2, 3, 4, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20]
+4 onto itself: true
+7 up by three: [1, 2, 3, 1, 2, 3, 4, 5, 6, 7, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20]
+7 down by three: [4, 5, 6, 7, 8, 9, 10, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20]
+7 up by one: [1, 1, 2, 3, 4, 5, 6, 7, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20]
+7 onto itself: true
+8 up by three: [1, 2, 3, 1, 2, 3, 4, 5, 6, 7, 8, 12, 13, 14, 15, 16, 17, 18, 19, 20]
+8 down by three: [4, 5, 6, 7, 8, 9, 10, 11, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20]
+8 up by one: [1, 1, 2, 3, 4, 5, 6, 7, 8, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20]
+8 onto itself: true
+10 up by three: [1, 2, 3, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 14, 15, 16, 17, 18, 19, 20]
+10 down by three: [4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20]
+10 up by one: [1, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 12, 13, 14, 15, 16, 17, 18, 19, 20]
+10 onto itself: true
+16 up by three: [1, 2, 3, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 20]
+16 down by three: [4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 17, 18, 19, 20]
+16 up by one: [1, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 18, 19, 20]
+16 onto itself: true
+17 up by three: [1, 2, 3, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17]
+17 down by three: [4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 18, 19, 20]
+17 up by one: [1, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 19, 20]
+17 onto itself: true
+rows of 4: 136
+rows of 8: 2080
+rows of 16: 18528
+one more than the source has: IndexError
+off the end of the source: IndexError
+a source index below zero: IndexError
+off the end of the destination: IndexError
+a destination index below zero: IndexError
+a count below zero: ValueError
+nothing from past the end: IndexError
+nothing to past the end: IndexError
+numbers that would wrap round: IndexError
+an index that would wrap round: IndexError
+from a list: TypeError
+to a list: TypeError
+from a string: TypeError
+a float index: TypeError
+a string index: TypeError
+a float count: TypeError
+untouched by all that: true
+call_builtin: [3, 4, 5, 6]
