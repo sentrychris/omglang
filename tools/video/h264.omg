@@ -483,7 +483,7 @@ alloc CB_LAST8 := [
 # every byte position the four bytes from there on are kept as one
 # number, so that any read of up to 25 bits is one list access.
 
-alloc br_b := list_repeat(0, 4096)
+alloc br_b := bytes_repeat(0, 4096)
 alloc br_w := list_repeat(0, 4096)
 alloc br_pos := 0              # in bits
 alloc br_end := 0              # the bit position of the stop bit
@@ -491,7 +491,7 @@ alloc br_end := 0              # the bit position of the stop bit
 proc br_load(data, from, to) {
     alloc n := to - from
     if length(br_b) < n + 16 {
-        br_b := list_repeat(0, n * 2 + 16)
+        br_b := bytes_repeat(0, n * 2 + 16)
         br_w := list_repeat(0, n * 2 + 16)
     }
     alloc b := br_b
@@ -1198,25 +1198,25 @@ proc activate_sps(s) {
         s4 := mbw * 4
         s2 := mbw * 2
         mb_slice := list_repeat(-1, mb_count)
-        mb_intra := list_repeat(0, mb_count)
-        mb_qp := list_repeat(0, mb_count)
-        mb_skip := list_repeat(0, mb_count)
-        mb_kind := list_repeat(0, mb_count)
-        mb_cbp := list_repeat(0, mb_count)
-        mb_cmode := list_repeat(0, mb_count)
-        mb_dc := list_repeat(0, mb_count)
-        mb_t8 := list_repeat(0, mb_count)
-        mb_whole := list_repeat(0, mb_count)
-        mvdx := list_repeat(0, mb_count * 16)
-        mvdy := list_repeat(0, mb_count * 16)
-        mvdx1 := list_repeat(0, mb_count * 16)
-        mvdy1 := list_repeat(0, mb_count * 16)
-        bdirect := list_repeat(0, mb_count * 16)
-        mb_bdir := list_repeat(0, mb_count)
-        nz := list_repeat(0, mb_count * 16)
-        ipm := list_repeat(2, mb_count * 16)
-        nzu := list_repeat(0, mb_count * 4)
-        nzv := list_repeat(0, mb_count * 4)
+        mb_intra := bytes_repeat(0, mb_count)
+        mb_qp := bytes_repeat(0, mb_count)
+        mb_skip := bytes_repeat(0, mb_count)
+        mb_kind := bytes_repeat(0, mb_count)
+        mb_cbp := bytes_repeat(0, mb_count)
+        mb_cmode := bytes_repeat(0, mb_count)
+        mb_dc := bytes_repeat(0, mb_count)
+        mb_t8 := bytes_repeat(0, mb_count)
+        mb_whole := bytes_repeat(0, mb_count)
+        mvdx := bytes_repeat(0, mb_count * 16)
+        mvdy := bytes_repeat(0, mb_count * 16)
+        mvdx1 := bytes_repeat(0, mb_count * 16)
+        mvdy1 := bytes_repeat(0, mb_count * 16)
+        bdirect := bytes_repeat(0, mb_count * 16)
+        mb_bdir := bytes_repeat(0, mb_count)
+        nz := bytes_repeat(0, mb_count * 16)
+        ipm := bytes_repeat(2, mb_count * 16)
+        nzu := bytes_repeat(0, mb_count * 4)
+        nzv := bytes_repeat(0, mb_count * 4)
         pic_all := []
         dpb := []
     }
@@ -1236,9 +1236,9 @@ proc pic_alloc() {
     }
     if p == false {
         p := {}
-        p.y := list_repeat(0, ystride * pic_h)
-        p.u := list_repeat(128, cstride * (pic_h // 2))
-        p.v := list_repeat(128, cstride * (pic_h // 2))
+        p.y := bytes_repeat(0, ystride * pic_h)
+        p.u := bytes_repeat(128, cstride * (pic_h // 2))
+        p.v := bytes_repeat(128, cstride * (pic_h // 2))
         p.mvx := list_repeat(0, mb_count * 16)
         p.mvy := list_repeat(0, mb_count * 16)
         p.refi := list_repeat(-1, mb_count * 16)

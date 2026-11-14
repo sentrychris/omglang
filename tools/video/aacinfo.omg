@@ -61,7 +61,7 @@ proc sound(m, out_path, unmixed) {
         out := file_open(out_path, "wb")
     }
     alloc took := 0
-    alloc bytes := list_repeat(0, 4096)
+    alloc bytes := bytes_repeat(0, 4096)
     alloc i := 0
     loop i < s.count {
         alloc data := mp4.read_sound(m, i)
@@ -74,7 +74,7 @@ proc sound(m, out_path, unmixed) {
         alloc n := length(pcm)
         if out != false {
             if length(bytes) != 2 * n {
-                bytes := list_repeat(0, 2 * n)
+                bytes := bytes_repeat(0, 2 * n)
             }
             alloc k := 0
             loop k < n {
