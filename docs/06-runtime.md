@@ -97,6 +97,7 @@ A value of your program is two words: a tag and a payload.
 | 8 | Str | pointer to the object |
 | 9, 10, 11 | List, Dict, Closure | pointer to the object |
 | 12 | Cell | a captured variable |
+| 13 | Byte list | pointer to the object |
 
 Tags of 8 and above are heap objects, and every heap object starts
 with its reference count. The layouts (offsets in bytes) are at the
@@ -106,6 +107,9 @@ top of `core.omg`:
   hash, then the UTF-8 data and a NUL.
 - **List**: count, length, capacity, pointer to the items (16 bytes
   each: payload, tag).
+- **Byte list**: the same four words, and the pointer is to one byte
+  per item. Having the length and the pointer where a list has them
+  lets compiled code share the bounds check between the two.
 - **Dict**: count, length, capacity, entries (key, hash, value), and
   an index of 32-bit slots for hashing. Small dicts are scanned and
   have no index. Entries keep insertion order.

@@ -1,0 +1,16 @@
+;;;omg
+# expect: ValueError
+# A byte list refuses a number it cannot hold, and the error is an
+# ordinary one: uncaught, it ends the program.
+proc fill(xs, v) {
+    alloc i := 0
+    loop i < length(xs) {
+        xs[i] := v + i
+        i := i + 1
+    }
+    return xs
+}
+emit fill(bytes_repeat(0, 3), 10)
+emit fill(list_repeat(0, 3), 254)
+emit fill(bytes_repeat(0, 3), 254)
+emit "not reached"

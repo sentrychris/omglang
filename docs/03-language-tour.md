@@ -200,7 +200,8 @@ emit length(s)             # 5 (not 6)
 emit s[1]                  # é
 ```
 
-For raw byte access use `string_bytes(s)` and `bytes_to_string(list)`.
+For raw byte access use `string_bytes(s)`, which gives a
+[byte list](#byte-lists), and `bytes_to_string(bytes)`.
 
 ## Lists
 
@@ -216,6 +217,37 @@ emit xs                    # [99, 2, 3]
 append(xs, 4)              # in-place push, constant time
 emit xs                    # [99, 2, 3, 4]
 ```
+
+## Byte lists
+
+A byte list holds only Ints from 0 to 255 and stores each in one
+byte, where a list spends sixteen. It is what `file_read` on a binary
+handle, `tcp_read`, `stdin_read_bytes` and `string_bytes` return, and
+the thing to keep a picture, a sound or a file's contents in.
+
+```omg
+alloc b := bytes_repeat(0, 3)      # [0, 0, 0]
+b[0] := 255
+append(b, 16)
+emit b                     # [255, 0, 0, 16]
+emit b[0] + 1              # 256: an element read is an ordinary Int
+emit b[1:]                 # [0, 0, 16] (a byte list)
+emit to_bytes([1, 2]) == [1, 2]    # true
+emit to_bytes("hi")        # [104, 105]
+b[0] := 256                # ValueError: a byte list holds whole numbers from 0 to 255, not 256
+```
+
+Indexing, slicing, `for`, `length`, `append`, `==` and printing work
+as on a list. The differences:
+
+- Storing or appending an Int outside 0..255 raises `ValueError`, and
+  anything that is not an Int raises `TypeError`. Nothing wraps round.
+- `bytes + bytes` is a byte list. `bytes + list` and `list + bytes`
+  are ordinary lists.
+- `to_bytes(x)` always makes a new byte list: from a list of Ints
+  0..255, from the UTF-8 bytes of a string, or as a copy of a byte
+  list. There is no builtin for the other direction; `[] + b` gives
+  an ordinary list with the same numbers.
 
 ## Dicts
 
@@ -280,7 +312,8 @@ Imports are resolved at compile time and inlined into the bytecode.
 The full list, grouped by area. Argument counts in parens.
 
 **Strings & chars**
-`length(x)`, `chr(i)`, `ascii(s)`, `string_bytes(s)`, `bytes_to_string(list)`
+`length(x)`, `chr(i)`, `ascii(s)`, `string_bytes(s)` (a byte list),
+`bytes_to_string(bytes)` (a byte list or a list of Ints 0..255)
 
 **Numeric**
 `int(x)`, `float(x)`, `floor(x)`, `ceil(x)`, `round(x)`, `abs(x)`, `pow(a,b)`,
@@ -291,11 +324,14 @@ The full list, grouped by area. Argument counts in parens.
 
 **Collections**
 `freeze(d)` (makes a dict immutable), `dict_keys(d)`, `has_key(d, k)`,
-`append(list, item)` (in place), `list_repeat(item, n)`
+`append(list, item)` (in place), `list_repeat(item, n)`,
+`bytes_repeat(value, n)` (a byte list of `n` times `value`),
+`to_bytes(x)` (a new byte list from a list, a string or a byte list)
 
 **File I/O**
 `read_file(path)` (returns string),
-`file_open(path, mode)` (returns int handle), `file_read(h)`,
+`file_open(path, mode)` (returns int handle), `file_read(h)` (a string,
+or a byte list from a binary handle),
 `file_read(h, max)` (at most `max` bytes), `file_write(h, data)`,
 `file_close(h)`,
 `file_exists(p)`, `file_size(p)`, `file_mtime(p)` (ms since 1970),
@@ -308,7 +344,7 @@ Windows it only checks that the file exists)
 
 **Networking**
 `tcp_listen(host, port)`, `tcp_accept(listener)`, `tcp_connect(host, port)`,
-`tcp_read(h, max)` (a list of bytes; `[]` once the other side has closed),
+`tcp_read(h, max)` (a byte list; empty once the other side has closed),
 `tcp_write(h, data)` and `tcp_write(h, data, offset)` (return the bytes
 sent), `tcp_close(h)`, `tcp_peer(h)` (`"address:port"`),
 `tcp_nonblocking(h, on)` (accept and read then return `false` rather

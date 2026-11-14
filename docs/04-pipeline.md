@@ -174,14 +174,18 @@ So are the two things a loop over numbers does most: reading
 `list[i]`, and writing `list[i] := v` when neither the new value nor
 the one it replaces is a heap object. In line that is a check that the
 container is a list and the index an Int inside it, then a load or a
-store; a negative index, a dict, a string or an error takes the call.
+store. A [byte list](03-language-tour.md#byte-lists) gets the same
+treatment, with a one-byte load or store and a check that the value
+stored is from 0 to 255; that code sits after the proc's body, a jump
+away, so that the list case stays the straight path. A negative
+index, a dict, a string or an error takes the call.
 Anything bigger (string concatenation, dictionaries, builtins) is
 always a call into the runtime.
 
 **Each proc is compiled twice.** Those checks cost more than the work
 they guard: `acc := acc + xs[i]` in a loop asks, every time round,
-whether `acc` is an Int, whether `i` is, whether `xs` is a list and
-whether the element is an Int. The answers are nearly always the same
+whether `acc` is an Int, whether `i` is, whether `xs` is a list or a
+byte list and whether the element is an Int. The answers are nearly always the same
 as last time. So the back end writes two versions of every proc. The
 *careful version* is the code described so far. The *fast version* is
 the one a call enters, and it guesses:
@@ -189,7 +193,8 @@ the one a call enters, and it guesses:
 - that the operands of arithmetic, shifts, `//`, `%` and the ordering
   comparisons are Ints;
 - that `xs[i]`, where the element goes straight into arithmetic or
-  into another list, is an Int at a place inside a list.
+  into another list, is an Int at a place inside a list or a byte
+  list.
 
 A guess is tested once and then remembered for as long as it stays
 true. A local variable found to hold an Int is not tested again until
@@ -200,6 +205,13 @@ the way in, and what is known at the top of the loop is checked on the
 way back round only where the body could have changed it. With the
 kinds known, storing an Int over an Int is one instruction, and `//`
 and `%` by a constant are a shift, a mask or a divide in line.
+
+One thing is asked every time and not remembered: whether a container
+is a list or a byte list. The same proc is often handed one and then
+the other (a filter given a picture's bytes on one call and a list of
+wider numbers on the next), so the answer at the top of a loop says
+little about the next call, and the question is one compare of a tag
+that is already in the frame.
 
 When a guess is wrong (a Float turns up, an index is off the end, an
 addition does not fit in 64 bits) the fast version jumps into the
@@ -214,20 +226,26 @@ that loop takes for granted holds by then.
 This is the loop of `total` in the fast version, whole:
 
 ```
-proc total(xs) {                 top:  mov  rcx, [xs]          ; length(xs): xs is known
-    alloc acc := 0                     mov  rax, [rcx+8]       ;   to be a list here
-    alloc i := 0                       cmp  [i], rax
-    loop i < length(xs) {              jge  done
-        acc := acc + xs[i]             mov  rcx, [xs]
-        i := i + 1                     mov  rsi, [i]
-    }                                  cmp  rsi, [rcx+8]       ; i inside the list?
-    return acc                         jae  careful
-}                                      mov  rdi, [rcx+24]      ; the elements
+proc total(xs) {                 top:  cmp  [xs.tag], LIST     ; length(xs)
+    alloc acc := 0                     je   len
+    alloc i := 0                       cmp  [xs.tag], BYTES
+    loop i < length(xs) {              jne  careful
+        acc := acc + xs[i]       len:  mov  rcx, [xs]
+        i := i + 1                     mov  rax, [rcx+8]
+    }                                  cmp  [i], rax
+    return acc                         jge  done
+}                                      cmp  [xs.tag], LIST     ; xs[i]
+                                       jne  bytes
+                                       mov  rcx, [xs]
+                                       mov  rsi, [i]
+                                       cmp  rsi, [rcx+8]       ; i inside the list?
+                                       jae  careful
+                                       mov  rdi, [rcx+24]      ; the elements
                                        add  rsi, rsi           ; two words each
                                        cmp  qword [rdi+rsi*8+8], 0
                                        jne  careful            ; the element is not an Int
                                        mov  rax, [rdi+rsi*8]
-                                       add  rax, [acc]
+                                 sum:  add  rax, [acc]
                                        jo   careful            ; does not fit
                                        mov  [acc], rax
                                        mov  rax, [i]
@@ -235,20 +253,29 @@ proc total(xs) {                 top:  mov  rcx, [xs]          ; length(xs): xs 
                                        jo   careful
                                        mov  [i], rax
                                        jmp  top
+
+                               bytes:  cmp  [xs.tag], BYTES    ; after the proc's body
+                                       jne  careful
+                                       mov  rcx, [xs]
+                                       mov  rsi, [i]
+                                       cmp  rsi, [rcx+8]
+                                       jae  careful
+                                       mov  rdi, [rcx+24]
+                                       movzx rax, byte [rdi+rsi]   ; always an Int
+                                       jmp  sum
 ```
 
-That is 17 instructions a turn where the careful version runs 52,
-a call into the runtime for `length` among them. What is left cannot
-go without knowing more than one proc's code can tell: that
-`i` stays inside the list, that every element is an Int, that the sum
-fits.
+That is 25 instructions a turn for a list and 27 for a byte list,
+where the careful version runs 44. What is left cannot go without
+knowing more than one proc's code can tell: that `i` stays inside the
+list, that every element is an Int, that the sum fits.
 
-How much time that saves depends on the program. This loop runs three
-times as fast as it did, a matrix multiplication 1.8 times, and the
-H.264 decoder in `tools/video/` 10 to 25 percent, although four in ten
-of the instructions it used to run are gone: checks that never fail
-cost a modern processor little, and a big program waits mostly for
-memory ([10-video.md](10-video.md#how-fast-it-is)).
+How much time that saves depends on the program. Measured against
+the careful version alone, a loop like this one runs 1.7 times as
+fast, a matrix multiplication 1.6 times, and the H.264 decoder in
+`tools/video/` takes a quarter less time. A big program gains less
+than a small loop because checks that never fail cost a modern
+processor little ([10-video.md](10-video.md#how-fast-it-is)).
 
 Three things follow for anyone writing OMG that has to be quick:
 

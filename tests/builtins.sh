@@ -266,13 +266,21 @@ loop i < length(bs) {
     emit "b" + i + "=" + bs[i]
     i := i + 1
 }
+# What comes back is a byte list: it refuses a number that is no byte.
+try {
+    append(bs, 256)
+    emit "took 256"
+} except e {
+    emit e
+}
 EOF
 build_aot "$TMPDIR_TEST/stdin_read_bytes.omg" "$TMPDIR_TEST/stdin_read_bytes" >/dev/null
 expected="len=4
 b0=65
 b1=66
 b2=255
-b3=0"
+b3=0
+ValueError: a byte list holds whole numbers from 0 to 255, not 256"
 actual=$(printf '\x41\x42\xff\x00' | "$TMPDIR_TEST/stdin_read_bytes")
 assert_eq "stdin_read_bytes: AOT preserves 0x00 / 0xff" "$expected" "$actual"
 actual=$(printf '\x41\x42\xff\x00' | "$OMG_NATIVE" "$TMPDIR_TEST/stdin_read_bytes.omg")
@@ -576,6 +584,135 @@ hello
 cdef
 1
 0" no 19881
+
+section "Builtins: byte lists through files and sockets"
+
+# Raw bytes come back as byte lists, whichever builtin hands them over,
+# and the builtins that write take a byte list or a list of numbers.
+# is_bytes tells the two apart the only way a program can: a byte list
+# will not hold 256.
+cat > "$TMPDIR_TEST/bytes_files.omg" <<'EOF'
+;;;omg
+proc is_bytes(x) {
+    alloc c := x[0:0]
+    try {
+        append(c, 256)
+    } except e {
+        return true
+    }
+    return false
+}
+alloc path := args[1]
+alloc all := bytes_repeat(0, 256)
+alloc i := 0
+loop i < 256 {
+    all[i] := i
+    i := i + 1
+}
+alloc h := file_open(path, "wb")
+file_write(h, all)
+file_write(h, [255, 0, 128])
+file_write(h, all[10:13])
+file_write(h, to_bytes("né"))
+file_close(h)
+emit file_size(path)
+h := file_open(path, "rb")
+alloc got := file_read(h)
+file_close(h)
+emit is_bytes(got)
+emit length(got)
+emit got[0:256] == all
+emit got[256:]
+emit bytes_to_string(got[262:])
+h := file_open(path, "rb")
+alloc piece := file_read(h, 4)
+emit is_bytes(piece)
+emit piece
+emit length(file_read(h))
+emit file_read(h) == []
+emit is_bytes(file_read(h, 10))
+file_close(h)
+h := file_open(path, "r")
+emit is_bytes(string_bytes(file_read(h, 3)))
+file_close(h)
+# A list with a number that is no byte is refused, and so is text.
+h := file_open(path, "wb")
+try {
+    file_write(h, [1, 2, 300])
+} except e {
+    emit "refused 300"
+}
+try {
+    file_write(h, [1, "2"])
+} except e {
+    emit "refused a string in the list"
+}
+file_close(h)
+EOF
+assert_every_path "byte lists to a file and back" \
+    "$TMPDIR_TEST/bytes_files.omg" \
+    "265
+true
+265
+true
+[255, 0, 128, 10, 11, 12, 110, 195, 169]
+né
+true
+[0, 1, 2, 3]
+261
+true
+true
+true
+refused 300
+refused a string in the list" yes "$TMPDIR_TEST/bytes_files.bin"
+
+cat > "$TMPDIR_TEST/bytes_sockets.omg" <<'EOF'
+;;;omg
+proc is_bytes(x) {
+    alloc c := x[0:0]
+    try {
+        append(c, 256)
+    } except e {
+        return true
+    }
+    return false
+}
+alloc port := int(args[1])
+alloc l := tcp_listen("127.0.0.1", port)
+alloc c := tcp_connect("127.0.0.1", port)
+alloc s := tcp_accept(l)
+emit tcp_write(c, to_bytes([0, 255, 7]))
+alloc got := tcp_read(s, 100)
+emit is_bytes(got)
+emit got
+emit tcp_write(s, [9, 8, 7, 6], 1)
+emit tcp_read(c, 100)
+emit tcp_write(s, to_bytes("abcdef"), 4)
+emit bytes_to_string(tcp_read(c, 100))
+# What was read goes straight back out, with a piece of it added on.
+got := got + got[1:2]
+emit tcp_write(s, got)
+emit tcp_read(c, 100)
+tcp_close(c)
+alloc end := tcp_read(s, 100)
+emit is_bytes(end)
+emit end == []
+tcp_close(s)
+tcp_close(l)
+EOF
+assert_every_path "byte lists over a socket" \
+    "$TMPDIR_TEST/bytes_sockets.omg" \
+    "3
+true
+[0, 255, 7]
+3
+[8, 7, 6]
+2
+ef
+4
+[0, 255, 7, 255]
+true
+true" no 19882
 
 # interrupted() counts requests to stop instead of letting them end the
 # program. Not on Windows, where Git Bash's kill ends a native program

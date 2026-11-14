@@ -28,6 +28,7 @@ every stage.
   - [Conditionals](#conditionals)
   - [Loops](#loops)
   - [Lists](#lists)
+  - [Byte lists](#byte-lists)
   - [Dictionaries](#dictionaries)
   - [Functions](#functions)
   - [Multi-file programs: `import`](#multi-file-programs-import)
@@ -443,6 +444,43 @@ b[0] := 99
 emit a              # [99, 2, 3]: `a` and `b` point at the same list
 ```
 
+### Byte lists
+
+A byte list is a list that holds only whole numbers from 0 to 255, and
+keeps each one in a single byte. An ordinary list spends sixteen bytes
+on every element, so a megabyte of file data costs sixteen megabytes
+in a list and one megabyte in a byte list. Reading and writing its
+elements is as fast as with a list.
+
+```omg
+;;;omg
+
+alloc b := bytes_repeat(0, 4)   # four zeros
+b[1] := 200
+append(b, 7)
+emit b                  # [0, 200, 0, 0, 7]
+emit length(b)          # 5
+emit b[1] + 100         # 300         ← what you read is an ordinary Int
+emit b[1:3]             # [200, 0]    ← a slice of a byte list is a byte list
+
+emit to_bytes([72, 105])        # [72, 105]   ← from a list
+emit to_bytes("Hi")             # [72, 105]   ← from the bytes of a string
+emit to_bytes([72, 105]) == [72, 105]   # true
+```
+
+It works wherever a list of numbers does: indexing, slicing, `for`,
+`length`, `append`, `==`, and it prints the same way. The one
+difference is what it accepts. Storing a number below 0 or above 255
+raises `ValueError`, and storing anything that is not an Int raises
+`TypeError`; nothing is wrapped round or cut down for you. Joining two
+byte lists with `+` gives a byte list; joining a byte list and an
+ordinary list gives an ordinary list.
+
+Everything that hands you raw bytes hands you a byte list:
+`file_read` on a binary handle, `tcp_read`, `stdin_read_bytes` and
+`string_bytes`. `file_write`, `tcp_write` and `bytes_to_string` take
+either kind.
+
 ### Dictionaries
 
 A dictionary maps keys to values. Keys are strings. You can read or
@@ -632,8 +670,8 @@ emit file_read(h2)              # hi from OMG
 file_close(h2)
 ```
 
-Binary mode (`"rb"`, `"wb"`, `"ab"`) reads and writes lists of bytes
-(integers 0–255):
+Binary mode (`"rb"`, `"wb"`, `"ab"`) reads a [byte list](#byte-lists)
+and writes a byte list or a list of integers 0–255:
 
 ```omg
 ;;;omg
@@ -718,11 +756,11 @@ Always available, no import needed.
 | Function                       | What it does                                          |
 | ------------------------------ | ----------------------------------------------------- |
 | **Strings & chars**            |                                                       |
-| `length(x)`                    | length of a list or string, or number of entries in a dict |
+| `length(x)`                    | length of a list, byte list or string, or number of entries in a dict |
 | `chr(n)`                       | one-character string for byte value `n`               |
 | `ascii(c)`                     | code point of a one-character string `c`              |
-| `string_bytes(s)`              | UTF-8 byte values of `s` as a list of integers        |
-| `bytes_to_string(bytes)`       | inverse of `string_bytes`: list of bytes → string     |
+| `string_bytes(s)`              | UTF-8 byte values of `s` as a byte list               |
+| `bytes_to_string(bytes)`       | inverse of `string_bytes`: byte list or list of bytes → string |
 | **Numeric & math**             |                                                       |
 | `int(x)` / `float(x)`          | convert between int and float (or parse from string)  |
 | `floor(x)` / `ceil(x)`         | round a float toward `-∞` / `+∞`, returns int         |
@@ -741,14 +779,16 @@ Always available, no import needed.
 | `freeze(d)`                    | turn a dict into a read-only one                      |
 | `dict_keys(d)`                 | list of a dict's keys (strings, in insertion order)   |
 | `has_key(d, k)`                | `true` iff `d` has key `k` (non-dict `d` → `false`)   |
-| `append(list, item)`           | add `item` to the end of `list`, in place             |
+| `append(list, item)`           | add `item` to the end of `list` (or byte list), in place |
 | `list_repeat(item, n)`         | a new list holding `item` `n` times                   |
+| `bytes_repeat(value, n)`       | a new byte list holding `value` (0–255) `n` times     |
+| `to_bytes(x)`                  | a new byte list from a list of integers 0–255, from the UTF-8 bytes of a string, or a copy of a byte list |
 | **File I/O**                   |                                                       |
 | `read_file(path)`              | read a text file in one shot, or `false` on error     |
 | `file_open(path, mode)`        | open and return a handle (`r`, `rb`, `w`, `wb`, `a`, `ab`) |
-| `file_read(handle)`            | read everything remaining from a handle               |
+| `file_read(handle)`            | read everything remaining from a handle: a string, or a byte list in binary mode |
 | `file_read(handle, max)`       | read at most `max` bytes: for going through a large file a piece at a time |
-| `file_write(handle, data)`     | write to a handle                                     |
+| `file_write(handle, data)`     | write to a handle: a string, or in binary mode a byte list or a list of bytes |
 | `file_close(handle)`           | close a handle                                        |
 | `file_exists(path)`            | does the file exist?                                  |
 | `file_size(path)`              | a file's length in bytes                              |
@@ -760,7 +800,7 @@ Always available, no import needed.
 | **Standard input**             |                                                       |
 | `stdin_readline()`             | read one line from stdin, or `false` on EOF           |
 | `stdin_read()`                 | slurp all of stdin to EOF as a string (empty on no input) |
-| `stdin_read_bytes()`           | slurp all of stdin to EOF as a list of bytes (0–255)  |
+| `stdin_read_bytes()`           | slurp all of stdin to EOF as a byte list              |
 | **Real-time terminal I/O**     |                                                       |
 | `time_ms()`                    | current time in ms (epoch-based; suitable for elapsed-time) |
 | `sleep_ms(n)`                  | pause the process for `n` milliseconds                |
@@ -773,8 +813,8 @@ Always available, no import needed.
 | `tcp_listen(host, port)`       | a listening TCP socket                                |
 | `tcp_accept(listener)`         | the next connection to it                             |
 | `tcp_connect(host, port)`      | a connection to somewhere else                        |
-| `tcp_read(h, max)`             | up to `max` bytes as a list; `[]` once the other side has closed |
-| `tcp_write(h, data)` / `tcp_write(h, data, offset)` | send a string or bytes (from `offset` on); returns the number of bytes sent |
+| `tcp_read(h, max)`             | up to `max` bytes as a byte list; empty once the other side has closed |
+| `tcp_write(h, data)` / `tcp_write(h, data, offset)` | send a string, a byte list or a list of bytes (from `offset` on); returns the number of bytes sent |
 | `tcp_close(h)`                 | close a socket                                        |
 | `tcp_peer(h)`                  | the other end's address, as `"203.0.113.9:53012"`     |
 | `tcp_nonblocking(h, on)`       | with it on, `tcp_accept` and `tcp_read` return `false` rather than wait, and `tcp_write` sends what fits |
