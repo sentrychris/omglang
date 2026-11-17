@@ -1,0 +1,1087 @@
+;;;omg
+
+# tools/browser/font.omg
+#
+# Letters. Finds the TrueType font files of the system, reads them, and
+# turns the outline of a letter into a small picture that says how much
+# of each pixel the letter covers. Nothing here knows about pages: it
+# answers "how wide is this character at this size" and "what does it
+# look like".
+#
+#     import "font.omg" as font
+#     alloc f := font.pick(["arial", "sans-serif"], 16, false, false)
+#     alloc w := font.advance(f, 65)          # the width of "A", in pixels
+#     alloc g := font.glyph(f, 65)            # [w, h, left, top, coverage]
+#
+# A font file holds, for each character, a list of closed curves made
+# of straight lines and quadratic Bezier arcs, in a grid of (usually)
+# 1000 or 2048 units to the letter height. Drawing a letter at 16
+# pixels is scaling those curves and working out, for every pixel, how
+# much of it lies inside them.
+#
+# Not here: hinting (the programs fonts carry to snap themselves to the
+# pixel grid), kerning, ligatures, and OpenType fonts whose outlines
+# are in the CFF format (most .otf files).
+
+import "util.omg" as u
+
+alloc files := {}              # file name without its ending, lower case -> path
+alloc scanned := false
+alloc faces := {}              # path -> a font read from it, or false
+alloc picked := {}             # what pick() worked out before
+alloc fallbacks := []          # fonts tried for a character the chosen one lacks
+alloc fallbacks_ready := false
+alloc extra_dirs := []
+
+proc u16(b, p) {
+    return (b[p] << 8) | b[p + 1]
+}
+
+proc s16(b, p) {
+    alloc v := (b[p] << 8) | b[p + 1]
+    if v >= 32768 {
+        return v - 65536
+    }
+    return v
+}
+
+proc u32(b, p) {
+    return (b[p] << 24) | (b[p + 1] << 16) | (b[p + 2] << 8) | b[p + 3]
+}
+
+# --- reading a font file -------------------------------------------------------
+
+# The font in the bytes b (number `index` of a collection), or false
+# when it is not one this can draw.
+proc parse(b, index) {
+    if length(b) < 12 {
+        return false
+    }
+    alloc base := 0
+    alloc tag := u32(b, 0)
+    if tag == 1953784678 {                       # "ttcf": several fonts in one file
+        if index >= u32(b, 8) {
+            return false
+        }
+        base := u32(b, 12 + index * 4)
+        tag := u32(b, base)
+    }
+    if tag != 65536 and tag != 1953658213 {      # TrueType outlines only
+        return false
+    }
+    alloc ntab := u16(b, base + 4)
+    alloc t := {}
+    alloc i := 0
+    loop i < ntab {
+        alloc p := base + 12 + i * 16
+        t[bytes_to_string(b[p:p + 4])] := u32(b, p + 8)
+        i := i + 1
+    }
+    for need in ["head", "hhea", "maxp", "hmtx", "cmap", "loca", "glyf"] {
+        if has_key(t, need) == false {
+            return false
+        }
+    }
+    alloc head := t["head"]
+    alloc hhea := t["hhea"]
+    alloc asc := s16(b, hhea + 4)
+    alloc desc := s16(b, hhea + 6)
+    alloc gap := s16(b, hhea + 8)
+    if asc == 0 and desc == 0 and has_key(t, "OS/2") {
+        asc := u16(b, t["OS/2"] + 74)
+        desc := 0 - u16(b, t["OS/2"] + 76)
+    }
+    # The table that says which outline belongs to which character:
+    # the widest one this understands.
+    alloc cm := t["cmap"]
+    alloc ncm := u16(b, cm + 2)
+    alloc best := 0
+    alloc best_score := 0
+    alloc best_fmt := 0
+    i := 0
+    loop i < ncm {
+        alloc plat := u16(b, cm + 4 + i * 8)
+        alloc enc := u16(b, cm + 6 + i * 8)
+        alloc sub := cm + u32(b, cm + 8 + i * 8)
+        alloc fmt := u16(b, sub)
+        alloc score := 0
+        if fmt == 12 and (plat == 0 or (plat == 3 and enc == 10)) {
+            score := 4
+        } elif fmt == 4 and (plat == 0 or (plat == 3 and enc == 1)) {
+            score := 3
+        } elif fmt == 4 and plat == 3 and enc == 0 {
+            score := 1
+        }
+        if score > best_score {
+            best := sub
+            best_score := score
+            best_fmt := fmt
+        }
+        i := i + 1
+    }
+    if best == 0 {
+        return false
+    }
+    alloc units := u16(b, head + 18)
+    if units < 16 {
+        return false
+    }
+    return {
+        b: b,
+        glyf: t["glyf"],
+        loca: t["loca"],
+        long: s16(b, head + 50) != 0,
+        hmtx: t["hmtx"],
+        nhm: u16(b, hhea + 34),
+        ng: u16(b, t["maxp"] + 4),
+        units: units,
+        asc: asc,
+        desc: desc,
+        gap: gap,
+        cmap: best,
+        fmt: best_fmt,
+        ga: list_repeat(-1, 128),
+        gx: {},
+        sizes: {}
+    }
+}
+
+# The font in a file, read once; false when it cannot be used.
+proc load(path) {
+    if has_key(faces, path) {
+        return faces[path]
+    }
+    alloc face := false
+    alloc b := u.read_bytes(path)
+    if b != false {
+        try {
+            face := parse(b, 0)
+        } except e {
+            face := false
+        }
+    }
+    faces[path] := face
+    return face
+}
+
+proc cmap_lookup(face, cp) {
+    alloc b := face.b
+    alloc sub := face.cmap
+    if face.fmt == 4 {
+        if cp > 65535 {
+            return 0
+        }
+        alloc segx2 := u16(b, sub + 6)
+        alloc ends := sub + 14
+        alloc starts := ends + segx2 + 2
+        alloc deltas := starts + segx2
+        alloc ranges := deltas + segx2
+        alloc lo := 0
+        alloc hi := segx2 // 2 - 1
+        loop lo < hi {
+            alloc mid := (lo + hi) // 2
+            if u16(b, ends + mid * 2) < cp {
+                lo := mid + 1
+            } else {
+                hi := mid
+            }
+        }
+        alloc start := u16(b, starts + lo * 2)
+        if start > cp or u16(b, ends + lo * 2) < cp {
+            return 0
+        }
+        alloc delta := u16(b, deltas + lo * 2)
+        alloc ro := u16(b, ranges + lo * 2)
+        if ro == 0 {
+            return (cp + delta) & 65535
+        }
+        alloc at := ranges + lo * 2 + ro + (cp - start) * 2
+        if at + 1 >= length(b) {
+            return 0
+        }
+        alloc g := u16(b, at)
+        if g == 0 {
+            return 0
+        }
+        return (g + delta) & 65535
+    }
+    # format 12: groups of [first character, last character, first glyph]
+    alloc n := u32(b, sub + 12)
+    alloc lo2 := 0
+    alloc hi2 := n - 1
+    loop lo2 < hi2 {
+        alloc mid2 := (lo2 + hi2) // 2
+        if u32(b, sub + 16 + mid2 * 12 + 4) < cp {
+            lo2 := mid2 + 1
+        } else {
+            hi2 := mid2
+        }
+    }
+    if n == 0 {
+        return 0
+    }
+    alloc gp := sub + 16 + lo2 * 12
+    if u32(b, gp) > cp or u32(b, gp + 4) < cp {
+        return 0
+    }
+    return u32(b, gp + 8) + cp - u32(b, gp)
+}
+
+# Which outline of the font draws character cp; 0 when it has none.
+proc glyph_index(face, cp) {
+    if cp < 128 {
+        alloc g := face.ga[cp]
+        if g < 0 {
+            g := cmap_lookup(face, cp)
+            face.ga[cp] := g
+        }
+        return g
+    }
+    alloc gx := face.gx
+    if has_key(gx, cp) {
+        return gx[cp]
+    }
+    alloc g2 := cmap_lookup(face, cp)
+    gx[cp] := g2
+    return g2
+}
+
+# How far the pen moves after outline g, in font units.
+proc units_advance(face, g) {
+    if g >= face.nhm {
+        g := face.nhm - 1
+    }
+    if g < 0 {
+        return 0
+    }
+    return u16(face.b, face.hmtx + g * 4)
+}
+
+# The outline of glyph g: a list of closed curves, each a flat list
+# x, y, on, x, y, on ... in font units. `on` is 1 for a point the
+# curve goes through and 0 for one that only pulls it.
+proc outline(face, g, depth) {
+    alloc b := face.b
+    alloc out := []
+    if g < 0 or g >= face.ng {
+        return out
+    }
+    alloc o0 := 0
+    alloc o1 := 0
+    if face.long {
+        o0 := u32(b, face.loca + g * 4)
+        o1 := u32(b, face.loca + g * 4 + 4)
+    } else {
+        o0 := u16(b, face.loca + g * 2) * 2
+        o1 := u16(b, face.loca + g * 2 + 2) * 2
+    }
+    if o1 <= o0 {
+        return out
+    }
+    alloc p := face.glyf + o0
+    alloc nc := s16(b, p)
+    p := p + 10
+    alloc i := 0
+    if nc >= 0 {
+        alloc ends := []
+        loop i < nc {
+            append(ends, u16(b, p + i * 2))
+            i := i + 1
+        }
+        p := p + nc * 2
+        alloc npts := 0
+        if nc > 0 {
+            npts := ends[nc - 1] + 1
+        }
+        p := p + 2 + u16(b, p)                   # the hinting program: skipped
+        alloc flags := bytes_repeat(0, npts)
+        i := 0
+        loop i < npts {
+            alloc f := b[p]
+            p := p + 1
+            flags[i] := f
+            i := i + 1
+            if (f & 8) != 0 {
+                alloc r := b[p]
+                p := p + 1
+                loop r > 0 and i < npts {
+                    flags[i] := f
+                    i := i + 1
+                    r := r - 1
+                }
+            }
+        }
+        alloc xs := list_repeat(0, npts)
+        alloc ys := list_repeat(0, npts)
+        alloc v := 0
+        i := 0
+        loop i < npts {
+            alloc fx := flags[i]
+            if (fx & 2) != 0 {
+                if (fx & 16) != 0 {
+                    v := v + b[p]
+                } else {
+                    v := v - b[p]
+                }
+                p := p + 1
+            } elif (fx & 16) == 0 {
+                v := v + s16(b, p)
+                p := p + 2
+            }
+            xs[i] := v
+            i := i + 1
+        }
+        v := 0
+        i := 0
+        loop i < npts {
+            alloc fy := flags[i]
+            if (fy & 4) != 0 {
+                if (fy & 32) != 0 {
+                    v := v + b[p]
+                } else {
+                    v := v - b[p]
+                }
+                p := p + 1
+            } elif (fy & 32) == 0 {
+                v := v + s16(b, p)
+                p := p + 2
+            }
+            ys[i] := v
+            i := i + 1
+        }
+        alloc start := 0
+        alloc c := 0
+        loop c < nc {
+            alloc contour := []
+            alloc j := start
+            loop j <= ends[c] {
+                append(contour, xs[j])
+                append(contour, ys[j])
+                append(contour, flags[j] & 1)
+                j := j + 1
+            }
+            append(out, contour)
+            start := ends[c] + 1
+            c := c + 1
+        }
+        return out
+    }
+    # A glyph made of other glyphs, each moved and perhaps scaled.
+    if depth > 6 {
+        return out
+    }
+    alloc more := true
+    loop more {
+        alloc fl := u16(b, p)
+        alloc gi := u16(b, p + 2)
+        p := p + 4
+        alloc dx := 0
+        alloc dy := 0
+        if (fl & 1) != 0 {
+            dx := s16(b, p)
+            dy := s16(b, p + 2)
+            p := p + 4
+        } else {
+            dx := b[p]
+            dy := b[p + 1]
+            if dx >= 128 {
+                dx := dx - 256
+            }
+            if dy >= 128 {
+                dy := dy - 256
+            }
+            p := p + 2
+        }
+        if (fl & 2) == 0 {
+            # the numbers name points to line up, not a distance: rare, not followed
+            dx := 0
+            dy := 0
+        }
+        alloc m00 := 1.0
+        alloc m01 := 0.0
+        alloc m10 := 0.0
+        alloc m11 := 1.0
+        alloc scaled := false
+        if (fl & 8) != 0 {
+            m00 := s16(b, p) / 16384
+            m11 := m00
+            p := p + 2
+            scaled := true
+        } elif (fl & 64) != 0 {
+            m00 := s16(b, p) / 16384
+            m11 := s16(b, p + 2) / 16384
+            p := p + 4
+            scaled := true
+        } elif (fl & 128) != 0 {
+            m00 := s16(b, p) / 16384
+            m01 := s16(b, p + 2) / 16384
+            m10 := s16(b, p + 4) / 16384
+            m11 := s16(b, p + 6) / 16384
+            p := p + 8
+            scaled := true
+        }
+        alloc sub := outline(face, gi, depth + 1)
+        for sc in sub {
+            alloc k := 0
+            alloc n := length(sc)
+            loop k < n {
+                if scaled {
+                    alloc px := sc[k]
+                    alloc py := sc[k + 1]
+                    sc[k] := m00 * px + m10 * py + dx
+                    sc[k + 1] := m01 * px + m11 * py + dy
+                } else {
+                    sc[k] := sc[k] + dx
+                    sc[k + 1] := sc[k + 1] + dy
+                }
+                k := k + 3
+            }
+            append(out, sc)
+        }
+        more := (fl & 32) != 0
+    }
+    return out
+}
+
+# --- from outline to pixels ------------------------------------------------------
+#
+# The method is the one of font-rs (Raph Levien): every straight piece
+# of the outline adds, to each pixel it passes, the share of the pixel
+# to its right that the piece puts inside the shape, signed by whether
+# the piece goes up or down. Summing a row from the left then gives the
+# cover of every pixel exactly, with no sampling.
+
+proc acc_line(acc, stride, h, x0, y0, x1, y1) {
+    if y0 == y1 {
+        return 0
+    }
+    alloc dir := 1.0
+    if y0 > y1 {
+        dir := -1.0
+        alloc tx := x0
+        x0 := x1
+        x1 := tx
+        alloc ty := y0
+        y0 := y1
+        y1 := ty
+    }
+    alloc dxdy := (x1 - x0) / (y1 - y0)
+    alloc x := x0
+    alloc y := floor(y0)
+    if y < 0 {
+        y := 0
+    }
+    alloc ylast := ceil(y1)
+    if ylast > h {
+        ylast := h
+    }
+    loop y < ylast {
+        alloc top := y
+        if y0 > top {
+            top := y0
+        }
+        alloc bot := y + 1
+        if y1 < bot {
+            bot := y1
+        }
+        alloc dy := bot - top
+        alloc xnext := x + dxdy * dy
+        alloc d := dy * dir
+        alloc xa := x
+        alloc xb := xnext
+        if xnext < x {
+            xa := xnext
+            xb := x
+        }
+        alloc xai := floor(xa)
+        alloc xbi := ceil(xb)
+        alloc row := y * stride
+        if xbi <= xai + 1 {
+            alloc xmf := 0.5 * (x + xnext) - xai
+            acc[row + xai] := acc[row + xai] + d - d * xmf
+            acc[row + xai + 1] := acc[row + xai + 1] + d * xmf
+        } else {
+            alloc s := 1.0 / (xb - xa)
+            alloc xaf := xa - xai
+            alloc a0 := 0.5 * s * (1.0 - xaf) * (1.0 - xaf)
+            alloc xbf := xb - xbi + 1.0
+            alloc am := 0.5 * s * xbf * xbf
+            acc[row + xai] := acc[row + xai] + d * a0
+            if xbi == xai + 2 {
+                acc[row + xai + 1] := acc[row + xai + 1] + d * (1.0 - a0 - am)
+            } else {
+                alloc a1 := s * (1.5 - xaf)
+                acc[row + xai + 1] := acc[row + xai + 1] + d * (a1 - a0)
+                alloc xi := xai + 2
+                loop xi < xbi - 1 {
+                    acc[row + xi] := acc[row + xi] + d * s
+                    xi := xi + 1
+                }
+                alloc a2 := a1 + (xbi - xai - 3) * s
+                acc[row + xbi - 1] := acc[row + xbi - 1] + d * (1.0 - a2 - am)
+            }
+            acc[row + xbi] := acc[row + xbi] + d * am
+        }
+        x := xnext
+        y := y + 1
+    }
+    return 0
+}
+
+# A quadratic arc from (x0, y0) to (x2, y2) pulled towards (x1, y1), as
+# as many straight pieces as it takes to be within a tenth of a pixel.
+proc acc_quad(acc, stride, h, x0, y0, x1, y1, x2, y2) {
+    alloc devx := x0 - 2.0 * x1 + x2
+    alloc devy := y0 - 2.0 * y1 + y2
+    alloc devsq := devx * devx + devy * devy
+    if devsq < 0.333 {
+        return acc_line(acc, stride, h, x0, y0, x2, y2)
+    }
+    alloc n := 1 + floor(sqrt(sqrt(3.0 * devsq)))
+    alloc px := x0
+    alloc py := y0
+    alloc i := 1
+    loop i < n {
+        alloc t := i / n
+        alloc mt := 1.0 - t
+        alloc qx := mt * mt * x0 + 2.0 * mt * t * x1 + t * t * x2
+        alloc qy := mt * mt * y0 + 2.0 * mt * t * y1 + t * t * y2
+        acc_line(acc, stride, h, px, py, qx, qy)
+        px := qx
+        py := qy
+        i := i + 1
+    }
+    return acc_line(acc, stride, h, px, py, x2, y2)
+}
+
+# The picture of glyph g of a font at `scale` pixels a unit:
+# [width, height, left, top, coverage]. `coverage` is a byte list, a row
+# after another from the top, 0 for a pixel the letter leaves alone and
+# 255 for one it fills. The picture's top left pixel belongs `left`
+# pixels right of the pen and `top` pixels below the baseline (so `top`
+# is negative for anything that stands on the line). `shear` leans the
+# letter (0.2 for a made-up italic), `bold` thickens it by a pixel.
+proc raster(face, g, scale, shear, bold) {
+    alloc cs := outline(face, g, 0)
+    alloc minx := 1000000000.0
+    alloc miny := 1000000000.0
+    alloc maxx := -1000000000.0
+    alloc maxy := -1000000000.0
+    alloc any := false
+    for c in cs {
+        alloc n := length(c)
+        alloc i := 0
+        loop i < n {
+            alloc x := (c[i] + c[i + 1] * shear) * scale
+            alloc y := 0.0 - c[i + 1] * scale
+            c[i] := x
+            c[i + 1] := y
+            if x < minx { minx := x }
+            if x > maxx { maxx := x }
+            if y < miny { miny := y }
+            if y > maxy { maxy := y }
+            any := true
+            i := i + 3
+        }
+    }
+    if any == false {
+        return [0, 0, 0, 0, to_bytes([])]
+    }
+    alloc left := floor(minx)
+    alloc top := floor(miny)
+    alloc w := ceil(maxx) - left + 1
+    alloc h := ceil(maxy) - top + 1
+    if w > 4000 or h > 4000 {
+        return [0, 0, 0, 0, to_bytes([])]
+    }
+    alloc stride := w + 2
+    alloc acc := list_repeat(0.0, stride * h + 2)
+    for c2 in cs {
+        alloc np := length(c2) // 3
+        if np < 2 {
+            continue
+        }
+        # Start from a point on the curve. Two pulling points in a row
+        # have one on the curve half way between them, left out of the
+        # file because it can be worked out.
+        alloc first := 0
+        alloc count := np
+        alloc sx := 0.0
+        alloc sy := 0.0
+        alloc last := (np - 1) * 3
+        if c2[2] == 1 {
+            sx := c2[0] - left
+            sy := c2[1] - top
+            first := 1
+            count := np - 1
+        } elif c2[last + 2] == 1 {
+            sx := c2[last] - left
+            sy := c2[last + 1] - top
+            first := 0
+            count := np - 1
+        } else {
+            sx := (c2[0] + c2[last]) / 2 - left
+            sy := (c2[1] + c2[last + 1]) / 2 - top
+        }
+        alloc cx := sx
+        alloc cy := sy
+        alloc have := false
+        alloc kx := 0.0
+        alloc ky := 0.0
+        alloc k := 0
+        loop k < count {
+            alloc at := (first + k) * 3
+            alloc qx := c2[at] - left
+            alloc qy := c2[at + 1] - top
+            if c2[at + 2] == 1 {
+                if have {
+                    acc_quad(acc, stride, h, cx, cy, kx, ky, qx, qy)
+                    have := false
+                } else {
+                    acc_line(acc, stride, h, cx, cy, qx, qy)
+                }
+                cx := qx
+                cy := qy
+            } else {
+                if have {
+                    alloc mx := (kx + qx) / 2
+                    alloc my := (ky + qy) / 2
+                    acc_quad(acc, stride, h, cx, cy, kx, ky, mx, my)
+                    cx := mx
+                    cy := my
+                }
+                kx := qx
+                ky := qy
+                have := true
+            }
+            k := k + 1
+        }
+        if have {
+            acc_quad(acc, stride, h, cx, cy, kx, ky, sx, sy)
+        } else {
+            acc_line(acc, stride, h, cx, cy, sx, sy)
+        }
+    }
+    alloc bw := w
+    if bold {
+        bw := w + 1
+    }
+    alloc bm := bytes_repeat(0, bw * h)
+    alloc row := 0
+    loop row < h {
+        alloc s := 0.0
+        alloc xx := 0
+        alloc a := row * stride
+        alloc o := row * bw
+        alloc prev := 0
+        loop xx < w {
+            s := s + acc[a + xx]
+            alloc cv := s
+            if cv < 0 {
+                cv := 0.0 - cv
+            }
+            alloc val := floor(cv * 255.0 + 0.5)
+            if val > 255 {
+                val := 255
+            }
+            if bold {
+                alloc both := val + prev
+                if both > 255 {
+                    both := 255
+                }
+                bm[o + xx] := both
+                prev := val
+            } else {
+                bm[o + xx] := val
+            }
+            xx := xx + 1
+        }
+        if bold {
+            bm[o + w] := prev
+        }
+        row := row + 1
+    }
+    return [bw, h, left, top, bm]
+}
+
+# --- a font at a size -------------------------------------------------------------
+
+# The font `face` at `px` pixels, perhaps made bold or leaning by force.
+# What comes back is what advance() and glyph() take.
+proc sized(face, px, bold, italic) {
+    alloc key := "" + px + "/" + bold + "/" + italic
+    alloc sizes := face.sizes
+    if has_key(sizes, key) {
+        return sizes[key]
+    }
+    alloc scale := px / face.units
+    alloc shear := 0.0
+    if italic {
+        shear := 0.2
+    }
+    alloc asc := floor(face.asc * scale + 0.5)
+    alloc desc := floor((0 - face.desc) * scale + 0.5)
+    alloc line := floor((face.asc - face.desc + face.gap) * scale + 0.5)
+    if line < asc + desc {
+        line := asc + desc
+    }
+    alloc f := {
+        face: face,
+        px: px,
+        scale: scale,
+        shear: shear,
+        bold: bold,
+        italic: italic,
+        asc: asc,
+        desc: desc,
+        line: line,
+        adv: list_repeat(-1, 128),
+        advx: {},
+        gl: list_repeat(false, 128),
+        glx: {}
+    }
+    sizes[key] := f
+    return f
+}
+
+# Characters that take no room and draw nothing.
+proc invisible(cp) {
+    if cp < 32 or cp == 127 or cp == 173 {
+        return true
+    }
+    if cp >= 8203 and cp <= 8207 {
+        return true
+    }
+    if cp == 8288 or cp == 65279 or (cp >= 8232 and cp <= 8238) or (cp >= 65024 and cp <= 65039) {
+        return true
+    }
+    return false
+}
+
+# The font that draws cp when `face` has no outline for it, or false.
+proc fallback_for(cp) {
+    if fallbacks_ready == false {
+        fallbacks_ready := true
+        scan()
+        for stem in ["dejavusans", "notosans-regular", "freesans", "segoeui", "arial", "seguisym", "liberationsans-regular",
+                     "notosanssymbols-regular", "notosanssymbols2-regular", "symbola", "unifont",
+                     "msyh", "msgothic", "malgun", "simsun", "nirmala", "seguiemj", "wqy-zenhei", "wqy-microhei",
+                     "droidsansfallbackfull", "notosanscjk-regular", "freeserif", "dejavuserif", "dejavusansmono"] {
+            if has_key(files, stem) {
+                append(fallbacks, files[stem])
+            }
+        }
+    }
+    for path in fallbacks {
+        alloc face := load(path)
+        if face != false {
+            if glyph_index(face, cp) != 0 {
+                return face
+            }
+        }
+    }
+    return false
+}
+
+# [the font to draw cp with, its outline number]: the font itself when
+# it has the character, otherwise another that does, otherwise the
+# font's own "missing" box (outline 0).
+proc locate(f, cp) {
+    alloc face := f.face
+    alloc g := glyph_index(face, cp)
+    if g != 0 {
+        return [f, g]
+    }
+    if cp == 160 or cp == 8239 or cp == 8199 {
+        return [f, glyph_index(face, 32)]
+    }
+    if cp == 8209 {
+        return [f, glyph_index(face, 45)]
+    }
+    alloc other := fallback_for(cp)
+    if other != false {
+        return [sized(other, f.px, f.bold, f.italic), glyph_index(other, cp)]
+    }
+    return [f, 0]
+}
+
+proc advance_slow(f, cp) {
+    if invisible(cp) {
+        return 0
+    }
+    alloc at := locate(f, cp)
+    alloc g := at[0]
+    alloc a := floor(units_advance(g.face, at[1]) * g.scale + 0.5)
+    if f.bold and a > 0 {
+        a := a + 1
+    }
+    return a
+}
+
+# How many pixels the pen moves after character cp.
+proc advance(f, cp) {
+    if cp < 128 {
+        alloc a := f.adv[cp]
+        if a < 0 {
+            a := advance_slow(f, cp)
+            f.adv[cp] := a
+        }
+        return a
+    }
+    alloc advx := f.advx
+    if has_key(advx, cp) {
+        return advx[cp]
+    }
+    alloc a2 := advance_slow(f, cp)
+    advx[cp] := a2
+    return a2
+}
+
+# The width of the characters list[from:to], in pixels.
+proc measure(f, list, from, to) {
+    alloc adv := f.adv
+    alloc w := 0
+    alloc i := from
+    loop i < to {
+        alloc cp := list[i]
+        if cp < 128 {
+            alloc a := adv[cp]
+            if a < 0 {
+                a := advance(f, cp)
+            }
+            w := w + a
+        } else {
+            w := w + advance(f, cp)
+        }
+        i := i + 1
+    }
+    return w
+}
+
+proc glyph_slow(f, cp) {
+    if invisible(cp) or cp == 32 {
+        return [0, 0, 0, 0, to_bytes([])]
+    }
+    alloc at := locate(f, cp)
+    alloc g := at[0]
+    return raster(g.face, at[1], g.scale, g.shear, g.bold)
+}
+
+# The picture of character cp: [width, height, left, top, coverage]
+# (see raster). Made once and kept.
+proc glyph(f, cp) {
+    if cp < 128 {
+        alloc g := f.gl[cp]
+        if g == false {
+            g := glyph_slow(f, cp)
+            f.gl[cp] := g
+        }
+        return g
+    }
+    alloc glx := f.glx
+    if has_key(glx, cp) {
+        return glx[cp]
+    }
+    alloc g2 := glyph_slow(f, cp)
+    glx[cp] := g2
+    return g2
+}
+
+# --- finding fonts -----------------------------------------------------------------
+
+proc scan_dir(dir, depth) {
+    alloc names := []
+    try {
+        names := read_dir(dir)
+    } except e {
+        return false
+    }
+    for name in names {
+        alloc low := u.lower(name)
+        alloc n := length(low)
+        alloc path := dir + "/" + name
+        if n > 4 and (u.ends_with(low, ".ttf") or u.ends_with(low, ".ttc") or u.ends_with(low, ".otf")) {
+            alloc stem := low[0:n - 4]
+            if has_key(files, stem) == false {
+                files[stem] := path
+            }
+        } elif depth < 6 and u.contains(low, ".") == false {
+            scan_dir(path, depth + 1)
+        }
+    }
+    return true
+}
+
+# Look for font files where systems keep them. Once.
+proc scan() {
+    if scanned {
+        return false
+    }
+    scanned := true
+    for d in extra_dirs {
+        scan_dir(d, 0)
+    }
+    scan_dir("C:/Windows/Fonts", 0)
+    scan_dir("/usr/share/fonts", 0)
+    scan_dir("/usr/local/share/fonts", 0)
+    scan_dir("/System/Library/Fonts", 0)
+    scan_dir("/Library/Fonts", 0)
+    return true
+}
+
+# Also look in this directory (asked for before the first pick()).
+proc add_dir(dir) {
+    append(extra_dirs, dir)
+    return true
+}
+
+# How many font files were found.
+proc count() {
+    scan()
+    return length(dict_keys(files))
+}
+
+proc first_loadable(stems) {
+    for s in stems {
+        if has_key(files, s) {
+            alloc face := load(files[s])
+            if face != false {
+                return face
+            }
+        }
+    }
+    return false
+}
+
+# The font files of one family are told apart by their names. `stem` is
+# the family as its files spell it ("arial", "dejavusans",
+# "liberationsans"); what follows it says which of the four it is, and
+# every maker says it differently.
+proc family_face(stem, bold, italic) {
+    alloc regular := first_loadable([stem, stem + "-regular", stem + "regular", stem + "-r", stem + "-book", stem + "-roman", stem + "-medium"])
+    if regular == false {
+        return false
+    }
+    alloc b := first_loadable([stem + "-bold", stem + "bd", stem + "b", stem + "bold", stem + "-b", stem + "-bd"])
+    alloc i := first_loadable([stem + "-italic", stem + "i", stem + "-oblique", stem + "oblique", stem + "italic", stem + "-ri", stem + "it", stem + "-i", stem + "-it"])
+    alloc bi := first_loadable([stem + "-bolditalic", stem + "bi", stem + "z", stem + "-boldoblique", stem + "boldoblique", stem + "bolditalic", stem + "-bi", stem + "-z"])
+    if bold and italic {
+        if bi != false {
+            return [bi, false, false]
+        }
+        if b != false {
+            return [b, false, true]
+        }
+        if i != false {
+            return [i, true, false]
+        }
+        return [regular, true, true]
+    }
+    if bold {
+        if b != false {
+            return [b, false, false]
+        }
+        return [regular, true, false]
+    }
+    if italic {
+        if i != false {
+            return [i, false, false]
+        }
+        return [regular, false, true]
+    }
+    return [regular, false, false]
+}
+
+alloc SANS := ["arial", "liberationsans", "arimo", "notosans", "dejavusans", "freesans", "ubuntu", "roboto", "opensans", "cantarell", "tahoma", "verdana"]
+alloc SERIF := ["times", "liberationserif", "tinos", "notoserif", "dejavuserif", "freeserif", "georgia"]
+alloc MONO := ["consola", "cour", "liberationmono", "cousine", "dejavusansmono", "notosansmono", "freemono", "ubuntumono", "lucon"]
+
+# The file stems to try for a family name as a style sheet writes it.
+proc stems_for(name) {
+    if name == "sans-serif" or name == "system-ui" or name == "ui-sans-serif" or name == "-apple-system" or name == "blinkmacsystemfont" or name == "cursive" or name == "fantasy" {
+        return SANS
+    }
+    if name == "serif" or name == "ui-serif" {
+        return SERIF
+    }
+    if name == "monospace" or name == "ui-monospace" {
+        return MONO
+    }
+    if name == "arial" or name == "helvetica" or name == "helvetica neue" or name == "arimo" or name == "liberation sans" {
+        return ["arial", "liberationsans", "arimo", "freesans"]
+    }
+    if name == "times new roman" or name == "times" or name == "liberation serif" {
+        return ["times", "liberationserif", "tinos", "freeserif"]
+    }
+    if name == "courier new" or name == "courier" or name == "liberation mono" {
+        return ["cour", "liberationmono", "cousine", "freemono"]
+    }
+    if name == "segoe ui" {
+        return ["segoeui"]
+    }
+    if name == "trebuchet ms" {
+        return ["trebuc"]
+    }
+    if name == "consolas" {
+        return ["consola"]
+    }
+    if name == "menlo" or name == "monaco" or name == "sf mono" or name == "sfmono-regular" {
+        return ["dejavusansmono", "consola"]
+    }
+    if name == "lucida console" {
+        return ["lucon"]
+    }
+    if name == "comic sans ms" {
+        return ["comic"]
+    }
+    # any other: the name with its spaces taken out
+    return [u.replace(name, " ", "")]
+}
+
+# The font for a list of family names (lower case, in order of
+# preference) at a size, with weight and slope: what advance() and
+# glyph() take. false only when the system has no font file this can
+# read at all.
+proc pick(families, px, bold, italic) {
+    alloc key := u.join(families, ",") + "|" + bold + "|" + italic
+    alloc got := false
+    if has_key(picked, key) {
+        got := picked[key]
+    } else {
+        scan()
+        for name in families {
+            for stem in stems_for(name) {
+                got := family_face(stem, bold, italic)
+                if got != false {
+                    break
+                }
+            }
+            if got != false {
+                break
+            }
+        }
+        if got == false {
+            for stem2 in SANS {
+                got := family_face(stem2, bold, italic)
+                if got != false {
+                    break
+                }
+            }
+        }
+        if got == false {
+            # anything at all
+            for k in dict_keys(files) {
+                alloc face := load(files[k])
+                if face != false and glyph_index(face, 97) != 0 {
+                    got := [face, bold, italic]
+                    break
+                }
+            }
+        }
+        picked[key] := got
+    }
+    if got == false {
+        return false
+    }
+    return sized(got[0], px, got[1], got[2])
+}

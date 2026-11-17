@@ -1,0 +1,4454 @@
+;;;omg
+
+# tools/browser/css.omg
+#
+# Style sheets: reads CSS, works out which rules apply to which
+# element, and from them the value of every property for every element.
+#
+#     import "css.omg" as css
+#     css.reset()
+#     css.add_sheet(bytes, 1)                 # 0: the browser's own sheet, 1: a page's
+#     css.style_tree(doc, 1024, 768)          # gives every element a .style
+#     css.get(node.style, "display")          # "block"
+#
+# Three steps, as in the CSS standards:
+#
+#   1. Parsing. A sheet becomes a list of rules; a rule is a selector
+#      and declarations. Shorthands ("margin: 0 auto") are taken apart
+#      into the properties they set, and values are put in a form that
+#      is quick to use: a length is a small list [kind, number].
+#   2. Matching. For an element, the rules whose selector fits it are
+#      found (through an index by id, class and tag, so that not every
+#      rule is tried) and put in order of weight: the cascade.
+#   3. Computing. Declarations are applied in that order; values that
+#      depend on context (em, %, inherit, var()) are worked out.
+#
+# A length, here and in layout, is a list whose first item says what
+# kind it is:
+#
+#     [0, n]            n pixels
+#     [1, n]            n percent of something layout knows
+#     [2, px, pct]      px pixels plus pct percent (from calc())
+#     [3, 0]            auto
+#     [4, 0]            none
+#     [15, op, items]   min(), max() or clamp() of [px, pct] pairs
+#
+# and before computing also em, rem, vw, vh and calc() mixes of them
+# (kinds 5 to 11, 9 and 14), which computing turns into the above.
+#
+# Not here: @font-face (fonts come from the system), animations and
+# transitions, :hover and the other states that change as the page is
+# used, CSS nesting, @container, cascade layers' ordering, and many
+# properties; a declaration that is not understood is dropped, as the
+# standard says, so an earlier one that is understood stays in force.
+
+import "util.omg" as u
+import "url.omg" as url
+
+alloc AUTO := [3, 0]
+alloc NONE := [4, 0]
+alloc ZERO := [0, 0]
+
+# --- values: from text to tokens -----------------------------------------------
+#
+# A value is cut into tokens, each a list:
+#     [1, name]              a word (lower case)
+#     [2, number, unit]      a number; unit "" or "%" or "px", "em" ...
+#     [3, text]              #text
+#     [4, text]              "a string"
+#     [5, name, tokens]      name( ... )
+#     [6]                    ,
+#     [7]                    /
+#     [8, text]              url(text)
+#     [9, char]              any other single character
+
+alloc tb := []                 # the bytes being cut up
+alloc tp := 0                  # where the cutting is
+alloc tn := 0
+
+proc is_name_char(c) {
+    return (c >= 97 and c <= 122) or (c >= 65 and c <= 90) or (c >= 48 and c <= 57) or c == 45 or c == 95 or c >= 128 or c == 92
+}
+
+# The name at tp, lower case; tp moves past it.
+proc read_ident() {
+    alloc b := tb
+    alloc start := tp
+    alloc i := tp
+    alloc plain := true
+    loop i < tn {
+        alloc c := b[i]
+        if c == 92 {
+            plain := false
+            i := i + 2
+        } elif (c >= 97 and c <= 122) or (c >= 48 and c <= 57) or c == 45 or c == 95 or c >= 128 {
+            i := i + 1
+        } elif c >= 65 and c <= 90 {
+            plain := false
+            i := i + 1
+        } else {
+            break
+        }
+    }
+    if i > tn {
+        i := tn
+    }
+    tp := i
+    if plain {
+        return bytes_to_string(b[start:i])
+    }
+    alloc out := to_bytes([])
+    alloc k := start
+    loop k < i {
+        alloc c2 := b[k]
+        if c2 == 92 {
+            k := k + 1
+            if k < i {
+                append(out, b[k])
+            }
+        } elif c2 >= 65 and c2 <= 90 {
+            append(out, c2 + 32)
+        } else {
+            append(out, c2)
+        }
+        k := k + 1
+    }
+    return bytes_to_string(out)
+}
+
+# Like read_ident, but keeps capitals (class names and ids).
+proc read_name_cs() {
+    alloc b := tb
+    alloc start := tp
+    alloc i := tp
+    alloc plain := true
+    loop i < tn {
+        alloc c := b[i]
+        if c == 92 {
+            plain := false
+            i := i + 2
+        } elif is_name_char(c) {
+            i := i + 1
+        } else {
+            break
+        }
+    }
+    if i > tn {
+        i := tn
+    }
+    tp := i
+    if plain {
+        return bytes_to_string(b[start:i])
+    }
+    alloc out := to_bytes([])
+    alloc k := start
+    loop k < i {
+        if b[k] == 92 {
+            k := k + 1
+        }
+        if k < i {
+            append(out, b[k])
+        }
+        k := k + 1
+    }
+    return bytes_to_string(out)
+}
+
+proc read_string(q) {
+    alloc b := tb
+    alloc out := to_bytes([])
+    alloc i := tp
+    loop i < tn and b[i] != q {
+        if b[i] == 92 and i + 1 < tn {
+            i := i + 1
+            if b[i] == 10 {
+                i := i + 1
+                continue
+            }
+            # \201C and the like: a character by its number in hex
+            alloc v := 0
+            alloc digits := 0
+            loop i < tn and digits < 6 {
+                alloc h := b[i]
+                if h >= 48 and h <= 57 {
+                    v := v * 16 + h - 48
+                } elif h >= 97 and h <= 102 {
+                    v := v * 16 + h - 87
+                } elif h >= 65 and h <= 70 {
+                    v := v * 16 + h - 55
+                } else {
+                    break
+                }
+                digits := digits + 1
+                i := i + 1
+            }
+            if digits > 0 {
+                u.put_utf8(out, v)
+                if i < tn and b[i] == 32 {
+                    i := i + 1
+                }
+                continue
+            }
+        }
+        append(out, b[i])
+        i := i + 1
+    }
+    tp := i + 1
+    return bytes_to_string(out)
+}
+
+# Tokens from tp up to the closing ")" (when closing is true) or tn.
+proc read_tokens(closing) {
+    alloc b := tb
+    alloc out := []
+    loop tp < tn {
+        alloc c := b[tp]
+        if c == 32 or c == 10 or c == 9 or c == 13 or c == 12 {
+            tp := tp + 1
+        } elif c == 41 {
+            tp := tp + 1
+            if closing {
+                return out
+            }
+        } elif c == 40 {
+            # a bare bracket: a group, kept as a function with no name
+            tp := tp + 1
+            append(out, [5, "", read_tokens(true)])
+        } elif c == 44 {
+            append(out, [6])
+            tp := tp + 1
+        } elif c == 47 {
+            append(out, [7])
+            tp := tp + 1
+        } elif c == 34 or c == 39 {
+            tp := tp + 1
+            append(out, [4, read_string(c)])
+        } elif c == 35 {
+            tp := tp + 1
+            append(out, [3, read_name_cs()])
+        } elif (c >= 48 and c <= 57) or (c == 46 and tp + 1 < tn and b[tp + 1] >= 48 and b[tp + 1] <= 57) or ((c == 45 or c == 43) and tp + 1 < tn and ((b[tp + 1] >= 48 and b[tp + 1] <= 57) or (b[tp + 1] == 46 and tp + 2 < tn and b[tp + 2] >= 48 and b[tp + 2] <= 57))) {
+            alloc r := u.number_at(b, tp, tn)
+            if r == false {
+                tp := tp + 1
+                continue
+            }
+            tp := r[1]
+            alloc unit := ""
+            if tp < tn and b[tp] == 37 {
+                unit := "%"
+                tp := tp + 1
+            } elif tp < tn and ((b[tp] >= 97 and b[tp] <= 122) or (b[tp] >= 65 and b[tp] <= 90)) {
+                unit := read_ident()
+            }
+            append(out, [2, r[0], unit])
+        } elif c == 45 and (tp + 1 >= tn or (is_name_char(b[tp + 1]) == false) or (b[tp + 1] >= 48 and b[tp + 1] <= 57)) {
+            # a minus sign on its own (in calc)
+            append(out, [9, 45])
+            tp := tp + 1
+        } elif is_name_char(c) {
+            alloc name := read_ident()
+            if tp < tn and b[tp] == 40 {
+                tp := tp + 1
+                if name == "url" {
+                    loop tp < tn and u.is_space(b[tp]) {
+                        tp := tp + 1
+                    }
+                    if tp < tn and (b[tp] == 34 or b[tp] == 39) {
+                        alloc q := b[tp]
+                        tp := tp + 1
+                        alloc s := read_string(q)
+                        loop tp < tn and b[tp] != 41 {
+                            tp := tp + 1
+                        }
+                        tp := tp + 1
+                        append(out, [8, s])
+                    } else {
+                        alloc start := tp
+                        loop tp < tn and b[tp] != 41 {
+                            tp := tp + 1
+                        }
+                        append(out, [8, u.trim(bytes_to_string(b[start:tp]))])
+                        tp := tp + 1
+                    }
+                } else {
+                    append(out, [5, name, read_tokens(true)])
+                }
+            } else {
+                append(out, [1, name])
+            }
+        } else {
+            append(out, [9, c])
+            tp := tp + 1
+        }
+    }
+    return out
+}
+
+# The tokens of the value in b[from:to].
+proc tokenize(b, from, to) {
+    tb := b
+    tp := from
+    tn := to
+    alloc out := read_tokens(false)
+    tb := []
+    return out
+}
+
+proc tokenize_str(s) {
+    alloc b := string_bytes(s)
+    return tokenize(b, 0, length(b))
+}
+
+# --- colours -----------------------------------------------------------------------
+
+alloc COLOR_NAMES := "aliceblue:f0f8ff;antiquewhite:faebd7;aqua:00ffff;aquamarine:7fffd4;azure:f0ffff;beige:f5f5dc;bisque:ffe4c4;black:000000;blanchedalmond:ffebcd;blue:0000ff;blueviolet:8a2be2;brown:a52a2a;burlywood:deb887;cadetblue:5f9ea0;chartreuse:7fff00;chocolate:d2691e;coral:ff7f50;cornflowerblue:6495ed;cornsilk:fff8dc;crimson:dc143c;cyan:00ffff;darkblue:00008b;darkcyan:008b8b;darkgoldenrod:b8860b;darkgray:a9a9a9;darkgreen:006400;darkgrey:a9a9a9;darkkhaki:bdb76b;darkmagenta:8b008b;darkolivegreen:556b2f;darkorange:ff8c00;darkorchid:9932cc;darkred:8b0000;darksalmon:e9967a;darkseagreen:8fbc8f;darkslateblue:483d8b;darkslategray:2f4f4f;darkslategrey:2f4f4f;darkturquoise:00ced1;darkviolet:9400d3;deeppink:ff1493;deepskyblue:00bfff;dimgray:696969;dimgrey:696969;dodgerblue:1e90ff;firebrick:b22222;floralwhite:fffaf0;forestgreen:228b22;fuchsia:ff00ff;gainsboro:dcdcdc;ghostwhite:f8f8ff;gold:ffd700;goldenrod:daa520;gray:808080;green:008000;greenyellow:adff2f;grey:808080;honeydew:f0fff0;hotpink:ff69b4;indianred:cd5c5c;indigo:4b0082;ivory:fffff0;khaki:f0e68c;lavender:e6e6fa;lavenderblush:fff0f5;lawngreen:7cfc00;lemonchiffon:fffacd;lightblue:add8e6;lightcoral:f08080;lightcyan:e0ffff;lightgoldenrodyellow:fafad2;lightgray:d3d3d3;lightgreen:90ee90;lightgrey:d3d3d3;lightpink:ffb6c1;lightsalmon:ffa07a;lightseagreen:20b2aa;lightskyblue:87cefa;lightslategray:778899;lightslategrey:778899;lightsteelblue:b0c4de;lightyellow:ffffe0;lime:00ff00;limegreen:32cd32;linen:faf0e6;magenta:ff00ff;maroon:800000;mediumaquamarine:66cdaa;mediumblue:0000cd;mediumorchid:ba55d3;mediumpurple:9370db;mediumseagreen:3cb371;mediumslateblue:7b68ee;mediumspringgreen:00fa9a;mediumturquoise:48d1cc;mediumvioletred:c71585;midnightblue:191970;mintcream:f5fffa;mistyrose:ffe4e1;moccasin:ffe4b5;navajowhite:ffdead;navy:000080;oldlace:fdf5e6;olive:808000;olivedrab:6b8e23;orange:ffa500;orangered:ff4500;orchid:da70d6;palegoldenrod:eee8aa;palegreen:98fb98;paleturquoise:afeeee;palevioletred:db7093;papayawhip:ffefd5;peachpuff:ffdab9;peru:cd853f;pink:ffc0cb;plum:dda0dd;powderblue:b0e0e6;purple:800080;rebeccapurple:663399;red:ff0000;rosybrown:bc8f8f;royalblue:4169e1;saddlebrown:8b4513;salmon:fa8072;sandybrown:f4a460;seagreen:2e8b57;seashell:fff5ee;sienna:a0522d;silver:c0c0c0;skyblue:87ceeb;slateblue:6a5acd;slategray:708090;slategrey:708090;snow:fffafa;springgreen:00ff7f;steelblue:4682b4;tan:d2b48c;teal:008080;thistle:d8bfd8;tomato:ff6347;turquoise:40e0d0;violet:ee82ee;wheat:f5deb3;white:ffffff;whitesmoke:f5f5f5;yellow:ffff00;yellowgreen:9acd32;canvas:ffffff;canvastext:000000;linktext:0000ee;visitedtext:551a8b;buttonface:efefef;buttontext:000000;field:ffffff;fieldtext:000000;graytext:808080;highlight:3390ff;highlighttext:ffffff;buttonborder:767676;windowtext:000000;window:ffffff"
+alloc colors := {}
+
+proc hex_val(c) {
+    if c >= 48 and c <= 57 {
+        return c - 48
+    }
+    if c >= 97 and c <= 102 {
+        return c - 87
+    }
+    if c >= 65 and c <= 70 {
+        return c - 55
+    }
+    return -1
+}
+
+proc colors_init() {
+    for item in u.split(COLOR_NAMES, ";") {
+        alloc b := string_bytes(item)
+        alloc n := length(b)
+        alloc v := 0
+        alloc i := n - 6
+        loop i < n {
+            v := v * 16 + hex_val(b[i])
+            i := i + 1
+        }
+        colors[bytes_to_string(b[0:n - 7])] := 4278190080 | v
+    }
+    return true
+}
+
+proc clamp255(v) {
+    alloc r := floor(v + 0.5)
+    if r < 0 {
+        return 0
+    }
+    if r > 255 {
+        return 255
+    }
+    return r
+}
+
+proc hue_part(p, q, t) {
+    if t < 0 {
+        t := t + 1
+    }
+    if t > 1 {
+        t := t - 1
+    }
+    if t * 6 < 1 {
+        return p + (q - p) * 6 * t
+    }
+    if t * 2 < 1 {
+        return q
+    }
+    if t * 3 < 2 {
+        return p + (q - p) * (2.0 / 3 - t) * 6
+    }
+    return p
+}
+
+# The numbers inside rgb(...) or hsl(...): the tokens without commas,
+# and what follows a "/" as the last one.
+proc color_args(toks) {
+    alloc out := []
+    for t in toks {
+        if t[0] == 2 {
+            append(out, t)
+        } elif t[0] == 1 and t[1] == "none" {
+            append(out, [2, 0, ""])
+        } elif t[0] != 6 and t[0] != 7 {
+            return false
+        }
+    }
+    return out
+}
+
+proc alpha_of(t) {
+    alloc a := t[1]
+    if t[2] == "%" {
+        a := a / 100
+    }
+    return clamp255(a * 255)
+}
+
+# A colour from one token: alpha * 16777216 + rgb, the string
+# "currentcolor", or false when the token is not a colour.
+proc color_of(t) {
+    if length(dict_keys(colors)) == 0 {
+        colors_init()
+    }
+    alloc k := t[0]
+    if k == 1 {
+        alloc name := t[1]
+        if has_key(colors, name) {
+            return colors[name]
+        }
+        if name == "transparent" {
+            return 0
+        }
+        if name == "currentcolor" {
+            return "currentcolor"
+        }
+        return false
+    }
+    if k == 3 {
+        alloc b := string_bytes(t[1])
+        alloc n := length(b)
+        alloc i := 0
+        loop i < n {
+            if hex_val(b[i]) < 0 {
+                return false
+            }
+            i := i + 1
+        }
+        if n == 3 or n == 4 {
+            alloc r := hex_val(b[0]) * 17
+            alloc g := hex_val(b[1]) * 17
+            alloc bl := hex_val(b[2]) * 17
+            alloc a := 255
+            if n == 4 {
+                a := hex_val(b[3]) * 17
+            }
+            return (a << 24) | (r << 16) | (g << 8) | bl
+        }
+        if n == 6 or n == 8 {
+            alloc v := 0
+            i := 0
+            loop i < 6 {
+                v := v * 16 + hex_val(b[i])
+                i := i + 1
+            }
+            alloc a2 := 255
+            if n == 8 {
+                a2 := hex_val(b[6]) * 16 + hex_val(b[7])
+            }
+            return (a2 << 24) | v
+        }
+        return false
+    }
+    if k == 5 {
+        alloc fname := t[1]
+        if fname == "rgb" or fname == "rgba" {
+            alloc ar := color_args(t[2])
+            if ar == false or length(ar) < 3 {
+                return false
+            }
+            alloc ch := [0, 0, 0]
+            alloc j := 0
+            loop j < 3 {
+                alloc v2 := ar[j][1]
+                if ar[j][2] == "%" {
+                    v2 := v2 * 255 / 100
+                }
+                ch[j] := clamp255(v2)
+                j := j + 1
+            }
+            alloc a3 := 255
+            if length(ar) > 3 {
+                a3 := alpha_of(ar[3])
+            }
+            return (a3 << 24) | (ch[0] << 16) | (ch[1] << 8) | ch[2]
+        }
+        if fname == "light-dark" {
+            # this browser is always the light one
+            for lt in t[2] {
+                if lt[0] != 6 and lt[0] != 7 {
+                    return color_of(lt)
+                }
+            }
+            return false
+        }
+        if fname == "hsl" or fname == "hsla" {
+            alloc ah := color_args(t[2])
+            if ah == false or length(ah) < 3 {
+                return false
+            }
+            alloc hue := ah[0][1]
+            if ah[0][2] == "turn" {
+                hue := hue * 360
+            } elif ah[0][2] == "rad" {
+                hue := hue * 57.29578
+            }
+            hue := (hue - floor(hue / 360) * 360) / 360.0
+            alloc sat := ah[1][1] / 100.0
+            alloc lig := ah[2][1] / 100.0
+            if sat < 0 { sat := 0.0 }
+            if sat > 1 { sat := 1.0 }
+            if lig < 0 { lig := 0.0 }
+            if lig > 1 { lig := 1.0 }
+            alloc q := lig + sat - lig * sat
+            if lig < 0.5 {
+                q := lig * (1 + sat)
+            }
+            alloc p := 2 * lig - q
+            alloc a4 := 255
+            if length(ah) > 3 {
+                a4 := alpha_of(ah[3])
+            }
+            return (a4 << 24) | (clamp255(hue_part(p, q, hue + 1.0 / 3) * 255) << 16) | (clamp255(hue_part(p, q, hue) * 255) << 8) | clamp255(hue_part(p, q, hue - 1.0 / 3) * 255)
+        }
+    }
+    return false
+}
+
+# --- lengths -------------------------------------------------------------------------
+
+# A token that is a length with a unit, as a list (see the top of the
+# file); false when it is not one. A bare 0 is a length; any other bare
+# number is not.
+proc unit_len(t) {
+    if t[0] != 2 {
+        return false
+    }
+    alloc v := t[1]
+    alloc unit := t[2]
+    if unit == "px" {
+        return [0, v]
+    }
+    if unit == "%" {
+        return [1, v]
+    }
+    if unit == "em" {
+        return [5, v]
+    }
+    if unit == "rem" {
+        return [6, v]
+    }
+    if unit == "" {
+        if v == 0 {
+            return ZERO
+        }
+        return false
+    }
+    if unit == "pt" {
+        return [0, v * 4 / 3]
+    }
+    if unit == "vw" or unit == "vi" or unit == "svw" or unit == "dvw" or unit == "lvw" {
+        return [7, v]
+    }
+    if unit == "vh" or unit == "vb" or unit == "svh" or unit == "dvh" or unit == "lvh" {
+        return [8, v]
+    }
+    if unit == "vmin" {
+        return [10, v]
+    }
+    if unit == "vmax" {
+        return [11, v]
+    }
+    if unit == "ex" or unit == "ch" {
+        return [5, v / 2]
+    }
+    if unit == "pc" {
+        return [0, v * 16]
+    }
+    if unit == "in" {
+        return [0, v * 96]
+    }
+    if unit == "cm" {
+        return [0, v * 96 / 2.54]
+    }
+    if unit == "mm" {
+        return [0, v * 96 / 25.4]
+    }
+    if unit == "q" {
+        return [0, v * 96 / 101.6]
+    }
+    return false
+}
+
+# calc() works on mixes: [px, percent, em, rem, vw, vh, a plain number].
+proc mix_of(t) {
+    if t[0] == 2 {
+        alloc m := [0, 0, 0, 0, 0, 0, 0]
+        if t[2] == "" {
+            m[6] := t[1]
+            return m
+        }
+        alloc l := unit_len(t)
+        if l == false {
+            return false
+        }
+        alloc k := l[0]
+        if k == 0 {
+            m[0] := l[1]
+        } elif k == 1 {
+            m[1] := l[1]
+        } elif k == 5 {
+            m[2] := l[1]
+        } elif k == 6 {
+            m[3] := l[1]
+        } elif k == 7 or k == 10 {
+            m[4] := l[1]
+        } elif k == 8 or k == 11 {
+            m[5] := l[1]
+        }
+        return m
+    }
+    if t[0] == 5 and (t[1] == "calc" or t[1] == "") {
+        return calc_sum(t[2], 0, length(t[2]))
+    }
+    if t[0] == 5 and t[1] == "var" {
+        return false
+    }
+    return false
+}
+
+# A product: terms joined by * and /, from toks[i] on. Returns
+# [mix, index after it] or false.
+proc calc_product(toks, i, n) {
+    if i >= n {
+        return false
+    }
+    alloc acc := mix_of(toks[i])
+    if acc == false {
+        return false
+    }
+    i := i + 1
+    loop i < n {
+        alloc t := toks[i]
+        alloc mul := t[0] == 9 and t[1] == 42
+        alloc div := t[0] == 7
+        if mul == false and div == false {
+            break
+        }
+        if i + 1 >= n {
+            return false
+        }
+        alloc rhs := mix_of(toks[i + 1])
+        if rhs == false {
+            return false
+        }
+        alloc k := 0
+        if mul {
+            # one side must be a plain number
+            alloc scalar := rhs[6]
+            alloc other := acc
+            if rhs[0] != 0 or rhs[1] != 0 or rhs[2] != 0 or rhs[3] != 0 or rhs[4] != 0 or rhs[5] != 0 {
+                scalar := acc[6]
+                other := rhs
+            }
+            alloc res := [0, 0, 0, 0, 0, 0, 0]
+            loop k < 7 {
+                res[k] := other[k] * scalar
+                k := k + 1
+            }
+            acc := res
+        } else {
+            if rhs[6] == 0 {
+                return false
+            }
+            loop k < 7 {
+                acc[k] := acc[k] / rhs[6]
+                k := k + 1
+            }
+        }
+        i := i + 2
+    }
+    return [acc, i]
+}
+
+# A sum of products; the mix, or false.
+proc calc_sum(toks, i, n) {
+    alloc r := calc_product(toks, i, n)
+    if r == false {
+        return false
+    }
+    alloc acc := r[0]
+    i := r[1]
+    loop i < n {
+        alloc t := toks[i]
+        alloc sign := 0
+        if t[0] == 9 and t[1] == 43 {
+            sign := 1
+        } elif t[0] == 9 and t[1] == 45 {
+            sign := -1
+        } elif t[0] == 2 and t[1] < 0 {
+            # "a -5px" reads as a number with a sign: take it as a sum
+            sign := 1
+            i := i - 1
+        } else {
+            return false
+        }
+        alloc r2 := calc_product(toks, i + 1, n)
+        if r2 == false {
+            return false
+        }
+        alloc k := 0
+        loop k < 7 {
+            acc[k] := acc[k] + sign * r2[0][k]
+            k := k + 1
+        }
+        i := r2[1]
+    }
+    return acc
+}
+
+# A mix as a length: the simplest list that says the same.
+proc mix_len(m) {
+    if m[2] == 0 and m[3] == 0 and m[4] == 0 and m[5] == 0 {
+        if m[1] == 0 {
+            return [0, m[0]]
+        }
+        if m[0] == 0 {
+            return [1, m[1]]
+        }
+        return [2, m[0], m[1]]
+    }
+    return [9, m[0], m[1], m[2], m[3], m[4], m[5]]
+}
+
+# The arguments of min(), max() or clamp(), cut at the commas, each a mix.
+proc mix_args(toks) {
+    alloc out := []
+    alloc start := 0
+    alloc i := 0
+    alloc n := length(toks)
+    loop i <= n {
+        if i == n or toks[i][0] == 6 {
+            if i > start {
+                alloc m := calc_sum(toks, start, i)
+                if m == false {
+                    if i - start == 1 and toks[start][0] == 1 and toks[start][1] == "none" {
+                        m := false
+                    } else {
+                        return false
+                    }
+                }
+                append(out, m)
+            }
+            start := i + 1
+        }
+        i := i + 1
+    }
+    return out
+}
+
+# A length from one token: a number with a unit, calc(), min(), max()
+# or clamp(). false when it is none of those.
+proc len_of(t) {
+    if t[0] == 2 {
+        return unit_len(t)
+    }
+    if t[0] == 5 {
+        alloc name := t[1]
+        if name == "calc" {
+            alloc m := calc_sum(t[2], 0, length(t[2]))
+            if m == false {
+                return false
+            }
+            return mix_len(m)
+        }
+        if name == "min" or name == "max" or name == "clamp" {
+            alloc ar := mix_args(t[2])
+            if ar == false or length(ar) == 0 {
+                return false
+            }
+            alloc op := 1
+            if name == "max" {
+                op := 2
+            } elif name == "clamp" {
+                op := 3
+                if length(ar) != 3 {
+                    return false
+                }
+            }
+            return [14, op, ar]
+        }
+    }
+    return false
+}
+
+# --- properties ----------------------------------------------------------------------
+#
+# PROPS says, for every property this knows: what kind of value it
+# takes, whether an element gets it from its parent when nothing sets
+# it, and the value it has to begin with.
+#
+#     kind 1   a length or auto            kind 5   a colour
+#     kind 2   a length, not negative      kind 6   the width of a border
+#     kind 3   a length or none            kind 7   a number
+#     kind 4   one of a set of words       kind 8   its own rules (see special())
+
+alloc PROPS := {}
+alloc KW := {}                 # property -> {word as written: word as kept}
+alloc INHERITED := []          # the names of the inherited properties
+alloc SIDES := ["top", "right", "bottom", "left"]
+alloc ready := false
+alloc sheet_base := ""         # the address url(...) in a sheet is counted from
+
+proc prop(name, kind, inherited, initial) {
+    PROPS[name] := [kind, inherited, initial]
+    if inherited {
+        append(INHERITED, name)
+    }
+    return true
+}
+
+# A set of words: "a b=c d" lets a, b and d through, b kept as c.
+proc words(name, list) {
+    alloc d := {}
+    for w in u.words(list) {
+        alloc at := u.find(w, "=")
+        if at < 0 {
+            d[w] := w
+        } else {
+            d[w[0:at]] := w[at + 1:]
+        }
+    }
+    KW[name] := d
+    return true
+}
+
+proc props_init() {
+    ready := true
+    prop("display", 4, false, "inline")
+    words("display", "block inline inline-block list-item none table inline-table table-row table-cell table-row-group table-header-group table-footer-group table-caption table-column table-column-group flex inline-flex grid inline-grid contents flow-root=block -webkit-box=flex -webkit-flex=flex -webkit-inline-box=inline-flex -ms-flexbox=flex")
+    prop("position", 4, false, "static")
+    words("position", "static relative absolute fixed sticky -webkit-sticky=sticky")
+    prop("float", 4, false, "none")
+    words("float", "left right none inline-start=left inline-end=right")
+    prop("clear", 4, false, "none")
+    words("clear", "left right both none inline-start=left inline-end=right")
+    prop("visibility", 4, true, "visible")
+    words("visibility", "visible hidden collapse")
+    for side in SIDES {
+        prop(side, 1, false, AUTO)
+        prop("margin-" + side, 1, false, ZERO)
+        prop("padding-" + side, 2, false, ZERO)
+        prop("border-" + side + "-width", 6, false, 0)
+        prop("border-" + side + "-style", 4, false, "none")
+        words("border-" + side + "-style", "none hidden solid dashed dotted double groove ridge inset outset")
+        prop("border-" + side + "-color", 5, false, "currentcolor")
+    }
+    prop("width", 1, false, AUTO)
+    prop("height", 1, false, AUTO)
+    prop("min-width", 1, false, AUTO)
+    prop("min-height", 1, false, AUTO)
+    prop("max-width", 3, false, NONE)
+    prop("max-height", 3, false, NONE)
+    prop("box-sizing", 4, false, "content-box")
+    words("box-sizing", "content-box border-box")
+    prop("color", 5, true, 4278190080)
+    prop("background-color", 5, false, 0)
+    prop("background-image", 8, false, "none")
+    prop("background-repeat", 4, false, "repeat")
+    words("background-repeat", "repeat no-repeat repeat-x repeat-y space=repeat round=repeat")
+    prop("background-position-x", 8, false, ZERO)
+    prop("background-position-y", 8, false, ZERO)
+    prop("background-size", 8, false, "auto")
+    prop("border-radius", 2, false, ZERO)
+    prop("opacity", 8, false, 1)
+    prop("overflow-x", 4, false, "visible")
+    prop("overflow-y", 4, false, "visible")
+    words("overflow-x", "visible hidden scroll auto clip=hidden overlay=auto")
+    words("overflow-y", "visible hidden scroll auto clip=hidden overlay=auto")
+    prop("z-index", 8, false, "auto")
+    prop("font-family", 8, true, ["serif"])
+    prop("font-size", 8, true, 16)
+    prop("font-weight", 8, true, 400)
+    prop("font-style", 4, true, "normal")
+    words("font-style", "normal italic oblique=italic")
+    prop("line-height", 8, true, [13, 0])
+    prop("text-align", 4, true, "left")
+    words("text-align", "left right center justify start=left end=right -webkit-center=-center -moz-center=-center -webkit-left=left -webkit-right=right -moz-left=left -moz-right=right match-parent=left")
+    prop("text-indent", 1, true, ZERO)
+    prop("text-transform", 4, true, "none")
+    words("text-transform", "none uppercase lowercase capitalize")
+    prop("white-space", 4, true, "normal")
+    words("white-space", "normal nowrap pre pre-wrap pre-line break-spaces=pre-wrap")
+    prop("letter-spacing", 8, true, 0)
+    prop("text-decoration-line", 8, false, 0)
+    prop("vertical-align", 8, false, "baseline")
+    prop("list-style-type", 4, true, "disc")
+    words("list-style-type", "disc circle square decimal decimal-leading-zero=decimal lower-alpha upper-alpha lower-latin=lower-alpha upper-latin=upper-alpha lower-roman upper-roman none lower-greek=lower-alpha disclosure-closed=disc disclosure-open=disc")
+    prop("list-style-position", 4, true, "outside")
+    words("list-style-position", "inside outside")
+    prop("border-collapse", 4, true, "separate")
+    words("border-collapse", "collapse separate")
+    prop("border-spacing", 8, true, 0)
+    prop("caption-side", 4, true, "top")
+    words("caption-side", "top bottom")
+    prop("table-layout", 4, false, "auto")
+    words("table-layout", "auto fixed")
+    prop("cursor", 8, true, "auto")
+    prop("word-break", 4, true, "normal")
+    words("word-break", "normal break-all keep-all break-word")
+    prop("overflow-wrap", 4, true, "normal")
+    words("overflow-wrap", "normal break-word anywhere")
+    prop("text-overflow", 4, false, "clip")
+    words("text-overflow", "clip ellipsis")
+    prop("content", 8, false, "normal")
+    prop("flex-direction", 4, false, "row")
+    words("flex-direction", "row row-reverse column column-reverse")
+    prop("flex-wrap", 4, false, "nowrap")
+    words("flex-wrap", "nowrap wrap wrap-reverse")
+    prop("flex-grow", 7, false, 0)
+    prop("flex-shrink", 7, false, 1)
+    prop("flex-basis", 1, false, AUTO)
+    prop("justify-content", 4, false, "normal")
+    words("justify-content", "normal flex-start flex-end center space-between space-around space-evenly start=flex-start end=flex-end left=flex-start right=flex-end stretch=normal")
+    prop("align-items", 4, false, "normal")
+    words("align-items", "normal stretch flex-start flex-end center baseline start=flex-start end=flex-end self-start=flex-start self-end=flex-end")
+    prop("align-self", 4, false, "auto")
+    words("align-self", "auto normal stretch flex-start flex-end center baseline start=flex-start end=flex-end self-start=flex-start self-end=flex-end")
+    prop("align-content", 4, false, "normal")
+    words("align-content", "normal stretch flex-start flex-end center space-between space-around space-evenly start=flex-start end=flex-end")
+    prop("order", 7, false, 0)
+    prop("row-gap", 2, false, ZERO)
+    prop("column-gap", 2, false, ZERO)
+    prop("object-fit", 4, false, "fill")
+    words("object-fit", "fill contain cover none scale-down")
+    prop("aspect-ratio", 8, false, "auto")
+    prop("grid-template-columns", 8, false, "none")
+    prop("grid-column-start", 8, false, "auto")
+    prop("grid-column-end", 8, false, "auto")
+    return true
+}
+
+# The names a property goes by besides its own: the "logical" ones,
+# which mean left or right by the direction of writing (here always
+# left to right, top to bottom).
+alloc ALIASES := {
+    "margin-inline-start": "margin-left", "margin-inline-end": "margin-right",
+    "margin-block-start": "margin-top", "margin-block-end": "margin-bottom",
+    "padding-inline-start": "padding-left", "padding-inline-end": "padding-right",
+    "padding-block-start": "padding-top", "padding-block-end": "padding-bottom",
+    "inset-inline-start": "left", "inset-inline-end": "right",
+    "inset-block-start": "top", "inset-block-end": "bottom",
+    "inline-size": "width", "block-size": "height",
+    "min-inline-size": "min-width", "min-block-size": "min-height",
+    "max-inline-size": "max-width", "max-block-size": "max-height",
+    "border-inline-start-width": "border-left-width", "border-inline-end-width": "border-right-width",
+    "border-block-start-width": "border-top-width", "border-block-end-width": "border-bottom-width",
+    "border-inline-start-style": "border-left-style", "border-inline-end-style": "border-right-style",
+    "border-block-start-style": "border-top-style", "border-block-end-style": "border-bottom-style",
+    "border-inline-start-color": "border-left-color", "border-inline-end-color": "border-right-color",
+    "border-block-start-color": "border-top-color", "border-block-end-color": "border-bottom-color",
+    "border-inline-start": "border-left", "border-inline-end": "border-right",
+    "border-block-start": "border-top", "border-block-end": "border-bottom",
+    "word-wrap": "overflow-wrap", "grid-gap": "gap", "grid-row-gap": "row-gap", "grid-column-gap": "column-gap",
+    "text-decoration-line": "text-decoration-line", "overflow-inline": "overflow-x", "overflow-block": "overflow-y"
+}
+
+# What "inherit", "initial" and "unset" set when written for a shorthand.
+alloc SHORT := {
+    margin: ["margin-top", "margin-right", "margin-bottom", "margin-left"],
+    padding: ["padding-top", "padding-right", "padding-bottom", "padding-left"],
+    inset: ["top", "right", "bottom", "left"],
+    "border-width": ["border-top-width", "border-right-width", "border-bottom-width", "border-left-width"],
+    "border-style": ["border-top-style", "border-right-style", "border-bottom-style", "border-left-style"],
+    "border-color": ["border-top-color", "border-right-color", "border-bottom-color", "border-left-color"],
+    border: ["border-top-width", "border-right-width", "border-bottom-width", "border-left-width",
+             "border-top-style", "border-right-style", "border-bottom-style", "border-left-style",
+             "border-top-color", "border-right-color", "border-bottom-color", "border-left-color"],
+    "border-top": ["border-top-width", "border-top-style", "border-top-color"],
+    "border-right": ["border-right-width", "border-right-style", "border-right-color"],
+    "border-bottom": ["border-bottom-width", "border-bottom-style", "border-bottom-color"],
+    "border-left": ["border-left-width", "border-left-style", "border-left-color"],
+    background: ["background-color", "background-image", "background-repeat", "background-position-x", "background-position-y", "background-size"],
+    "background-position": ["background-position-x", "background-position-y"],
+    font: ["font-style", "font-weight", "font-size", "line-height", "font-family"],
+    "list-style": ["list-style-type", "list-style-position"],
+    "text-decoration": ["text-decoration-line"],
+    overflow: ["overflow-x", "overflow-y"],
+    flex: ["flex-grow", "flex-shrink", "flex-basis"],
+    "flex-flow": ["flex-direction", "flex-wrap"],
+    gap: ["row-gap", "column-gap"],
+    "margin-inline": ["margin-left", "margin-right"],
+    "margin-block": ["margin-top", "margin-bottom"],
+    "padding-inline": ["padding-left", "padding-right"],
+    "padding-block": ["padding-top", "padding-bottom"],
+    "inset-inline": ["left", "right"],
+    "inset-block": ["top", "bottom"],
+    "place-items": ["align-items"],
+    "place-content": ["align-content", "justify-content"],
+    "place-self": ["align-self"],
+    "grid-column": ["grid-column-start", "grid-column-end"]
+}
+
+proc ident_of(t) {
+    if t[0] == 1 {
+        return t[1]
+    }
+    return ""
+}
+
+# A length or auto from one token, or false.
+proc len_or_auto(t) {
+    if t[0] == 1 {
+        if t[1] == "auto" {
+            return AUTO
+        }
+        if t[1] == "fit-content" or t[1] == "max-content" or t[1] == "min-content" or t[1] == "-webkit-fit-content" or t[1] == "-moz-fit-content" {
+            return [16, t[1]]
+        }
+        return false
+    }
+    return len_of(t)
+}
+
+proc border_width_of(t) {
+    if t[0] == 1 {
+        if t[1] == "thin" {
+            return [0, 1]
+        }
+        if t[1] == "medium" {
+            return [0, 3]
+        }
+        if t[1] == "thick" {
+            return [0, 5]
+        }
+        return false
+    }
+    alloc l := len_of(t)
+    if l != false and l[0] == 1 {
+        return false
+    }
+    return l
+}
+
+alloc FONT_SIZES := {"xx-small": 9, "x-small": 10, small: 13, medium: 16, large: 18, "x-large": 24, "xx-large": 32, "xxx-large": 48}
+
+# The value of one of the properties with rules of their own (kind 8),
+# from its tokens; false when the tokens are not a value for it.
+proc special(name, toks) {
+    alloc n := length(toks)
+    if n == 0 {
+        return false
+    }
+    alloc t := toks[0]
+    alloc id := ident_of(t)
+    if name == "font-size" {
+        if n != 1 {
+            return false
+        }
+        if has_key(FONT_SIZES, id) {
+            return [0, FONT_SIZES[id]]
+        }
+        if id == "smaller" {
+            return [5, 0.833]
+        }
+        if id == "larger" {
+            return [5, 1.2]
+        }
+        alloc fl := len_of(t)
+        if fl == false {
+            return false
+        }
+        if fl[0] == 1 {
+            return [5, fl[1] / 100.0]
+        }
+        if fl[0] == 2 {
+            return [9, fl[1], 0, fl[2] / 100.0, 0, 0, 0]
+        }
+        return fl
+    }
+    if name == "font-weight" {
+        if n != 1 {
+            return false
+        }
+        if id == "normal" {
+            return 400
+        }
+        if id == "bold" {
+            return 700
+        }
+        if id == "bolder" or id == "lighter" {
+            return id
+        }
+        if t[0] == 2 and t[2] == "" and t[1] >= 1 and t[1] <= 1000 {
+            return t[1]
+        }
+        return false
+    }
+    if name == "line-height" {
+        if n != 1 {
+            return false
+        }
+        if id == "normal" {
+            return [13, 0]
+        }
+        if t[0] == 2 and t[2] == "" {
+            if t[1] < 0 {
+                return false
+            }
+            return [12, t[1]]
+        }
+        alloc ll := len_of(t)
+        if ll == false {
+            return false
+        }
+        if ll[0] == 1 {
+            return [5, ll[1] / 100.0]
+        }
+        return ll
+    }
+    if name == "font-family" {
+        alloc fams := []
+        alloc cur := ""
+        for ft in toks {
+            if ft[0] == 6 {
+                if cur != "" {
+                    append(fams, cur)
+                }
+                cur := ""
+            } elif ft[0] == 1 or ft[0] == 4 {
+                if cur != "" {
+                    cur := cur + " "
+                }
+                cur := cur + u.lower(ft[1])
+            } else {
+                return false
+            }
+        }
+        if cur != "" {
+            append(fams, cur)
+        }
+        if length(fams) == 0 {
+            return false
+        }
+        return fams
+    }
+    if name == "vertical-align" {
+        if n != 1 {
+            return false
+        }
+        if id == "baseline" or id == "sub" or id == "super" or id == "top" or id == "text-top" or id == "middle" or id == "bottom" or id == "text-bottom" {
+            return id
+        }
+        if id == "-webkit-baseline-middle" {
+            return "middle"
+        }
+        alloc vl := len_of(t)
+        if vl == false {
+            return false
+        }
+        if vl[0] == 1 {
+            return [5, vl[1] / 100.0]
+        }
+        return vl
+    }
+    if name == "text-decoration-line" {
+        alloc bits := 0
+        alloc seen := false
+        for dt in toks {
+            alloc di := ident_of(dt)
+            if di == "underline" {
+                bits := bits | 1
+                seen := true
+            } elif di == "overline" {
+                bits := bits | 2
+                seen := true
+            } elif di == "line-through" {
+                bits := bits | 4
+                seen := true
+            } elif di == "none" {
+                seen := true
+            } elif di == "blink" {
+                seen := true
+            }
+        }
+        if seen == false {
+            return false
+        }
+        return bits
+    }
+    if name == "letter-spacing" {
+        if id == "normal" {
+            return ZERO
+        }
+        alloc sl := len_of(t)
+        if sl == false or sl[0] == 1 {
+            return false
+        }
+        return sl
+    }
+    if name == "border-spacing" {
+        alloc bs := len_of(t)
+        if bs == false or bs[0] == 1 {
+            return false
+        }
+        return bs
+    }
+    if name == "z-index" {
+        if id == "auto" {
+            return "auto"
+        }
+        if t[0] == 2 and t[2] == "" {
+            return floor(t[1])
+        }
+        return false
+    }
+    if name == "opacity" {
+        if t[0] != 2 or n != 1 {
+            return false
+        }
+        alloc o := t[1]
+        if t[2] == "%" {
+            o := o / 100.0
+        }
+        if o < 0 {
+            o := 0
+        }
+        if o > 1 {
+            o := 1
+        }
+        return o
+    }
+    if name == "cursor" {
+        alloc last := ident_of(toks[n - 1])
+        if last == "" {
+            return false
+        }
+        return last
+    }
+    if name == "aspect-ratio" {
+        if id == "auto" and n == 1 {
+            return "auto"
+        }
+        alloc nums := []
+        for at in toks {
+            if at[0] == 2 and at[2] == "" {
+                append(nums, at[1])
+            }
+        }
+        if length(nums) == 1 and nums[0] > 0 {
+            return nums[0] * 1.0
+        }
+        if length(nums) == 2 and nums[0] > 0 and nums[1] > 0 {
+            return nums[0] * 1.0 / nums[1]
+        }
+        return false
+    }
+    if name == "content" {
+        if n == 1 and (id == "normal" or id == "none") {
+            return id
+        }
+        alloc parts := []
+        for ct in toks {
+            if ct[0] == 4 {
+                append(parts, [4, ct[1]])
+            } elif ct[0] == 5 and ct[1] == "attr" and length(ct[2]) > 0 and ct[2][0][0] == 1 {
+                append(parts, [5, ct[2][0][1]])
+            } elif ct[0] == 1 and (ct[1] == "open-quote" or ct[1] == "close-quote") {
+                append(parts, [4, "\""])
+            } elif ct[0] == 7 {
+                break
+            }
+        }
+        return [20, parts]
+    }
+    if name == "background-image" {
+        if id == "none" {
+            return "none"
+        }
+        if t[0] == 8 {
+            alloc where := t[1]
+            if sheet_base != "" {
+                alloc whole := url.resolve(sheet_base, where)
+                if whole != "" {
+                    where := whole
+                }
+            }
+            return [21, where]
+        }
+        if t[0] == 5 {
+            return gradient_of(t)
+        }
+        return false
+    }
+    if name == "background-position-x" or name == "background-position-y" {
+        if n != 1 {
+            return false
+        }
+        if id == "left" or id == "top" {
+            return [1, 0]
+        }
+        if id == "center" {
+            return [1, 50]
+        }
+        if id == "right" or id == "bottom" {
+            return [1, 100]
+        }
+        return len_of(t)
+    }
+    if name == "background-size" {
+        if id == "cover" or id == "contain" {
+            return id
+        }
+        alloc sx := len_or_auto(t)
+        if sx == false {
+            return false
+        }
+        alloc sy := AUTO
+        if n > 1 {
+            sy := len_or_auto(toks[1])
+            if sy == false {
+                return false
+            }
+        }
+        if sx[0] == 3 and sy[0] == 3 {
+            return "auto"
+        }
+        return [22, sx, sy]
+    }
+    if name == "grid-template-columns" {
+        return grid_tracks(toks)
+    }
+    if name == "grid-column-start" or name == "grid-column-end" {
+        if id == "auto" {
+            return "auto"
+        }
+        if id == "span" and n == 2 and toks[1][0] == 2 {
+            return [23, floor(toks[1][1])]
+        }
+        if t[0] == 2 and t[2] == "" {
+            return floor(t[1])
+        }
+        return false
+    }
+    return false
+}
+
+# The column widths of a grid: a list of lengths, with [17, n] for
+# "n fr" (a share of what is left). repeat(3, 1fr) is written out;
+# repeat(auto-fill, minmax(200px, 1fr)) is kept as [18, the least width].
+proc grid_tracks(toks) {
+    alloc out := []
+    for t in toks {
+        alloc id := ident_of(t)
+        if id == "none" {
+            return "none"
+        }
+        if t[0] == 2 and t[2] == "fr" {
+            append(out, [17, t[1]])
+        } elif id == "auto" or id == "min-content" or id == "max-content" {
+            append(out, AUTO)
+        } elif t[0] == 5 and t[1] == "minmax" {
+            alloc ar := split_commas(t[2])
+            if length(ar) != 2 or length(ar[1]) != 1 {
+                return false
+            }
+            alloc hi := ar[1][0]
+            if hi[0] == 2 and hi[2] == "fr" {
+                append(out, [17, hi[1]])
+            } elif ident_of(hi) != "" {
+                append(out, AUTO)
+            } else {
+                alloc hl := len_of(hi)
+                if hl == false {
+                    return false
+                }
+                append(out, hl)
+            }
+        } elif t[0] == 5 and t[1] == "repeat" {
+            alloc ra := split_commas(t[2])
+            if length(ra) != 2 or length(ra[0]) != 1 {
+                return false
+            }
+            alloc cnt := ra[0][0]
+            if cnt[0] == 2 {
+                alloc inner := grid_tracks(ra[1])
+                if inner == false or inner == "none" {
+                    return false
+                }
+                alloc k := 0
+                loop k < cnt[1] and k < 100 {
+                    for it in inner {
+                        append(out, it)
+                    }
+                    k := k + 1
+                }
+            } else {
+                # auto-fill or auto-fit: as many columns as fit
+                alloc least := [0, 100]
+                if length(ra[1]) == 1 {
+                    alloc rt := ra[1][0]
+                    if rt[0] == 5 and rt[1] == "minmax" {
+                        alloc ma := split_commas(rt[2])
+                        if length(ma) == 2 and length(ma[0]) == 1 {
+                            alloc ml := len_of(ma[0][0])
+                            if ml != false {
+                                least := ml
+                            }
+                        }
+                    } else {
+                        alloc rl := len_of(rt)
+                        if rl != false {
+                            least := rl
+                        }
+                    }
+                }
+                return [[18, least]]
+            }
+        } elif t[0] == 5 and t[1] == "fit-content" {
+            append(out, AUTO)
+        } elif t[0] == 9 {
+            # [line names] are stepped over
+            continue
+        } elif t[0] == 1 {
+            continue
+        } else {
+            alloc l := len_of(t)
+            if l == false {
+                return false
+            }
+            append(out, l)
+        }
+    }
+    if length(out) == 0 {
+        return false
+    }
+    return out
+}
+
+# The tokens between commas, as a list of token lists.
+proc split_commas(toks) {
+    alloc out := []
+    alloc cur := []
+    for t in toks {
+        if t[0] == 6 {
+            append(out, cur)
+            cur := []
+        } else {
+            append(cur, t)
+        }
+    }
+    append(out, cur)
+    return out
+}
+
+# linear-gradient(...) as [24, angle in degrees, stops], each stop
+# [colour, place in percent or -1]. 0 degrees points up, 90 to the
+# right, as in CSS. Other kinds of gradient are not drawn.
+proc gradient_of(t) {
+    alloc name := t[1]
+    if name != "linear-gradient" and name != "-webkit-linear-gradient" and name != "repeating-linear-gradient" and name != "-moz-linear-gradient" {
+        return false
+    }
+    alloc parts := split_commas(t[2])
+    alloc angle := 180.0
+    alloc first := 0
+    if length(parts) > 0 and length(parts[0]) > 0 {
+        alloc p0 := parts[0]
+        alloc lead := p0[0]
+        if lead[0] == 2 and (lead[2] == "deg" or lead[2] == "turn" or lead[2] == "rad" or lead[2] == "grad") {
+            angle := lead[1] * 1.0
+            if lead[2] == "turn" {
+                angle := angle * 360
+            } elif lead[2] == "rad" {
+                angle := angle * 57.29578
+            } elif lead[2] == "grad" {
+                angle := angle * 0.9
+            }
+            first := 1
+        } elif lead[0] == 1 and (lead[1] == "to" or lead[1] == "top" or lead[1] == "bottom" or lead[1] == "left" or lead[1] == "right") {
+            alloc to := lead[1] == "to"
+            alloc dx := 0
+            alloc dy := 0
+            for dt in p0 {
+                alloc w := ident_of(dt)
+                if w == "top" {
+                    dy := -1
+                } elif w == "bottom" {
+                    dy := 1
+                } elif w == "left" {
+                    dx := -1
+                } elif w == "right" {
+                    dx := 1
+                }
+            }
+            if to == false {
+                # the old form names where it starts
+                dx := 0 - dx
+                dy := 0 - dy
+            }
+            if dx == 0 and dy == -1 { angle := 0.0 }
+            if dx == 1 and dy == -1 { angle := 45.0 }
+            if dx == 1 and dy == 0 { angle := 90.0 }
+            if dx == 1 and dy == 1 { angle := 135.0 }
+            if dx == 0 and dy == 1 { angle := 180.0 }
+            if dx == -1 and dy == 1 { angle := 225.0 }
+            if dx == -1 and dy == 0 { angle := 270.0 }
+            if dx == -1 and dy == -1 { angle := 315.0 }
+            first := 1
+        }
+    }
+    alloc stops := []
+    alloc i := first
+    loop i < length(parts) {
+        alloc sp := parts[i]
+        if length(sp) == 0 {
+            return false
+        }
+        alloc c := color_of(sp[0])
+        if c == false {
+            return false
+        }
+        if c == "currentcolor" {
+            c := 4278190080
+        }
+        alloc at := -1
+        if length(sp) > 1 and sp[1][0] == 2 {
+            if sp[1][2] == "%" {
+                at := sp[1][1]
+            } elif sp[1][1] == 0 {
+                at := 0
+            }
+        }
+        append(stops, [c, at])
+        i := i + 1
+    }
+    if length(stops) < 1 {
+        return false
+    }
+    return [24, angle, stops]
+}
+
+# One value for a property that takes one (not a shorthand), from its
+# tokens; false when they are not a value for it.
+proc value_of(name, toks) {
+    alloc p := PROPS[name]
+    alloc kind := p[0]
+    alloc n := length(toks)
+    if n == 0 {
+        return false
+    }
+    if kind == 8 {
+        return special(name, toks)
+    }
+    if n != 1 {
+        return false
+    }
+    alloc t := toks[0]
+    if kind == 1 {
+        return len_or_auto(t)
+    }
+    if kind == 2 {
+        if t[0] == 1 and t[1] == "normal" {
+            return ZERO
+        }
+        alloc l := len_of(t)
+        if l != false and l[0] < 2 and l[1] < 0 {
+            return false
+        }
+        return l
+    }
+    if kind == 3 {
+        if t[0] == 1 {
+            if t[1] == "none" {
+                return NONE
+            }
+            return false
+        }
+        return len_of(t)
+    }
+    if kind == 4 {
+        if t[0] != 1 {
+            return false
+        }
+        alloc set := KW[name]
+        if has_key(set, t[1]) {
+            return set[t[1]]
+        }
+        return false
+    }
+    if kind == 5 {
+        return color_of(t)
+    }
+    if kind == 6 {
+        return border_width_of(t)
+    }
+    if kind == 7 {
+        if t[0] == 2 and t[2] == "" {
+            return t[1]
+        }
+        return false
+    }
+    return false
+}
+
+proc put(out, name, value, important) {
+    append(out, [name, value, important, 0])
+    return true
+}
+
+# One to four values for the four sides, the CSS way: one for all,
+# two for top-and-bottom and left-and-right, and so on.
+proc four(out, toks, names, important) {
+    alloc n := length(toks)
+    if n < 1 or n > 4 {
+        return false
+    }
+    alloc vals := []
+    for t in toks {
+        alloc v := value_of(names[0], [t])
+        if v == false {
+            return false
+        }
+        append(vals, v)
+    }
+    alloc top := vals[0]
+    alloc right := top
+    if n > 1 {
+        right := vals[1]
+    }
+    alloc bottom := top
+    if n > 2 {
+        bottom := vals[2]
+    }
+    alloc left := right
+    if n > 3 {
+        left := vals[3]
+    }
+    put(out, names[0], top, important)
+    put(out, names[1], right, important)
+    put(out, names[2], bottom, important)
+    put(out, names[3], left, important)
+    return true
+}
+
+# "1px solid red", in any order, for the sides named.
+proc border_short(out, toks, sides, important) {
+    alloc width := [0, 3]
+    alloc style := "none"
+    alloc color := "currentcolor"
+    for t in toks {
+        alloc w := border_width_of(t)
+        if w != false {
+            width := w
+            continue
+        }
+        alloc id := ident_of(t)
+        if id != "" and has_key(KW["border-top-style"], id) {
+            style := id
+            continue
+        }
+        alloc c := color_of(t)
+        if c == false {
+            return false
+        }
+        color := c
+    }
+    for side in sides {
+        put(out, "border-" + side + "-width", width, important)
+        put(out, "border-" + side + "-style", style, important)
+        put(out, "border-" + side + "-color", color, important)
+    }
+    return true
+}
+
+proc background_short(out, toks, important) {
+    # several pictures may be layered, with commas between: the first is the one drawn
+    alloc layers := split_commas(toks)
+    alloc color := 0
+    alloc image := "none"
+    alloc repeat := "repeat"
+    alloc px := ZERO
+    alloc py := ZERO
+    alloc size := "auto"
+    alloc li := length(layers) - 1
+    loop li >= 0 {
+        alloc layer := layers[li]
+        alloc pos := []
+        alloc after_slash := false
+        alloc sizes := []
+        alloc l_image := "none"
+        alloc l_repeat := "repeat"
+        for t in layer {
+            alloc id := ident_of(t)
+            if t[0] == 7 {
+                after_slash := true
+                continue
+            }
+            if after_slash {
+                append(sizes, t)
+                continue
+            }
+            if t[0] == 8 {
+                l_image := [21, t[1]]
+            } elif t[0] == 5 and u.contains(t[1], "gradient") {
+                alloc g := gradient_of(t)
+                if g != false {
+                    l_image := g
+                }
+            } elif id == "none" {
+                l_image := "none"
+            } elif id != "" and has_key(KW["background-repeat"], id) {
+                l_repeat := KW["background-repeat"][id]
+            } elif id == "scroll" or id == "fixed" or id == "local" or id == "border-box" or id == "padding-box" or id == "content-box" or id == "text" {
+                continue
+            } elif id == "left" or id == "right" or id == "top" or id == "bottom" or id == "center" or t[0] == 2 or (t[0] == 5 and t[1] == "calc") {
+                append(pos, t)
+            } else {
+                alloc c := color_of(t)
+                if c == false {
+                    return false
+                }
+                if li == length(layers) - 1 {
+                    color := c
+                }
+            }
+        }
+        if li == 0 {
+            image := l_image
+            repeat := l_repeat
+            alloc xy := position_of(pos)
+            if xy != false {
+                px := xy[0]
+                py := xy[1]
+            }
+            if length(sizes) > 0 {
+                alloc sv := special("background-size", sizes)
+                if sv != false {
+                    size := sv
+                }
+            }
+        }
+        li := li - 1
+    }
+    if color == "currentcolor" {
+        color := 0
+    }
+    put(out, "background-color", color, important)
+    put(out, "background-image", image, important)
+    put(out, "background-repeat", repeat, important)
+    put(out, "background-position-x", px, important)
+    put(out, "background-position-y", py, important)
+    put(out, "background-size", size, important)
+    return true
+}
+
+# Where a background picture sits, from "center", "left 10px", "50% 0"...
+# as [x, y] lengths; false when the tokens make no sense.
+proc position_of(toks) {
+    alloc x := [1, 50]
+    alloc y := [1, 50]
+    alloc n := length(toks)
+    if n == 0 {
+        return [ZERO, ZERO]
+    }
+    alloc have_x := false
+    alloc have_y := false
+    alloc i := 0
+    loop i < n {
+        alloc t := toks[i]
+        alloc id := ident_of(t)
+        if id == "left" {
+            x := [1, 0]
+            have_x := true
+        } elif id == "right" {
+            x := [1, 100]
+            have_x := true
+        } elif id == "top" {
+            y := [1, 0]
+            have_y := true
+        } elif id == "bottom" {
+            y := [1, 100]
+            have_y := true
+        } elif id == "center" {
+            if have_x {
+                have_y := true
+            } elif i > 0 {
+                have_x := true
+            }
+        } else {
+            alloc l := len_of(t)
+            if l == false {
+                return false
+            }
+            if have_x == false and i == 0 {
+                x := l
+                have_x := true
+            } elif have_y == false {
+                y := l
+                have_y := true
+            }
+        }
+        i := i + 1
+    }
+    return [x, y]
+}
+
+proc font_short(out, toks, important) {
+    alloc n := length(toks)
+    alloc style := "normal"
+    alloc weight := 400
+    alloc i := 0
+    alloc size := false
+    loop i < n {
+        alloc t := toks[i]
+        alloc id := ident_of(t)
+        if id == "italic" or id == "oblique" {
+            style := "italic"
+        } elif id == "bold" {
+            weight := 700
+        } elif id == "bolder" or id == "lighter" {
+            weight := id
+        } elif id == "normal" or id == "small-caps" or id == "condensed" or id == "expanded" {
+            i := i + 1
+            continue
+        } elif t[0] == 2 and t[2] == "" and t[1] >= 100 and t[1] <= 900 and size == false and i + 1 < n {
+            weight := t[1]
+        } else {
+            size := special("font-size", [t])
+            if size == false {
+                return false
+            }
+            i := i + 1
+            break
+        }
+        i := i + 1
+    }
+    if size == false or i >= n {
+        return false
+    }
+    alloc lh := [13, 0]
+    if toks[i][0] == 7 {
+        if i + 1 >= n {
+            return false
+        }
+        lh := special("line-height", [toks[i + 1]])
+        if lh == false {
+            return false
+        }
+        i := i + 2
+    }
+    alloc fam := special("font-family", toks[i:])
+    if fam == false {
+        return false
+    }
+    put(out, "font-style", style, important)
+    put(out, "font-weight", weight, important)
+    put(out, "font-size", size, important)
+    put(out, "line-height", lh, important)
+    put(out, "font-family", fam, important)
+    return true
+}
+
+proc flex_short(out, toks, important) {
+    alloc n := length(toks)
+    alloc grow := 1
+    alloc shrink := 1
+    alloc basis := ZERO
+    alloc id := ident_of(toks[0])
+    if n == 1 and id == "none" {
+        grow := 0
+        shrink := 0
+        basis := AUTO
+    } elif n == 1 and id == "auto" {
+        basis := AUTO
+    } elif n == 1 and id == "initial" {
+        grow := 0
+        basis := AUTO
+    } else {
+        alloc nums := 0
+        for t in toks {
+            if t[0] == 2 and t[2] == "" and (nums < 2) and (t[1] != 0 or n > 1 or true) {
+                if nums == 0 {
+                    grow := t[1]
+                } else {
+                    shrink := t[1]
+                }
+                nums := nums + 1
+            } else {
+                alloc b := len_or_auto(t)
+                if b == false {
+                    if ident_of(t) == "content" {
+                        b := AUTO
+                    } else {
+                        return false
+                    }
+                }
+                basis := b
+            }
+        }
+    }
+    put(out, "flex-grow", grow, important)
+    put(out, "flex-shrink", shrink, important)
+    put(out, "flex-basis", basis, important)
+    return true
+}
+
+# Take one declaration apart: add to `out` an entry [property, value,
+# important] for every property it sets. Returns false, adding
+# nothing, when the declaration is not understood.
+proc declare(out, name, toks, important) {
+    if has_key(ALIASES, name) {
+        name := ALIASES[name]
+    }
+    alloc n := length(toks)
+    if n == 0 {
+        return false
+    }
+    if n == 1 and toks[0][0] == 1 {
+        alloc word := toks[0][1]
+        if word == "inherit" or word == "initial" or word == "unset" or word == "revert" or word == "revert-layer" {
+            if word == "revert" or word == "revert-layer" {
+                word := "unset"
+            }
+            if has_key(SHORT, name) {
+                for long in SHORT[name] {
+                    put(out, long, word, important)
+                }
+                return true
+            }
+            if has_key(PROPS, name) {
+                put(out, name, word, important)
+                return true
+            }
+            return false
+        }
+    }
+    if has_key(PROPS, name) {
+        alloc v := value_of(name, toks)
+        if v == false {
+            return false
+        }
+        put(out, name, v, important)
+        return true
+    }
+    if name == "margin" or name == "padding" or name == "inset" or name == "border-width" or name == "border-style" or name == "border-color" {
+        return four(out, toks, SHORT[name], important)
+    }
+    if name == "border" {
+        return border_short(out, toks, SIDES, important)
+    }
+    if name == "border-top" or name == "border-right" or name == "border-bottom" or name == "border-left" {
+        return border_short(out, toks, [name[7:]], important)
+    }
+    if name == "background" {
+        return background_short(out, toks, important)
+    }
+    if name == "background-position" {
+        alloc xy := position_of(split_commas(toks)[0])
+        if xy == false {
+            return false
+        }
+        put(out, "background-position-x", xy[0], important)
+        put(out, "background-position-y", xy[1], important)
+        return true
+    }
+    if name == "font" {
+        return font_short(out, toks, important)
+    }
+    if name == "list-style" {
+        alloc any := false
+        for t in toks {
+            alloc id := ident_of(t)
+            if id == "inside" or id == "outside" {
+                put(out, "list-style-position", id, important)
+                any := true
+            } elif id != "" and has_key(KW["list-style-type"], id) {
+                put(out, "list-style-type", KW["list-style-type"][id], important)
+                any := true
+            } elif t[0] == 8 or t[0] == 4 or id != "" {
+                any := true
+            }
+        }
+        return any
+    }
+    if name == "text-decoration" {
+        alloc bits := special("text-decoration-line", toks)
+        if bits == false and bits != 0 {
+            return false
+        }
+        put(out, "text-decoration-line", bits, important)
+        return true
+    }
+    if name == "overflow" {
+        alloc ox := value_of("overflow-x", [toks[0]])
+        if ox == false {
+            return false
+        }
+        alloc oy := ox
+        if n > 1 {
+            oy := value_of("overflow-y", [toks[1]])
+            if oy == false {
+                return false
+            }
+        }
+        put(out, "overflow-x", ox, important)
+        put(out, "overflow-y", oy, important)
+        return true
+    }
+    if name == "flex" {
+        return flex_short(out, toks, important)
+    }
+    if name == "flex-flow" {
+        for t2 in toks {
+            alloc id2 := ident_of(t2)
+            if has_key(KW["flex-direction"], id2) {
+                put(out, "flex-direction", id2, important)
+            } elif has_key(KW["flex-wrap"], id2) {
+                put(out, "flex-wrap", id2, important)
+            } else {
+                return false
+            }
+        }
+        return true
+    }
+    if name == "gap" {
+        alloc rg := value_of("row-gap", [toks[0]])
+        if rg == false {
+            return false
+        }
+        alloc cg := rg
+        if n > 1 {
+            cg := value_of("column-gap", [toks[1]])
+            if cg == false {
+                return false
+            }
+        }
+        put(out, "row-gap", rg, important)
+        put(out, "column-gap", cg, important)
+        return true
+    }
+    if name == "margin-inline" or name == "margin-block" or name == "padding-inline" or name == "padding-block" or name == "inset-inline" or name == "inset-block" {
+        alloc pair := SHORT[name]
+        alloc a := value_of(pair[0], [toks[0]])
+        if a == false {
+            return false
+        }
+        alloc b2 := a
+        if n > 1 {
+            b2 := value_of(pair[1], [toks[1]])
+            if b2 == false {
+                return false
+            }
+        }
+        put(out, pair[0], a, important)
+        put(out, pair[1], b2, important)
+        return true
+    }
+    if name == "place-items" or name == "place-self" or name == "place-content" {
+        alloc target := SHORT[name][0]
+        alloc pv := value_of(target, [toks[0]])
+        if pv == false {
+            return false
+        }
+        put(out, target, pv, important)
+        if name == "place-content" {
+            alloc jt := toks[0]
+            if n > 1 {
+                jt := toks[1]
+            }
+            alloc jv := value_of("justify-content", [jt])
+            if jv != false {
+                put(out, "justify-content", jv, important)
+            }
+        }
+        return true
+    }
+    if name == "grid-column" {
+        alloc parts := []
+        alloc cur := []
+        for gt in toks {
+            if gt[0] == 7 {
+                append(parts, cur)
+                cur := []
+            } else {
+                append(cur, gt)
+            }
+        }
+        append(parts, cur)
+        alloc gs := special("grid-column-start", parts[0])
+        if gs == false {
+            return false
+        }
+        put(out, "grid-column-start", gs, important)
+        if length(parts) > 1 {
+            alloc ge := special("grid-column-end", parts[1])
+            if ge != false {
+                put(out, "grid-column-end", ge, important)
+            }
+        }
+        return true
+    }
+    if name == "border-top-left-radius" {
+        alloc rv := value_of("border-radius", [toks[0]])
+        if rv == false {
+            return false
+        }
+        put(out, "border-radius", rv, important)
+        return true
+    }
+    if name == "border-radius" {
+        alloc rv2 := value_of("border-radius", [toks[0]])
+        if rv2 == false {
+            return false
+        }
+        put(out, "border-radius", rv2, important)
+        return true
+    }
+    # -webkit-box-sizing and the like: the same property under an older name
+    if u.starts_with(name, "-webkit-") {
+        return declare(out, name[8:], toks, important)
+    }
+    if u.starts_with(name, "-moz-") {
+        return declare(out, name[5:], toks, important)
+    }
+    return false
+}
+
+# --- selectors -----------------------------------------------------------------------
+#
+# A selector such as "ul.menu > li a:first-child" is kept from right to
+# left: [compound, combinator, compound, combinator, compound], since
+# matching starts at the element and works outwards. A compound is
+# [tag, id, classes, attributes, pseudo-classes]; a combinator is 1 for
+# a space (any ancestor), 2 for ">", 3 for "+", 4 for "~".
+#
+# Pseudo-classes are [kind, argument]:
+#     1 first-child   2 last-child   3 only-child   4 nth-child   5 nth-last-child
+#     6 first-of-type 7 last-of-type 8 nth-of-type  9 only-of-type 19 nth-last-of-type
+#     10 root  11 empty  12 not(...)  13 is(...)/where(...)  14 link
+#     15 never (hover, focus, visited: states this browser does not follow)
+#     16 checked  17 disabled  18 enabled
+
+alloc PSEUDO := {
+    "first-child": 1, "last-child": 2, "only-child": 3, "first-of-type": 6, "last-of-type": 7,
+    "only-of-type": 9, root: 10, empty: 11, link: 14, "any-link": 14, scope: 10,
+    hover: 15, active: 15, focus: 15, "focus-visible": 15, "focus-within": 15, visited: 15, target: 15,
+    "read-only": 15, "read-write": 15, "placeholder-shown": 15, required: 15, optional: 15, valid: 15,
+    invalid: 15, indeterminate: 15, default: 15, "in-range": 15, "out-of-range": 15, fullscreen: 15,
+    "target-within": 15, "user-invalid": 15, "user-valid": 15, autofill: 15, "-webkit-autofill": 15,
+    "popover-open": 15, modal: 15, open: 15, defined: 15, "-moz-focusring": 15, "-moz-ui-invalid": 15,
+    "picture-in-picture": 15, playing: 15, paused: 15, future: 15, past: 15, current: 15,
+    checked: 16, disabled: 17, enabled: 18
+}
+
+proc skip_ws() {
+    alloc b := tb
+    alloc moved := false
+    loop tp < tn and u.is_space(b[tp]) {
+        tp := tp + 1
+        moved := true
+    }
+    return moved
+}
+
+# The index of the bracket that closes the one opened just before tp.
+proc closing_paren(i) {
+    alloc b := tb
+    alloc depth := 1
+    loop i < tn {
+        alloc c := b[i]
+        if c == 40 {
+            depth := depth + 1
+        } elif c == 41 {
+            depth := depth - 1
+            if depth == 0 {
+                return i
+            }
+        } elif c == 34 or c == 39 {
+            i := i + 1
+            loop i < tn and b[i] != c {
+                i := i + 1
+            }
+        }
+        i := i + 1
+    }
+    return tn
+}
+
+# "2n+1", "odd", "-n+3", "5" as [a, b]; false when it is none of them.
+proc parse_nth(s) {
+    alloc t := u.lower(u.trim(s))
+    alloc of := u.find(t, " of ")
+    if of >= 0 {
+        t := u.trim(t[0:of])
+    }
+    if t == "odd" {
+        return [2, 1]
+    }
+    if t == "even" {
+        return [2, 0]
+    }
+    t := u.replace(t, " ", "")
+    alloc at := u.find(t, "n")
+    if at < 0 {
+        alloc v := u.to_int(t, false)
+        if v == false and v != 0 {
+            return false
+        }
+        return [0, v]
+    }
+    alloc a := 1
+    alloc lead := t[0:at]
+    if lead == "-" {
+        a := -1
+    } elif lead != "" and lead != "+" {
+        a := u.to_int(lead, 1)
+    }
+    alloc b := u.to_int(t[at + 1:], 0)
+    return [a, b]
+}
+
+# A list of selectors up to the ")" that closes the bracket tp is in.
+# Returns [list of selectors (each as parse_complex gives), greatest
+# weight among them], or false.
+proc parse_inner_list() {
+    alloc list := []
+    alloc best := 0
+    loop true {
+        alloc s := parse_complex()
+        if s == false {
+            return false
+        }
+        append(list, s[0])
+        if s[1] > best {
+            best := s[1]
+        }
+        skip_ws()
+        if tp < tn and tb[tp] == 44 {
+            tp := tp + 1
+        } else {
+            break
+        }
+    }
+    if tp < tn and tb[tp] == 41 {
+        tp := tp + 1
+    }
+    return [list, best]
+}
+
+alloc sel_spec := 0            # the weight of the compound just read
+alloc sel_pe := 0              # its pseudo-element: 1 before, 2 after, 9 one this does not draw
+
+proc parse_compound() {
+    alloc b := tb
+    alloc tag := ""
+    alloc id := ""
+    alloc classes := []
+    alloc attrs := []
+    alloc pseudos := []
+    alloc spec := 0
+    alloc any := false
+    if tp < tn and b[tp] == 42 {
+        tp := tp + 1
+        any := true
+    } elif tp < tn and ((b[tp] >= 97 and b[tp] <= 122) or (b[tp] >= 65 and b[tp] <= 90) or b[tp] == 95 or b[tp] >= 128 or (b[tp] == 45 and tp + 1 < tn and is_name_char(b[tp + 1]))) {
+        tag := read_ident()
+        spec := spec + 1
+        any := true
+    }
+    if tp < tn and b[tp] == 124 {
+        # a namespace prefix ("svg|a"): not followed
+        return false
+    }
+    loop tp < tn {
+        alloc c := b[tp]
+        if c == 35 {
+            tp := tp + 1
+            id := read_name_cs()
+            spec := spec + 65536
+        } elif c == 46 {
+            tp := tp + 1
+            alloc cn := read_name_cs()
+            if cn == "" {
+                return false
+            }
+            append(classes, cn)
+            spec := spec + 256
+        } elif c == 91 {
+            tp := tp + 1
+            skip_ws()
+            alloc an := read_ident()
+            skip_ws()
+            alloc op := 0
+            alloc av := ""
+            alloc ci := false
+            if tp < tn and b[tp] != 93 {
+                alloc oc := b[tp]
+                if oc == 61 {
+                    op := 1
+                    tp := tp + 1
+                } elif tp + 1 < tn and b[tp + 1] == 61 {
+                    if oc == 126 { op := 2 }
+                    if oc == 124 { op := 3 }
+                    if oc == 94 { op := 4 }
+                    if oc == 36 { op := 5 }
+                    if oc == 42 { op := 6 }
+                    if op == 0 {
+                        return false
+                    }
+                    tp := tp + 2
+                } else {
+                    return false
+                }
+                skip_ws()
+                if tp < tn and (b[tp] == 34 or b[tp] == 39) {
+                    alloc q := b[tp]
+                    tp := tp + 1
+                    av := read_string(q)
+                } else {
+                    av := read_name_cs()
+                }
+                skip_ws()
+                if tp < tn and (b[tp] == 105 or b[tp] == 73) {
+                    ci := true
+                    tp := tp + 1
+                } elif tp < tn and (b[tp] == 115 or b[tp] == 83) {
+                    tp := tp + 1
+                }
+                skip_ws()
+            }
+            if tp >= tn or b[tp] != 93 {
+                return false
+            }
+            tp := tp + 1
+            if ci {
+                av := u.lower(av)
+            }
+            append(attrs, [an, op, av, ci])
+            spec := spec + 256
+        } elif c == 58 {
+            tp := tp + 1
+            alloc double := false
+            if tp < tn and b[tp] == 58 {
+                double := true
+                tp := tp + 1
+            }
+            alloc pn := read_ident()
+            if pn == "" {
+                return false
+            }
+            if double or pn == "before" or pn == "after" or pn == "first-line" or pn == "first-letter" {
+                if pn == "before" {
+                    sel_pe := 1
+                } elif pn == "after" {
+                    sel_pe := 2
+                } else {
+                    sel_pe := 9
+                }
+                if tp < tn and b[tp] == 40 {
+                    tp := closing_paren(tp + 1) + 1
+                }
+                spec := spec + 1
+            } elif tp < tn and b[tp] == 40 {
+                tp := tp + 1
+                if pn == "not" or pn == "is" or pn == "where" or pn == "matches" or pn == "-webkit-any" or pn == "-moz-any" {
+                    alloc inner := parse_inner_list()
+                    if inner == false {
+                        return false
+                    }
+                    if pn == "not" {
+                        append(pseudos, [12, inner[0]])
+                    } else {
+                        append(pseudos, [13, inner[0]])
+                    }
+                    if pn != "where" {
+                        spec := spec + inner[1]
+                    }
+                } else {
+                    alloc close := closing_paren(tp)
+                    alloc arg := bytes_to_string(b[tp:close])
+                    tp := close + 1
+                    alloc kind := 0
+                    if pn == "nth-child" { kind := 4 }
+                    if pn == "nth-last-child" { kind := 5 }
+                    if pn == "nth-of-type" { kind := 8 }
+                    if pn == "nth-last-of-type" { kind := 19 }
+                    if kind != 0 {
+                        alloc ab := parse_nth(arg)
+                        if ab == false {
+                            return false
+                        }
+                        append(pseudos, [kind, ab])
+                    } elif pn == "has" or pn == "lang" or pn == "dir" or pn == "host" or pn == "host-context" or pn == "state" {
+                        append(pseudos, [15, 0])
+                    } else {
+                        return false
+                    }
+                    spec := spec + 256
+                }
+            } else {
+                if has_key(PSEUDO, pn) == false {
+                    return false
+                }
+                append(pseudos, [PSEUDO[pn], 0])
+                spec := spec + 256
+            }
+        } else {
+            break
+        }
+        any := true
+    }
+    if any == false {
+        return false
+    }
+    sel_spec := spec
+    return [tag, id, classes, attrs, pseudos]
+}
+
+# One selector from tp, up to a "," or ")" or the end. Returns
+# [parts from right to left, weight, pseudo-element], or false when it
+# is not one this understands.
+proc parse_complex() {
+    alloc b := tb
+    alloc lr := []
+    alloc spec := 0
+    alloc pe := 0
+    skip_ws()
+    loop true {
+        sel_pe := 0
+        alloc c := parse_compound()
+        if c == false {
+            return false
+        }
+        spec := spec + sel_spec
+        if sel_pe != 0 {
+            pe := sel_pe
+        }
+        append(lr, c)
+        alloc space := skip_ws()
+        if tp >= tn or b[tp] == 44 or b[tp] == 41 {
+            break
+        }
+        if pe != 0 {
+            return false
+        }
+        alloc ch := b[tp]
+        if ch == 62 {
+            append(lr, 2)
+            tp := tp + 1
+        } elif ch == 43 {
+            append(lr, 3)
+            tp := tp + 1
+        } elif ch == 126 {
+            append(lr, 4)
+            tp := tp + 1
+        } elif space {
+            append(lr, 1)
+        } else {
+            return false
+        }
+        skip_ws()
+    }
+    alloc parts := []
+    alloc i := length(lr) - 1
+    loop i >= 0 {
+        append(parts, lr[i])
+        i := i - 1
+    }
+    return [parts, spec, pe]
+}
+
+# The selectors of a rule ("a, b > c"), from b[from:to]. An empty list
+# when any of them is not understood: the standard has the whole rule
+# dropped then.
+proc parse_selectors(b, from, to) {
+    tb := b
+    tp := from
+    tn := to
+    alloc out := []
+    loop true {
+        alloc s := parse_complex()
+        if s == false {
+            tb := []
+            return []
+        }
+        append(out, s)
+        if tp < tn and b[tp] == 44 {
+            tp := tp + 1
+        } else {
+            break
+        }
+    }
+    alloc clean := tp >= tn
+    tb := []
+    if clean == false {
+        return []
+    }
+    return out
+}
+
+# --- matching ------------------------------------------------------------------------
+#
+# The element being asked about is path[d]; path[0..d-1] are its
+# ancestors, outermost first, and pidx[k] is where path[k] sits among
+# its parent's children.
+
+alloc path := []
+alloc pidx := []
+
+proc attr_matches(node, a) {
+    alloc attrs := node.attrs
+    alloc name := a[0]
+    if has_key(attrs, name) == false {
+        return false
+    }
+    alloc op := a[1]
+    if op == 0 {
+        return true
+    }
+    alloc have := attrs[name]
+    alloc want := a[2]
+    if a[3] or name == "type" or name == "dir" or name == "lang" or name == "rel" or name == "align" or name == "method" {
+        have := u.lower(have)
+        want := u.lower(want)
+    }
+    if op == 1 {
+        return have == want
+    }
+    if want == "" {
+        return false
+    }
+    if op == 2 {
+        for w in u.words(have) {
+            if w == want {
+                return true
+            }
+        }
+        return false
+    }
+    if op == 3 {
+        return have == want or u.starts_with(have, want + "-")
+    }
+    if op == 4 {
+        return u.starts_with(have, want)
+    }
+    if op == 5 {
+        return u.ends_with(have, want)
+    }
+    return u.contains(have, want)
+}
+
+proc nth_ok(ab, index) {
+    alloc a := ab[0]
+    alloc b := ab[1]
+    if a == 0 {
+        return index == b
+    }
+    alloc diff := index - b
+    if diff % a != 0 {
+        return false
+    }
+    return diff // a >= 0
+}
+
+# Where the element stands among its sisters with the same tag:
+# [from the start, from the end], both counted from 1.
+proc type_index(parent, node, at) {
+    alloc kids := parent.kids
+    alloc tag := node.tag
+    alloc before := 0
+    alloc after := 0
+    alloc i := 0
+    alloc n := length(kids)
+    loop i < n {
+        alloc k := kids[i]
+        if k.t == 1 and k.tag == tag {
+            if i < at {
+                before := before + 1
+            } elif i > at {
+                after := after + 1
+            }
+        }
+        i := i + 1
+    }
+    return [before + 1, after + 1]
+}
+
+proc pseudo_matches(p, d) {
+    alloc node := path[d]
+    alloc kind := p[0]
+    if kind == 15 {
+        return false
+    }
+    if kind == 14 {
+        return (node.tag == "a" or node.tag == "area") and has_key(node.attrs, "href")
+    }
+    if kind == 12 or kind == 13 {
+        alloc hit := false
+        for s in p[1] {
+            if match_from(s, 0, d) {
+                hit := true
+                break
+            }
+        }
+        if kind == 12 {
+            return hit == false
+        }
+        return hit
+    }
+    if kind == 10 {
+        return d == 0
+    }
+    if kind == 11 {
+        for k in node.kids {
+            if k.t == 1 or (k.t == 3 and length(k.text) > 0) {
+                return false
+            }
+        }
+        return true
+    }
+    if kind == 16 {
+        return has_key(node.attrs, "checked") or has_key(node.attrs, "selected")
+    }
+    if kind == 17 {
+        return has_key(node.attrs, "disabled")
+    }
+    if kind == 18 {
+        alloc tg := node.tag
+        return (tg == "input" or tg == "button" or tg == "select" or tg == "textarea") and has_key(node.attrs, "disabled") == false
+    }
+    # the rest are about the element's place among its sisters
+    alloc count := 1
+    alloc parent := false
+    if d > 0 {
+        parent := path[d - 1]
+        count := parent.ne
+    }
+    alloc index := node.ei
+    if kind == 1 {
+        return index == 1
+    }
+    if kind == 2 {
+        return index == count
+    }
+    if kind == 3 {
+        return count == 1
+    }
+    if kind == 4 {
+        return nth_ok(p[1], index)
+    }
+    if kind == 5 {
+        return nth_ok(p[1], count - index + 1)
+    }
+    alloc ti := [1, 1]
+    if parent != false {
+        ti := type_index(parent, node, pidx[d])
+    }
+    if kind == 6 {
+        return ti[0] == 1
+    }
+    if kind == 7 {
+        return ti[1] == 1
+    }
+    if kind == 8 {
+        return nth_ok(p[1], ti[0])
+    }
+    if kind == 19 {
+        return nth_ok(p[1], ti[1])
+    }
+    if kind == 9 {
+        return ti[0] == 1 and ti[1] == 1
+    }
+    return false
+}
+
+proc compound_matches(c, d) {
+    alloc node := path[d]
+    alloc tag := c[0]
+    if tag != "" and tag != node.tag {
+        return false
+    }
+    if c[1] != "" and c[1] != node.eid {
+        return false
+    }
+    alloc classes := c[2]
+    if length(classes) > 0 {
+        alloc have := node.cls
+        alloc nh := length(have)
+        if nh == 0 {
+            return false
+        }
+        for want in classes {
+            alloc found := false
+            alloc i := 0
+            loop i < nh {
+                if have[i] == want {
+                    found := true
+                    break
+                }
+                i := i + 1
+            }
+            if found == false {
+                return false
+            }
+        }
+    }
+    for a in c[3] {
+        if attr_matches(node, a) == false {
+            return false
+        }
+    }
+    for p in c[4] {
+        if pseudo_matches(p, d) == false {
+            return false
+        }
+    }
+    return true
+}
+
+# Does the selector `sel`, from its part k on, fit the element path[d]?
+proc match_from(sel, k, d) {
+    if compound_matches(sel[k], d) == false {
+        return false
+    }
+    if k + 1 >= length(sel) {
+        return true
+    }
+    alloc comb := sel[k + 1]
+    if comb == 1 {
+        alloc a := d - 1
+        loop a >= 0 {
+            if match_from(sel, k + 2, a) {
+                return true
+            }
+            a := a - 1
+        }
+        return false
+    }
+    if comb == 2 {
+        return d > 0 and match_from(sel, k + 2, d - 1)
+    }
+    # an earlier sister: stand her in the element's place for the test
+    if d == 0 {
+        return false
+    }
+    alloc kids := path[d - 1].kids
+    alloc saved := path[d]
+    alloc saved_i := pidx[d]
+    alloc i := saved_i - 1
+    alloc result := false
+    loop i >= 0 {
+        alloc sib := kids[i]
+        if sib.t == 1 {
+            path[d] := sib
+            pidx[d] := i
+            if match_from(sel, k + 2, d) {
+                result := true
+                break
+            }
+            if comb == 3 {
+                break
+            }
+        }
+        i := i - 1
+    }
+    path[d] := saved
+    pidx[d] := saved_i
+    return result
+}
+
+# --- sheets --------------------------------------------------------------------------
+#
+# A rule, once read: [selector parts, weight, order, declarations,
+# media, pseudo-element, origin, rank, has custom properties or var()].
+# `media` is an index into `medias` (-1: always applies); `rank` puts
+# the browser's own rules below a page's, then lighter selectors below
+# heavier, then earlier below later.
+#
+# A declaration: [property, value, important, flag]; flag 1 marks a
+# custom property ("--gap: 4px", value kept as text) and 2 a value that
+# uses var(), also kept as text until the element is known.
+
+alloc by_id := {}
+alloc by_class := {}
+alloc by_tag := {}
+alloc by_any := []
+alloc rule_count := 0
+alloc medias := []             # each: the conditions that must all hold
+alloc media_state := []        # per entry: 0 not asked yet, 1 holds, 2 does not
+alloc found_imports := []      # [url, media] of the @import rules read
+alloc vw := 1024
+alloc vh := 768
+alloc root_fs := 16
+alloc var_cache := {}
+alloc EMPTY := []
+alloc NO_VARS := {}
+
+# The sheet without its comments.
+proc strip_comments(b) {
+    alloc n := length(b)
+    alloc i := 0
+    alloc first := -1
+    loop i + 1 < n {
+        if b[i] == 47 and b[i + 1] == 42 {
+            first := i
+            break
+        }
+        i := i + 1
+    }
+    if first < 0 {
+        return b
+    }
+    alloc out := bytes_repeat(32, n)
+    alloc w := 0
+    alloc start := 0
+    i := first
+    loop i + 1 < n {
+        if b[i] == 47 and b[i + 1] == 42 {
+            if i > start {
+                bytes_copy(b, start, out, w, i - start)
+                w := w + i - start
+            }
+            w := w + 1
+            alloc j := i + 2
+            loop j + 1 < n and (b[j] != 42 or b[j + 1] != 47) {
+                j := j + 1
+            }
+            i := j + 2
+            start := i
+        } else {
+            i := i + 1
+        }
+    }
+    if start < n {
+        bytes_copy(b, start, out, w, n - start)
+        w := w + n - start
+    }
+    return out[0:w]
+}
+
+# The index of the "}" that closes a block whose "{" is just before i.
+proc block_end(b, i, end) {
+    alloc depth := 1
+    loop i < end {
+        alloc c := b[i]
+        if c == 123 {
+            depth := depth + 1
+        } elif c == 125 {
+            depth := depth - 1
+            if depth == 0 {
+                return i
+            }
+        } elif c == 34 or c == 39 {
+            i := i + 1
+            loop i < end and b[i] != c {
+                if b[i] == 92 {
+                    i := i + 1
+                }
+                i := i + 1
+            }
+        }
+        i := i + 1
+    }
+    return end
+}
+
+proc has_var(b, from, to) {
+    alloc i := from
+    alloc last := to - 4
+    loop i <= last {
+        if b[i] == 118 and b[i + 1] == 97 and b[i + 2] == 114 and b[i + 3] == 40 {
+            return true
+        }
+        i := i + 1
+    }
+    return false
+}
+
+# The declarations in b[from:to] ("color: red; margin: 0").
+proc parse_decls(b, from, to) {
+    alloc out := []
+    alloc i := from
+    loop i < to {
+        loop i < to and (u.is_space(b[i]) or b[i] == 59) {
+            i := i + 1
+        }
+        if i >= to {
+            break
+        }
+        alloc ns := i
+        loop i < to and b[i] != 58 and b[i] != 59 and b[i] != 123 and b[i] != 125 {
+            i := i + 1
+        }
+        if i >= to {
+            break
+        }
+        if b[i] == 59 or b[i] == 125 {
+            i := i + 1
+            continue
+        }
+        if b[i] == 123 {
+            # a rule nested in the block: stepped over
+            i := block_end(b, i + 1, to) + 1
+            continue
+        }
+        alloc ne := i
+        i := i + 1
+        alloc vs := i
+        alloc depth := 0
+        alloc nested := false
+        loop i < to {
+            alloc c := b[i]
+            if c == 59 and depth == 0 {
+                break
+            }
+            if c == 40 {
+                depth := depth + 1
+            } elif c == 41 {
+                if depth > 0 {
+                    depth := depth - 1
+                }
+            } elif c == 34 or c == 39 {
+                i := i + 1
+                loop i < to and b[i] != c {
+                    if b[i] == 92 {
+                        i := i + 1
+                    }
+                    i := i + 1
+                }
+            } elif c == 123 and depth == 0 {
+                nested := true
+                break
+            }
+            i := i + 1
+        }
+        if nested {
+            # it was "a:hover { ... }" after all, not a declaration
+            i := block_end(b, i + 1, to) + 1
+            continue
+        }
+        alloc ve := i
+        if ve > to {
+            ve := to
+        }
+        i := i + 1
+        loop ns < ne and u.is_space(b[ns]) {
+            ns := ns + 1
+        }
+        loop ne > ns and u.is_space(b[ne - 1]) {
+            ne := ne - 1
+        }
+        loop vs < ve and u.is_space(b[vs]) {
+            vs := vs + 1
+        }
+        loop ve > vs and u.is_space(b[ve - 1]) {
+            ve := ve - 1
+        }
+        if ne <= ns or ve <= vs {
+            continue
+        }
+        # "!important" at the end
+        alloc important := false
+        if ve - vs >= 10 {
+            alloc k := ve - 9
+            if (b[k] | 32) == 105 and (b[k + 1] | 32) == 109 and (b[k + 8] | 32) == 116 {
+                alloc e := k
+                loop e > vs and u.is_space(b[e - 1]) {
+                    e := e - 1
+                }
+                if e > vs and b[e - 1] == 33 {
+                    important := true
+                    ve := e - 1
+                    loop ve > vs and u.is_space(b[ve - 1]) {
+                        ve := ve - 1
+                    }
+                }
+            }
+        }
+        if b[ns] == 45 and ns + 1 < ne and b[ns + 1] == 45 {
+            append(out, [bytes_to_string(b[ns:ne]), bytes_to_string(b[vs:ve]), important, 1])
+            continue
+        }
+        alloc name := u.lower(bytes_to_string(b[ns:ne]))
+        if has_var(b, vs, ve) {
+            append(out, [name, bytes_to_string(b[vs:ve]), important, 2])
+            continue
+        }
+        declare(out, name, tokenize(b, vs, ve), important)
+    }
+    return out
+}
+
+proc put_rule(index, key, rule) {
+    if has_key(index, key) == false {
+        index[key] := []
+    }
+    append(index[key], rule)
+    return true
+}
+
+proc add_rule(sel, decls, media, origin, special_flags) {
+    alloc parts := sel[0]
+    alloc c := parts[0]
+    alloc spec := sel[1]
+    alloc rank := (origin << 48) | (spec << 24) | rule_count
+    alloc rule := [parts, spec, rule_count, decls, media, sel[2], origin, rank, special_flags]
+    rule_count := rule_count + 1
+    if c[1] != "" {
+        put_rule(by_id, c[1], rule)
+    } elif length(c[2]) > 0 {
+        put_rule(by_class, c[2][0], rule)
+    } elif c[0] != "" {
+        put_rule(by_tag, c[0], rule)
+    } else {
+        append(by_any, rule)
+    }
+    return true
+}
+
+# The entry in `medias` for a condition inside the block `parent`.
+proc media_index(parent, cond) {
+    alloc list := []
+    if parent >= 0 {
+        list := medias[parent] + []
+    }
+    append(list, cond)
+    append(medias, list)
+    append(media_state, 0)
+    return length(medias) - 1
+}
+
+proc media_px(t) {
+    if t[0] != 2 {
+        return false
+    }
+    if t[2] == "em" or t[2] == "rem" {
+        return t[1] * 16
+    }
+    alloc l := unit_len(t)
+    if l != false and l[0] == 0 {
+        return l[1]
+    }
+    return t[1]
+}
+
+# One bracketed test of a media query, as tokens: "min-width: 600px".
+proc media_feature(inner) {
+    alloc n := length(inner)
+    if n == 0 {
+        return false
+    }
+    if n == 1 and inner[0][0] == 5 and inner[0][1] == "" {
+        return media_feature(inner[0][2])
+    }
+    alloc name := ident_of(inner[0])
+    if name == "not" and n == 2 and inner[1][0] == 5 {
+        return media_feature(inner[1][2]) == false
+    }
+    if n == 1 {
+        return name == "color" or name == "hover" or name == "pointer" or name == "any-hover" or name == "any-pointer"
+    }
+    if inner[1][0] == 9 and inner[1][1] == 58 and n >= 3 {
+        alloc v := inner[2]
+        alloc word := ident_of(v)
+        alloc px := media_px(v)
+        if name == "min-width" or name == "min-device-width" {
+            return px != false and vw >= px
+        }
+        if name == "max-width" or name == "max-device-width" {
+            return px != false and vw <= px
+        }
+        if name == "width" or name == "device-width" {
+            return px != false and vw == px
+        }
+        if name == "min-height" or name == "min-device-height" {
+            return px != false and vh >= px
+        }
+        if name == "max-height" or name == "max-device-height" {
+            return px != false and vh <= px
+        }
+        if name == "orientation" {
+            return (word == "landscape") == (vw >= vh)
+        }
+        if name == "prefers-color-scheme" {
+            return word == "light"
+        }
+        if name == "prefers-reduced-motion" {
+            return word == "reduce"
+        }
+        if name == "prefers-contrast" or name == "prefers-reduced-transparency" or name == "prefers-reduced-data" {
+            return word == "no-preference"
+        }
+        if name == "hover" or name == "any-hover" {
+            return word == "hover"
+        }
+        if name == "pointer" or name == "any-pointer" {
+            return word == "fine"
+        }
+        if name == "display-mode" {
+            return word == "browser"
+        }
+        if name == "scripting" or name == "forced-colors" or name == "inverted-colors" {
+            return word == "none"
+        }
+        if name == "min-resolution" or name == "-webkit-min-device-pixel-ratio" or name == "min--moz-device-pixel-ratio" or name == "min-device-pixel-ratio" {
+            if v[0] != 2 {
+                return false
+            }
+            if v[2] == "dpi" {
+                return v[1] <= 96
+            }
+            return v[1] <= 1
+        }
+        if name == "max-resolution" or name == "-webkit-max-device-pixel-ratio" or name == "max-device-pixel-ratio" {
+            if v[0] != 2 {
+                return false
+            }
+            if v[2] == "dpi" {
+                return v[1] >= 96
+            }
+            return v[1] >= 1
+        }
+        return false
+    }
+    # the newer way of writing a range: "width >= 600px", "400px <= width < 800px"
+    alloc at := -1
+    alloc i := 0
+    loop i < n {
+        alloc w := ident_of(inner[i])
+        if w == "width" or w == "height" {
+            at := i
+        }
+        i := i + 1
+    }
+    if at < 0 {
+        return false
+    }
+    alloc size := vw
+    if ident_of(inner[at]) == "height" {
+        size := vh
+    }
+    alloc ok := true
+    # what stands before the name: value, comparison
+    if at >= 2 {
+        alloc lv := media_px(inner[0])
+        alloc lt := inner[1][0] == 9 and inner[1][1] == 60
+        alloc gt := inner[1][0] == 9 and inner[1][1] == 62
+        alloc eq := at >= 3 and inner[2][0] == 9 and inner[2][1] == 61
+        if lv == false and lv != 0 {
+            return false
+        }
+        if lt {
+            ok := ok and (lv < size or (eq and lv == size))
+        } elif gt {
+            ok := ok and (lv > size or (eq and lv == size))
+        }
+    }
+    if at + 2 < n {
+        alloc lt2 := inner[at + 1][0] == 9 and inner[at + 1][1] == 60
+        alloc gt2 := inner[at + 1][0] == 9 and inner[at + 1][1] == 62
+        alloc eq2 := inner[at + 2][0] == 9 and inner[at + 2][1] == 61
+        alloc rv := media_px(inner[n - 1])
+        if rv == false and rv != 0 {
+            return false
+        }
+        if lt2 {
+            ok := ok and (size < rv or (eq2 and size == rv))
+        } elif gt2 {
+            ok := ok and (size > rv or (eq2 and size == rv))
+        } elif inner[at + 1][0] == 9 and inner[at + 1][1] == 61 {
+            ok := ok and size == rv
+        }
+    }
+    return ok
+}
+
+# Does a media query list ("screen and (min-width: 600px), print") hold?
+proc media_query(cond) {
+    alloc toks := tokenize_str(cond)
+    if length(toks) == 0 {
+        return true
+    }
+    for q in split_commas(toks) {
+        alloc n := length(q)
+        alloc i := 0
+        alloc neg := false
+        alloc result := true
+        if n == 0 {
+            continue
+        }
+        alloc first := ident_of(q[0])
+        if first == "not" {
+            neg := true
+            i := 1
+        } elif first == "only" {
+            i := 1
+        }
+        if i < n and q[i][0] == 1 and q[i][1] != "and" {
+            alloc kind := q[i][1]
+            result := kind == "all" or kind == "screen"
+            i := i + 1
+        }
+        loop i < n {
+            alloc t := q[i]
+            if t[0] == 5 and t[1] == "" {
+                if media_feature(t[2]) == false {
+                    result := false
+                }
+            } elif t[0] != 1 {
+                result := false
+            }
+            i := i + 1
+        }
+        if neg {
+            result := result == false
+        }
+        if result {
+            return true
+        }
+    }
+    return false
+}
+
+proc media_holds(idx) {
+    if idx < 0 {
+        return true
+    }
+    alloc s := media_state[idx]
+    if s == 1 {
+        return true
+    }
+    if s == 2 {
+        return false
+    }
+    alloc ok := true
+    for cond in medias[idx] {
+        if media_query(cond) == false {
+            ok := false
+            break
+        }
+    }
+    if ok {
+        media_state[idx] := 1
+    } else {
+        media_state[idx] := 2
+    }
+    return ok
+}
+
+# "@supports (display: grid) and (not (gap: 1px))": true when this
+# browser would keep the declarations asked about.
+proc supports(toks) {
+    alloc n := length(toks)
+    alloc result := true
+    alloc any := false
+    alloc mode := 0
+    alloc neg := false
+    alloc i := 0
+    loop i < n {
+        alloc t := toks[i]
+        alloc id := ident_of(t)
+        if id == "not" {
+            neg := true
+        } elif id == "and" {
+            mode := 1
+        } elif id == "or" {
+            mode := 2
+        } elif t[0] == 5 {
+            alloc v := false
+            if t[1] == "" {
+                alloc inner := t[2]
+                if length(inner) >= 3 and inner[0][0] == 1 and inner[1][0] == 9 and inner[1][1] == 58 {
+                    alloc name := inner[0][1]
+                    if u.starts_with(name, "--") {
+                        v := true
+                    } else {
+                        v := declare([], name, inner[2:], false)
+                    }
+                } else {
+                    v := supports(inner)
+                }
+            }
+            if neg {
+                v := v == false
+                neg := false
+            }
+            if any == false {
+                result := v
+            } elif mode == 2 {
+                result := result or v
+            } else {
+                result := result and v
+            }
+            any := true
+        }
+        i := i + 1
+    }
+    return any and result
+}
+
+proc parse_rules(b, i, end, media, origin, depth) {
+    loop i < end {
+        alloc c := b[i]
+        if u.is_space(c) or c == 59 or c == 125 {
+            i := i + 1
+            continue
+        }
+        if c == 60 and i + 3 < end and b[i + 1] == 33 {
+            i := i + 4
+            continue
+        }
+        if c == 45 and i + 2 < end and b[i + 1] == 45 and b[i + 2] == 62 {
+            i := i + 3
+            continue
+        }
+        # up to the "{" that opens the block, or the ";" that ends a rule without one
+        alloc start := i
+        loop i < end and b[i] != 123 and b[i] != 59 {
+            if b[i] == 34 or b[i] == 39 {
+                alloc q := b[i]
+                i := i + 1
+                loop i < end and b[i] != q {
+                    i := i + 1
+                }
+            }
+            i := i + 1
+        }
+        if c == 64 {
+            tb := b
+            tp := start + 1
+            tn := i
+            alloc at_name := read_ident()
+            alloc pre := tp
+            tb := []
+            if i >= end or b[i] == 59 {
+                if at_name == "import" {
+                    alloc toks := tokenize(b, pre, u.min(i, end))
+                    if length(toks) > 0 and (toks[0][0] == 8 or toks[0][0] == 4) {
+                        # what follows the address is a media query
+                        alloc mi := media
+                        alloc ms := pre
+                        loop ms < i and u.is_space(b[ms]) {
+                            ms := ms + 1
+                        }
+                        alloc me := ms
+                        if b[ms] == 34 or b[ms] == 39 {
+                            me := ms + 1
+                            loop me < i and b[me] != b[ms] {
+                                me := me + 1
+                            }
+                            me := me + 1
+                        } else {
+                            loop me < i and b[me] != 41 {
+                                me := me + 1
+                            }
+                            me := me + 1
+                        }
+                        if me < i {
+                            alloc cond := u.trim(bytes_to_string(b[me:i]))
+                            if cond != "" and u.starts_with(cond, "layer") == false and u.starts_with(cond, "supports") == false {
+                                mi := media_index(media, cond)
+                            }
+                        }
+                        append(found_imports, [toks[0][1], mi])
+                    }
+                }
+                i := i + 1
+                continue
+            }
+            alloc close := block_end(b, i + 1, end)
+            if depth < 8 {
+                if at_name == "media" {
+                    parse_rules(b, i + 1, close, media_index(media, u.trim(bytes_to_string(b[pre:i]))), origin, depth + 1)
+                } elif at_name == "supports" {
+                    if supports(tokenize(b, pre, i)) {
+                        parse_rules(b, i + 1, close, media, origin, depth + 1)
+                    }
+                } elif at_name == "layer" {
+                    parse_rules(b, i + 1, close, media, origin, depth + 1)
+                }
+            }
+            i := close + 1
+            continue
+        }
+        if i >= end {
+            break
+        }
+        alloc close2 := block_end(b, i + 1, end)
+        alloc sels := parse_selectors(b, start, i)
+        if length(sels) > 0 {
+            alloc decls := parse_decls(b, i + 1, close2)
+            if length(decls) > 0 {
+                alloc flags := 0
+                for d in decls {
+                    if d[3] != 0 {
+                        flags := flags | 1
+                    }
+                    if d[2] {
+                        flags := flags | 2
+                    }
+                }
+                for s in sels {
+                    if s[2] != 9 {
+                        add_rule(s, decls, media, origin, flags)
+                    }
+                }
+            }
+        }
+        i := close2 + 1
+    }
+    return true
+}
+
+# Add a style sheet (a byte list). origin 0 is the browser's own sheet,
+# 1 a page's. `media` is the entry for the media query on the <link>
+# or @import that brought it (-1 for none): see media_entry.
+proc add_sheet(bytes, origin, media) {
+    if ready == false {
+        props_init()
+    }
+    alloc b := strip_comments(bytes)
+    parse_rules(b, 0, length(b), media, origin, 0)
+    return true
+}
+
+proc media_entry(cond) {
+    if u.trim(cond) == "" {
+        return -1
+    }
+    return media_index(-1, cond)
+}
+
+# Say where the sheets added from now on come from, so that the
+# pictures they name with url(...) can be found.
+proc set_base(address) {
+    sheet_base := address
+    return true
+}
+
+# The sheets a sheet asks for at its top with @import, to be loaded
+# before it: [address, media] each.
+proc imports_of(bytes) {
+    alloc b := strip_comments(bytes)
+    alloc n := length(b)
+    alloc out := []
+    alloc i := 0
+    loop i < n {
+        loop i < n and (b[i] == 32 or b[i] == 10 or b[i] == 13 or b[i] == 9 or b[i] == 12) {
+            i := i + 1
+        }
+        if i + 7 >= n or b[i] != 64 {
+            break
+        }
+        alloc end := i
+        loop end < n and b[end] != 59 and b[end] != 123 {
+            end := end + 1
+        }
+        if end >= n or b[end] == 123 {
+            break
+        }
+        alloc text := bytes_to_string(b[i:end])
+        alloc low := u.lower(text)
+        if u.starts_with(low, "@import") {
+            alloc rest := u.trim(text[7:])
+            alloc where := ""
+            alloc after := ""
+            if u.starts_with(u.lower(rest), "url(") {
+                alloc close := u.find(rest, ")")
+                if close > 0 {
+                    where := u.trim(rest[4:close])
+                    after := rest[close + 1:]
+                }
+            }
+            if where == "" and length(rest) > 0 and (rest[0:1] == "\"" or rest[0:1] == "'") {
+                alloc q := rest[0:1]
+                alloc close2 := u.find(rest[1:], q)
+                if close2 >= 0 {
+                    where := rest[1:close2 + 1]
+                    after := rest[close2 + 2:]
+                }
+            }
+            if length(where) >= 2 and (where[0:1] == "\"" or where[0:1] == "'") {
+                where := where[1:length(where) - 1]
+            }
+            if where != "" {
+                append(out, [where, u.trim(after)])
+            }
+        } elif u.starts_with(low, "@charset") == false and u.starts_with(low, "@layer") == false {
+            break
+        }
+        i := end + 1
+    }
+    return out
+}
+
+# The @import rules met since the last call: [address, media] each.
+proc take_imports() {
+    alloc out := found_imports
+    found_imports := []
+    return out
+}
+
+# Forget every sheet, and start again from the browser's own.
+proc reset() {
+    if ready == false {
+        props_init()
+    }
+    by_id := {}
+    by_class := {}
+    by_tag := {}
+    by_any := []
+    rule_count := 0
+    medias := []
+    media_state := []
+    found_imports := []
+    var_cache := {}
+    add_sheet(string_bytes(UA_SHEET), 0, -1)
+    return true
+}
+
+# --- from declarations to values -----------------------------------------------------
+
+# A property's value for an element: what its style says, or the
+# value every element starts with.
+proc get(st, name) {
+    if has_key(st, name) {
+        return st[name]
+    }
+    return PROPS[name][2]
+}
+
+# A colour property, with "the text colour" filled in.
+proc color(st, name) {
+    alloc v := get(st, name)
+    if v == "currentcolor" {
+        return get(st, "color")
+    }
+    return v
+}
+
+# A computed length in pixels. `base` is what a percentage is of, or
+# false when that is not known; then, and for auto and none, the
+# answer is false.
+proc resolve(v, base) {
+    alloc k := v[0]
+    if k == 0 {
+        return v[1]
+    }
+    if k == 1 {
+        if base == false {
+            return false
+        }
+        return base * v[1] / 100.0
+    }
+    if k == 2 {
+        if base == false {
+            return false
+        }
+        return v[1] + base * v[2] / 100.0
+    }
+    if k == 15 {
+        alloc vals := []
+        for it in v[2] {
+            if it == false {
+                append(vals, false)
+            } elif it[1] != 0 {
+                if base == false {
+                    return false
+                }
+                append(vals, it[0] + base * it[1] / 100.0)
+            } else {
+                append(vals, it[0])
+            }
+        }
+        if v[1] == 3 {
+            alloc r := vals[1]
+            if vals[2] != false and r > vals[2] {
+                r := vals[2]
+            }
+            if vals[0] != false and r < vals[0] {
+                r := vals[0]
+            }
+            return r
+        }
+        alloc best := vals[0]
+        for x in vals {
+            if (v[1] == 1 and x < best) or (v[1] == 2 and x > best) {
+                best := x
+            }
+        }
+        return best
+    }
+    return false
+}
+
+# A length as written, made into one layout can use: em, rem and the
+# viewport units become pixels. fs is the font size em counts in.
+proc comp_len(v, fs) {
+    alloc k := v[0]
+    if k <= 4 {
+        return v
+    }
+    if k == 5 {
+        return [0, v[1] * fs]
+    }
+    if k == 6 {
+        return [0, v[1] * root_fs]
+    }
+    if k == 7 {
+        return [0, v[1] * vw / 100.0]
+    }
+    if k == 8 {
+        return [0, v[1] * vh / 100.0]
+    }
+    if k == 10 {
+        return [0, v[1] * u.min(vw, vh) / 100.0]
+    }
+    if k == 11 {
+        return [0, v[1] * u.max(vw, vh) / 100.0]
+    }
+    if k == 9 {
+        alloc px := v[1] + v[3] * fs + v[4] * root_fs + v[5] * vw / 100.0 + v[6] * vh / 100.0
+        if v[2] == 0 {
+            return [0, px]
+        }
+        return [2, px, v[2]]
+    }
+    if k == 14 {
+        alloc items := []
+        alloc plain := true
+        for m in v[2] {
+            if m == false {
+                append(items, false)
+            } else {
+                append(items, [m[0] + m[2] * fs + m[3] * root_fs + m[4] * vw / 100.0 + m[5] * vh / 100.0, m[1]])
+                if m[1] != 0 {
+                    plain := false
+                }
+            }
+        }
+        alloc out := [15, v[1], items]
+        if plain {
+            return [0, resolve(out, 0)]
+        }
+        return out
+    }
+    if k == 16 {
+        return AUTO
+    }
+    return v
+}
+
+# The text of a value with every var(--name) replaced by what the
+# custom property holds; false when one of them holds nothing and no
+# fallback is given.
+proc substitute(raw, vars, depth) {
+    alloc b := string_bytes(raw)
+    alloc n := length(b)
+    if has_var(b, 0, n) == false {
+        return raw
+    }
+    if depth > 12 {
+        return false
+    }
+    alloc out := to_bytes([])
+    alloc i := 0
+    loop i < n {
+        if i + 3 < n and b[i] == 118 and b[i + 1] == 97 and b[i + 2] == 114 and b[i + 3] == 40 and (i == 0 or is_name_char(b[i - 1]) == false) {
+            alloc j := i + 4
+            alloc d := 1
+            alloc comma := -1
+            loop j < n {
+                if b[j] == 40 {
+                    d := d + 1
+                } elif b[j] == 41 {
+                    d := d - 1
+                    if d == 0 {
+                        break
+                    }
+                } elif b[j] == 44 and d == 1 and comma < 0 {
+                    comma := j
+                }
+                j := j + 1
+            }
+            alloc name_end := j
+            if comma >= 0 {
+                name_end := comma
+            }
+            alloc name := u.trim(bytes_to_string(b[i + 4:name_end]))
+            alloc val := false
+            if has_key(vars, name) {
+                val := substitute(vars[name], vars, depth + 1)
+            }
+            if val == false and comma >= 0 {
+                val := substitute(bytes_to_string(b[comma + 1:j]), vars, depth + 1)
+            }
+            if val == false {
+                return false
+            }
+            u.put_str(out, val)
+            i := j + 1
+        } else {
+            append(out, b[i])
+            i := i + 1
+        }
+    }
+    return bytes_to_string(out)
+}
+
+alloc BW := ["border-top-width", "border-right-width", "border-bottom-width", "border-left-width"]
+alloc BS := ["border-top-style", "border-right-style", "border-bottom-style", "border-left-style"]
+
+proc comp_special(name, v, st, ps, fs) {
+    if name == "font-weight" {
+        if v == "bolder" or v == "lighter" {
+            alloc pw := 400
+            if ps != false {
+                pw := get(ps, "font-weight")
+            }
+            if v == "bolder" {
+                if pw < 400 {
+                    v := 400
+                } elif pw < 600 {
+                    v := 700
+                } else {
+                    v := 900
+                }
+            } else {
+                if pw < 600 {
+                    v := 100
+                } elif pw < 800 {
+                    v := 400
+                } else {
+                    v := 700
+                }
+            }
+        }
+        st[name] := v
+        return true
+    }
+    if name == "line-height" {
+        alloc k := v[0]
+        if k == 12 or k == 13 {
+            st[name] := v
+        } else {
+            alloc l := comp_len(v, fs)
+            if l[0] == 0 {
+                st[name] := l
+            } else {
+                st[name] := [13, 0]
+            }
+        }
+        return true
+    }
+    if name == "vertical-align" {
+        if u.is_str(v) {
+            st[name] := v
+        } else {
+            alloc vl := comp_len(v, fs)
+            if vl[0] == 0 {
+                st[name] := vl
+            } else {
+                st[name] := "baseline"
+            }
+        }
+        return true
+    }
+    if name == "letter-spacing" or name == "border-spacing" {
+        alloc sl := comp_len(v, fs)
+        if sl[0] == 0 {
+            st[name] := sl[1]
+        } else {
+            st[name] := 0
+        }
+        return true
+    }
+    if name == "background-position-x" or name == "background-position-y" {
+        st[name] := comp_len(v, fs)
+        return true
+    }
+    if name == "background-size" {
+        if u.is_str(v) {
+            st[name] := v
+        } else {
+            st[name] := [22, comp_len(v[1], fs), comp_len(v[2], fs)]
+        }
+        return true
+    }
+    if name == "grid-template-columns" {
+        if u.is_str(v) {
+            st[name] := v
+        } else {
+            alloc tracks := []
+            for t in v {
+                if t[0] == 17 {
+                    append(tracks, t)
+                } elif t[0] == 18 {
+                    append(tracks, [18, comp_len(t[1], fs)])
+                } else {
+                    append(tracks, comp_len(t, fs))
+                }
+            }
+            st[name] := tracks
+        }
+        return true
+    }
+    st[name] := v
+    return true
+}
+
+# Put the declarations of the matched rules in force, in order, and
+# work out the element's values. `matched` is sorted by rank; `extra`
+# are the declarations of the element's own style attribute; `hints`
+# those that stand for old HTML attributes (bgcolor, width ...). `ps`
+# is the parent's style, false for the root.
+proc cascade(matched, extra, hints, ps, depth) {
+    alloc sp := {}
+    # 1. custom properties, which the rest may refer to
+    alloc vars := NO_VARS
+    if ps != false {
+        vars := ps["-vars"]
+    }
+    alloc own := false
+    alloc pass := 0
+    loop pass < 2 {
+        alloc imp := pass == 1
+        for r in matched {
+            if (r[8] & 1) != 0 and (imp == false or r[6] != 0) {
+                for d in r[3] {
+                    if d[3] == 1 and d[2] == imp {
+                        if own == false {
+                            own := true
+                            alloc copy := {}
+                            for k in dict_keys(vars) {
+                                copy[k] := vars[k]
+                            }
+                            vars := copy
+                        }
+                        vars[d[0]] := d[1]
+                    }
+                }
+            }
+        }
+        for d2 in extra {
+            if d2[3] == 1 and d2[2] == imp {
+                if own == false {
+                    own := true
+                    alloc copy2 := {}
+                    for k2 in dict_keys(vars) {
+                        copy2[k2] := vars[k2]
+                    }
+                    vars := copy2
+                }
+                vars[d2[0]] := d2[1]
+            }
+        }
+        pass := pass + 1
+    }
+    # 2. the declarations, lightest first; then the important ones
+    pass := 0
+    alloc any_important := false
+    loop pass < 2 {
+        alloc imp2 := pass == 1
+        alloc hinted := imp2
+        alloc lists := []
+        for r2 in matched {
+            if hinted == false and r2[6] != 0 {
+                hinted := true
+                append(lists, hints)
+            }
+            if imp2 {
+                if (r2[8] & 2) != 0 and r2[6] != 0 {
+                    append(lists, r2[3])
+                }
+            } else {
+                append(lists, r2[3])
+                if (r2[8] & 2) != 0 {
+                    any_important := true
+                }
+            }
+        }
+        if hinted == false {
+            append(lists, hints)
+        }
+        append(lists, extra)
+        for decls in lists {
+            for d3 in decls {
+                if d3[2] != imp2 {
+                    if d3[2] {
+                        any_important := true
+                    }
+                    continue
+                }
+                alloc flag := d3[3]
+                if flag == 0 {
+                    sp[d3[0]] := d3[1]
+                } elif flag == 2 {
+                    alloc text := substitute(d3[1], vars, 0)
+                    if text != false {
+                        alloc ck := d3[0] + ":" + text
+                        alloc entries := false
+                        if has_key(var_cache, ck) {
+                            entries := var_cache[ck]
+                        } else {
+                            entries := []
+                            declare(entries, d3[0], tokenize_str(text), false)
+                            var_cache[ck] := entries
+                        }
+                        for e in entries {
+                            sp[e[0]] := e[1]
+                        }
+                    }
+                }
+            }
+        }
+        if any_important == false {
+            break
+        }
+        pass := pass + 1
+    }
+    # 3. values
+    alloc st := {}
+    if ps != false {
+        for name in INHERITED {
+            if has_key(ps, name) {
+                st[name] := ps[name]
+            }
+        }
+    }
+    st["-vars"] := vars
+    alloc pfs := 16
+    if ps != false {
+        pfs := get(ps, "font-size")
+    }
+    alloc fs := pfs
+    if has_key(sp, "font-size") {
+        alloc fv := sp["font-size"]
+        if fv == "initial" {
+            fs := 16
+        } elif fv != "inherit" and fv != "unset" {
+            alloc save_root := root_fs
+            if depth == 0 {
+                root_fs := 16
+            }
+            alloc fl := comp_len(fv, pfs)
+            root_fs := save_root
+            if fl[0] == 0 {
+                fs := fl[1]
+            }
+        }
+        if fs < 0 {
+            fs := 0
+        }
+        st["font-size"] := fs
+    }
+    if depth == 0 {
+        root_fs := fs
+    }
+    if has_key(sp, "color") {
+        alloc cv := sp["color"]
+        if cv == "initial" {
+            st["color"] := 4278190080
+        } elif cv != "inherit" and cv != "unset" and cv != "currentcolor" {
+            st["color"] := cv
+        }
+    }
+    alloc cur := get(st, "color")
+    for name2 in dict_keys(sp) {
+        if name2 == "font-size" or name2 == "color" {
+            continue
+        }
+        alloc v := sp[name2]
+        alloc p := PROPS[name2]
+        alloc kind := p[0]
+        if v == "inherit" {
+            if ps != false {
+                st[name2] := get(ps, name2)
+            } else {
+                st[name2] := p[2]
+            }
+        } elif v == "initial" {
+            if kind == 6 {
+                st[name2] := 3
+            } else {
+                st[name2] := p[2]
+            }
+        } elif v == "unset" {
+            if p[1] == false {
+                st[name2] := p[2]
+            }
+        } elif kind <= 3 {
+            st[name2] := comp_len(v, fs)
+        } elif kind == 4 or kind == 7 {
+            st[name2] := v
+        } elif kind == 5 {
+            if v == "currentcolor" {
+                st[name2] := cur
+            } else {
+                st[name2] := v
+            }
+        } elif kind == 6 {
+            alloc bl := comp_len(v, fs)
+            if bl[0] == 0 {
+                st[name2] := bl[1]
+            } else {
+                st[name2] := 0
+            }
+        } else {
+            comp_special(name2, v, st, ps, fs)
+        }
+    }
+    # a border that is not drawn has no width; one that is, and says
+    # nothing about its width, is 3 pixels
+    alloc i := 0
+    loop i < 4 {
+        alloc bstyle := get(st, BS[i])
+        if bstyle == "none" or bstyle == "hidden" {
+            if has_key(st, BW[i]) {
+                st[BW[i]] := 0
+            }
+        } elif has_key(st, BW[i]) == false {
+            st[BW[i]] := 3
+        }
+        i := i + 1
+    }
+    # lines under and through text carry down to everything inside
+    alloc deco := get(st, "text-decoration-line")
+    if ps != false and has_key(ps, "-deco") {
+        deco := deco | ps["-deco"]
+    }
+    st["-deco"] := deco
+    # things taken out of the flow are blocks, whatever they said
+    alloc pos := get(st, "position")
+    alloc out_of_flow := pos == "absolute" or pos == "fixed"
+    if out_of_flow and has_key(st, "float") {
+        st["float"] := "none"
+    }
+    if out_of_flow or depth == 0 or get(st, "float") != "none" {
+        alloc disp := get(st, "display")
+        if disp == "inline" or disp == "inline-block" or u.starts_with(disp, "table-") {
+            st["display"] := "block"
+        } elif disp == "inline-table" {
+            st["display"] := "table"
+        } elif disp == "inline-flex" {
+            st["display"] := "flex"
+        } elif disp == "inline-grid" {
+            st["display"] := "grid"
+        }
+    }
+    return st
+}
+
+proc sort_rules(list) {
+    alloc n := length(list)
+    alloc i := 1
+    loop i < n {
+        alloc r := list[i]
+        alloc key := r[7]
+        alloc j := i - 1
+        loop j >= 0 and list[j][7] > key {
+            list[j + 1] := list[j]
+            j := j - 1
+        }
+        list[j + 1] := r
+        i := i + 1
+    }
+    return list
+}
+
+proc gather(list, d, m0, m1, m2) {
+    for r in list {
+        if match_from(r[0], 0, d) {
+            if r[4] < 0 or media_holds(r[4]) {
+                alloc pe := r[5]
+                if pe == 0 {
+                    append(m0, r)
+                } elif pe == 1 {
+                    append(m1, r)
+                } else {
+                    append(m2, r)
+                }
+            }
+        }
+    }
+    return true
+}
+
+# A colour as old HTML attributes write it: a name, or six hex digits
+# with or without the "#".
+proc legacy_color(s) {
+    alloc t := u.lower(u.trim(s))
+    if t == "" {
+        return false
+    }
+    alloc c := color_of([1, t])
+    if c != false and c != "currentcolor" {
+        return c
+    }
+    if u.starts_with(t, "#") {
+        t := t[1:]
+    }
+    return color_of([3, t])
+}
+
+# "100", "50%" from an attribute, as a length; false for anything else.
+proc legacy_len(s) {
+    alloc b := string_bytes(u.trim(s))
+    alloc r := u.number_at(b, 0, length(b))
+    if r == false or r[0] < 0 {
+        return false
+    }
+    if r[1] < length(b) and b[r[1]] == 37 {
+        return [1, r[0]]
+    }
+    return [0, r[0]]
+}
+
+alloc FONT_ATTR_SIZES := [10, 10, 13, 16, 18, 24, 32, 48]
+
+# What an element's old-style attributes say about how it looks, as
+# declarations. They count for less than any rule of the page's.
+proc hints_of(node, d) {
+    alloc attrs := node.attrs
+    alloc names := dict_keys(attrs)
+    if length(names) == 0 {
+        return EMPTY
+    }
+    alloc tag := node.tag
+    alloc out := []
+    for name in names {
+        alloc v := attrs[name]
+        if name == "width" or name == "height" {
+            if tag == "img" or tag == "table" or tag == "td" or tag == "th" or tag == "iframe" or tag == "video" or tag == "canvas" or tag == "embed" or tag == "object" or tag == "svg" or tag == "col" or tag == "hr" or tag == "input" {
+                alloc l := legacy_len(v)
+                if l != false and (l[1] > 0 or tag == "img") {
+                    put(out, name, l, false)
+                }
+            }
+        } elif name == "bgcolor" {
+            alloc c := legacy_color(v)
+            if c != false {
+                put(out, "background-color", c, false)
+            }
+        } elif name == "text" and tag == "body" {
+            alloc c2 := legacy_color(v)
+            if c2 != false {
+                put(out, "color", c2, false)
+            }
+        } elif name == "color" and (tag == "font" or tag == "hr") {
+            alloc c3 := legacy_color(v)
+            if c3 != false {
+                put(out, "color", c3, false)
+            }
+        } elif name == "face" and tag == "font" {
+            alloc fam := special("font-family", tokenize_str(v))
+            if fam != false {
+                put(out, "font-family", fam, false)
+            }
+        } elif name == "size" and tag == "font" {
+            alloc t := u.trim(v)
+            alloc n := u.to_int(t, 3)
+            if u.starts_with(t, "+") or u.starts_with(t, "-") {
+                n := 3 + n
+            }
+            if n < 1 {
+                n := 1
+            }
+            if n > 7 {
+                n := 7
+            }
+            put(out, "font-size", [0, FONT_ATTR_SIZES[n]], false)
+        } elif name == "align" {
+            alloc a := u.lower(u.trim(v))
+            if tag == "table" or tag == "img" or tag == "iframe" {
+                if a == "left" or a == "right" {
+                    put(out, "float", a, false)
+                } elif a == "center" and tag == "table" {
+                    put(out, "margin-left", AUTO, false)
+                    put(out, "margin-right", AUTO, false)
+                } elif tag == "img" and (a == "middle" or a == "top" or a == "bottom") {
+                    put(out, "vertical-align", a, false)
+                }
+            } elif a == "center" or a == "middle" {
+                put(out, "text-align", "-center", false)
+            } elif a == "left" or a == "right" or a == "justify" {
+                put(out, "text-align", a, false)
+            }
+        } elif name == "valign" {
+            alloc va := u.lower(u.trim(v))
+            if va == "top" or va == "middle" or va == "bottom" or va == "baseline" {
+                put(out, "vertical-align", va, false)
+            }
+        } elif name == "nowrap" and (tag == "td" or tag == "th") {
+            put(out, "white-space", "nowrap", false)
+        } elif name == "cellspacing" and tag == "table" {
+            alloc cs := legacy_len(v)
+            if cs != false and cs[0] == 0 {
+                put(out, "border-spacing", cs, false)
+            }
+        } elif name == "border" and tag == "table" {
+            alloc bw := u.to_int(v, 1)
+            if bw > 0 {
+                for side in SIDES {
+                    put(out, "border-" + side + "-width", [0, bw], false)
+                    put(out, "border-" + side + "-style", "solid", false)
+                    put(out, "border-" + side + "-color", 4286611584, false)
+                }
+            }
+        } elif name == "border" and tag == "img" {
+            alloc ib := u.to_int(v, 0)
+            if ib > 0 {
+                for side2 in SIDES {
+                    put(out, "border-" + side2 + "-width", [0, ib], false)
+                    put(out, "border-" + side2 + "-style", "solid", false)
+                }
+            }
+        } elif (name == "hspace" or name == "vspace") and tag == "img" {
+            alloc sp := legacy_len(v)
+            if sp != false {
+                if name == "hspace" {
+                    put(out, "margin-left", sp, false)
+                    put(out, "margin-right", sp, false)
+                } else {
+                    put(out, "margin-top", sp, false)
+                    put(out, "margin-bottom", sp, false)
+                }
+            }
+        } elif name == "type" and (tag == "ol" or tag == "ul" or tag == "li") {
+            alloc lt := v
+            alloc kind := ""
+            if lt == "1" { kind := "decimal" }
+            if lt == "a" { kind := "lower-alpha" }
+            if lt == "A" { kind := "upper-alpha" }
+            if lt == "i" { kind := "lower-roman" }
+            if lt == "I" { kind := "upper-roman" }
+            if u.lower(lt) == "disc" or u.lower(lt) == "circle" or u.lower(lt) == "square" or u.lower(lt) == "none" {
+                kind := u.lower(lt)
+            }
+            if kind != "" {
+                put(out, "list-style-type", kind, false)
+            }
+        } elif name == "hidden" {
+            put(out, "display", "none", false)
+        }
+    }
+    if tag == "td" or tag == "th" {
+        # a table's cellpadding and border are about its cells
+        alloc a2 := d - 1
+        loop a2 >= 0 {
+            alloc anc := path[a2]
+            if anc.tag == "table" {
+                if has_key(anc.attrs, "cellpadding") {
+                    alloc cp := legacy_len(anc.attrs["cellpadding"])
+                    if cp != false and cp[0] == 0 {
+                        for side3 in SIDES {
+                            put(out, "padding-" + side3, cp, false)
+                        }
+                    }
+                }
+                if has_key(anc.attrs, "border") and u.to_int(anc.attrs["border"], 1) > 0 {
+                    for side4 in SIDES {
+                        put(out, "border-" + side4 + "-width", [0, 1], false)
+                        put(out, "border-" + side4 + "-style", "solid", false)
+                        put(out, "border-" + side4 + "-color", 4286611584, false)
+                    }
+                }
+                break
+            }
+            a2 := a2 - 1
+        }
+    }
+    return out
+}
+
+# Note on each element what matching needs to know about it.
+proc prepare(node) {
+    alloc attrs := node.attrs
+    if has_key(attrs, "class") {
+        node.cls := u.words(attrs["class"])
+    } else {
+        node.cls := EMPTY
+    }
+    if has_key(attrs, "id") {
+        node.eid := attrs["id"]
+    } else {
+        node.eid := ""
+    }
+    if has_key(attrs, "style") {
+        alloc sb := string_bytes(attrs["style"])
+        node.sd := parse_decls(sb, 0, length(sb))
+    } else {
+        node.sd := EMPTY
+    }
+    alloc n := 0
+    for k in node.kids {
+        if k.t == 1 {
+            n := n + 1
+            k.ei := n
+            prepare(k)
+        }
+    }
+    node.ne := n
+    return true
+}
+
+proc style_node(node, ps, d) {
+    if length(path) <= d {
+        append(path, node)
+        append(pidx, 0)
+    } else {
+        path[d] := node
+    }
+    alloc m0 := []
+    alloc m1 := []
+    alloc m2 := []
+    if node.eid != "" and has_key(by_id, node.eid) {
+        gather(by_id[node.eid], d, m0, m1, m2)
+    }
+    for c in node.cls {
+        if has_key(by_class, c) {
+            gather(by_class[c], d, m0, m1, m2)
+        }
+    }
+    if has_key(by_tag, node.tag) {
+        gather(by_tag[node.tag], d, m0, m1, m2)
+    }
+    gather(by_any, d, m0, m1, m2)
+    alloc st := cascade(sort_rules(m0), node.sd, hints_of(node, d), ps, d)
+    if length(m1) > 0 {
+        alloc bst := cascade(sort_rules(m1), EMPTY, EMPTY, st, d + 1)
+        if u.is_str(get(bst, "content")) == false and get(bst, "display") != "none" {
+            st["-before"] := bst
+        }
+    }
+    if length(m2) > 0 {
+        alloc ast := cascade(sort_rules(m2), EMPTY, EMPTY, st, d + 1)
+        if u.is_str(get(ast, "content")) == false and get(ast, "display") != "none" {
+            st["-after"] := ast
+        }
+    }
+    node.style := st
+    if get(st, "display") == "none" {
+        return true
+    }
+    alloc kids := node.kids
+    alloc n := length(kids)
+    alloc i := 0
+    loop i < n {
+        alloc k := kids[i]
+        if k.t == 1 {
+            if length(pidx) <= d + 1 {
+                append(path, k)
+                append(pidx, i)
+            } else {
+                pidx[d + 1] := i
+            }
+            style_node(k, st, d + 1)
+        }
+        i := i + 1
+    }
+    return true
+}
+
+# Give every element of the document its .style, for a window whose
+# inside is w x h pixels. Call again when the window changes size: the
+# rules inside @media depend on it.
+proc style_tree(doc, w, h) {
+    vw := w
+    vh := h
+    root_fs := 16
+    alloc i := 0
+    loop i < length(media_state) {
+        media_state[i] := 0
+        i := i + 1
+    }
+    if has_key(doc, "prepared") == false {
+        doc.root.ei := 1
+        prepare(doc.root)
+        doc.prepared := true
+    }
+    path := []
+    pidx := []
+    style_node(doc.root, false, 0)
+    path := []
+    pidx := []
+    return true
+}
+
+# How many rules are loaded (for tests and curiosity).
+proc rules() {
+    return rule_count
+}
+
+# --- the browser's own style sheet ------------------------------------------------------
+#
+# What HTML looks like before a page says anything: which elements are
+# blocks, how big a heading is, that links are blue. It follows the
+# sheet in the HTML standard ("Rendering"), cut down.
+
+alloc UA_SHEET := "
+html, body, div, p, h1, h2, h3, h4, h5, h6, ul, ol, dl, dt, dd, blockquote, pre, form, fieldset, legend,
+address, article, aside, footer, header, hgroup, main, nav, section, figure, figcaption, details, summary,
+center, hr, menu, dir, optgroup, search, noscript, listing, xmp, plaintext { display: block }
+head, script, style, title, meta, link, base, template, datalist, param, source, track, area, noembed,
+noframes, rp, colgroup, col, [hidden] { display: none }
+body { margin: 8px }
+p, dl, blockquote, figure, pre, ul, ol, menu, dir, listing, xmp { margin-top: 1em; margin-bottom: 1em }
+blockquote, figure { margin-left: 40px; margin-right: 40px }
+h1 { font-size: 2em; margin: 0.67em 0; font-weight: bold }
+h2 { font-size: 1.5em; margin: 0.83em 0; font-weight: bold }
+h3 { font-size: 1.17em; margin: 1em 0; font-weight: bold }
+h4 { font-size: 1em; margin: 1.33em 0; font-weight: bold }
+h5 { font-size: 0.83em; margin: 1.67em 0; font-weight: bold }
+h6 { font-size: 0.67em; margin: 2.33em 0; font-weight: bold }
+b, strong, th { font-weight: bold }
+i, em, cite, var, dfn, address { font-style: italic }
+code, kbd, samp, tt, pre, listing, xmp, plaintext { font-family: monospace; font-size: 0.8125em }
+pre code, pre kbd, pre samp, pre tt, code code, kbd kbd, samp samp, code kbd, kbd code, samp code { font-size: 1em }
+pre, listing, xmp, plaintext { white-space: pre }
+a:link { color: #0000ee; text-decoration: underline; cursor: pointer }
+u, ins { text-decoration: underline }
+s, strike, del { text-decoration: line-through }
+small { font-size: smaller }
+big { font-size: larger }
+sub { vertical-align: sub; font-size: smaller }
+sup { vertical-align: super; font-size: smaller }
+mark { background-color: yellow; color: black }
+abbr[title], acronym[title] { text-decoration: underline }
+nobr { white-space: nowrap }
+ul, menu, dir { list-style-type: disc; padding-left: 40px }
+ol { list-style-type: decimal; padding-left: 40px }
+ul ul, ol ul, menu ul { list-style-type: circle }
+ul ul ul, ol ul ul, ul ol ul, ol ol ul { list-style-type: square }
+ul ul, ul ol, ol ul, ol ol { margin-top: 0; margin-bottom: 0 }
+li { display: list-item }
+dd { margin-left: 40px }
+table { display: table; border-spacing: 2px; border-collapse: separate; box-sizing: border-box; text-indent: 0;
+        border-top-color: gray; border-right-color: gray; border-bottom-color: gray; border-left-color: gray }
+thead { display: table-header-group; vertical-align: middle }
+tbody { display: table-row-group; vertical-align: middle }
+tfoot { display: table-footer-group; vertical-align: middle }
+tr { display: table-row; vertical-align: inherit }
+td, th { display: table-cell; vertical-align: inherit; padding: 1px }
+th { text-align: center }
+caption { display: table-caption; text-align: center }
+hr { border: 1px inset gray; margin: 8px auto; color: gray; overflow: hidden }
+center { text-align: -webkit-center }
+fieldset { border: 2px groove #c0c0c0; padding: 0.35em 0.75em 0.625em; margin-left: 2px; margin-right: 2px }
+legend { padding-left: 2px; padding-right: 2px }
+details:not([open]) > :not(summary) { display: none }
+summary { cursor: pointer }
+dialog:not([open]) { display: none }
+dialog { border: 2px solid black; padding: 1em; background-color: white }
+q::before { content: open-quote }
+q::after { content: close-quote }
+rt { font-size: 50% }
+img, svg, canvas, video, audio, iframe, object, embed { display: inline-block }
+iframe { border: 2px inset #c0c0c0 }
+input, select, button, textarea { display: inline-block; font-family: sans-serif; font-size: 13.33px;
+        font-weight: normal; font-style: normal; color: black; line-height: normal; text-align: left;
+        text-transform: none; text-indent: 0; white-space: nowrap; letter-spacing: normal; cursor: auto;
+        margin: 0; box-sizing: border-box }
+input, select, textarea { background-color: white; border: 1px solid #767676; padding: 1px 2px }
+textarea { font-family: monospace; white-space: pre-wrap; padding: 2px; box-sizing: content-box }
+button, input[type=submit], input[type=button], input[type=reset] { background-color: #efefef;
+        border: 1px solid #767676; border-radius: 3px; padding: 1px 6px; text-align: center; cursor: pointer }
+input[type=checkbox], input[type=radio] { padding: 0; margin: 3px 3px 3px 4px }
+input[type=radio] { border-radius: 50% }
+input[type=hidden] { display: none }
+input[type=image], input[type=file], input[type=range], input[type=color] { border: 0; padding: 0; background-color: transparent }
+select { border-radius: 0 }
+option, optgroup { display: none }
+"

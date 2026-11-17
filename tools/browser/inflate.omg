@@ -1,0 +1,398 @@
+;;;omg
+
+# tools/browser/inflate.omg
+#
+# Unpacking "deflate" data, the compression inside gzip, zlib and so
+# inside most web pages as they travel and inside every PNG picture
+# (RFC 1951, with the wrappers of RFC 1950 and 1952).
+#
+# Deflate is a stream of bits: runs of bytes copied as they are, or
+# symbols under a Huffman code, each either a byte or "copy n bytes
+# from d bytes back". The codes are read through a table that has
+# one entry for every possible next `max` bits, so a symbol costs one
+# look-up.
+
+alloc LEN_BASE := [3, 4, 5, 6, 7, 8, 9, 10, 11, 13, 15, 17, 19, 23, 27, 31, 35, 43, 51, 59, 67, 83, 99, 115, 131, 163, 195, 227, 258]
+alloc LEN_EXTRA := [0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 2, 2, 2, 2, 3, 3, 3, 3, 4, 4, 4, 4, 5, 5, 5, 5, 0]
+alloc DIST_BASE := [1, 2, 3, 4, 5, 7, 9, 13, 17, 25, 33, 49, 65, 97, 129, 193, 257, 385, 513, 769, 1025, 1537, 2049, 3073, 4097, 6145, 8193, 12289, 16385, 24577]
+alloc DIST_EXTRA := [0, 0, 0, 0, 1, 1, 2, 2, 3, 3, 4, 4, 5, 5, 6, 6, 7, 7, 8, 8, 9, 9, 10, 10, 11, 11, 12, 12, 13, 13]
+alloc ORDER := [16, 17, 18, 0, 8, 7, 9, 6, 10, 5, 11, 4, 12, 3, 13, 2, 14, 1, 15]
+
+alloc fixed_lit := false
+alloc fixed_dist := false
+
+# The look-up table for a code given the length of each symbol's
+# code: [table, bits]; each entry is symbol * 16 + length, or 0 where
+# no code leads. false when the lengths make no code.
+proc table_of(lengths, n) {
+    alloc count := list_repeat(0, 16)
+    alloc maxlen := 0
+    alloc i := 0
+    loop i < n {
+        alloc l := lengths[i]
+        count[l] := count[l] + 1
+        if l > maxlen {
+            maxlen := l
+        }
+        i := i + 1
+    }
+    if maxlen == 0 {
+        return [[0, 0], 1]
+    }
+    alloc next := list_repeat(0, 16)
+    alloc code := 0
+    alloc bits := 1
+    loop bits <= maxlen {
+        code := (code + count[bits - 1]) << 1
+        if bits == 1 {
+            code := 0
+        }
+        next[bits] := code
+        bits := bits + 1
+    }
+    alloc size := 1 << maxlen
+    alloc table := list_repeat(0, size)
+    i := 0
+    loop i < n {
+        alloc len := lengths[i]
+        if len != 0 {
+            alloc c := next[len]
+            next[len] := c + 1
+            if c >= (1 << len) {
+                return false
+            }
+            # the code arrives lowest bit first: turn it round
+            alloc r := 0
+            alloc k := 0
+            loop k < len {
+                r := (r << 1) | ((c >> k) & 1)
+                k := k + 1
+            }
+            alloc step := 1 << len
+            alloc e := (i << 4) | len
+            loop r < size {
+                table[r] := e
+                r := r + step
+            }
+        }
+        i := i + 1
+    }
+    return [table, maxlen]
+}
+
+# Unpack the deflate stream in `src` starting at byte `pos`. `hint`
+# is how large the result is expected to be (0 when unknown).
+# Returns [bytes, where the stream ended], or false if it is broken.
+proc inflate(src, pos, hint) {
+    alloc n := length(src)
+    alloc cap := hint
+    if cap < 1024 {
+        cap := (n - pos) * 4 + 1024
+    }
+    alloc out := bytes_repeat(0, cap)
+    alloc op := 0
+    alloc bb := 0
+    alloc bn := 0
+    alloc p := pos
+    alloc final := false
+    loop final == false {
+        loop bn < 24 and p < n {
+            bb := bb | (src[p] << bn)
+            bn := bn + 8
+            p := p + 1
+        }
+        if bn < 3 {
+            return false
+        }
+        final := (bb & 1) == 1
+        alloc kind := (bb >> 1) & 3
+        bb := bb >> 3
+        bn := bn - 3
+        if kind == 0 {
+            # bytes as they are: back to a whole byte first
+            alloc drop := bn & 7
+            bb := bb >> drop
+            bn := bn - drop
+            p := p - bn // 8
+            bb := 0
+            bn := 0
+            if p + 4 > n {
+                return false
+            }
+            alloc len := src[p] | (src[p + 1] << 8)
+            p := p + 4
+            if p + len > n {
+                return false
+            }
+            if op + len > cap {
+                cap := (op + len) * 2
+                alloc bigger := bytes_repeat(0, cap)
+                bytes_copy(out, 0, bigger, 0, op)
+                out := bigger
+            }
+            bytes_copy(src, p, out, op, len)
+            op := op + len
+            p := p + len
+            continue
+        }
+        if kind == 3 {
+            return false
+        }
+        alloc lt := false
+        alloc dt := false
+        if kind == 1 {
+            if fixed_lit == false {
+                alloc fl := list_repeat(8, 288)
+                alloc fi := 144
+                loop fi < 256 {
+                    fl[fi] := 9
+                    fi := fi + 1
+                }
+                loop fi < 280 {
+                    fl[fi] := 7
+                    fi := fi + 1
+                }
+                fixed_lit := table_of(fl, 288)
+                fixed_dist := table_of(list_repeat(5, 30), 30)
+            }
+            lt := fixed_lit
+            dt := fixed_dist
+        } else {
+            loop bn < 14 and p < n {
+                bb := bb | (src[p] << bn)
+                bn := bn + 8
+                p := p + 1
+            }
+            alloc hlit := (bb & 31) + 257
+            alloc hdist := ((bb >> 5) & 31) + 1
+            alloc hclen := ((bb >> 10) & 15) + 4
+            bb := bb >> 14
+            bn := bn - 14
+            alloc cl := list_repeat(0, 19)
+            alloc ci := 0
+            loop ci < hclen {
+                loop bn < 3 and p < n {
+                    bb := bb | (src[p] << bn)
+                    bn := bn + 8
+                    p := p + 1
+                }
+                cl[ORDER[ci]] := bb & 7
+                bb := bb >> 3
+                bn := bn - 3
+                ci := ci + 1
+            }
+            alloc ct := table_of(cl, 19)
+            if ct == false {
+                return false
+            }
+            alloc ctab := ct[0]
+            alloc cmask := (1 << ct[1]) - 1
+            alloc lens := list_repeat(0, hlit + hdist)
+            alloc li := 0
+            loop li < hlit + hdist {
+                loop bn < 24 and p < n {
+                    bb := bb | (src[p] << bn)
+                    bn := bn + 8
+                    p := p + 1
+                }
+                alloc ce := ctab[bb & cmask]
+                alloc cbits := ce & 15
+                if cbits == 0 or cbits > bn {
+                    return false
+                }
+                bb := bb >> cbits
+                bn := bn - cbits
+                alloc sym := ce >> 4
+                if sym < 16 {
+                    lens[li] := sym
+                    li := li + 1
+                } else {
+                    alloc rep := 0
+                    alloc val := 0
+                    if sym == 16 {
+                        if li == 0 {
+                            return false
+                        }
+                        val := lens[li - 1]
+                        rep := 3 + (bb & 3)
+                        bb := bb >> 2
+                        bn := bn - 2
+                    } elif sym == 17 {
+                        rep := 3 + (bb & 7)
+                        bb := bb >> 3
+                        bn := bn - 3
+                    } else {
+                        rep := 11 + (bb & 127)
+                        bb := bb >> 7
+                        bn := bn - 7
+                    }
+                    if li + rep > hlit + hdist {
+                        return false
+                    }
+                    loop rep > 0 {
+                        lens[li] := val
+                        li := li + 1
+                        rep := rep - 1
+                    }
+                }
+            }
+            lt := table_of(lens, hlit)
+            dt := table_of(lens[hlit:], hdist)
+            if lt == false or dt == false {
+                return false
+            }
+        }
+        alloc ltab := lt[0]
+        alloc lmask := (1 << lt[1]) - 1
+        alloc dtab := dt[0]
+        alloc dmask := (1 << dt[1]) - 1
+        loop true {
+            loop bn < 48 and p < n {
+                bb := bb | (src[p] << bn)
+                bn := bn + 8
+                p := p + 1
+            }
+            alloc e := ltab[bb & lmask]
+            alloc eb := e & 15
+            if eb == 0 or eb > bn {
+                return false
+            }
+            bb := bb >> eb
+            bn := bn - eb
+            alloc s := e >> 4
+            if s < 256 {
+                if op >= cap {
+                    cap := cap * 2
+                    alloc bigger2 := bytes_repeat(0, cap)
+                    bytes_copy(out, 0, bigger2, 0, op)
+                    out := bigger2
+                }
+                out[op] := s
+                op := op + 1
+                continue
+            }
+            if s == 256 {
+                break
+            }
+            s := s - 257
+            if s >= 29 {
+                return false
+            }
+            alloc xb := LEN_EXTRA[s]
+            alloc length_ := LEN_BASE[s] + (bb & ((1 << xb) - 1))
+            bb := bb >> xb
+            bn := bn - xb
+            alloc de := dtab[bb & dmask]
+            alloc db := de & 15
+            if db == 0 or db > bn {
+                return false
+            }
+            bb := bb >> db
+            bn := bn - db
+            alloc ds := de >> 4
+            if ds >= 30 {
+                return false
+            }
+            alloc dxb := DIST_EXTRA[ds]
+            alloc dist := DIST_BASE[ds] + (bb & ((1 << dxb) - 1))
+            bb := bb >> dxb
+            bn := bn - dxb
+            if bn < 0 or dist > op {
+                return false
+            }
+            if op + length_ > cap {
+                cap := (op + length_) * 2
+                alloc bigger3 := bytes_repeat(0, cap)
+                bytes_copy(out, 0, bigger3, 0, op)
+                out := bigger3
+            }
+            if dist >= length_ {
+                bytes_copy(out, op - dist, out, op, length_)
+                op := op + length_
+            } else {
+                alloc from := op - dist
+                alloc stop := op + length_
+                loop op < stop {
+                    out[op] := out[from]
+                    op := op + 1
+                    from := from + 1
+                }
+            }
+        }
+    }
+    # bytes read ahead and not used belong to whatever follows
+    p := p - bn // 8
+    if op == cap {
+        return [out, p]
+    }
+    return [out[0:op], p]
+}
+
+# The content of a zlib stream (as in PNG), or false.
+proc zlib(src, hint) {
+    if length(src) < 6 or (src[0] & 15) != 8 {
+        return false
+    }
+    alloc r := inflate(src, 2, hint)
+    if r == false {
+        return false
+    }
+    return r[0]
+}
+
+# The content of a gzip file, or false.
+proc gunzip(src) {
+    alloc n := length(src)
+    if n < 18 or src[0] != 31 or src[1] != 139 or src[2] != 8 {
+        return false
+    }
+    alloc flags := src[3]
+    alloc p := 10
+    if (flags & 4) != 0 {
+        p := p + 2 + (src[p] | (src[p + 1] << 8))
+    }
+    if (flags & 8) != 0 {
+        loop p < n and src[p] != 0 {
+            p := p + 1
+        }
+        p := p + 1
+    }
+    if (flags & 16) != 0 {
+        loop p < n and src[p] != 0 {
+            p := p + 1
+        }
+        p := p + 1
+    }
+    if (flags & 2) != 0 {
+        p := p + 2
+    }
+    if p >= n {
+        return false
+    }
+    # the last four bytes say how long the content is
+    alloc size := src[n - 4] | (src[n - 3] << 8) | (src[n - 2] << 16) | (src[n - 1] << 24)
+    if size > 268435456 {
+        size := 0
+    }
+    alloc r := inflate(src, p, size)
+    if r == false {
+        return false
+    }
+    return r[0]
+}
+
+# What "Content-Encoding: deflate" sends: a zlib stream by the book,
+# a bare deflate stream from servers that never read it.
+proc deflated(src) {
+    if length(src) >= 2 and (src[0] & 15) == 8 and ((src[0] << 8) | src[1]) % 31 == 0 {
+        alloc r := zlib(src, 0)
+        if r != false {
+            return r
+        }
+    }
+    alloc r2 := inflate(src, 0, 0)
+    if r2 == false {
+        return false
+    }
+    return r2[0]
+}

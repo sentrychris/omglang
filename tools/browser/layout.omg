@@ -1,0 +1,4274 @@
+;;;omg
+
+# tools/browser/layout.omg
+#
+# Layout: where everything on a page goes.
+#
+# The work has two halves. build() turns the document tree, each
+# element carrying the style css.omg gave it, into a tree of boxes;
+# layout() gives every box a place and a size for a window of some
+# width. paint.omg then draws the boxes.
+#
+# A box is a dict. `kind` says how it lays out what is inside it:
+#
+#   1 block     a container whose content flows down the page (a div,
+#               a paragraph, a table cell, an inline-block)
+#   2 inline    a stretch of a line (a span, a link); it has no place
+#               of its own, the lines of the block around it hold its
+#               pieces
+#   3 text      a run of characters
+#   4 br        a forced line end (or, with `wbr`, a place a line may end)
+#   5 replaced  something with a size of its own: a picture, a form control
+#   6 table     7 row group     8 row
+#   9 flex      10 grid
+#
+# x, y are the top left corner of a box's border, counted from the
+# top left corner of the border of the box that holds it; w, h are
+# the size out to the border. Margins, borders and padding are in
+# mt/mr/mb/ml, bt/br/bb/bl and pt/pr/pb/pl. Boxes point at their
+# children only, never back up: OMG counts references, so a box that
+# pointed at its parent would never be freed.
+#
+# A block either holds blocks (`ifc` false), which stack downwards, or
+# holds only inline things (`ifc` true), which are broken into lines.
+# When an element mixes the two, the inline stretches are wrapped in
+# blocks without an element of their own, as CSS says to.
+
+import "util.omg" as u
+import "font.omg" as font
+import "css.omg" as css
+
+alloc K_BLOCK := 1
+alloc K_INLINE := 2
+alloc K_TEXT := 3
+alloc K_BR := 4
+alloc K_REPL := 5
+alloc K_TABLE := 6
+alloc K_GROUP := 7
+alloc K_ROW := 8
+alloc K_FLEX := 9
+alloc K_GRID := 10
+
+alloc EMPTY := []
+alloc FAR := -100000000
+
+# Elements drawn as one thing, whatever is written inside them.
+alloc REPLACED := {img: 1, input: 1, select: 1, textarea: 1, svg: 1, canvas: 1, video: 1, audio: 1,
+                   iframe: 1, embed: 1, meter: 1, progress: 1}
+
+alloc view_w := 1024
+alloc view_h := 768
+alloc any_fixed := false
+
+# --- small things -------------------------------------------------------------------
+
+proc lenpx(v, base) {
+    alloc r := css.resolve(v, base)
+    if r == false {
+        return 0
+    }
+    return r
+}
+
+proc max(a, b) {
+    if a > b {
+        return a
+    }
+    return b
+}
+
+proc min(a, b) {
+    if a < b {
+        return a
+    }
+    return b
+}
+
+# Two margins that touch become one: the larger of two that push
+# apart, the more negative of two that pull together, their sum when
+# they disagree.
+proc collapse(a, b) {
+    if a >= 0 and b >= 0 {
+        if a > b {
+            return a
+        }
+        return b
+    }
+    if a < 0 and b < 0 {
+        if a < b {
+            return a
+        }
+        return b
+    }
+    return a + b
+}
+
+# The font a style asks for, with its line: [font, rise, drop] where
+# rise and drop are how far a line of this text reaches above and
+# below the baseline, the line-height's spare room shared between them.
+proc metrics(st) {
+    if has_key(st, "-m") {
+        return st["-m"]
+    }
+    alloc px := css.get(st, "font-size")
+    alloc f := font.pick(css.get(st, "font-family"), px, css.get(st, "font-weight") >= 600, css.get(st, "font-style") == "italic")
+    alloc lh := css.get(st, "line-height")
+    alloc line := f.line
+    if lh[0] == 12 {
+        line := floor(lh[1] * px + 0.5)
+    } elif lh[0] == 0 {
+        line := floor(lh[1] + 0.5)
+    }
+    alloc half := floor((line - f.asc - f.desc) / 2)
+    alloc m := [f, f.asc + half, line - f.asc - half]
+    st["-m"] := m
+    return m
+}
+
+proc font_of(st) {
+    return metrics(st)[0]
+}
+
+# The style of a box that stands for no element: what its parent
+# hands down, nothing more.
+proc anon_style(st) {
+    if has_key(st, "-anon") {
+        return st["-anon"]
+    }
+    alloc a := {}
+    for name in css.INHERITED {
+        if has_key(st, name) {
+            a[name] := st[name]
+        }
+    }
+    a["-vars"] := st["-vars"]
+    a["-deco"] := 0
+    st["-anon"] := a
+    return a
+}
+
+proc new_box(kind, d, node, st, link) {
+    return {
+        kind: kind, d: d, node: node, st: st, link: link, kids: [],
+        x: 0, y: 0, w: 0, h: 0,
+        mt: 0, mr: 0, mb: 0, ml: 0,
+        bt: 0, br: 0, bb: 0, bl: 0,
+        pt: 0, pr: 0, pb: 0, pl: 0,
+        am: 0, inl: false, fl: "none", pos: "static", bfc: false, ifc: false,
+        na: 0, mbc: 0, thru: false, root: false
+    }
+}
+
+proc is_list(v) {
+    alloc s := "" + v
+    return s[0:1] == "["
+}
+
+proc is_ws(c) {
+    return c == 32 or c == 10 or c == 9 or c == 13 or c == 12
+}
+
+proc all_ws(cps) {
+    for c in cps {
+        if (c == 32 or c == 10 or c == 9 or c == 13 or c == 12) == false {
+            return false
+        }
+    }
+    return true
+}
+
+proc upper_cp(c) {
+    if (c >= 97 and c <= 122) or (c >= 224 and c <= 254 and c != 247) or (c >= 945 and c <= 969 and c != 962) or (c >= 1072 and c <= 1103) {
+        return c - 32
+    }
+    if c >= 1104 and c <= 1119 {
+        return c - 80
+    }
+    if c == 255 {
+        return 376
+    }
+    return c
+}
+
+proc lower_cp(c) {
+    if (c >= 65 and c <= 90) or (c >= 192 and c <= 222 and c != 215) or (c >= 913 and c <= 937) or (c >= 1040 and c <= 1071) {
+        return c + 32
+    }
+    if c >= 1024 and c <= 1039 {
+        return c + 80
+    }
+    return c
+}
+
+proc transform(cps, mode) {
+    alloc out := []
+    alloc start := true
+    for c in cps {
+        if mode == "uppercase" {
+            if c == 223 {
+                append(out, 83)
+                append(out, 83)
+            } else {
+                append(out, upper_cp(c))
+            }
+        } elif mode == "lowercase" {
+            append(out, lower_cp(c))
+        } else {
+            if start {
+                append(out, upper_cp(c))
+            } else {
+                append(out, c)
+            }
+            start := is_ws(c) or c == 160 or c == 45 or c == 40
+        }
+    }
+    return out
+}
+
+proc text_box(cps, st, link, node) {
+    alloc tt := css.get(st, "text-transform")
+    if tt != "none" {
+        cps := transform(cps, tt)
+    }
+    return {kind: 3, d: "text", node: node, st: st, link: link, kids: EMPTY, raw: cps,
+            inl: true, fl: "none", pos: "static", na: 0}
+}
+
+# --- from elements to boxes ------------------------------------------------------------
+
+# The box for what a ::before or ::after rule adds, or false.
+proc pseudo_box(st, key, node, link) {
+    if has_key(st, key) == false {
+        return false
+    }
+    alloc ps := st[key]
+    alloc content := css.get(ps, "content")
+    alloc out := []
+    for part in content[1] {
+        if part[0] == 4 {
+            for c in u.cps(part[1]) {
+                append(out, c)
+            }
+        } elif part[0] == 5 and node != false and has_key(node.attrs, part[1]) {
+            for c2 in u.cps(node.attrs[part[1]]) {
+                append(out, c2)
+            }
+        }
+    }
+    alloc d := css.get(ps, "display")
+    alloc box := false
+    if d == "inline" {
+        box := new_box(K_INLINE, d, false, ps, link)
+        box.inl := true
+    } else {
+        box := new_box(K_BLOCK, d, false, ps, link)
+        if d == "inline-block" or d == "inline-flex" or d == "inline-table" or d == "inline-grid" {
+            box.inl := true
+        } else {
+            box.d := "block"
+        }
+        flags(box, ps)
+    }
+    if length(out) > 0 {
+        append(box.kids, text_box(out, ps, link, false))
+    }
+    return box
+}
+
+# Whether a box floats, where it is positioned, and whether what is
+# inside it is laid out on its own (floats outside it do not reach
+# in, floats inside it do not hang out).
+proc flags(box, st) {
+    alloc pos := css.get(st, "position")
+    box.pos := pos
+    alloc fl := css.get(st, "float")
+    box.fl := fl
+    alloc d := box.d
+    if fl != "none" or pos == "absolute" or pos == "fixed" or box.inl or d == "table-cell" or d == "table-caption" or box.kind != K_BLOCK {
+        box.bfc := true
+    } elif css.get(st, "overflow-x") != "visible" or css.get(st, "overflow-y") != "visible" {
+        box.bfc := true
+    }
+    return true
+}
+
+proc element_box(node, st, d, link) {
+    alloc tag := node.tag
+    alloc kind := K_BLOCK
+    alloc inl := false
+    if d == "inline" {
+        kind := K_INLINE
+        inl := true
+    } elif d == "inline-block" {
+        inl := true
+    } elif d == "table" {
+        kind := K_TABLE
+    } elif d == "inline-table" {
+        kind := K_TABLE
+        inl := true
+    } elif d == "table-row-group" or d == "table-header-group" or d == "table-footer-group" {
+        kind := K_GROUP
+    } elif d == "table-row" {
+        kind := K_ROW
+    } elif d == "flex" {
+        kind := K_FLEX
+    } elif d == "inline-flex" {
+        kind := K_FLEX
+        inl := true
+    } elif d == "grid" {
+        kind := K_GRID
+    } elif d == "inline-grid" {
+        kind := K_GRID
+        inl := true
+    }
+    alloc replaced := has_key(REPLACED, tag)
+    if tag == "img" and has_key(node, "img") == false {
+        # a picture that has not come (yet): its words instead, unless
+        # the page gave it a size to keep
+        alloc alt := ""
+        if has_key(node.attrs, "alt") {
+            alt := node.attrs["alt"]
+        }
+        if css.get(st, "width")[0] == 3 or css.get(st, "height")[0] == 3 {
+            replaced := false
+            alloc ib := new_box(K_INLINE, "inline", node, st, link)
+            ib.inl := true
+            if u.trim(alt) != "" {
+                append(ib.kids, text_box(u.cps(alt), st, link, false))
+            }
+            return ib
+        }
+    }
+    if replaced {
+        alloc rb := new_box(K_REPL, d, node, st, link)
+        rb.inl := inl
+        flags(rb, st)
+        return rb
+    }
+    alloc box := new_box(kind, d, node, st, link)
+    box.inl := inl
+    if kind != K_INLINE {
+        flags(box, st)
+    } else {
+        box.pos := css.get(st, "position")
+    }
+    build_kids(box, node, link)
+    return box
+}
+
+proc build_kids(parent, node, link) {
+    alloc st := node.style
+    alloc before := pseudo_box(st, "-before", node, link)
+    if before != false {
+        append(parent.kids, before)
+    }
+    alloc ordinal := 1
+    if has_key(node.attrs, "start") {
+        ordinal := u.to_int(node.attrs["start"], 1)
+    }
+    for k in node.kids {
+        if k.t == 3 {
+            if k.text != "" {
+                append(parent.kids, text_box(u.cps(k.text), st, link, k))
+            }
+            continue
+        }
+        if k.t != 1 or has_key(k, "style") == false {
+            continue
+        }
+        alloc kst := k.style
+        alloc d := css.get(kst, "display")
+        if d == "none" {
+            continue
+        }
+        alloc tag := k.tag
+        alloc klink := link
+        if (tag == "a" and has_key(k.attrs, "href")) or tag == "button" or tag == "summary" or tag == "label" {
+            klink := k
+        }
+        if d == "contents" {
+            build_kids(parent, k, klink)
+            continue
+        }
+        if tag == "br" or tag == "wbr" {
+            append(parent.kids, {kind: 4, d: "br", node: k, st: st, link: link, kids: EMPTY,
+                                 inl: true, fl: "none", pos: "static", na: 0, wbr: tag == "wbr"})
+            continue
+        }
+        alloc box := element_box(k, kst, d, klink)
+        if d == "list-item" {
+            if has_key(k.attrs, "value") {
+                ordinal := u.to_int(k.attrs["value"], ordinal)
+            }
+            box.ord := ordinal
+            ordinal := ordinal + 1
+        }
+        append(parent.kids, box)
+    }
+    alloc after := pseudo_box(st, "-after", node, link)
+    if after != false {
+        append(parent.kids, after)
+    }
+    return true
+}
+
+# --- putting the tree in order -------------------------------------------------------------
+
+proc out_of_flow(k) {
+    return k.fl != "none" or k.pos == "absolute" or k.pos == "fixed"
+}
+
+# Does this inline thing put anything on a line?
+proc is_real(k) {
+    alloc kind := k.kind
+    if kind == K_TEXT {
+        if all_ws(k.raw) == false {
+            return true
+        }
+        alloc ws := css.get(k.st, "white-space")
+        return ws == "pre" or ws == "pre-wrap"
+    }
+    if kind == K_BR {
+        return k.wbr == false
+    }
+    if out_of_flow(k) {
+        return false
+    }
+    if kind == K_INLINE {
+        for kk in k.kids {
+            if is_real(kk) {
+                return true
+            }
+        }
+        alloc st := k.st
+        return css.get(st, "border-left-width") + css.get(st, "border-right-width") > 0 or css.get(st, "padding-left")[1] != 0 or css.get(st, "padding-right")[1] != 0
+    }
+    return true
+}
+
+proc anon_block(parent, kids) {
+    alloc b := new_box(K_BLOCK, "block", false, anon_style(parent.st), parent.link)
+    b.kids := kids
+    b.ifc := true
+    return b
+}
+
+proc is_table_part(k) {
+    alloc d := k.d
+    return k.kind == K_GROUP or k.kind == K_ROW or d == "table-cell" or d == "table-caption"
+}
+
+# A block's children: all inline (then the block breaks them into
+# lines), or all blocks, the inline stretches between blocks wrapped.
+proc finish_block(box) {
+    alloc kids := box.kids
+    alloc any_block := false
+    alloc any_part := false
+    for k in kids {
+        if k.inl == false and out_of_flow(k) == false {
+            any_block := true
+        }
+        if k.kind != K_TEXT and k.kind != K_BR and is_table_part(k) {
+            any_part := true
+        }
+    }
+    if any_part {
+        # rows and cells with no table around them get one
+        alloc fresh := []
+        alloc table := false
+        for k2 in kids {
+            if k2.kind != K_TEXT and k2.kind != K_BR and is_table_part(k2) {
+                if table == false {
+                    table := new_box(K_TABLE, "table", false, anon_style(box.st), box.link)
+                    table.bfc := true
+                    append(fresh, table)
+                }
+                append(table.kids, k2)
+            } elif table != false and k2.kind == K_TEXT and all_ws(k2.raw) {
+                continue
+            } else {
+                if table != false {
+                    fix_table(table)
+                    table := false
+                }
+                append(fresh, k2)
+            }
+        }
+        if table != false {
+            fix_table(table)
+        }
+        kids := fresh
+        box.kids := kids
+        any_block := true
+    }
+    if any_block == false {
+        box.ifc := length(kids) > 0
+        return true
+    }
+    box.ifc := false
+    alloc out := []
+    alloc run := []
+    alloc real := false
+    for k3 in kids {
+        if k3.inl or (out_of_flow(k3) and length(run) > 0) {
+            append(run, k3)
+            if real == false and is_real(k3) {
+                real := true
+            }
+            continue
+        }
+        if length(run) > 0 {
+            if real {
+                append(out, anon_block(box, run))
+            } else {
+                for r in run {
+                    if r.kind != K_TEXT and r.kind != K_BR and out_of_flow(r) {
+                        append(out, r)
+                    }
+                }
+            }
+            run := []
+            real := false
+        }
+        append(out, k3)
+    }
+    if length(run) > 0 {
+        if real {
+            append(out, anon_block(box, run))
+        } else {
+            for r2 in run {
+                if r2.kind != K_TEXT and r2.kind != K_BR and out_of_flow(r2) {
+                    append(out, r2)
+                }
+            }
+        }
+    }
+    box.kids := out
+    return true
+}
+
+# The children of a flex or grid container are each a block.
+proc finish_items(box) {
+    alloc out := []
+    alloc run := []
+    alloc real := false
+    for k in box.kids {
+        if k.kind == K_TEXT or k.kind == K_BR or k.kind == K_INLINE {
+            if out_of_flow(k) == false {
+                append(run, k)
+                if real == false and is_real(k) {
+                    real := true
+                }
+                continue
+            }
+        }
+        if length(run) > 0 and real {
+            alloc ab := anon_block(box, run)
+            ab.bfc := true
+            append(out, ab)
+        }
+        run := []
+        real := false
+        if k.pos != "absolute" and k.pos != "fixed" {
+            k.inl := false
+            k.fl := "none"
+            k.bfc := true
+        }
+        append(out, k)
+    }
+    if length(run) > 0 and real {
+        alloc ab2 := anon_block(box, run)
+        ab2.bfc := true
+        append(out, ab2)
+    }
+    box.kids := out
+    return true
+}
+
+proc anon_cell(parent) {
+    alloc c := new_box(K_BLOCK, "table-cell", false, anon_style(parent.st), parent.link)
+    c.bfc := true
+    return c
+}
+
+proc fix_row(row) {
+    alloc out := []
+    alloc cell := false
+    for k in row.kids {
+        if k.kind != K_TEXT and k.kind != K_BR and k.d == "table-cell" {
+            if cell != false {
+                finish_block(cell)
+                cell := false
+            }
+            k.inl := false
+            k.bfc := true
+            append(out, k)
+        } elif k.kind == K_TEXT and all_ws(k.raw) {
+            continue
+        } else {
+            if cell == false {
+                cell := anon_cell(row)
+                append(out, cell)
+            }
+            append(cell.kids, k)
+        }
+    }
+    if cell != false {
+        finish_block(cell)
+    }
+    row.kids := out
+    return true
+}
+
+proc fix_group(group) {
+    alloc out := []
+    alloc row := false
+    for k in group.kids {
+        if k.kind == K_ROW {
+            if row != false {
+                fix_row(row)
+                row := false
+            }
+            fix_row(k)
+            append(out, k)
+        } elif k.kind == K_TEXT and all_ws(k.raw) {
+            continue
+        } else {
+            if row == false {
+                row := new_box(K_ROW, "table-row", false, anon_style(group.st), group.link)
+                append(out, row)
+            }
+            append(row.kids, k)
+        }
+    }
+    if row != false {
+        fix_row(row)
+    }
+    group.kids := out
+    return true
+}
+
+# A table holds captions and row groups; a row group holds rows; a
+# row holds cells. Whatever is missing is put in.
+proc fix_table(table) {
+    alloc out := []
+    alloc group := false
+    for k in table.kids {
+        if k.kind == K_TEXT and all_ws(k.raw) {
+            continue
+        }
+        if k.kind != K_TEXT and k.kind != K_BR and k.d == "table-caption" {
+            if group != false {
+                fix_group(group)
+                group := false
+            }
+            k.inl := false
+            k.bfc := true
+            append(out, k)
+        } elif k.kind == K_GROUP {
+            if group != false {
+                fix_group(group)
+                group := false
+            }
+            fix_group(k)
+            append(out, k)
+        } else {
+            if group == false {
+                group := new_box(K_GROUP, "table-row-group", false, anon_style(table.st), table.link)
+                append(out, group)
+            }
+            append(group.kids, k)
+        }
+    }
+    if group != false {
+        fix_group(group)
+    }
+    table.kids := out
+    return true
+}
+
+proc fix(box) {
+    alloc kind := box.kind
+    for k in box.kids {
+        if k.kind != K_TEXT and k.kind != K_BR {
+            fix(k)
+        }
+    }
+    if kind == K_INLINE {
+        alloc blocky := false
+        for k2 in box.kids {
+            if k2.inl == false and out_of_flow(k2) == false {
+                blocky := true
+                break
+            }
+        }
+        if blocky == false {
+            return true
+        }
+        # a block inside a span: the span becomes a block
+        box.kind := K_BLOCK
+        box.d := "block"
+        box.inl := false
+        kind := K_BLOCK
+        flags(box, box.st)
+    }
+    if kind == K_BLOCK {
+        finish_block(box)
+    } elif kind == K_FLEX or kind == K_GRID {
+        finish_items(box)
+    } elif kind == K_TABLE {
+        fix_table(box)
+    }
+    return true
+}
+
+# How many boxes inside this one are placed by position: absolute
+# or fixed. Layout skips whole branches that hold none.
+proc count_placed(box) {
+    alloc n := 0
+    for k in box.kids {
+        if k.kind == K_TEXT or k.kind == K_BR {
+            continue
+        }
+        count_placed(k)
+        n := n + k.na
+        if k.pos == "absolute" or k.pos == "fixed" {
+            n := n + 1
+            if k.pos == "fixed" {
+                any_fixed := true
+            }
+        }
+    }
+    box.na := n
+    return true
+}
+
+# The tree of boxes for a styled document (see css.style_tree).
+proc build(doc) {
+    alloc node := doc.root
+    alloc st := node.style
+    alloc d := css.get(st, "display")
+    alloc kind := K_BLOCK
+    if d == "flex" {
+        kind := K_FLEX
+    } elif d == "grid" {
+        kind := K_GRID
+    }
+    alloc root := new_box(kind, "block", node, st, false)
+    root.bfc := true
+    root.root := true
+    build_kids(root, node, false)
+    fix(root)
+    any_fixed := false
+    count_placed(root)
+    return root
+}
+
+# --- sizes ------------------------------------------------------------------------------
+
+# A box's margins, borders and padding, for a container cbw wide
+# (percentages of all four sides count against the width). `am` notes
+# which margins said "auto": 1 left, 2 right, 4 top, 8 bottom.
+proc edges(box, cbw) {
+    alloc st := box.st
+    box.pt := lenpx(css.get(st, "padding-top"), cbw)
+    box.pr := lenpx(css.get(st, "padding-right"), cbw)
+    box.pb := lenpx(css.get(st, "padding-bottom"), cbw)
+    box.pl := lenpx(css.get(st, "padding-left"), cbw)
+    if has_key(box, "fb") {
+        alloc fb := box.fb
+        box.bt := fb[0]
+        box.br := fb[1]
+        box.bb := fb[2]
+        box.bl := fb[3]
+    } else {
+        box.bt := css.get(st, "border-top-width")
+        box.br := css.get(st, "border-right-width")
+        box.bb := css.get(st, "border-bottom-width")
+        box.bl := css.get(st, "border-left-width")
+    }
+    alloc am := 0
+    alloc v := css.get(st, "margin-left")
+    if v[0] == 3 {
+        am := 1
+        box.ml := 0
+    } else {
+        box.ml := lenpx(v, cbw)
+    }
+    v := css.get(st, "margin-right")
+    if v[0] == 3 {
+        am := am | 2
+        box.mr := 0
+    } else {
+        box.mr := lenpx(v, cbw)
+    }
+    v := css.get(st, "margin-top")
+    if v[0] == 3 {
+        am := am | 4
+        box.mt := 0
+    } else {
+        box.mt := lenpx(v, cbw)
+    }
+    v := css.get(st, "margin-bottom")
+    if v[0] == 3 {
+        am := am | 8
+        box.mb := 0
+    } else {
+        box.mb := lenpx(v, cbw)
+    }
+    box.am := am
+    return true
+}
+
+# What a style says a size is, out to the border, or false when it
+# says nothing that can be worked out (auto, none, a percentage of
+# something unknown). pb is the padding and border in that direction.
+proc spec(st, name, base, pb) {
+    alloc r := css.resolve(css.get(st, name), base)
+    if r == false {
+        return false
+    }
+    if r < 0 {
+        r := 0
+    }
+    if css.get(st, "box-sizing") == "border-box" {
+        if r < pb {
+            return pb
+        }
+        return r
+    }
+    return r + pb
+}
+
+# Margins left and right that are plain lengths.
+proc hmargins(st) {
+    alloc m := 0
+    alloc v := css.get(st, "margin-left")
+    if v[0] == 0 {
+        m := v[1]
+    }
+    v := css.get(st, "margin-right")
+    if v[0] == 0 {
+        m := m + v[1]
+    }
+    return m
+}
+
+proc hpadding(st) {
+    alloc p := css.get(st, "border-left-width") + css.get(st, "border-right-width")
+    alloc v := css.get(st, "padding-left")
+    if v[0] == 0 {
+        p := p + v[1]
+    }
+    v := css.get(st, "padding-right")
+    if v[0] == 0 {
+        p := p + v[1]
+    }
+    return p
+}
+
+# --- form controls and other things with a size of their own -----------------------------
+
+proc node_text(node, out) {
+    for k in node.kids {
+        if k.t == 3 {
+            append(out, k.text)
+        } elif k.t == 1 {
+            node_text(k, out)
+        }
+    }
+    return out
+}
+
+proc input_type(node) {
+    if node.tag != "input" {
+        return node.tag
+    }
+    if has_key(node.attrs, "type") {
+        alloc t := u.lower(node.attrs["type"])
+        if t == "submit" or t == "reset" or t == "button" or t == "checkbox" or t == "radio" or t == "hidden" or t == "image" or t == "file" or t == "password" or t == "range" or t == "color" {
+            return t
+        }
+    }
+    return "text"
+}
+
+proc options_of(node, out) {
+    for k in node.kids {
+        if k.t == 1 {
+            if k.tag == "option" {
+                append(out, k)
+            } elif k.tag == "optgroup" {
+                options_of(k, out)
+            }
+        }
+    }
+    return out
+}
+
+# Which option of a select shows: the one picked in the window, or
+# the one the page marks, or the first.
+proc selected_option(node) {
+    alloc opts := options_of(node, [])
+    if length(opts) == 0 {
+        return false
+    }
+    if has_key(node, "sel") and node.sel < length(opts) {
+        return opts[node.sel]
+    }
+    for o in opts {
+        if has_key(o.attrs, "selected") {
+            return o
+        }
+    }
+    return opts[0]
+}
+
+proc option_label(o) {
+    if has_key(o.attrs, "label") {
+        return o.attrs["label"]
+    }
+    return u.join(u.words(u.join(node_text(o, []), "")), " ")
+}
+
+# The words on a control: a button's label, a field's content.
+proc control_text(node) {
+    alloc t := input_type(node)
+    if t == "select" {
+        alloc o := selected_option(node)
+        if o == false {
+            return ""
+        }
+        return option_label(o)
+    }
+    if has_key(node, "value") {
+        return node.value
+    }
+    if t == "textarea" {
+        alloc s := u.join(node_text(node, []), "")
+        if u.starts_with(s, "\n") {
+            s := s[1:]
+        }
+        return s
+    }
+    if has_key(node.attrs, "value") {
+        return node.attrs["value"]
+    }
+    if t == "submit" {
+        return "Submit"
+    }
+    if t == "reset" {
+        return "Reset"
+    }
+    if t == "file" {
+        return "Choose file"
+    }
+    if t == "image" {
+        if has_key(node.attrs, "alt") {
+            return node.attrs["alt"]
+        }
+        return "Submit"
+    }
+    return ""
+}
+
+proc attr_num(node, name, otherwise) {
+    if has_key(node.attrs, name) {
+        alloc r := u.number_at(string_bytes(node.attrs[name]), 0, length(string_bytes(node.attrs[name])))
+        if r != false and r[0] > 0 {
+            return r[0]
+        }
+    }
+    return otherwise
+}
+
+# The size something has before any style: [width, height, width / height
+# or 0 when it has no fixed shape].
+proc natural_size(box) {
+    alloc node := box.node
+    alloc tag := node.tag
+    if tag == "img" {
+        if has_key(node, "img") {
+            alloc im := node.img
+            if im[1] > 0 {
+                return [im[0], im[1], im[0] * 1.0 / im[1]]
+            }
+        }
+        return [0, 0, 0]
+    }
+    alloc f := font_of(box.st)
+    alloc t := input_type(node)
+    if tag == "input" or tag == "select" or tag == "textarea" {
+        if t == "checkbox" or t == "radio" {
+            return [13, 13, 0]
+        }
+        if t == "range" {
+            return [129, 16, 0]
+        }
+        if t == "color" {
+            return [44, 23, 0]
+        }
+        alloc ch := font.advance(f, 48)
+        if t == "textarea" {
+            return [floor(attr_num(node, "cols", 20) * ch), floor(attr_num(node, "rows", 2)) * f.line, 0]
+        }
+        if t == "select" {
+            alloc widest := 0
+            for o in options_of(node, []) {
+                alloc cps := u.cps(option_label(o))
+                alloc ow := font.measure(f, cps, 0, length(cps))
+                if ow > widest {
+                    widest := ow
+                }
+            }
+            return [ceil(widest) + 20, f.line, 0]
+        }
+        if t == "submit" or t == "reset" or t == "button" or t == "file" or t == "image" {
+            alloc lcps := u.cps(control_text(node))
+            return [ceil(font.measure(f, lcps, 0, length(lcps))), f.line, 0]
+        }
+        return [floor(attr_num(node, "size", 20) * ch), f.line, 0]
+    }
+    if tag == "svg" {
+        alloc sw := attr_num(node, "width", 0)
+        alloc sh := attr_num(node, "height", 0)
+        if (sw == 0 or sh == 0) and has_key(node.attrs, "viewbox") {
+            alloc parts := u.words(u.replace(node.attrs["viewbox"], ",", " "))
+            if length(parts) == 4 {
+                alloc vbw := u.to_number(parts[2], 0)
+                alloc vbh := u.to_number(parts[3], 0)
+                if vbw > 0 and vbh > 0 {
+                    if sw == 0 and sh == 0 {
+                        sw := vbw
+                        sh := vbh
+                    } elif sw == 0 {
+                        sw := sh * vbw / vbh
+                    } else {
+                        sh := sw * vbh / vbw
+                    }
+                }
+            }
+        }
+        if sw == 0 {
+            sw := 300
+        }
+        if sh == 0 {
+            sh := 150
+        }
+        return [sw, sh, sw * 1.0 / sh]
+    }
+    if tag == "audio" {
+        if has_key(node.attrs, "controls") {
+            return [300, 54, 0]
+        }
+        return [0, 0, 0]
+    }
+    if tag == "meter" or tag == "progress" {
+        return [160, 16, 0]
+    }
+    return [300, 150, 2.0]
+}
+
+proc size_replaced(box, cbw, cbh, mode, fw, fh) {
+    alloc st := box.st
+    alloc hpb := box.bl + box.br + box.pl + box.pr
+    alloc vpb := box.bt + box.bb + box.pt + box.pb
+    alloc nat := natural_size(box)
+    alloc ratio := nat[2]
+    alloc ar := css.get(st, "aspect-ratio")
+    if ar != "auto" and ratio == 0 {
+        ratio := ar
+    }
+    alloc sw := spec(st, "width", cbw, hpb)
+    alloc sh := spec(st, "height", cbh, vpb)
+    if mode == 2 {
+        sw := fw
+    }
+    if fh != false {
+        sh := fh
+    }
+    alloc w := nat[0] + hpb
+    alloc h := nat[1] + vpb
+    if sw != false and sh != false {
+        w := sw
+        h := sh
+    } elif sw != false {
+        w := sw
+        if ratio > 0 {
+            h := (w - hpb) / ratio + vpb
+        }
+    } elif sh != false {
+        h := sh
+        if ratio > 0 {
+            w := (h - vpb) * ratio + hpb
+        }
+    }
+    alloc mxw := spec(st, "max-width", cbw, hpb)
+    if mxw != false and w > mxw {
+        w := mxw
+        if sh == false and ratio > 0 {
+            h := (w - hpb) / ratio + vpb
+        }
+    }
+    alloc mnw := spec(st, "min-width", cbw, hpb)
+    if mnw != false and w < mnw {
+        w := mnw
+        if sh == false and ratio > 0 {
+            h := (w - hpb) / ratio + vpb
+        }
+    }
+    alloc mxh := spec(st, "max-height", cbh, vpb)
+    if mxh != false and h > mxh {
+        h := mxh
+        if sw == false and ratio > 0 {
+            w := (h - vpb) * ratio + hpb
+        }
+    }
+    alloc mnh := spec(st, "min-height", cbh, vpb)
+    if mnh != false and h < mnh {
+        h := mnh
+        if sw == false and ratio > 0 {
+            w := (h - vpb) * ratio + hpb
+        }
+    }
+    if mode == 0 {
+        alloc free := cbw - w - box.ml - box.mr
+        if free > 0 {
+            alloc am := box.am
+            if (am & 3) == 3 {
+                box.ml := box.ml + floor(free / 2)
+            } elif (am & 1) != 0 {
+                box.ml := box.ml + free
+            } elif css.get(st, "text-align") == "-center" {
+                box.ml := box.ml + floor(free / 2)
+            }
+        }
+    }
+    box.w := w
+    box.h := h
+    alloc tag := box.node.tag
+    if tag == "input" or tag == "select" {
+        alloc f := font_of(st)
+        alloc t := input_type(box.node)
+        if t == "checkbox" or t == "radio" {
+            box.base := h - 2
+        } else {
+            box.base := box.bt + box.pt + floor((h - vpb - f.asc - f.desc) / 2) + f.asc
+        }
+    }
+    return true
+}
+
+# --- how wide content wants to be ------------------------------------------------------------
+#
+# Two widths for every box, out to its border: imin, the narrowest it
+# can be made without anything sticking out (its longest word, its
+# widest picture), and imax, the width it would take with all the room
+# in the world (every paragraph on one line). Floats, table cells,
+# inline-blocks and positioned boxes are sized between the two.
+
+proc intrinsic(box) {
+    if has_key(box, "imax") {
+        return true
+    }
+    alloc st := box.st
+    alloc kind := box.kind
+    if kind == K_TABLE {
+        table_widths(box)
+        return true
+    }
+    alloc pbw := hpadding(st)
+    if has_key(box, "fb") {
+        pbw := pbw - css.get(st, "border-left-width") - css.get(st, "border-right-width") + box.fb[1] + box.fb[3]
+    }
+    alloc mn := 0
+    alloc mx := 0
+    alloc wv := css.get(st, "width")
+    alloc border_box := css.get(st, "box-sizing") == "border-box"
+    if kind == K_REPL {
+        alloc nat := natural_size(box)
+        alloc w := nat[0]
+        alloc hv := css.get(st, "height")
+        if wv[0] == 0 {
+            w := wv[1]
+            if border_box {
+                w := max(0, w - pbw)
+            }
+        } elif hv[0] == 0 and nat[2] > 0 {
+            w := hv[1] * nat[2]
+        }
+        mn := w
+        mx := w
+        if wv[0] == 1 or wv[0] == 2 or css.get(st, "max-width")[0] == 1 {
+            mn := 0
+        }
+    } elif wv[0] == 0 and box.d != "table-cell" {
+        mn := wv[1]
+        if border_box {
+            mn := max(0, mn - pbw)
+        }
+        mx := mn
+    } elif kind == K_FLEX {
+        alloc dir := css.get(st, "flex-direction")
+        alloc row := dir == "row" or dir == "row-reverse"
+        alloc wrap := css.get(st, "flex-wrap") != "nowrap"
+        alloc gap := lenpx(css.get(st, "column-gap"), 0)
+        alloc count := 0
+        for k in box.kids {
+            if k.pos == "absolute" or k.pos == "fixed" {
+                continue
+            }
+            intrinsic(k)
+            alloc m := hmargins(k.st)
+            alloc kmin := k.imin + m
+            alloc kmax := k.imax + m
+            alloc basis := css.get(k.st, "flex-basis")
+            if row and basis[0] == 0 {
+                kmax := basis[1] + m
+                if css.get(k.st, "box-sizing") != "border-box" {
+                    kmax := kmax + hpadding(k.st)
+                }
+                if kmin > kmax {
+                    kmin := kmax
+                }
+            }
+            if row {
+                mx := mx + kmax
+                if wrap {
+                    mn := max(mn, kmin)
+                } else {
+                    mn := mn + kmin
+                }
+                count := count + 1
+            } else {
+                mx := max(mx, kmax)
+                mn := max(mn, kmin)
+            }
+        }
+        if row and count > 1 {
+            mx := mx + gap * (count - 1)
+            if wrap == false {
+                mn := mn + gap * (count - 1)
+            }
+        }
+    } elif kind == K_GRID {
+        alloc cols := grid_columns(box, false)
+        alloc ncols := length(cols)
+        alloc ggap := lenpx(css.get(st, "column-gap"), 0)
+        alloc widest := 0
+        alloc narrow := 0
+        for k2 in box.kids {
+            if k2.pos == "absolute" or k2.pos == "fixed" {
+                continue
+            }
+            intrinsic(k2)
+            alloc m2 := hmargins(k2.st)
+            widest := max(widest, k2.imax + m2)
+            narrow := max(narrow, k2.imin + m2)
+        }
+        mx := widest * ncols + ggap * (ncols - 1)
+        mn := narrow
+        alloc fixed_sum := 0
+        alloc all_fixed := ncols > 0
+        for c in cols {
+            if c[0] == 0 {
+                fixed_sum := fixed_sum + c[1]
+            } else {
+                all_fixed := false
+            }
+        }
+        if all_fixed {
+            mx := fixed_sum + ggap * (ncols - 1)
+            mn := mx
+        }
+    } elif box.ifc {
+        alloc r := inline_widths(box)
+        mn := r[0]
+        mx := r[1]
+    } else {
+        alloc fsum := 0
+        for k3 in box.kids {
+            if k3.pos == "absolute" or k3.pos == "fixed" {
+                continue
+            }
+            intrinsic(k3)
+            alloc m3 := hmargins(k3.st)
+            mn := max(mn, k3.imin + m3)
+            if k3.fl != "none" {
+                fsum := fsum + k3.imax + m3
+                mx := max(mx, fsum)
+            } else {
+                if k3.bfc {
+                    mx := max(mx, fsum + k3.imax + m3)
+                } else {
+                    mx := max(mx, k3.imax + m3)
+                }
+                fsum := 0
+            }
+        }
+    }
+    alloc lo := css.get(st, "min-width")
+    if lo[0] == 0 {
+        alloc lov := lo[1]
+        if border_box {
+            lov := max(0, lov - pbw)
+        }
+        mn := max(mn, lov)
+        mx := max(mx, lov)
+    }
+    alloc hi := css.get(st, "max-width")
+    if hi[0] == 0 {
+        alloc hiv := hi[1]
+        if border_box {
+            hiv := max(0, hiv - pbw)
+        }
+        mn := min(mn, hiv)
+        mx := min(mx, hiv)
+    }
+    box.imin := mn + pbw
+    box.imax := mx + pbw
+    box.ipb := pbw
+    return true
+}
+
+# --- floats -----------------------------------------------------------------------------------
+#
+# The floats of one stretch of page, as rectangles out to their
+# margins, in that stretch's own coordinates. Lines and later floats
+# ask it how much room is left at a height.
+
+proc new_fc() {
+    return {l: [], r: [], top: FAR, any: false}
+}
+
+# The left and right ends of the room between floats, for something
+# h tall at y, inside x0..x1.
+proc fc_band(fc, y, h, x0, x1) {
+    if fc.any == false {
+        return [x0, x1]
+    }
+    alloc y1 := y + h
+    for f in fc.l {
+        if f[1] < y1 and f[3] > y and f[2] > x0 {
+            x0 := f[2]
+        }
+    }
+    for f2 in fc.r {
+        if f2[1] < y1 and f2[3] > y and f2[0] < x1 {
+            x1 := f2[0]
+        }
+    }
+    return [x0, x1]
+}
+
+# The next height below y where a float ends (so there may be more
+# room), or false.
+proc fc_next(fc, y) {
+    alloc best := false
+    for f in fc.l {
+        if f[3] > y and (best == false or f[3] < best) {
+            best := f[3]
+        }
+    }
+    for f2 in fc.r {
+        if f2[3] > y and (best == false or f2[3] < best) {
+            best := f2[3]
+        }
+    }
+    return best
+}
+
+# Put a float w x h (out to its margins) on a side, no higher than y:
+# returns [x, y] of where its margin corner went.
+proc fc_place(fc, w, h, side, x0, x1, y) {
+    if y < fc.top {
+        y := fc.top
+    }
+    alloc tries := 0
+    loop tries < 1000 {
+        alloc band := fc_band(fc, y, max(h, 1), x0, x1)
+        if band[1] - band[0] >= w - 0.01 or (band[0] == x0 and band[1] == x1) {
+            alloc x := band[0]
+            if side == "right" {
+                x := band[1] - w
+                append(fc.r, [x, y, x + w, y + h])
+            } else {
+                append(fc.l, [x, y, x + w, y + h])
+            }
+            fc.any := true
+            fc.top := y
+            return [x, y]
+        }
+        alloc ny := fc_next(fc, y)
+        if ny == false {
+            break
+        }
+        y := ny
+        tries := tries + 1
+    }
+    fc.top := y
+    return [x0, y]
+}
+
+# Where the floats on a side ("left", "right", "both") end.
+proc fc_clear(fc, side) {
+    alloc y := FAR
+    if side != "right" {
+        for f in fc.l {
+            if f[3] > y {
+                y := f[3]
+            }
+        }
+    }
+    if side != "left" {
+        for f2 in fc.r {
+            if f2[3] > y {
+                y := f2[3]
+            }
+        }
+    }
+    return y
+}
+
+# --- blocks --------------------------------------------------------------------------------------
+
+# The margin above a box as its container sees it: its own, joined
+# with that of a first child that touches its top edge.
+proc ctm(box, cbw) {
+    alloc st := box.st
+    alloc m := lenpx(css.get(st, "margin-top"), cbw)
+    if box.kind == K_BLOCK and box.bfc == false and box.ifc == false {
+        if css.get(st, "border-top-width") == 0 and lenpx(css.get(st, "padding-top"), cbw) == 0 {
+            for k in box.kids {
+                if k.fl != "none" or k.pos == "absolute" or k.pos == "fixed" {
+                    continue
+                }
+                if css.get(k.st, "clear") == "none" {
+                    m := collapse(m, ctm(k, cbw))
+                }
+                break
+            }
+        }
+    }
+    return m
+}
+
+# Lay out one box. cbw and cbh are the width and height of the room
+# it is in (cbh false when that is not known yet). mode says how its
+# width is found: 0 it fills the room like a block, 1 it shrinks to
+# what is inside it, 2 it is told (fw). fh, when not false, tells its
+# height too. ox, oy and fc are for floats: where the box's left
+# margin edge and top border edge are in the coordinates of the float
+# set fc.
+proc lay(box, cbw, cbh, mode, fw, fh, ox, oy, fc) {
+    alloc kind := box.kind
+    if box.bfc {
+        if has_key(box, "memo") {
+            alloc mm := box.memo
+            if mm[0] == cbw and mm[1] == cbh and mm[2] == mode and mm[3] == fw and mm[4] == fh {
+                return true
+            }
+        }
+        box.memo := [cbw, cbh, mode, fw, fh]
+    }
+    edges(box, cbw)
+    box.mbc := box.mb
+    box.thru := false
+    alloc st := box.st
+    if box.pos == "relative" {
+        alloc rl := css.resolve(css.get(st, "left"), cbw)
+        alloc rr := css.resolve(css.get(st, "right"), cbw)
+        alloc rt := css.resolve(css.get(st, "top"), cbh)
+        alloc rb := css.resolve(css.get(st, "bottom"), cbh)
+        box.rx := 0
+        box.ry := 0
+        if rl != false {
+            box.rx := rl
+        } elif rr != false {
+            box.rx := 0 - rr
+        }
+        if rt != false {
+            box.ry := rt
+        } elif rb != false {
+            box.ry := 0 - rb
+        }
+    }
+    if kind == K_REPL {
+        size_replaced(box, cbw, cbh, mode, fw, fh)
+        return true
+    }
+    if kind == K_TABLE {
+        lay_table(box, cbw, cbh, mode, fw, fh)
+        if box.pos != "static" {
+            resolve_abs(box)
+        }
+        return true
+    }
+    alloc hpb := box.bl + box.br + box.pl + box.pr
+    alloc w := 0
+    if mode == 2 {
+        w := fw
+    } else {
+        alloc sw := spec(st, "width", cbw, hpb)
+        alloc avail := cbw - box.ml - box.mr
+        if sw == false {
+            if mode == 0 {
+                w := avail
+            } else {
+                intrinsic(box)
+                w := box.imax
+                if w > avail {
+                    w := avail
+                }
+                if w < box.imin {
+                    w := box.imin
+                }
+            }
+        } else {
+            w := sw
+        }
+        alloc mxw := spec(st, "max-width", cbw, hpb)
+        if mxw != false and w > mxw {
+            w := mxw
+        }
+        alloc mnw := spec(st, "min-width", cbw, hpb)
+        if mnw != false and w < mnw {
+            w := mnw
+        }
+        if mode == 0 {
+            alloc free := cbw - w - box.ml - box.mr
+            if free > 0 {
+                alloc am := box.am
+                if (am & 3) == 3 {
+                    box.ml := box.ml + floor(free / 2)
+                } elif (am & 1) != 0 {
+                    box.ml := box.ml + free
+                } elif (am & 2) == 0 and box.node != false and css.get(st, "text-align") == "-center" {
+                    box.ml := box.ml + floor(free / 2)
+                }
+            }
+        }
+    }
+    if w < hpb {
+        w := hpb
+    }
+    box.w := w
+    alloc vpb := box.bt + box.bb + box.pt + box.pb
+    alloc sh := fh
+    if sh == false {
+        sh := spec(st, "height", cbh, vpb)
+    }
+    alloc mxh := spec(st, "max-height", cbh, vpb)
+    alloc mnh := spec(st, "min-height", cbh, vpb)
+    if box.root and (mnh == false or mnh < cbh) and sh == false {
+        mnh := cbh
+    }
+    alloc inner := false
+    if sh != false {
+        alloc ih := sh
+        if mxh != false and ih > mxh {
+            ih := mxh
+        }
+        if mnh != false and ih < mnh {
+            ih := mnh
+        }
+        inner := max(0, ih - vpb)
+    }
+    alloc ch := 0
+    if kind == K_FLEX {
+        alloc least := false
+        if mnh != false {
+            least := max(0, mnh - vpb)
+        }
+        ch := lay_flex(box, inner, least)
+    } elif kind == K_GRID {
+        ch := lay_grid(box, inner)
+    } else {
+        ch := lay_flow(box, inner, ox + box.ml, oy, fc)
+    }
+    alloc h := ch + vpb
+    # something that would scroll in another browser grows instead:
+    # nothing here scrolls inside the page, and this way all of it shows
+    alloc grows := fh == false and css.get(st, "overflow-y") != "visible" and css.get(st, "overflow-y") != "hidden"
+    if sh != false and (grows == false or h < sh) {
+        h := sh
+    }
+    if mxh != false and h > mxh and grows == false {
+        h := mxh
+    }
+    if mnh != false and h < mnh {
+        h := mnh
+    }
+    box.h := h
+    if kind == K_BLOCK and h == 0 and box.bfc == false {
+        box.thru := true
+    }
+    if box.pos != "static" or box.root {
+        resolve_abs(box)
+    }
+    return true
+}
+
+# What is inside a block: lines, or blocks one under another.
+# Returns how tall it came out.
+proc lay_flow(box, inner, ox, oy, fc) {
+    alloc cx := box.bl + box.pl
+    alloc cy := box.bt + box.pt
+    alloc cw := box.w - cx - box.br - box.pr
+    if cw < 0 {
+        cw := 0
+    }
+    alloc mine := fc
+    if box.bfc {
+        mine := new_fc()
+        ox := 0
+        oy := 0
+    }
+    alloc h := 0
+    if box.ifc {
+        h := lay_inline(box, cw, cx, cy, ox + cx, oy + cy, mine)
+    } else {
+        h := lay_blocks(box, cw, inner, cx, cy, ox + cx, oy + cy, mine)
+    }
+    if box.bfc and mine.any {
+        alloc bottom := fc_clear(mine, "both") - cy
+        if bottom > h {
+            h := bottom
+        }
+    }
+    return h
+}
+
+proc lay_blocks(box, cw, inner, cx, cy, ox, oy, fc) {
+    alloc y := 0
+    alloc pending := 0
+    alloc first := true
+    alloc ctop := box.bfc == false and box.bt == 0 and box.pt == 0 and box.kind == K_BLOCK
+    for kid in box.kids {
+        if kid.pos == "absolute" or kid.pos == "fixed" {
+            kid.sx := cx
+            kid.sy := cy + y + pending
+            continue
+        }
+        if kid.fl != "none" {
+            lay(kid, cw, inner, 1, false, false, 0, 0, fc)
+            alloc fy := oy + y + pending
+            alloc fclr := css.get(kid.st, "clear")
+            if fclr != "none" {
+                alloc fcy := fc_clear(fc, fclr)
+                if fcy > fy {
+                    fy := fcy
+                }
+            }
+            alloc p := fc_place(fc, kid.w + kid.ml + kid.mr, kid.h + kid.mt + kid.mb, kid.fl, ox, ox + cw, fy)
+            kid.x := p[0] - ox + cx + kid.ml
+            kid.y := p[1] - oy + cy + kid.mt
+            continue
+        }
+        alloc m := ctm(kid, cw)
+        if first and ctop {
+            m := 0
+        }
+        alloc gap := collapse(pending, m)
+        alloc ky := y + gap
+        alloc clr := css.get(kid.st, "clear")
+        if clr != "none" and fc.any {
+            alloc c := fc_clear(fc, clr) - oy
+            if c > ky {
+                ky := c
+            }
+        }
+        alloc kx := 0
+        alloc kcw := cw
+        if kid.bfc and fc.any {
+            # a table, or a box that keeps its floats to itself, goes
+            # beside the floats already here, or below them
+            alloc need := 0
+            if kid.kind == K_TABLE or css.get(kid.st, "width")[0] == 0 {
+                intrinsic(kid)
+                need := kid.imin
+            }
+            alloc tries := 0
+            loop tries < 100 {
+                alloc band := fc_band(fc, oy + ky, 1, ox, ox + cw)
+                kx := band[0] - ox
+                kcw := band[1] - band[0]
+                if kcw >= cw or kcw >= need + 1 {
+                    break
+                }
+                alloc ny := fc_next(fc, oy + ky)
+                if ny == false {
+                    break
+                }
+                ky := ny - oy
+                tries := tries + 1
+            }
+        }
+        lay(kid, kcw, inner, 0, false, false, ox + kx, oy + ky, fc)
+        kid.x := cx + kx + kid.ml
+        kid.y := cy + ky
+        if kid.thru {
+            pending := collapse(gap, kid.mbc)
+        } else {
+            y := ky + kid.h
+            pending := kid.mbc
+            first := false
+        }
+    }
+    alloc st := box.st
+    alloc cbot := box.bfc == false and box.bb == 0 and box.pb == 0 and box.kind == K_BLOCK and inner == false and box.root == false
+    if cbot and css.get(st, "min-height")[0] == 0 and css.get(st, "min-height")[1] > 0 {
+        cbot := false
+    }
+    if cbot {
+        box.mbc := collapse(box.mb, pending)
+    } else {
+        y := y + pending
+    }
+    return y
+}
+
+# --- boxes placed by position ---------------------------------------------------------------------
+
+# Place an absolutely positioned box in the room of the box it
+# answers to: that room is cbw x cbh, its corner at (px0, py0); the
+# place the box would have had in the flow is (sx, sy). All in the
+# coordinates of the answering box's border corner.
+proc lay_abs(box, cbw, cbh, px0, py0, sx, sy) {
+    alloc st := box.st
+    edges(box, cbw)
+    alloc l := css.resolve(css.get(st, "left"), cbw)
+    alloc r := css.resolve(css.get(st, "right"), cbw)
+    alloc t := css.resolve(css.get(st, "top"), cbh)
+    alloc b := css.resolve(css.get(st, "bottom"), cbh)
+    alloc hpb := box.bl + box.br + box.pl + box.pr
+    alloc vpb := box.bt + box.bb + box.pt + box.pb
+    alloc replaced := box.kind == K_REPL
+    alloc mode := 1
+    alloc fw := false
+    alloc room := cbw
+    alloc sw := spec(st, "width", cbw, hpb)
+    if replaced == false {
+        if sw != false {
+            fw := sw
+        } elif l != false and r != false {
+            fw := max(hpb, cbw - l - r - box.ml - box.mr)
+        }
+        if fw != false {
+            alloc mxw := spec(st, "max-width", cbw, hpb)
+            if mxw != false and fw > mxw {
+                fw := mxw
+            }
+            alloc mnw := spec(st, "min-width", cbw, hpb)
+            if mnw != false and fw < mnw {
+                fw := mnw
+            }
+            mode := 2
+        } else {
+            if l != false {
+                room := room - l
+            } elif r != false {
+                room := room - r
+            } else {
+                room := max(0, cbw - (sx - px0))
+            }
+        }
+    }
+    alloc fh := false
+    if replaced == false and t != false and b != false and spec(st, "height", cbh, vpb) == false {
+        fh := max(vpb, cbh - t - b - box.mt - box.mb)
+    }
+    if replaced {
+        lay(box, cbw, cbh, 1, false, false, 0, 0, false)
+    } elif mode == 2 {
+        lay(box, cbw, cbh, 2, fw, fh, 0, 0, false)
+    } else {
+        lay(box, room, cbh, 1, false, fh, 0, 0, false)
+    }
+    alloc am := box.am
+    alloc x := sx + box.ml
+    if l != false {
+        x := px0 + l + box.ml
+        if r != false {
+            alloc free := cbw - l - r - box.w - box.ml - box.mr
+            if free > 0 {
+                if (am & 3) == 3 {
+                    x := x + floor(free / 2)
+                } elif (am & 1) != 0 {
+                    x := x + free
+                }
+            }
+        }
+    } elif r != false {
+        x := px0 + cbw - r - box.mr - box.w
+    }
+    alloc y := sy + box.mt
+    if t != false {
+        y := py0 + t + box.mt
+        if b != false {
+            alloc vfree := cbh - t - b - box.h - box.mt - box.mb
+            if vfree > 0 {
+                if (am & 12) == 12 {
+                    y := y + floor(vfree / 2)
+                } elif (am & 4) != 0 {
+                    y := y + vfree
+                }
+            }
+        }
+    } elif b != false {
+        y := py0 + cbh - b - box.mb - box.h
+    }
+    box.x := x
+    box.y := y
+    return true
+}
+
+proc abs_walk(cb, box, dx, dy, pw, ph) {
+    for k in box.kids {
+        if k.kind == K_TEXT or k.kind == K_BR {
+            continue
+        }
+        alloc pos := k.pos
+        if pos == "absolute" {
+            if has_key(k, "sx") == false {
+                k.sx := 0
+                k.sy := 0
+            }
+            lay_abs(k, pw, ph, cb.bl, cb.bt, dx + k.sx, dy + k.sy)
+            k.x := k.x - dx
+            k.y := k.y - dy
+            continue
+        }
+        if pos == "fixed" or k.na == 0 {
+            continue
+        }
+        if pos != "static" and k.kind != K_INLINE {
+            # it has placed its own
+            continue
+        }
+        abs_walk(cb, k, dx + k.x, dy + k.y, pw, ph)
+    }
+    return true
+}
+
+# Place the positioned boxes that answer to this one, now that its
+# size is known.
+proc resolve_abs(cb) {
+    if cb.na == 0 {
+        return true
+    }
+    abs_walk(cb, cb, 0, 0, cb.w - cb.bl - cb.br, cb.h - cb.bt - cb.bb)
+    return true
+}
+
+# Fixed boxes answer to the window, wherever in the tree they are.
+proc fixed_walk(box, dx, dy) {
+    for k in box.kids {
+        if k.kind == K_TEXT or k.kind == K_BR {
+            continue
+        }
+        if k.pos == "fixed" {
+            if has_key(k, "sx") == false {
+                k.sx := 0
+                k.sy := 0
+            }
+            lay_abs(k, view_w, view_h, 0, 0, dx + k.sx, dy + k.sy)
+            k.x := k.x - dx
+            k.y := k.y - dy
+            continue
+        }
+        if k.na > 0 {
+            fixed_walk(k, dx + k.x, dy + k.y)
+        }
+    }
+    return true
+}
+
+# Give every box of the tree its place, for a window w x h.
+proc layout(root, w, h) {
+    view_w := w
+    view_h := h
+    lay(root, w, h, 0, false, false, 0, 0, new_fc())
+    if any_fixed {
+        fixed_walk(root, 0, 0)
+    }
+    return true
+}
+
+# --- lines ------------------------------------------------------------------------------------------
+#
+# The inline content of a block is first flattened into a list of
+# items, in reading order:
+#
+#   [1, box, from, to, width, nowrap, anywhere]   a word: box.cps[from:to]
+#   [2, box, width, 0, nowrap, kept, from, to]    a space (kept: one that
+#                                                 does not vanish at a line's ends)
+#   [3, box]   an inline element starts       [4, box]   it ends
+#   [5, box, nowrap]   something laid out on its own (inline-block, picture)
+#   [6, box]   a forced line end              [7, box]   a float
+#   [8, box]   a positioned box               [9]        a line may end here
+#
+# Runs of white space are folded to one space here, across element
+# boundaries too, unless the style keeps them (pre). A line may end
+# at a space, at [9], and before or after a [5].
+
+alloc I_TEXT := 1
+alloc I_SPACE := 2
+alloc I_OPEN := 3
+alloc I_CLOSE := 4
+alloc I_ATOM := 5
+alloc I_BR := 6
+alloc I_FLOAT := 7
+alloc I_ABS := 8
+alloc I_WBR := 9
+
+alloc g_space := true          # the last thing put out was a space that folds
+alloc next_tid := 1            # text boxes are numbered, to tell them apart cheaply
+
+# Does a line end freely on either side of this character? (Chinese,
+# Japanese and Korean writing has no spaces.)
+proc is_cjk(c) {
+    if c < 11904 {
+        return false
+    }
+    return (c >= 11904 and c <= 40959) or (c >= 44032 and c <= 55203) or (c >= 63744 and c <= 64255) or (c >= 65280 and c <= 65519 and (c < 65296 or c > 65370)) or (c >= 131072 and c <= 201551)
+}
+
+proc text_items(k, out) {
+    alloc st := k.st
+    alloc ws := css.get(st, "white-space")
+    alloc f := font_of(st)
+    alloc raw := k.raw
+    alloc fold := ws == "normal" or ws == "nowrap" or ws == "pre-line"
+    alloc nb := ws == "nowrap" or ws == "pre"
+    alloc ls := css.get(st, "letter-spacing")
+    alloc ow := css.get(st, "overflow-wrap")
+    alloc wb := css.get(st, "word-break")
+    alloc anywhere := nb == false and (ow != "normal" or wb == "break-all" or wb == "break-word")
+    alloc cps := []
+    alloc n := length(raw)
+    alloc i := 0
+    alloc col := 0
+    alloc sp := font.advance(f, 32) + ls
+    loop i < n {
+        alloc c := raw[i]
+        if c == 32 or c == 10 or c == 9 or c == 13 or c == 12 {
+            if fold {
+                alloc newline := false
+                loop i < n {
+                    c := raw[i]
+                    if c == 10 {
+                        newline := true
+                    } elif (c == 32 or c == 9 or c == 13 or c == 12) == false {
+                        break
+                    }
+                    i := i + 1
+                }
+                if newline and ws == "pre-line" {
+                    append(out, [I_BR, k])
+                    g_space := true
+                } elif g_space == false {
+                    append(cps, 32)
+                    append(out, [I_SPACE, k, sp, 0, nb, false, length(cps) - 1, length(cps)])
+                    g_space := true
+                }
+            } else {
+                i := i + 1
+                if c == 10 {
+                    append(out, [I_BR, k])
+                    col := 0
+                } elif c == 9 {
+                    alloc stops := 8 - col % 8
+                    alloc from := length(cps)
+                    alloc t := 0
+                    loop t < stops {
+                        append(cps, 32)
+                        t := t + 1
+                    }
+                    col := col + stops
+                    append(out, [I_SPACE, k, sp * stops, 0, nb, true, from, length(cps)])
+                } elif c == 32 {
+                    append(cps, 32)
+                    col := col + 1
+                    append(out, [I_SPACE, k, sp, 0, nb, true, length(cps) - 1, length(cps)])
+                }
+                g_space := false
+            }
+            continue
+        }
+        alloc start := length(cps)
+        alloc w := 0
+        loop i < n {
+            c := raw[i]
+            if c == 32 or c == 10 or c == 9 or c == 13 or c == 12 {
+                break
+            }
+            i := i + 1
+            col := col + 1
+            if c == 8203 or c == 173 {
+                # a place the word may be split, with nothing to draw
+                if length(cps) > start {
+                    append(out, [I_TEXT, k, start, length(cps), w, nb, anywhere])
+                    start := length(cps)
+                    w := 0
+                }
+                if nb == false {
+                    append(out, [I_WBR])
+                }
+                continue
+            }
+            if c == 160 {
+                c := 32
+            }
+            alloc cjk := c >= 11904 and is_cjk(c)
+            if cjk and length(cps) > start and nb == false {
+                append(out, [I_TEXT, k, start, length(cps), w, nb, anywhere])
+                append(out, [I_WBR])
+                start := length(cps)
+                w := 0
+            }
+            append(cps, c)
+            w := w + font.advance(f, c) + ls
+            if nb == false and i < n {
+                alloc nx := raw[i]
+                alloc split := cjk
+                if c == 45 and length(cps) - start > 1 and ((nx >= 97 and nx <= 122) or (nx >= 65 and nx <= 90) or nx > 191) {
+                    split := true
+                }
+                if split and (nx == 32 or nx == 10 or nx == 9 or nx == 13) == false {
+                    append(out, [I_TEXT, k, start, length(cps), w, nb, anywhere])
+                    append(out, [I_WBR])
+                    start := length(cps)
+                    w := 0
+                }
+            }
+        }
+        if length(cps) > start {
+            append(out, [I_TEXT, k, start, length(cps), w, nb, anywhere])
+        }
+        g_space := false
+    }
+    k.cps := cps
+    k.tid := next_tid
+    next_tid := next_tid + 1
+    return true
+}
+
+proc gen_items(box, out) {
+    alloc nb := css.get(box.st, "white-space")
+    nb := nb == "nowrap" or nb == "pre"
+    for k in box.kids {
+        alloc kind := k.kind
+        if kind == K_TEXT {
+            text_items(k, out)
+        } elif kind == K_BR {
+            if k.wbr {
+                append(out, [I_WBR])
+            } else {
+                append(out, [I_BR, k])
+                g_space := true
+            }
+        } elif k.pos == "absolute" or k.pos == "fixed" {
+            append(out, [I_ABS, k])
+        } elif k.fl != "none" {
+            append(out, [I_FLOAT, k])
+        } elif kind == K_INLINE {
+            append(out, [I_OPEN, k])
+            gen_items(k, out)
+            append(out, [I_CLOSE, k])
+        } else {
+            append(out, [I_ATOM, k, nb])
+            g_space := false
+        }
+    }
+    return true
+}
+
+proc items_of(box) {
+    if has_key(box, "items") {
+        return box.items
+    }
+    alloc out := []
+    g_space := true
+    gen_items(box, out)
+    box.items := out
+    return out
+}
+
+# [narrowest, widest] the inline content of a block can be: the
+# longest stretch no line can end in, and everything on one line.
+proc inline_widths(box) {
+    alloc items := items_of(box)
+    alloc mx := 0
+    alloc cur := 0
+    alloc mn := 0
+    alloc run := 0
+    alloc trail := 0
+    for it in items {
+        alloc t := it[0]
+        if t == I_TEXT {
+            cur := cur + it[4]
+            if it[6] {
+                # a word that may be cut anywhere holds nothing open
+                if run > mn {
+                    mn := run
+                }
+                run := 0
+            } else {
+                run := run + it[4]
+            }
+            trail := 0
+        } elif t == I_SPACE {
+            cur := cur + it[2]
+            if it[4] {
+                run := run + it[2]
+            } else {
+                if run > mn {
+                    mn := run
+                }
+                run := 0
+            }
+            if it[5] {
+                trail := 0
+            } else {
+                trail := it[2]
+            }
+        } elif t == I_WBR {
+            if run > mn {
+                mn := run
+            }
+            run := 0
+        } elif t == I_OPEN {
+            alloc st := it[1].st
+            alloc e := css.get(st, "border-left-width")
+            alloc v := css.get(st, "padding-left")
+            if v[0] == 0 {
+                e := e + v[1]
+            }
+            v := css.get(st, "margin-left")
+            if v[0] == 0 {
+                e := e + v[1]
+            }
+            cur := cur + e
+            run := run + e
+        } elif t == I_CLOSE {
+            alloc st2 := it[1].st
+            alloc e2 := css.get(st2, "border-right-width")
+            alloc v2 := css.get(st2, "padding-right")
+            if v2[0] == 0 {
+                e2 := e2 + v2[1]
+            }
+            v2 := css.get(st2, "margin-right")
+            if v2[0] == 0 {
+                e2 := e2 + v2[1]
+            }
+            cur := cur + e2
+            run := run + e2
+        } elif t == I_ATOM {
+            alloc b := it[1]
+            intrinsic(b)
+            alloc m := hmargins(b.st)
+            if it[2] == false {
+                if run > mn {
+                    mn := run
+                }
+                run := 0
+            }
+            cur := cur + b.imax + m
+            run := run + b.imin + m
+            if it[2] == false {
+                if run > mn {
+                    mn := run
+                }
+                run := 0
+            }
+            trail := 0
+        } elif t == I_BR {
+            if cur - trail > mx {
+                mx := cur - trail
+            }
+            cur := 0
+            trail := 0
+            if run > mn {
+                mn := run
+            }
+            run := 0
+        } elif t == I_FLOAT {
+            alloc fb := it[1]
+            intrinsic(fb)
+            alloc fm := hmargins(fb.st)
+            cur := cur + fb.imax + fm
+            if fb.imin + fm > mn {
+                mn := fb.imin + fm
+            }
+        }
+    }
+    if cur - trail > mx {
+        mx := cur - trail
+    }
+    if run > mn {
+        mn := run
+    }
+    alloc indent := css.get(box.st, "text-indent")
+    if indent[0] == 0 and indent[1] > 0 {
+        mx := mx + indent[1]
+        mn := mn + indent[1]
+    }
+    return [ceil(mn), ceil(mx)]
+}
+
+# How far below the top border edge of a box its first (or last) line
+# of text sits, or false when it has none.
+proc find_baseline(box, last) {
+    alloc kind := box.kind
+    if kind == K_REPL {
+        if has_key(box, "base") {
+            return box.base
+        }
+        return false
+    }
+    if kind == K_TEXT or kind == K_BR or kind == K_INLINE {
+        return false
+    }
+    if box.ifc {
+        if has_key(box, "lines") == false or length(box.lines) == 0 {
+            return false
+        }
+        if last {
+            return box.lines[length(box.lines) - 1][2]
+        }
+        return box.lines[0][2]
+    }
+    alloc kids := box.kids
+    alloc n := length(kids)
+    alloc i := 0
+    loop i < n {
+        alloc k := kids[i]
+        if last {
+            k := kids[n - 1 - i]
+        }
+        i := i + 1
+        if k.kind == K_TEXT or k.kind == K_BR or k.fl != "none" or k.pos == "absolute" or k.pos == "fixed" {
+            continue
+        }
+        alloc r := find_baseline(k, last)
+        if r != false {
+            return k.y + r
+        }
+    }
+    return false
+}
+
+# How far an inline element's baseline is moved down from the
+# baseline of what it sits in (up when negative).
+proc valign_shift(st, pm, m) {
+    alloc va := css.get(st, "vertical-align")
+    if va == "baseline" or va == "top" or va == "bottom" {
+        return 0
+    }
+    alloc pf := pm[0]
+    alloc f := m[0]
+    if va == "sub" {
+        return floor(pf.px * 0.2 + 0.5)
+    }
+    if va == "super" {
+        return 0 - floor(pf.px * 0.34 + 0.5)
+    }
+    if va == "middle" {
+        return floor((f.asc - f.desc) / 2 - pf.px * 0.25)
+    }
+    if va == "text-top" {
+        return f.asc - pf.asc
+    }
+    if va == "text-bottom" {
+        return pf.desc - f.desc
+    }
+    return 0 - va[1]
+}
+
+# Break the inline content of a block into lines. cw is the width
+# for them; (cx, cy) is where the block's content starts inside its
+# border; (ox, oy) the same place among the floats of fc. Leaves
+# box.lines, each [top, height, baseline, pieces], the pieces being
+#
+#   [1, x, baseline, width, font, cps, from, to, box, gap]   text (gap: extra
+#                                         room after each character)
+#   [2, x0, x1, top, bottom, box, starts, ends]   the part of an inline
+#                                         element on this line
+#   [3, box]                              something laid out on its own
+#
+# all counted from the block's border corner. Returns the height.
+proc lay_inline(box, cw, cx, cy, ox, oy, fc) {
+    alloc items := items_of(box)
+    alloc n := length(items)
+    alloc st := box.st
+    alloc m0 := metrics(st)
+    alloc lh0 := m0[1] + m0[2]
+    alloc ta := css.get(st, "text-align")
+    alloc indent := lenpx(css.get(st, "text-indent"), cw)
+    for it0 in items {
+        alloc t0 := it0[0]
+        if t0 == I_ATOM or t0 == I_FLOAT {
+            lay(it0[1], cw, false, 1, false, false, 0, 0, fc)
+        } elif t0 == I_OPEN {
+            edges(it0[1], cw)
+        }
+    }
+    alloc lines := []
+    alloc y := 0
+    alloc i := 0
+    alloc part := -1
+    alloc first_line := true
+    # the inline elements open where the line starts, outermost first
+    alloc open := []
+    alloc nopen := 0
+    alloc sh := []                 # per open element: its baseline shift
+    alloc ms := []                 # and its metrics
+    alloc ofr := []                # and its piece on this line
+    alloc guard := 0
+    loop i < n {
+        guard := guard + 1
+        if guard > n * 4 + 100 {
+            break
+        }
+        # floats that come before anything on this line go at its top
+        alloc lead := i
+        loop lead < n {
+            alloc lt := items[lead][0]
+            if lt == I_FLOAT {
+                alloc fbx := items[lead][1]
+                alloc fy := oy + y
+                alloc fclr := css.get(fbx.st, "clear")
+                if fclr != "none" {
+                    fy := max(fy, fc_clear(fc, fclr))
+                }
+                alloc fp := fc_place(fc, fbx.w + fbx.ml + fbx.mr, fbx.h + fbx.mt + fbx.mb, fbx.fl, ox, ox + cw, fy)
+                fbx.x := fp[0] - ox + cx + fbx.ml
+                fbx.y := fp[1] - oy + cy + fbx.mt
+            } elif lt == I_TEXT or lt == I_ATOM or lt == I_BR or (lt == I_SPACE and items[lead][5]) {
+                break
+            }
+            lead := lead + 1
+        }
+        # --- how much fits
+        alloc lx := 0
+        alloc avail := cw
+        alloc end := -1
+        alloc split_at := -1
+        alloc forced := false
+        alloc cut_x := -1
+        alloc cut_sp := 0
+        alloc retry := true
+        loop retry {
+            retry := false
+            alloc band := fc_band(fc, oy + y, lh0, ox, ox + cw)
+            lx := band[0] - ox
+            avail := band[1] - band[0]
+            alloc x := 0
+            if first_line {
+                x := indent
+            }
+            alloc started := false
+            alloc bk := -1
+            alloc bk_x := 0
+            alloc bk_sp := 0
+            alloc spaces := 0
+            alloc xe := x
+            alloc j := i
+            end := -1
+            split_at := -1
+            forced := false
+            cut_x := -1
+            loop j < n {
+                alloc it := items[j]
+                alloc t := it[0]
+                if t == I_TEXT {
+                    alloc w := it[4]
+                    alloc from := it[2]
+                    if j == i and part >= 0 {
+                        from := part
+                        w := font.measure(font_of(it[1].st), it[1].cps, from, it[3])
+                    }
+                    if x + w > avail + 0.01 {
+                        if bk >= 0 {
+                            end := bk
+                            cut_x := bk_x
+                            cut_sp := bk_sp
+                            break
+                        }
+                        if started == false and avail < cw {
+                            alloc ny := fc_next(fc, oy + y)
+                            if ny != false {
+                                y := ny - oy
+                                retry := true
+                                break
+                            }
+                        }
+                        if it[6] {
+                            alloc tf := font_of(it[1].st)
+                            alloc tcps := it[1].cps
+                            alloc k := from
+                            alloc acc := 0
+                            loop k < it[3] {
+                                alloc a := font.advance(tf, tcps[k])
+                                if x + acc + a > avail and (k > from or started) {
+                                    break
+                                }
+                                acc := acc + a
+                                k := k + 1
+                            }
+                            if k > from and k < it[3] {
+                                end := j + 1
+                                split_at := k
+                                break
+                            }
+                            if k == from and started {
+                                end := j
+                                break
+                            }
+                        }
+                    }
+                    x := x + w
+                    xe := x
+                    started := true
+                } elif t == I_SPACE {
+                    if it[5] or started {
+                        if it[4] == false and (started or j > i) {
+                            bk := j
+                            bk_x := xe
+                            bk_sp := spaces
+                        }
+                        x := x + it[2]
+                        if it[5] {
+                            started := true
+                            xe := x
+                        } else {
+                            spaces := spaces + 1
+                        }
+                    }
+                } elif t == I_WBR {
+                    if started {
+                        bk := j
+                        bk_x := xe
+                        bk_sp := spaces
+                    }
+                } elif t == I_OPEN {
+                    alloc ob := it[1]
+                    x := x + ob.ml + ob.bl + ob.pl
+                } elif t == I_CLOSE {
+                    alloc cb := it[1]
+                    x := x + cb.pr + cb.br + cb.mr
+                    if started {
+                        xe := x
+                    }
+                } elif t == I_ATOM {
+                    alloc ab := it[1]
+                    alloc aw := ab.ml + ab.w + ab.mr
+                    if x + aw > avail + 0.01 {
+                        if started and it[2] == false {
+                            end := j
+                            cut_x := xe
+                            cut_sp := spaces
+                            break
+                        }
+                        if bk >= 0 {
+                            end := bk
+                            cut_x := bk_x
+                            cut_sp := bk_sp
+                            break
+                        }
+                        if started == false and avail < cw {
+                            alloc ny2 := fc_next(fc, oy + y)
+                            if ny2 != false {
+                                y := ny2 - oy
+                                retry := true
+                                break
+                            }
+                        }
+                    }
+                    if started and it[2] == false {
+                        bk := j
+                        bk_x := xe
+                        bk_sp := spaces
+                    }
+                    x := x + aw
+                    xe := x
+                    started := true
+                    if it[2] == false and j + 1 < n {
+                        bk := j + 1
+                        bk_x := xe
+                        bk_sp := spaces
+                    }
+                } elif t == I_BR {
+                    end := j + 1
+                    forced := true
+                    break
+                }
+                j := j + 1
+            }
+        }
+        if end == -1 {
+            end := n
+        }
+        if end <= i {
+            end := i + 1
+            split_at := -1
+            cut_x := -1
+        }
+        # --- put the pieces down
+        alloc frags := []
+        alloc atoms := []
+        alloc late := []
+        alloc asc := m0[1]
+        alloc desc := m0[2]
+        alloc real := false
+        alloc px := lx
+        if first_line {
+            px := px + indent
+        }
+        alloc line_x0 := px
+        alloc jadd := 0
+        if ta == "justify" and cut_x > 0 and cut_sp > 0 and forced == false and end < n {
+            alloc spare := avail - cut_x
+            if spare > 0 {
+                jadd := spare / cut_sp
+            }
+        }
+        alloc o := 0
+        loop o < nopen {
+            alloc cf := [2, px, px, 0, 0, open[o], false, false, sh[o]]
+            append(frags, cf)
+            ofr[o] := cf
+            alloc om := ms[o]
+            asc := max(asc, om[1] - sh[o])
+            desc := max(desc, om[2] + sh[o])
+            o := o + 1
+        }
+        alloc begun := false
+        alloc pend := px                # where the last thing that shows ends
+        alloc last := false             # the text piece just made, to grow
+        alloc last_box := 0
+        alloc last_to := -1
+        alloc k2 := i
+        loop k2 < end {
+            alloc it2 := items[k2]
+            alloc t2 := it2[0]
+            if t2 == I_TEXT {
+                alloc tb := it2[1]
+                alloc from2 := it2[2]
+                alloc to2 := it2[3]
+                alloc w2 := it2[4]
+                alloc tm := metrics(tb.st)
+                alloc cut := false
+                if k2 == i and part >= 0 {
+                    from2 := part
+                    cut := true
+                }
+                if k2 == end - 1 and split_at >= 0 {
+                    to2 := split_at
+                    cut := true
+                }
+                if cut {
+                    w2 := font.measure(tm[0], tb.cps, from2, to2)
+                }
+                if last != false and last_to == from2 and last_box == tb.tid {
+                    last[3] := last[3] + w2
+                    last[7] := to2
+                } else {
+                    alloc s := 0
+                    if nopen > 0 {
+                        s := sh[nopen - 1]
+                    }
+                    last := [1, px, s, w2, tm[0], tb.cps, from2, to2, tb, css.get(tb.st, "letter-spacing")]
+                    append(frags, last)
+                    last_box := tb.tid
+                    asc := max(asc, tm[1] - s)
+                    desc := max(desc, tm[2] + s)
+                }
+                last_to := to2
+                px := px + w2
+                pend := px
+                begun := true
+                real := true
+            } elif t2 == I_SPACE {
+                if it2[5] or begun {
+                    alloc sb := it2[1]
+                    alloc sw := it2[2]
+                    if it2[5] == false {
+                        sw := sw + jadd
+                    }
+                    if last != false and last_to == it2[6] and last_box == sb.tid and jadd == 0 {
+                        last[3] := last[3] + sw
+                        last[7] := it2[7]
+                        last_to := it2[7]
+                    } else {
+                        alloc ss := 0
+                        if nopen > 0 {
+                            ss := sh[nopen - 1]
+                        }
+                        alloc sm := metrics(sb.st)
+                        last := [1, px, ss, sw, sm[0], sb.cps, it2[6], it2[7], sb, 0]
+                        append(frags, last)
+                        last_box := sb.tid
+                        last_to := it2[7]
+                        if jadd != 0 {
+                            last_to := -1
+                        }
+                    }
+                    px := px + sw
+                    if it2[5] {
+                        pend := px
+                        begun := true
+                        real := true
+                    }
+                }
+            } elif t2 == I_OPEN {
+                alloc ob2 := it2[1]
+                alloc pm := m0
+                alloc ps := 0
+                if nopen > 0 {
+                    pm := ms[nopen - 1]
+                    ps := sh[nopen - 1]
+                }
+                alloc om2 := metrics(ob2.st)
+                alloc os := ps + valign_shift(ob2.st, pm, om2)
+                px := px + ob2.ml
+                alloc of := [2, px, px, 0, 0, ob2, true, false, os]
+                append(frags, of)
+                if nopen < length(open) {
+                    open[nopen] := ob2
+                    sh[nopen] := os
+                    ms[nopen] := om2
+                    ofr[nopen] := of
+                } else {
+                    append(open, ob2)
+                    append(sh, os)
+                    append(ms, om2)
+                    append(ofr, of)
+                }
+                nopen := nopen + 1
+                px := px + ob2.bl + ob2.pl
+                asc := max(asc, om2[1] - os)
+                desc := max(desc, om2[2] + os)
+                if ob2.bl + ob2.pl + ob2.ml != 0 {
+                    real := true
+                    pend := px
+                }
+                last := false
+            } elif t2 == I_CLOSE {
+                if nopen > 0 {
+                    alloc cb2 := it2[1]
+                    px := px + cb2.pr + cb2.br
+                    alloc cfr := ofr[nopen - 1]
+                    if begun == false and cfr[6] == false {
+                        # only the tail of the element is here: nothing to draw
+                        cfr[1] := px
+                    }
+                    cfr[2] := px
+                    cfr[7] := true
+                    nopen := nopen - 1
+                    px := px + cb2.mr
+                    if cb2.pr + cb2.br + cb2.mr != 0 {
+                        real := true
+                        pend := px
+                    }
+                }
+                last := false
+            } elif t2 == I_ATOM {
+                alloc ab2 := it2[1]
+                alloc apm := m0
+                alloc aps := 0
+                if nopen > 0 {
+                    apm := ms[nopen - 1]
+                    aps := sh[nopen - 1]
+                }
+                alloc oh := ab2.mt + ab2.h + ab2.mb
+                alloc va := css.get(ab2.st, "vertical-align")
+                alloc mode := 0
+                alloc off := 0          # from the baseline down to the top margin edge
+                if va == "top" {
+                    mode := 1
+                } elif va == "bottom" {
+                    mode := 2
+                } elif va == "middle" {
+                    off := aps - floor(apm[0].px * 0.25) - floor(oh / 2)
+                } elif va == "text-top" {
+                    off := aps - apm[0].asc
+                } elif va == "text-bottom" {
+                    off := aps + apm[0].desc - oh
+                } else {
+                    alloc base := false
+                    if ab2.kind == K_REPL or css.get(ab2.st, "overflow-y") == "visible" {
+                        base := find_baseline(ab2, ab2.kind == K_BLOCK)
+                    }
+                    if base == false {
+                        base := oh
+                    } else {
+                        base := base + ab2.mt
+                    }
+                    alloc extra := 0
+                    if va == "sub" {
+                        extra := floor(apm[0].px * 0.2 + 0.5)
+                    } elif va == "super" {
+                        extra := 0 - floor(apm[0].px * 0.34 + 0.5)
+                    } elif va != "baseline" {
+                        extra := 0 - va[1]
+                    }
+                    off := aps + extra - base
+                }
+                if mode == 0 {
+                    asc := max(asc, 0 - off)
+                    desc := max(desc, off + oh)
+                }
+                px := px + ab2.ml
+                append(atoms, [ab2, px, mode, off])
+                append(frags, [3, ab2])
+                px := px + ab2.w + ab2.mr
+                pend := px
+                begun := true
+                real := true
+                last := false
+            } elif t2 == I_BR {
+                real := true
+                last := false
+            } elif t2 == I_FLOAT {
+                if k2 >= lead {
+                    append(late, it2[1])
+                }
+            } elif t2 == I_ABS {
+                alloc pb := it2[1]
+                pb.sx := cx + px
+                pb.sy := cy + y
+            }
+            k2 := k2 + 1
+        }
+        # a space the line ended on does not show
+        if last != false and pend < px {
+            last[3] := last[3] - (px - pend)
+            if last[3] < 0 {
+                last[3] := 0
+            }
+        }
+        alloc o2 := 0
+        loop o2 < nopen {
+            ofr[o2][2] := pend
+            o2 := o2 + 1
+        }
+        if real {
+            alloc lh := asc + desc
+            for at in atoms {
+                alloc ah := at[0].mt + at[0].h + at[0].mb
+                if at[2] != 0 and ah > lh {
+                    if at[2] == 1 {
+                        desc := desc + ah - lh
+                    } else {
+                        asc := asc + ah - lh
+                    }
+                    lh := ah
+                }
+            }
+            alloc baseline := y + asc
+            alloc shift := 0
+            alloc spare2 := avail - (pend - lx)
+            if spare2 > 0 {
+                if ta == "center" or ta == "-center" {
+                    shift := floor(spare2 / 2)
+                } elif ta == "right" {
+                    shift := spare2
+                }
+            }
+            alloc dx := cx + shift
+            for fr in frags {
+                alloc ft := fr[0]
+                if ft == 1 {
+                    fr[1] := fr[1] + dx
+                    fr[2] := cy + baseline + fr[2]
+                } elif ft == 2 {
+                    alloc fb := fr[5]
+                    alloc ff := font_of(fb.st)
+                    alloc mid := cy + baseline + fr[8]
+                    fr[1] := fr[1] + dx
+                    fr[2] := fr[2] + dx
+                    fr[3] := mid - ff.asc - fb.pt - fb.bt
+                    fr[4] := mid + ff.desc + fb.pb + fb.bb
+                }
+            }
+            for at2 in atoms {
+                alloc ab3 := at2[0]
+                ab3.x := at2[1] + dx
+                if at2[2] == 1 {
+                    ab3.y := cy + y + ab3.mt
+                } elif at2[2] == 2 {
+                    ab3.y := cy + y + lh - ab3.mb - ab3.h
+                } else {
+                    ab3.y := cy + baseline + at2[3] + ab3.mt
+                }
+            }
+            append(lines, [cy + y, lh, cy + baseline, frags])
+            y := y + lh
+            first_line := false
+        }
+        for lf in late {
+            alloc ly := oy + y
+            alloc lclr := css.get(lf.st, "clear")
+            if lclr != "none" {
+                ly := max(ly, fc_clear(fc, lclr))
+            }
+            alloc lp := fc_place(fc, lf.w + lf.ml + lf.mr, lf.h + lf.mt + lf.mb, lf.fl, ox, ox + cw, ly)
+            lf.x := lp[0] - ox + cx + lf.ml
+            lf.y := lp[1] - oy + cy + lf.mt
+        }
+        if split_at >= 0 {
+            i := end - 1
+            part := split_at
+        } else {
+            i := end
+            part := -1
+        }
+    }
+    box.lines := lines
+    return y
+}
+
+# --- tables -----------------------------------------------------------------------------------------
+
+# The rows and cells of a table as a grid: {rows, cells, ncols, caps},
+# each cell entry being [box, row, column, rows spanned, columns spanned].
+proc table_grid(table) {
+    if has_key(table, "tg") {
+        return table.tg
+    }
+    alloc heads := []
+    alloc bodies := []
+    alloc foots := []
+    alloc caps := []
+    for k in table.kids {
+        if k.kind == K_GROUP {
+            if k.d == "table-header-group" {
+                append(heads, k)
+            } elif k.d == "table-footer-group" {
+                append(foots, k)
+            } else {
+                append(bodies, k)
+            }
+        } else {
+            append(caps, k)
+        }
+    }
+    alloc groups := []
+    for g in heads {
+        append(groups, g)
+    }
+    for g2 in bodies {
+        append(groups, g2)
+    }
+    for g3 in foots {
+        append(groups, g3)
+    }
+    alloc rows := []
+    for g4 in groups {
+        g4.r0 := length(rows)
+        for r in g4.kids {
+            append(rows, r)
+        }
+        g4.r1 := length(rows)
+    }
+    alloc nrows := length(rows)
+    alloc occ := []
+    alloc ri := 0
+    loop ri < nrows {
+        append(occ, [])
+        ri := ri + 1
+    }
+    alloc cells := []
+    alloc ncols := 0
+    ri := 0
+    loop ri < nrows {
+        alloc c := 0
+        alloc mine := occ[ri]
+        for cell in rows[ri].kids {
+            loop c < length(mine) and mine[c] {
+                c := c + 1
+            }
+            alloc cs := 1
+            alloc rs := 1
+            if cell.node != false {
+                cs := floor(attr_num(cell.node, "colspan", 1))
+                if cs > 1000 {
+                    cs := 1000
+                }
+                if has_key(cell.node.attrs, "rowspan") {
+                    rs := u.to_int(cell.node.attrs["rowspan"], 1)
+                    if rs == 0 {
+                        rs := nrows - ri
+                    }
+                    if rs < 1 {
+                        rs := 1
+                    }
+                }
+            }
+            if ri + rs > nrows {
+                rs := nrows - ri
+            }
+            alloc rr := ri
+            loop rr < ri + rs {
+                alloc line := occ[rr]
+                loop length(line) < c + cs {
+                    append(line, false)
+                }
+                alloc cc := c
+                loop cc < c + cs {
+                    line[cc] := true
+                    cc := cc + 1
+                }
+                rr := rr + 1
+            }
+            append(cells, [cell, ri, c, rs, cs])
+            c := c + cs
+            if c > ncols {
+                ncols := c
+            }
+        }
+        ri := ri + 1
+    }
+    alloc tg := {rows: rows, cells: cells, ncols: ncols, caps: caps, groups: groups}
+    table.tg := tg
+    return tg
+}
+
+# border-collapse: collapse. Neighbouring cells share one border,
+# the wider of the two; here the cell on the left, or above, draws it.
+proc table_collapse(table, tg) {
+    alloc ncols := tg.ncols
+    alloc nrows := length(tg.rows)
+    alloc at := []
+    alloc i := 0
+    loop i < nrows {
+        append(at, list_repeat(-1, ncols))
+        i := i + 1
+    }
+    alloc cells := tg.cells
+    alloc own := []
+    alloc src := []
+    alloc n := length(cells)
+    i := 0
+    loop i < n {
+        alloc e := cells[i]
+        alloc st := e[0].st
+        alloc b := [css.get(st, "border-top-width"), css.get(st, "border-right-width"), css.get(st, "border-bottom-width"), css.get(st, "border-left-width")]
+        alloc s := [st, st, st, st]
+        alloc rst := tg.rows[e[1]].st
+        if css.get(rst, "border-top-width") > b[0] {
+            b[0] := css.get(rst, "border-top-width")
+            s[0] := rst
+        }
+        alloc lrst := tg.rows[e[1] + e[3] - 1].st
+        if css.get(lrst, "border-bottom-width") > b[2] {
+            b[2] := css.get(lrst, "border-bottom-width")
+            s[2] := lrst
+        }
+        append(own, b)
+        append(src, s)
+        alloc r := e[1]
+        loop r < e[1] + e[3] {
+            alloc c := e[2]
+            loop c < e[2] + e[4] and c < ncols {
+                at[r][c] := i
+                c := c + 1
+            }
+            r := r + 1
+        }
+        i := i + 1
+    }
+    alloc tst := table.st
+    alloc tb := [css.get(tst, "border-top-width"), css.get(tst, "border-right-width"), css.get(tst, "border-bottom-width"), css.get(tst, "border-left-width")]
+    i := 0
+    loop i < n {
+        alloc e2 := cells[i]
+        alloc o := own[i]
+        alloc fb := [0, o[1], o[2], 0]
+        alloc fs := [src[i][0], src[i][1], src[i][2], src[i][3]]
+        alloc right := e2[2] + e2[4]
+        if right < ncols {
+            alloc nb := at[e2[1]][right]
+            if nb >= 0 and own[nb][3] > fb[1] {
+                fb[1] := own[nb][3]
+                fs[1] := src[nb][3]
+            }
+        } elif tb[1] > fb[1] {
+            fb[1] := tb[1]
+            fs[1] := tst
+        }
+        alloc below := e2[1] + e2[3]
+        if below < nrows {
+            alloc nb2 := at[below][e2[2]]
+            if nb2 >= 0 and own[nb2][0] > fb[2] {
+                fb[2] := own[nb2][0]
+                fs[2] := src[nb2][0]
+            }
+        } elif tb[2] > fb[2] {
+            fb[2] := tb[2]
+            fs[2] := tst
+        }
+        if e2[2] == 0 {
+            fb[3] := o[3]
+            if tb[3] > fb[3] {
+                fb[3] := tb[3]
+                fs[3] := tst
+            }
+        }
+        if e2[1] == 0 {
+            fb[0] := o[0]
+            if tb[0] > fb[0] {
+                fb[0] := tb[0]
+                fs[0] := tst
+            }
+        }
+        e2[0].fb := fb
+        e2[0].fbs := fs
+        i := i + 1
+    }
+    table.fb := [0, 0, 0, 0]
+    return true
+}
+
+# The narrowest and widest each column can be, and with them the
+# table.
+proc table_widths(table) {
+    if has_key(table, "imax") {
+        return true
+    }
+    alloc tg := table_grid(table)
+    alloc st := table.st
+    alloc collapsed := css.get(st, "border-collapse") == "collapse"
+    alloc sp := css.get(st, "border-spacing")
+    if collapsed {
+        table_collapse(table, tg)
+        sp := 0
+    }
+    table.sp := sp
+    alloc n := tg.ncols
+    alloc cmin := list_repeat(0, n)
+    alloc cmax := list_repeat(0, n)
+    alloc cpct := list_repeat(0, n)
+    alloc cfix := list_repeat(false, n)
+    for e in tg.cells {
+        alloc cell := e[0]
+        intrinsic(cell)
+        if e[4] == 1 {
+            alloc c := e[2]
+            alloc lo := cell.imin
+            alloc hi := cell.imax
+            alloc wv := css.get(cell.st, "width")
+            if wv[0] == 0 {
+                alloc w := wv[1]
+                if css.get(cell.st, "box-sizing") != "border-box" {
+                    w := w + cell.ipb
+                }
+                hi := max(lo, w)
+                cfix[c] := true
+            } elif wv[0] == 1 and wv[1] > cpct[c] {
+                cpct[c] := wv[1]
+            }
+            if lo > cmin[c] {
+                cmin[c] := lo
+            }
+            if hi > cmax[c] {
+                cmax[c] := hi
+            }
+        }
+    }
+    # cells over several columns widen them when they must
+    for e2 in tg.cells {
+        alloc span := e2[4]
+        if span > 1 {
+            alloc c0 := e2[2]
+            alloc c1 := min(n, c0 + span)
+            alloc have_min := sp * (c1 - c0 - 1)
+            alloc have_max := have_min
+            alloc ci := c0
+            loop ci < c1 {
+                have_min := have_min + cmin[ci]
+                have_max := have_max + cmax[ci]
+                ci := ci + 1
+            }
+            alloc cell2 := e2[0]
+            alloc want_max := cell2.imax
+            alloc wv2 := css.get(cell2.st, "width")
+            if wv2[0] == 0 and wv2[1] > want_max {
+                want_max := wv2[1]
+            }
+            if cell2.imin > have_min {
+                alloc add := (cell2.imin - have_min) / (c1 - c0)
+                ci := c0
+                loop ci < c1 {
+                    cmin[ci] := cmin[ci] + add
+                    ci := ci + 1
+                }
+            }
+            if want_max > have_max {
+                alloc add2 := (want_max - have_max) / (c1 - c0)
+                ci := c0
+                loop ci < c1 {
+                    cmax[ci] := cmax[ci] + add2
+                    ci := ci + 1
+                }
+            }
+        }
+    }
+    alloc smin := 0
+    alloc smax := 0
+    alloc i := 0
+    loop i < n {
+        if cmax[i] < cmin[i] {
+            cmax[i] := cmin[i]
+        }
+        smin := smin + cmin[i]
+        smax := smax + cmax[i]
+        i := i + 1
+    }
+    table.cmin := cmin
+    table.cmax := cmax
+    table.cpct := cpct
+    table.cfix := cfix
+    alloc pbw := hpadding(st)
+    if collapsed {
+        pbw := pbw - css.get(st, "border-left-width") - css.get(st, "border-right-width")
+    }
+    alloc gaps := 0
+    if n > 0 {
+        gaps := sp * (n + 1)
+    }
+    alloc imin := smin + gaps + pbw
+    alloc imax := smax + gaps + pbw
+    alloc tw := css.get(st, "width")
+    if tw[0] == 0 {
+        alloc tv := tw[1]
+        if css.get(st, "box-sizing") != "border-box" {
+            tv := tv + pbw
+        }
+        imin := max(imin, tv)
+        imax := imin
+    }
+    for cap in tg.caps {
+        intrinsic(cap)
+        imin := max(imin, cap.imin)
+    }
+    if imax < imin {
+        imax := imin
+    }
+    table.imin := ceil(imin)
+    table.imax := ceil(imax)
+    return true
+}
+
+# Share `room` between the columns.
+proc table_share(table, room) {
+    alloc cmin := table.cmin
+    alloc cmax := table.cmax
+    alloc cpct := table.cpct
+    alloc cfix := table.cfix
+    alloc n := length(cmin)
+    alloc w := []
+    alloc smin := 0
+    alloc i := 0
+    loop i < n {
+        append(w, cmin[i])
+        smin := smin + cmin[i]
+        i := i + 1
+    }
+    alloc left := room - smin
+    if left <= 0 {
+        return w
+    }
+    # columns given as a share of the table come first
+    i := 0
+    loop i < n {
+        if cpct[i] > 0 {
+            alloc want := room * cpct[i] / 100.0 - w[i]
+            if want > left {
+                want := left
+            }
+            if want > 0 {
+                w[i] := w[i] + want
+                left := left - want
+            }
+        }
+        i := i + 1
+    }
+    # then every other column grows towards the width it likes
+    alloc grow := 0
+    i := 0
+    loop i < n {
+        if cpct[i] == 0 {
+            grow := grow + cmax[i] - cmin[i]
+        }
+        i := i + 1
+    }
+    if grow > 0 and left > 0 {
+        alloc f := 1.0
+        if left < grow {
+            f := left * 1.0 / grow
+        }
+        i := 0
+        loop i < n {
+            if cpct[i] == 0 {
+                alloc add := (cmax[i] - cmin[i]) * f
+                w[i] := w[i] + add
+                left := left - add
+            }
+            i := i + 1
+        }
+    }
+    if left <= 0.01 {
+        return w
+    }
+    # and what is still over goes to the columns nobody gave a width
+    alloc pass := 0
+    loop pass < 3 {
+        alloc weight := 0
+        alloc count := 0
+        i := 0
+        loop i < n {
+            if (pass == 0 and cpct[i] == 0 and cfix[i] == false) or (pass == 1 and cpct[i] == 0) or pass == 2 {
+                weight := weight + cmax[i]
+                count := count + 1
+            }
+            i := i + 1
+        }
+        if count > 0 {
+            i := 0
+            loop i < n {
+                if (pass == 0 and cpct[i] == 0 and cfix[i] == false) or (pass == 1 and cpct[i] == 0) or pass == 2 {
+                    if weight > 0 {
+                        w[i] := w[i] + left * cmax[i] / weight
+                    } else {
+                        w[i] := w[i] + left * 1.0 / count
+                    }
+                }
+                i := i + 1
+            }
+            break
+        }
+        pass := pass + 1
+    }
+    return w
+}
+
+# Move what is inside a box down by dy (for a cell whose content
+# sits in its middle or at its bottom).
+proc shift_floats(box, dy) {
+    for k in box.kids {
+        if k.kind == K_INLINE {
+            shift_floats(k, dy)
+        } elif k.kind != K_TEXT and k.kind != K_BR and (k.fl != "none" or k.pos == "absolute" or k.pos == "fixed") {
+            k.y := k.y + dy
+            if has_key(k, "sy") {
+                k.sy := k.sy + dy
+            }
+        }
+    }
+    return true
+}
+
+proc shift_content(box, dy) {
+    if box.ifc {
+        if has_key(box, "lines") {
+            for line in box.lines {
+                line[0] := line[0] + dy
+                line[2] := line[2] + dy
+                for fr in line[3] {
+                    alloc t := fr[0]
+                    if t == 1 {
+                        fr[2] := fr[2] + dy
+                    } elif t == 2 {
+                        fr[3] := fr[3] + dy
+                        fr[4] := fr[4] + dy
+                    } else {
+                        fr[1].y := fr[1].y + dy
+                    }
+                }
+            }
+        }
+        shift_floats(box, dy)
+    } else {
+        for k in box.kids {
+            if k.kind != K_TEXT and k.kind != K_BR {
+                k.y := k.y + dy
+            }
+        }
+    }
+    return true
+}
+
+proc lay_table(box, cbw, cbh, mode, fw, fh) {
+    alloc st := box.st
+    table_widths(box)
+    edges(box, cbw)
+    alloc tg := box.tg
+    alloc n := tg.ncols
+    alloc sp := box.sp
+    alloc hpb := box.bl + box.br + box.pl + box.pr
+    alloc vpb := box.bt + box.bb + box.pt + box.pb
+    alloc avail := cbw - box.ml - box.mr
+    alloc w := 0
+    alloc sw := spec(st, "width", cbw, hpb)
+    if mode == 2 {
+        w := fw
+    } elif sw != false {
+        w := sw
+    } else {
+        w := min(box.imax, avail)
+    }
+    alloc mxw := spec(st, "max-width", cbw, hpb)
+    if mxw != false and w > mxw {
+        w := mxw
+    }
+    alloc mnw := spec(st, "min-width", cbw, hpb)
+    if mnw != false and w < mnw {
+        w := mnw
+    }
+    if w < box.imin {
+        w := box.imin
+    }
+    box.w := w
+    if mode == 0 {
+        alloc free := cbw - w - box.ml - box.mr
+        if free > 0 {
+            alloc am := box.am
+            if (am & 3) == 3 {
+                box.ml := box.ml + floor(free / 2)
+            } elif (am & 1) != 0 {
+                box.ml := box.ml + free
+            } elif (am & 2) == 0 and css.get(st, "text-align") == "-center" {
+                box.ml := box.ml + floor(free / 2)
+            }
+        }
+    }
+    alloc gaps := 0
+    if n > 0 {
+        gaps := sp * (n + 1)
+    }
+    alloc cw := table_share(box, w - hpb - gaps)
+    # where each column starts, inside the table's padding
+    alloc colx := []
+    alloc x := sp
+    alloc i := 0
+    loop i < n {
+        # whole pixels, so that borders of neighbours meet
+        alloc wi := floor(cw[i] + 0.5)
+        cw[i] := wi
+        append(colx, x)
+        x := x + wi + sp
+        i := i + 1
+    }
+    alloc y := box.bt + box.pt
+    alloc inner_w := w - hpb
+    for cap in tg.caps {
+        if css.get(cap.st, "caption-side") != "bottom" {
+            lay(cap, inner_w, false, 0, false, false, 0, 0, false)
+            cap.x := box.bl + box.pl + cap.ml
+            cap.y := y + cap.mt
+            y := y + cap.mt + cap.h + cap.mb
+        }
+    }
+    alloc rows := tg.rows
+    alloc nrows := length(rows)
+    alloc rowh := list_repeat(0, nrows)
+    alloc ri := 0
+    loop ri < nrows {
+        alloc rh := spec(rows[ri].st, "height", false, 0)
+        if rh != false {
+            rowh[ri] := rh
+        }
+        ri := ri + 1
+    }
+    for e in tg.cells {
+        alloc cell := e[0]
+        alloc c0 := e[2]
+        alloc c1 := min(n, c0 + e[4])
+        alloc width := sp * (c1 - c0 - 1)
+        alloc ci := c0
+        loop ci < c1 {
+            width := width + cw[ci]
+            ci := ci + 1
+        }
+        lay(cell, width, false, 2, width, false, 0, 0, false)
+        cell.ml := 0
+        cell.mr := 0
+        cell.mt := 0
+        cell.mb := 0
+        alloc chh := cell.h
+        alloc sh := spec(cell.st, "height", false, cell.bt + cell.bb + cell.pt + cell.pb)
+        if sh != false and sh > chh {
+            chh := sh
+        }
+        cell.nat := cell.h
+        e[0].want := chh
+        if e[3] == 1 and chh > rowh[e[1]] {
+            rowh[e[1]] := chh
+        }
+    }
+    for e2 in tg.cells {
+        if e2[3] > 1 {
+            alloc total := sp * (e2[3] - 1)
+            alloc r := e2[1]
+            loop r < e2[1] + e2[3] {
+                total := total + rowh[r]
+                r := r + 1
+            }
+            if e2[0].want > total {
+                alloc last := e2[1] + e2[3] - 1
+                rowh[last] := rowh[last] + e2[0].want - total
+            }
+        }
+    }
+    # a table told its height shares what is over between its rows
+    alloc th := fh
+    if th == false {
+        th := spec(st, "height", cbh, vpb)
+    }
+    if th != false and nrows > 0 {
+        alloc used := vpb + sp * (nrows + 1)
+        ri := 0
+        loop ri < nrows {
+            used := used + rowh[ri]
+            ri := ri + 1
+        }
+        if th > used {
+            alloc each := (th - used) / nrows
+            ri := 0
+            loop ri < nrows {
+                rowh[ri] := rowh[ri] + each
+                ri := ri + 1
+            }
+        }
+    }
+    alloc rowy := []
+    if nrows > 0 {
+        y := y + sp
+    }
+    ri := 0
+    loop ri < nrows {
+        append(rowy, y)
+        y := y + rowh[ri] + sp
+        ri := ri + 1
+    }
+    alloc left := box.bl + box.pl
+    for g in tg.groups {
+        g.x := left
+        g.w := inner_w
+        if g.r1 > g.r0 {
+            g.y := rowy[g.r0]
+            g.h := rowy[g.r1 - 1] + rowh[g.r1 - 1] - g.y
+        } else {
+            g.y := y
+            g.h := 0
+        }
+        ri := g.r0
+        loop ri < g.r1 {
+            alloc row := rows[ri]
+            row.x := 0
+            row.y := rowy[ri] - g.y
+            row.w := inner_w
+            row.h := rowh[ri]
+            ri := ri + 1
+        }
+    }
+    for e3 in tg.cells {
+        alloc cell3 := e3[0]
+        alloc r3 := e3[1]
+        alloc hh := sp * (e3[3] - 1)
+        alloc rr := r3
+        loop rr < r3 + e3[3] {
+            hh := hh + rowh[rr]
+            rr := rr + 1
+        }
+        cell3.x := colx[e3[2]]
+        cell3.y := 0
+        alloc spare := hh - cell3.nat
+        cell3.h := hh
+        if spare > 0 {
+            alloc va := css.get(cell3.st, "vertical-align")
+            alloc dy := 0
+            if va == "middle" {
+                dy := floor(spare / 2)
+            } elif va == "bottom" {
+                dy := spare
+            }
+            alloc was := 0
+            if has_key(cell3, "dy") {
+                was := cell3.dy
+            }
+            if dy != was {
+                shift_content(cell3, dy - was)
+            }
+            cell3.dy := dy
+        } elif has_key(cell3, "dy") and cell3.dy != 0 {
+            shift_content(cell3, 0 - cell3.dy)
+            cell3.dy := 0
+        }
+        if cell3.pos != "static" {
+            resolve_abs(cell3)
+        }
+    }
+    for cap2 in tg.caps {
+        if css.get(cap2.st, "caption-side") == "bottom" {
+            lay(cap2, inner_w, false, 0, false, false, 0, 0, false)
+            cap2.x := box.bl + box.pl + cap2.ml
+            cap2.y := y + cap2.mt
+            y := y + cap2.mt + cap2.h + cap2.mb
+        }
+    }
+    box.h := y + box.pb + box.bb
+    return true
+}
+
+# --- flexbox ---------------------------------------------------------------------------------------
+
+proc flex_items(box, cx, cy) {
+    alloc items := []
+    alloc ordered := false
+    for k in box.kids {
+        if k.pos == "absolute" or k.pos == "fixed" {
+            k.sx := cx
+            k.sy := cy
+            continue
+        }
+        append(items, k)
+        if css.get(k.st, "order") != 0 {
+            ordered := true
+        }
+    }
+    if ordered {
+        alloc i := 1
+        loop i < length(items) {
+            alloc it := items[i]
+            alloc key := css.get(it.st, "order")
+            alloc j := i - 1
+            loop j >= 0 and css.get(items[j].st, "order") > key {
+                items[j + 1] := items[j]
+                j := j - 1
+            }
+            items[j + 1] := it
+            i := i + 1
+        }
+    }
+    return items
+}
+
+# Give a flex item its final height without laying its inside out
+# again, when that is safe: a plain block does not care how tall it
+# is told to be.
+proc stretch_to(it, cw, inner, w, h) {
+    if it.h == h {
+        return true
+    }
+    if it.kind == K_BLOCK or it.kind == K_REPL {
+        it.h := h
+        if it.pos != "static" {
+            resolve_abs(it)
+        }
+        return true
+    }
+    lay(it, cw, inner, 2, w, h, 0, 0, false)
+    return true
+}
+
+proc lay_flex(box, inner, least) {
+    alloc st := box.st
+    alloc cx := box.bl + box.pl
+    alloc cy := box.bt + box.pt
+    alloc cw := box.w - cx - box.br - box.pr
+    if cw < 0 {
+        cw := 0
+    }
+    alloc dir := css.get(st, "flex-direction")
+    alloc items := flex_items(box, cx, cy)
+    if length(items) == 0 {
+        return 0
+    }
+    alloc ai := css.get(st, "align-items")
+    if ai == "normal" {
+        ai := "stretch"
+    }
+    alloc jc := css.get(st, "justify-content")
+    alloc rev := dir == "row-reverse" or dir == "column-reverse"
+    if dir == "column" or dir == "column-reverse" {
+        return flex_column(box, items, inner, least, cx, cy, cw, ai, jc, rev)
+    }
+    alloc wrap := css.get(st, "flex-wrap") != "nowrap"
+    alloc gap := lenpx(css.get(st, "column-gap"), cw)
+    alloc rgap := lenpx(css.get(st, "row-gap"), cw)
+    # per item: [box, base, size, min, max, grow, shrink, frozen]
+    alloc info := []
+    for it in items {
+        edges(it, cw)
+        alloc ist := it.st
+        alloc ipb := it.bl + it.br + it.pl + it.pr
+        alloc base := false
+        if css.get(ist, "flex-basis")[0] != 3 {
+            base := spec(ist, "flex-basis", cw, ipb)
+        }
+        alloc given := spec(ist, "width", cw, ipb)
+        if base == false {
+            base := given
+        }
+        if base == false {
+            intrinsic(it)
+            base := it.imax
+        }
+        alloc lo := ipb
+        alloc mnv := css.get(ist, "min-width")
+        if mnv[0] == 3 {
+            if css.get(ist, "overflow-x") == "visible" {
+                intrinsic(it)
+                lo := it.imin
+                if given != false and given < lo {
+                    lo := given
+                }
+            }
+        } else {
+            alloc mnr := spec(ist, "min-width", cw, ipb)
+            if mnr != false {
+                lo := mnr
+            }
+        }
+        alloc hi := spec(ist, "max-width", cw, ipb)
+        alloc size := base
+        if hi != false and size > hi {
+            size := hi
+        }
+        if size < lo {
+            size := lo
+        }
+        append(info, [it, base, size, lo, hi, css.get(ist, "flex-grow"), css.get(ist, "flex-shrink"), false])
+    }
+    # break into lines
+    alloc lines := []
+    alloc cur := []
+    alloc used := 0
+    for e in info {
+        alloc outer := e[2] + e[0].ml + e[0].mr
+        if wrap and length(cur) > 0 and used + gap + outer > cw + 0.01 {
+            append(lines, cur)
+            cur := []
+            used := 0
+        }
+        if length(cur) > 0 {
+            used := used + gap
+        }
+        used := used + outer
+        append(cur, e)
+    }
+    append(lines, cur)
+    alloc nlines := length(lines)
+    alloc crosses := []
+    for line in lines {
+        alloc nl := length(line)
+        alloc gaps := gap * (nl - 1)
+        alloc total := gaps
+        for e2 in line {
+            total := total + e2[2] + e2[0].ml + e2[0].mr
+        }
+        alloc growing := total < cw
+        for e3 in line {
+            alloc factor := e3[6]
+            if growing {
+                factor := e3[5]
+            }
+            e3[7] := factor == 0 or (growing and e3[1] > e3[2]) or (growing == false and e3[1] < e3[2])
+            if e3[7] == false {
+                e3[2] := e3[1]
+            }
+        }
+        alloc rounds := 0
+        loop rounds < nl + 1 {
+            rounds := rounds + 1
+            alloc room := cw - gaps
+            alloc sumf := 0
+            alloc open := 0
+            for e4 in line {
+                room := room - e4[0].ml - e4[0].mr
+                if e4[7] {
+                    room := room - e4[2]
+                } else {
+                    room := room - e4[1]
+                    open := open + 1
+                    if growing {
+                        sumf := sumf + e4[5]
+                    } else {
+                        sumf := sumf + e4[6] * e4[1]
+                    }
+                }
+            }
+            if open == 0 or sumf == 0 {
+                break
+            }
+            if growing and sumf < 1 {
+                room := room * sumf
+            }
+            alloc over := 0
+            for e5 in line {
+                if e5[7] == false {
+                    alloc target := e5[1]
+                    if growing {
+                        target := e5[1] + room * e5[5] / sumf
+                    } else {
+                        target := e5[1] + room * e5[6] * e5[1] / sumf
+                    }
+                    alloc clamped := target
+                    if e5[4] != false and clamped > e5[4] {
+                        clamped := e5[4]
+                    }
+                    if clamped < e5[3] {
+                        clamped := e5[3]
+                    }
+                    e5[2] := clamped
+                    over := over + clamped - target
+                }
+            }
+            alloc settled := true
+            for e6 in line {
+                if e6[7] == false {
+                    if over == 0 {
+                        e6[7] := true
+                    } else {
+                        alloc target2 := e6[1]
+                        if growing {
+                            target2 := e6[1] + room * e6[5] / sumf
+                        } else {
+                            target2 := e6[1] + room * e6[6] * e6[1] / sumf
+                        }
+                        if (over > 0 and e6[2] > target2) or (over < 0 and e6[2] < target2) {
+                            e6[7] := true
+                        } else {
+                            settled := false
+                        }
+                    }
+                }
+            }
+            if over == 0 or settled {
+                break
+            }
+        }
+        alloc cross := 0
+        for e7 in line {
+            alloc b7 := e7[0]
+            lay(b7, cw, inner, 2, e7[2], false, 0, 0, false)
+            alloc oh := b7.h + b7.mt + b7.mb
+            if oh > cross {
+                cross := oh
+            }
+        }
+        append(crosses, cross)
+    }
+    if nlines == 1 {
+        if inner != false {
+            crosses[0] := inner
+        } elif least != false and least > crosses[0] {
+            crosses[0] := least
+        }
+    } elif inner != false {
+        alloc sum := rgap * (nlines - 1)
+        for c in crosses {
+            sum := sum + c
+        }
+        if inner > sum and css.get(st, "align-content") != "flex-start" {
+            alloc each := (inner - sum) / nlines
+            alloc li := 0
+            loop li < nlines {
+                crosses[li] := crosses[li] + each
+                li := li + 1
+            }
+        }
+    }
+    alloc y := 0
+    alloc li2 := 0
+    loop li2 < nlines {
+        alloc line2 := lines[li2]
+        alloc cross2 := crosses[li2]
+        alloc nl2 := length(line2)
+        alloc free := cw - gap * (nl2 - 1)
+        alloc autos := 0
+        for e8 in line2 {
+            free := free - e8[2] - e8[0].ml - e8[0].mr
+            if (e8[0].am & 1) != 0 {
+                autos := autos + 1
+            }
+            if (e8[0].am & 2) != 0 {
+                autos := autos + 1
+            }
+        }
+        alloc x := 0
+        alloc between := gap
+        alloc each_auto := 0
+        if autos > 0 and free > 0 {
+            each_auto := free / autos
+        } elif jc == "center" {
+            x := free / 2
+        } elif jc == "flex-end" {
+            x := free
+        } elif free > 0 {
+            if jc == "space-between" and nl2 > 1 {
+                between := gap + free / (nl2 - 1)
+            } elif jc == "space-around" {
+                between := gap + free / nl2
+                x := free / nl2 / 2
+            } elif jc == "space-evenly" {
+                between := gap + free / (nl2 + 1)
+                x := free / (nl2 + 1)
+            }
+        }
+        for e9 in line2 {
+            alloc b := e9[0]
+            if (b.am & 1) != 0 {
+                x := x + each_auto
+            }
+            alloc align := css.get(b.st, "align-self")
+            if align == "auto" {
+                align := ai
+            }
+            if align == "normal" {
+                align := "stretch"
+            }
+            alloc off := 0
+            alloc space := cross2 - b.h - b.mt - b.mb
+            if (b.am & 12) != 0 {
+                if space > 0 {
+                    if (b.am & 12) == 12 {
+                        off := space / 2
+                    } elif (b.am & 4) != 0 {
+                        off := space
+                    }
+                }
+            } elif align == "stretch" {
+                if space != 0 and b.kind != K_REPL and spec(b.st, "height", inner, 0) == false {
+                    alloc sh := max(cross2 - b.mt - b.mb, b.bt + b.bb + b.pt + b.pb)
+                    alloc mxh := spec(b.st, "max-height", inner, b.bt + b.bb + b.pt + b.pb)
+                    if mxh != false and sh > mxh {
+                        sh := mxh
+                    }
+                    if space > 0 or nlines == 1 and inner != false {
+                        stretch_to(b, cw, inner, e9[2], sh)
+                    }
+                }
+            } elif align == "center" {
+                off := space / 2
+            } elif align == "flex-end" {
+                off := space
+            }
+            alloc bx := x + b.ml
+            if rev {
+                bx := cw - x - b.mr - b.w
+            }
+            b.x := cx + floor(bx + 0.5)
+            b.y := cy + y + floor(off) + b.mt
+            x := x + b.ml + e9[2] + b.mr + between
+            if (b.am & 2) != 0 {
+                x := x + each_auto
+            }
+        }
+        y := y + cross2 + rgap
+        li2 := li2 + 1
+    }
+    return y - rgap
+}
+
+proc flex_column(box, items, inner, least, cx, cy, cw, ai, jc, rev) {
+    alloc st := box.st
+    alloc gap := lenpx(css.get(st, "row-gap"), cw)
+    alloc total := 0
+    alloc grow := 0
+    alloc n := length(items)
+    for it in items {
+        edges(it, cw)
+        alloc ist := it.st
+        alloc align := css.get(ist, "align-self")
+        if align == "auto" {
+            align := ai
+        }
+        if align == "normal" {
+            align := "stretch"
+        }
+        it.fa := align
+        alloc ipb := it.bl + it.br + it.pl + it.pr
+        alloc vpb := it.bt + it.bb + it.pt + it.pb
+        alloc fh := false
+        if css.get(ist, "flex-basis")[0] != 3 and inner != false {
+            fh := spec(ist, "flex-basis", inner, vpb)
+            if fh != false and css.get(ist, "flex-basis")[0] == 0 and css.get(ist, "flex-basis")[1] == 0 {
+                # "flex: 1" asks for nothing and takes a share: start from the content
+                fh := false
+            }
+        }
+        if align == "stretch" and (it.am & 3) == 0 and spec(ist, "width", cw, ipb) == false and it.kind != K_REPL {
+            alloc w := cw - it.ml - it.mr
+            alloc mxw := spec(ist, "max-width", cw, ipb)
+            if mxw != false and w > mxw {
+                w := mxw
+            }
+            alloc mnw := spec(ist, "min-width", cw, ipb)
+            if mnw != false and w < mnw {
+                w := mnw
+            }
+            if w < ipb {
+                w := ipb
+            }
+            it.fw := w
+            lay(it, cw, false, 2, w, fh, 0, 0, false)
+        } else {
+            it.fw := false
+            lay(it, cw, false, 1, false, fh, 0, 0, false)
+        }
+        total := total + it.h + it.mt + it.mb
+        grow := grow + css.get(ist, "flex-grow")
+    }
+    total := total + gap * (n - 1)
+    alloc target := total
+    if inner != false {
+        target := inner
+    } elif least != false and least > total {
+        target := least
+    }
+    alloc free := target - total
+    if free > 0 and grow > 0 {
+        alloc scale := free / grow
+        if grow < 1 {
+            scale := free
+        }
+        for it2 in items {
+            alloc g := css.get(it2.st, "flex-grow")
+            if g > 0 {
+                alloc nh := it2.h + scale * g
+                alloc mxh := spec(it2.st, "max-height", target, it2.bt + it2.bb + it2.pt + it2.pb)
+                if mxh != false and nh > mxh {
+                    nh := mxh
+                }
+                free := free - (nh - it2.h)
+                if it2.fw == false {
+                    stretch_to(it2, cw, target, it2.w, nh)
+                } else {
+                    stretch_to(it2, cw, target, it2.fw, nh)
+                }
+            }
+        }
+    }
+    alloc autos := 0
+    for it3 in items {
+        if (it3.am & 4) != 0 {
+            autos := autos + 1
+        }
+        if (it3.am & 8) != 0 {
+            autos := autos + 1
+        }
+    }
+    alloc y := 0
+    alloc between := gap
+    alloc each_auto := 0
+    if free > 0 {
+        if autos > 0 {
+            each_auto := free / autos
+        } elif jc == "center" {
+            y := free / 2
+        } elif jc == "flex-end" {
+            y := free
+        } elif jc == "space-between" and n > 1 {
+            between := gap + free / (n - 1)
+        } elif jc == "space-around" {
+            between := gap + free / n
+            y := free / n / 2
+        } elif jc == "space-evenly" {
+            between := gap + free / (n + 1)
+            y := free / (n + 1)
+        }
+    }
+    alloc i := 0
+    loop i < n {
+        alloc b := items[i]
+        if rev {
+            b := items[n - 1 - i]
+        }
+        i := i + 1
+        if (b.am & 4) != 0 {
+            y := y + each_auto
+        }
+        alloc space := cw - b.w - b.ml - b.mr
+        alloc off := 0
+        if space > 0 {
+            if (b.am & 3) == 3 {
+                off := space / 2
+            } elif (b.am & 1) != 0 {
+                off := space
+            } elif (b.am & 2) == 0 {
+                if b.fa == "center" {
+                    off := space / 2
+                } elif b.fa == "flex-end" {
+                    off := space
+                }
+            }
+        }
+        b.x := cx + floor(off) + b.ml
+        b.y := cy + floor(y + 0.5) + b.mt
+        y := y + b.mt + b.h + b.mb + between
+        if (b.am & 8) != 0 {
+            y := y + each_auto
+        }
+    }
+    return max(total, target)
+}
+
+# --- grid ----------------------------------------------------------------------------------------
+#
+# The plain part of CSS grid: columns from grid-template-columns,
+# items put in them in order, each row as tall as its tallest item.
+
+proc grid_columns(box, cw) {
+    alloc tmpl := css.get(box.st, "grid-template-columns")
+    if u.is_str(tmpl) {
+        return [css.AUTO]
+    }
+    if length(tmpl) == 1 and tmpl[0][0] == 18 {
+        if cw == false {
+            return [css.AUTO]
+        }
+        alloc least := lenpx(tmpl[0][1], cw)
+        alloc gap := lenpx(css.get(box.st, "column-gap"), cw)
+        alloc n := 1
+        if least + gap > 0 {
+            n := floor((cw + gap) / (least + gap))
+        }
+        if n < 1 {
+            n := 1
+        }
+        if n > 50 {
+            n := 50
+        }
+        alloc out := []
+        alloc i := 0
+        loop i < n {
+            append(out, [17, 1])
+            i := i + 1
+        }
+        return out
+    }
+    return tmpl
+}
+
+proc lay_grid(box, inner) {
+    alloc st := box.st
+    alloc cx := box.bl + box.pl
+    alloc cy := box.bt + box.pt
+    alloc cw := box.w - cx - box.br - box.pr
+    if cw < 0 {
+        cw := 0
+    }
+    alloc cols := grid_columns(box, cw)
+    alloc n := length(cols)
+    alloc gap := lenpx(css.get(st, "column-gap"), cw)
+    alloc rgap := lenpx(css.get(st, "row-gap"), cw)
+    alloc items := flex_items(box, cx, cy)
+    # where each item goes: [box, column, span, row]
+    alloc placed := []
+    alloc occ := []
+    alloc row := 0
+    alloc col := 0
+    for it in items {
+        alloc cs := css.get(it.st, "grid-column-start")
+        alloc ce := css.get(it.st, "grid-column-end")
+        alloc span := 1
+        alloc start := -1
+        if u.is_str(cs) == false {
+            if is_list(cs) {
+                span := cs[1]
+            } elif cs > 0 {
+                start := cs - 1
+            } elif cs < 0 {
+                start := n + 1 + cs
+            }
+        }
+        if u.is_str(ce) == false {
+            if is_list(ce) {
+                span := ce[1]
+            } elif start >= 0 {
+                alloc stop := ce - 1
+                if ce < 0 {
+                    stop := n + 1 + ce
+                }
+                span := stop - start
+            }
+        }
+        if span < 1 {
+            span := 1
+        }
+        if span > n {
+            span := n
+        }
+        if start >= 0 {
+            if start + span > n {
+                start := n - span
+            }
+            if start < col {
+                row := row + 1
+            }
+            col := start
+        }
+        alloc tries := 0
+        loop tries < 10000 {
+            tries := tries + 1
+            if col + span > n {
+                col := 0
+                row := row + 1
+            }
+            loop length(occ) <= row {
+                append(occ, list_repeat(false, n))
+            }
+            alloc clear := true
+            alloc c := col
+            loop c < col + span {
+                if occ[row][c] {
+                    clear := false
+                }
+                c := c + 1
+            }
+            if clear {
+                break
+            }
+            col := col + 1
+        }
+        loop length(occ) <= row {
+            append(occ, list_repeat(false, n))
+        }
+        alloc c2 := col
+        loop c2 < col + span and c2 < n {
+            occ[row][c2] := true
+            c2 := c2 + 1
+        }
+        append(placed, [it, col, span, row])
+        col := col + span
+    }
+    # column widths
+    alloc widths := list_repeat(0, n)
+    alloc room := cw - gap * (n - 1)
+    alloc frs := 0
+    alloc autos := 0
+    alloc i := 0
+    loop i < n {
+        alloc t := cols[i]
+        if t[0] == 17 {
+            frs := frs + t[1]
+        } elif t[0] == 3 {
+            autos := autos + 1
+            for p in placed {
+                if p[1] == i and p[2] == 1 {
+                    intrinsic(p[0])
+                    alloc want := p[0].imax + hmargins(p[0].st)
+                    if want > widths[i] {
+                        widths[i] := want
+                    }
+                }
+            }
+            room := room - widths[i]
+        } else {
+            widths[i] := lenpx(t, cw)
+            room := room - widths[i]
+        }
+        i := i + 1
+    }
+    if room < 0 and autos > 0 {
+        # the columns sized by their content give way
+        alloc auto_sum := 0
+        i := 0
+        loop i < n {
+            if cols[i][0] == 3 {
+                auto_sum := auto_sum + widths[i]
+            }
+            i := i + 1
+        }
+        if auto_sum > 0 {
+            alloc keep := max(0, auto_sum + room) / auto_sum
+            i := 0
+            loop i < n {
+                if cols[i][0] == 3 {
+                    widths[i] := widths[i] * keep
+                }
+                i := i + 1
+            }
+        }
+        room := 0
+    }
+    if room > 0 {
+        i := 0
+        loop i < n {
+            if frs > 0 {
+                if cols[i][0] == 17 {
+                    widths[i] := room * cols[i][1] / frs
+                }
+            } elif cols[i][0] == 3 {
+                widths[i] := widths[i] + room / autos
+            }
+            i := i + 1
+        }
+    }
+    alloc colx := []
+    alloc x := 0
+    i := 0
+    loop i < n {
+        append(colx, x)
+        x := x + widths[i] + gap
+        i := i + 1
+    }
+    alloc nrows := length(occ)
+    alloc rowh := list_repeat(0, nrows)
+    for p2 in placed {
+        alloc b := p2[0]
+        alloc w := gap * (p2[2] - 1)
+        alloc c3 := p2[1]
+        loop c3 < p2[1] + p2[2] {
+            w := w + widths[c3]
+            c3 := c3 + 1
+        }
+        edges(b, w)
+        if b.kind == K_REPL or spec(b.st, "width", w, 0) != false {
+            lay(b, w, false, 1, false, false, 0, 0, false)
+        } else {
+            lay(b, w, false, 2, max(w - b.ml - b.mr, b.bl + b.br + b.pl + b.pr), false, 0, 0, false)
+        }
+        alloc oh := b.h + b.mt + b.mb
+        if oh > rowh[p2[3]] {
+            rowh[p2[3]] := oh
+        }
+    }
+    alloc rowy := []
+    alloc y := 0
+    i := 0
+    loop i < nrows {
+        append(rowy, y)
+        y := y + rowh[i] + rgap
+        i := i + 1
+    }
+    alloc ai := css.get(st, "align-items")
+    for p3 in placed {
+        alloc b2 := p3[0]
+        b2.x := cx + floor(colx[p3[1]] + 0.5) + b2.ml
+        b2.y := cy + rowy[p3[3]] + b2.mt
+        alloc align := css.get(b2.st, "align-self")
+        if align == "auto" {
+            align := ai
+        }
+        alloc space := rowh[p3[3]] - b2.h - b2.mt - b2.mb
+        if space > 0 {
+            if align == "center" {
+                b2.y := b2.y + floor(space / 2)
+            } elif align == "flex-end" {
+                b2.y := b2.y + space
+            } elif (align == "normal" or align == "stretch") and b2.kind != K_REPL and spec(b2.st, "height", false, 0) == false {
+                stretch_to(b2, b2.w, false, b2.w, b2.h + space)
+            }
+        }
+    }
+    if nrows == 0 {
+        return 0
+    }
+    return y - rgap
+}

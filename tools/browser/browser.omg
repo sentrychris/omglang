@@ -1,0 +1,1707 @@
+;;;omg
+
+# tools/browser/browser.omg
+#
+# A web browser. Build it and run it:
+#
+#     bin/omg --build tools/browser/browser.omg browser
+#     ./browser https://example.com
+#
+# It fetches pages over HTTP and HTTPS, reads HTML and CSS, lays the
+# page out, draws it with the system's fonts, shows pictures (PNG,
+# JPEG, GIF), follows links, goes back and forward, scrolls, and fills
+# in and sends forms. It does not run JavaScript.
+#
+# Options:
+#
+#     --screenshot FILE   load the page, save a picture of the window
+#                         as a PNG, and leave (no window is opened)
+#     --size WxH          the size of the window (default 1100x760)
+#     --scroll N          with --screenshot: scrolled down N pixels
+#     --page-only         with --screenshot: the page without the bar
+#     --proxy HOST:PORT   go through an HTTP proxy
+#     --ca-file FILE      trust the certificates in this PEM file too
+#
+# Keys: Ctrl+L address, Enter go, Alt+Left / Backspace back, Alt+Right
+# forward, F5 / Ctrl+R reload, Escape stop, arrows, Space, PageUp,
+# PageDown, Home and End scroll, Ctrl+Q quit.
+#
+# The parts, each a file next to this one: url (addresses), net and
+# io (fetching), tls with its helpers (HTTPS), inflate (unpacking),
+# html and entities (parsing), css (styles), layout (where things
+# go), paint and gfx (drawing), font (letters), image (pictures).
+
+import "util.omg" as u
+import "font.omg" as font
+import "gfx.omg" as gfx
+import "html.omg" as html
+import "css.omg" as css
+import "layout.omg" as lay
+import "paint.omg" as paint
+import "url.omg" as url
+import "io.omg" as io
+import "net.omg" as net
+import "tls.omg" as tls
+import "image.omg" as image
+
+alloc BAR := 42                # the height of the bar at the top
+alloc SB := 12                 # the width of the scroll bar
+alloc W := 1100
+alloc H := 760
+alloc win := false
+alloc headless := false
+alloc running := true
+alloc dirty := true
+alloc ui := false              # the font of the bar
+
+# the page on show
+alloc doc := false
+alloc root := false
+alloc page_url := "about:blank"
+alloc base_url := "about:blank"
+alloc title := ""
+alloc sx := 0
+alloc sy := 0
+alloc doc_w := 0
+alloc doc_h := 0
+alloc pictures := {}           # address -> [w, h, data], or false for one that failed
+alloc forms := {}              # uid -> the <form>, <details> or <label> element
+alloc next_uid := 1
+
+# where the user has been
+alloc past := []               # each [address, scroll]
+alloc at := -1
+
+# what is going on
+alloc busy := false
+alloc pending := false         # a page asked for while another was loading
+alloc halt := false
+alloc status := ""
+alloc hover := false
+alloc cursor := "arrow"
+alloc last_draw := 0
+alloc blink_at := 0
+
+# the address field
+alloc addr := []
+alloc addr_caret := 0
+alloc addr_focus := false
+alloc addr_all := false
+
+# the form control being typed in, and an open drop-down list
+alloc focus := false
+alloc popup := false           # [select node, x, y, w, option nodes, first shown]
+alloc press := false           # what the mouse went down on
+alloc drag := -1               # dragging the scroll bar: where in the thumb it was caught
+alloc mx := 0
+alloc my := 0
+
+proc view_w() {
+    return W - SB
+}
+
+proc view_h() {
+    return H - BAR
+}
+
+proc uid_of(node) {
+    if has_key(node, "uid") == false {
+        node.uid := next_uid
+        next_uid := next_uid + 1
+    }
+    return node.uid
+}
+
+# --- drawing the window ------------------------------------------------------------------
+
+proc ui_text(s, x, y, color) {
+    alloc cps := u.cps(s)
+    return gfx.text(ui, cps, 0, length(cps), x, y, color)
+}
+
+proc clamp_scroll() {
+    alloc most := doc_h - view_h()
+    if sy > most {
+        sy := most
+    }
+    if sy < 0 {
+        sy := 0
+    }
+    alloc mostx := doc_w - view_w()
+    if sx > mostx {
+        sx := mostx
+    }
+    if sx < 0 {
+        sx := 0
+    }
+    return true
+}
+
+# [top, height] of the thumb of the scroll bar, or false when the
+# page fits.
+proc thumb() {
+    alloc vh := view_h()
+    if doc_h <= vh {
+        return false
+    }
+    alloc th := vh * vh // doc_h
+    if th < 30 {
+        th := 30
+    }
+    alloc ty := BAR + (vh - th) * sy // (doc_h - vh)
+    return [ty, th]
+}
+
+proc draw_bar() {
+    gfx.unclip()
+    gfx.fill(0, 0, W, BAR - 1, 4293980660)
+    gfx.fill(0, BAR - 1, W, 1, 4291611852)
+    alloc dim := 4290032820
+    alloc ink := 4283454046
+    alloc mid := (BAR - 1) // 2
+    # back
+    alloc c := dim
+    if at > 0 {
+        c := ink
+    }
+    gfx.polygon([24, mid - 7, 26, mid - 5, 19, mid, 26, mid + 5, 24, mid + 7, 15, mid], c)
+    # forward
+    c := dim
+    if at < length(past) - 1 {
+        c := ink
+    }
+    gfx.polygon([50, mid - 7, 48, mid - 5, 55, mid, 48, mid + 5, 50, mid + 7, 59, mid], c)
+    # reload, or stop while a page is coming
+    if busy {
+        gfx.polygon([78, mid - 6, 80, mid - 8, 86, mid - 2, 92, mid - 8, 94, mid - 6, 88, mid, 94, mid + 6, 92, mid + 8, 86, mid + 2, 80, mid + 8, 78, mid + 6, 84, mid], ink)
+    } else {
+        gfx.round_rect(79, mid - 7, 15, 15, 7, 2, ink)
+        gfx.fill(88, mid - 8, 7, 7, 4293980660)
+        gfx.polygon([87, mid - 9, 94, mid - 5, 87, mid - 1], ink)
+    }
+    # the address
+    alloc fx := 108
+    alloc fw := W - fx - 10
+    alloc fy := 7
+    alloc fh := BAR - 15
+    gfx.round_rect(fx, fy, fw, fh, 6, 0, 4294967295)
+    if addr_focus {
+        gfx.round_rect(fx, fy, fw, fh, 6, 2, 4279858898)
+    } else {
+        gfx.round_rect(fx, fy, fw, fh, 6, 1, 4291611852)
+    }
+    alloc tx := fx + 10
+    alloc base := fy + (fh - ui.asc - ui.desc) // 2 + ui.asc
+    gfx.clip(tx - 2, fy + 1, fx + fw - 8, fy + fh - 1)
+    alloc n := length(addr)
+    alloc off := 0
+    if addr_focus {
+        alloc cxp := font.measure(ui, addr, 0, addr_caret)
+        if cxp > fw - 24 {
+            off := floor(cxp - fw + 24)
+        }
+        if addr_all and n > 0 {
+            gfx.fill(tx - off, base - ui.asc - 1, ceil(font.measure(ui, addr, 0, n)), ui.asc + ui.desc + 2, 4290240255)
+        }
+    }
+    gfx.text(ui, addr, 0, n, tx - off, base, 4280295456)
+    if addr_focus and paint_caret() and addr_all == false {
+        gfx.fill(tx - off + floor(font.measure(ui, addr, 0, addr_caret)), base - ui.asc, 1, ui.asc + ui.desc, 4278190080)
+    }
+    gfx.unclip()
+    if busy {
+        # a thin line that says "working"
+        alloc span := W // 4
+        alloc lead := (time_ms() // 4) % (W + span) - span
+        gfx.fill(lead, BAR - 3, span, 2, 4279858898)
+    }
+    return true
+}
+
+proc paint_caret() {
+    return ((time_ms() - blink_at) // 530) % 2 == 0
+}
+
+proc draw_scrollbar() {
+    alloc x := W - SB
+    gfx.fill(x, BAR, SB, H - BAR, 4294046193)
+    alloc t := thumb()
+    if t != false {
+        alloc c := 4290822336
+        if drag >= 0 {
+            c := 4287137928
+        }
+        gfx.round_rect(x + 2, t[0] + 2, SB - 4, t[1] - 4, 4, 0, c)
+    }
+    return true
+}
+
+proc draw_status() {
+    if status == "" {
+        return true
+    }
+    alloc cps := u.cps(status)
+    alloc n := length(cps)
+    if n > 110 {
+        n := 110
+    }
+    alloc w := ceil(font.measure(ui, cps, 0, n)) + 16
+    alloc h := ui.asc + ui.desc + 8
+    gfx.fill(0, H - h, w, h, 4293980660)
+    gfx.fill(0, H - h, w, 1, 4291611852)
+    gfx.fill(w - 1, H - h, 1, h, 4291611852)
+    gfx.text(ui, cps, 0, n, 8, H - h + 4 + ui.asc, 4283454046)
+    return true
+}
+
+proc draw_popup() {
+    if popup == false {
+        return true
+    }
+    alloc opts := popup[4]
+    alloc x := popup[1]
+    alloc y := popup[2]
+    alloc w := popup[3]
+    alloc row := ui.asc + ui.desc + 6
+    alloc shown := length(opts) - popup[5]
+    alloc most := (H - y - 4) // row
+    if shown > most {
+        shown := most
+    }
+    gfx.fill(x, y, w, shown * row + 2, 4294967295)
+    gfx.frame(x, y, w, shown * row + 2, 1, 4287137928)
+    alloc i := 0
+    loop i < shown {
+        alloc o := opts[popup[5] + i]
+        alloc ry := y + 1 + i * row
+        alloc ink := 4280295456
+        if mx >= x and mx < x + w and my >= ry and my < ry + row {
+            gfx.fill(x + 1, ry, w - 2, row, 4279858898)
+            ink := 4294967295
+        }
+        gfx.clip(x + 1, ry, x + w - 1, ry + row)
+        ui_text(lay.option_label(o), x + 6, ry + 3 + ui.asc, ink)
+        gfx.unclip()
+        i := i + 1
+    }
+    return true
+}
+
+proc redraw() {
+    dirty := false
+    last_draw := time_ms()
+    if headless == false and win == false {
+        return true
+    }
+    paint.set_caret(paint_caret())
+    paint.draw(0, BAR, view_w(), view_h(), sx, sy)
+    draw_scrollbar()
+    draw_bar()
+    draw_status()
+    draw_popup()
+    if win != false {
+        window_draw(win, gfx.pixels(), W)
+    }
+    return true
+}
+
+proc set_status(s) {
+    if s != status {
+        status := s
+        dirty := true
+    }
+    return true
+}
+
+proc set_cursor(shape) {
+    if shape != cursor {
+        cursor := shape
+        if win != false {
+            window_cursor(win, shape)
+        }
+    }
+    return true
+}
+
+proc set_addr(text) {
+    addr := u.cps(text)
+    addr_caret := length(addr)
+    addr_all := false
+    return true
+}
+
+# --- from a document to a picture of it ------------------------------------------------------
+
+# Style, lay out and paint the document again (after the window
+# changed size, a picture arrived, or a <details> opened).
+proc reflow() {
+    if doc == false {
+        return true
+    }
+    css.style_tree(doc, view_w(), view_h())
+    root := lay.build(doc)
+    lay.layout(root, view_w(), view_h())
+    paint.render(root)
+    alloc size := paint.size()
+    doc_w := size[0]
+    doc_h := size[1]
+    clamp_scroll()
+    dirty := true
+    return true
+}
+
+proc repaint() {
+    if root != false {
+        paint.render(root)
+        dirty := true
+    }
+    return true
+}
+
+# Number the forms and what belongs to them, so that a control can
+# name its form without pointing at it.
+proc index_forms(node, form, details) {
+    for k in node.kids {
+        if k.t != 1 {
+            continue
+        }
+        alloc f := form
+        alloc d := details
+        alloc tag := k.tag
+        if tag == "form" {
+            f := uid_of(k)
+            forms["" + f] := k
+        } elif tag == "details" {
+            d := uid_of(k)
+            forms["" + d] := k
+        } elif tag == "input" or tag == "select" or tag == "textarea" or tag == "button" {
+            k.form := f
+        } elif tag == "summary" {
+            k.form := d
+        }
+        index_forms(k, f, d)
+    }
+    return true
+}
+
+proc show_document(bytes, charset, address) {
+    alloc d := html.parse(html.to_utf8(bytes, charset))
+    doc := d
+    root := false
+    page_url := address
+    base_url := url.without_frag(address)
+    forms := {}
+    focus := false
+    popup := false
+    hover := false
+    paint.set_focus(0)
+    paint.forget_images()
+    for b in html.find_all(d, "base", []) {
+        if has_key(b.attrs, "href") {
+            alloc bu := url.resolve(base_url, b.attrs["href"])
+            if bu != "" {
+                base_url := bu
+            }
+            break
+        }
+    }
+    title := ""
+    for t in html.find_all(d, "title", []) {
+        title := u.join(u.words(html.text_of(t)), " ")
+        break
+    }
+    if win != false {
+        if title == "" {
+            window_title(win, address)
+        } else {
+            window_title(win, title)
+        }
+    }
+    index_forms(d, 0, 0)
+    return true
+}
+
+alloc sheet_count := 0
+
+# Fetch a style sheet, the sheets it imports first.
+proc load_sheet(address, media, depth) {
+    if sheet_count >= 60 or depth > 4 or halt {
+        return false
+    }
+    sheet_count := sheet_count + 1
+    set_status("Loading " + address)
+    tick()
+    alloc r := net.fetch(address, "GET", false, "", base_url)
+    if r.status != 200 or length(r.body) == 0 {
+        return false
+    }
+    add_sheet(r.body, r.url, media, depth)
+    return true
+}
+
+proc add_sheet(bytes, address, media, depth) {
+    for imp in css.imports_of(bytes) {
+        alloc where := url.resolve(address, imp[0])
+        if where != "" {
+            alloc m := media
+            if imp[1] != "" {
+                m := css.media_entry(imp[1])
+            }
+            load_sheet(where, m, depth + 1)
+        }
+    }
+    css.set_base(address)
+    css.add_sheet(bytes, 1, media)
+    css.take_imports()
+    return true
+}
+
+proc load_styles() {
+    css.reset()
+    sheet_count := 0
+    alloc nodes := []
+    collect_styles(doc, nodes)
+    for node in nodes {
+        if halt {
+            break
+        }
+        alloc media := -1
+        if has_key(node.attrs, "media") {
+            alloc mt := u.trim(node.attrs["media"])
+            if mt != "" and u.lower(mt) != "all" {
+                media := css.media_entry(mt)
+            }
+        }
+        if node.tag == "style" {
+            add_sheet(string_bytes(html.text_of(node)), base_url, media, 0)
+        } else {
+            alloc where := url.resolve(base_url, node.attrs["href"])
+            if where != "" {
+                load_sheet(where, media, 0)
+            }
+        }
+    }
+    css.set_base(base_url)
+    return true
+}
+
+proc collect_styles(node, out) {
+    for k in node.kids {
+        if k.t != 1 {
+            continue
+        }
+        if k.tag == "style" {
+            append(out, k)
+        } elif k.tag == "link" and has_key(k.attrs, "href") and has_key(k.attrs, "rel") {
+            alloc rel := " " + u.lower(k.attrs["rel"]) + " "
+            alloc sheet := u.contains(rel, " stylesheet ") and u.contains(rel, " alternate ") == false
+            if u.contains(rel, " preload ") and has_key(k.attrs, "as") and u.lower(k.attrs["as"]) == "style" {
+                sheet := true
+            }
+            if sheet {
+                append(out, k)
+            }
+        } else {
+            collect_styles(k, out)
+        }
+    }
+    return true
+}
+
+# The address of the picture an <img> wants.
+proc picture_address(node) {
+    alloc src := ""
+    if has_key(node.attrs, "src") {
+        src := u.trim(node.attrs["src"])
+    }
+    if (src == "" or u.starts_with(src, "data:image/gif") or u.starts_with(src, "data:image/svg")) and has_key(node.attrs, "data-src") {
+        src := u.trim(node.attrs["data-src"])
+    }
+    if src == "" and has_key(node.attrs, "srcset") {
+        alloc parts := u.words(node.attrs["srcset"])
+        if length(parts) > 0 {
+            src := parts[0]
+        }
+    }
+    if src == "" {
+        return ""
+    }
+    return url.resolve(base_url, src)
+}
+
+proc get_picture(where) {
+    if has_key(pictures, where) {
+        return pictures[where]
+    }
+    alloc im := false
+    alloc r := net.fetch(where, "GET", false, "", base_url)
+    if r.status == 200 and length(r.body) > 0 {
+        im := image.decode(r.body)
+    }
+    if r.status == 0 and r.error == "stopped" {
+        return false
+    }
+    pictures[where] := im
+    return im
+}
+
+# Fetch the pictures of the page, showing them as they come.
+proc load_pictures() {
+    alloc nodes := html.find_all(doc, "img", [])
+    alloc mine := doc
+    alloc changed := false
+    alloc last := time_ms()
+    alloc count := 0
+    for node in nodes {
+        if halt or pending != false or running == false or count >= 400 {
+            break
+        }
+        if has_key(node, "style") == false or css.get(node.style, "display") == "none" {
+            continue
+        }
+        alloc where := picture_address(node)
+        if where == "" {
+            continue
+        }
+        count := count + 1
+        if has_key(pictures, where) == false {
+            set_status("Loading " + where)
+            tick()
+        }
+        alloc im := get_picture(where)
+        if im != false {
+            node.img := im
+            changed := true
+        }
+        if changed and time_ms() - last > 700 {
+            reflow()
+            tick()
+            changed := false
+            last := time_ms()
+        }
+    }
+    if changed {
+        reflow()
+    }
+    # pictures that style sheets put behind things
+    alloc rounds := 0
+    loop rounds < 3 and halt == false and pending == false and running {
+        alloc wanted := paint.take_wanted()
+        if length(wanted) == 0 {
+            break
+        }
+        alloc n := 0
+        for where2 in wanted {
+            if halt or pending != false or n >= 60 {
+                break
+            }
+            n := n + 1
+            alloc full := url.resolve(base_url, where2)
+            if full != "" {
+                set_status("Loading " + full)
+                tick()
+                paint.set_image(where2, get_picture(full))
+            }
+        }
+        repaint()
+        rounds := rounds + 1
+    }
+    return true
+}
+
+alloc HOME := "<!DOCTYPE html><title>OMG browser</title><style>body{font-family:sans-serif;max-width:640px;margin:70px auto;color:#222;line-height:1.5}h1{font-size:34px;margin-bottom:0}p.s{color:#666;margin-top:4px}code{background:#f1f3f4;padding:1px 5px;border-radius:4px}li{margin:6px 0}</style><h1>OMG browser</h1><p class=s>A web browser written in OMG.</p><p>Type an address or a search in the bar above and press Enter.</p><ul><li><code>Ctrl+L</code> goes to the address bar<li><code>Alt+Left</code> and <code>Alt+Right</code> go back and forward<li><code>F5</code> loads the page again, <code>Escape</code> stops<li>arrows, <code>Space</code>, <code>PageUp</code>, <code>PageDown</code>, <code>Home</code> and <code>End</code> scroll</ul><p>Places to start: <a href=\"https://example.com/\">example.com</a>, <a href=\"https://en.wikipedia.org/wiki/Web_browser\">Wikipedia on web browsers</a>, <a href=\"https://news.ycombinator.com/\">Hacker News</a>, <a href=\"https://lite.duckduckgo.com/lite/\">DuckDuckGo</a>.</p><p>JavaScript does not run here, so pages that are built by scripts stay empty.</p>"
+
+proc error_page(address, why) {
+    return "<!DOCTYPE html><title>Problem loading page</title><style>body{font-family:sans-serif;max-width:560px;margin:90px auto;color:#222;line-height:1.5}h1{font-size:24px}p.a{color:#666;word-break:break-all}</style><h1>This page could not be loaded</h1><p>" + net.html_escape(why) + ".</p><p class=a>" + net.html_escape(address) + "</p>"
+}
+
+proc charset_of(ctype) {
+    alloc low := u.lower(ctype)
+    alloc i := u.find(low, "charset=")
+    if i < 0 {
+        return ""
+    }
+    alloc cs := low[i + 8:]
+    alloc semi := u.find(cs, ";")
+    if semi >= 0 {
+        cs := cs[0:semi]
+    }
+    return u.trim(u.replace(u.replace(cs, "\"", ""), "'", ""))
+}
+
+# Load an address and show it. `how` is 0 for a new page (it joins
+# the history), 1 for going back or forward or loading again.
+proc load(address, method, body, ctype, how, scroll_to) {
+    busy := true
+    halt := false
+    io.restart()
+    set_status("Loading " + address)
+    if how == 0 {
+        set_addr(address)
+    }
+    dirty := true
+    tick()
+    alloc bytes := to_bytes([])
+    alloc kind := "text/html"
+    alloc charset := "utf-8"
+    alloc final := address
+    alloc refreshes := 0
+    loop true {
+        alloc p := url.parse(final)
+        if p != false and p.scheme == "about" {
+            if p.path == "blank" {
+                bytes := string_bytes("<!DOCTYPE html><title></title>")
+            } else {
+                bytes := string_bytes(HOME)
+            }
+        } else {
+            alloc r := net.fetch(final, method, body, ctype, "")
+            if r.status == 0 {
+                if r.error == "stopped" {
+                    busy := false
+                    set_status("")
+                    dirty := true
+                    return false
+                }
+                bytes := string_bytes(error_page(final, r.error))
+            } else {
+                final := r.url
+                bytes := r.body
+                kind := "text/html"
+                charset := ""
+                if has_key(r.headers, "content-type") {
+                    alloc ct := r.headers["content-type"]
+                    charset := charset_of(ct)
+                    alloc semi := u.find(ct, ";")
+                    if semi >= 0 {
+                        ct := ct[0:semi]
+                    }
+                    kind := u.lower(u.trim(ct))
+                }
+                if u.starts_with(kind, "image/") {
+                    bytes := string_bytes("<!DOCTYPE html><title>" + net.html_escape(final) + "</title><body style=\"margin:0;background:#222;text-align:center\"><img src=\"" + net.html_escape(final) + "\" style=\"max-width:100%\">")
+                    charset := "utf-8"
+                } elif kind != "text/html" and kind != "application/xhtml+xml" and kind != "" {
+                    if u.starts_with(kind, "text/") or kind == "application/json" or kind == "application/xml" or kind == "application/javascript" {
+                        alloc text := bytes_to_string(html.to_utf8(bytes, charset))
+                        bytes := string_bytes("<!DOCTYPE html><title>" + net.html_escape(final) + "</title><pre style=\"white-space:pre-wrap;word-break:break-all\">" + u.replace(net.html_escape(text), ">", "&gt;") + "</pre>")
+                        charset := "utf-8"
+                    } else {
+                        bytes := string_bytes(error_page(final, "The browser cannot show this kind of file (" + kind + ")"))
+                        charset := "utf-8"
+                    }
+                }
+            }
+        }
+        show_document(bytes, charset, final)
+        # a page that only says "go there"
+        alloc next := ""
+        if refreshes < 5 {
+            for m in html.find_all(doc, "meta", []) {
+                if has_key(m.attrs, "http-equiv") and u.lower(m.attrs["http-equiv"]) == "refresh" and has_key(m.attrs, "content") {
+                    alloc c := m.attrs["content"]
+                    alloc ui2 := u.find(u.lower(c), "url=")
+                    alloc wait := u.to_int(u.trim(u.split(c, ";")[0]), 99)
+                    if ui2 >= 0 and wait <= 3 {
+                        alloc target := u.trim(c[ui2 + 4:])
+                        if length(target) > 1 and (target[0:1] == "'" or target[0:1] == "\"") {
+                            target := target[1:length(target) - 1]
+                        }
+                        next := url.resolve(base_url, target)
+                    }
+                    break
+                }
+            }
+        }
+        if next == "" or next == final {
+            break
+        }
+        refreshes := refreshes + 1
+        final := next
+        method := "GET"
+        body := false
+        ctype := ""
+    }
+    load_styles()
+    sx := 0
+    sy := 0
+    if how == 0 {
+        # what came after this point in the history is forgotten
+        past := past[0:at + 1]
+        append(past, [final, 0])
+        at := length(past) - 1
+    } else {
+        past[at][0] := final
+    }
+    set_addr(final)
+    addr_focus := false
+    reflow()
+    goto_fragment(final)
+    if scroll_to > 0 {
+        sy := scroll_to
+        clamp_scroll()
+    }
+    set_status("")
+    tick()
+    load_pictures()
+    if scroll_to > 0 and sy != scroll_to {
+        sy := scroll_to
+        clamp_scroll()
+    }
+    busy := false
+    set_status("")
+    dirty := true
+    return true
+}
+
+proc goto_fragment(address) {
+    alloc hash := u.find(address, "#")
+    if hash < 0 or hash == length(address) - 1 or root == false {
+        return false
+    }
+    alloc name := bytes_to_string(url.unescape_bytes(address[hash + 1:]))
+    alloc y := paint.anchor_y(root, name, 0)
+    if y == false {
+        return false
+    }
+    sy := floor(y)
+    clamp_scroll()
+    dirty := true
+    return true
+}
+
+# Go to an address: now, or as soon as what is under way lets go.
+proc go(address, method, body, ctype, how, scroll_to) {
+    if address == "" {
+        return false
+    }
+    if busy {
+        pending := [address, method, body, ctype, how, scroll_to]
+        halt := true
+        io.stop()
+        return true
+    }
+    # a link to another part of the page on show
+    if how == 0 and method == "GET" and doc != false and url.without_frag(address) == url.without_frag(page_url) and u.contains(address, "#") {
+        past[at][1] := sy
+        past := past[0:at + 1]
+        append(past, [address, 0])
+        at := length(past) - 1
+        page_url := address
+        set_addr(address)
+        goto_fragment(address)
+        dirty := true
+        return true
+    }
+    if at >= 0 and at < length(past) {
+        past[at][1] := sy
+    }
+    load(address, method, body, ctype, how, scroll_to)
+    loop pending != false and running {
+        alloc p := pending
+        pending := false
+        load(p[0], p[1], p[2], p[3], p[4], p[5])
+    }
+    return true
+}
+
+proc go_back() {
+    if at > 0 {
+        past[at][1] := sy
+        at := at - 1
+        go(past[at][0], "GET", false, "", 1, past[at][1])
+    }
+    return true
+}
+
+proc go_forward() {
+    if at < length(past) - 1 {
+        past[at][1] := sy
+        at := at + 1
+        go(past[at][0], "GET", false, "", 1, past[at][1])
+    }
+    return true
+}
+
+proc reload() {
+    if at >= 0 {
+        go(past[at][0], "GET", false, "", 1, sy)
+    }
+    return true
+}
+
+# --- forms --------------------------------------------------------------------------------
+
+proc controls_of(node, out) {
+    for k in node.kids {
+        if k.t == 1 {
+            if k.tag == "input" or k.tag == "select" or k.tag == "textarea" or k.tag == "button" {
+                append(out, k)
+            }
+            controls_of(k, out)
+        }
+    }
+    return out
+}
+
+proc is_checked(node) {
+    if has_key(node, "checked") {
+        return node.checked
+    }
+    return has_key(node.attrs, "checked")
+}
+
+# Send the form that `by` (a button, or a field Enter was pressed
+# in) belongs to.
+proc submit(by) {
+    if has_key(by, "form") == false or by.form == 0 {
+        return false
+    }
+    alloc form := forms["" + by.form]
+    alloc pairs := ""
+    for c in controls_of(form, []) {
+        if has_key(c.attrs, "name") == false or has_key(c.attrs, "disabled") {
+            continue
+        }
+        alloc name := c.attrs["name"]
+        alloc t := lay.input_type(c)
+        alloc value := ""
+        if c.tag == "button" or t == "submit" or t == "image" {
+            if has_key(c, "uid") == false or has_key(by, "uid") == false or c.uid != by.uid {
+                continue
+            }
+            if has_key(c.attrs, "value") {
+                value := c.attrs["value"]
+            }
+        } elif t == "reset" or t == "button" or t == "file" {
+            continue
+        } elif t == "checkbox" or t == "radio" {
+            if is_checked(c) == false {
+                continue
+            }
+            value := "on"
+            if has_key(c.attrs, "value") {
+                value := c.attrs["value"]
+            }
+        } elif t == "select" {
+            alloc o := lay.selected_option(c)
+            if o == false {
+                continue
+            }
+            if has_key(o.attrs, "value") {
+                value := o.attrs["value"]
+            } else {
+                value := lay.option_label(o)
+            }
+        } else {
+            value := lay.control_text(c)
+        }
+        if pairs != "" {
+            pairs := pairs + "&"
+        }
+        pairs := pairs + url.escape(name, true) + "=" + url.escape(u.replace(value, "\n", "\r\n"), true)
+    }
+    alloc action := base_url
+    if has_key(form.attrs, "action") and u.trim(form.attrs["action"]) != "" {
+        action := url.resolve(base_url, form.attrs["action"])
+    }
+    if has_key(by.attrs, "formaction") {
+        action := url.resolve(base_url, by.attrs["formaction"])
+    }
+    alloc method := "GET"
+    if has_key(form.attrs, "method") and u.lower(u.trim(form.attrs["method"])) == "post" {
+        method := "POST"
+    }
+    if action == "" {
+        return false
+    }
+    if method == "POST" {
+        go(action, "POST", string_bytes(pairs), "application/x-www-form-urlencoded", 0, 0)
+    } else {
+        alloc p := url.parse(action)
+        if p == false {
+            return false
+        }
+        p.query := "?" + pairs
+        p.frag := ""
+        go(url.to_string(p), "GET", false, "", 0, 0)
+    }
+    return true
+}
+
+proc set_focus(node) {
+    focus := node
+    if node == false {
+        paint.set_focus(0)
+    } else {
+        paint.set_focus(uid_of(node))
+        if has_key(node, "value") == false {
+            node.value := lay.control_text(node)
+        }
+        if has_key(node, "caret") == false {
+            node.caret := length(u.cps(node.value))
+        }
+    }
+    blink_at := time_ms()
+    dirty := true
+    return true
+}
+
+proc is_text_field(node) {
+    if node.tag == "textarea" {
+        return true
+    }
+    if node.tag != "input" {
+        return false
+    }
+    alloc t := lay.input_type(node)
+    return t == "text" or t == "password"
+}
+
+# A key typed into a line of text: returns [characters, caret], or
+# false when the key is not one for editing.
+proc edit(cps, caret, name, held) {
+    alloc n := length(cps)
+    if caret > n {
+        caret := n
+    }
+    if name == "left" {
+        if caret > 0 {
+            caret := caret - 1
+        }
+        return [cps, caret]
+    }
+    if name == "right" {
+        if caret < n {
+            caret := caret + 1
+        }
+        return [cps, caret]
+    }
+    if name == "home" {
+        return [cps, 0]
+    }
+    if name == "end" {
+        return [cps, n]
+    }
+    alloc put := []
+    if name == "backspace" {
+        if caret == 0 {
+            return [cps, caret]
+        }
+        alloc out := cps[0:caret - 1]
+        for c in cps[caret:] {
+            append(out, c)
+        }
+        return [out, caret - 1]
+    }
+    if name == "delete" {
+        if caret >= n {
+            return [cps, caret]
+        }
+        alloc out2 := cps[0:caret]
+        for c2 in cps[caret + 1:] {
+            append(out2, c2)
+        }
+        return [out2, caret]
+    }
+    if (held & 2) != 0 and (name == "v" or name == "V") {
+        if win != false {
+            for pc in u.cps(clipboard_get(win)) {
+                if pc >= 32 or pc == 10 {
+                    append(put, pc)
+                }
+            }
+        }
+    } elif (held & 6) != 0 {
+        return false
+    } elif name == "space" {
+        put := [32]
+    } else {
+        alloc kc := u.cps(name)
+        if length(kc) != 1 {
+            return false
+        }
+        put := kc
+    }
+    alloc out3 := cps[0:caret]
+    for c3 in put {
+        append(out3, c3)
+    }
+    for c4 in cps[caret:] {
+        append(out3, c4)
+    }
+    return [out3, caret + length(put)]
+}
+
+# --- what the user does -----------------------------------------------------------------------
+
+proc scroll_by(dy) {
+    alloc was := sy
+    sy := sy + dy
+    clamp_scroll()
+    if sy != was {
+        dirty := true
+        popup := false
+    }
+    return true
+}
+
+proc key(name, held) {
+    blink_at := time_ms()
+    alloc ctrl := (held & 2) != 0
+    alloc alt := (held & 4) != 0
+    if ctrl and (name == "q" or name == "Q") {
+        running := false
+        io.stop()
+        return true
+    }
+    if ctrl and (name == "l" or name == "L") {
+        addr_focus := true
+        addr_all := true
+        addr_caret := length(addr)
+        set_focus(false)
+        dirty := true
+        return true
+    }
+    if name == "f5" or (ctrl and (name == "r" or name == "R")) {
+        reload()
+        return true
+    }
+    if alt and name == "left" {
+        go_back()
+        return true
+    }
+    if alt and name == "right" {
+        go_forward()
+        return true
+    }
+    if name == "escape" {
+        if popup != false {
+            popup := false
+        } elif busy {
+            halt := true
+            io.stop()
+        } elif addr_focus {
+            addr_focus := false
+            set_addr(page_url)
+        } else {
+            set_focus(false)
+        }
+        dirty := true
+        return true
+    }
+    if addr_focus {
+        if name == "enter" {
+            alloc typed := u.encode(addr)
+            addr_focus := false
+            go(url.from_typed(typed), "GET", false, "", 0, 0)
+            return true
+        }
+        if ctrl and (name == "a" or name == "A") {
+            addr_all := true
+            dirty := true
+            return true
+        }
+        if ctrl and (name == "c" or name == "C") {
+            if win != false {
+                clipboard_set(win, u.encode(addr))
+            }
+            return true
+        }
+        alloc base := addr
+        alloc caret := addr_caret
+        if addr_all and name != "left" and name != "right" and name != "home" and name != "end" {
+            base := []
+            caret := 0
+        }
+        alloc r := edit(base, caret, name, held)
+        if r != false {
+            addr := r[0]
+            addr_caret := r[1]
+            addr_all := false
+            dirty := true
+        }
+        return true
+    }
+    if focus != false and is_text_field(focus) {
+        if name == "enter" and focus.tag != "textarea" {
+            submit(focus)
+            return true
+        }
+        if name == "tab" {
+            set_focus(false)
+            return true
+        }
+        alloc cps := u.cps(focus.value)
+        alloc r2 := false
+        if name == "enter" {
+            alloc out := cps[0:focus.caret]
+            append(out, 10)
+            for c in cps[focus.caret:] {
+                append(out, c)
+            }
+            r2 := [out, focus.caret + 1]
+        } else {
+            r2 := edit(cps, focus.caret, name, held)
+        }
+        if r2 != false {
+            focus.value := u.encode(r2[0])
+            focus.caret := r2[1]
+            dirty := true
+            return true
+        }
+    }
+    alloc page := view_h() - 60
+    if name == "down" {
+        scroll_by(50)
+    } elif name == "up" {
+        scroll_by(-50)
+    } elif name == "pagedown" or (name == "space" and (held & 1) == 0) {
+        scroll_by(page)
+    } elif name == "pageup" or name == "space" {
+        scroll_by(0 - page)
+    } elif name == "home" {
+        scroll_by(0 - sy)
+    } elif name == "end" {
+        scroll_by(doc_h)
+    } elif name == "left" {
+        sx := sx - 50
+        clamp_scroll()
+        dirty := true
+    } elif name == "right" {
+        sx := sx + 50
+        clamp_scroll()
+        dirty := true
+    } elif name == "backspace" {
+        go_back()
+    }
+    return true
+}
+
+# What the mouse is over: the link, button or field, or false.
+proc under(x, y) {
+    if y < BAR or x >= W - SB {
+        return false
+    }
+    return paint.hit(x, y - BAR, sx, sy)
+}
+
+proc href_of(node) {
+    if node != false and node.tag == "a" and has_key(node.attrs, "href") {
+        return url.resolve(base_url, node.attrs["href"])
+    }
+    return ""
+}
+
+proc moved(x, y) {
+    mx := x
+    my := y
+    if drag >= 0 {
+        alloc t := thumb()
+        if t != false {
+            alloc vh := view_h()
+            sy := (y - drag - BAR) * (doc_h - vh) // (vh - t[1])
+            clamp_scroll()
+            dirty := true
+        }
+        return true
+    }
+    if popup != false {
+        dirty := true
+        set_cursor("arrow")
+        return true
+    }
+    if y < BAR {
+        if x >= 108 {
+            set_cursor("text")
+        } else {
+            set_cursor("arrow")
+        }
+        set_status("")
+        return true
+    }
+    alloc node := under(x, y)
+    hover := node
+    if node == false {
+        set_cursor("arrow")
+        if busy == false {
+            set_status("")
+        }
+        return true
+    }
+    alloc link := href_of(node)
+    if link != "" {
+        set_cursor("hand")
+        set_status(link)
+    } elif is_text_field(node) {
+        set_cursor("text")
+        set_status("")
+    } elif node.tag == "button" or node.tag == "summary" or node.tag == "select" or node.tag == "label" or node.tag == "input" {
+        set_cursor("hand")
+        set_status("")
+    } else {
+        set_cursor("arrow")
+        set_status("")
+    }
+    return true
+}
+
+proc open_popup(node) {
+    alloc opts := lay.options_of(node, [])
+    if length(opts) == 0 {
+        return false
+    }
+    alloc r := paint.last_hit()
+    alloc w := r[2] - r[0]
+    for o in opts {
+        alloc cps := u.cps(lay.option_label(o))
+        alloc ow := ceil(font.measure(ui, cps, 0, length(cps))) + 14
+        if ow > w {
+            w := ow
+        }
+    }
+    alloc px := floor(r[0]) - sx
+    alloc py := floor(r[3]) - sy + BAR
+    alloc row := ui.asc + ui.desc + 6
+    alloc need := length(opts) * row + 2
+    if py + need > H {
+        py := H - need
+        if py < BAR {
+            py := BAR
+        }
+    }
+    popup := [node, px, py, floor(w), opts, 0]
+    dirty := true
+    return true
+}
+
+# The element with this id, or false.
+proc by_id(node, id) {
+    for k in node.kids {
+        if k.t == 1 {
+            if has_key(k.attrs, "id") and k.attrs["id"] == id {
+                return k
+            }
+            alloc found := by_id(k, id)
+            if found != false {
+                return found
+            }
+        }
+    }
+    return false
+}
+
+# The field a <label> speaks for, or false.
+proc labelled(node) {
+    if has_key(node.attrs, "for") {
+        alloc c := by_id(doc, node.attrs["for"])
+        if c != false and (c.tag == "input" or c.tag == "select" or c.tag == "textarea") {
+            return c
+        }
+        return false
+    }
+    alloc inside := controls_of(node, [])
+    if length(inside) > 0 and inside[0].tag != "button" {
+        return inside[0]
+    }
+    return false
+}
+
+# The mouse went down on a field: x < 0 when it was its label that
+# was pressed, so there is no place in the text to aim for.
+proc press_on(node, x) {
+    alloc tag := node.tag
+    if is_text_field(node) {
+        set_focus(node)
+        if tag == "input" and x >= 0 {
+            # the caret goes where the click was
+            alloc r := paint.last_hit()
+            alloc f := lay.font_of(node.style)
+            alloc cps := u.cps(node.value)
+            alloc want2 := x + sx - r[0] - 4
+            alloc k2 := 0
+            alloc acc2 := 0
+            loop k2 < length(cps) {
+                alloc a2 := font.advance(f, cps[k2])
+                if acc2 + a2 / 2 > want2 {
+                    break
+                }
+                acc2 := acc2 + a2
+                k2 := k2 + 1
+            }
+            node.caret := k2
+        }
+        return true
+    }
+    set_focus(false)
+    if tag == "select" {
+        if x >= 0 {
+            open_popup(node)
+        }
+        return true
+    }
+    if tag == "input" {
+        alloc t2 := lay.input_type(node)
+        if t2 == "checkbox" {
+            node.checked := is_checked(node) == false
+            dirty := true
+        } elif t2 == "radio" {
+            # the others of its group go out
+            if has_key(node, "form") and has_key(node.attrs, "name") {
+                alloc scope := doc
+                if node.form != 0 {
+                    scope := forms["" + node.form]
+                }
+                for c in controls_of(scope, []) {
+                    if lay.input_type(c) == "radio" and has_key(c.attrs, "name") and c.attrs["name"] == node.attrs["name"] {
+                        c.checked := false
+                    }
+                }
+            }
+            node.checked := true
+            dirty := true
+        }
+    }
+    return true
+}
+
+proc mouse_down(x, y, button) {
+    mx := x
+    my := y
+    blink_at := time_ms()
+    if button != 1 {
+        return true
+    }
+    if popup != false {
+        alloc row := ui.asc + ui.desc + 6
+        if x >= popup[1] and x < popup[1] + popup[3] and y >= popup[2] + 1 {
+            alloc i := (y - popup[2] - 1) // row + popup[5]
+            if i < length(popup[4]) {
+                popup[0].sel := i
+            }
+        }
+        popup := false
+        dirty := true
+        return true
+    }
+    if y < BAR {
+        set_focus(false)
+        if x < 36 {
+            addr_focus := false
+            go_back()
+        } elif x < 66 {
+            addr_focus := false
+            go_forward()
+        } elif x < 104 {
+            addr_focus := false
+            if busy {
+                halt := true
+                io.stop()
+            } else {
+                reload()
+            }
+        } else {
+            if addr_focus == false {
+                addr_focus := true
+                addr_all := true
+                addr_caret := length(addr)
+            } else {
+                # put the caret where the click was
+                addr_all := false
+                alloc want := x - 118
+                alloc k := 0
+                alloc acc := 0
+                loop k < length(addr) {
+                    alloc a := font.advance(ui, addr[k])
+                    if acc + a / 2 > want {
+                        break
+                    }
+                    acc := acc + a
+                    k := k + 1
+                }
+                addr_caret := k
+            }
+        }
+        dirty := true
+        return true
+    }
+    if addr_focus {
+        addr_focus := false
+        set_addr(page_url)
+        dirty := true
+    }
+    if x >= W - SB {
+        alloc t := thumb()
+        if t != false {
+            if y >= t[0] and y < t[0] + t[1] {
+                drag := y - t[0]
+            } elif y < t[0] {
+                scroll_by(0 - (view_h() - 60))
+            } else {
+                scroll_by(view_h() - 60)
+            }
+            dirty := true
+        }
+        return true
+    }
+    alloc node := under(x, y)
+    press := node
+    if node == false {
+        set_focus(false)
+        return true
+    }
+    press_on(node, x)
+    return true
+}
+
+proc mouse_up(x, y, button) {
+    mx := x
+    my := y
+    if drag >= 0 {
+        drag := -1
+        dirty := true
+        return true
+    }
+    if button != 1 or press == false {
+        return true
+    }
+    alloc node := under(x, y)
+    alloc was := press
+    press := false
+    if node == false or uid_of(node) != uid_of(was) {
+        return true
+    }
+    alloc link := href_of(node)
+    if link != "" {
+        alloc p := url.parse(link)
+        if p != false and (p.scheme == "http" or p.scheme == "https" or p.scheme == "file" or p.scheme == "about" or p.scheme == "data") {
+            go(link, "GET", false, "", 0, 0)
+        } else {
+            set_status("The browser cannot open " + link)
+        }
+        return true
+    }
+    alloc tag := node.tag
+    if tag == "label" {
+        alloc target := labelled(node)
+        if target != false {
+            press_on(target, -1)
+        }
+        return true
+    }
+    if tag == "summary" {
+        if has_key(node, "form") and node.form != 0 {
+            alloc d := forms["" + node.form]
+            if has_key(d.attrs, "open") {
+                alloc kept := {}
+                for k in dict_keys(d.attrs) {
+                    if k != "open" {
+                        kept[k] := d.attrs[k]
+                    }
+                }
+                d.attrs := kept
+            } else {
+                d.attrs["open"] := ""
+            }
+            reflow()
+        }
+        return true
+    }
+    if tag == "button" {
+        alloc bt := "submit"
+        if has_key(node.attrs, "type") {
+            bt := u.lower(node.attrs["type"])
+        }
+        if bt == "submit" {
+            uid_of(node)
+            submit(node)
+        }
+        return true
+    }
+    if tag == "input" {
+        alloc t := lay.input_type(node)
+        if t == "submit" or t == "image" {
+            uid_of(node)
+            submit(node)
+        }
+    }
+    return true
+}
+
+proc resized(w, h) {
+    if w < 200 {
+        w := 200
+    }
+    if h < 120 {
+        h := 120
+    }
+    if w == W and h == H {
+        return true
+    }
+    W := w
+    H := h
+    gfx.resize(W, H)
+    popup := false
+    reflow()
+    dirty := true
+    return true
+}
+
+proc handle(ev) {
+    alloc kind := ev[0]
+    if kind == "move" {
+        moved(ev[1], ev[2])
+    } elif kind == "wheel" {
+        if popup != false {
+            popup[5] := popup[5] - ev[3] * 3
+            if popup[5] > length(popup[4]) - 5 {
+                popup[5] := length(popup[4]) - 5
+            }
+            if popup[5] < 0 {
+                popup[5] := 0
+            }
+            dirty := true
+        } else {
+            scroll_by(0 - ev[3] * 80)
+        }
+    } elif kind == "down" {
+        mouse_down(ev[1], ev[2], ev[3])
+    } elif kind == "up" {
+        mouse_up(ev[1], ev[2], ev[3])
+    } elif kind == "key" {
+        key(ev[1], ev[2])
+    } elif kind == "resize" {
+        resized(ev[1], ev[2])
+    } elif kind == "close" {
+        running := false
+        win := false
+        halt := true
+        io.stop()
+    }
+    return true
+}
+
+# Look at what the user did, and redraw if something changed. Called
+# over and over: from the main loop, and by the network code while it
+# waits, which is what keeps the window alive during a download.
+proc tick() {
+    if win == false {
+        return true
+    }
+    alloc ev := window_poll(win)
+    alloc n := 0
+    loop ev != false and running and n < 200 {
+        handle(ev)
+        n := n + 1
+        if win == false {
+            return true
+        }
+        ev := window_poll(win)
+    }
+    alloc now := time_ms()
+    if busy or addr_focus or focus != false {
+        # the caret blinks, the "working" line moves
+        if now - last_draw > 120 {
+            dirty := true
+        }
+    }
+    if dirty and now - last_draw >= 16 {
+        redraw()
+    }
+    return true
+}
+
+# --- start --------------------------------------------------------------------------------------
+
+proc main() {
+    alloc start := "about:home"
+    alloc shot := ""
+    alloc shot_scroll := 0
+    alloc page_only := false
+    alloc i := 1
+    loop i < length(args) {
+        alloc a := args[i]
+        if a == "--screenshot" and i + 1 < length(args) {
+            shot := args[i + 1]
+            i := i + 1
+        } elif a == "--size" and i + 1 < length(args) {
+            alloc parts := u.split(u.lower(args[i + 1]), "x")
+            if length(parts) == 2 {
+                W := u.to_int(parts[0], W)
+                H := u.to_int(parts[1], H)
+            }
+            i := i + 1
+        } elif a == "--scroll" and i + 1 < length(args) {
+            shot_scroll := u.to_int(args[i + 1], 0)
+            i := i + 1
+        } elif a == "--page-only" {
+            page_only := true
+        } elif a == "--proxy" and i + 1 < length(args) {
+            alloc hp := args[i + 1]
+            if u.contains(hp, "://") {
+                hp := hp[u.find(hp, "://") + 3:]
+            }
+            hp := u.replace(hp, "/", "")
+            alloc colon := u.find(hp, ":")
+            if colon > 0 {
+                net.set_proxy(hp[0:colon], u.to_int(hp[colon + 1:], 8080))
+            } else {
+                net.set_proxy(hp, 8080)
+            }
+            i := i + 1
+        } elif a == "--ca-file" and i + 1 < length(args) {
+            if tls.add_ca_file(args[i + 1]) == false {
+                emit "browser: cannot read certificates from " + args[i + 1]
+            }
+            i := i + 1
+        } elif u.starts_with(a, "--") {
+            emit "browser: unknown option " + a
+            return 2
+        } else {
+            start := url.from_typed(a)
+            if url.is_absolute(a) == false and u.contains(a, "://") == false and file_exists(a) {
+                # a file named from where the browser was started
+                start := url.from_path(current_dir + "/" + a)
+            }
+        }
+        i := i + 1
+    }
+    ui := font.pick(["sans-serif"], 14, false, false)
+    if ui == false {
+        emit "browser: no usable font found on this system"
+        return 1
+    }
+    if shot != "" {
+        headless := true
+        if page_only {
+            BAR := 0
+            SB := 0
+        }
+        gfx.resize(W, H)
+        go(start, "GET", false, "", 0, 0)
+        sy := shot_scroll
+        clamp_scroll()
+        redraw()
+        gfx.save_png(shot)
+        net.close_all()
+        return 0
+    }
+    gfx.resize(W, H)
+    win := window_open("OMG browser", W, H)
+    io.set_idle(tick)
+    redraw()
+    go(start, "GET", false, "", 0, 0)
+    loop running {
+        tick()
+        if running and dirty == false {
+            sleep_ms(8)
+        }
+    }
+    if win != false {
+        window_close(win)
+    }
+    net.close_all()
+    return 0
+}
+
+exit(main())

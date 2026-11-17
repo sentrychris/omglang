@@ -1,0 +1,419 @@
+;;;omg
+
+# tools/browser/util.omg
+#
+# Small things every part of the browser needs: text as bytes and as
+# Unicode numbers, and the string helpers the language leaves out.
+
+# The Unicode numbers of the characters in a UTF-8 byte list, from
+# index `from` up to `to`. A byte that is not UTF-8 counts as the
+# character with that number, which is what it would be in Latin-1.
+proc decode_range(b, from, to) {
+    alloc out := []
+    alloc i := from
+    loop i < to {
+        alloc c := b[i]
+        if c < 128 {
+            append(out, c)
+            i := i + 1
+        } elif c >= 194 and c < 224 and i + 1 < to and (b[i + 1] & 192) == 128 {
+            append(out, ((c & 31) << 6) | (b[i + 1] & 63))
+            i := i + 2
+        } elif c >= 224 and c < 240 and i + 2 < to and (b[i + 1] & 192) == 128 and (b[i + 2] & 192) == 128 {
+            append(out, ((c & 15) << 12) | ((b[i + 1] & 63) << 6) | (b[i + 2] & 63))
+            i := i + 3
+        } elif c >= 240 and c < 245 and i + 3 < to and (b[i + 1] & 192) == 128 and (b[i + 2] & 192) == 128 and (b[i + 3] & 192) == 128 {
+            append(out, ((c & 7) << 18) | ((b[i + 1] & 63) << 12) | ((b[i + 2] & 63) << 6) | (b[i + 3] & 63))
+            i := i + 4
+        } else {
+            append(out, c)
+            i := i + 1
+        }
+    }
+    return out
+}
+
+# The Unicode numbers of the characters of a string.
+proc cps(s) {
+    alloc b := string_bytes(s)
+    return decode_range(b, 0, length(b))
+}
+
+# Add the UTF-8 form of character `c` to the byte list `out`.
+proc put_utf8(out, c) {
+    if c < 128 {
+        append(out, c)
+    } elif c < 2048 {
+        append(out, 192 | (c >> 6))
+        append(out, 128 | (c & 63))
+    } elif c < 65536 {
+        append(out, 224 | (c >> 12))
+        append(out, 128 | ((c >> 6) & 63))
+        append(out, 128 | (c & 63))
+    } else {
+        append(out, 240 | ((c >> 18) & 7))
+        append(out, 128 | ((c >> 12) & 63))
+        append(out, 128 | ((c >> 6) & 63))
+        append(out, 128 | (c & 63))
+    }
+    return out
+}
+
+# A string from a list of Unicode numbers, from index `from` up to `to`.
+proc encode_range(list, from, to) {
+    alloc out := to_bytes([])
+    alloc i := from
+    loop i < to {
+        put_utf8(out, list[i])
+        i := i + 1
+    }
+    return bytes_to_string(out)
+}
+
+proc encode(list) {
+    return encode_range(list, 0, length(list))
+}
+
+# A string of one character.
+proc char(c) {
+    return bytes_to_string(put_utf8(to_bytes([]), c))
+}
+
+# Add the bytes of string s to the byte list out.
+proc put_str(out, s) {
+    alloc b := string_bytes(s)
+    alloc n := length(b)
+    alloc at := length(out)
+    alloc i := 0
+    loop i < n {
+        append(out, b[i])
+        i := i + 1
+    }
+    return out
+}
+
+# The string in lower case (the letters A to Z only).
+proc lower(s) {
+    alloc b := string_bytes(s)
+    alloc n := length(b)
+    alloc i := 0
+    alloc changed := false
+    loop i < n {
+        alloc c := b[i]
+        if c >= 65 and c <= 90 {
+            b[i] := c + 32
+            changed := true
+        }
+        i := i + 1
+    }
+    if changed {
+        return bytes_to_string(b)
+    }
+    return s
+}
+
+proc upper(s) {
+    alloc b := string_bytes(s)
+    alloc n := length(b)
+    alloc i := 0
+    loop i < n {
+        alloc c := b[i]
+        if c >= 97 and c <= 122 {
+            b[i] := c - 32
+        }
+        i := i + 1
+    }
+    return bytes_to_string(b)
+}
+
+proc is_space(c) {
+    return c == 32 or c == 9 or c == 10 or c == 13 or c == 12
+}
+
+# Without the white space at either end.
+proc trim(s) {
+    alloc b := string_bytes(s)
+    alloc n := length(b)
+    alloc a := 0
+    loop a < n and is_space(b[a]) {
+        a := a + 1
+    }
+    alloc z := n
+    loop z > a and is_space(b[z - 1]) {
+        z := z - 1
+    }
+    if a == 0 and z == n {
+        return s
+    }
+    return bytes_to_string(b[a:z])
+}
+
+proc starts_with(s, prefix) {
+    alloc n := length(prefix)
+    if length(s) < n {
+        return false
+    }
+    return s[0:n] == prefix
+}
+
+proc ends_with(s, suffix) {
+    alloc n := length(suffix)
+    alloc m := length(s)
+    if m < n {
+        return false
+    }
+    return s[m - n:] == suffix
+}
+
+# Where `needle` first is in `s` at or after `from`, counted in
+# bytes; -1 when it is not there.
+proc find_bytes(b, nb, from) {
+    alloc n := length(b)
+    alloc m := length(nb)
+    if m == 0 {
+        return from
+    }
+    alloc first := nb[0]
+    alloc i := from
+    alloc last := n - m
+    loop i <= last {
+        if b[i] == first {
+            alloc j := 1
+            loop j < m and b[i + j] == nb[j] {
+                j := j + 1
+            }
+            if j == m {
+                return i
+            }
+        }
+        i := i + 1
+    }
+    return -1
+}
+
+# Where `needle` first is in `s` (a character index for plain ASCII
+# text, which is what this is used on); -1 when it is not there.
+proc find(s, needle) {
+    return find_bytes(string_bytes(s), string_bytes(needle), 0)
+}
+
+proc contains(s, needle) {
+    return find(s, needle) >= 0
+}
+
+# The pieces of s between occurrences of the one-byte separator.
+proc split(s, sep) {
+    alloc b := string_bytes(s)
+    alloc n := length(b)
+    alloc c := string_bytes(sep)[0]
+    alloc out := []
+    alloc start := 0
+    alloc i := 0
+    loop i < n {
+        if b[i] == c {
+            append(out, bytes_to_string(b[start:i]))
+            start := i + 1
+        }
+        i := i + 1
+    }
+    append(out, bytes_to_string(b[start:n]))
+    return out
+}
+
+# The words of s: the pieces between runs of white space.
+proc words(s) {
+    alloc b := string_bytes(s)
+    alloc n := length(b)
+    alloc out := []
+    alloc i := 0
+    loop i < n {
+        loop i < n and is_space(b[i]) {
+            i := i + 1
+        }
+        alloc start := i
+        loop i < n and is_space(b[i]) == false {
+            i := i + 1
+        }
+        if i > start {
+            append(out, bytes_to_string(b[start:i]))
+        }
+    }
+    return out
+}
+
+proc join(parts, sep) {
+    alloc out := to_bytes([])
+    alloc first := true
+    for p in parts {
+        if first == false {
+            put_str(out, sep)
+        }
+        put_str(out, p)
+        first := false
+    }
+    return bytes_to_string(out)
+}
+
+# Every `what` in s replaced by `with`.
+proc replace(s, what, with) {
+    alloc b := string_bytes(s)
+    alloc w := string_bytes(what)
+    alloc at := find_bytes(b, w, 0)
+    if at < 0 {
+        return s
+    }
+    alloc out := to_bytes([])
+    alloc from := 0
+    loop at >= 0 {
+        out := out + b[from:at]
+        put_str(out, with)
+        from := at + length(w)
+        at := find_bytes(b, w, from)
+    }
+    out := out + b[from:]
+    return bytes_to_string(out)
+}
+
+# A whole number from the digits at the start of s (after spaces and a
+# sign); `otherwise` when there are none.
+proc to_int(s, otherwise) {
+    alloc b := string_bytes(s)
+    alloc n := length(b)
+    alloc i := 0
+    loop i < n and is_space(b[i]) {
+        i := i + 1
+    }
+    alloc neg := false
+    if i < n and (b[i] == 45 or b[i] == 43) {
+        neg := b[i] == 45
+        i := i + 1
+    }
+    alloc v := 0
+    alloc digits := 0
+    loop i < n and b[i] >= 48 and b[i] <= 57 and digits < 15 {
+        v := v * 10 + b[i] - 48
+        digits := digits + 1
+        i := i + 1
+    }
+    if digits == 0 {
+        return otherwise
+    }
+    if neg {
+        return 0 - v
+    }
+    return v
+}
+
+# A number, whole or with a fraction, from the start of the byte list
+# at index i: [value, index after it], or false when no number starts
+# there. Exponents are understood ("1e3").
+proc number_at(b, i, n) {
+    alloc start := i
+    alloc neg := false
+    if i < n and (b[i] == 45 or b[i] == 43) {
+        neg := b[i] == 45
+        i := i + 1
+    }
+    alloc v := 0
+    alloc digits := 0
+    loop i < n and b[i] >= 48 and b[i] <= 57 {
+        if digits < 15 {
+            v := v * 10 + b[i] - 48
+        }
+        digits := digits + 1
+        i := i + 1
+    }
+    alloc is_float := false
+    if i + 1 < n and b[i] == 46 and b[i + 1] >= 48 and b[i + 1] <= 57 {
+        is_float := true
+        i := i + 1
+        alloc scale := 1.0
+        alloc frac := 0.0
+        alloc fd := 0
+        loop i < n and b[i] >= 48 and b[i] <= 57 {
+            if fd < 12 {
+                scale := scale * 10
+                frac := frac * 10 + (b[i] - 48)
+                fd := fd + 1
+            }
+            digits := digits + 1
+            i := i + 1
+        }
+        v := v + frac / scale
+    }
+    if digits == 0 {
+        return false
+    }
+    if i + 1 < n and (b[i] == 101 or b[i] == 69) {
+        alloc j := i + 1
+        alloc eneg := false
+        if b[j] == 45 or b[j] == 43 {
+            eneg := b[j] == 45
+            j := j + 1
+        }
+        if j < n and b[j] >= 48 and b[j] <= 57 {
+            alloc e := 0
+            loop j < n and b[j] >= 48 and b[j] <= 57 and e < 400 {
+                e := e * 10 + b[j] - 48
+                j := j + 1
+            }
+            alloc k := 0
+            v := v * 1.0
+            loop k < e and k < 40 {
+                if eneg {
+                    v := v / 10
+                } else {
+                    v := v * 10
+                }
+                k := k + 1
+            }
+            i := j
+        }
+    }
+    if neg {
+        v := 0 - v
+    }
+    return [v, i]
+}
+
+# A number from a string, or `otherwise`.
+proc to_number(s, otherwise) {
+    alloc b := string_bytes(trim(s))
+    alloc r := number_at(b, 0, length(b))
+    if r == false {
+        return otherwise
+    }
+    return r[0]
+}
+
+# Is v a string? (The language has no way to ask; this is the trick.)
+proc is_str(v) {
+    return v[0:0] == ""
+}
+
+# All the bytes of a file, or false.
+proc read_bytes(path) {
+    alloc b := false
+    try {
+        alloc h := file_open(path, "rb")
+        b := file_read(h)
+        file_close(h)
+    } except e {
+        return false
+    }
+    return b
+}
+
+proc max(a, b) {
+    if a > b {
+        return a
+    }
+    return b
+}
+
+proc min(a, b) {
+    if a < b {
+        return a
+    }
+    return b
+}

@@ -1,0 +1,411 @@
+;;;omg
+
+# tools/browser/url.omg
+#
+# Web addresses: taking one apart, working out what a link written
+# on a page points at, and the %XX spelling of awkward characters.
+
+import "util.omg" as u
+
+proc is_alpha(c) {
+    return (c >= 97 and c <= 122) or (c >= 65 and c <= 90)
+}
+
+# The length of the scheme at the start of s ("https" of "https://x"),
+# or 0 when s does not start with one.
+proc scheme_len(s) {
+    alloc b := string_bytes(s)
+    alloc n := length(b)
+    if n == 0 or is_alpha(b[0]) == false {
+        return 0
+    }
+    alloc i := 1
+    loop i < n {
+        alloc c := b[i]
+        if c == 58 {
+            return i
+        }
+        if (is_alpha(c) or (c >= 48 and c <= 57) or c == 43 or c == 45 or c == 46) == false {
+            return 0
+        }
+        i := i + 1
+    }
+    return 0
+}
+
+proc default_port(scheme) {
+    if scheme == "https" {
+        return 443
+    }
+    if scheme == "http" {
+        return 80
+    }
+    return 0
+}
+
+# Spaces and line ends do not belong in an address.
+proc clean(s) {
+    s := u.trim(s)
+    alloc b := string_bytes(s)
+    alloc out := to_bytes([])
+    alloc dirty := false
+    for c in b {
+        if c == 10 or c == 13 or c == 9 {
+            dirty := true
+        } else {
+            append(out, c)
+        }
+    }
+    if dirty {
+        return bytes_to_string(out)
+    }
+    return s
+}
+
+# Take "." and ".." steps out of a path.
+proc normal_path(path) {
+    alloc parts := u.split(path, "/")
+    alloc out := []
+    alloc n := 0
+    alloc i := 0
+    alloc count := length(parts)
+    loop i < count {
+        alloc p := parts[i]
+        alloc last := i == count - 1
+        if p == "." or p == "%2e" or p == "%2E" {
+            if last {
+                if n < length(out) {
+                    out[n] := ""
+                } else {
+                    append(out, "")
+                }
+                n := n + 1
+            }
+        } elif p == ".." {
+            if n > 1 {
+                n := n - 1
+            }
+            if last {
+                if n < length(out) {
+                    out[n] := ""
+                } else {
+                    append(out, "")
+                }
+                n := n + 1
+            }
+        } else {
+            if n < length(out) {
+                out[n] := p
+            } else {
+                append(out, p)
+            }
+            n := n + 1
+        }
+        i := i + 1
+    }
+    alloc s := ""
+    i := 0
+    loop i < n {
+        if i > 0 {
+            s := s + "/"
+        }
+        s := s + out[i]
+        i := i + 1
+    }
+    if u.starts_with(s, "/") == false {
+        s := "/" + s
+    }
+    return s
+}
+
+# An address in its parts: {scheme, host, port, path, query, frag}.
+# query keeps its "?" and frag its "#"; port is 0 when the scheme's
+# usual one is meant. false when s is not an address this understands.
+proc parse(s) {
+    s := clean(s)
+    alloc sl := scheme_len(s)
+    if sl == 0 {
+        return false
+    }
+    alloc scheme := u.lower(s[0:sl])
+    alloc rest := s[sl + 1:]
+    alloc frag := ""
+    alloc at := u.find(rest, "#")
+    if at >= 0 {
+        frag := rest[at:]
+        rest := rest[0:at]
+    }
+    if scheme != "http" and scheme != "https" and scheme != "file" {
+        # about:, data:, mailto: and the like: no parts inside
+        return {scheme: scheme, host: "", port: 0, path: rest, query: "", frag: frag}
+    }
+    alloc query := ""
+    at := u.find(rest, "?")
+    if at >= 0 {
+        query := rest[at:]
+        rest := rest[0:at]
+    }
+    rest := u.replace(rest, "\\", "/")
+    alloc host := ""
+    alloc port := 0
+    alloc path := rest
+    if u.starts_with(rest, "//") {
+        rest := rest[2:]
+        at := u.find(rest, "/")
+        alloc auth := rest
+        path := "/"
+        if at >= 0 {
+            auth := rest[0:at]
+            path := rest[at:]
+        }
+        at := u.find(auth, "@")
+        if at >= 0 {
+            auth := auth[at + 1:]
+        }
+        host := auth
+        alloc colon := u.find(auth, ":")
+        if u.starts_with(auth, "[") {
+            # an IPv6 address in brackets
+            alloc close := u.find(auth, "]")
+            colon := -1
+            if close >= 0 {
+                host := auth[0:close + 1]
+                if length(auth) > close + 1 and auth[close + 1:close + 2] == ":" {
+                    colon := close + 1
+                }
+            }
+        }
+        if colon >= 0 {
+            host := auth[0:colon]
+            port := u.to_int(auth[colon + 1:], 0)
+            if port == default_port(scheme) {
+                port := 0
+            }
+        }
+        host := u.lower(host)
+    } elif scheme != "file" {
+        return false
+    }
+    if scheme != "file" {
+        if host == "" {
+            return false
+        }
+        path := normal_path(path)
+    }
+    return {scheme: scheme, host: host, port: port, path: path, query: query, frag: frag}
+}
+
+proc to_string(p) {
+    if p.scheme != "http" and p.scheme != "https" and p.scheme != "file" {
+        return p.scheme + ":" + p.path + p.frag
+    }
+    alloc s := p.scheme + "://" + p.host
+    if p.port != 0 {
+        s := s + ":" + p.port
+    }
+    return s + p.path + p.query + p.frag
+}
+
+# The address without its "#..." end.
+proc without_frag(s) {
+    alloc at := u.find(s, "#")
+    if at >= 0 {
+        return s[0:at]
+    }
+    return s
+}
+
+# "https://host:port" of an address.
+proc origin(p) {
+    alloc s := p.scheme + "://" + p.host
+    if p.port != 0 {
+        s := s + ":" + p.port
+    }
+    return s
+}
+
+# What `ref`, as written in a page at address `base`, points at:
+# a whole address, or "" when it makes none.
+proc resolve(base, ref) {
+    ref := clean(ref)
+    alloc sl := scheme_len(ref)
+    if sl > 0 {
+        alloc scheme := u.lower(ref[0:sl])
+        if scheme == "http" or scheme == "https" or scheme == "file" {
+            alloc p := parse(ref)
+            if p != false {
+                return to_string(p)
+            }
+            # "http:page.html": the scheme, then a relative address
+            ref := ref[sl + 1:]
+        } else {
+            return ref
+        }
+    }
+    alloc b := parse(base)
+    if b == false {
+        return ""
+    }
+    if b.scheme != "http" and b.scheme != "https" and b.scheme != "file" {
+        if u.starts_with(ref, "#") {
+            return b.scheme + ":" + b.path + ref
+        }
+        return ""
+    }
+    if ref == "" {
+        b.frag := ""
+        return to_string(b)
+    }
+    if u.starts_with(ref, "#") {
+        b.frag := ref
+        return to_string(b)
+    }
+    ref := u.replace(ref, "\\", "/")
+    if u.starts_with(ref, "//") {
+        alloc p2 := parse(b.scheme + ":" + ref)
+        if p2 == false {
+            return ""
+        }
+        return to_string(p2)
+    }
+    alloc frag := ""
+    alloc at := u.find(ref, "#")
+    if at >= 0 {
+        frag := ref[at:]
+        ref := ref[0:at]
+    }
+    alloc query := ""
+    at := u.find(ref, "?")
+    if at >= 0 {
+        query := ref[at:]
+        ref := ref[0:at]
+    }
+    b.frag := frag
+    if ref == "" {
+        if query != "" {
+            b.query := query
+        }
+        return to_string(b)
+    }
+    b.query := query
+    if u.starts_with(ref, "/") {
+        b.path := normal_path(ref)
+        return to_string(b)
+    }
+    alloc dir := b.path
+    alloc cut := length(dir) - 1
+    alloc db := string_bytes(dir)
+    loop cut >= 0 and db[cut] != 47 {
+        cut := cut - 1
+    }
+    b.path := normal_path(dir[0:cut + 1] + ref)
+    return to_string(b)
+}
+
+alloc HEX := "0123456789ABCDEF"
+
+# Spell the bytes that cannot stand in an address as %XX. `form`
+# is for the fields of a form: there a space is "+" and nearly
+# everything else is spelled out.
+proc escape(s, form) {
+    alloc b := string_bytes(s)
+    alloc out := to_bytes([])
+    for c in b {
+        alloc keep := (c >= 48 and c <= 57) or is_alpha(c) or c == 45 or c == 46 or c == 95 or c == 42
+        if form == false and keep == false {
+            # in an address most punctuation means something: leave it
+            keep := c > 32 and c < 127 and c != 34 and c != 60 and c != 62 and c != 96 and c != 123 and c != 125 and c != 124 and c != 94
+        }
+        if keep {
+            append(out, c)
+        } elif c == 32 and form {
+            append(out, 43)
+        } else {
+            append(out, 37)
+            append(out, string_bytes(HEX)[c >> 4])
+            append(out, string_bytes(HEX)[c & 15])
+        }
+    }
+    return bytes_to_string(out)
+}
+
+proc hex_digit(c) {
+    if c >= 48 and c <= 57 {
+        return c - 48
+    }
+    if c >= 97 and c <= 102 {
+        return c - 87
+    }
+    if c >= 65 and c <= 70 {
+        return c - 55
+    }
+    return -1
+}
+
+# The bytes a %XX spelling stands for.
+proc unescape_bytes(s) {
+    alloc b := string_bytes(s)
+    alloc n := length(b)
+    alloc out := to_bytes([])
+    alloc i := 0
+    loop i < n {
+        alloc c := b[i]
+        if c == 37 and i + 2 < n + 0 and hex_digit(b[i + 1]) >= 0 and hex_digit(b[i + 2]) >= 0 {
+            append(out, hex_digit(b[i + 1]) * 16 + hex_digit(b[i + 2]))
+            i := i + 3
+        } else {
+            append(out, c)
+            i := i + 1
+        }
+    }
+    return out
+}
+
+# The address of a file on the disk, given its whole path.
+proc from_path(path) {
+    path := u.replace(path, "\\", "/")
+    if u.starts_with(path, "/") == false and u.starts_with(path, "~") == false and u.starts_with(path, ".") == false {
+        # "C:/Users/..." on Windows
+        path := "/" + path
+    }
+    return "file://" + escape(path, false)
+}
+
+# Whether a path names its place whole ("/x", "C:\x") and not from
+# the folder the program was started in.
+proc is_absolute(path) {
+    if u.starts_with(path, "/") or u.starts_with(path, "\\") {
+        return true
+    }
+    return length(path) > 2 and path[1:2] == ":" and (path[2:3] == "\\" or path[2:3] == "/")
+}
+
+# What someone typed in the address bar, as an address: a path on
+# the disk, a site with or without its "https://", or a search.
+proc from_typed(text) {
+    text := u.trim(text)
+    if text == "" {
+        return ""
+    }
+    alloc sl := scheme_len(text)
+    if sl > 1 and (u.contains(text, "://") or u.starts_with(text, "about:") or u.starts_with(text, "data:")) {
+        alloc p := parse(text)
+        if p != false {
+            return to_string(p)
+        }
+    }
+    if u.starts_with(text, "/") or u.starts_with(text, "./") or u.starts_with(text, "~") or (sl == 1 and length(text) > 2 and (text[2:3] == "\\" or text[2:3] == "/")) {
+        return from_path(text)
+    }
+    if u.contains(text, " ") == false and (u.contains(text, ".") or u.starts_with(text, "localhost") or (sl > 0 and u.to_int(text[sl + 1:], -1) >= 0)) {
+        alloc guess := "https://"
+        if u.starts_with(text, "localhost") or u.starts_with(text, "127.") or u.starts_with(text, "192.168.") or u.starts_with(text, "10.") {
+            guess := "http://"
+        }
+        alloc p2 := parse(guess + text)
+        if p2 != false {
+            return to_string(p2)
+        }
+    }
+    return "https://duckduckgo.com/html/?q=" + escape(text, true)
+}

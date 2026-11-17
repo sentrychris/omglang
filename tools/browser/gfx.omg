@@ -1,0 +1,703 @@
+;;;omg
+
+# tools/browser/gfx.omg
+#
+# The picture the browser draws into: one number per pixel, as
+# window_draw wants them, and the few ways of changing it: fill a
+# rectangle, lay down a letter, put a picture in. Everything is cut off
+# at a clip rectangle, which is how a scrolled box hides what has
+# scrolled out of it.
+#
+# A colour is alpha * 16777216 + red * 65536 + green * 256 + blue, with
+# alpha 255 for solid and 0 for nothing at all.
+
+import "font.omg" as font
+
+alloc px := []
+alloc cw := 0
+alloc ch := 0
+alloc kx0 := 0                 # the clip: columns kx0 up to kx1, rows ky0 up to ky1
+alloc ky0 := 0
+alloc kx1 := 0
+alloc ky1 := 0
+
+# A new picture of w x h pixels, white.
+proc resize(w, h) {
+    cw := w
+    ch := h
+    px := list_repeat(16777215, w * h)
+    kx0 := 0
+    ky0 := 0
+    kx1 := w
+    ky1 := h
+    return true
+}
+
+proc pixels() {
+    return px
+}
+
+proc width() {
+    return cw
+}
+
+proc height() {
+    return ch
+}
+
+# Draw only inside this rectangle from now on (and inside the picture).
+proc clip(x0, y0, x1, y1) {
+    if x0 < 0 { x0 := 0 }
+    if y0 < 0 { y0 := 0 }
+    if x1 > cw { x1 := cw }
+    if y1 > ch { y1 := ch }
+    if x1 < x0 { x1 := x0 }
+    if y1 < y0 { y1 := y0 }
+    kx0 := x0
+    ky0 := y0
+    kx1 := x1
+    ky1 := y1
+    return true
+}
+
+proc get_clip() {
+    return [kx0, ky0, kx1, ky1]
+}
+
+proc unclip() {
+    return clip(0, 0, cw, ch)
+}
+
+# Fill the rectangle with a colour, which may be see-through.
+proc fill(x, y, w, h, color) {
+    alloc a := (color >> 24) & 255
+    if a == 0 {
+        return 0
+    }
+    alloc x0 := x
+    alloc y0 := y
+    alloc x1 := x + w
+    alloc y1 := y + h
+    if x0 < kx0 { x0 := kx0 }
+    if y0 < ky0 { y0 := ky0 }
+    if x1 > kx1 { x1 := kx1 }
+    if y1 > ky1 { y1 := ky1 }
+    if x1 <= x0 or y1 <= y0 {
+        return 0
+    }
+    alloc p := px
+    alloc stride := cw
+    alloc rgb := color & 16777215
+    alloc yy := y0
+    if a == 255 {
+        loop yy < y1 {
+            alloc i := yy * stride + x0
+            alloc end := yy * stride + x1
+            loop i < end {
+                p[i] := rgb
+                i := i + 1
+            }
+            yy := yy + 1
+        }
+        return 0
+    }
+    alloc a256 := a + (a >> 7)
+    alloc ia := 256 - a256
+    alloc srb := (rgb & 16711935) * a256
+    alloc sg := (rgb & 65280) * a256
+    loop yy < y1 {
+        alloc i2 := yy * stride + x0
+        alloc end2 := yy * stride + x1
+        loop i2 < end2 {
+            alloc d := p[i2]
+            p[i2] := (((srb + (d & 16711935) * ia) >> 8) & 16711935) | (((sg + (d & 65280) * ia) >> 8) & 65280)
+            i2 := i2 + 1
+        }
+        yy := yy + 1
+    }
+    return 0
+}
+
+# The outline of a rectangle, t pixels thick, inside it.
+proc frame(x, y, w, h, t, color) {
+    fill(x, y, w, t, color)
+    fill(x, y + h - t, w, t, color)
+    fill(x, y + t, t, h - 2 * t, color)
+    fill(x + w - t, y + t, t, h - 2 * t, color)
+    return 0
+}
+
+# Lay a coverage map (see font.raster) down in a colour, its top left
+# pixel at (x, y).
+proc blit(bm, bw, bh, x, y, color) {
+    alloc alpha := (color >> 24) & 255
+    if alpha == 0 {
+        return 0
+    }
+    alloc c0 := 0
+    alloc r0 := 0
+    alloc c1 := bw
+    alloc r1 := bh
+    if x < kx0 { c0 := kx0 - x }
+    if y < ky0 { r0 := ky0 - y }
+    if x + bw > kx1 { c1 := kx1 - x }
+    if y + bh > ky1 { r1 := ky1 - y }
+    if c1 <= c0 or r1 <= r0 {
+        return 0
+    }
+    alloc p := px
+    alloc stride := cw
+    alloc rgb := color & 16777215
+    alloc srb := rgb & 16711935
+    alloc sg := rgb & 65280
+    alloc r := r0
+    loop r < r1 {
+        alloc si := r * bw + c0
+        alloc di := (y + r) * stride + x + c0
+        alloc n := c1 - c0
+        loop n > 0 {
+            alloc c := bm[si]
+            if c != 0 {
+                if alpha != 255 {
+                    c := (c * alpha + 127) // 255
+                }
+                if c >= 255 {
+                    p[di] := rgb
+                } else {
+                    alloc a256 := c + (c >> 7)
+                    alloc ia := 256 - a256
+                    alloc d := p[di]
+                    p[di] := (((srb * a256 + (d & 16711935) * ia) >> 8) & 16711935) | (((sg * a256 + (d & 65280) * ia) >> 8) & 65280)
+                }
+            }
+            si := si + 1
+            di := di + 1
+            n := n - 1
+        }
+        r := r + 1
+    }
+    return 0
+}
+
+# Draw the characters list[from:to] (Unicode numbers) in font f, the
+# pen starting at x on the baseline y. Returns where the pen ends.
+proc text(f, list, from, to, x, y, color) {
+    alloc i := from
+    loop i < to {
+        alloc cp := list[i]
+        alloc g := font.glyph(f, cp)
+        if g[0] > 0 {
+            blit(g[4], g[0], g[1], x + g[2], y + g[3], color)
+        }
+        x := x + font.advance(f, cp)
+        i := i + 1
+    }
+    return x
+}
+
+# Draw a picture: `data` holds iw x ih pixels of four bytes each (red,
+# green, blue, alpha), and it goes into the rectangle dw x dh at
+# (dx, dy), stretched or shrunk to fit.
+proc image(data, iw, ih, dx, dy, dw, dh) {
+    if dw <= 0 or dh <= 0 or iw <= 0 or ih <= 0 {
+        return 0
+    }
+    alloc x0 := dx
+    alloc y0 := dy
+    alloc x1 := dx + dw
+    alloc y1 := dy + dh
+    if x0 < kx0 { x0 := kx0 }
+    if y0 < ky0 { y0 := ky0 }
+    if x1 > kx1 { x1 := kx1 }
+    if y1 > ky1 { y1 := ky1 }
+    if x1 <= x0 or y1 <= y0 {
+        return 0
+    }
+    alloc p := px
+    alloc stride := cw
+    alloc xstep := (iw << 16) // dw
+    alloc ystep := (ih << 16) // dh
+    alloc yy := y0
+    loop yy < y1 {
+        alloc sy := ((yy - dy) * ystep + (ystep >> 1)) >> 16
+        if sy >= ih {
+            sy := ih - 1
+        }
+        alloc srow := sy * iw * 4
+        alloc fx := (x0 - dx) * xstep + (xstep >> 1)
+        alloc di := yy * stride + x0
+        alloc n := x1 - x0
+        loop n > 0 {
+            alloc sx := fx >> 16
+            if sx >= iw {
+                sx := iw - 1
+            }
+            alloc si := srow + sx * 4
+            alloc a := data[si + 3]
+            if a == 255 {
+                p[di] := (data[si] << 16) | (data[si + 1] << 8) | data[si + 2]
+            } elif a != 0 {
+                alloc a256 := a + (a >> 7)
+                alloc ia := 256 - a256
+                alloc d := p[di]
+                alloc srb := (data[si] << 16) | data[si + 2]
+                alloc sg := data[si + 1] << 8
+                p[di] := (((srb * a256 + (d & 16711935) * ia) >> 8) & 16711935) | (((sg * a256 + (d & 65280) * ia) >> 8) & 65280)
+            }
+            fx := fx + xstep
+            di := di + 1
+            n := n - 1
+        }
+        yy := yy + 1
+    }
+    return 0
+}
+
+# --- saving the picture as a PNG file --------------------------------------------
+#
+# For looking at what was drawn without a screen. The pixel data of a
+# PNG is a zlib stream; this writes one that does not compress
+# ("stored" blocks), which every reader accepts.
+
+alloc crc_table := []
+
+proc crc_init() {
+    alloc n := 0
+    loop n < 256 {
+        alloc c := n
+        alloc k := 0
+        loop k < 8 {
+            if (c & 1) != 0 {
+                c := 3988292384 ^ (c >> 1)
+            } else {
+                c := c >> 1
+            }
+            k := k + 1
+        }
+        append(crc_table, c)
+        n := n + 1
+    }
+    return 0
+}
+
+proc put32(out, v) {
+    append(out, (v >> 24) & 255)
+    append(out, (v >> 16) & 255)
+    append(out, (v >> 8) & 255)
+    append(out, v & 255)
+    return 0
+}
+
+proc chunk(out, kind, body) {
+    if length(crc_table) == 0 {
+        crc_init()
+    }
+    put32(out, length(body))
+    alloc kb := string_bytes(kind)
+    alloc c := 4294967295
+    alloc t := crc_table
+    for b in kb {
+        append(out, b)
+        c := t[(c ^ b) & 255] ^ (c >> 8)
+    }
+    alloc n := length(body)
+    alloc i := 0
+    loop i < n {
+        alloc v := body[i]
+        append(out, v)
+        c := t[(c ^ v) & 255] ^ (c >> 8)
+        i := i + 1
+    }
+    put32(out, c ^ 4294967295)
+    return 0
+}
+
+# The picture as the bytes of a PNG file.
+proc png() {
+    alloc out := to_bytes([137, 80, 78, 71, 13, 10, 26, 10])
+    alloc head := to_bytes([])
+    put32(head, cw)
+    put32(head, ch)
+    append(head, 8)
+    append(head, 2)
+    append(head, 0)
+    append(head, 0)
+    append(head, 0)
+    chunk(out, "IHDR", head)
+    alloc raw := bytes_repeat(0, (cw * 3 + 1) * ch)
+    alloc p := px
+    alloc o := 0
+    alloc i := 0
+    alloc y := 0
+    loop y < ch {
+        o := o + 1
+        alloc x := 0
+        loop x < cw {
+            alloc v := p[i]
+            raw[o] := (v >> 16) & 255
+            raw[o + 1] := (v >> 8) & 255
+            raw[o + 2] := v & 255
+            o := o + 3
+            i := i + 1
+            x := x + 1
+        }
+        y := y + 1
+    }
+    alloc n := length(raw)
+    alloc z := to_bytes([120, 1])
+    alloc at := 0
+    alloc s1 := 1
+    alloc s2 := 0
+    loop at < n or at == 0 {
+        alloc len := n - at
+        if len > 65535 {
+            len := 65535
+        }
+        if at + len >= n {
+            append(z, 1)
+        } else {
+            append(z, 0)
+        }
+        append(z, len & 255)
+        append(z, len >> 8)
+        append(z, (len ^ 65535) & 255)
+        append(z, (len ^ 65535) >> 8)
+        alloc before := length(z)
+        z := z + raw[at:at + len]
+        alloc k := at
+        alloc stop := at + len
+        loop k < stop {
+            # Adler-32, taking the remainder every so often
+            alloc lim := k + 3800
+            if lim > stop {
+                lim := stop
+            }
+            loop k < lim {
+                s1 := s1 + raw[k]
+                s2 := s2 + s1
+                k := k + 1
+            }
+            s1 := s1 % 65521
+            s2 := s2 % 65521
+        }
+        at := at + len
+        if n == 0 {
+            break
+        }
+    }
+    put32(z, (s2 << 16) | s1)
+    chunk(out, "IDAT", z)
+    chunk(out, "IEND", to_bytes([]))
+    return out
+}
+
+proc save_png(path) {
+    alloc h := file_open(path, "wb")
+    file_write(h, png())
+    file_close(h)
+    return true
+}
+
+# --- shapes ----------------------------------------------------------------------------
+
+# Blend one pixel: cov is how much of it the shape covers, 0 to 255.
+proc dot(x, y, cov, color) {
+    if x < kx0 or x >= kx1 or y < ky0 or y >= ky1 {
+        return 0
+    }
+    alloc a := (((color >> 24) & 255) * cov + 127) // 255
+    if a <= 0 {
+        return 0
+    }
+    alloc i := y * cw + x
+    if a >= 255 {
+        px[i] := color & 16777215
+        return 0
+    }
+    alloc a256 := a + (a >> 7)
+    alloc ia := 256 - a256
+    alloc d := px[i]
+    px[i] := ((((color & 16711935) * a256 + (d & 16711935) * ia) >> 8) & 16711935) | ((((color & 65280) * a256 + (d & 65280) * ia) >> 8) & 65280)
+    return 0
+}
+
+# One rounded corner: the quarter of a ring (or of a disc, when rin
+# is 0) with outer radius r whose centre is (cx, cy), in the r x r
+# square whose top left pixel is (x, y).
+proc corner(x, y, r, rin, cx, cy, color) {
+    alloc j := 0
+    loop j < r {
+        alloc i := 0
+        loop i < r {
+            alloc dx := x + i + 0.5 - cx
+            alloc dy := y + j + 0.5 - cy
+            alloc d := sqrt(dx * dx + dy * dy)
+            alloc c := r + 0.5 - d
+            if c > 1 {
+                c := 1
+            }
+            if c > 0 {
+                if rin > 0 {
+                    alloc c2 := rin + 0.5 - d
+                    if c2 > 1 {
+                        c2 := 1
+                    }
+                    if c2 > 0 {
+                        c := c - c2
+                    }
+                }
+                if c > 0 {
+                    dot(x + i, y + j, floor(c * 255), color)
+                }
+            }
+            i := i + 1
+        }
+        j := j + 1
+    }
+    return 0
+}
+
+# A rectangle with round corners of radius r: filled when t is 0,
+# otherwise only its edge, t pixels thick.
+proc round_rect(x, y, w, h, r, t, color) {
+    if w <= 0 or h <= 0 {
+        return 0
+    }
+    if r * 2 > w {
+        r := w // 2
+    }
+    if r * 2 > h {
+        r := h // 2
+    }
+    if r < 1 {
+        if t == 0 {
+            fill(x, y, w, h, color)
+        } else {
+            frame(x, y, w, h, t, color)
+        }
+        return 0
+    }
+    alloc rin := 0
+    if t > 0 {
+        rin := r - t
+        if rin < 0 {
+            rin := 0
+        }
+    }
+    if t == 0 {
+        fill(x + r, y, w - 2 * r, r, color)
+        fill(x, y + r, w, h - 2 * r, color)
+        fill(x + r, y + h - r, w - 2 * r, r, color)
+    } else {
+        fill(x + r, y, w - 2 * r, t, color)
+        fill(x + r, y + h - t, w - 2 * r, t, color)
+        fill(x, y + r, t, h - 2 * r, color)
+        fill(x + w - t, y + r, t, h - 2 * r, color)
+    }
+    corner(x, y, r, rin, x + r, y + r, color)
+    corner(x + w - r, y, r, rin, x + w - r, y + r, color)
+    corner(x, y + h - r, r, rin, x + r, y + h - r, color)
+    corner(x + w - r, y + h - r, r, rin, x + w - r, y + h - r, color)
+    return 0
+}
+
+# Fill a shape given by its corners [x0, y0, x1, y1, ...], smoothly.
+# Meant for small things: a tick, an arrow, the slanted end of a border.
+proc polygon(pts, color) {
+    alloc n := length(pts) // 2
+    if n < 3 {
+        return 0
+    }
+    alloc minx := pts[0]
+    alloc maxx := pts[0]
+    alloc miny := pts[1]
+    alloc maxy := pts[1]
+    alloc i := 1
+    loop i < n {
+        if pts[i * 2] < minx { minx := pts[i * 2] }
+        if pts[i * 2] > maxx { maxx := pts[i * 2] }
+        if pts[i * 2 + 1] < miny { miny := pts[i * 2 + 1] }
+        if pts[i * 2 + 1] > maxy { maxy := pts[i * 2 + 1] }
+        i := i + 1
+    }
+    alloc x0 := floor(minx)
+    alloc x1 := ceil(maxx)
+    alloc y0 := floor(miny)
+    alloc y1 := ceil(maxy)
+    if x0 < kx0 { x0 := kx0 }
+    if y0 < ky0 { y0 := ky0 }
+    if x1 > kx1 { x1 := kx1 }
+    if y1 > ky1 { y1 := ky1 }
+    if x1 <= x0 or y1 <= y0 {
+        return 0
+    }
+    alloc wide := x1 - x0
+    alloc y := y0
+    loop y < y1 {
+        alloc cov := list_repeat(0.0, wide)
+        alloc s := 0
+        loop s < 4 {
+            alloc sy := y + (s + 0.5) / 4
+            # where this thin line crosses the edges
+            alloc xs := []
+            i := 0
+            loop i < n {
+                alloc ax := pts[i * 2]
+                alloc ay := pts[i * 2 + 1]
+                alloc j := (i + 1) % n
+                alloc bx := pts[j * 2]
+                alloc by := pts[j * 2 + 1]
+                if (ay <= sy and by > sy) or (by <= sy and ay > sy) {
+                    alloc xx := ax + (sy - ay) * (bx - ax) / (by - ay)
+                    # keep the crossings in order
+                    alloc k := length(xs)
+                    append(xs, xx)
+                    loop k > 0 and xs[k - 1] > xx {
+                        xs[k] := xs[k - 1]
+                        k := k - 1
+                    }
+                    xs[k] := xx
+                }
+                i := i + 1
+            }
+            alloc e := 0
+            loop e + 1 < length(xs) {
+                alloc a := xs[e] - x0
+                alloc b := xs[e + 1] - x0
+                if a < 0 { a := 0 }
+                if b > wide { b := wide }
+                if b > a {
+                    alloc ia := floor(a)
+                    alloc ib := floor(b)
+                    if ia == ib {
+                        cov[ia] := cov[ia] + (b - a)
+                    } else {
+                        cov[ia] := cov[ia] + (ia + 1 - a)
+                        alloc m := ia + 1
+                        loop m < ib {
+                            cov[m] := cov[m] + 1
+                            m := m + 1
+                        }
+                        if ib < wide {
+                            cov[ib] := cov[ib] + (b - ib)
+                        }
+                    }
+                }
+                e := e + 2
+            }
+            s := s + 1
+        }
+        alloc c := 0
+        loop c < wide {
+            if cov[c] > 0 {
+                alloc v := floor(cov[c] * 63.75 + 0.5)
+                if v > 255 {
+                    v := 255
+                }
+                dot(x0 + c, y, v, color)
+            }
+            c := c + 1
+        }
+        y := y + 1
+    }
+    return 0
+}
+
+# Fill a rectangle with colours that run into one another along a
+# direction: angle in degrees as CSS counts them (0 up, 90 to the
+# right, 180 down); stops is [[colour, place 0..1], ...] in order.
+proc gradient(x, y, w, h, angle, stops) {
+    alloc ns := length(stops)
+    if ns == 0 or w <= 0 or h <= 0 {
+        return 0
+    }
+    alloc x0 := x
+    alloc y0 := y
+    alloc x1 := x + w
+    alloc y1 := y + h
+    if x0 < kx0 { x0 := kx0 }
+    if y0 < ky0 { y0 := ky0 }
+    if x1 > kx1 { x1 := kx1 }
+    if y1 > ky1 { y1 := ky1 }
+    if x1 <= x0 or y1 <= y0 {
+        return 0
+    }
+    alloc rad := angle * 3.141592653589793 / 180
+    alloc dx := sin(rad)
+    alloc dy := 0 - cos(rad)
+    alloc len := abs(w * dx) + abs(h * dy)
+    if len < 1 {
+        len := 1
+    }
+    alloc mx := x + w / 2.0
+    alloc my := y + h / 2.0
+    # the colours along the line, worked out once
+    alloc steps := floor(len) + 1
+    if steps > 2048 {
+        steps := 2048
+    }
+    alloc ramp := []
+    alloc si := 0
+    alloc i := 0
+    loop i <= steps {
+        alloc t := i * 1.0 / steps
+        loop si + 1 < ns and stops[si + 1][1] <= t {
+            si := si + 1
+        }
+        alloc c := stops[si][0]
+        if si + 1 < ns and t > stops[si][1] {
+            alloc a := stops[si]
+            alloc b := stops[si + 1]
+            alloc f := (t - a[1]) / (b[1] - a[1])
+            alloc ca := a[0]
+            alloc cb := b[0]
+            alloc aa := (ca >> 24) & 255
+            alloc ab := (cb >> 24) & 255
+            if aa == 0 {
+                ca := cb & 16777215
+            }
+            if ab == 0 {
+                cb := ca & 16777215
+            }
+            alloc oa := floor(aa + (ab - aa) * f + 0.5)
+            alloc orr := floor(((ca >> 16) & 255) + (((cb >> 16) & 255) - ((ca >> 16) & 255)) * f + 0.5)
+            alloc og := floor(((ca >> 8) & 255) + (((cb >> 8) & 255) - ((ca >> 8) & 255)) * f + 0.5)
+            alloc ob := floor((ca & 255) + ((cb & 255) - (ca & 255)) * f + 0.5)
+            c := (oa << 24) | (orr << 16) | (og << 8) | ob
+        }
+        append(ramp, c)
+        i := i + 1
+    }
+    alloc p := px
+    alloc yy := y0
+    alloc scale := steps / len
+    loop yy < y1 {
+        alloc xx := x0
+        alloc base := ((x0 + 0.5 - mx) * dx + (yy + 0.5 - my) * dy + len / 2) * scale
+        alloc step := dx * scale
+        alloc di := yy * cw + x0
+        loop xx < x1 {
+            alloc k := floor(base)
+            if k < 0 {
+                k := 0
+            } elif k > steps {
+                k := steps
+            }
+            alloc col := ramp[k]
+            alloc al := (col >> 24) & 255
+            if al == 255 {
+                p[di] := col & 16777215
+            } elif al != 0 {
+                alloc a256 := al + (al >> 7)
+                alloc ia := 256 - a256
+                alloc d := p[di]
+                p[di] := ((((col & 16711935) * a256 + (d & 16711935) * ia) >> 8) & 16711935) | ((((col & 65280) * a256 + (d & 65280) * ia) >> 8) & 65280)
+            }
+            base := base + step
+            di := di + 1
+            xx := xx + 1
+        }
+        yy := yy + 1
+    }
+    return 0
+}
