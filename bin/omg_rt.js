@@ -1164,6 +1164,11 @@ const _omg_builtins = {
     window_draw: omg_window_draw,
     window_poll: omg_window_poll,
     window_close: omg_window_close,
+    window_title: omg_window_title,
+    window_cursor: omg_window_cursor,
+    clipboard_get: omg_clipboard_get,
+    clipboard_set: omg_clipboard_set,
+    random_bytes: omg_random_bytes,
     audio_open: omg_audio_open,
     audio_write: omg_audio_write,
     audio_played: omg_audio_played,
@@ -1273,6 +1278,36 @@ function omg_window_poll(_win) {
 }
 function omg_window_close(_win) {
     omg_panic('ValueError', 'window_close is not supported in the JS runtime');
+}
+function omg_window_title(_win, _title) {
+    omg_panic('ValueError', 'window_title is not supported in the JS runtime');
+}
+function omg_window_cursor(_win, _shape) {
+    omg_panic('ValueError', 'window_cursor is not supported in the JS runtime');
+}
+function omg_clipboard_get(_win) {
+    omg_panic('ValueError', 'clipboard_get is not supported in the JS runtime');
+}
+function omg_clipboard_set(_win, _text) {
+    omg_panic('ValueError', 'clipboard_set is not supported in the JS runtime');
+}
+
+// random_bytes(n): n bytes nobody can guess, from the engine's own
+// source (crypto.getRandomValues, which browsers and node both have),
+// as a byte list.
+function omg_random_bytes(n) {
+    if (typeof n !== 'bigint') omg_panic('TypeError', 'random_bytes() expects (count: int)');
+    if (n < 0n || n > 1048576n) omg_panic('ValueError', 'random_bytes: the count must be between 0 and 1048576');
+    const buf = new Uint8Array(Number(n));
+    const c = globalThis.crypto;
+    if (!c || typeof c.getRandomValues !== 'function') {
+        omg_panic('ValueError', 'random_bytes: the system gave no random bytes');
+    }
+    // one call fills at most 65536 bytes
+    for (let at = 0; at < buf.length; at += 65536) {
+        c.getRandomValues(buf.subarray(at, Math.min(at + 65536, buf.length)));
+    }
+    return omg_bytes_from(buf);
 }
 
 // Sound, the same.

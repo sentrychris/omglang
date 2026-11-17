@@ -4014,6 +4014,51 @@ static Value omg_builtin_window_close(Value win) {
     (void)win;
     return omg_builtin_window_unavailable("window_close");
 }
+static Value omg_builtin_window_title(Value win, Value title) {
+    (void)win; (void)title;
+    return omg_builtin_window_unavailable("window_title");
+}
+static Value omg_builtin_window_cursor(Value win, Value shape) {
+    (void)win; (void)shape;
+    return omg_builtin_window_unavailable("window_cursor");
+}
+static Value omg_builtin_clipboard_get(Value win) {
+    (void)win;
+    return omg_builtin_window_unavailable("clipboard_get");
+}
+static Value omg_builtin_clipboard_set(Value win, Value text) {
+    (void)win; (void)text;
+    return omg_builtin_window_unavailable("clipboard_set");
+}
+
+/* random_bytes(n): n bytes nobody can guess, from the system, as a
+ * byte list. /dev/urandom where there is one; on Windows the function
+ * advapi32 has under the name SystemFunction036 (RtlGenRandom). */
+#ifdef _WIN32
+BOOLEAN NTAPI SystemFunction036(PVOID buffer, ULONG length);
+#endif
+static Value omg_builtin_random_bytes(Value n) {
+    if (n.tag != OMG_INT) omg_panic("TypeError", "random_bytes() expects (count: int)");
+    if (n.v.i < 0 || n.v.i > 1048576) omg_panic("ValueError", "random_bytes: the count must be between 0 and 1048576");
+    size_t want = (size_t)n.v.i;
+    unsigned char *buf = (unsigned char *)malloc(want + 1);
+    if (!buf) omg_panic("RuntimeError", "random_bytes: out of memory");
+    int ok = 1;
+#ifdef _WIN32
+    if (want > 0 && !SystemFunction036(buf, (ULONG)want)) ok = 0;
+#else
+    FILE *f = fopen("/dev/urandom", "rb");
+    if (!f || fread(buf, 1, want, f) != want) ok = 0;
+    if (f) fclose(f);
+#endif
+    if (!ok) {
+        free(buf);
+        omg_panic("ValueError", "random_bytes: the system gave no random bytes");
+    }
+    Value out = omg_bytes_from(buf, want);
+    free(buf);
+    return out;
+}
 
 /* audio_open / audio_write / audio_played / audio_pause / audio_close:
  * sound, like the window, comes from OMG's own runtime, which speaks
@@ -4224,6 +4269,8 @@ static Value omg_call_builtin(Value name, Value args) {
         if (strcmp(n, "tcp_peer") == 0)        return omg_builtin_tcp_peer(a[0]);
         if (strcmp(n, "window_poll") == 0)     return omg_builtin_window_poll(a[0]);
         if (strcmp(n, "window_close") == 0)    return omg_builtin_window_close(a[0]);
+        if (strcmp(n, "clipboard_get") == 0)   return omg_builtin_clipboard_get(a[0]);
+        if (strcmp(n, "random_bytes") == 0)    return omg_builtin_random_bytes(a[0]);
         if (strcmp(n, "audio_played") == 0)    return omg_builtin_audio_played(a[0]);
         if (strcmp(n, "audio_close") == 0)     return omg_builtin_audio_close(a[0]);
         if (strcmp(n, "file_size") == 0)       return omg_builtin_file_size(a[0]);
@@ -4269,6 +4316,9 @@ static Value omg_call_builtin(Value name, Value args) {
         if (strcmp(n, "pty_write") == 0)   return omg_builtin_pty_write(a[0], a[1]);
         if (strcmp(n, "audio_open") == 0)  return omg_builtin_audio_open(a[0], a[1]);
         if (strcmp(n, "audio_pause") == 0) return omg_builtin_audio_pause(a[0], a[1]);
+        if (strcmp(n, "window_title") == 0) return omg_builtin_window_title(a[0], a[1]);
+        if (strcmp(n, "window_cursor") == 0) return omg_builtin_window_cursor(a[0], a[1]);
+        if (strcmp(n, "clipboard_set") == 0) return omg_builtin_clipboard_set(a[0], a[1]);
     }
     if (argc == 3) {
         if (strcmp(n, "pty_resize") == 0) return omg_builtin_pty_resize(a[0], a[1], a[2]);
