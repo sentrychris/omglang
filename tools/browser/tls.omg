@@ -1,0 +1,30 @@
+;;;omg
+
+# tools/browser/tls.omg (placeholder until the real one is written)
+
+alloc last_error := ""
+
+proc connect(h, host) {
+    last_error := "HTTPS is not built yet"
+    return false
+}
+
+proc read(t) {
+    return false
+}
+
+proc write(t, data) {
+    return false
+}
+
+proc close(t) {
+    return true
+}
+
+proc error() {
+    return last_error
+}
+
+proc add_ca_file(path) {
+    return true
+}

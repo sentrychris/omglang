@@ -1,0 +1,701 @@
+;;;omg
+
+# tools/browser/net.omg
+#
+# Fetching what an address names. fetch() takes an address and gives
+# back the bytes behind it, whatever kind of address it is:
+#
+#   http:, https:   asked for over HTTP/1.1, connections kept open and
+#                   used again, redirects followed, cookies kept,
+#                   gzip unpacked
+#   file:           read from the disk (a directory becomes a page
+#                   listing it)
+#   data:           decoded from the address itself
+#
+# The answer is a dict: status (200, 404 ...; 0 when nothing came
+# back), error (why, when status is 0), headers (names in lower
+# case), body (bytes) and url (the address after redirects).
+
+import "util.omg" as u
+import "url.omg" as url
+import "inflate.omg" as zip
+import "io.omg" as io
+import "tls.omg" as tls
+
+alloc AGENT := "Mozilla/5.0 (X11; Linux x86_64) OMGBrowser/0.1"
+alloc pool := {}               # "https://host:port" -> connections waiting to be used again
+alloc jar := []                # cookies: [domain, host only, path, name, value, secure]
+alloc proxy := false           # [host, port] of an HTTP proxy to go through
+alloc TIMEOUT := 30000
+
+proc set_proxy(host, port) {
+    proxy := [host, port]
+    return true
+}
+
+# --- cookies ----------------------------------------------------------------------------
+
+proc domain_matches(host, c) {
+    if host == c[0] {
+        return true
+    }
+    return c[1] == false and u.ends_with(host, "." + c[0])
+}
+
+proc cookies_for(p) {
+    alloc out := ""
+    alloc path := p.path
+    for c in jar {
+        if domain_matches(p.host, c) and (c[5] == false or p.scheme == "https") {
+            alloc cp := c[2]
+            if u.starts_with(path, cp) and (length(path) == length(cp) or u.ends_with(cp, "/") or path[length(cp):length(cp) + 1] == "/") {
+                if out != "" {
+                    out := out + "; "
+                }
+                out := out + c[3] + "=" + c[4]
+            }
+        }
+    }
+    return out
+}
+
+proc set_cookie(p, line) {
+    alloc parts := u.split(line, ";")
+    alloc first := u.trim(parts[0])
+    alloc eq := u.find(first, "=")
+    if eq <= 0 {
+        return false
+    }
+    alloc name := u.trim(first[0:eq])
+    alloc value := u.trim(first[eq + 1:])
+    alloc domain := p.host
+    alloc host_only := true
+    alloc path := "/"
+    alloc cut := length(p.path) - 1
+    alloc pb := string_bytes(p.path)
+    loop cut > 0 and pb[cut] != 47 {
+        cut := cut - 1
+    }
+    if cut > 0 {
+        path := p.path[0:cut]
+    }
+    alloc secure := false
+    alloc gone := false
+    alloc i := 1
+    loop i < length(parts) {
+        alloc a := u.trim(parts[i])
+        alloc av := ""
+        alloc ae := u.find(a, "=")
+        if ae >= 0 {
+            av := u.trim(a[ae + 1:])
+            a := a[0:ae]
+        }
+        a := u.lower(u.trim(a))
+        if a == "domain" and av != "" {
+            if u.starts_with(av, ".") {
+                av := av[1:]
+            }
+            av := u.lower(av)
+            # a site may only set cookies for itself and the sites above it
+            if (p.host == av or u.ends_with(p.host, "." + av)) and u.contains(av, ".") {
+                domain := av
+                host_only := false
+            } else {
+                return false
+            }
+        } elif a == "path" and u.starts_with(av, "/") {
+            path := av
+        } elif a == "secure" {
+            secure := true
+        } elif a == "max-age" {
+            if u.to_int(av, 1) <= 0 {
+                gone := true
+            }
+        } elif a == "expires" {
+            # a date in the past is how a site deletes a cookie; the
+            # year is enough to tell
+            for w in u.words(u.replace(u.replace(av, "-", " "), ",", " ")) {
+                alloc year := u.to_int(w, 0)
+                if length(w) == 4 and year > 1900 and year < 2024 {
+                    gone := true
+                }
+            }
+        }
+        i := i + 1
+    }
+    alloc kept := []
+    for c in jar {
+        if (c[0] == domain and c[2] == path and c[3] == name) == false {
+            append(kept, c)
+        }
+    }
+    if gone == false and length(kept) < 3000 {
+        append(kept, [domain, host_only, path, name, value, secure])
+    }
+    jar := kept
+    return true
+}
+
+# --- a connection -----------------------------------------------------------------------
+
+proc conn_fill(c) {
+    alloc data := false
+    if c.tls != false {
+        data := tls.read(c.tls)
+    } else {
+        try {
+            data := io.read(c.h, 65536, TIMEOUT)
+        } except e {
+            data := false
+        }
+    }
+    if data == false or length(data) == 0 {
+        return false
+    }
+    alloc rest := length(c.buf) - c.pos
+    if rest == 0 {
+        c.buf := data
+    } else {
+        alloc joined := bytes_repeat(0, rest + length(data))
+        bytes_copy(c.buf, c.pos, joined, 0, rest)
+        bytes_copy(data, 0, joined, rest, length(data))
+        c.buf := joined
+    }
+    c.pos := 0
+    return true
+}
+
+proc conn_write(c, bytes) {
+    if c.tls != false {
+        return tls.write(c.tls, bytes)
+    }
+    return io.write(c.h, bytes)
+}
+
+proc conn_close(c) {
+    if c.tls != false {
+        tls.close(c.tls)
+    }
+    io.close(c.h)
+    return true
+}
+
+# The next line, without its line end, or false.
+proc read_line(c) {
+    alloc from := c.pos
+    loop true {
+        alloc buf := c.buf
+        alloc n := length(buf)
+        alloc i := from
+        loop i < n {
+            if buf[i] == 10 {
+                alloc end := i
+                if end > c.pos and buf[end - 1] == 13 {
+                    end := end - 1
+                }
+                alloc line := bytes_to_string(buf[c.pos:end])
+                c.pos := i + 1
+                return line
+            }
+            i := i + 1
+        }
+        alloc had := n - c.pos
+        if had > 65536 or conn_fill(c) == false {
+            return false
+        }
+        from := had
+    }
+    return false
+}
+
+# Exactly n bytes, or false.
+proc read_n(c, n) {
+    alloc out := bytes_repeat(0, n)
+    alloc got := 0
+    loop got < n {
+        alloc have := length(c.buf) - c.pos
+        if have == 0 {
+            if conn_fill(c) == false {
+                return false
+            }
+            continue
+        }
+        alloc take := n - got
+        if take > have {
+            take := have
+        }
+        bytes_copy(c.buf, c.pos, out, got, take)
+        c.pos := c.pos + take
+        got := got + take
+    }
+    return out
+}
+
+proc read_rest(c) {
+    alloc chunks := []
+    alloc total := 0
+    loop true {
+        alloc have := length(c.buf) - c.pos
+        if have > 0 {
+            append(chunks, c.buf[c.pos:])
+            total := total + have
+            c.pos := length(c.buf)
+        }
+        if total > 268435456 or conn_fill(c) == false {
+            break
+        }
+    }
+    alloc out := bytes_repeat(0, total)
+    alloc at := 0
+    for ch in chunks {
+        bytes_copy(ch, 0, out, at, length(ch))
+        at := at + length(ch)
+    }
+    return out
+}
+
+# Open a connection to the site of p. Returns it, or {err: why}.
+proc open(p) {
+    alloc port := p.port
+    if port == 0 {
+        port := url.default_port(p.scheme)
+    }
+    alloc host := p.host
+    if u.starts_with(host, "[") {
+        return {err: "this browser does not speak IPv6 yet"}
+    }
+    alloc h := false
+    alloc via := false
+    try {
+        if proxy != false {
+            h := tcp_connect(proxy[0], proxy[1])
+            via := true
+        } else {
+            h := tcp_connect(host, port)
+        }
+    } except e {
+        if via == false and proxy != false {
+            return {err: "could not reach the proxy"}
+        }
+        return {err: "could not connect to " + host}
+    }
+    alloc c := {h: h, tls: false, buf: to_bytes([]), pos: 0, proxied: false, err: ""}
+    if proxy != false {
+        if p.scheme == "http" {
+            c.proxied := true
+            return c
+        }
+        # ask the proxy for a plain pipe to the site
+        io.write(h, string_bytes("CONNECT " + host + ":" + port + " HTTP/1.1\r\nHost: " + host + ":" + port + "\r\n\r\n"))
+        alloc line := read_line(c)
+        if line == false or u.contains(line, " 200") == false {
+            io.close(h)
+            if line == false {
+                return {err: "the proxy did not answer"}
+            }
+            return {err: "the proxy refused: " + line}
+        }
+        loop true {
+            line := read_line(c)
+            if line == false or line == "" {
+                break
+            }
+        }
+    }
+    if p.scheme == "https" {
+        alloc t := tls.connect(h, host)
+        if t == false {
+            io.close(h)
+            return {err: tls.error()}
+        }
+        c.tls := t
+    }
+    return c
+}
+
+# Send a request on c and read the answer: {status, headers, cookies,
+# body, keep} or false if the connection failed.
+proc exchange(c, p, method, body, ctype, referer) {
+    alloc target := p.path + p.query
+    if c.proxied {
+        target := url.origin(p) + target
+    }
+    target := url.escape(target, false)
+    alloc host := p.host
+    if p.port != 0 {
+        host := host + ":" + p.port
+    }
+    alloc head := method + " " + target + " HTTP/1.1\r\nHost: " + host + "\r\nUser-Agent: " + AGENT + "\r\nAccept: text/html,application/xhtml+xml,image/png,image/jpeg,image/gif,*/*;q=0.8\r\nAccept-Language: en\r\nAccept-Encoding: gzip, deflate\r\nConnection: keep-alive\r\n"
+    alloc cookie := cookies_for(p)
+    if cookie != "" {
+        head := head + "Cookie: " + cookie + "\r\n"
+    }
+    if referer != "" {
+        head := head + "Referer: " + referer + "\r\n"
+    }
+    if body != false {
+        head := head + "Content-Type: " + ctype + "\r\nContent-Length: " + length(body) + "\r\n"
+    }
+    head := head + "\r\n"
+    alloc out := string_bytes(head)
+    if body != false {
+        alloc all := bytes_repeat(0, length(out) + length(body))
+        bytes_copy(out, 0, all, 0, length(out))
+        bytes_copy(body, 0, all, length(out), length(body))
+        out := all
+    }
+    if conn_write(c, out) == false {
+        return false
+    }
+    alloc status := 0
+    alloc headers := {}
+    alloc cookies := []
+    alloc version := ""
+    loop true {
+        alloc line := read_line(c)
+        if line == false {
+            return false
+        }
+        alloc parts := u.words(line)
+        if length(parts) < 2 or u.starts_with(parts[0], "HTTP/") == false {
+            return false
+        }
+        version := parts[0]
+        status := u.to_int(parts[1], 0)
+        headers := {}
+        loop true {
+            alloc hl := read_line(c)
+            if hl == false {
+                return false
+            }
+            if hl == "" {
+                break
+            }
+            alloc colon := u.find(hl, ":")
+            if colon > 0 {
+                alloc name := u.lower(u.trim(hl[0:colon]))
+                alloc value := u.trim(hl[colon + 1:])
+                if name == "set-cookie" {
+                    append(cookies, value)
+                } else {
+                    headers[name] := value
+                }
+            }
+        }
+        if status >= 200 or status == 101 {
+            break
+        }
+    }
+    alloc keep := version != "HTTP/1.0"
+    if has_key(headers, "connection") {
+        alloc cv := u.lower(headers["connection"])
+        if u.contains(cv, "close") {
+            keep := false
+        } elif u.contains(cv, "keep-alive") {
+            keep := true
+        }
+    }
+    alloc data := to_bytes([])
+    if method == "HEAD" or status == 204 or status == 304 {
+        data := to_bytes([])
+    } elif has_key(headers, "transfer-encoding") and u.contains(u.lower(headers["transfer-encoding"]), "chunked") {
+        alloc chunks := []
+        alloc total := 0
+        loop true {
+            alloc sl := read_line(c)
+            if sl == false {
+                return false
+            }
+            alloc semi := u.find(sl, ";")
+            if semi >= 0 {
+                sl := sl[0:semi]
+            }
+            alloc size := 0
+            for hc in string_bytes(u.trim(sl)) {
+                alloc hv := url.hex_digit(hc)
+                if hv < 0 {
+                    return false
+                }
+                size := size * 16 + hv
+                if size > 268435456 {
+                    return false
+                }
+            }
+            if size == 0 {
+                loop true {
+                    alloc tl := read_line(c)
+                    if tl == false or tl == "" {
+                        break
+                    }
+                }
+                break
+            }
+            alloc chunk := read_n(c, size)
+            if chunk == false {
+                return false
+            }
+            append(chunks, chunk)
+            total := total + size
+            read_line(c)
+        }
+        data := bytes_repeat(0, total)
+        alloc at := 0
+        for ch in chunks {
+            bytes_copy(ch, 0, data, at, length(ch))
+            at := at + length(ch)
+        }
+    } elif has_key(headers, "content-length") {
+        alloc len := u.to_int(headers["content-length"], -1)
+        if len < 0 or len > 268435456 {
+            return false
+        }
+        data := read_n(c, len)
+        if data == false {
+            return false
+        }
+    } else {
+        data := read_rest(c)
+        keep := false
+    }
+    return {status: status, headers: headers, cookies: cookies, body: data, keep: keep}
+}
+
+proc failure(address, why) {
+    return {status: 0, error: why, headers: {}, body: to_bytes([]), url: address}
+}
+
+# --- other kinds of address ---------------------------------------------------------------
+
+alloc TYPES := {html: "text/html", htm: "text/html", css: "text/css", png: "image/png", jpg: "image/jpeg",
+                jpeg: "image/jpeg", gif: "image/gif", txt: "text/plain", md: "text/plain", omg: "text/plain",
+                svg: "image/svg+xml", json: "application/json", js: "text/javascript", xml: "text/xml"}
+
+proc html_escape(s) {
+    return u.replace(u.replace(u.replace(s, "&", "&amp;"), "<", "&lt;"), "\"", "&quot;")
+}
+
+proc fetch_file(address, p) {
+    alloc path := bytes_to_string(url.unescape_bytes(p.path))
+    # "/C:/Users/..." on Windows
+    if length(path) > 3 and path[0:1] == "/" and path[2:3] == ":" {
+        path := path[1:]
+    }
+    alloc dir := false
+    try {
+        dir := is_dir(path)
+    } except e {
+        dir := false
+    }
+    if dir {
+        alloc names := []
+        try {
+            names := read_dir(path)
+        } except e2 {
+            return failure(address, "this folder cannot be read")
+        }
+        alloc base := address
+        if u.ends_with(url.without_frag(base), "/") == false {
+            base := base + "/"
+        }
+        alloc page := "<!DOCTYPE html><title>" + html_escape(path) + "</title><style>body{font-family:sans-serif;margin:2em}li{line-height:1.6}</style><h1>" + html_escape(path) + "</h1><ul><li><a href=\"../\">..</a>"
+        # in order, folders and files alike
+        alloc i := 1
+        loop i < length(names) {
+            alloc v := names[i]
+            alloc j := i - 1
+            loop j >= 0 and u.lower(names[j]) > u.lower(v) {
+                names[j + 1] := names[j]
+                j := j - 1
+            }
+            names[j + 1] := v
+            i := i + 1
+        }
+        for name in names {
+            page := page + "<li><a href=\"" + html_escape(url.escape(name, false)) + "\">" + html_escape(name) + "</a>"
+        }
+        return {status: 200, error: "", headers: {"content-type": "text/html; charset=utf-8"}, body: string_bytes(page + "</ul>"), url: base}
+    }
+    alloc bytes := u.read_bytes(path)
+    if bytes == false {
+        return failure(address, "there is no file " + path)
+    }
+    alloc kind := "application/octet-stream"
+    alloc dot := length(path) - 1
+    alloc pb := string_bytes(path)
+    loop dot >= 0 and pb[dot] != 46 and pb[dot] != 47 {
+        dot := dot - 1
+    }
+    if dot >= 0 and pb[dot] == 46 {
+        alloc ext := u.lower(path[dot + 1:])
+        if has_key(TYPES, ext) {
+            kind := TYPES[ext]
+        }
+    }
+    return {status: 200, error: "", headers: {"content-type": kind}, body: bytes, url: address}
+}
+
+alloc b64 := false
+
+# The bytes that base64 text stands for.
+proc base64(b) {
+    if b64 == false {
+        b64 := list_repeat(-1, 256)
+        alloc alphabet := string_bytes("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/")
+        alloc i := 0
+        loop i < 64 {
+            b64[alphabet[i]] := i
+            i := i + 1
+        }
+        b64[45] := 62
+        b64[95] := 63
+    }
+    alloc out := to_bytes([])
+    alloc acc := 0
+    alloc bits := 0
+    for c in b {
+        alloc v := b64[c]
+        if v >= 0 {
+            acc := ((acc << 6) | v) & 16777215
+            bits := bits + 6
+            if bits >= 8 {
+                bits := bits - 8
+                append(out, (acc >> bits) & 255)
+            }
+        }
+    }
+    return out
+}
+
+proc fetch_data(address, p) {
+    alloc comma := u.find(p.path, ",")
+    if comma < 0 {
+        return failure(address, "a data: address with nothing in it")
+    }
+    alloc meta := p.path[0:comma]
+    alloc payload := url.unescape_bytes(p.path[comma + 1:] + p.frag)
+    alloc kind := "text/plain"
+    if u.ends_with(u.lower(meta), ";base64") {
+        payload := base64(payload)
+        meta := meta[0:length(meta) - 7]
+    }
+    if meta != "" {
+        kind := meta
+    }
+    return {status: 200, error: "", headers: {"content-type": kind}, body: payload, url: address}
+}
+
+# --- fetch ---------------------------------------------------------------------------------
+
+# Fetch an address. method is "GET" or "POST"; body (bytes) and
+# ctype go with a POST, otherwise false and ""; referer is the page
+# the request comes from, or "".
+proc fetch(address, method, body, ctype, referer) {
+    alloc hops := 0
+    loop hops < 12 {
+        hops := hops + 1
+        alloc p := url.parse(address)
+        if p == false {
+            return failure(address, "this is not an address the browser understands")
+        }
+        if p.scheme == "file" {
+            return fetch_file(address, p)
+        }
+        if p.scheme == "data" {
+            return fetch_data(address, p)
+        }
+        if p.scheme != "http" and p.scheme != "https" {
+            return failure(address, "the browser cannot open " + p.scheme + ": addresses")
+        }
+        alloc key := url.origin(p)
+        alloc r := false
+        alloc tries := 0
+        alloc why := "the connection was lost"
+        loop tries < 2 and r == false {
+            tries := tries + 1
+            alloc c := false
+            if has_key(pool, key) and length(pool[key]) > 0 and tries == 1 {
+                alloc waiting := pool[key]
+                c := waiting[length(waiting) - 1]
+                pool[key] := waiting[0:length(waiting) - 1]
+            } else {
+                c := open(p)
+                if c.err != "" {
+                    return failure(address, c.err)
+                }
+                tries := 2
+            }
+            r := exchange(c, p, method, body, ctype, referer)
+            if r == false {
+                conn_close(c)
+                if io.is_stopped() {
+                    return failure(address, "stopped")
+                }
+            } elif r.keep and length(c.buf) == c.pos {
+                if has_key(pool, key) == false {
+                    pool[key] := []
+                }
+                if length(pool[key]) < 6 {
+                    append(pool[key], c)
+                } else {
+                    conn_close(c)
+                }
+            } else {
+                conn_close(c)
+            }
+        }
+        if r == false {
+            return failure(address, why)
+        }
+        for line in r.cookies {
+            set_cookie(p, line)
+        }
+        alloc status := r.status
+        if (status == 301 or status == 302 or status == 303 or status == 307 or status == 308) and has_key(r.headers, "location") {
+            alloc next := url.resolve(address, r.headers["location"])
+            if next == "" {
+                return failure(address, "the site sent the browser to an address that makes no sense")
+            }
+            # a "#part" survives a redirect that names none
+            alloc old := url.parse(address)
+            if old.frag != "" and u.contains(next, "#") == false {
+                next := next + old.frag
+            }
+            address := next
+            if status != 307 and status != 308 and method == "POST" {
+                method := "GET"
+                body := false
+                ctype := ""
+            }
+            continue
+        }
+        alloc data := r.body
+        if has_key(r.headers, "content-encoding") and length(data) > 0 {
+            alloc enc := u.lower(u.trim(r.headers["content-encoding"]))
+            alloc plain := data
+            if enc == "gzip" or enc == "x-gzip" {
+                plain := zip.gunzip(data)
+            } elif enc == "deflate" {
+                plain := zip.deflated(data)
+            } elif enc != "identity" and enc != "" {
+                return failure(address, "the site packed the page in a way the browser does not know (" + enc + ")")
+            }
+            if plain == false {
+                return failure(address, "the page arrived damaged")
+            }
+            data := plain
+        }
+        return {status: status, error: "", headers: r.headers, body: data, url: address}
+    }
+    return failure(address, "the site keeps sending the browser somewhere else")
+}
+
+# Close every connection kept for later.
+proc close_all() {
+    for key in dict_keys(pool) {
+        for c in pool[key] {
+            conn_close(c)
+        }
+    }
+    pool := {}
+    return true
+}

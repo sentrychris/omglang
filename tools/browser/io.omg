@@ -1,0 +1,84 @@
+;;;omg
+
+# tools/browser/io.omg
+#
+# Reading from and writing to a socket without freezing the window:
+# while a read waits, the `idle` proc (if one is set) is called every
+# few hundredths of a second, so the window can answer the mouse and
+# redraw; it can also call stop() to give the transfer up.
+
+alloc idle := false
+alloc stopped := false
+
+proc set_idle(p) {
+    idle := p
+    return true
+}
+
+proc stop() {
+    stopped := true
+    return true
+}
+
+proc restart() {
+    stopped := false
+    return true
+}
+
+proc is_stopped() {
+    return stopped
+}
+
+# Up to `max` bytes from socket h: an empty list when the other side
+# has closed, false when nothing came for `timeout` milliseconds or
+# the transfer was stopped.
+proc read(h, max, timeout) {
+    alloc waited := 0
+    loop true {
+        if stopped {
+            return false
+        }
+        alloc r := tcp_poll([h], [], 30)
+        if length(r[0]) > 0 {
+            return tcp_read(h, max)
+        }
+        waited := waited + 30
+        if waited >= timeout {
+            return false
+        }
+        if idle != false {
+            idle()
+        }
+    }
+    return false
+}
+
+# Send all of `data` (a string or bytes). false if the line broke.
+proc write(h, data) {
+    alloc n := length(data)
+    alloc sent := 0
+    try {
+        loop sent < n {
+            alloc k := tcp_write(h, data, sent)
+            if k <= 0 {
+                alloc r := tcp_poll([], [h], 1000)
+                if length(r[1]) == 0 and stopped {
+                    return false
+                }
+            }
+            sent := sent + k
+        }
+    } except e {
+        return false
+    }
+    return true
+}
+
+proc close(h) {
+    try {
+        tcp_close(h)
+    } except e {
+        return false
+    }
+    return true
+}

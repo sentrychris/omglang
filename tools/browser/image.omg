@@ -1,0 +1,1503 @@
+;;;omg
+
+# tools/browser/image.omg
+#
+# Pictures: PNG, GIF and JPEG files turned into pixels. decode() takes
+# the bytes of a file and returns [width, height, data], data holding
+# four bytes for every pixel (red, green, blue, and alpha: 255 solid,
+# 0 clear), rows from the top; or false when the bytes are not a
+# picture this can read. An animated GIF gives its first frame.
+
+import "inflate.omg" as zip
+
+alloc MAX_PIXELS := 40000000
+
+# --- PNG ----------------------------------------------------------------------------------
+#
+# A PNG is chunks: IHDR says the size and the kind of pixel, IDAT
+# chunks together are one zlib stream of the rows, each row led by a
+# byte naming the "filter" that was used to make it compress better
+# (it is stored as differences from its neighbours).
+
+proc be32(b, i) {
+    return (b[i] << 24) | (b[i + 1] << 16) | (b[i + 2] << 8) | b[i + 3]
+}
+
+# Undo the filters of h rows of `stride` bytes starting at raw[at],
+# in place; bpp is the bytes per whole pixel. Returns where the rows
+# end, or -1.
+proc unfilter(raw, at, stride, h, bpp) {
+    alloc n := length(raw)
+    alloc prev := -1
+    alloc y := 0
+    loop y < h {
+        if at + 1 + stride > n {
+            return -1
+        }
+        alloc f := raw[at]
+        alloc row := at + 1
+        alloc i := 0
+        if f == 1 {
+            i := bpp
+            loop i < stride {
+                raw[row + i] := (raw[row + i] + raw[row + i - bpp]) & 255
+                i := i + 1
+            }
+        } elif f == 2 {
+            if prev >= 0 {
+                loop i < stride {
+                    raw[row + i] := (raw[row + i] + raw[prev + i]) & 255
+                    i := i + 1
+                }
+            }
+        } elif f == 3 {
+            loop i < stride {
+                alloc left := 0
+                if i >= bpp {
+                    left := raw[row + i - bpp]
+                }
+                alloc up := 0
+                if prev >= 0 {
+                    up := raw[prev + i]
+                }
+                raw[row + i] := (raw[row + i] + ((left + up) >> 1)) & 255
+                i := i + 1
+            }
+        } elif f == 4 {
+            loop i < stride {
+                alloc a := 0
+                alloc c := 0
+                if i >= bpp {
+                    a := raw[row + i - bpp]
+                    if prev >= 0 {
+                        c := raw[prev + i - bpp]
+                    }
+                }
+                alloc b := 0
+                if prev >= 0 {
+                    b := raw[prev + i]
+                }
+                alloc p := a + b - c
+                alloc pa := p - a
+                if pa < 0 {
+                    pa := 0 - pa
+                }
+                alloc pb := p - b
+                if pb < 0 {
+                    pb := 0 - pb
+                }
+                alloc pc := p - c
+                if pc < 0 {
+                    pc := 0 - pc
+                }
+                alloc pred := c
+                if pa <= pb and pa <= pc {
+                    pred := a
+                } elif pb <= pc {
+                    pred := b
+                }
+                raw[row + i] := (raw[row + i] + pred) & 255
+                i := i + 1
+            }
+        } elif f != 0 {
+            return -1
+        }
+        prev := row
+        at := row + stride
+        y := y + 1
+    }
+    return at
+}
+
+# Turn unfiltered rows (at raw[at], each after its filter byte) into
+# RGBA pixels of `out`: the pixel (x, y) of the rows goes to
+# (x0 + x * dx, y0 + y * dy) of the picture, which is how the passes
+# of an interlaced PNG are laid in.
+proc png_rows(raw, at, stride, w, h, kind, depth, pal, trns, out, ow, x0, y0, dx, dy) {
+    alloc y := 0
+    loop y < h {
+        alloc row := at + y * (stride + 1) + 1
+        alloc o := ((y0 + y * dy) * ow + x0) * 4
+        alloc step := dx * 4
+        alloc x := 0
+        if kind == 6 and depth == 8 {
+            if dx == 1 {
+                bytes_copy(raw, row, out, o, w * 4)
+            } else {
+                loop x < w {
+                    bytes_copy(raw, row + x * 4, out, o, 4)
+                    o := o + step
+                    x := x + 1
+                }
+            }
+        } elif kind == 2 and depth == 8 {
+            alloc tr := -1
+            alloc tg := -1
+            alloc tb := -1
+            if trns != false and length(trns) >= 6 {
+                tr := trns[1]
+                tg := trns[3]
+                tb := trns[5]
+            }
+            alloc s := row
+            loop x < w {
+                alloc r := raw[s]
+                alloc g := raw[s + 1]
+                alloc b := raw[s + 2]
+                out[o] := r
+                out[o + 1] := g
+                out[o + 2] := b
+                if r == tr and g == tg and b == tb {
+                    out[o + 3] := 0
+                } else {
+                    out[o + 3] := 255
+                }
+                s := s + 3
+                o := o + step
+                x := x + 1
+            }
+        } elif kind == 3 {
+            alloc np := length(pal) // 3
+            alloc nt := 0
+            if trns != false {
+                nt := length(trns)
+            }
+            alloc mask := (1 << depth) - 1
+            loop x < w {
+                alloc bit := x * depth
+                alloc idx := (raw[row + (bit >> 3)] >> (8 - depth - (bit & 7))) & mask
+                if idx < np {
+                    out[o] := pal[idx * 3]
+                    out[o + 1] := pal[idx * 3 + 1]
+                    out[o + 2] := pal[idx * 3 + 2]
+                }
+                if idx < nt {
+                    out[o + 3] := trns[idx]
+                } else {
+                    out[o + 3] := 255
+                }
+                o := o + step
+                x := x + 1
+            }
+        } elif kind == 0 {
+            alloc gmask := (1 << depth) - 1
+            alloc tkey := -1
+            if trns != false and length(trns) >= 2 {
+                tkey := (trns[0] << 8) | trns[1]
+            }
+            loop x < w {
+                alloc v := 0
+                alloc key := 0
+                if depth == 16 {
+                    v := raw[row + x * 2]
+                    key := (v << 8) | raw[row + x * 2 + 1]
+                } elif depth == 8 {
+                    v := raw[row + x]
+                    key := v
+                } else {
+                    alloc gbit := x * depth
+                    key := (raw[row + (gbit >> 3)] >> (8 - depth - (gbit & 7))) & gmask
+                    v := key * 255 // gmask
+                }
+                out[o] := v
+                out[o + 1] := v
+                out[o + 2] := v
+                if key == tkey {
+                    out[o + 3] := 0
+                } else {
+                    out[o + 3] := 255
+                }
+                o := o + step
+                x := x + 1
+            }
+        } elif kind == 4 {
+            alloc size := depth // 8
+            loop x < w {
+                alloc gv := raw[row + x * 2 * size]
+                out[o] := gv
+                out[o + 1] := gv
+                out[o + 2] := gv
+                out[o + 3] := raw[row + x * 2 * size + size]
+                o := o + step
+                x := x + 1
+            }
+        } elif depth == 16 {
+            # 16 bits a sample, with or without alpha: keep the high bytes
+            alloc ch := 3
+            if kind == 6 {
+                ch := 4
+            }
+            loop x < w {
+                alloc s2 := row + x * ch * 2
+                out[o] := raw[s2]
+                out[o + 1] := raw[s2 + 2]
+                out[o + 2] := raw[s2 + 4]
+                if ch == 4 {
+                    out[o + 3] := raw[s2 + 6]
+                } else {
+                    out[o + 3] := 255
+                }
+                o := o + step
+                x := x + 1
+            }
+        }
+        y := y + 1
+    }
+    return true
+}
+
+proc png(b) {
+    alloc n := length(b)
+    alloc p := 8
+    alloc w := 0
+    alloc h := 0
+    alloc depth := 0
+    alloc kind := 0
+    alloc lace := 0
+    alloc pal := false
+    alloc trns := false
+    alloc parts := []
+    alloc total := 0
+    loop p + 12 <= n {
+        alloc len := be32(b, p)
+        alloc name := bytes_to_string(b[p + 4:p + 8])
+        alloc body := p + 8
+        if len < 0 or body + len > n {
+            break
+        }
+        if name == "IHDR" {
+            w := be32(b, body)
+            h := be32(b, body + 4)
+            depth := b[body + 8]
+            kind := b[body + 9]
+            lace := b[body + 12]
+        } elif name == "PLTE" {
+            pal := b[body:body + len]
+        } elif name == "tRNS" {
+            trns := b[body:body + len]
+        } elif name == "IDAT" {
+            append(parts, [body, len])
+            total := total + len
+        } elif name == "IEND" {
+            break
+        }
+        p := body + len + 4
+    }
+    if w <= 0 or h <= 0 or w * h > MAX_PIXELS or total == 0 {
+        return false
+    }
+    alloc ch := 1
+    if kind == 2 {
+        ch := 3
+    } elif kind == 4 {
+        ch := 2
+    } elif kind == 6 {
+        ch := 4
+    } elif kind == 3 {
+        if pal == false {
+            return false
+        }
+    } elif kind != 0 {
+        return false
+    }
+    if depth != 1 and depth != 2 and depth != 4 and depth != 8 and depth != 16 {
+        return false
+    }
+    alloc packed := bytes_repeat(0, total)
+    alloc at := 0
+    for part in parts {
+        bytes_copy(b, part[0], packed, at, part[1])
+        at := at + part[1]
+    }
+    alloc bits := ch * depth
+    alloc bpp := (bits + 7) // 8
+    alloc stride := (w * bits + 7) // 8
+    alloc raw := zip.zlib(packed, (stride + 1) * h + 64)
+    if raw == false {
+        return false
+    }
+    alloc out := bytes_repeat(0, w * h * 4)
+    if lace == 0 {
+        if unfilter(raw, 0, stride, h, bpp) < 0 {
+            return false
+        }
+        png_rows(raw, 0, stride, w, h, kind, depth, pal, trns, out, w, 0, 0, 1, 1)
+        return [w, h, out]
+    }
+    # interlaced: seven thin pictures, coarse to fine
+    alloc xs := [0, 4, 0, 2, 0, 1, 0]
+    alloc ys := [0, 0, 4, 0, 2, 0, 1]
+    alloc dxs := [8, 8, 4, 4, 2, 2, 1]
+    alloc dys := [8, 8, 8, 4, 4, 2, 2]
+    alloc pos := 0
+    alloc pass := 0
+    loop pass < 7 {
+        alloc pw := (w - xs[pass] + dxs[pass] - 1) // dxs[pass]
+        alloc ph := (h - ys[pass] + dys[pass] - 1) // dys[pass]
+        if pw > 0 and ph > 0 {
+            alloc pstride := (pw * bits + 7) // 8
+            alloc end := unfilter(raw, pos, pstride, ph, bpp)
+            if end < 0 {
+                return false
+            }
+            png_rows(raw, pos, pstride, pw, ph, kind, depth, pal, trns, out, w, xs[pass], ys[pass], dxs[pass], dys[pass])
+            pos := end
+        }
+        pass := pass + 1
+    }
+    return [w, h, out]
+}
+
+# --- GIF ----------------------------------------------------------------------------------
+#
+# Up to 256 colours from a table; the pixels are numbers into it,
+# packed with LZW: codes of growing width, each standing for a
+# string of pixels seen before.
+
+proc gif(b) {
+    alloc n := length(b)
+    if n < 13 {
+        return false
+    }
+    alloc w := b[6] | (b[7] << 8)
+    alloc h := b[8] | (b[9] << 8)
+    if w <= 0 or h <= 0 or w * h > MAX_PIXELS {
+        return false
+    }
+    alloc flags := b[10]
+    alloc p := 13
+    alloc global := false
+    if (flags & 128) != 0 {
+        alloc gsize := 3 << ((flags & 7) + 1)
+        global := b[p:p + gsize]
+        p := p + gsize
+    }
+    alloc clear_index := -1
+    loop p < n {
+        alloc kind := b[p]
+        p := p + 1
+        if kind == 59 {
+            break
+        }
+        if kind == 33 {
+            # an extension; the "graphic control" one names the clear colour
+            if p + 1 < n and b[p] == 249 and b[p + 1] >= 4 {
+                if (b[p + 2] & 1) != 0 {
+                    clear_index := b[p + 5]
+                } else {
+                    clear_index := -1
+                }
+            }
+            p := p + 1
+            loop p < n and b[p] != 0 {
+                p := p + b[p] + 1
+            }
+            p := p + 1
+            continue
+        }
+        if kind != 44 or p + 9 > n {
+            break
+        }
+        alloc left := b[p] | (b[p + 1] << 8)
+        alloc top := b[p + 2] | (b[p + 3] << 8)
+        alloc fw := b[p + 4] | (b[p + 5] << 8)
+        alloc fh := b[p + 6] | (b[p + 7] << 8)
+        alloc lflags := b[p + 8]
+        p := p + 9
+        alloc pal := global
+        if (lflags & 128) != 0 {
+            alloc lsize := 3 << ((lflags & 7) + 1)
+            pal := b[p:p + lsize]
+            p := p + lsize
+        }
+        if pal == false or p >= n {
+            return false
+        }
+        alloc min_bits := b[p]
+        p := p + 1
+        if min_bits < 1 or min_bits > 11 {
+            return false
+        }
+        # the packed data comes in blocks of up to 255 bytes
+        alloc data := to_bytes([])
+        loop p < n and b[p] != 0 {
+            alloc bl := b[p]
+            alloc chunk := b[p + 1:p + 1 + bl]
+            alloc joined := bytes_repeat(0, length(data) + length(chunk))
+            bytes_copy(data, 0, joined, 0, length(data))
+            bytes_copy(chunk, 0, joined, length(data), length(chunk))
+            data := joined
+            p := p + bl + 1
+        }
+        alloc npix := fw * fh
+        alloc idx := bytes_repeat(0, npix)
+        alloc clear := 1 << min_bits
+        alloc stop := clear + 1
+        alloc prefix := list_repeat(0, 4096)
+        alloc suffix := list_repeat(0, 4096)
+        alloc stack := list_repeat(0, 4097)
+        alloc avail := clear + 2
+        alloc bits := min_bits + 1
+        alloc old := -1
+        alloc first := 0
+        alloc acc := 0
+        alloc nb := 0
+        alloc dp := 0
+        alloc dn := length(data)
+        alloc op := 0
+        alloc k := 0
+        loop k < clear {
+            suffix[k] := k
+            k := k + 1
+        }
+        loop op < npix {
+            loop nb < bits and dp < dn {
+                acc := acc | (data[dp] << nb)
+                nb := nb + 8
+                dp := dp + 1
+            }
+            if nb < bits {
+                break
+            }
+            alloc code := acc & ((1 << bits) - 1)
+            acc := acc >> bits
+            nb := nb - bits
+            if code == clear {
+                avail := clear + 2
+                bits := min_bits + 1
+                old := -1
+                continue
+            }
+            if code == stop {
+                break
+            }
+            if old == -1 {
+                if code >= clear {
+                    break
+                }
+                idx[op] := code
+                op := op + 1
+                old := code
+                first := code
+                continue
+            }
+            alloc in_code := code
+            alloc sp := 0
+            if code >= avail {
+                stack[sp] := first
+                sp := sp + 1
+                code := old
+            }
+            loop code >= clear {
+                if code >= 4096 or sp >= 4096 {
+                    return false
+                }
+                stack[sp] := suffix[code]
+                sp := sp + 1
+                code := prefix[code]
+            }
+            first := suffix[code]
+            stack[sp] := first
+            sp := sp + 1
+            if avail < 4096 {
+                prefix[avail] := old
+                suffix[avail] := first
+                avail := avail + 1
+                if avail == (1 << bits) and bits < 12 {
+                    bits := bits + 1
+                }
+            }
+            old := in_code
+            loop sp > 0 and op < npix {
+                sp := sp - 1
+                idx[op] := stack[sp]
+                op := op + 1
+            }
+        }
+        alloc out := bytes_repeat(0, w * h * 4)
+        alloc ncol := length(pal) // 3
+        alloc row := 0
+        alloc y := 0
+        alloc pass := 0
+        alloc STARTS := [0, 4, 2, 1]
+        alloc STEPS := [8, 8, 4, 2]
+        loop row < fh {
+            alloc yy := top + y
+            if yy < h {
+                alloc x := 0
+                alloc o := (yy * w + left) * 4
+                alloc s := row * fw
+                loop x < fw and left + x < w {
+                    alloc c := idx[s + x]
+                    if c != clear_index and c < ncol {
+                        out[o] := pal[c * 3]
+                        out[o + 1] := pal[c * 3 + 1]
+                        out[o + 2] := pal[c * 3 + 2]
+                        out[o + 3] := 255
+                    }
+                    o := o + 4
+                    x := x + 1
+                }
+            }
+            row := row + 1
+            if (lflags & 64) != 0 {
+                y := y + STEPS[pass]
+                loop y >= fh and pass < 3 {
+                    pass := pass + 1
+                    y := STARTS[pass]
+                }
+            } else {
+                y := y + 1
+            }
+        }
+        return [w, h, out]
+    }
+    return false
+}
+
+# --- JPEG ---------------------------------------------------------------------------------
+#
+# A JPEG holds the picture as 8 x 8 blocks of frequencies (how much
+# of each of 64 wave patterns the block has), rounded off by a
+# table, Huffman coded. Colour is usually stored as brightness plus
+# two colour differences, the differences at half size. Both the
+# plain ("baseline") and the "progressive" kind, which sends every
+# block several times in growing detail, are read here.
+
+alloc ZIGZAG := [0, 1, 8, 16, 9, 2, 3, 10, 17, 24, 32, 25, 18, 11, 4, 5, 12, 19, 26, 33, 40, 48, 41, 34, 27, 20, 13, 6, 7, 14, 21,
+                 28, 35, 42, 49, 56, 57, 50, 43, 36, 29, 22, 15, 23, 30, 37, 44, 51, 58, 59, 52, 45, 38, 31, 39, 46, 53, 60, 61,
+                 54, 47, 55, 62, 63, 63, 63, 63, 63, 63, 63, 63, 63, 63, 63, 63, 63, 63, 63, 63, 63]
+
+# the reader's place in the file, shared by the procs below
+alloc jb := []
+alloc jp := 0
+alloc jn := 0
+alloc jbits := 0
+alloc jcount := 0
+alloc jmarker := 0             # a marker met while reading bits
+alloc eobrun := 0
+
+# Make sure at least 16 bits are waiting (zeros past the end).
+proc jfill() {
+    loop jcount <= 24 {
+        alloc c := 0
+        if jmarker == 0 and jp < jn {
+            c := jb[jp]
+            jp := jp + 1
+            if c == 255 {
+                alloc d := 0
+                if jp < jn {
+                    d := jb[jp]
+                }
+                if d == 0 {
+                    jp := jp + 1
+                } else {
+                    # a marker: the bits end here
+                    jmarker := d
+                    jp := jp - 1
+                    c := 0
+                }
+            }
+        }
+        jbits := (jbits << 8) | c
+        jcount := jcount + 8
+    }
+    return true
+}
+
+# Read the table of a DHT segment into what jdecode() uses:
+# [look, maxcode, valptr, mincode, symbols]; look answers codes of up
+# to 9 bits at once as length * 256 + symbol.
+proc jtable(counts, symbols) {
+    alloc look := list_repeat(0, 512)
+    alloc maxcode := list_repeat(-1, 18)
+    alloc valptr := list_repeat(0, 17)
+    alloc mincode := list_repeat(0, 17)
+    alloc code := 0
+    alloc k := 0
+    alloc len := 1
+    loop len <= 16 {
+        valptr[len] := k
+        mincode[len] := code
+        alloc i := 0
+        loop i < counts[len - 1] {
+            if len <= 9 and k < length(symbols) {
+                alloc from := code << (9 - len)
+                alloc to := from + (1 << (9 - len))
+                alloc e := (len << 8) | symbols[k]
+                loop from < to and from < 512 {
+                    look[from] := e
+                    from := from + 1
+                }
+            }
+            code := code + 1
+            k := k + 1
+            i := i + 1
+        }
+        if counts[len - 1] > 0 {
+            maxcode[len] := code - 1
+        }
+        code := code << 1
+        len := len + 1
+    }
+    return [look, maxcode, valptr, mincode, symbols]
+}
+
+proc jdecode(t) {
+    if jcount < 16 {
+        jfill()
+    }
+    alloc e := t[0][(jbits >> (jcount - 9)) & 511]
+    if e != 0 {
+        jcount := jcount - (e >> 8)
+        return e & 255
+    }
+    alloc maxcode := t[1]
+    alloc len := 10
+    loop len <= 16 {
+        alloc code := (jbits >> (jcount - len)) & ((1 << len) - 1)
+        if maxcode[len] >= 0 and code <= maxcode[len] and code >= t[3][len] {
+            jcount := jcount - len
+            alloc at := t[2][len] + code - t[3][len]
+            if at < length(t[4]) {
+                return t[4][at]
+            }
+            return 0
+        }
+        len := len + 1
+    }
+    jcount := jcount - 16
+    return 0
+}
+
+# The next n bits as a number.
+proc jreceive(n) {
+    if n == 0 {
+        return 0
+    }
+    if jcount < n {
+        jfill()
+    }
+    jcount := jcount - n
+    return (jbits >> jcount) & ((1 << n) - 1)
+}
+
+# The next n bits as the signed value JPEG means by them.
+proc jextend(n) {
+    if n == 0 {
+        return 0
+    }
+    if jcount < n {
+        jfill()
+    }
+    jcount := jcount - n
+    alloc v := (jbits >> jcount) & ((1 << n) - 1)
+    if v < (1 << (n - 1)) {
+        return v - (1 << n) + 1
+    }
+    return v
+}
+
+# One block of a plain JPEG: its 64 numbers into co[at...].
+proc jblock(co, at, comp, dct, act) {
+    alloc s := jdecode(dct)
+    alloc diff := 0
+    if s > 0 {
+        diff := jextend(s)
+    }
+    comp.pred := comp.pred + diff
+    co[at] := comp.pred
+    alloc k := 1
+    loop k < 64 {
+        alloc rs := jdecode(act)
+        alloc r := rs >> 4
+        alloc sz := rs & 15
+        if sz == 0 {
+            if r != 15 {
+                break
+            }
+            k := k + 16
+        } else {
+            k := k + r
+            co[at + ZIGZAG[k]] := jextend(sz)
+            k := k + 1
+        }
+    }
+    return true
+}
+
+# One block of one pass of a progressive JPEG. ss..se is the band of
+# numbers the pass carries, al how many low bits it leaves for later,
+# ah not zero when it adds one bit to what earlier passes sent.
+proc jprog(co, at, comp, dct, act, ss, se, ah, al) {
+    if ss == 0 {
+        if ah == 0 {
+            alloc s := jdecode(dct)
+            alloc diff := 0
+            if s > 0 {
+                diff := jextend(s)
+            }
+            comp.pred := comp.pred + diff
+            co[at] := comp.pred << al
+        } elif jreceive(1) == 1 {
+            co[at] := co[at] | (1 << al)
+        }
+        return true
+    }
+    if ah == 0 {
+        if eobrun > 0 {
+            eobrun := eobrun - 1
+            return true
+        }
+        alloc k := ss
+        loop k <= se {
+            alloc rs := jdecode(act)
+            alloc r := rs >> 4
+            alloc sz := rs & 15
+            if sz == 0 {
+                if r < 15 {
+                    eobrun := (1 << r) - 1
+                    if r > 0 {
+                        eobrun := eobrun + jreceive(r)
+                    }
+                    break
+                }
+                k := k + 16
+            } else {
+                k := k + r
+                co[at + ZIGZAG[k]] := jextend(sz) << al
+                k := k + 1
+            }
+        }
+        return true
+    }
+    # one more bit for the numbers already known, new ones in between
+    alloc bit := 1 << al
+    alloc k2 := ss
+    if eobrun == 0 {
+        loop k2 <= se {
+            alloc rs2 := jdecode(act)
+            alloc r2 := rs2 >> 4
+            alloc sz2 := rs2 & 15
+            alloc value := 0
+            if sz2 == 0 {
+                if r2 < 15 {
+                    eobrun := (1 << r2) - 1
+                    if r2 > 0 {
+                        eobrun := eobrun + jreceive(r2)
+                    }
+                    eobrun := eobrun + 1
+                    break
+                }
+            } else {
+                if jreceive(1) == 1 {
+                    value := bit
+                } else {
+                    value := 0 - bit
+                }
+            }
+            loop k2 <= se {
+                alloc z := at + ZIGZAG[k2]
+                k2 := k2 + 1
+                if co[z] != 0 {
+                    if jreceive(1) == 1 {
+                        if (co[z] & bit) == 0 {
+                            if co[z] > 0 {
+                                co[z] := co[z] + bit
+                            } else {
+                                co[z] := co[z] - bit
+                            }
+                        }
+                    }
+                } else {
+                    if r2 == 0 {
+                        if value != 0 {
+                            co[z] := value
+                        }
+                        break
+                    }
+                    r2 := r2 - 1
+                }
+            }
+        }
+    }
+    if eobrun > 0 {
+        loop k2 <= se {
+            alloc z2 := at + ZIGZAG[k2]
+            k2 := k2 + 1
+            if co[z2] != 0 {
+                if jreceive(1) == 1 {
+                    if (co[z2] & bit) == 0 {
+                        if co[z2] > 0 {
+                            co[z2] := co[z2] + bit
+                        } else {
+                            co[z2] := co[z2] - bit
+                        }
+                    }
+                }
+            }
+        }
+        eobrun := eobrun - 1
+    }
+    return true
+}
+
+alloc iw := list_repeat(0, 64)
+
+# From 64 frequencies (co[at...], times the table q) to 64 pixel
+# values, written to plane[o...] in rows `stride` apart.
+proc idct(co, at, q, plane, o, stride) {
+    alloc w := iw
+    alloc i := 0
+    loop i < 8 {
+        alloc c := at + i
+        alloc s1 := co[c + 8]
+        alloc s2 := co[c + 16]
+        alloc s3 := co[c + 24]
+        alloc s4 := co[c + 32]
+        alloc s5 := co[c + 40]
+        alloc s6 := co[c + 48]
+        alloc s7 := co[c + 56]
+        if s1 == 0 and s2 == 0 and s3 == 0 and s4 == 0 and s5 == 0 and s6 == 0 and s7 == 0 {
+            alloc dc := (co[c] * q[i]) << 2
+            w[i] := dc
+            w[i + 8] := dc
+            w[i + 16] := dc
+            w[i + 24] := dc
+            w[i + 32] := dc
+            w[i + 40] := dc
+            w[i + 48] := dc
+            w[i + 56] := dc
+        } else {
+            s1 := s1 * q[i + 8]
+            s2 := s2 * q[i + 16]
+            s3 := s3 * q[i + 24]
+            s4 := s4 * q[i + 32]
+            s5 := s5 * q[i + 40]
+            s6 := s6 * q[i + 48]
+            s7 := s7 * q[i + 56]
+            alloc s0 := co[c] * q[i]
+            alloc p1 := (s2 + s6) * 2217
+            alloc t2 := p1 - s6 * 7567
+            alloc t3 := p1 + s2 * 3135
+            alloc t0 := (s0 + s4) << 12
+            alloc t1 := (s0 - s4) << 12
+            alloc x0 := t0 + t3
+            alloc x3 := t0 - t3
+            alloc x1 := t1 + t2
+            alloc x2 := t1 - t2
+            t0 := s7
+            t1 := s5
+            t2 := s3
+            t3 := s1
+            alloc p3 := t0 + t2
+            alloc p4 := t1 + t3
+            p1 := t0 + t3
+            alloc p2 := t1 + t2
+            alloc p5 := (p3 + p4) * 4816
+            t0 := t0 * 1223
+            t1 := t1 * 8410
+            t2 := t2 * 12586
+            t3 := t3 * 6149
+            p1 := p5 - p1 * 3685
+            p2 := p5 - p2 * 10497
+            p3 := 0 - p3 * 8034
+            p4 := 0 - p4 * 1597
+            t3 := t3 + p1 + p4
+            t2 := t2 + p2 + p3
+            t1 := t1 + p2 + p4
+            t0 := t0 + p1 + p3
+            x0 := x0 + 512
+            x1 := x1 + 512
+            x2 := x2 + 512
+            x3 := x3 + 512
+            w[i] := (x0 + t3) >> 10
+            w[i + 56] := (x0 - t3) >> 10
+            w[i + 8] := (x1 + t2) >> 10
+            w[i + 48] := (x1 - t2) >> 10
+            w[i + 16] := (x2 + t1) >> 10
+            w[i + 40] := (x2 - t1) >> 10
+            w[i + 24] := (x3 + t0) >> 10
+            w[i + 32] := (x3 - t0) >> 10
+        }
+        i := i + 1
+    }
+    i := 0
+    loop i < 8 {
+        alloc r := i * 8
+        alloc a0 := w[r]
+        alloc a1 := w[r + 1]
+        alloc a2 := w[r + 2]
+        alloc a3 := w[r + 3]
+        alloc a4 := w[r + 4]
+        alloc a5 := w[r + 5]
+        alloc a6 := w[r + 6]
+        alloc a7 := w[r + 7]
+        alloc q1 := (a2 + a6) * 2217
+        alloc u2 := q1 - a6 * 7567
+        alloc u3 := q1 + a2 * 3135
+        alloc u0 := (a0 + a4) << 12
+        alloc u1 := (a0 - a4) << 12
+        alloc y0 := u0 + u3
+        alloc y3 := u0 - u3
+        alloc y1 := u1 + u2
+        alloc y2 := u1 - u2
+        u0 := a7
+        u1 := a5
+        u2 := a3
+        u3 := a1
+        alloc q3 := u0 + u2
+        alloc q4 := u1 + u3
+        q1 := u0 + u3
+        alloc q2 := u1 + u2
+        alloc q5 := (q3 + q4) * 4816
+        u0 := u0 * 1223
+        u1 := u1 * 8410
+        u2 := u2 * 12586
+        u3 := u3 * 6149
+        q1 := q5 - q1 * 3685
+        q2 := q5 - q2 * 10497
+        q3 := 0 - q3 * 8034
+        q4 := 0 - q4 * 1597
+        u3 := u3 + q1 + q4
+        u2 := u2 + q2 + q3
+        u1 := u1 + q2 + q4
+        u0 := u0 + q1 + q3
+        # 65536 for the rounding, and 128 * 131072 because the values are around zero
+        y0 := y0 + 16842752
+        y1 := y1 + 16842752
+        y2 := y2 + 16842752
+        y3 := y3 + 16842752
+        alloc d := o + i * stride
+        alloc v := (y0 + u3) >> 17
+        if v < 0 { v := 0 } elif v > 255 { v := 255 }
+        plane[d] := v
+        v := (y0 - u3) >> 17
+        if v < 0 { v := 0 } elif v > 255 { v := 255 }
+        plane[d + 7] := v
+        v := (y1 + u2) >> 17
+        if v < 0 { v := 0 } elif v > 255 { v := 255 }
+        plane[d + 1] := v
+        v := (y1 - u2) >> 17
+        if v < 0 { v := 0 } elif v > 255 { v := 255 }
+        plane[d + 6] := v
+        v := (y2 + u1) >> 17
+        if v < 0 { v := 0 } elif v > 255 { v := 255 }
+        plane[d + 2] := v
+        v := (y2 - u1) >> 17
+        if v < 0 { v := 0 } elif v > 255 { v := 255 }
+        plane[d + 5] := v
+        v := (y3 + u0) >> 17
+        if v < 0 { v := 0 } elif v > 255 { v := 255 }
+        plane[d + 3] := v
+        v := (y3 - u0) >> 17
+        if v < 0 { v := 0 } elif v > 255 { v := 255 }
+        plane[d + 4] := v
+        i := i + 1
+    }
+    return true
+}
+
+# A plane stored at part of the picture's size, stretched to all of
+# it (w x h), each new sample mixed from the four nearest old ones.
+proc upsample(c, w, h, hmax, vmax) {
+    alloc src := c.plane
+    alloc sw := c.pw
+    alloc cw := (w * c.h + hmax - 1) // hmax
+    alloc chh := (h * c.v + vmax - 1) // vmax
+    alloc out := bytes_repeat(0, w * h)
+    alloc xa := list_repeat(0, w)
+    alloc xb := list_repeat(0, w)
+    alloc xf := list_repeat(0, w)
+    alloc x := 0
+    loop x < w {
+        alloc pos := ((2 * x + 1) * 128 * c.h) // hmax - 128
+        alloc i0 := pos >> 8
+        alloc f := pos & 255
+        if i0 < 0 {
+            i0 := 0
+            f := 0
+        }
+        alloc i1 := i0 + 1
+        if i1 > cw - 1 {
+            i1 := cw - 1
+        }
+        if i0 > cw - 1 {
+            i0 := cw - 1
+        }
+        xa[x] := i0
+        xb[x] := i1
+        xf[x] := f
+        x := x + 1
+    }
+    alloc y := 0
+    loop y < h {
+        alloc ypos := ((2 * y + 1) * 128 * c.v) // vmax - 128
+        alloc j0 := ypos >> 8
+        alloc fy := ypos & 255
+        if j0 < 0 {
+            j0 := 0
+            fy := 0
+        }
+        alloc j1 := j0 + 1
+        if j1 > chh - 1 {
+            j1 := chh - 1
+        }
+        if j0 > chh - 1 {
+            j0 := chh - 1
+        }
+        alloc ra := j0 * sw
+        alloc rb := j1 * sw
+        alloc o := y * w
+        alloc gy := 256 - fy
+        x := 0
+        loop x < w {
+            alloc a := xa[x]
+            alloc b := xb[x]
+            alloc fx := xf[x]
+            alloc gx := 256 - fx
+            out[o + x] := ((src[ra + a] * gx + src[ra + b] * fx) * gy + (src[rb + a] * gx + src[rb + b] * fx) * fy + 32768) >> 16
+            x := x + 1
+        }
+        y := y + 1
+    }
+    return out
+}
+
+proc jpeg(b) {
+    jb := b
+    jn := length(b)
+    jp := 2
+    alloc qt := [false, false, false, false]
+    alloc hdc := [false, false, false, false]
+    alloc hac := [false, false, false, false]
+    alloc comps := []
+    alloc w := 0
+    alloc h := 0
+    alloc progressive := false
+    alloc hmax := 1
+    alloc vmax := 1
+    alloc mcux := 0
+    alloc mcuy := 0
+    alloc restart := 0
+    alloc adobe := -1
+    alloc done := false
+    loop done == false and jp + 4 <= jn {
+        if b[jp] != 255 {
+            jp := jp + 1
+            continue
+        }
+        alloc m := b[jp + 1]
+        jp := jp + 2
+        if m == 255 {
+            jp := jp - 1
+            continue
+        }
+        if m == 216 or m == 1 or (m >= 208 and m <= 215) or m == 0 {
+            continue
+        }
+        if m == 217 {
+            break
+        }
+        alloc len := (b[jp] << 8) | b[jp + 1]
+        alloc seg := jp + 2
+        alloc end := jp + len
+        if len < 2 or end > jn {
+            break
+        }
+        if m == 219 {
+            loop seg < end {
+                alloc pq := b[seg] >> 4
+                alloc tq := b[seg] & 15
+                seg := seg + 1
+                alloc table := list_repeat(0, 64)
+                alloc i := 0
+                loop i < 64 and seg < end {
+                    if pq == 0 {
+                        table[ZIGZAG[i]] := b[seg]
+                        seg := seg + 1
+                    } else {
+                        table[ZIGZAG[i]] := (b[seg] << 8) | b[seg + 1]
+                        seg := seg + 2
+                    }
+                    i := i + 1
+                }
+                if tq < 4 {
+                    qt[tq] := table
+                }
+            }
+        } elif m == 192 or m == 193 or m == 194 {
+            progressive := m == 194
+            if b[seg] != 8 {
+                return false
+            }
+            h := (b[seg + 1] << 8) | b[seg + 2]
+            w := (b[seg + 3] << 8) | b[seg + 4]
+            alloc nc := b[seg + 5]
+            if w <= 0 or h <= 0 or w * h > MAX_PIXELS or (nc != 1 and nc != 3 and nc != 4) {
+                return false
+            }
+            comps := []
+            alloc ci := 0
+            loop ci < nc {
+                alloc at := seg + 6 + ci * 3
+                alloc hs := b[at + 1] >> 4
+                alloc vs := b[at + 1] & 15
+                if hs < 1 or hs > 4 or vs < 1 or vs > 4 or b[at + 2] > 3 {
+                    return false
+                }
+                append(comps, {id: b[at], h: hs, v: vs, tq: b[at + 2], pred: 0, td: 0, ta: 0})
+                if hs > hmax {
+                    hmax := hs
+                }
+                if vs > vmax {
+                    vmax := vs
+                }
+                ci := ci + 1
+            }
+            mcux := (w + 8 * hmax - 1) // (8 * hmax)
+            mcuy := (h + 8 * vmax - 1) // (8 * vmax)
+            for c in comps {
+                c.bw := mcux * c.h
+                c.bh := mcuy * c.v
+                # blocks that hold part of the picture (the rest is padding)
+                c.rw := ((w * c.h + hmax - 1) // hmax + 7) // 8
+                c.rh := ((h * c.v + vmax - 1) // vmax + 7) // 8
+                c.co := list_repeat(0, c.bw * c.bh * 64)
+            }
+        } elif m >= 195 and m <= 207 and m != 196 and m != 200 and m != 204 {
+            # lossless, arithmetic-coded and other rare kinds
+            return false
+        } elif m == 196 {
+            loop seg + 17 <= end {
+                alloc tc := b[seg] >> 4
+                alloc th := b[seg] & 15
+                alloc counts := []
+                alloc total := 0
+                alloc k := 0
+                loop k < 16 {
+                    append(counts, b[seg + 1 + k])
+                    total := total + b[seg + 1 + k]
+                    k := k + 1
+                }
+                seg := seg + 17
+                if seg + total > end or th > 3 {
+                    return false
+                }
+                alloc symbols := []
+                k := 0
+                loop k < total {
+                    append(symbols, b[seg + k])
+                    k := k + 1
+                }
+                seg := seg + total
+                if tc == 0 {
+                    hdc[th] := jtable(counts, symbols)
+                } else {
+                    hac[th] := jtable(counts, symbols)
+                }
+            }
+        } elif m == 221 {
+            restart := (b[seg] << 8) | b[seg + 1]
+        } elif m == 238 {
+            if len >= 14 and b[seg] == 65 and b[seg + 1] == 100 {
+                adobe := b[seg + 11]
+            }
+        } elif m == 218 {
+            if length(comps) == 0 {
+                return false
+            }
+            alloc ns := b[seg]
+            alloc scan := []
+            alloc si := 0
+            loop si < ns {
+                alloc cid := b[seg + 1 + si * 2]
+                alloc tabs := b[seg + 2 + si * 2]
+                for c2 in comps {
+                    if c2.id == cid {
+                        c2.td := tabs >> 4
+                        c2.ta := tabs & 15
+                        append(scan, c2)
+                    }
+                }
+                si := si + 1
+            }
+            if length(scan) != ns or ns == 0 {
+                return false
+            }
+            alloc ss := b[seg + 1 + ns * 2]
+            alloc se := b[seg + 2 + ns * 2]
+            alloc ah := b[seg + 3 + ns * 2] >> 4
+            alloc al := b[seg + 3 + ns * 2] & 15
+            if se > 63 {
+                se := 63
+            }
+            jp := end
+            jbits := 0
+            jcount := 0
+            jmarker := 0
+            eobrun := 0
+            for c3 in comps {
+                c3.pred := 0
+            }
+            alloc nx := mcux
+            alloc ny := mcuy
+            if ns == 1 {
+                nx := scan[0].rw
+                ny := scan[0].rh
+            }
+            alloc units := nx * ny
+            alloc unit := 0
+            alloc until := restart
+            loop unit < units {
+                if restart > 0 and unit == until {
+                    # a restart marker: start afresh
+                    until := until + restart
+                    jbits := 0
+                    jcount := 0
+                    if jmarker == 0 {
+                        loop jp + 1 < jn and (b[jp] != 255 or b[jp + 1] < 208 or b[jp + 1] > 215) {
+                            jp := jp + 1
+                        }
+                    }
+                    jp := jp + 2
+                    jmarker := 0
+                    eobrun := 0
+                    for c4 in comps {
+                        c4.pred := 0
+                    }
+                }
+                alloc ux := unit % nx
+                alloc uy := unit // nx
+                if ns == 1 {
+                    alloc sc := scan[0]
+                    alloc at2 := (uy * sc.bw + ux) * 64
+                    if progressive {
+                        jprog(sc.co, at2, sc, hdc[sc.td], hac[sc.ta], ss, se, ah, al)
+                    } else {
+                        jblock(sc.co, at2, sc, hdc[sc.td], hac[sc.ta])
+                    }
+                } else {
+                    for sc2 in scan {
+                        alloc dct := hdc[sc2.td]
+                        alloc act := hac[sc2.ta]
+                        alloc by := 0
+                        loop by < sc2.v {
+                            alloc bx := 0
+                            loop bx < sc2.h {
+                                alloc at3 := ((uy * sc2.v + by) * sc2.bw + ux * sc2.h + bx) * 64
+                                if progressive {
+                                    jprog(sc2.co, at3, sc2, dct, act, ss, se, ah, al)
+                                } else {
+                                    jblock(sc2.co, at3, sc2, dct, act)
+                                }
+                                bx := bx + 1
+                            }
+                            by := by + 1
+                        }
+                    }
+                }
+                unit := unit + 1
+            }
+            # on to the next marker
+            if jmarker != 0 {
+                # jp stands on the marker's 255
+                jmarker := 0
+            } else {
+                loop jp + 1 < jn and (b[jp] != 255 or b[jp + 1] == 0) {
+                    jp := jp + 1
+                }
+            }
+            continue
+        }
+        jp := end
+    }
+    if length(comps) == 0 {
+        return false
+    }
+    # frequencies to pixels, one plane per component
+    for c5 in comps {
+        alloc q := qt[c5.tq]
+        if q == false {
+            return false
+        }
+        c5.pw := c5.bw * 8
+        alloc plane := bytes_repeat(0, c5.bw * c5.bh * 64)
+        alloc byy := 0
+        loop byy < c5.bh {
+            alloc bxx := 0
+            loop bxx < c5.bw {
+                idct(c5.co, (byy * c5.bw + bxx) * 64, q, plane, byy * 8 * c5.pw + bxx * 8, c5.pw)
+                bxx := bxx + 1
+            }
+            byy := byy + 1
+        }
+        c5.plane := plane
+        c5.co := false
+    }
+    alloc out := bytes_repeat(255, w * h * 4)
+    alloc nc2 := length(comps)
+    alloc c0 := comps[0]
+    alloc p0 := c0.plane
+    if nc2 == 1 {
+        alloc y := 0
+        loop y < h {
+            alloc s := y * c0.pw
+            alloc o := y * w * 4
+            alloc x := 0
+            loop x < w {
+                alloc v := p0[s + x]
+                out[o] := v
+                out[o + 1] := v
+                out[o + 2] := v
+                o := o + 4
+                x := x + 1
+            }
+            y := y + 1
+        }
+        return [w, h, out]
+    }
+    alloc c1 := comps[1]
+    alloc c2x := comps[2]
+    alloc rgb := adobe == 0 or (c0.id == 82 and c1.id == 71 and c2x.id == 66)
+    for c6 in comps {
+        if c6.h != hmax or c6.v != vmax {
+            c6.plane := upsample(c6, w, h, hmax, vmax)
+            c6.pw := w
+        }
+    }
+    alloc p1 := c1.plane
+    alloc p2 := c2x.plane
+    p0 := c0.plane
+    alloc p3 := false
+    alloc c3x := false
+    if nc2 == 4 {
+        c3x := comps[3]
+        p3 := c3x.plane
+    }
+    alloc yy := 0
+    loop yy < h {
+        alloc r0 := yy * c0.pw
+        alloc r1 := yy * c1.pw
+        alloc r2 := yy * c2x.pw
+        alloc r3 := 0
+        if nc2 == 4 {
+            r3 := yy * c3x.pw
+        }
+        alloc oo := yy * w * 4
+        alloc xq := 0
+        loop xq < w {
+            alloc a := p0[r0 + xq]
+            alloc cb := p1[r1 + xq]
+            alloc cr := p2[r2 + xq]
+            alloc rr := a
+            alloc gg := cb
+            alloc bb := cr
+            if rgb == false {
+                cb := cb - 128
+                cr := cr - 128
+                rr := a + ((cr * 91881 + 32768) >> 16)
+                gg := a - ((cb * 22554 + cr * 46802 + 32768) >> 16)
+                bb := a + ((cb * 116130 + 32768) >> 16)
+                if rr < 0 { rr := 0 } elif rr > 255 { rr := 255 }
+                if gg < 0 { gg := 0 } elif gg > 255 { gg := 255 }
+                if bb < 0 { bb := 0 } elif bb > 255 { bb := 255 }
+            }
+            if nc2 == 4 {
+                # four inks, stored upside down by the program that writes these
+                alloc kk := p3[r3 + xq]
+                if adobe == 2 {
+                    rr := 255 - rr
+                    gg := 255 - gg
+                    bb := 255 - bb
+                }
+                rr := rr * kk // 255
+                gg := gg * kk // 255
+                bb := bb * kk // 255
+            }
+            out[oo] := rr
+            out[oo + 1] := gg
+            out[oo + 2] := bb
+            oo := oo + 4
+            xq := xq + 1
+        }
+        yy := yy + 1
+    }
+    return [w, h, out]
+}
+
+# --- any of them -------------------------------------------------------------------------
+
+proc decode(b) {
+    alloc n := length(b)
+    if n < 10 {
+        return false
+    }
+    alloc r := false
+    try {
+        if b[0] == 137 and b[1] == 80 and b[2] == 78 and b[3] == 71 {
+            r := png(b)
+        } elif b[0] == 71 and b[1] == 73 and b[2] == 70 {
+            r := gif(b)
+        } elif b[0] == 255 and b[1] == 216 {
+            r := jpeg(b)
+        }
+    } except e {
+        r := false
+    }
+    return r
+}
+
+# The picture made smaller: dw x dh, every new pixel the average of
+# the old ones it covers.
+proc shrink(im, dw, dh) {
+    alloc sw := im[0]
+    alloc sh := im[1]
+    alloc src := im[2]
+    alloc out := bytes_repeat(0, dw * dh * 4)
+    alloc y := 0
+    loop y < dh {
+        alloc y0 := y * sh // dh
+        alloc y1 := (y + 1) * sh // dh
+        if y1 <= y0 {
+            y1 := y0 + 1
+        }
+        alloc x := 0
+        loop x < dw {
+            alloc x0 := x * sw // dw
+            alloc x1 := (x + 1) * sw // dw
+            if x1 <= x0 {
+                x1 := x0 + 1
+            }
+            alloc r := 0
+            alloc g := 0
+            alloc b := 0
+            alloc a := 0
+            alloc yy := y0
+            loop yy < y1 {
+                alloc s := (yy * sw + x0) * 4
+                alloc xx := x0
+                loop xx < x1 {
+                    alloc al := src[s + 3]
+                    r := r + src[s] * al
+                    g := g + src[s + 1] * al
+                    b := b + src[s + 2] * al
+                    a := a + al
+                    s := s + 4
+                    xx := xx + 1
+                }
+                yy := yy + 1
+            }
+            alloc o := (y * dw + x) * 4
+            if a > 0 {
+                out[o] := r // a
+                out[o + 1] := g // a
+                out[o + 2] := b // a
+                out[o + 3] := a // ((x1 - x0) * (y1 - y0))
+            }
+            x := x + 1
+        }
+        y := y + 1
+    }
+    return [dw, dh, out]
+}

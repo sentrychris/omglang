@@ -1,0 +1,980 @@
+;;;omg
+
+# tools/browser/html.omg
+#
+# Reads HTML into a tree.
+#
+#     import "html.omg" as html
+#     alloc doc := html.parse(bytes)         # a byte list, UTF-8
+#
+# The tree is made of dictionaries:
+#
+#     an element   {t: 1, tag: "div", attrs: {class: "x"}, kids: [...]}
+#     a text       {t: 3, text: "Hello"}
+#     the document {t: 9, kids: [the html element], head: ..., body: ...}
+#
+# A node does not know its parent: a parent that points at its children
+# which point back would never be freed, since OMG frees a value when
+# the last reference to it goes. Whoever walks the tree keeps track of
+# where it is.
+#
+# HTML is forgiving, and pages rely on it: a <p> ends when a <div>
+# starts, an <li> ends at the next <li>, a missing <tbody> is put in,
+# and an end tag with no start is let pass. What is here follows the
+# HTML standard's rules for those cases that pages meet in practice. It
+# does not follow the rules for repairing badly nested formatting
+# ("<b><i></b></i>", the standard's "adoption agency"), nor does it
+# move text that is loose inside a <table> out in front of it.
+
+import "util.omg" as u
+import "entities.omg" as ent
+
+alloc VOID := {area: 1, base: 1, br: 1, col: 1, embed: 1, hr: 1, img: 1, input: 1, link: 1, meta: 1,
+               param: 1, source: 1, track: 1, wbr: 1, keygen: 1, frame: 1, bgsound: 1, basefont: 1}
+# start tags that end a paragraph still open
+alloc ENDS_P := {address: 1, article: 1, aside: 1, blockquote: 1, center: 1, details: 1, dialog: 1, dir: 1,
+                 div: 1, dl: 1, fieldset: 1, figcaption: 1, figure: 1, footer: 1, form: 1, h1: 1, h2: 1,
+                 h3: 1, h4: 1, h5: 1, h6: 1, header: 1, hgroup: 1, hr: 1, main: 1, menu: 1, nav: 1, ol: 1,
+                 p: 1, pre: 1, section: 1, summary: 1, table: 1, ul: 1, li: 1, dd: 1, dt: 1, listing: 1,
+                 xmp: 1, plaintext: 1}
+alloc HEAD_TAGS := {title: 1, meta: 1, link: 1, style: 1, script: 1, base: 1, template: 1, noscript: 1}
+# elements whose content is not HTML: it runs to their own end tag
+alloc RAW := {script: 1, style: 1, textarea: 1, title: 1, xmp: 1, iframe: 1, noembed: 1, noframes: 1}
+alloc HEADING := {h1: 1, h2: 1, h3: 1, h4: 1, h5: 1, h6: 1}
+# an end tag does not reach out of one of these to close something
+alloc SCOPE := {html: 1, table: 1, td: 1, th: 1, caption: 1, marquee: 1, object: 1, template: 1}
+alloc TABLE_SCOPE := {html: 1, table: 1, template: 1}
+alloc TABLE_PARTS := {tr: 1, tbody: 1, thead: 1, tfoot: 1, td: 1, th: 1, caption: 1, colgroup: 1}
+
+# What the parser is in the middle of.
+alloc src := []                # the page, as bytes
+alloc pos := 0
+alloc len := 0
+alloc doc := false
+alloc root := false            # the html element
+alloc head := false
+alloc body := false
+alloc stack := []              # the elements that are open, outermost first
+alloc text := false            # text read and not yet put in the tree (a byte list)
+alloc form_open := false
+
+proc element(tag, attrs) {
+    return {t: 1, tag: tag, attrs: attrs, kids: []}
+}
+
+proc top() {
+    return stack[length(stack) - 1]
+}
+
+proc pop() {
+    alloc n := length(stack)
+    stack := stack[0:n - 1]
+    return true
+}
+
+# Put the waiting text in the tree.
+proc flush() {
+    if text == false {
+        return false
+    }
+    alloc t := text
+    text := false
+    alloc n := length(t)
+    if n == 0 {
+        return false
+    }
+    alloc blank := true
+    alloc i := 0
+    loop i < n {
+        if u.is_space(t[i]) == false {
+            blank := false
+            break
+        }
+        i := i + 1
+    }
+    if body == false {
+        # before the body: white space means nothing, anything else starts the body
+        if blank {
+            return false
+        }
+        start_body()
+    }
+    alloc cur := top()
+    if blank and (cur.tag == "html" or cur.tag == "head" or cur.tag == "table" or cur.tag == "tbody" or cur.tag == "tr" or cur.tag == "thead" or cur.tag == "tfoot" or cur.tag == "colgroup" or cur.tag == "select") {
+        return false
+    }
+    alloc nk := length(cur.kids)
+    if nk > 0 and cur.kids[nk - 1].t == 3 {
+        cur.kids[nk - 1].text := cur.kids[nk - 1].text + bytes_to_string(t)
+    } else {
+        append(cur.kids, {t: 3, text: bytes_to_string(t)})
+    }
+    return true
+}
+
+proc ensure_root() {
+    if root == false {
+        root := element("html", {})
+        append(doc.kids, root)
+        stack := [root]
+    }
+    return root
+}
+
+proc ensure_head() {
+    ensure_root()
+    if head == false {
+        head := element("head", {})
+        append(root.kids, head)
+    }
+    return head
+}
+
+proc start_body() {
+    ensure_head()
+    if body == false {
+        body := element("body", {})
+        append(root.kids, body)
+        stack := [root, body]
+    }
+    return body
+}
+
+proc merge_attrs(node, attrs) {
+    for k in dict_keys(attrs) {
+        if has_key(node.attrs, k) == false {
+            node.attrs[k] := attrs[k]
+        }
+    }
+    return true
+}
+
+# Is an element with this tag open, without leaving the scope `bars`?
+# Returns its place in the stack, or -1.
+proc open_index(tag, bars) {
+    alloc i := length(stack) - 1
+    loop i >= 0 {
+        alloc t := stack[i].tag
+        if t == tag {
+            return i
+        }
+        if has_key(bars, t) {
+            return -1
+        }
+        i := i - 1
+    }
+    return -1
+}
+
+proc close_at(i) {
+    if i >= 2 or (i >= 1 and body == false) {
+        stack := stack[0:i]
+    }
+    return true
+}
+
+proc close_tag(tag, bars) {
+    alloc i := open_index(tag, bars)
+    if i >= 0 {
+        close_at(i)
+        return true
+    }
+    return false
+}
+
+proc close_p() {
+    alloc i := length(stack) - 1
+    loop i >= 0 {
+        alloc t := stack[i].tag
+        if t == "p" {
+            close_at(i)
+            return true
+        }
+        if has_key(SCOPE, t) or t == "button" {
+            return false
+        }
+        i := i - 1
+    }
+    return false
+}
+
+# --- characters written as &names; --------------------------------------------------
+
+# Copy src[from:to] to the byte list out, with the &...; forms replaced
+# by the characters they stand for. In an attribute a name without its
+# semicolon is left alone when a letter, digit or = follows it.
+proc decode_into(out, b, from, to, in_attr) {
+    alloc i := from
+    loop i < to {
+        alloc c := b[i]
+        if c != 38 {
+            append(out, c)
+            i := i + 1
+            continue
+        }
+        alloc j := i + 1
+        if j < to and b[j] == 35 {
+            # a number: &#233; or &#xE9;
+            j := j + 1
+            alloc v := 0
+            alloc digits := 0
+            if j < to and (b[j] == 120 or b[j] == 88) {
+                j := j + 1
+                loop j < to and digits < 9 {
+                    alloc h := b[j]
+                    if h >= 48 and h <= 57 {
+                        v := v * 16 + h - 48
+                    } elif h >= 97 and h <= 102 {
+                        v := v * 16 + h - 87
+                    } elif h >= 65 and h <= 70 {
+                        v := v * 16 + h - 55
+                    } else {
+                        break
+                    }
+                    digits := digits + 1
+                    j := j + 1
+                }
+            } else {
+                loop j < to and b[j] >= 48 and b[j] <= 57 and digits < 9 {
+                    v := v * 10 + b[j] - 48
+                    digits := digits + 1
+                    j := j + 1
+                }
+            }
+            if digits == 0 {
+                append(out, 38)
+                i := i + 1
+                continue
+            }
+            if j < to and b[j] == 59 {
+                j := j + 1
+            }
+            if v == 0 or v > 1114111 or (v >= 55296 and v <= 57343) {
+                v := 65533
+            } elif v >= 128 and v <= 159 {
+                v := cp1252(v)
+            }
+            u.put_utf8(out, v)
+            i := j
+            continue
+        }
+        loop j < to and j - i < 34 and ((b[j] >= 97 and b[j] <= 122) or (b[j] >= 65 and b[j] <= 90) or (b[j] >= 48 and b[j] <= 57)) {
+            j := j + 1
+        }
+        alloc found := false
+        if j > i + 1 {
+            alloc closed := j < to and b[j] == 59
+            alloc name := bytes_to_string(b[i + 1:j])
+            found := ent.lookup(name, closed)
+            if found == false {
+                # "&notit" is "&not" followed by "it": try the longest old name that fits
+                alloc k := j - 1
+                loop k > i + 2 and found == false {
+                    found := ent.lookup(bytes_to_string(b[i + 1:k]), false)
+                    if found != false {
+                        j := k
+                    }
+                    k := k - 1
+                }
+            }
+            if found != false and closed == false and in_attr and j < to {
+                alloc nx := b[j]
+                if nx == 61 or (nx >= 97 and nx <= 122) or (nx >= 65 and nx <= 90) or (nx >= 48 and nx <= 57) {
+                    found := false
+                }
+            }
+            if found != false {
+                for cp in found {
+                    u.put_utf8(out, cp)
+                }
+                if j < to and b[j] == 59 {
+                    j := j + 1
+                }
+                i := j
+                continue
+            }
+        }
+        append(out, 38)
+        i := i + 1
+    }
+    return out
+}
+
+# What the bytes 128 to 159 mean in Windows-1252, which is what pages
+# that use them as characters mean.
+alloc CP1252 := [8364, 129, 8218, 402, 8222, 8230, 8224, 8225, 710, 8240, 352, 8249, 338, 141, 381, 143,
+                 144, 8216, 8217, 8220, 8221, 8226, 8211, 8212, 732, 8482, 353, 8250, 339, 157, 382, 376]
+
+proc cp1252(v) {
+    return CP1252[v - 128]
+}
+
+proc decoded(b, from, to, in_attr) {
+    return bytes_to_string(decode_into(to_bytes([]), b, from, to, in_attr))
+}
+
+# --- tags ---------------------------------------------------------------------------
+
+# The lower-case name that starts at src[i]; [name, index after it].
+proc read_name(i) {
+    alloc b := src
+    alloc start := i
+    alloc upper := false
+    loop i < len {
+        alloc c := b[i]
+        if c == 62 or c == 47 or c == 32 or c == 10 or c == 9 or c == 13 or c == 12 {
+            break
+        }
+        if c >= 65 and c <= 90 {
+            upper := true
+        }
+        i := i + 1
+    }
+    alloc name := bytes_to_string(b[start:i])
+    if upper {
+        name := u.lower(name)
+    }
+    return [name, i]
+}
+
+# The attributes from src[i] to the end of the tag: sets `pos` after
+# the ">", and returns [attrs, self_closing].
+proc read_attrs(i) {
+    alloc b := src
+    alloc attrs := {}
+    alloc selfc := false
+    loop i < len {
+        alloc c := b[i]
+        if c == 62 {
+            i := i + 1
+            break
+        }
+        if u.is_space(c) {
+            i := i + 1
+            continue
+        }
+        if c == 47 {
+            if i + 1 < len and b[i + 1] == 62 {
+                selfc := true
+            }
+            i := i + 1
+            continue
+        }
+        alloc start := i
+        alloc upper := false
+        loop i < len {
+            c := b[i]
+            if c == 61 and i > start {
+                break
+            }
+            if c == 62 or c == 47 or u.is_space(c) {
+                break
+            }
+            if c >= 65 and c <= 90 {
+                upper := true
+            }
+            i := i + 1
+        }
+        alloc name := bytes_to_string(b[start:i])
+        if upper {
+            name := u.lower(name)
+        }
+        loop i < len and u.is_space(b[i]) {
+            i := i + 1
+        }
+        alloc value := ""
+        if i < len and b[i] == 61 {
+            i := i + 1
+            loop i < len and u.is_space(b[i]) {
+                i := i + 1
+            }
+            if i < len and (b[i] == 34 or b[i] == 39) {
+                alloc q := b[i]
+                i := i + 1
+                alloc vs := i
+                loop i < len and b[i] != q {
+                    i := i + 1
+                }
+                value := decoded(b, vs, i, true)
+                i := i + 1
+            } else {
+                alloc vs2 := i
+                loop i < len and b[i] != 62 and u.is_space(b[i]) == false {
+                    i := i + 1
+                }
+                value := decoded(b, vs2, i, true)
+            }
+        }
+        if length(name) > 0 and has_key(attrs, name) == false {
+            attrs[name] := value
+        }
+    }
+    pos := i
+    return [attrs, selfc]
+}
+
+# Where "</tag" next is, at or after i, in any case; len when nowhere.
+proc find_end_tag(tag, i) {
+    alloc b := src
+    alloc t := string_bytes(tag)
+    alloc tn := length(t)
+    loop i + tn + 1 < len {
+        if b[i] == 60 and b[i + 1] == 47 {
+            alloc k := 0
+            loop k < tn and (b[i + 2 + k] | 32) == t[k] {
+                k := k + 1
+            }
+            if k == tn {
+                alloc after := 0
+                if i + 2 + tn < len {
+                    after := b[i + 2 + tn]
+                }
+                if after == 62 or after == 47 or u.is_space(after) or after == 0 {
+                    return i
+                }
+            }
+        }
+        i := i + 1
+    }
+    return len
+}
+
+proc insert(node) {
+    append(top().kids, node)
+    return node
+}
+
+proc start_tag(tag, attrs, selfc) {
+    if tag == "html" {
+        ensure_root()
+        merge_attrs(root, attrs)
+        return true
+    }
+    if tag == "head" {
+        ensure_head()
+        merge_attrs(head, attrs)
+        return true
+    }
+    if tag == "body" {
+        start_body()
+        merge_attrs(body, attrs)
+        return true
+    }
+    if body == false {
+        if has_key(HEAD_TAGS, tag) {
+            ensure_head()
+            alloc hn := element(tag, attrs)
+            append(head.kids, hn)
+            if has_key(RAW, tag) {
+                raw_text(hn)
+            } elif tag == "noscript" {
+                # no scripts run here, so what is in it counts: a head
+                # one holds links and styles, which stay in the head
+                return true
+            }
+            return true
+        }
+        start_body()
+    }
+    # What this tag ends by starting.
+    if has_key(ENDS_P, tag) {
+        close_p()
+    }
+    if tag == "li" {
+        alloc i := length(stack) - 1
+        loop i >= 0 {
+            alloc t := stack[i].tag
+            if t == "li" {
+                close_at(i)
+                break
+            }
+            if t == "ul" or t == "ol" or has_key(SCOPE, t) {
+                break
+            }
+            i := i - 1
+        }
+    } elif tag == "dd" or tag == "dt" {
+        alloc i2 := length(stack) - 1
+        loop i2 >= 0 {
+            alloc t2 := stack[i2].tag
+            if t2 == "dd" or t2 == "dt" {
+                close_at(i2)
+                break
+            }
+            if t2 == "dl" or has_key(SCOPE, t2) {
+                break
+            }
+            i2 := i2 - 1
+        }
+    } elif has_key(HEADING, tag) {
+        if has_key(HEADING, top().tag) {
+            pop()
+        }
+    } elif tag == "option" {
+        if top().tag == "option" {
+            pop()
+        }
+    } elif tag == "optgroup" {
+        if top().tag == "option" {
+            pop()
+        }
+        if top().tag == "optgroup" {
+            pop()
+        }
+    } elif tag == "a" {
+        close_tag("a", SCOPE)
+    } elif tag == "button" {
+        close_tag("button", SCOPE)
+    } elif tag == "form" {
+        if form_open {
+            return true
+        }
+        form_open := true
+    } elif tag == "tr" {
+        close_tag("tr", TABLE_SCOPE)
+        alloc ct := top().tag
+        if ct == "table" {
+            stack := stack + [insert(element("tbody", {}))]
+        }
+    } elif tag == "td" or tag == "th" {
+        if close_tag("td", TABLE_SCOPE) == false {
+            close_tag("th", TABLE_SCOPE)
+        }
+        alloc ct2 := top().tag
+        if ct2 == "table" {
+            stack := stack + [insert(element("tbody", {}))]
+            ct2 := "tbody"
+        }
+        if ct2 == "tbody" or ct2 == "thead" or ct2 == "tfoot" {
+            stack := stack + [insert(element("tr", {}))]
+        }
+    } elif tag == "tbody" or tag == "thead" or tag == "tfoot" or tag == "caption" or tag == "colgroup" {
+        alloc ti := open_index("table", {html: 1})
+        if ti >= 0 and ti + 1 < length(stack) {
+            stack := stack[0:ti + 1]
+        }
+    } elif tag == "col" {
+        if top().tag != "colgroup" and top().tag != "table" {
+            close_tag("colgroup", TABLE_SCOPE)
+        }
+    }
+    alloc node := insert(element(tag, attrs))
+    if has_key(VOID, tag) {
+        return true
+    }
+    if has_key(RAW, tag) {
+        raw_text(node)
+        return true
+    }
+    if selfc and (tag == "svg" or tag == "path" or tag == "circle" or tag == "rect" or tag == "use" or tag == "g" or tag == "line" or tag == "polygon" or tag == "polyline" or tag == "ellipse") {
+        return true
+    }
+    stack := stack + [node]
+    return true
+}
+
+# The content of a script, style, textarea or title: taken as it is up
+# to the element's own end tag.
+proc raw_text(node) {
+    alloc tag := node.tag
+    alloc end := find_end_tag(tag, pos)
+    if end > pos {
+        if tag == "textarea" or tag == "title" {
+            append(node.kids, {t: 3, text: decoded(src, pos, end, false)})
+        } else {
+            append(node.kids, {t: 3, text: bytes_to_string(src[pos:end])})
+        }
+    }
+    pos := end
+    # step over the end tag
+    loop pos < len and src[pos] != 62 {
+        pos := pos + 1
+    }
+    pos := pos + 1
+    return true
+}
+
+proc end_tag(tag) {
+    if tag == "body" or tag == "html" {
+        return true
+    }
+    if tag == "head" or body == false {
+        return true
+    }
+    if tag == "p" {
+        if close_p() == false {
+            insert(element("p", {}))
+        }
+        return true
+    }
+    if tag == "br" {
+        insert(element("br", {}))
+        return true
+    }
+    if tag == "form" {
+        form_open := false
+    }
+    if has_key(HEADING, tag) {
+        alloc i := length(stack) - 1
+        loop i >= 0 {
+            alloc t := stack[i].tag
+            if has_key(HEADING, t) {
+                close_at(i)
+                return true
+            }
+            if has_key(SCOPE, t) {
+                return true
+            }
+            i := i - 1
+        }
+        return true
+    }
+    if tag == "table" {
+        close_tag(tag, {html: 1})
+        return true
+    }
+    if has_key(TABLE_PARTS, tag) {
+        close_tag(tag, TABLE_SCOPE)
+        return true
+    }
+    close_tag(tag, SCOPE)
+    return true
+}
+
+# The tree of the HTML in the byte list `bytes` (UTF-8: see to_utf8).
+proc parse(bytes) {
+    src := bytes
+    pos := 0
+    len := length(bytes)
+    doc := {t: 9, kids: [], head: false, body: false}
+    root := false
+    head := false
+    body := false
+    stack := []
+    text := false
+    form_open := false
+    alloc b := src
+    loop pos < len {
+        alloc c := b[pos]
+        if c != 60 {
+            # text, up to the next "<"
+            alloc start := pos
+            alloc amp := false
+            loop pos < len and b[pos] != 60 {
+                if b[pos] == 38 {
+                    amp := true
+                }
+                pos := pos + 1
+            }
+            if text == false {
+                text := to_bytes([])
+            }
+            if amp {
+                decode_into(text, b, start, pos, false)
+            } else {
+                text := text + b[start:pos]
+            }
+            continue
+        }
+        alloc nx := 0
+        if pos + 1 < len {
+            nx := b[pos + 1]
+        }
+        if (nx >= 97 and nx <= 122) or (nx >= 65 and nx <= 90) {
+            flush()
+            alloc nm := read_name(pos + 1)
+            alloc at := read_attrs(nm[1])
+            ensure_root()
+            start_tag(nm[0], at[0], at[1])
+        } elif nx == 47 {
+            alloc nx2 := 0
+            if pos + 2 < len {
+                nx2 := b[pos + 2]
+            }
+            if (nx2 >= 97 and nx2 <= 122) or (nx2 >= 65 and nx2 <= 90) {
+                flush()
+                alloc en := read_name(pos + 2)
+                pos := en[1]
+                loop pos < len and b[pos] != 62 {
+                    pos := pos + 1
+                }
+                pos := pos + 1
+                ensure_root()
+                end_tag(en[0])
+            } else {
+                # "</>" and the like: a comment as far as the next ">"
+                loop pos < len and b[pos] != 62 {
+                    pos := pos + 1
+                }
+                pos := pos + 1
+            }
+        } elif nx == 33 {
+            if pos + 3 < len and b[pos + 2] == 45 and b[pos + 3] == 45 {
+                # a comment: to "-->"
+                alloc e := u.find_bytes(b, to_bytes([45, 45, 62]), pos + 4)
+                if pos + 4 < len and b[pos + 4] == 62 {
+                    e := pos + 2
+                }
+                if e < 0 {
+                    pos := len
+                } else {
+                    pos := e + 3
+                }
+            } elif pos + 8 < len and b[pos + 2] == 91 and b[pos + 3] == 67 and b[pos + 8] == 91 {
+                # <![CDATA[ ... ]]>
+                alloc e2 := u.find_bytes(b, to_bytes([93, 93, 62]), pos + 9)
+                if e2 < 0 {
+                    e2 := len
+                }
+                if text == false {
+                    text := to_bytes([])
+                }
+                text := text + b[pos + 9:e2]
+                pos := e2 + 3
+            } else {
+                # <!DOCTYPE ...> and anything else that starts "<!"
+                loop pos < len and b[pos] != 62 {
+                    pos := pos + 1
+                }
+                pos := pos + 1
+            }
+        } elif nx == 63 {
+            loop pos < len and b[pos] != 62 {
+                pos := pos + 1
+            }
+            pos := pos + 1
+        } else {
+            # a "<" that starts nothing
+            if text == false {
+                text := to_bytes([])
+            }
+            append(text, 60)
+            pos := pos + 1
+        }
+    }
+    flush()
+    start_body()
+    doc.head := head
+    doc.body := body
+    doc.root := root
+    alloc result := doc
+    # let go of what was being worked on
+    src := []
+    doc := false
+    root := false
+    head := false
+    body := false
+    stack := []
+    return result
+}
+
+# --- the encoding of a page -----------------------------------------------------
+
+# The name of the encoding a page declares in its first bytes
+# (<meta charset=...>), lower case, or "".
+proc sniff_charset(b) {
+    alloc n := length(b)
+    if n > 4096 {
+        n := 4096
+    }
+    alloc key := string_bytes("charset")
+    alloc i := 0
+    loop i + 8 < n {
+        alloc k := 0
+        loop k < 7 and (b[i + k] | 32) == key[k] {
+            k := k + 1
+        }
+        if k == 7 {
+            alloc j := i + 7
+            loop j < n and u.is_space(b[j]) {
+                j := j + 1
+            }
+            if j < n and b[j] == 61 {
+                j := j + 1
+                loop j < n and (u.is_space(b[j]) or b[j] == 34 or b[j] == 39) {
+                    j := j + 1
+                }
+                alloc s := j
+                loop j < n and b[j] != 34 and b[j] != 39 and b[j] != 62 and b[j] != 59 and b[j] != 47 and u.is_space(b[j]) == false {
+                    j := j + 1
+                }
+                return u.lower(bytes_to_string(b[s:j]))
+            }
+        }
+        i := i + 1
+    }
+    return ""
+}
+
+# Is the byte list well-formed UTF-8?
+proc looks_utf8(b) {
+    alloc n := length(b)
+    alloc i := 0
+    loop i < n {
+        alloc c := b[i]
+        if c < 128 {
+            i := i + 1
+        } elif c >= 194 and c < 224 {
+            if i + 1 >= n or (b[i + 1] & 192) != 128 {
+                return false
+            }
+            i := i + 2
+        } elif c >= 224 and c < 240 {
+            if i + 2 >= n or (b[i + 1] & 192) != 128 or (b[i + 2] & 192) != 128 {
+                return false
+            }
+            i := i + 3
+        } elif c >= 240 and c < 245 {
+            if i + 3 >= n or (b[i + 1] & 192) != 128 or (b[i + 2] & 192) != 128 or (b[i + 3] & 192) != 128 {
+                return false
+            }
+            i := i + 4
+        } else {
+            return false
+        }
+    }
+    return true
+}
+
+# The page as UTF-8, whatever it came as. `charset` is what the server
+# said ("" when it said nothing); the page's own <meta> is looked at
+# next. UTF-8, UTF-16 with a byte order mark, and the one-byte Western
+# encodings (ISO-8859-1, Windows-1252) are understood; anything else is
+# taken as UTF-8 if it is well formed and as Windows-1252 if not.
+proc to_utf8(b, charset) {
+    alloc n := length(b)
+    if n >= 3 and b[0] == 239 and b[1] == 187 and b[2] == 191 {
+        return b[3:]
+    }
+    if n >= 2 and ((b[0] == 255 and b[1] == 254) or (b[0] == 254 and b[1] == 255)) {
+        alloc le := b[0] == 255
+        alloc out := to_bytes([])
+        alloc i := 2
+        loop i + 1 < n {
+            alloc v := 0
+            if le {
+                v := b[i] | (b[i + 1] << 8)
+            } else {
+                v := (b[i] << 8) | b[i + 1]
+            }
+            i := i + 2
+            if v >= 55296 and v < 56320 and i + 1 < n {
+                alloc w := 0
+                if le {
+                    w := b[i] | (b[i + 1] << 8)
+                } else {
+                    w := (b[i] << 8) | b[i + 1]
+                }
+                if w >= 56320 and w < 57344 {
+                    v := 65536 + ((v - 55296) << 10) + (w - 56320)
+                    i := i + 2
+                }
+            }
+            u.put_utf8(out, v)
+        }
+        return out
+    }
+    alloc cs := u.lower(charset)
+    if cs == "" {
+        cs := sniff_charset(b)
+    }
+    alloc latin := cs == "iso-8859-1" or cs == "windows-1252" or cs == "latin1" or cs == "cp1252" or cs == "us-ascii" or cs == "iso-8859-15" or cs == "ascii"
+    if latin == false and looks_utf8(b) {
+        return b
+    }
+    alloc any := false
+    alloc k := 0
+    loop k < n {
+        if b[k] >= 128 {
+            any := true
+            break
+        }
+        k := k + 1
+    }
+    if any == false {
+        return b
+    }
+    alloc out2 := to_bytes([])
+    k := 0
+    loop k < n {
+        alloc c := b[k]
+        if c < 128 {
+            append(out2, c)
+        } elif c < 160 {
+            u.put_utf8(out2, CP1252[c - 128])
+        } else {
+            u.put_utf8(out2, c)
+        }
+        k := k + 1
+    }
+    return out2
+}
+
+# --- looking things up in a tree ---------------------------------------------------
+
+# The value of an attribute, or `otherwise`.
+proc attr(node, name, otherwise) {
+    if node.t == 1 and has_key(node.attrs, name) {
+        return node.attrs[name]
+    }
+    return otherwise
+}
+
+# All the text inside a node, as one string.
+proc text_of(node) {
+    if node.t == 3 {
+        return node.text
+    }
+    alloc parts := []
+    collect_text(node, parts)
+    return u.join(parts, "")
+}
+
+proc collect_text(node, parts) {
+    if node.t == 3 {
+        append(parts, node.text)
+        return true
+    }
+    for k in node.kids {
+        collect_text(k, parts)
+    }
+    return true
+}
+
+# Every element with this tag under node, in page order, added to out.
+proc find_all(node, tag, out) {
+    if node.t == 3 {
+        return out
+    }
+    if node.t == 1 and node.tag == tag {
+        append(out, node)
+    }
+    for k in node.kids {
+        find_all(k, tag, out)
+    }
+    return out
+}
+
+# The tree as indented text, for tests and for looking.
+proc dump(node, indent, out) {
+    if node.t == 3 {
+        alloc t := u.replace(node.text, "\n", "\\n")
+        append(out, indent + "\"" + t + "\"")
+        return out
+    }
+    if node.t == 9 {
+        for k in node.kids {
+            dump(k, indent, out)
+        }
+        return out
+    }
+    alloc line := indent + "<" + node.tag
+    for name in dict_keys(node.attrs) {
+        line := line + " " + name + "=\"" + node.attrs[name] + "\""
+    }
+    append(out, line + ">")
+    for k2 in node.kids {
+        dump(k2, indent + "  ", out)
+    }
+    return out
+}

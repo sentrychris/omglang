@@ -1,0 +1,1312 @@
+;;;omg
+
+# tools/browser/paint.omg
+#
+# From boxes to pixels. render() walks the tree layout.omg placed and
+# writes down, in page coordinates, everything there is to draw: a
+# list of simple orders (fill this rectangle, set this text). draw()
+# then carries out the orders that fall inside the window, shifted by
+# how far the page is scrolled. Scrolling only redoes the second
+# half, which is why it is quick.
+#
+# The orders, each a list:
+#
+#   [0]                                         nothing
+#   [1, x, y, w, h, colour]                     a filled rectangle
+#   [2, x, baseline, font, cps, from, to, colour, gap]   text
+#   [3, x, y, w, h, node]                       the picture of an <img>
+#   [4, x0, y0, x1, y1]   [5]                   draw only inside / end of that
+#   [6, x, y, w, h, radius, thick, colour]      a rounded rectangle (thick 0: filled)
+#   [7, x, y, w, h, angle, stops]               a run of colours
+#   [8, x, y, w, h, picture, repeat, ox, oy, tw, th]   a background picture
+#   [9, x, y, w, h, corners, colour]            a shape, its corners counted from (x, y)
+#   [10, x, y, w, h, box]                       a form control, drawn as it is now
+#
+# Order matters, and follows CSS: within one layer first the
+# backgrounds of blocks, then floats, then text and other inline
+# things; boxes placed by position come after, by z-index.
+
+import "util.omg" as u
+import "font.omg" as font
+import "css.omg" as css
+import "gfx.omg" as gfx
+import "layout.omg" as lay
+
+alloc main := []               # the orders for the page
+alloc pinned := []             # and for what stays put when it scrolls (position: fixed)
+alloc cmds := main             # the list being written
+alloc hits := []               # [x0, y0, x1, y1, node]: where the mouse does something
+alloc pinned_hits := []
+alloc cur_hits := hits
+alloc on_main := true
+alloc deferred := []
+alloc alpha := 1.0
+alloc nclip := 0
+alloc doc_w := 0
+alloc doc_h := 0
+alloc canvas := 4294967295
+alloc images := {}             # background pictures by address: [w, h, rgba bytes], or false
+alloc wanted := []             # addresses of background pictures asked for and not there
+alloc focus := 0               # the uid of the element that takes typing, or 0
+alloc caret_on := true
+alloc WHITE := 4294967295
+alloc BLACK := 4278190080
+
+proc tint(c) {
+    if alpha >= 1 {
+        return c
+    }
+    alloc a := floor(((c >> 24) & 255) * alpha)
+    return (a << 24) | (c & 16777215)
+}
+
+proc extent(x, y) {
+    if on_main and nclip == 0 {
+        if x > doc_w {
+            doc_w := x
+        }
+        if y > doc_h {
+            doc_h := y
+        }
+    }
+    return true
+}
+
+proc rect(x, y, w, h, c) {
+    if ((c >> 24) & 255) == 0 or w <= 0 or h <= 0 {
+        return true
+    }
+    append(cmds, [1, x, y, w, h, tint(c)])
+    return true
+}
+
+proc darker(c) {
+    alloc r := floor(((c >> 16) & 255) * 0.6)
+    alloc g := floor(((c >> 8) & 255) * 0.6)
+    alloc b := floor((c & 255) * 0.6)
+    return (c & 4278190080) | (r << 16) | (g << 8) | b
+}
+
+# --- backgrounds and borders ---------------------------------------------------------------
+
+proc side_line(horizontal, x, y, w, h, style, c) {
+    if style == "dashed" or style == "dotted" {
+        alloc t := h
+        if horizontal == false {
+            t := w
+        }
+        alloc dash := t
+        if style == "dashed" {
+            dash := t * 3
+        }
+        if dash < 1 {
+            dash := 1
+        }
+        alloc len := w
+        if horizontal == false {
+            len := h
+        }
+        alloc at := 0
+        alloc count := 0
+        loop at < len and count < 2000 {
+            alloc d := dash
+            if at + d > len {
+                d := len - at
+            }
+            if horizontal {
+                rect(x + at, y, d, h, c)
+            } else {
+                rect(x, y + at, w, d, c)
+            }
+            at := at + dash * 2
+            count := count + 1
+        }
+        return true
+    }
+    if style == "double" and ((horizontal and h >= 3) or (horizontal == false and w >= 3)) {
+        if horizontal {
+            alloc third := floor(h / 3)
+            rect(x, y, w, third, c)
+            rect(x, y + h - third, w, third, c)
+        } else {
+            alloc third2 := floor(w / 3)
+            rect(x, y, third2, h, c)
+            rect(x + w - third2, y, third2, h, c)
+        }
+        return true
+    }
+    rect(x, y, w, h, c)
+    return true
+}
+
+# The background and border of a box whose border corner is (x, y)
+# and whose size is w x h. `sides` is 15 for a whole box; an inline
+# element cut by a line end leaves out a side (1 top, 2 right,
+# 4 bottom, 8 left).
+proc decor(box, st, x, y, w, h, sides) {
+    if css.get(st, "visibility") != "visible" {
+        return true
+    }
+    alloc bt := box.bt
+    alloc br := box.br
+    alloc bb := box.bb
+    alloc bl := box.bl
+    if (sides & 2) == 0 {
+        br := 0
+    }
+    if (sides & 8) == 0 {
+        bl := 0
+    }
+    alloc radius := 0
+    alloc rv := css.get(st, "border-radius")
+    if rv[1] != 0 and sides == 15 {
+        radius := floor(lay.lenpx(rv, w) + 0.5)
+        if radius * 2 > w {
+            radius := floor(w / 2)
+        }
+        if radius * 2 > h {
+            radius := floor(h / 2)
+        }
+    }
+    alloc bg := css.color(st, "background-color")
+    if ((bg >> 24) & 255) != 0 and has_key(box, "nobg") == false and w > 0 and h > 0 {
+        if radius > 0 {
+            append(cmds, [6, x, y, w, h, radius, 0, tint(bg)])
+        } else {
+            append(cmds, [1, x, y, w, h, tint(bg)])
+        }
+    }
+    alloc bi := css.get(st, "background-image")
+    if bi != "none" and w > 0 and h > 0 {
+        if bi[0] == 24 {
+            # a run of colours; places not given are spread evenly
+            alloc stops := []
+            alloc raw := bi[2]
+            alloc n := length(raw)
+            alloc i := 0
+            loop i < n {
+                alloc at := raw[i][1]
+                if at < 0 {
+                    if i == 0 {
+                        at := 0
+                    } elif i == n - 1 {
+                        at := 100
+                    }
+                }
+                append(stops, [tint(raw[i][0]), at / 100.0])
+                i := i + 1
+            }
+            i := 1
+            loop i < n {
+                if stops[i][1] < 0 {
+                    alloc j := i
+                    loop j < n and stops[j][1] < 0 {
+                        j := j + 1
+                    }
+                    alloc a := stops[i - 1][1]
+                    alloc b := stops[j][1]
+                    alloc k := i
+                    loop k < j {
+                        stops[k][1] := a + (b - a) * (k - i + 1) / (j - i + 1)
+                        k := k + 1
+                    }
+                    i := j
+                }
+                if stops[i][1] < stops[i - 1][1] {
+                    stops[i][1] := stops[i - 1][1]
+                }
+                i := i + 1
+            }
+            if n == 1 {
+                append(cmds, [1, x, y, w, h, stops[0][0]])
+            } else {
+                append(cmds, [7, x, y, w, h, bi[1], stops])
+            }
+        } elif bi[0] == 21 {
+            alloc addr := bi[1]
+            if has_key(images, addr) == false {
+                append(wanted, addr)
+                images[addr] := false
+            }
+            alloc im := images[addr]
+            if im != false and im[0] > 0 and im[1] > 0 {
+                # placed in the padding box
+                alloc px0 := x + bl
+                alloc py0 := y + bt
+                alloc pw := w - bl - br
+                alloc ph := h - bt - bb
+                alloc tw := im[0]
+                alloc th := im[1]
+                alloc size := css.get(st, "background-size")
+                if size == "cover" or size == "contain" {
+                    alloc fx := pw * 1.0 / im[0]
+                    alloc fy := ph * 1.0 / im[1]
+                    alloc f := fx
+                    if (size == "cover" and fy > fx) or (size == "contain" and fy < fx) {
+                        f := fy
+                    }
+                    tw := im[0] * f
+                    th := im[1] * f
+                } elif size != "auto" {
+                    alloc sx := css.resolve(size[1], pw)
+                    alloc sy := css.resolve(size[2], ph)
+                    if sx != false and sy != false {
+                        tw := sx
+                        th := sy
+                    } elif sx != false {
+                        tw := sx
+                        th := im[1] * sx / im[0]
+                    } elif sy != false {
+                        th := sy
+                        tw := im[0] * sy / im[1]
+                    }
+                }
+                tw := floor(tw + 0.5)
+                th := floor(th + 0.5)
+                if tw > 0 and th > 0 {
+                    alloc pxv := css.get(st, "background-position-x")
+                    alloc pyv := css.get(st, "background-position-y")
+                    alloc ox := 0
+                    alloc oy := 0
+                    if pxv[0] == 1 {
+                        ox := (pw - tw) * pxv[1] / 100.0
+                    } elif pxv[0] == 2 {
+                        ox := pxv[1] + (pw - tw) * pxv[2] / 100.0
+                    } else {
+                        ox := pxv[1]
+                    }
+                    if pyv[0] == 1 {
+                        oy := (ph - th) * pyv[1] / 100.0
+                    } elif pyv[0] == 2 {
+                        oy := pyv[1] + (ph - th) * pyv[2] / 100.0
+                    } else {
+                        oy := pyv[1]
+                    }
+                    append(cmds, [8, x, y, w, h, im, css.get(st, "background-repeat"), px0 - x + floor(ox + 0.5), py0 - y + floor(oy + 0.5), tw, th])
+                }
+            }
+        }
+    }
+    if bt + br + bb + bl == 0 {
+        return true
+    }
+    alloc s := [st, st, st, st]
+    if has_key(box, "fbs") {
+        s := box.fbs
+    }
+    alloc st0 := css.get(s[0], "border-top-style")
+    alloc st1 := css.get(s[1], "border-right-style")
+    alloc st2 := css.get(s[2], "border-bottom-style")
+    alloc st3 := css.get(s[3], "border-left-style")
+    alloc c0 := css.color(s[0], "border-top-color")
+    alloc c1 := css.color(s[1], "border-right-color")
+    alloc c2 := css.color(s[2], "border-bottom-color")
+    alloc c3 := css.color(s[3], "border-left-color")
+    if st0 == "inset" or st0 == "groove" {
+        c0 := darker(c0)
+    }
+    if st3 == "inset" or st3 == "groove" {
+        c3 := darker(c3)
+    }
+    if st2 == "outset" or st2 == "ridge" {
+        c2 := darker(c2)
+    }
+    if st1 == "outset" or st1 == "ridge" {
+        c1 := darker(c1)
+    }
+    alloc plain := st0 != "dashed" and st0 != "dotted" and st0 != "double"
+    if radius > 0 and bt == br and bt == bb and bt == bl and c0 == c1 and c0 == c2 and c0 == c3 and plain and st0 == st1 and st0 == st2 and st0 == st3 {
+        if ((c0 >> 24) & 255) != 0 {
+            append(cmds, [6, x, y, w, h, radius, bt, tint(c0)])
+        }
+        return true
+    }
+    # slanted joins where two thick borders of different colours meet
+    # (also how pages draw triangles: a box of nothing but borders)
+    alloc mitre := false
+    if (bt > 1 and bl > 1 and c0 != c3) or (bt > 1 and br > 1 and c0 != c1) or (bb > 1 and bl > 1 and c2 != c3) or (bb > 1 and br > 1 and c2 != c1) {
+        mitre := plain and st1 != "dashed" and st1 != "dotted" and st2 != "dashed" and st2 != "dotted" and st3 != "dashed" and st3 != "dotted"
+    }
+    if mitre {
+        alloc iw := w - bl - br
+        alloc ih := h - bt - bb
+        if bt > 0 and ((c0 >> 24) & 255) != 0 and (sides & 1) != 0 {
+            append(cmds, [9, x, y, w, bt, [0, 0, w, 0, w - br, bt, bl, bt], tint(c0)])
+        }
+        if bb > 0 and ((c2 >> 24) & 255) != 0 and (sides & 4) != 0 {
+            append(cmds, [9, x, y + h - bb, w, bb, [bl, 0, w - br, 0, w, bb, 0, bb], tint(c2)])
+        }
+        if bl > 0 and ((c3 >> 24) & 255) != 0 {
+            append(cmds, [9, x, y, bl, h, [0, 0, bl, bt, bl, h - bb, 0, h], tint(c3)])
+        }
+        if br > 0 and ((c1 >> 24) & 255) != 0 {
+            append(cmds, [9, x + w - br, y, br, h, [br, 0, br, h, 0, h - bb, 0, bt], tint(c1)])
+        }
+        return true
+    }
+    alloc top := 0
+    alloc bottom := 0
+    if bt > 0 and (sides & 1) != 0 {
+        side_line(true, x, y, w, bt, st0, c0)
+        top := bt
+    }
+    if bb > 0 and (sides & 4) != 0 {
+        side_line(true, x, y + h - bb, w, bb, st2, c2)
+        bottom := bb
+    }
+    if bl > 0 {
+        side_line(false, x, y + top, bl, h - top - bottom, st3, c3)
+    }
+    if br > 0 {
+        side_line(false, x + w - br, y + top, br, h - top - bottom, st1, c1)
+    }
+    return true
+}
+
+# --- text -----------------------------------------------------------------------------------
+
+proc text_piece(fr, ax, ay) {
+    alloc b := fr[8]
+    alloc st := b.st
+    if css.get(st, "visibility") != "visible" {
+        return true
+    }
+    alloc c := tint(css.get(st, "color"))
+    alloc f := fr[4]
+    alloc x := ax + fr[1]
+    alloc y := ay + fr[2]
+    alloc w := fr[3]
+    if fr[7] > fr[6] {
+        append(cmds, [2, x, y, f, fr[5], fr[6], fr[7], c, fr[9]])
+    }
+    alloc deco := st["-deco"]
+    if deco != 0 and w > 0 {
+        alloc thick := floor(f.px / 14)
+        if thick < 1 {
+            thick := 1
+        }
+        if (deco & 1) != 0 {
+            append(cmds, [1, x, y + thick + floor(f.px / 16), w, thick, c])
+        }
+        if (deco & 2) != 0 {
+            append(cmds, [1, x, y - f.asc, w, thick, c])
+        }
+        if (deco & 4) != 0 {
+            append(cmds, [1, x, y - floor(f.px * 0.3), w, thick, c])
+        }
+    }
+    extent(x + w, y + f.desc)
+    if b.link != false {
+        append(cur_hits, [x, y - f.asc, x + w, y + f.desc, b.link])
+    }
+    return true
+}
+
+proc roman(n, upper) {
+    alloc vals := [1000, 900, 500, 400, 100, 90, 50, 40, 10, 9, 5, 4, 1]
+    alloc syms := ["m", "cm", "d", "cd", "c", "xc", "l", "xl", "x", "ix", "v", "iv", "i"]
+    alloc out := ""
+    alloc i := 0
+    loop i < 13 {
+        loop n >= vals[i] {
+            out := out + syms[i]
+            n := n - vals[i]
+        }
+        i := i + 1
+    }
+    if upper {
+        return u.upper(out)
+    }
+    return out
+}
+
+proc alpha_label(n, upper) {
+    alloc out := ""
+    loop n > 0 {
+        n := n - 1
+        alloc c := 97 + n % 26
+        if upper {
+            c := c - 32
+        }
+        out := chr(c) + out
+        n := n // 26
+    }
+    return out
+}
+
+# The bullet or number of a list item.
+proc marker(box, ax, ay) {
+    alloc st := box.st
+    alloc kind := css.get(st, "list-style-type")
+    if kind == "none" or css.get(st, "visibility") != "visible" {
+        return true
+    }
+    alloc m := lay.metrics(st)
+    alloc f := m[0]
+    alloc base := lay.find_baseline(box, false)
+    if base == false {
+        base := box.bt + box.pt + m[1]
+    }
+    alloc x := ax + box.bl + box.pl
+    alloc y := ay + base
+    alloc c := tint(css.get(st, "color"))
+    if kind == "disc" or kind == "circle" or kind == "square" {
+        alloc s := floor(f.px * 0.36 + 0.5)
+        if s < 3 {
+            s := 3
+        }
+        alloc bx := x - floor(f.px * 0.6) - s
+        alloc by := y - floor(f.px * 0.32) - floor(s / 2)
+        if kind == "square" {
+            append(cmds, [1, bx, by, s, s, c])
+        } elif kind == "disc" {
+            append(cmds, [6, bx, by, s, s, floor(s / 2), 0, c])
+        } else {
+            append(cmds, [6, bx, by, s, s, floor(s / 2), 1, c])
+        }
+        return true
+    }
+    alloc n := box.ord
+    alloc label := "" + n
+    if n > 0 {
+        if kind == "lower-alpha" {
+            label := alpha_label(n, false)
+        } elif kind == "upper-alpha" {
+            label := alpha_label(n, true)
+        } elif kind == "lower-roman" and n < 4000 {
+            label := roman(n, false)
+        } elif kind == "upper-roman" and n < 4000 {
+            label := roman(n, true)
+        }
+    }
+    alloc cps := u.cps(label + ".")
+    alloc w := font.measure(f, cps, 0, length(cps))
+    append(cmds, [2, x - floor(f.px * 0.35) - w, y, f, cps, 0, length(cps), c, 0])
+    return true
+}
+
+# --- the walk ---------------------------------------------------------------------------------
+
+# What a box needs besides plain drawing: 1 it cuts off what sticks
+# out of it, 2 it is see-through as a whole, 4 it is placed by position.
+proc flags_of(box) {
+    alloc st := box.st
+    alloc f := 0
+    if box.root == false and box.kind != lay.K_INLINE {
+        if css.get(st, "overflow-x") == "hidden" or css.get(st, "overflow-y") == "hidden" {
+            if box.node == false or box.node.tag != "body" {
+                f := 1
+            }
+        }
+    }
+    if css.get(st, "opacity") < 1 {
+        f := f | 2
+    }
+    alloc pos := box.pos
+    if pos != "static" and pos != "sticky" and box.kind != lay.K_INLINE {
+        f := f | 4
+    }
+    box.pf := f
+    return f
+}
+
+proc push_clip(box, ax, ay) {
+    append(cmds, [4, ax + box.bl, ay + box.bt, ax + box.w - box.br, ay + box.h - box.bb])
+    nclip := nclip + 1
+    return length(cmds)
+}
+
+proc pop_clip(mark) {
+    nclip := nclip - 1
+    if length(cmds) == mark {
+        # nothing was drawn inside: take the order back
+        cmds[mark - 1] := [0]
+    } else {
+        append(cmds, [5])
+    }
+    return true
+}
+
+proc defer(k, x, y) {
+    alloc z := css.get(k.st, "z-index")
+    if z == "auto" {
+        z := 0
+    }
+    alloc rx := 0
+    alloc ry := 0
+    if has_key(k, "rx") {
+        rx := k.rx
+        ry := k.ry
+    }
+    append(deferred, [k, x + rx, y + ry, z, alpha])
+    return true
+}
+
+# Backgrounds of the blocks inside a box, top down.
+proc pass_blocks(box, ax, ay) {
+    for k in box.kids {
+        alloc kind := k.kind
+        if kind == 3 or kind == 4 {
+            continue
+        }
+        if kind == 2 {
+            if length(k.kids) > 0 {
+                pass_blocks(k, ax, ay)
+            }
+            continue
+        }
+        alloc f := 0
+        if has_key(k, "pf") {
+            f := k.pf
+        } else {
+            f := flags_of(k)
+        }
+        if (f & 4) != 0 {
+            defer(k, ax + k.x, ay + k.y)
+            continue
+        }
+        if k.fl != "none" or k.inl {
+            continue
+        }
+        alloc kx := ax + k.x
+        alloc ky := ay + k.y
+        if (f & 2) != 0 or kind == 5 {
+            whole(k, kx, ky)
+            continue
+        }
+        decor(k, k.st, kx, ky, k.w, k.h, 15)
+        extent(kx + k.w, ky + k.h)
+        if k.link != false and kind == 1 {
+            append(cur_hits, [kx, ky, kx + k.w, ky + k.h, k.link])
+        }
+        if length(k.kids) > 0 {
+            if (f & 1) != 0 {
+                alloc mark := push_clip(k, kx, ky)
+                pass_blocks(k, kx, ky)
+                pop_clip(mark)
+            } else {
+                pass_blocks(k, kx, ky)
+            }
+        }
+    }
+    return true
+}
+
+# Floats inside a box.
+proc pass_floats(box, ax, ay) {
+    for k in box.kids {
+        alloc kind := k.kind
+        if kind == 3 or kind == 4 {
+            continue
+        }
+        if kind == 2 {
+            if length(k.kids) > 0 {
+                pass_floats(k, ax, ay)
+            }
+            continue
+        }
+        alloc f := k.pf
+        if (f & 4) != 0 {
+            continue
+        }
+        if k.fl != "none" {
+            whole(k, ax + k.x, ay + k.y)
+            continue
+        }
+        if k.inl or (f & 2) != 0 or kind == 5 or length(k.kids) == 0 {
+            continue
+        }
+        if (f & 1) != 0 {
+            alloc mark := push_clip(k, ax + k.x, ay + k.y)
+            pass_floats(k, ax + k.x, ay + k.y)
+            pop_clip(mark)
+        } else {
+            pass_floats(k, ax + k.x, ay + k.y)
+        }
+    }
+    return true
+}
+
+proc lines_of(box, ax, ay) {
+    for line in box.lines {
+        for fr in line[3] {
+            alloc t := fr[0]
+            if t == 1 {
+                text_piece(fr, ax, ay)
+            } elif t == 2 {
+                alloc b := fr[5]
+                if fr[2] > fr[1] {
+                    alloc sides := 5
+                    if fr[6] {
+                        sides := sides | 8
+                    }
+                    if fr[7] {
+                        sides := sides | 2
+                    }
+                    decor(b, b.st, ax + fr[1], ay + fr[3], fr[2] - fr[1], fr[4] - fr[3], sides)
+                    if b.link != false {
+                        append(cur_hits, [ax + fr[1], ay + fr[3], ax + fr[2], ay + fr[4], b.link])
+                    }
+                }
+            } else {
+                alloc a := fr[1]
+                alloc f := 0
+                if has_key(a, "pf") {
+                    f := a.pf
+                } else {
+                    f := flags_of(a)
+                }
+                if (f & 4) == 0 {
+                    whole(a, ax + a.x, ay + a.y)
+                }
+            }
+        }
+    }
+    return true
+}
+
+# Text and the other inline things inside a box.
+proc pass_inline(box, ax, ay) {
+    if box.ifc {
+        if has_key(box, "lines") {
+            lines_of(box, ax, ay)
+        }
+        if has_key(box, "ord") {
+            marker(box, ax, ay)
+        }
+        return true
+    }
+    if has_key(box, "ord") {
+        marker(box, ax, ay)
+    }
+    for k in box.kids {
+        alloc kind := k.kind
+        if kind == 3 or kind == 4 or kind == 2 or kind == 5 {
+            continue
+        }
+        alloc f := k.pf
+        if (f & 6) != 0 or k.fl != "none" or k.inl {
+            continue
+        }
+        if (f & 1) != 0 {
+            alloc mark := push_clip(k, ax + k.x, ay + k.y)
+            pass_inline(k, ax + k.x, ay + k.y)
+            pop_clip(mark)
+        } else {
+            pass_inline(k, ax + k.x, ay + k.y)
+        }
+    }
+    return true
+}
+
+# A box and all inside it, as one thing: a float, an inline-block,
+# a picture.
+proc whole(box, ax, ay) {
+    alloc f := 0
+    if has_key(box, "pf") {
+        f := box.pf
+    } else {
+        f := flags_of(box)
+    }
+    alloc st := box.st
+    alloc keep := alpha
+    if (f & 2) != 0 {
+        alpha := alpha * css.get(st, "opacity")
+    }
+    if box.kind != lay.K_INLINE {
+        decor(box, st, ax, ay, box.w, box.h, 15)
+        extent(ax + box.w, ay + box.h)
+    }
+    if box.kind == 5 {
+        alloc node := box.node
+        alloc tag := node.tag
+        alloc cxx := ax + box.bl + box.pl
+        alloc cyy := ay + box.bt + box.pt
+        alloc cw := box.w - box.bl - box.pl - box.br - box.pr
+        alloc ch := box.h - box.bt - box.pt - box.bb - box.pb
+        if css.get(st, "visibility") == "visible" {
+            if tag == "img" {
+                if has_key(node, "img") and cw > 0 and ch > 0 {
+                    append(cmds, [3, cxx, cyy, cw, ch, node])
+                }
+            } elif tag == "input" or tag == "select" or tag == "textarea" {
+                append(cmds, [10, ax, ay, box.w, box.h, box])
+            } elif tag == "video" {
+                append(cmds, [1, cxx, cyy, cw, ch, tint(BLACK)])
+            }
+        }
+        if box.link != false {
+            append(cur_hits, [ax, ay, ax + box.w, ay + box.h, box.link])
+        }
+        if tag == "input" or tag == "select" or tag == "textarea" {
+            append(cur_hits, [ax, ay, ax + box.w, ay + box.h, node])
+        }
+        alpha := keep
+        return true
+    }
+    if box.link != false and box.kind != lay.K_INLINE {
+        append(cur_hits, [ax, ay, ax + box.w, ay + box.h, box.link])
+    }
+    alloc mark := 0
+    if (f & 1) != 0 {
+        mark := push_clip(box, ax, ay)
+    }
+    pass_blocks(box, ax, ay)
+    pass_floats(box, ax, ay)
+    pass_inline(box, ax, ay)
+    if (f & 1) != 0 {
+        pop_clip(mark)
+    }
+    alpha := keep
+    return true
+}
+
+# A box that makes a layer of its own: itself, then the positioned
+# boxes inside it in the order of their z-index.
+proc layer(box, ax, ay) {
+    alloc mine := []
+    alloc saved := deferred
+    deferred := mine
+    alloc before := length(cmds)
+    whole(box, ax, ay)
+    deferred := saved
+    alloc n := length(mine)
+    if n == 0 {
+        return true
+    }
+    # by z-index, keeping the order of the page among equals
+    alloc i := 1
+    loop i < n {
+        alloc e := mine[i]
+        alloc j := i - 1
+        loop j >= 0 and mine[j][3] > e[3] {
+            mine[j + 1] := mine[j]
+            j := j - 1
+        }
+        mine[j + 1] := e
+        i := i + 1
+    }
+    alloc keep := alpha
+    for e2 in mine {
+        alloc k := e2[0]
+        alpha := e2[4]
+        if k.pos == "fixed" and on_main {
+            alloc save_cmds := cmds
+            alloc save_hits := cur_hits
+            alloc save_clip := nclip
+            cmds := pinned
+            cur_hits := pinned_hits
+            on_main := false
+            nclip := 0
+            layer(k, e2[1], e2[2])
+            cmds := save_cmds
+            cur_hits := save_hits
+            on_main := true
+            nclip := save_clip
+        } else {
+            layer(k, e2[1], e2[2])
+        }
+    }
+    alpha := keep
+    return true
+}
+
+# Write down how to draw the tree of boxes whose root this is.
+proc render(root) {
+    main := []
+    pinned := []
+    hits := []
+    pinned_hits := []
+    cmds := main
+    cur_hits := hits
+    on_main := true
+    deferred := []
+    alpha := 1.0
+    nclip := 0
+    doc_w := root.w
+    doc_h := root.h
+    # the colour behind everything is the root's, or else the body's
+    alloc bg := css.color(root.st, "background-color")
+    if ((bg >> 24) & 255) == 0 and css.get(root.st, "background-image") == "none" {
+        for k in root.kids {
+            if k.kind != 3 and k.kind != 4 and k.node != false and k.node.tag == "body" {
+                bg := css.color(k.st, "background-color")
+                k.nobg := true
+            }
+        }
+    }
+    canvas := WHITE
+    if ((bg >> 24) & 255) != 0 {
+        # over white, in case it is see-through
+        alloc a := (bg >> 24) & 255
+        alloc r := (((bg >> 16) & 255) * a + 255 * (255 - a)) // 255
+        alloc g := (((bg >> 8) & 255) * a + 255 * (255 - a)) // 255
+        alloc b := ((bg & 255) * a + 255 * (255 - a)) // 255
+        canvas := 4278190080 | (r << 16) | (g << 8) | b
+    }
+    layer(root, 0, 0)
+    return true
+}
+
+# [width, height] of everything there is to scroll over.
+proc size() {
+    return [ceil(doc_w), ceil(doc_h)]
+}
+
+# --- form controls, drawn as they are at the moment --------------------------------------------------
+
+# Cut text into lines no wider than `width`: [[from, to], ...].
+proc wrap_text(cps, f, width) {
+    alloc lines := []
+    alloc n := length(cps)
+    alloc start := 0
+    alloc x := 0
+    alloc last_space := -1
+    alloc i := 0
+    loop i < n {
+        alloc c := cps[i]
+        if c == 10 {
+            append(lines, [start, i])
+            start := i + 1
+            x := 0
+            last_space := -1
+            i := i + 1
+            continue
+        }
+        alloc a := font.advance(f, c)
+        if x + a > width and i > start {
+            if last_space >= start {
+                append(lines, [start, last_space + 1])
+                start := last_space + 1
+                i := start
+            } else {
+                append(lines, [start, i])
+                start := i
+            }
+            x := 0
+            last_space := -1
+            continue
+        }
+        if c == 32 {
+            last_space := i
+        }
+        x := x + a
+        i := i + 1
+    }
+    append(lines, [start, n])
+    return lines
+}
+
+proc is_checked(node) {
+    if has_key(node, "checked") {
+        return node.checked
+    }
+    return has_key(node.attrs, "checked")
+}
+
+proc control(box, x, y) {
+    alloc node := box.node
+    alloc st := box.st
+    alloc t := lay.input_type(node)
+    alloc f := lay.font_of(st)
+    alloc color := css.get(st, "color")
+    alloc cx := x + box.bl + box.pl
+    alloc cy := y + box.bt + box.pt
+    alloc cw := floor(box.w - box.bl - box.pl - box.br - box.pr)
+    alloc ch := floor(box.h - box.bt - box.pt - box.bb - box.pb)
+    alloc focused := focus != 0 and has_key(node, "uid") and node.uid == focus
+    if t == "checkbox" {
+        if is_checked(node) {
+            alloc w := box.w
+            alloc h := box.h
+            gfx.polygon([x + w * 0.2, y + h * 0.5, x + w * 0.42, y + h * 0.72, x + w * 0.82, y + h * 0.24,
+                         x + w * 0.9, y + h * 0.34, x + w * 0.42, y + h * 0.9, x + w * 0.12, y + h * 0.6], 4278216447)
+        }
+        if focused {
+            gfx.frame(x - 1, y - 1, box.w + 2, box.h + 2, 1, 4278216447)
+        }
+        return true
+    }
+    if t == "radio" {
+        if is_checked(node) {
+            alloc d := floor(box.w * 0.5)
+            alloc o := floor((box.w - d) / 2)
+            gfx.round_rect(x + o, y + o, d, d, d // 2, 0, 4278216447)
+        }
+        return true
+    }
+    if t == "range" {
+        gfx.fill(x, y + floor(box.h / 2) - 2, floor(box.w), 4, 4291611852)
+        gfx.round_rect(x + floor(box.w / 2) - 6, y + floor(box.h / 2) - 6, 12, 12, 6, 0, 4278216447)
+        return true
+    }
+    if t == "color" or t == "hidden" {
+        return true
+    }
+    alloc saved := gfx.get_clip()
+    alloc k0 := max(saved[0], cx)
+    alloc k1 := max(saved[1], y)
+    alloc k2 := min(saved[2], cx + cw)
+    alloc k3 := min(saved[3], y + floor(box.h))
+    if k2 <= k0 or k3 <= k1 {
+        return true
+    }
+    gfx.clip(k0, k1, k2, k3)
+    alloc text := lay.control_text(node)
+    alloc cps := u.cps(text)
+    alloc n := length(cps)
+    if t == "textarea" {
+        alloc lines := wrap_text(cps, f, cw)
+        alloc ly := cy + f.asc
+        alloc caret := -1
+        if focused and has_key(node, "caret") {
+            caret := node.caret
+        }
+        alloc li := 0
+        for ln in lines {
+            gfx.text(f, cps, ln[0], ln[1], cx, ly, color)
+            if caret >= ln[0] and (caret < ln[1] or (caret == ln[1] and (li == length(lines) - 1 or cps[ln[1] - 1] != 32 or ln[1] == ln[0]))) and caret_on {
+                if caret <= ln[1] {
+                    gfx.fill(cx + floor(font.measure(f, cps, ln[0], caret)), ly - f.asc, 1, f.asc + f.desc, color)
+                    caret := -1
+                }
+            }
+            ly := ly + f.line
+            li := li + 1
+        }
+        gfx.clip(saved[0], saved[1], saved[2], saved[3])
+        return true
+    }
+    alloc base := y + box.h - 3
+    if has_key(box, "base") {
+        base := y + box.base
+    }
+    if t == "select" {
+        gfx.text(f, cps, 0, n, cx, base, color)
+        gfx.clip(saved[0], saved[1], saved[2], saved[3])
+        alloc ax := x + box.w - box.br - 14
+        alloc ay := y + floor(box.h / 2) - 2
+        gfx.polygon([ax, ay, ax + 8, ay, ax + 4, ay + 5], color)
+        return true
+    }
+    if t == "submit" or t == "reset" or t == "button" or t == "file" or t == "image" {
+        alloc tw := font.measure(f, cps, 0, n)
+        alloc tx := cx + floor((cw - tw) / 2)
+        if t == "file" or tx < cx {
+            tx := cx
+        }
+        gfx.text(f, cps, 0, n, tx, base, color)
+        gfx.clip(saved[0], saved[1], saved[2], saved[3])
+        return true
+    }
+    # a one-line field
+    alloc shown := cps
+    if t == "password" {
+        shown := list_repeat(8226, n)
+    }
+    alloc caret2 := 0
+    if has_key(node, "caret") {
+        caret2 := node.caret
+        if caret2 > n {
+            caret2 := n
+        }
+    }
+    alloc off := 0
+    if focused {
+        alloc cxp := font.measure(f, shown, 0, caret2)
+        if cxp > cw - 2 {
+            off := floor(cxp - cw + 2)
+        }
+    }
+    if n == 0 and has_key(node.attrs, "placeholder") {
+        alloc ph := u.cps(node.attrs["placeholder"])
+        gfx.text(f, ph, 0, length(ph), cx, base, 4287137928)
+    } else {
+        gfx.text(f, shown, 0, n, cx - off, base, color)
+    }
+    if focused and caret_on {
+        gfx.fill(cx - off + floor(font.measure(f, shown, 0, caret2)), base - f.asc, 1, f.asc + f.desc, color)
+    }
+    gfx.clip(saved[0], saved[1], saved[2], saved[3])
+    return true
+}
+
+proc max(a, b) {
+    if a > b {
+        return a
+    }
+    return b
+}
+
+proc min(a, b) {
+    if a < b {
+        return a
+    }
+    return b
+}
+
+# --- carrying the orders out ---------------------------------------------------------------------
+
+proc run(list, dx, dy, vx, vy, vw, vh) {
+    alloc top := vy
+    alloc bottom := vy + vh
+    # the stack of clips; each [x0, y0, x1, y1]
+    alloc stack := [[vx, vy, vx + vw, vy + vh]]
+    alloc depth := 0
+    gfx.clip(vx, vy, vx + vw, vy + vh)
+    for c in list {
+        alloc t := c[0]
+        if t == 2 {
+            alloc y := floor(c[2] + 0.5) + dy
+            alloc f := c[3]
+            if y + f.desc + 4 < top or y - f.asc - 4 > bottom {
+                continue
+            }
+            alloc x := floor(c[1] + 0.5) + dx
+            if c[8] == 0 {
+                gfx.text(f, c[4], c[5], c[6], x, y, c[7])
+            } else {
+                alloc i := c[5]
+                alloc pen := x * 1.0
+                loop i < c[6] {
+                    gfx.text(f, c[4], i, i + 1, floor(pen + 0.5), y, c[7])
+                    pen := pen + font.advance(f, c[4][i]) + c[8]
+                    i := i + 1
+                }
+            }
+            continue
+        }
+        if t == 0 {
+            continue
+        }
+        if t == 5 {
+            if depth > 0 {
+                depth := depth - 1
+            }
+            alloc k := stack[depth]
+            gfx.clip(k[0], k[1], k[2], k[3])
+            continue
+        }
+        if t == 4 {
+            alloc cur := stack[depth]
+            alloc n0 := floor(c[1] + 0.5) + dx
+            alloc n1 := floor(c[2] + 0.5) + dy
+            alloc n2 := floor(c[3] + 0.5) + dx
+            alloc n3 := floor(c[4] + 0.5) + dy
+            if n0 < cur[0] { n0 := cur[0] }
+            if n1 < cur[1] { n1 := cur[1] }
+            if n2 > cur[2] { n2 := cur[2] }
+            if n3 > cur[3] { n3 := cur[3] }
+            depth := depth + 1
+            if depth < length(stack) {
+                stack[depth] := [n0, n1, n2, n3]
+            } else {
+                append(stack, [n0, n1, n2, n3])
+            }
+            gfx.clip(n0, n1, n2, n3)
+            continue
+        }
+        alloc x0 := floor(c[1] + 0.5) + dx
+        alloc y0 := floor(c[2] + 0.5) + dy
+        alloc x1 := floor(c[1] + c[3] + 0.5) + dx
+        alloc y1 := floor(c[2] + c[4] + 0.5) + dy
+        if y1 <= top or y0 >= bottom {
+            continue
+        }
+        if t == 1 {
+            if x1 == x0 and c[3] > 0 {
+                x1 := x0 + 1
+            }
+            if y1 == y0 and c[4] > 0 {
+                y1 := y0 + 1
+            }
+            gfx.fill(x0, y0, x1 - x0, y1 - y0, c[5])
+        } elif t == 6 {
+            alloc thick := c[6]
+            if thick > 0 {
+                thick := floor(thick + 0.5)
+                if thick < 1 {
+                    thick := 1
+                }
+            }
+            gfx.round_rect(x0, y0, x1 - x0, y1 - y0, c[5], thick, c[7])
+        } elif t == 3 {
+            alloc im := c[5].img
+            gfx.image(im[2], im[0], im[1], x0, y0, x1 - x0, y1 - y0)
+        } elif t == 7 {
+            gfx.gradient(x0, y0, x1 - x0, y1 - y0, c[5], c[6])
+        } elif t == 8 {
+            alloc im2 := c[5]
+            alloc saved := gfx.get_clip()
+            alloc k0 := max(saved[0], x0)
+            alloc k1 := max(saved[1], y0)
+            alloc k2 := min(saved[2], x1)
+            alloc k3 := min(saved[3], y1)
+            if k2 > k0 and k3 > k1 {
+                gfx.clip(k0, k1, k2, k3)
+                alloc rep := c[6]
+                alloc tw := c[9]
+                alloc th := c[10]
+                alloc tx := x0 + c[7]
+                alloc ty := y0 + c[8]
+                alloc repx := rep == "repeat" or rep == "repeat-x"
+                alloc repy := rep == "repeat" or rep == "repeat-y"
+                if repx {
+                    tx := tx - ceil((tx - k0) * 1.0 / tw) * tw
+                }
+                if repy {
+                    ty := ty - ceil((ty - k1) * 1.0 / th) * th
+                }
+                alloc yy := ty
+                alloc rows := 0
+                loop yy < k3 and rows < 4000 {
+                    alloc xx := tx
+                    alloc cols := 0
+                    loop xx < k2 and cols < 4000 {
+                        gfx.image(im2[2], im2[0], im2[1], xx, yy, tw, th)
+                        cols := cols + 1
+                        if repx == false {
+                            break
+                        }
+                        xx := xx + tw
+                    }
+                    rows := rows + 1
+                    if repy == false {
+                        break
+                    }
+                    yy := yy + th
+                }
+                gfx.clip(saved[0], saved[1], saved[2], saved[3])
+            }
+        } elif t == 9 {
+            alloc pts := []
+            alloc src := c[5]
+            alloc pi := 0
+            loop pi < length(src) {
+                append(pts, x0 + src[pi])
+                append(pts, y0 + src[pi + 1])
+                pi := pi + 2
+            }
+            gfx.polygon(pts, c[6])
+        } elif t == 10 {
+            control(c[5], x0, y0)
+        }
+    }
+    gfx.clip(vx, vy, vx + vw, vy + vh)
+    return true
+}
+
+# Draw the page into the part of the picture at (vx, vy), vw x vh,
+# scrolled by (sx, sy).
+proc draw(vx, vy, vw, vh, sx, sy) {
+    gfx.clip(vx, vy, vx + vw, vy + vh)
+    gfx.fill(vx, vy, vw, vh, canvas)
+    run(main, vx - sx, vy - sy, vx, vy, vw, vh)
+    run(pinned, vx, vy, vx, vy, vw, vh)
+    gfx.unclip()
+    return true
+}
+
+# What is under the point (x, y) of the window's page area: the
+# link, button or field there, or false.
+alloc hit_rect := [0, 0, 0, 0]
+
+proc hit(x, y, sx, sy) {
+    alloc i := length(pinned_hits) - 1
+    loop i >= 0 {
+        alloc h := pinned_hits[i]
+        if x >= h[0] and x < h[2] and y >= h[1] and y < h[3] {
+            hit_rect := [h[0] + sx, h[1] + sy, h[2] + sx, h[3] + sy]
+            return h[4]
+        }
+        i := i - 1
+    }
+    x := x + sx
+    y := y + sy
+    i := length(hits) - 1
+    loop i >= 0 {
+        alloc h2 := hits[i]
+        if x >= h2[0] and x < h2[2] and y >= h2[1] and y < h2[3] {
+            hit_rect := [h2[0], h2[1], h2[2], h2[3]]
+            return h2[4]
+        }
+        i := i - 1
+    }
+    return false
+}
+
+# Where on the page the thing hit() last found is: [x0, y0, x1, y1].
+proc last_hit() {
+    return hit_rect
+}
+
+# How far down the page the element with this id (or <a name>) is,
+# or false.
+proc anchor_y(box, name, ay) {
+    for k in box.kids {
+        if k.kind == 3 or k.kind == 4 {
+            continue
+        }
+        alloc ky := ay + k.y
+        alloc node := k.node
+        if node != false and (node.eid == name or (node.tag == "a" and has_key(node.attrs, "name") and node.attrs["name"] == name)) {
+            if k.kind == 2 {
+                return anchor_inline(box, name, ay)
+            }
+            return ky
+        }
+        alloc r := anchor_y(k, name, ky)
+        if r != false {
+            return r
+        }
+    }
+    return false
+}
+
+# An inline element has no place of its own: find the line it is on.
+proc anchor_inline(block, name, ay) {
+    if has_key(block, "lines") {
+        for line in block.lines {
+            for fr in line[3] {
+                if fr[0] == 2 and fr[5].node != false {
+                    alloc node := fr[5].node
+                    if node.eid == name or (node.tag == "a" and has_key(node.attrs, "name") and node.attrs["name"] == name) {
+                        return ay + line[0]
+                    }
+                }
+            }
+        }
+    }
+    return ay
+}
+
+# --- what the window tells the painter ---------------------------------------------------------
+
+proc set_focus(uid) {
+    focus := uid
+    return true
+}
+
+proc set_caret(on) {
+    caret_on := on
+    return true
+}
+
+# A background picture has arrived (or, with false, will not).
+proc set_image(addr, im) {
+    images[addr] := im
+    return true
+}
+
+proc forget_images() {
+    images := {}
+    wanted := []
+    return true
+}
+
+# The addresses of background pictures asked for since the last call.
+proc take_wanted() {
+    alloc w := wanted
+    wanted := []
+    return w
+}
