@@ -868,6 +868,19 @@ export const BUILTINS: readonly BuiltinDoc[] = [
         runnable: false,
         see: ['tcp_poll']
     }),
+    b({
+        name: 'random_bytes',
+        category: 'Time and process',
+        signatures: ['random_bytes(count)'],
+        params: [{ name: 'count', doc: 'How many bytes, from 0 to 1048576.' }],
+        minArgs: 1, maxArgs: 1,
+        summary: 'Bytes nobody can guess, from the system.',
+        details: 'They come from the operating system\'s own source of randomness, the one keys and passwords are made from. For a number in a range, put bytes together and take the remainder.',
+        returns: 'A byte list of `count` bytes.',
+        example: 'alloc b := random_bytes(4)\nemit (b[0] << 24 | b[1] << 16 | b[2] << 8 | b[3]) % 6 + 1',
+        runnable: true,
+        see: ['time_ms']
+    }),
 
     // --- Pseudo-terminals ---------------------------------------------------
     b({
@@ -1130,10 +1143,71 @@ export const BUILTINS: readonly BuiltinDoc[] = [
         minArgs: 1, maxArgs: 1,
         summary: 'The next thing that happened to the window, without waiting.',
         details: 'Call it until it returns `false`, every few milliseconds: it is also what keeps the window alive. Keys are named by their character (`"a"`, `"A"`, `"."`), or `"space"`, `"enter"`, `"escape"`, `"tab"`, `"backspace"`, `"delete"`, `"left"`, `"right"`, `"up"`, `"down"`, `"home"`, `"end"`, `"pageup"`, `"pagedown"`, `"f1"` to `"f12"`.',
-        returns: '`false` when nothing happened, or a list: `["key", name]`, `["resize", width, height]`, or `["close"]` when the user closed the window.',
+        returns: '`false` when nothing happened, or a list: `["key", name, held]` (`held` adds up 1 for Shift, 2 for Ctrl, 4 for Alt), `["move", x, y]`, `["down", x, y, button]` and `["up", x, y, button]` (button 1 left, 2 middle, 3 right), `["wheel", x, y, turn]` (1 a notch away from the user, -1 towards), `["resize", width, height]`, or `["close"]` when the user closed the window.',
         example: 'alloc win := window_open("press q", 200, 100)\nalloc open := true\nloop open {\n    alloc ev := window_poll(win)\n    loop ev != false {\n        if ev[0] == "close" or (ev[0] == "key" and ev[1] == "q") {\n            open := false\n        }\n        ev := window_poll(win)\n    }\n    sleep_ms(10)\n}\nwindow_close(win)',
         runnable: false,
         see: ['window_open', 'window_draw']
+    }),
+    b({
+        name: 'window_title',
+        category: 'A window',
+        signatures: ['window_title(window, title)'],
+        params: [
+            { name: 'window', doc: 'A handle from `window_open`.' },
+            { name: 'title', doc: 'The new title.' }
+        ],
+        minArgs: 2, maxArgs: 2,
+        summary: 'Gives the window a new title.',
+        details: 'The title is what the system shows in the window\'s frame and in its list of windows.',
+        returns: 'Nothing.',
+        example: 'alloc win := window_open("one", 200, 100)\nwindow_title(win, "two")',
+        runnable: false,
+        see: ['window_open']
+    }),
+    b({
+        name: 'window_cursor',
+        category: 'A window',
+        signatures: ['window_cursor(window, shape)'],
+        params: [
+            { name: 'window', doc: 'A handle from `window_open`.' },
+            { name: 'shape', doc: '`"arrow"`, `"hand"` or `"text"`.' }
+        ],
+        minArgs: 2, maxArgs: 2,
+        summary: 'Sets the shape of the pointer over the window.',
+        details: 'The arrow is the usual pointer, the hand the one shown over something to click, and `"text"` the bar shown over text. Any other shape is a `ValueError`.',
+        returns: 'Nothing.',
+        example: 'alloc win := window_open("point at me", 200, 100)\nwindow_cursor(win, "hand")',
+        runnable: false,
+        see: ['window_open', 'window_poll']
+    }),
+    b({
+        name: 'clipboard_get',
+        category: 'A window',
+        signatures: ['clipboard_get(window)'],
+        params: [{ name: 'window', doc: 'A handle from `window_open`.' }],
+        minArgs: 1, maxArgs: 1,
+        summary: 'The text on the system\'s clipboard.',
+        details: 'What another program, or this one, last copied. A clipboard that holds something other than text gives `""`.',
+        returns: 'A string, `""` when there is no text.',
+        example: 'alloc win := window_open("paste", 200, 100)\nemit clipboard_get(win)',
+        runnable: false,
+        see: ['clipboard_set']
+    }),
+    b({
+        name: 'clipboard_set',
+        category: 'A window',
+        signatures: ['clipboard_set(window, text)'],
+        params: [
+            { name: 'window', doc: 'A handle from `window_open`.' },
+            { name: 'text', doc: 'The text to put there.' }
+        ],
+        minArgs: 2, maxArgs: 2,
+        summary: 'Puts a text on the system\'s clipboard.',
+        details: 'Other programs find it with their paste. On Linux the text stays with this program and is handed over when someone pastes, so it is gone when the window closes unless a clipboard manager kept a copy.',
+        returns: 'Nothing.',
+        example: 'alloc win := window_open("copy", 200, 100)\nclipboard_set(win, "from OMG")',
+        runnable: false,
+        see: ['clipboard_get']
     }),
     b({
         name: 'window_close',

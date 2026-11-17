@@ -842,7 +842,11 @@ Always available, no import needed.
 | **A window**                   | (programs run by `omg` or built to machine code, on Linux and Windows; see [docs/10-video.md](docs/10-video.md)) |
 | `window_open(title, w, h)`     | open a window `w` x `h` pixels inside; returns a handle |
 | `window_draw(win, pixels, width)` | show a picture: a list with one int per pixel (`red * 65536 + green * 256 + blue`), in rows of `width`; scaled to fit the window |
-| `window_poll(win)`             | what happened to the window: `false`, `["key", name]`, `["resize", w, h]` or `["close"]`; never waits |
+| `window_poll(win)`             | what happened to the window: `false`, `["key", name, held]`, `["move", x, y]`, `["down", x, y, button]`, `["up", x, y, button]`, `["wheel", x, y, turn]`, `["resize", w, h]` or `["close"]`; never waits |
+| `window_title(win, title)`     | give the window a new title                           |
+| `window_cursor(win, shape)`    | the pointer over the window: `"arrow"`, `"hand"` or `"text"` |
+| `clipboard_get(win)`           | the text on the system's clipboard, `""` when there is none |
+| `clipboard_set(win, text)`     | put a text on the system's clipboard                  |
 | `window_close(win)`            | close the window                                      |
 | **Sound**                      | (as the window; see [docs/10-video.md](docs/10-video.md#sound)) |
 | `audio_open(rate, channels)`   | open the loudspeakers for 16-bit sound, 1 or 2 channels; returns a handle |
@@ -850,6 +854,8 @@ Always available, no import needed.
 | `audio_played(a)`              | how many moments of sound have been heard: the clock to show pictures by |
 | `audio_pause(a, on)`           | hold the sound, or let it go on                       |
 | `audio_close(a)`               | stop at once and let go of the device                 |
+| **Chance**                     |                                                       |
+| `random_bytes(n)`              | `n` bytes nobody can guess, from the system, as a byte list |
 | **Process control**            |                                                       |
 | `subprocess([cmd, args...])`   | run a child process; returns its exit code (a program that cannot be started raises `ValueError`) |
 | `exit(code)`                   | exit the current process with the given status       |

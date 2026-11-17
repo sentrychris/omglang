@@ -14,8 +14,8 @@ speaking to the system directly. No library is linked in and no other
 program is started: `play` is one executable of about 1.9 MB, and
 `--target windows-x64` gives the same thing for Windows from Linux.
 
-This page covers the four builtins that give a program a window and
-the five that give it sound, then the video tools built on them.
+This page covers the builtins that give a program a window and the
+five that give it sound, then the video tools built on them.
 
 - [A window](#a-window)
 - [How the window gets on the screen](#how-the-window-gets-on-the-screen)
@@ -36,6 +36,10 @@ the five that give it sound, then the video tools built on them.
 | `window_open(title, width, height)` | Open a window whose inside is `width` x `height` pixels. Returns a handle. |
 | `window_draw(win, pixels, width)` | Show a picture: a list with one int per pixel. |
 | `window_poll(win)` | The next thing that happened to the window, or `false`. Never waits. |
+| `window_title(win, title)` | Give the window a new title. |
+| `window_cursor(win, shape)` | The shape of the pointer over the window: `"arrow"`, `"hand"` or `"text"`. |
+| `clipboard_get(win)` | The text on the system's clipboard; `""` when it holds none. |
+| `clipboard_set(win, text)` | Put a text on the system's clipboard. |
 | `window_close(win)` | Close it. |
 
 A complete program:
@@ -89,27 +93,47 @@ and otherwise one of:
 
 | Value | Meaning |
 | ----- | ------- |
-| `["key", name]` | A key went down. |
+| `["key", name, held]` | A key went down. |
+| `["move", x, y]` | The pointer moved over the window. |
+| `["down", x, y, button]` | A mouse button went down: 1 the left one, 2 the middle, 3 the right. |
+| `["up", x, y, button]` | It came up again. |
+| `["wheel", x, y, turn]` | The wheel turned: 1 for a notch away from the user, -1 for one towards. |
 | `["resize", width, height]` | The window has a new size. The picture has already been fitted to it. |
 | `["close"]` | The user closed the window. It is gone: stop drawing. |
 
 Keys that print are named by their character: `"a"`, `"A"` with Shift,
-`"7"`, `"."`. The others are `"space"`, `"enter"`, `"escape"`, `"tab"`,
-`"backspace"`, `"delete"`, `"left"`, `"right"`, `"up"`, `"down"`,
-`"home"`, `"end"`, `"pageup"`, `"pagedown"` and `"f1"` to `"f12"`.
+`"7"`, `"."`, `"é"`. The others are `"space"`, `"enter"`, `"escape"`,
+`"tab"`, `"backspace"`, `"delete"`, `"left"`, `"right"`, `"up"`,
+`"down"`, `"home"`, `"end"`, `"pageup"`, `"pagedown"` and `"f1"` to
+`"f12"`. `held` says what was held down with the key: 1 for Shift, 2
+for Ctrl, 4 for Alt, added up, so Ctrl and `l` together is
+`["key", "l", 2]`.
+
+`x` and `y` count pixels of the window from its top left corner. They
+are places in the picture too when the picture is the size of the
+window, which a program that wants a mouse sees to: it draws a new
+picture of the new size whenever a `"resize"` comes. While a button is
+held, the pointer is followed outside the window as well, so a drag
+that leaves the window still ends with its `"up"`.
+
+**The clipboard.** `clipboard_set` puts a text where the system's
+paste finds it, and `clipboard_get` returns what another program (or
+this one) copied. On Linux the text stays with the program that copied
+it and is handed over when someone pastes, as X11 has it, so it is
+gone once the window closes unless a clipboard manager kept a copy.
 
 Call `window_poll` often, in a loop until it returns `false`. It is
 also what keeps the window alive: a program that stops calling it has
 a window the system reports as not responding.
 
-**Limits.** One window at a time. There is no mouse and no text
-drawing: it is a surface for pictures, and what a video player or a
-simple game needs. A program that has a window is still a console
+**Limits.** One window at a time. There is no text drawing: it is a
+surface for pictures, and a program that wants letters draws them
+itself. A program that has a window is still a console
 program: `emit` goes to the terminal it was started from.
 
 **Where it works.** In a program run by `omg` or built with
 `omg --build` for Linux or Windows. Built through C
-(`--target c`) or as JavaScript, the four builtins are there and raise
+(`--target c`) or as JavaScript, the window builtins are there and raise
 a `ValueError` that says so, which a program can catch. `window_open`
 raises a `ValueError` too when there is nowhere to show a window (on
 Linux: `DISPLAY` is not set, or no X server answers there).
