@@ -48,6 +48,7 @@ alloc SYS_CLOCK_GETTIME := 228
 alloc SYS_EXIT_GROUP := 231
 alloc SYS_SIGNALFD4 := 289
 alloc SYS_PIPE2 := 293
+alloc SYS_GETRANDOM := 318
 
 alloc ENOENT := 2
 alloc EINTR := 4
@@ -745,8 +746,9 @@ proc os_pty_resize(fd, rows, cols) {
 
 # --- TCP -------------------------------------------------------------------------
 #
-# IPv4 only, and without a C library there is no name service: a host
-# is a dotted address, "localhost", or a name listed in /etc/hosts.
+# IPv4 only. A host is a dotted address, "localhost", a name listed in
+# /etc/hosts, or a name the name servers of /etc/resolv.conf know: with
+# no C library to ask, the runtime asks them itself (os_dns_lookup).
 
 # Parse a dotted address of n bytes at p into the 4 bytes at `out`.
 proc os_parse_ipv4(p, n, out) {
@@ -818,6 +820,224 @@ proc os_hosts_lookup(host, out) {
     return found
 }
 
+# n random bytes at p, from the kernel. 0, or a negative errno.
+proc os_random(p, n) {
+    loop n > 0 {
+        alloc r := __syscall(SYS_GETRANDOM, p, n, 0, 0, 0, 0)
+        if r < 0 {
+            if r != 0 - EINTR {
+                return r
+            }
+        } else {
+            p := p + r
+            n := n - r
+        }
+    }
+    return 0
+}
+
+# --- the domain name system ----------------------------------------------------
+#
+# A name that is not in /etc/hosts is asked of a name server, in the
+# way RFC 1035 lays down: one UDP packet to port 53 that holds the name
+# and the kind of record wanted (A, an IPv4 address), and one packet
+# back with the answers. The servers to ask are the "nameserver" lines
+# of /etc/resolv.conf, as for every other program on the system.
+
+alloc DNS_WAIT_MS := 2000
+
+# Step over the name at `at` in the packet of n bytes at p: the index
+# after it, or -1 when it runs off the end.
+proc os_dns_skip(p, n, at) {
+    loop at < n {
+        alloc b := __peek8(p + at)
+        if b == 0 {
+            return at + 1
+        }
+        if b >= 192 {
+            return at + 2
+        }
+        at := at + 1 + b
+    }
+    return -1
+}
+
+# Ask the name server whose address is the 4 bytes at `server` for the
+# IPv4 address of `host`. 1, and the address at out, when it has one;
+# -1 when it says there is no such name or no address for it; 0 when
+# no usable answer came, and another server may be worth asking.
+proc os_dns_ask(server, host, out) {
+    alloc hn := __peek64(host + S_BYTES)
+    if hn < 1 or hn > 253 {
+        return -1
+    }
+    alloc m := rt_alloc(2560)
+    alloc pfd := m + 512
+    alloc sa := m + 528
+    alloc rep := m + 544
+    __memset(m, 0, 544)
+    os_random(m, 2)                              # the number of this question
+    __poke8(m + 2, 1)                            # ask the server to look further itself
+    __poke8(m + 5, 1)                            # one question
+    alloc p := m + 12
+    alloc start := 0
+    alloc i := 0
+    alloc bad := 0
+    loop i <= hn {
+        if i == hn or __peek8(host + S_DATA + i) == 46 {
+            alloc len := i - start
+            if len > 63 or (len == 0 and (i != hn or start == 0)) {
+                bad := 1
+            } elif len > 0 {
+                __poke8(p, len)
+                __memcpy(p + 1, host + S_DATA + start, len)
+                p := p + 1 + len
+            }
+            start := i + 1
+        }
+        i := i + 1
+    }
+    if bad {
+        rt_free(m, 2560)
+        return -1
+    }
+    __poke8(p + 2, 1)                            # type A
+    __poke8(p + 4, 1)                            # class IN
+    alloc qlen := p + 5 - m
+    alloc s := os_sys3(SYS_SOCKET, 2, 2, 0)      # AF_INET, SOCK_DGRAM
+    if s < 0 {
+        rt_free(m, 2560)
+        return 0
+    }
+    __poke16(sa, 2)
+    __poke8(sa + 3, 53)
+    __memcpy(sa + 4, server, 4)
+    alloc result := 0
+    if os_sys3(SYS_CONNECT, s, sa, 16) == 0 and __syscall(SYS_SENDTO, s, m, qlen, 16384, 0, 0) == qlen {
+        alloc until := os_time_ms() + DNS_WAIT_MS
+        alloc waiting := 1
+        loop waiting {
+            alloc left := until - os_time_ms()
+            if left <= 0 {
+                break
+            }
+            __poke32(pfd, s)
+            __poke16(pfd + 4, POLLIN)
+            __poke16(pfd + 6, 0)
+            alloc r := os_sys3(SYS_POLL, pfd, 1, left)
+            if r == 0 - EINTR {
+                continue
+            }
+            if r <= 0 {
+                break
+            }
+            alloc n := os_read(s, rep, 2000)
+            if n < 12 {
+                break
+            }
+            # the answer to this question, and not to another or a stray packet
+            if __peek16(rep) != __peek16(m) or (__peek8(rep + 2) & 128) == 0 {
+                continue
+            }
+            waiting := 0
+            alloc rcode := __peek8(rep + 3) & 15
+            if rcode == 3 {
+                result := -1
+                break
+            }
+            if rcode != 0 {
+                break
+            }
+            alloc questions := __peek8(rep + 4) * 256 + __peek8(rep + 5)
+            alloc answers := __peek8(rep + 6) * 256 + __peek8(rep + 7)
+            alloc at := 12
+            loop questions > 0 and at >= 0 {
+                at := os_dns_skip(rep, n, at)
+                if at >= 0 {
+                    at := at + 4
+                }
+                questions := questions - 1
+            }
+            result := -1
+            loop answers > 0 and at >= 0 {
+                at := os_dns_skip(rep, n, at)
+                if at < 0 or at + 10 > n {
+                    break
+                }
+                alloc kind := __peek8(rep + at) * 256 + __peek8(rep + at + 1)
+                alloc size := __peek8(rep + at + 8) * 256 + __peek8(rep + at + 9)
+                at := at + 10
+                if at + size > n {
+                    break
+                }
+                if kind == 1 and size == 4 {
+                    __memcpy(out, rep + at, 4)
+                    result := 1
+                    break
+                }
+                at := at + size
+                answers := answers - 1
+            }
+        }
+    }
+    os_close(s)
+    rt_free(m, 2560)
+    return result
+}
+
+# Look a name up with the name servers of /etc/resolv.conf (127.0.0.1
+# when it names none); fills in `out` and returns 1 if found.
+proc os_dns_lookup(host, out) {
+    alloc servers := rt_alloc(16)
+    alloc count := 0
+    alloc fd := os_sys3(SYS_OPEN, "/etc/resolv.conf" + S_DATA, 0, 0)
+    if fd >= 0 {
+        alloc b := rt_read_all(fd)
+        os_close(fd)
+        alloc data := __peek64(b)
+        alloc size := __peek64(b + 8)
+        alloc at := 0
+        loop at < size {
+            alloc end := at
+            loop end < size and __peek8(data + end) != 10 {
+                end := end + 1
+            }
+            if end - at > 11 and count < 3 and __memcmp(data + at, "nameserver" + S_DATA, 10) == 0 and rt_is_space(__peek8(data + at + 10)) {
+                alloc i := at + 10
+                loop i < end and rt_is_space(__peek8(data + i)) {
+                    i := i + 1
+                }
+                alloc stop := i
+                loop stop < end and rt_is_space(__peek8(data + stop)) == 0 {
+                    stop := stop + 1
+                }
+                if os_parse_ipv4(data + i, stop - i, servers + count * 4) {
+                    count := count + 1
+                }
+            }
+            at := end + 1
+        }
+        rt_free(data, __peek64(b + 16))
+        rt_free(b, 24)
+    }
+    if count == 0 {
+        __poke32(servers, 16777343)              # 127.0.0.1
+        count := 1
+    }
+    alloc found := 0
+    alloc round := 0
+    loop round < 2 and found == 0 {
+        alloc k := 0
+        loop k < count and found == 0 {
+            found := os_dns_ask(servers + k * 4, host, out)
+            k := k + 1
+        }
+        round := round + 1
+    }
+    rt_free(servers, 16)
+    return found == 1
+}
+
 # A 16-byte IPv4 socket address for host and port, or 0.
 proc os_sockaddr(host, port) {
     alloc sa := rt_alloc(16)
@@ -838,6 +1058,9 @@ proc os_sockaddr(host, port) {
         return sa
     }
     if os_hosts_lookup(host, sa + 4) {
+        return sa
+    }
+    if os_dns_lookup(host, sa + 4) {
         return sa
     }
     rt_free(sa, 16)
@@ -1070,6 +1293,18 @@ alloc xw_h := 0
 alloc xw_q := 0                # a page for building requests and reading events
 alloc xw_extra := 0            # the tail of the last reply
 alloc xw_extra_size := 0
+alloc xw_net_name := 0         # the atoms _NET_WM_NAME and UTF8_STRING
+alloc xw_utf8 := 0
+alloc xw_clip := 0             # the atoms CLIPBOARD and TARGETS, and one of ours
+alloc xw_targets := 0
+alloc xw_sel_prop := 0
+alloc xw_clip_text := 0        # the text this program put on the clipboard, while it is the one there
+alloc xw_cursor_font := 0
+alloc xw_cursors := 0          # which pointer shapes have been made: a bit each
+alloc xw_pend := 0             # events read while waiting for something else
+alloc xw_pend_n := 0
+alloc xw_pend_at := 0
+alloc XW_PEND_MAX := 256
 
 proc xw_pad(n) {
     return (n + 3) & -4
@@ -1080,6 +1315,26 @@ proc xw_drop() {
         os_close(xw_fd)
     }
     xw_fd := -1
+    xw_pend_n := 0
+    xw_pend_at := 0
+    xw_cursor_font := 0
+    xw_cursors := 0
+    if xw_clip_text != 0 {
+        rt_drop(T_STR, xw_clip_text)
+        xw_clip_text := 0
+    }
+    return 0
+}
+
+# Keep the event at p (32 bytes) for os_win_event to hand out later.
+proc xw_stash(p) {
+    if xw_pend == 0 {
+        xw_pend := os_alloc(XW_PEND_MAX * 32)
+    }
+    if xw_pend_n < XW_PEND_MAX {
+        __memcpy(xw_pend + xw_pend_n * 32, p, 32)
+        xw_pend_n := xw_pend_n + 1
+    }
     return 0
 }
 
@@ -1109,8 +1364,9 @@ proc xw_send(p, n) {
 }
 
 # Wait for the reply to the request just sent: its first 32 bytes go to
-# p, the rest to xw_extra. Events that arrive first are let go. 0, or
-# -1 when the server answered with an error or went away.
+# p, the rest to xw_extra. Events that arrive first are kept for
+# os_win_event. 0, or -1 when the server answered with an error or
+# went away.
 proc xw_reply(p) {
     loop true {
         if xw_read(p, 32) < 0 {
@@ -1135,6 +1391,7 @@ proc xw_reply(p) {
             }
             return 0
         }
+        xw_stash(p)
     }
     return -1
 }
@@ -1155,20 +1412,34 @@ proc xw_atom(name) {
     return __peek32(q + 8)
 }
 
-# Set a property of the window: `n` items of `format` bits each at p.
-proc xw_property(prop, type, format, p, n) {
+# Set a property of window `wid`: `n` items of `format` bits each at p.
+# The request is sent in three pieces (what it is, the items, padding),
+# so the items may be longer than the page at xw_q.
+proc xw_property_on(wid, prop, type, format, p, n) {
     alloc bytes := n * (format // 8)
     alloc q := xw_q
-    __memset(q, 0, 24 + xw_pad(bytes))
+    __memset(q, 0, 32)
     __poke8(q, 18)                               # ChangeProperty, mode Replace
     __poke16(q + 2, 6 + xw_pad(bytes) // 4)
-    __poke32(q + 4, xw_wid)
+    __poke32(q + 4, wid)
     __poke32(q + 8, prop)
     __poke32(q + 12, type)
     __poke8(q + 16, format)
     __poke32(q + 20, n)
-    __memcpy(q + 24, p, bytes)
-    return xw_send(q, 24 + xw_pad(bytes))
+    xw_send(q, 24)
+    if bytes > 0 {
+        xw_send(p, bytes)
+    }
+    if xw_pad(bytes) > bytes {
+        __poke32(q + 24, 0)
+        xw_send(q + 24, xw_pad(bytes) - bytes)
+    }
+    return 0
+}
+
+# Set a property of the window.
+proc xw_property(prop, type, format, p, n) {
+    return xw_property_on(xw_wid, prop, type, format, p, n)
 }
 
 # Connect to display number `num` on this machine: the socket is a file
@@ -1271,6 +1542,28 @@ proc xw_cookie(num, file) {
 # for the rest, 0 for a key that is not reported.
 proc xw_key(sym) {
     if sym >= 32 and sym < 127 { return sym }
+    # Characters past ASCII go out as 16777216 plus their Unicode number
+    # (see rt_win_key_name). Key symbols 160 to 255 are Latin-1; those
+    # from 16777216 up are Unicode already.
+    if sym >= 160 and sym <= 255 { return 16777216 + sym }
+    if sym >= 16777216 + 160 and sym <= 16777216 + 1114111 { return sym }
+    if sym == 8364 { return 16777216 + 8364 }    # the euro sign
+    if sym >= 65456 and sym <= 65465 { return 48 + sym - 65456 }    # the number pad
+    if sym == 65450 { return 42 }
+    if sym == 65451 { return 43 }
+    if sym == 65453 { return 45 }
+    if sym == 65454 { return 46 }
+    if sym == 65455 { return 47 }
+    if sym == 65430 { return 258 }
+    if sym == 65432 { return 259 }
+    if sym == 65431 { return 260 }
+    if sym == 65433 { return 261 }
+    if sym == 65429 { return 265 }
+    if sym == 65436 { return 266 }
+    if sym == 65434 { return 267 }
+    if sym == 65435 { return 268 }
+    if sym == 65439 { return 264 }
+    if sym == 65056 { return 262 }               # Tab with Shift
     if sym == 65307 { return 256 }               # Escape
     if sym == 65293 or sym == 65421 { return 257 }
     if sym == 65361 { return 258 }
@@ -1285,6 +1578,33 @@ proc xw_key(sym) {
     if sym == 65365 { return 267 }
     if sym == 65366 { return 268 }
     if sym >= 65470 and sym <= 65481 { return 270 + sym - 65470 }
+    return 0
+}
+
+# The keyboard: ask which symbols each key code stands for. Asked when
+# the window opens, and again whenever the server says the answer has
+# changed (another layout was chosen).
+proc xw_load_keys() {
+    alloc q := xw_q
+    __memset(q, 0, 8)
+    __poke8(q, 101)                              # GetKeyboardMapping
+    __poke16(q + 2, 2)
+    __poke8(q + 4, xw_kmin)
+    __poke8(q + 5, xw_kcount)
+    xw_send(q, 8)
+    xw_kper := 0
+    if xw_reply(q) == 0 {
+        xw_kper := __peek8(q + 1)
+        if xw_keys != 0 {
+            rt_free(xw_keys, xw_keys_size)
+        }
+        xw_keys := xw_extra
+        xw_keys_size := xw_extra_size
+        xw_extra := 0
+        if xw_keys_size < xw_kcount * xw_kper * 4 {
+            xw_kper := 0
+        }
+    }
     return 0
 }
 
@@ -1415,29 +1735,15 @@ proc os_win_open(title, w, h) {
     # Names the window manager goes by.
     xw_proto := xw_atom("WM_PROTOCOLS")
     xw_delete := xw_atom("WM_DELETE_WINDOW")
-    alloc net_name := xw_atom("_NET_WM_NAME")
-    alloc utf8 := xw_atom("UTF8_STRING")
+    xw_net_name := xw_atom("_NET_WM_NAME")
+    xw_utf8 := xw_atom("UTF8_STRING")
+    xw_clip := xw_atom("CLIPBOARD")
+    xw_targets := xw_atom("TARGETS")
+    xw_sel_prop := xw_atom("OMG_SELECTION")
+    alloc net_name := xw_net_name
+    alloc utf8 := xw_utf8
 
-    # The keyboard: which symbols each key code stands for.
-    __memset(q, 0, 8)
-    __poke8(q, 101)                              # GetKeyboardMapping
-    __poke16(q + 2, 2)
-    __poke8(q + 4, xw_kmin)
-    __poke8(q + 5, xw_kcount)
-    xw_send(q, 8)
-    xw_kper := 0
-    if xw_reply(q) == 0 {
-        xw_kper := __peek8(q + 1)
-        if xw_keys != 0 {
-            rt_free(xw_keys, xw_keys_size)
-        }
-        xw_keys := xw_extra
-        xw_keys_size := xw_extra_size
-        xw_extra := 0
-        if xw_keys_size < xw_kcount * xw_kper * 4 {
-            xw_kper := 0
-        }
-    }
+    xw_load_keys()
 
     __memset(q, 0, 40)
     __poke8(q, 1)                                # CreateWindow, depth as the parent's
@@ -1449,7 +1755,8 @@ proc os_win_open(title, w, h) {
     __poke16(q + 22, 1)                          # InputOutput
     __poke32(q + 28, 2050)                       # values: background pixel, event mask
     __poke32(q + 32, 0)                          # black
-    __poke32(q + 36, 163841)                     # KeyPress | Exposure | StructureNotify
+    # KeyPress | ButtonPress | ButtonRelease | PointerMotion | Exposure | StructureNotify
+    __poke32(q + 36, 163917)
     xw_send(q, 40)
 
     alloc tn := __peek64(title + S_BYTES)
@@ -1522,9 +1829,111 @@ proc os_win_blit(buf, w, h) {
     return 0
 }
 
+# A 16-bit field of an event as a signed number.
+proc xw_s16(p) {
+    alloc v := __peek16(p)
+    if v >= 32768 {
+        return v - 65536
+    }
+    return v
+}
+
+# Which key a KeyPress event (at q) means, in the runtime's numbering;
+# 0 for one that is not reported. The keyboard mapping has several
+# symbols for each key: plain and with Shift, the same pair for a
+# second layout, and the pair AltGr gives.
+proc xw_key_of(q) {
+    alloc at := __peek8(q + 1) - xw_kmin
+    if xw_kper < 1 or at < 0 or at >= xw_kcount {
+        return 0
+    }
+    alloc state := __peek16(q + 28)
+    alloc row := xw_keys + at * xw_kper * 4
+    alloc col := 0
+    if (state & 128) != 0 and xw_kper > 5 and __peek32(row + 16) != 0 {
+        col := 4
+    } elif (state & 8192) != 0 and xw_kper > 3 and __peek32(row + 8) != 0 {
+        col := 2
+    }
+    alloc sym := __peek32(row + col * 4)
+    alloc other := 0
+    if xw_kper > col + 1 {
+        other := __peek32(row + (col + 1) * 4)
+    }
+    if (state & 1) != 0 {
+        # Shift is down: the second symbol, when it is a character
+        if other != 0 and (xw_key(other) < 256 or xw_key(other) >= 16777216) and xw_key(other) != 0 {
+            sym := other
+        } elif other == 0 and sym >= 97 and sym <= 122 {
+            sym := sym - 32
+        }
+    } elif (state & 16) != 0 and other >= 65450 and other <= 65465 {
+        # Num Lock is on and this is a key of the number pad
+        sym := other
+    }
+    if (state & 2) != 0 {
+        # Caps Lock turns letters over
+        if sym >= 97 and sym <= 122 {
+            sym := sym - 32
+        } elif sym >= 65 and sym <= 90 and (state & 1) != 0 {
+            sym := sym + 32
+        }
+    }
+    return xw_key(sym)
+}
+
+# Another program asks for the text this one put on the clipboard (the
+# request is the event at q): hand it over as a property on the asker's
+# window, and tell it so.
+proc xw_selection_request(q) {
+    alloc time := __peek32(q + 4)
+    alloc req := __peek32(q + 12)
+    alloc sel := __peek32(q + 16)
+    alloc target := __peek32(q + 20)
+    alloc prop := __peek32(q + 24)
+    if prop == 0 {
+        prop := target
+    }
+    alloc ok := 0
+    if xw_clip_text != 0 and sel == xw_clip {
+        if target == xw_targets {
+            alloc cell := rt_alloc(16)
+            __poke32(cell, xw_targets)
+            __poke32(cell + 4, xw_utf8)
+            xw_property_on(req, prop, 4, 32, cell, 2)
+            rt_free(cell, 16)
+            ok := 1
+        } elif target == xw_utf8 or target == 31 {
+            alloc n := __peek64(xw_clip_text + S_BYTES)
+            if n > (xw_maxreq - 8) * 4 {
+                n := (xw_maxreq - 8) * 4
+            }
+            xw_property_on(req, prop, target, 8, xw_clip_text + S_DATA, n)
+            ok := 1
+        }
+    }
+    __memset(q, 0, 44)
+    __poke8(q, 25)                               # SendEvent
+    __poke16(q + 2, 11)
+    __poke32(q + 4, req)
+    __poke8(q + 12, 31)                          # SelectionNotify
+    __poke32(q + 16, time)
+    __poke32(q + 20, req)
+    __poke32(q + 24, sel)
+    __poke32(q + 28, target)
+    if ok {
+        __poke32(q + 32, prop)
+    }
+    return xw_send(q, 44)
+}
+
 # The next thing that happened, without waiting: 0 nothing, 1 a key
-# (its number in out), 2 the window is to close, 3 it changed size
-# (width and height in out), 4 it needs painting again.
+# (its number in out, then what was held down with it: 1 Shift, 2 Ctrl,
+# 4 Alt, added up), 2 the window is to close, 3 it changed size (width
+# and height in out), 4 it needs painting again, 5 the pointer moved
+# (x and y in out), 6 a mouse button went down and 7 up (x, y and the
+# button: 1 left, 2 middle, 3 right), 8 the wheel turned (x, y, and 1
+# for a notch away from the user or -1 for one towards).
 proc os_win_event(out) {
     alloc q := xw_q
     loop true {
@@ -1535,15 +1944,24 @@ proc os_win_event(out) {
             }
             return 0
         }
-        __poke32(q, xw_fd)
-        __poke16(q + 4, POLLIN)
-        __poke16(q + 6, 0)
-        if os_sys3(SYS_POLL, q, 1, 0) <= 0 {
-            return 0
-        }
-        if xw_read(q, 32) < 0 {
-            xw_drop()
-            return 2
+        if xw_pend_at < xw_pend_n {
+            __memcpy(q, xw_pend + xw_pend_at * 32, 32)
+            xw_pend_at := xw_pend_at + 1
+            if xw_pend_at == xw_pend_n {
+                xw_pend_at := 0
+                xw_pend_n := 0
+            }
+        } else {
+            __poke32(q, xw_fd)
+            __poke16(q + 4, POLLIN)
+            __poke16(q + 6, 0)
+            if os_sys3(SYS_POLL, q, 1, 0) <= 0 {
+                return 0
+            }
+            if xw_read(q, 32) < 0 {
+                xw_drop()
+                return 2
+            }
         }
         alloc code := __peek8(q) & 127
         if code == 1 {
@@ -1561,21 +1979,29 @@ proc os_win_event(out) {
                 more := more - step
             }
         } elif code == 2 {                       # KeyPress
-            alloc at := __peek8(q + 1) - xw_kmin
-            if xw_kper > 0 and at >= 0 and at < xw_kcount {
-                alloc sym := __peek32(xw_keys + at * xw_kper * 4)
-                if (__peek16(q + 28) & 1) != 0 and xw_kper > 1 {
-                    # Shift is down: the second symbol, when it is a character
-                    alloc upper := __peek32(xw_keys + (at * xw_kper + 1) * 4)
-                    if upper >= 32 and upper < 127 {
-                        sym := upper
-                    }
-                }
-                alloc key := xw_key(sym)
-                if key != 0 {
-                    __poke64(out, key)
-                    return 1
-                }
+            alloc key := xw_key_of(q)
+            if key != 0 {
+                alloc state := __peek16(q + 28)
+                __poke64(out, key)
+                __poke64(out + 8, (state & 1) | ((state & 4) >> 1) | ((state & 8) >> 1))
+                return 1
+            }
+        } elif code == 4 or code == 5 or code == 6 {
+            # ButtonPress, ButtonRelease, MotionNotify
+            alloc button := __peek8(q + 1)
+            __poke64(out, xw_s16(q + 24))
+            __poke64(out + 8, xw_s16(q + 26))
+            __poke64(out + 16, button)
+            if code == 6 {
+                return 5
+            }
+            if button >= 1 and button <= 3 {
+                return code + 2
+            }
+            # the wheel is buttons 4 (away) and 5 (towards), pressed once a notch
+            if code == 4 and (button == 4 or button == 5) {
+                __poke64(out + 16, 9 - button * 2)
+                return 8
             }
         } elif code == 12 {                      # Expose
             if __peek16(q + 16) == 0 {
@@ -1600,8 +2026,187 @@ proc os_win_event(out) {
                 xw_drop()
                 return 2
             }
+        } elif code == 34 {                      # MappingNotify
+            if __peek8(q + 4) == 1 {
+                xw_load_keys()
+            }
+        } elif code == 30 {                      # SelectionRequest
+            xw_selection_request(q)
+        } elif code == 29 {                      # SelectionClear: another program copied something
+            if __peek32(q + 12) == xw_clip and xw_clip_text != 0 {
+                rt_drop(T_STR, xw_clip_text)
+                xw_clip_text := 0
+            }
         }
     }
+    return 0
+}
+
+# Give the window a new title.
+proc os_win_title(title) {
+    if xw_fd < 0 {
+        return 0
+    }
+    alloc tn := __peek64(title + S_BYTES)
+    if tn > 1024 {
+        tn := 1024
+    }
+    xw_property(39, 31, 8, title + S_DATA, tn)   # WM_NAME, of type STRING
+    if xw_net_name != 0 and xw_utf8 != 0 {
+        xw_property(xw_net_name, xw_utf8, 8, title + S_DATA, tn)
+    }
+    return 0
+}
+
+# The shape of the pointer over the window: 0 the usual arrow, 1 a
+# hand, 2 the bar that marks text. The shapes are glyphs of the font
+# every X server has under the name "cursor".
+proc os_win_cursor(kind) {
+    if xw_fd < 0 {
+        return 0
+    }
+    alloc q := xw_q
+    alloc cid := 0
+    if kind != 0 {
+        if xw_cursor_font == 0 {
+            xw_cursor_font := xw_wid + 2
+            __memset(q, 0, 20)
+            __poke8(q, 45)                       # OpenFont
+            __poke16(q + 2, 5)
+            __poke32(q + 4, xw_cursor_font)
+            __poke16(q + 8, 6)
+            __memcpy(q + 12, "cursor" + S_DATA, 6)
+            xw_send(q, 20)
+        }
+        cid := xw_wid + 2 + kind
+        if (xw_cursors & (1 << kind)) == 0 {
+            xw_cursors := xw_cursors | (1 << kind)
+            alloc glyph := 60                    # a hand
+            if kind == 2 {
+                glyph := 152                     # the text bar
+            }
+            __memset(q, 0, 32)
+            __poke8(q, 94)                       # CreateGlyphCursor
+            __poke16(q + 2, 8)
+            __poke32(q + 4, cid)
+            __poke32(q + 8, xw_cursor_font)
+            __poke32(q + 12, xw_cursor_font)
+            __poke16(q + 16, glyph)
+            __poke16(q + 18, glyph + 1)
+            __poke16(q + 26, 65535)              # black on white
+            __poke16(q + 28, 65535)
+            __poke16(q + 30, 65535)
+            xw_send(q, 32)
+        }
+    }
+    __memset(q, 0, 16)
+    __poke8(q, 2)                                # ChangeWindowAttributes
+    __poke16(q + 2, 4)
+    __poke32(q + 4, xw_wid)
+    __poke32(q + 8, 16384)                       # the cursor
+    __poke32(q + 12, cid)
+    xw_send(q, 16)
+    return 0
+}
+
+# The text on the clipboard, as an owned string; empty when there is
+# none or its owner does not answer within a second. The owner is
+# asked to put the text in a property of our window (ConvertSelection),
+# says when it has (SelectionNotify), and the property is then read.
+proc os_clip_get() {
+    if xw_fd < 0 or xw_clip == 0 or xw_utf8 == 0 {
+        return rt_str_alloc(0)
+    }
+    if xw_clip_text != 0 {
+        __poke64(xw_clip_text, __peek64(xw_clip_text) + 1)
+        return xw_clip_text
+    }
+    alloc q := xw_q
+    __memset(q, 0, 24)
+    __poke8(q, 24)                               # ConvertSelection
+    __poke16(q + 2, 6)
+    __poke32(q + 4, xw_wid)
+    __poke32(q + 8, xw_clip)
+    __poke32(q + 12, xw_utf8)
+    __poke32(q + 16, xw_sel_prop)
+    xw_send(q, 24)
+    alloc until := os_time_ms() + 1000
+    alloc prop := 0
+    loop xw_fd >= 0 {
+        alloc left := until - os_time_ms()
+        if left <= 0 {
+            return rt_str_alloc(0)
+        }
+        __poke32(q, xw_fd)
+        __poke16(q + 4, POLLIN)
+        __poke16(q + 6, 0)
+        alloc r := os_sys3(SYS_POLL, q, 1, left)
+        if r == 0 - EINTR {
+            continue
+        }
+        if r <= 0 {
+            return rt_str_alloc(0)
+        }
+        if xw_read(q, 32) < 0 {
+            xw_drop()
+            xw_lost := 1
+            return rt_str_alloc(0)
+        }
+        alloc code := __peek8(q) & 127
+        if code == 31 {                          # SelectionNotify
+            prop := __peek32(q + 20)
+            break
+        }
+        if code == 1 {
+            alloc more := __peek32(q + 4) * 4
+            if more > 0 {
+                alloc junk := rt_alloc(more)
+                xw_read(junk, more)
+                rt_free(junk, more)
+            }
+        } elif code != 0 {
+            xw_stash(q)
+        }
+    }
+    if prop == 0 or xw_fd < 0 {
+        return rt_str_alloc(0)
+    }
+    __memset(q, 0, 24)
+    __poke8(q, 20)                               # GetProperty, and delete it
+    __poke8(q + 1, 1)
+    __poke16(q + 2, 6)
+    __poke32(q + 4, xw_wid)
+    __poke32(q + 8, prop)
+    __poke32(q + 20, 1048576)                    # up to 4 MiB
+    xw_send(q, 24)
+    if xw_reply(q) < 0 {
+        return rt_str_alloc(0)
+    }
+    alloc n := __peek32(q + 16)
+    if __peek8(q + 1) != 8 or xw_extra == 0 or n > xw_extra_size {
+        return rt_str_alloc(0)
+    }
+    return rt_str_from(xw_extra, n)
+}
+
+# Put a text on the clipboard: say the window owns it, and keep the
+# text for whoever asks (xw_selection_request).
+proc os_clip_set(text) {
+    if xw_fd < 0 or xw_clip == 0 {
+        return 0
+    }
+    if xw_clip_text != 0 {
+        rt_drop(T_STR, xw_clip_text)
+    }
+    __poke64(text, __peek64(text) + 1)
+    xw_clip_text := text
+    alloc q := xw_q
+    __memset(q, 0, 16)
+    __poke8(q, 22)                               # SetSelectionOwner
+    __poke16(q + 2, 4)
+    __poke32(q + 4, xw_wid)
+    __poke32(q + 8, xw_clip)
+    xw_send(q, 16)
     return 0
 }
 

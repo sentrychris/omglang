@@ -201,9 +201,12 @@ in `args`, `module_file` and `current_dir`.
 
 ## Known limits
 
-- TCP on Linux takes a dotted IPv4 address, `localhost`, or a name
-  listed in `/etc/hosts`; there is no DNS client. (Windows uses the
-  system resolver.)
+- TCP is IPv4 only. On Linux a name that is not in `/etc/hosts` is
+  looked up by the runtime's own DNS client, which asks the name
+  servers of `/etc/resolv.conf` over UDP (two seconds a try, each
+  server twice); it does not know search domains, and a system that
+  resolves names some other way (mDNS, a VPN's own resolver that is
+  not in that file) is not followed. Windows uses the system resolver.
 - `pow` and the trigonometric functions come from x87 and can differ
   from a C library in the last digit.
 - A float literal with more than 19 significant digits may be off by

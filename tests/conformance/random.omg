@@ -1,0 +1,35 @@
+;;;omg
+# random_bytes: how many, what kind, and that two calls differ.
+alloc a := random_bytes(32)
+alloc b := random_bytes(32)
+emit length(a)
+emit a == b
+emit length(random_bytes(0))
+alloc ok := true
+for v in a {
+    if v < 0 or v > 255 {
+        ok := false
+    }
+}
+emit ok
+# a byte list: storing 256 is refused
+try {
+    a[0] := 256
+} except e {
+    emit e[0:10]
+}
+try {
+    random_bytes(-1)
+} except e {
+    emit e[0:10]
+}
+try {
+    random_bytes(1048577)
+} except e {
+    emit e[0:10]
+}
+try {
+    random_bytes("many")
+} except e {
+    emit e[0:9]
+}

@@ -1801,7 +1801,7 @@ alloc rt_win_h := 0
 alloc rt_win_buf := 0
 alloc rt_win_buf_size := 0
 alloc rt_win_drawn := 0        # the block holds a picture
-alloc rt_win_cell := 0         # two words for os_win_event to fill
+alloc rt_win_cell := 0         # four words for os_win_event to fill
 
 proc rt_win_check(t, h, what) {
     if t != T_INT {
@@ -1831,7 +1831,7 @@ proc bi_window_open(tt, title, wt, w, ht, h) {
         return rt_throw("ValueError", rt_str_concat("window_open: ", err))
     }
     if rt_win_cell == 0 {
-        rt_win_cell := rt_alloc(16)
+        rt_win_cell := rt_alloc(32)
     }
     rt_win_on := 1
     rt_win_w := w
@@ -1921,6 +1921,23 @@ proc bi_window_draw(t, h, pt, pixels, wt, sw) {
 proc rt_win_key_name(code) {
     if code == 32 { return "space" }
     if code < 128 { return rt_char_str(code) }
+    if code >= 16777216 {
+        # a character past ASCII: its Unicode number, as UTF-8
+        alloc c := code - 16777216
+        alloc u := rt_buf_new()
+        if c < 2048 {
+            rt_buf_byte(u, 192 | (c >> 6))
+        } elif c < 65536 {
+            rt_buf_byte(u, 224 | (c >> 12))
+            rt_buf_byte(u, 128 | ((c >> 6) & 63))
+        } else {
+            rt_buf_byte(u, 240 | (c >> 18))
+            rt_buf_byte(u, 128 | ((c >> 12) & 63))
+            rt_buf_byte(u, 128 | ((c >> 6) & 63))
+        }
+        rt_buf_byte(u, 128 | (c & 63))
+        return rt_buf_finish(u)
+    }
     if code == 256 { return "escape" }
     if code == 257 { return "enter" }
     if code == 258 { return "left" }
@@ -1945,8 +1962,10 @@ proc rt_win_key_name(code) {
 
 # window_poll(win): what has happened to the window since the last
 # call, one event at a time, without waiting. false when nothing has;
-# otherwise a list: ["key", name], ["resize", width, height] or
-# ["close"] (the user asked for the window to go away).
+# otherwise a list: ["key", name, held], ["move", x, y],
+# ["down", x, y, button], ["up", x, y, button], ["wheel", x, y, turn],
+# ["resize", width, height] or ["close"] (the user asked for the window
+# to go away).
 proc bi_window_poll(t, h) {
     rt_win_check(t, h, "window_poll()")
     loop true {
@@ -1962,15 +1981,33 @@ proc bi_window_poll(t, h) {
             }
             continue
         }
-        alloc ev := rt_list_alloc(3)
+        alloc ev := rt_list_alloc(4)
         rt_tag := T_LIST
         if kind == 1 {
             rt_list_push(ev, T_STR, "key")
             rt_list_push(ev, T_STR, rt_win_key_name(__peek64(rt_win_cell)))
+            rt_list_push(ev, T_INT, __peek64(rt_win_cell + 8))
             return ev
         }
         if kind == 2 {
             rt_list_push(ev, T_STR, "close")
+            return ev
+        }
+        if kind >= 5 {
+            if kind == 5 {
+                rt_list_push(ev, T_STR, "move")
+            } elif kind == 6 {
+                rt_list_push(ev, T_STR, "down")
+            } elif kind == 7 {
+                rt_list_push(ev, T_STR, "up")
+            } else {
+                rt_list_push(ev, T_STR, "wheel")
+            }
+            rt_list_push(ev, T_INT, __peek64(rt_win_cell))
+            rt_list_push(ev, T_INT, __peek64(rt_win_cell + 8))
+            if kind != 5 {
+                rt_list_push(ev, T_INT, __peek64(rt_win_cell + 16))
+            }
             return ev
         }
         rt_win_w := __peek64(rt_win_cell)
@@ -1982,6 +2019,77 @@ proc bi_window_poll(t, h) {
         return ev
     }
     return 0
+}
+
+# window_title(win, title): give the window a new title.
+proc bi_window_title(t, h, tt, title) {
+    rt_win_check(t, h, "window_title()")
+    if tt != T_STR {
+        return rt_type_error("window_title() expects (window, title: str)")
+    }
+    os_win_title(title)
+    rt_tag := T_NONE
+    return 0
+}
+
+# window_cursor(win, shape): the shape of the pointer over the window:
+# "arrow", "hand" or "text".
+proc bi_window_cursor(t, h, st, shape) {
+    rt_win_check(t, h, "window_cursor()")
+    if st != T_STR {
+        return rt_type_error("window_cursor() expects (window, shape: str)")
+    }
+    if rt_str_eq(shape, "arrow") {
+        os_win_cursor(0)
+    } elif rt_str_eq(shape, "hand") {
+        os_win_cursor(1)
+    } elif rt_str_eq(shape, "text") {
+        os_win_cursor(2)
+    } else {
+        return rt_value_error("window_cursor: the shape must be \"arrow\", \"hand\" or \"text\"")
+    }
+    rt_tag := T_NONE
+    return 0
+}
+
+# clipboard_get(win): the text on the system's clipboard; "" when it
+# holds none.
+proc bi_clipboard_get(t, h) {
+    rt_win_check(t, h, "clipboard_get()")
+    rt_tag := T_STR
+    return os_clip_get()
+}
+
+# clipboard_set(win, text): put a text on the system's clipboard.
+proc bi_clipboard_set(t, h, tt, text) {
+    rt_win_check(t, h, "clipboard_set()")
+    if tt != T_STR {
+        return rt_type_error("clipboard_set() expects (window, text: str)")
+    }
+    os_clip_set(text)
+    rt_tag := T_NONE
+    return 0
+}
+
+# random_bytes(n): n bytes nobody can guess, from the system, as a
+# byte list.
+proc bi_random_bytes(t, n) {
+    if t != T_INT {
+        return rt_type_error("random_bytes() expects (count: int)")
+    }
+    if n < 0 or n > 1048576 {
+        return rt_value_error("random_bytes: the count must be between 0 and 1048576")
+    }
+    alloc b := rt_bytes_alloc(n)
+    if n > 0 {
+        alloc r := os_random(__peek64(b + L_ITEMS), n)
+        if r < 0 {
+            return rt_os_error("random_bytes", 0, 0 - r)
+        }
+    }
+    __poke64(b + L_LEN, n)
+    rt_tag := T_BYTES
+    return b
 }
 
 proc bi_window_close(t, h) {
@@ -2238,6 +2346,11 @@ proc rt_bi_init() {
     rt_bi_add("window_draw", bi_window_draw, 3)
     rt_bi_add("window_poll", bi_window_poll, 1)
     rt_bi_add("window_close", bi_window_close, 1)
+    rt_bi_add("window_title", bi_window_title, 2)
+    rt_bi_add("window_cursor", bi_window_cursor, 2)
+    rt_bi_add("clipboard_get", bi_clipboard_get, 1)
+    rt_bi_add("clipboard_set", bi_clipboard_set, 2)
+    rt_bi_add("random_bytes", bi_random_bytes, 1)
     rt_bi_add("audio_open", bi_audio_open, 2)
     rt_bi_add("audio_write", bi_audio_write, 3)
     rt_bi_add("audio_played", bi_audio_played, 1)

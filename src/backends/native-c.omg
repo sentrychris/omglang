@@ -238,6 +238,11 @@ proc emit_builtin(name, argc) {
     if name == "window_draw"  and argc == 3 { return emit_builtin3("omg_builtin_window_draw") }
     if name == "window_poll"  and argc == 1 { return emit_builtin1("omg_builtin_window_poll") }
     if name == "window_close" and argc == 1 { return emit_builtin1("omg_builtin_window_close") }
+    if name == "window_title" and argc == 2 { return emit_builtin2("omg_builtin_window_title") }
+    if name == "window_cursor" and argc == 2 { return emit_builtin2("omg_builtin_window_cursor") }
+    if name == "clipboard_get" and argc == 1 { return emit_builtin1("omg_builtin_clipboard_get") }
+    if name == "clipboard_set" and argc == 2 { return emit_builtin2("omg_builtin_clipboard_set") }
+    if name == "random_bytes" and argc == 1 { return emit_builtin1("omg_builtin_random_bytes") }
     # Sound, the same.
     if name == "audio_open"   and argc == 2 { return emit_builtin2("omg_builtin_audio_open") }
     if name == "audio_write"  and argc == 3 { return emit_builtin3("omg_builtin_audio_write") }

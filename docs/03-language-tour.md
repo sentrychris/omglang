@@ -365,9 +365,12 @@ server built on them.
 **A window**
 `window_open(title, width, height)`, `window_draw(win, pixels, width)`
 (one int per pixel, `red * 65536 + green * 256 + blue`, scaled to fit),
-`window_poll(win)` (`false`, or `["key", name]`, `["resize", w, h]`,
-`["close"]`), `window_close(win)`. On Linux and Windows, in programs
-run by `omg` or built to machine code.
+`window_poll(win)` (`false`, or `["key", name, held]`, `["move", x, y]`,
+`["down", x, y, button]`, `["up", x, y, button]`, `["wheel", x, y, turn]`,
+`["resize", w, h]`, `["close"]`), `window_title(win, title)`,
+`window_cursor(win, shape)`, `clipboard_get(win)`,
+`clipboard_set(win, text)`, `window_close(win)`. On Linux and Windows,
+in programs run by `omg` or built to machine code.
 [10-video.md](10-video.md) has the details, and a video player built
 on them.
 

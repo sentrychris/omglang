@@ -1193,6 +1193,16 @@ proc os_poll_got(arr, i) {
     return 0
 }
 
+# n random bytes at p, from the system (the function advapi32.dll has
+# under the name SystemFunction036, which is RtlGenRandom). 0, or a
+# negative error number.
+proc os_random(p, n) {
+    if (__wincall2(__import("advapi32.dll!SystemFunction036"), p, n) & 255) == 0 {
+        return -31
+    }
+    return 0
+}
+
 # --- a window -------------------------------------------------------------------
 #
 # user32.dll for the window and its messages, gdi32.dll to put pixels
@@ -1209,6 +1219,8 @@ alloc ow_h := 0
 alloc ow_info := 0             # a BITMAPINFOHEADER for the pixel block
 alloc ow_msg := 0              # a MSG, and room for a RECT after it
 alloc ow_class := 0            # the window class has been registered
+alloc ow_high := 0             # the first half of a character that comes as two
+alloc ow_wheel := 0            # how far the wheel has turned, short of a notch
 
 # Open the window. Returns 0, or a string that says what went wrong.
 proc os_win_open(title, w, h) {
@@ -1284,11 +1296,10 @@ proc os_win_blit(buf, w, h) {
 }
 
 # Which key a virtual-key code is, in the runtime's own numbering (see
-# rt_win_key_name); 0 for a key that is not reported.
+# rt_win_key_name); 0 for a key that is not reported from here. Keys
+# that print are not: what they print depends on the layout and on
+# Shift, and Windows works that out and sends it as WM_CHAR.
 proc ow_key(vk) {
-    if vk == 32 { return 32 }
-    if vk >= 48 and vk <= 57 { return vk }
-    if vk >= 65 and vk <= 90 { return vk + 32 }
     if vk == 27 { return 256 }
     if vk == 13 { return 257 }
     if vk == 37 { return 258 }
@@ -1303,16 +1314,53 @@ proc ow_key(vk) {
     if vk == 33 { return 267 }
     if vk == 34 { return 268 }
     if vk >= 112 and vk <= 123 { return 270 + vk - 112 }
+    return 0
+}
+
+# A key that prints, pressed with Ctrl: no WM_CHAR comes for it (or one
+# with a control code), so it is named from the key itself.
+proc ow_ctrl_key(vk) {
+    if vk >= 48 and vk <= 57 { return vk }
+    if vk >= 65 and vk <= 90 { return vk + 32 }
+    if vk >= 96 and vk <= 105 { return vk - 48 }             # the number pad
     if vk == 187 or vk == 107 { return 43 }                  # + and =
     if vk == 189 or vk == 109 { return 45 }                  # -
     if vk == 188 { return 44 }
     if vk == 190 { return 46 }
+    if vk == 191 { return 47 }
     return 0
 }
 
+# What is held down: 1 Shift, 2 Ctrl, 4 Alt, added up.
+proc ow_mods() {
+    alloc m := 0
+    if (__wincall1(__import("user32.dll!GetKeyState"), 16) & 32768) != 0 {
+        m := m | 1
+    }
+    if (__wincall1(__import("user32.dll!GetKeyState"), 17) & 32768) != 0 {
+        m := m | 2
+    }
+    if (__wincall1(__import("user32.dll!GetKeyState"), 18) & 32768) != 0 {
+        m := m | 4
+    }
+    return m
+}
+
+proc ow_s16(v) {
+    v := v & 65535
+    if v >= 32768 {
+        return v - 65536
+    }
+    return v
+}
+
 # The next thing that happened, without waiting: 0 nothing, 1 a key
-# (its number in out), 2 the window is to close, 3 it changed size
-# (width and height in out), 4 it needs painting again.
+# (its number in out, then what was held down with it: 1 Shift, 2 Ctrl,
+# 4 Alt, added up), 2 the window is to close, 3 it changed size (width
+# and height in out), 4 it needs painting again, 5 the pointer moved
+# (x and y in out), 6 a mouse button went down and 7 up (x, y and the
+# button: 1 left, 2 middle, 3 right), 8 the wheel turned (x, y, and
+# the notches: positive away from the user).
 proc os_win_event(out) {
     alloc msg := ow_msg
     alloc rect := ow_msg + 64
@@ -1324,19 +1372,103 @@ proc os_win_event(out) {
             return 0
         }
         alloc what := __peek32(msg + 8)
-        alloc key := 0
-        if what == 256 {                                     # WM_KEYDOWN
-            key := ow_key(__peek64(msg + 16) & 65535)
+        alloc wparam := __peek64(msg + 16)
+        alloc lparam := __peek64(msg + 24)
+        alloc kind := 0
+        if what == 256 or what == 260 {                      # WM_KEYDOWN, WM_SYSKEYDOWN
+            alloc mods := ow_mods()
+            alloc key := ow_key(wparam & 65535)
+            if key == 0 and (mods & 6) == 2 {
+                key := ow_ctrl_key(wparam & 65535)
+            }
+            if key != 0 {
+                __poke64(out, key)
+                __poke64(out + 8, mods)
+                kind := 1
+            }
+        } elif what == 258 {                                 # WM_CHAR: a UTF-16 unit
+            alloc c := wparam & 65535
+            alloc ch := 0
+            if c >= 55296 and c < 56320 {
+                ow_high := c
+            } elif c >= 56320 and c < 57344 {
+                if ow_high != 0 {
+                    ch := 16777216 + 65536 + ((ow_high - 55296) << 10) + (c - 56320)
+                }
+                ow_high := 0
+            } elif c >= 32 and c < 127 {
+                ch := c
+            } elif c >= 160 {
+                ch := 16777216 + c
+            }
+            if ch != 0 {
+                __poke64(out, ch)
+                __poke64(out + 8, ow_mods() & 1)
+                kind := 1
+            }
+        } elif what == 512 {                                 # WM_MOUSEMOVE
+            __poke64(out, ow_s16(lparam))
+            __poke64(out + 8, ow_s16(lparam >> 16))
+            kind := 5
+        } elif what == 513 or what == 516 or what == 519 or what == 514 or what == 517 or what == 520 {
+            # a button down (513 left, 516 right, 519 middle) or, one more, up
+            alloc down := what == 513 or what == 516 or what == 519
+            alloc button := 1
+            if what == 516 or what == 517 {
+                button := 3
+            } elif what == 519 or what == 520 {
+                button := 2
+            }
+            __poke64(out, ow_s16(lparam))
+            __poke64(out + 8, ow_s16(lparam >> 16))
+            __poke64(out + 16, button)
+            if down {
+                # keep hearing of the pointer when it is dragged out of the window
+                __wincall1(__import("user32.dll!SetCapture"), ow_hwnd)
+                kind := 6
+            } else {
+                __wincall0(__import("user32.dll!ReleaseCapture"))
+                kind := 7
+            }
+        } elif what == 522 {                                 # WM_MOUSEWHEEL, 120 to a notch
+            ow_wheel := ow_wheel + ow_s16(wparam >> 16)
+            alloc notches := 0
+            loop ow_wheel >= 120 {
+                ow_wheel := ow_wheel - 120
+                notches := notches + 1
+            }
+            loop ow_wheel <= -120 {
+                ow_wheel := ow_wheel + 120
+                notches := notches - 1
+            }
+            if notches != 0 {
+                # the place comes in screen coordinates
+                __poke32(rect, ow_s16(lparam) & 4294967295)
+                __poke32(rect + 4, ow_s16(lparam >> 16) & 4294967295)
+                __wincall2(__import("user32.dll!ScreenToClient"), ow_hwnd, rect)
+                alloc px := __peek32(rect)
+                alloc py := __peek32(rect + 4)
+                if px >= 2147483648 {
+                    px := px - 4294967296
+                }
+                if py >= 2147483648 {
+                    py := py - 4294967296
+                }
+                __poke64(out, px)
+                __poke64(out + 8, py)
+                __poke64(out + 16, notches)
+                kind := 8
+            }
         }
+        __wincall1(__import("user32.dll!TranslateMessage"), msg)
         __wincall1(__import("user32.dll!DispatchMessageW"), msg)
         if os_u32(__wincall1(__import("user32.dll!IsWindow"), ow_hwnd)) == 0 {
             # the user closed it, and DefWindowProcW has destroyed it
             ow_hwnd := 0
             return 2
         }
-        if key != 0 {
-            __poke64(out, key)
-            return 1
+        if kind != 0 {
+            return kind
         }
         if os_u32(__wincall2(__import("user32.dll!GetClientRect"), ow_hwnd, rect)) != 0 {
             alloc nw := __peek32(rect + 8)
@@ -1353,6 +1485,84 @@ proc os_win_event(out) {
             return 4
         }
     }
+    return 0
+}
+
+# Give the window a new title.
+proc os_win_title(title) {
+    if ow_hwnd == 0 {
+        return 0
+    }
+    alloc w := os_wide(title + S_DATA)
+    __wincall2(__import("user32.dll!SetWindowTextW"), ow_hwnd, w)
+    os_tmp_free(w)
+    return 0
+}
+
+# The shape of the pointer over the window: 0 the usual arrow, 1 a
+# hand, 2 the bar that marks text. The class's cursor is what Windows
+# shows whenever the pointer moves over the window.
+proc os_win_cursor(kind) {
+    if ow_hwnd == 0 {
+        return 0
+    }
+    alloc id := 32512                                        # IDC_ARROW
+    if kind == 1 {
+        id := 32649                                          # IDC_HAND
+    } elif kind == 2 {
+        id := 32513                                          # IDC_IBEAM
+    }
+    alloc cur := __wincall2(__import("user32.dll!LoadCursorW"), 0, id)
+    __wincall3(__import("user32.dll!SetClassLongPtrW"), ow_hwnd, -12, cur)
+    __wincall1(__import("user32.dll!SetCursor"), cur)
+    return 0
+}
+
+# The text on the clipboard, as an owned string; empty when there is none.
+proc os_clip_get() {
+    alloc s := 0
+    if ow_hwnd != 0 and os_u32(__wincall1(__import("user32.dll!OpenClipboard"), ow_hwnd)) != 0 {
+        alloc h := __wincall1(__import("user32.dll!GetClipboardData"), 13)    # CF_UNICODETEXT
+        if h != 0 {
+            alloc w := __wincall1(__import("kernel32.dll!GlobalLock"), h)
+            if w != 0 {
+                s := os_utf8(w)
+                __wincall1(__import("kernel32.dll!GlobalUnlock"), h)
+            }
+        }
+        __wincall0(__import("user32.dll!CloseClipboard"))
+    }
+    if s == 0 {
+        s := rt_str_alloc(0)
+    }
+    return s
+}
+
+# Put a text on the clipboard. Windows takes over the block it is
+# handed, so nothing is kept here.
+proc os_clip_set(text) {
+    if ow_hwnd == 0 {
+        return 0
+    }
+    alloc w := os_wide(text + S_DATA)
+    alloc n := 0
+    loop __peek16(w + n * 2) != 0 {
+        n := n + 1
+    }
+    if os_u32(__wincall1(__import("user32.dll!OpenClipboard"), ow_hwnd)) != 0 {
+        __wincall0(__import("user32.dll!EmptyClipboard"))
+        alloc h := __wincall2(__import("kernel32.dll!GlobalAlloc"), 2, (n + 1) * 2)    # GMEM_MOVEABLE
+        if h != 0 {
+            alloc d := __wincall1(__import("kernel32.dll!GlobalLock"), h)
+            if d != 0 {
+                __memcpy(d, w, (n + 1) * 2)
+                __wincall1(__import("kernel32.dll!GlobalUnlock"), h)
+                __wincall2(__import("user32.dll!SetClipboardData"), 13, h)
+            }
+        }
+        __wincall0(__import("user32.dll!CloseClipboard"))
+    }
+    os_tmp_free(w)
     return 0
 }
 

@@ -326,7 +326,7 @@ alloc bad := 0
 loop n < 20 {
     alloc ev := window_poll(win)
     if ev != false {
-        if ev[0] != "resize" {
+        if ev[0] == "key" or ev[0] == "close" {
             bad := bad + 1
         }
     }
@@ -344,9 +344,25 @@ try {
 } except e {
     emit e
 }
+emit window_title(win, "a new title")
+emit window_cursor(win, "hand")
+emit window_cursor(win, "text")
+emit window_cursor(win, "arrow")
+try {
+    window_cursor(win, "paw")
+} except e {
+    emit e
+}
+clipboard_set(win, "copied by omg")
+emit clipboard_get(win)
 emit window_close(win)
 try {
     window_poll(win)
+} except e {
+    emit e
+}
+try {
+    clipboard_get(win)
 } except e {
     emit e
 }
@@ -357,7 +373,14 @@ window_want="1
 ValueError: window_draw: the pixels do not make whole rows of the given width
 TypeError: window_draw() expects every pixel to be an integer
 
-ValueError: window_poll(): no such window"
+
+
+
+ValueError: window_cursor: the shape must be \"arrow\", \"hand\" or \"text\"
+copied by omg
+
+ValueError: window_poll(): no such window
+ValueError: clipboard_get(): no such window"
 
 cat > "$TMPDIR_TEST/window-none.omg" <<'EOF'
 try {
