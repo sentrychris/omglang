@@ -281,6 +281,13 @@ if op == "DUP" {
 Note the `omg_inc` — duplicating a refcounted value bumps the count so both
 slots own a reference.
 
+`stack` is a C array, one for each proc and one for the top level,
+and `stack_need` in the same file decides how long it is: it follows
+the code as `pp_depths` does and takes the greatest depth it meets (a
+dict written out with 300 entries has 600 values there at once). An
+opcode it does not know counts as "takes two, leaves one", so give
+`DUP` its own line there too.
+
 And the same opcode in [native-js.omg](../src/backends/native-js.omg)'s
 `emit_js_for_instr`, where there is no reference counting to do.
 
