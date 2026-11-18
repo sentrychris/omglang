@@ -1,30 +1,842 @@
 ;;;omg
 
-# tools/browser/tls.omg (placeholder until the real one is written)
+# tools/browser/tls.omg
+#
+# TLS, the "S" of HTTPS: versions 1.3 (RFC 8446) and 1.2 (RFC 5246
+# with the modern additions), as a client.
+#
+#     alloc t := tls.connect(socket, "example.com")   # false: see error()
+#     tls.write(t, bytes)
+#     alloc data := tls.read(t)       # bytes; empty at the end; false on error
+#     tls.close(t)
+#
+# The key is agreed on with X25519, P-256 or P-384; the records are
+# sealed with ChaCha20-Poly1305 or AES-GCM; the server's certificate
+# must lead to an authority on Mozilla's list (x509.omg) and be good
+# for the name asked for. Older versions of TLS, RSA key exchange and
+# the CBC ciphers are refused: no server that is kept up needs them.
+#
+# Inside, a failure is raised as an error whose text starts "tls: "
+# and connect(), read() and write() turn it into false and error().
+
+import "io.omg" as io
+import "util.omg" as u
+import "sha.omg" as sha
+import "aead.omg" as aead
+import "pk.omg" as pk
+import "x509.omg" as x509
 
 alloc last_error := ""
-
-proc connect(h, host) {
-    last_error := "HTTPS is not built yet"
-    return false
-}
-
-proc read(t) {
-    return false
-}
-
-proc write(t, data) {
-    return false
-}
-
-proc close(t) {
-    return true
-}
+alloc last_info := ""
+alloc TIMEOUT := 20000
 
 proc error() {
     return last_error
 }
 
+# Trust the certificate authorities in this PEM file too.
 proc add_ca_file(path) {
+    alloc bytes := u.read_bytes(path)
+    if bytes == false {
+        return false
+    }
+    return x509.add_pem(bytes) > 0
+}
+
+# --- putting bytes together and taking them apart ---------------------------------------
+
+proc u16(v) {
+    return to_bytes([(v >> 8) & 255, v & 255])
+}
+
+proc u24(v) {
+    return to_bytes([(v >> 16) & 255, (v >> 8) & 255, v & 255])
+}
+
+proc vec8(b) {
+    return to_bytes([length(b)]) + b
+}
+
+proc vec16(b) {
+    return u16(length(b)) + b
+}
+
+proc vec24(b) {
+    return u24(length(b)) + b
+}
+
+# A place in a message being read.
+proc cursor(b) {
+    return {b: b, p: 0, end: length(b)}
+}
+
+proc take(c, n) {
+    if c.p + n > c.end {
+        raise("tls: the server sent a message that is cut short")
+    }
+    alloc out := c.b[c.p:c.p + n]
+    c.p := c.p + n
+    return out
+}
+
+proc r8(c) {
+    alloc b := take(c, 1)
+    return b[0]
+}
+
+proc r16(c) {
+    alloc b := take(c, 2)
+    return (b[0] << 8) | b[1]
+}
+
+proc r24(c) {
+    alloc b := take(c, 3)
+    return (b[0] << 16) | (b[1] << 8) | b[2]
+}
+
+# --- the suites of ciphers ---------------------------------------------------------------
+
+# [cipher, key bytes, hash] of a suite, or false for one not offered.
+proc suite(id) {
+    if id == 4865 or id == 49195 or id == 49199 {
+        return ["aes", 16, "sha256"]
+    }
+    if id == 4866 or id == 49196 or id == 49200 {
+        return ["aes", 32, "sha384"]
+    }
+    if id == 4867 or id == 52392 or id == 52393 {
+        return ["chacha", 32, "sha256"]
+    }
+    return false
+}
+
+# [kind, hash] of a signature scheme, or false.
+proc scheme(id) {
+    if id == 1027 {
+        return ["ecdsa", "sha256"]
+    }
+    if id == 1283 {
+        return ["ecdsa", "sha384"]
+    }
+    if id == 1539 {
+        return ["ecdsa", "sha512"]
+    }
+    if id == 2052 or id == 2057 {
+        return ["pss", "sha256"]
+    }
+    if id == 2053 or id == 2058 {
+        return ["pss", "sha384"]
+    }
+    if id == 2054 or id == 2059 {
+        return ["pss", "sha512"]
+    }
+    if id == 1025 {
+        return ["rsa", "sha256"]
+    }
+    if id == 1281 {
+        return ["rsa", "sha384"]
+    }
+    if id == 1537 {
+        return ["rsa", "sha512"]
+    }
+    return false
+}
+
+proc alert_text(code) {
+    alloc names := {
+        "10": "unexpected message", "20": "bad record", "40": "no cipher or version in common",
+        "42": "bad certificate", "43": "unsupported certificate", "46": "certificate unknown",
+        "47": "illegal parameter", "48": "unknown authority", "49": "access denied", "50": "decode error",
+        "51": "decrypt error", "70": "no TLS version in common", "71": "insufficient security",
+        "80": "internal error", "86": "inappropriate fallback", "109": "missing extension",
+        "112": "it does not know this name", "116": "certificate required", "120": "no protocol in common"
+    }
+    if has_key(names, "" + code) {
+        return names["" + code]
+    }
+    return "alert " + code
+}
+
+# --- records -----------------------------------------------------------------------------
+
+# Make sure `need` bytes are waiting in t.buf.
+proc fill(t, need) {
+    loop length(t.buf) - t.bp < need {
+        alloc data := io.read(t.h, 65536, TIMEOUT)
+        if data == false {
+            if io.is_stopped() {
+                raise("tls: stopped")
+            }
+            raise("tls: the server stopped answering")
+        }
+        if length(data) == 0 {
+            return false
+        }
+        if t.bp > 0 {
+            t.buf := t.buf[t.bp:] + data
+            t.bp := 0
+        } else {
+            t.buf := t.buf + data
+        }
+    }
+    return true
+}
+
+# The 12-byte nonce of record number `seq` under the fixed part iv.
+proc nonce_of(iv, seq) {
+    alloc n := iv[0:12]
+    alloc i := 0
+    loop i < 8 {
+        n[11 - i] := n[11 - i] ^ ((seq >> (i * 8)) & 255)
+        i := i + 1
+    }
+    return n
+}
+
+proc seq_bytes(seq) {
+    alloc b := bytes_repeat(0, 8)
+    alloc i := 0
+    loop i < 8 {
+        b[7 - i] := (seq >> (i * 8)) & 255
+        i := i + 1
+    }
+    return b
+}
+
+# The next record: [type, bytes], opened if the line is sealed by
+# now; false when the server has closed the line.
+proc read_record(t) {
+    if fill(t, 5) == false {
+        return false
+    }
+    alloc b := t.buf
+    alloc p := t.bp
+    alloc kind := b[p]
+    alloc len := (b[p + 3] << 8) | b[p + 4]
+    if len > 16384 + 256 or b[p + 1] != 3 {
+        raise("tls: the server answered with something that is not TLS")
+    }
+    if fill(t, 5 + len) == false {
+        return false
+    }
+    b := t.buf
+    p := t.bp
+    alloc header := b[p:p + 5]
+    alloc body := b[p + 5:p + 5 + len]
+    t.bp := p + 5 + len
+    alloc rd := t.rd
+    if rd == false or (t.version == 13 and kind != 23) {
+        # in the clear: the first messages, and the 1.3 dummy "change
+        # cipher" record that old middle boxes like to see
+        return [kind, body]
+    }
+    alloc plain := false
+    if t.version == 13 {
+        plain := aead.open(rd.c, nonce_of(rd.iv, rd.seq), header, body)
+        if plain != false {
+            alloc n := length(plain)
+            loop n > 0 and plain[n - 1] == 0 {
+                n := n - 1
+            }
+            if n == 0 {
+                raise("tls: the server sent an empty record")
+            }
+            kind := plain[n - 1]
+            plain := plain[0:n - 1]
+        }
+    } elif rd.c.kind == "chacha" {
+        alloc aad := seq_bytes(rd.seq) + to_bytes([kind, 3, 3]) + u16(len - 16)
+        plain := aead.open(rd.c, nonce_of(rd.iv, rd.seq), aad, body)
+    } else {
+        if len < 24 {
+            raise("tls: the server sent a record that is too short")
+        }
+        alloc aad2 := seq_bytes(rd.seq) + to_bytes([kind, 3, 3]) + u16(len - 24)
+        plain := aead.open(rd.c, rd.iv + body[0:8], aad2, body[8:])
+    }
+    if plain == false {
+        raise("tls: a record from the server was damaged or forged")
+    }
+    rd.seq := rd.seq + 1
+    return [kind, plain]
+}
+
+# Send one record of the given type.
+proc write_record(t, kind, data) {
+    alloc wr := t.wr
+    alloc out := false
+    if wr == false {
+        out := to_bytes([kind, 3, t.first]) + u16(length(data)) + data
+    } elif t.version == 13 {
+        alloc header := to_bytes([23, 3, 3]) + u16(length(data) + 17)
+        out := header + aead.seal(wr.c, nonce_of(wr.iv, wr.seq), header, data + to_bytes([kind]))
+        wr.seq := wr.seq + 1
+    } elif wr.c.kind == "chacha" {
+        alloc aad := seq_bytes(wr.seq) + to_bytes([kind, 3, 3]) + u16(length(data))
+        out := to_bytes([kind, 3, 3]) + u16(length(data) + 16) + aead.seal(wr.c, nonce_of(wr.iv, wr.seq), aad, data)
+        wr.seq := wr.seq + 1
+    } else {
+        alloc explicit := seq_bytes(wr.seq)
+        alloc aad2 := explicit + to_bytes([kind, 3, 3]) + u16(length(data))
+        out := to_bytes([kind, 3, 3]) + u16(length(data) + 24) + explicit + aead.seal(wr.c, wr.iv + explicit, aad2, data)
+        wr.seq := wr.seq + 1
+    }
+    if io.write(t.h, out) == false {
+        raise("tls: the connection broke")
+    }
+    return true
+}
+
+proc alert(t, body) {
+    if length(body) >= 2 {
+        if body[1] == 0 {
+            return true
+        }
+        raise("tls: the server refused: " + alert_text(body[1]))
+    }
+    raise("tls: the server sent a broken alert")
+}
+
+# --- handshake messages ------------------------------------------------------------------
+
+# Send a handshake message and remember it for the transcript.
+proc send_handshake(t, kind, body) {
+    alloc msg := to_bytes([kind]) + u24(length(body)) + body
+    t.script := t.script + msg
+    return write_record(t, 22, msg)
+}
+
+# The next handshake message: [type, body]. It joins the transcript.
+proc next_handshake(t) {
+    loop true {
+        alloc have := length(t.hs) - t.hp
+        if have >= 4 {
+            alloc len := (t.hs[t.hp + 1] << 16) | (t.hs[t.hp + 2] << 8) | t.hs[t.hp + 3]
+            if len > 262144 {
+                raise("tls: the server sent a message that is too long")
+            }
+            if have >= 4 + len {
+                alloc raw := t.hs[t.hp:t.hp + 4 + len]
+                t.hp := t.hp + 4 + len
+                if t.hp == length(t.hs) {
+                    t.hs := to_bytes([])
+                    t.hp := 0
+                }
+                if raw[0] != 0 {
+                    t.script := t.script + raw
+                }
+                return [raw[0], raw[4:]]
+            }
+        }
+        alloc r := read_record(t)
+        if r == false {
+            raise("tls: the server closed the connection during the handshake")
+        }
+        if r[0] == 22 {
+            t.hs := t.hs + r[1]
+        } elif r[0] == 21 {
+            alert(t, r[1])
+            raise("tls: the server closed the connection during the handshake")
+        } elif r[0] == 20 {
+            if t.version == 12 and t.rd_next != false {
+                t.rd := t.rd_next
+                t.rd_next := false
+            }
+        } else {
+            raise("tls: the server sent data before the handshake was done")
+        }
+    }
+    return false
+}
+
+proc expect(t, kind, what) {
+    alloc m := next_handshake(t)
+    if m[0] != kind {
+        raise("tls: the server sent message " + m[0] + " where " + what + " should come")
+    }
+    return m[1]
+}
+
+proc transcript_hash(t) {
+    return sha.hash(t.hash, t.script)
+}
+
+# --- the client hello --------------------------------------------------------------------
+
+proc extension(id, data) {
+    return u16(id) + vec16(data)
+}
+
+proc key_share_of(t, group) {
+    if group == 29 {
+        if t.x_secret == false {
+            t.x_secret := random_bytes(32)
+            alloc nine := bytes_repeat(0, 32)
+            nine[0] := 9
+            t.x_public := pk.x25519(t.x_secret, nine)
+        }
+        return t.x_public
+    }
+    alloc name := "p256"
+    if group == 24 {
+        name := "p384"
+    }
+    if has_key(t.ec, name) == false {
+        t.ec[name] := pk.ec_keypair(name)
+    }
+    return t.ec[name][1]
+}
+
+# The secret shared with the server, from its public key for `group`.
+proc shared_secret(t, group, theirs) {
+    alloc s := false
+    if group == 29 {
+        if length(theirs) != 32 {
+            raise("tls: the server's key has the wrong length")
+        }
+        s := pk.x25519(t.x_secret, theirs)
+        if pk.is_zero(s) {
+            raise("tls: the server's key is not usable")
+        }
+        return s
+    }
+    alloc name := "p256"
+    if group == 24 {
+        name := "p384"
+    }
+    key_share_of(t, group)
+    s := pk.ec_shared(name, t.ec[name][0], theirs)
+    if s == false {
+        raise("tls: the server's key is not on the curve")
+    }
+    return s
+}
+
+proc send_hello(t, group, cookie) {
+    alloc ext := to_bytes([])
+    if x509.ipv4(t.host) == false {
+        ext := ext + extension(0, vec16(to_bytes([0]) + vec16(string_bytes(t.host))))
+    }
+    ext := ext + extension(10, vec16(u16(29) + u16(23) + u16(24)))
+    ext := ext + extension(11, to_bytes([1, 0]))
+    ext := ext + extension(13, vec16(u16(1027) + u16(1283) + u16(2052) + u16(2053) + u16(2054) + u16(1025) + u16(1281) + u16(1537)))
+    ext := ext + extension(16, vec16(vec8(string_bytes("http/1.1"))))
+    ext := ext + extension(23, to_bytes([]))
+    ext := ext + extension(43, to_bytes([4, 3, 4, 3, 3]))
+    ext := ext + extension(51, vec16(u16(group) + vec16(key_share_of(t, group))))
+    ext := ext + extension(65281, to_bytes([0]))
+    if cookie != false {
+        ext := ext + extension(44, cookie)
+    }
+    alloc suites := u16(4867) + u16(4865) + u16(4866) + u16(52393) + u16(52392) + u16(49195) + u16(49199) + u16(49196) + u16(49200)
+    alloc body := to_bytes([3, 3]) + t.random + vec8(t.session) + vec16(suites) + to_bytes([1, 0]) + vec16(ext)
+    return send_handshake(t, 1, body)
+}
+
+# What the server's hello says: {random, suite, version, group, key,
+# cookie, ems, retry}.
+proc parse_hello(body) {
+    alloc c := cursor(body)
+    alloc legacy := r16(c)
+    alloc random := take(c, 32)
+    take(c, r8(c))
+    alloc sh := {random: random, suite: r16(c), version: 12, group: 0, key: false, cookie: false, ems: false, retry: false}
+    if legacy != 771 {
+        sh.version := 0
+    }
+    r8(c)
+    sh.retry := random == pk.hex_bytes("cf21ad74e59a6111be1d8c021e65b891c2a211167abb8c5e079e09e2c8a8339c")
+    if c.p < c.end {
+        alloc ec := cursor(take(c, r16(c)))
+        loop ec.p < ec.end {
+            alloc id := r16(ec)
+            alloc data := take(ec, r16(ec))
+            alloc dc := cursor(data)
+            if id == 43 {
+                if r16(dc) == 772 {
+                    sh.version := 13
+                } else {
+                    sh.version := 0
+                }
+            } elif id == 51 {
+                sh.group := r16(dc)
+                if dc.p < dc.end {
+                    sh.key := take(dc, r16(dc))
+                }
+            } elif id == 44 {
+                sh.cookie := data
+            } elif id == 23 {
+                sh.ems := true
+            }
+        }
+    }
+    return sh
+}
+
+# --- TLS 1.3 -----------------------------------------------------------------------------
+
+proc expand_label(alg, secret, label, context, count) {
+    alloc info := u16(count) + vec8(string_bytes("tls13 " + label)) + vec8(context)
+    return sha.hkdf_expand(alg, secret, info, count)
+}
+
+# The cipher state for one direction from its traffic secret.
+proc keys13(t, secret) {
+    alloc key := expand_label(t.hash, secret, "key", to_bytes([]), t.key_len)
+    alloc iv := expand_label(t.hash, secret, "iv", to_bytes([]), 12)
+    return {c: aead.new(t.cipher, key), iv: iv, seq: 0}
+}
+
+proc finished13(t, secret) {
+    alloc fk := expand_label(t.hash, secret, "finished", to_bytes([]), sha.size(t.hash))
+    return sha.hmac(t.hash, fk, transcript_hash(t))
+}
+
+# Check the server's certificates and its signature over the
+# handshake so far (`signed` is what it signed).
+proc check_server(t, ders, scheme_id, signed, sig) {
+    alloc r := x509.check(ders, t.host, time_ms() // 1000)
+    if r[0] != "" {
+        raise("tls: " + r[0])
+    }
+    alloc how := scheme(scheme_id)
+    if how == false or (t.version == 13 and how[0] == "rsa") {
+        raise("tls: the server signed in a way this browser does not accept")
+    }
+    if x509.verify(r[1], how[0], how[1], signed, sig) == false {
+        raise("tls: the server could not prove that the certificate is its own")
+    }
+    return true
+}
+
+proc handshake13(t, sh) {
+    alloc alg := t.hash
+    alloc hl := sha.size(alg)
+    alloc zeros := bytes_repeat(0, hl)
+    alloc nothing := to_bytes([])
+    alloc empty_hash := sha.hash(alg, nothing)
+    if sh.key == false {
+        raise("tls: the server sent no key")
+    }
+    alloc shared := shared_secret(t, sh.group, sh.key)
+    alloc early := sha.hkdf_extract(alg, zeros, zeros)
+    alloc hs := sha.hkdf_extract(alg, expand_label(alg, early, "derived", empty_hash, hl), shared)
+    alloc th := transcript_hash(t)
+    alloc c_hs := expand_label(alg, hs, "c hs traffic", th, hl)
+    alloc s_hs := expand_label(alg, hs, "s hs traffic", th, hl)
+    alloc master := sha.hkdf_extract(alg, expand_label(alg, hs, "derived", empty_hash, hl), zeros)
+    t.rd := keys13(t, s_hs)
+    expect(t, 8, "the encrypted extensions")
+    alloc m := next_handshake(t)
+    alloc wants_cert := false
+    alloc cert_context := nothing
+    if m[0] == 13 {
+        wants_cert := true
+        alloc rc := cursor(m[1])
+        cert_context := take(rc, r8(rc))
+        m := next_handshake(t)
+    }
+    if m[0] != 11 {
+        raise("tls: the server sent no certificate")
+    }
+    alloc cc := cursor(m[1])
+    take(cc, r8(cc))
+    alloc lc := cursor(take(cc, r24(cc)))
+    alloc ders := []
+    loop lc.p < lc.end {
+        append(ders, take(lc, r24(lc)))
+        take(lc, r16(lc))
+    }
+    alloc signed := bytes_repeat(32, 64) + string_bytes("TLS 1.3, server CertificateVerify") + to_bytes([0]) + transcript_hash(t)
+    alloc vc := cursor(expect(t, 15, "the proof of the certificate"))
+    alloc scheme_id := r16(vc)
+    check_server(t, ders, scheme_id, signed, take(vc, r16(vc)))
+    alloc want := finished13(t, s_hs)
+    if expect(t, 20, "the end of the handshake") != want {
+        raise("tls: the handshake was tampered with")
+    }
+    th := transcript_hash(t)
+    alloc c_ap := expand_label(alg, master, "c ap traffic", th, hl)
+    alloc s_ap := expand_label(alg, master, "s ap traffic", th, hl)
+    # the dummy record old middle boxes expect, then our own end
+    if t.retried == false {
+        write_record(t, 20, to_bytes([1]))
+    }
+    t.wr := keys13(t, c_hs)
+    if wants_cert {
+        send_handshake(t, 11, vec8(cert_context) + vec24(nothing))
+    }
+    send_handshake(t, 20, finished13(t, c_hs))
+    t.wr := keys13(t, c_ap)
+    t.rd := keys13(t, s_ap)
+    t.c_ap := c_ap
+    t.s_ap := s_ap
+    return true
+}
+
+# --- TLS 1.2 -----------------------------------------------------------------------------
+
+# The pseudo-random function of TLS 1.2.
+proc prf(alg, secret, label, seed, count) {
+    seed := string_bytes(label) + seed
+    alloc out := to_bytes([])
+    alloc a := seed
+    loop length(out) < count {
+        a := sha.hmac(alg, secret, a)
+        out := out + sha.hmac(alg, secret, a + seed)
+    }
+    return out[0:count]
+}
+
+proc handshake12(t, sh) {
+    alloc alg := t.hash
+    alloc nothing := to_bytes([])
+    if sh.random[24:32] == string_bytes("DOWNGRD") + to_bytes([1]) or sh.random[24:32] == string_bytes("DOWNGRD") + to_bytes([0]) {
+        raise("tls: someone on the way tried to force an older version of TLS")
+    }
+    alloc cc := cursor(expect(t, 11, "the certificate"))
+    alloc lc := cursor(take(cc, r24(cc)))
+    alloc ders := []
+    loop lc.p < lc.end {
+        append(ders, take(lc, r24(lc)))
+    }
+    alloc kx := expect(t, 12, "the server's key")
+    alloc kc := cursor(kx)
+    if r8(kc) != 3 {
+        raise("tls: the server chose a curve this browser does not know")
+    }
+    alloc group := r16(kc)
+    if group != 29 and group != 23 and group != 24 {
+        raise("tls: the server chose a curve this browser does not know")
+    }
+    alloc theirs := take(kc, r8(kc))
+    alloc params := kx[0:kc.p]
+    alloc scheme_id := r16(kc)
+    check_server(t, ders, scheme_id, t.random + sh.random + params, take(kc, r16(kc)))
+    alloc m := next_handshake(t)
+    alloc wants_cert := false
+    if m[0] == 13 {
+        wants_cert := true
+        m := next_handshake(t)
+    }
+    if m[0] != 14 {
+        raise("tls: the server sent message " + m[0] + " where the end of its hello should come")
+    }
+    if wants_cert {
+        send_handshake(t, 11, vec24(nothing))
+    }
+    alloc ours := key_share_of(t, group)
+    alloc pre := shared_secret(t, group, theirs)
+    send_handshake(t, 16, vec8(ours))
+    alloc master := false
+    if sh.ems {
+        master := prf(alg, pre, "extended master secret", transcript_hash(t), 48)
+    } else {
+        master := prf(alg, pre, "master secret", t.random + sh.random, 48)
+    }
+    alloc iv_len := 4
+    if t.cipher == "chacha" {
+        iv_len := 12
+    }
+    alloc kl := t.key_len
+    alloc block := prf(alg, master, "key expansion", sh.random + t.random, 2 * kl + 2 * iv_len)
+    write_record(t, 20, to_bytes([1]))
+    t.wr := {c: aead.new(t.cipher, block[0:kl]), iv: block[2 * kl:2 * kl + iv_len], seq: 0}
+    t.rd_next := {c: aead.new(t.cipher, block[kl:2 * kl]), iv: block[2 * kl + iv_len:2 * kl + 2 * iv_len], seq: 0}
+    send_handshake(t, 20, prf(alg, master, "client finished", transcript_hash(t), 12))
+    alloc want := prf(alg, master, "server finished", transcript_hash(t), 12)
+    m := next_handshake(t)
+    if m[0] == 4 {
+        # a ticket for coming back, which was not asked for
+        want := prf(alg, master, "server finished", transcript_hash(t), 12)
+        m := next_handshake(t)
+    }
+    if m[0] != 20 or t.rd == false or t.rd_next != false {
+        raise("tls: the server did not finish the handshake properly")
+    }
+    if m[1] != want {
+        raise("tls: the handshake was tampered with")
+    }
+    return true
+}
+
+# --- the handshake as a whole ------------------------------------------------------------
+
+proc handshake(t) {
+    send_hello(t, 29, false)
+    alloc sh := parse_hello(expect(t, 2, "its hello"))
+    if sh.retry {
+        # the server wants a key for another curve: say hello again
+        alloc s0 := suite(sh.suite)
+        if s0 == false or (sh.group != 23 and sh.group != 24) or t.retried {
+            raise("tls: the server asked for something this browser cannot give")
+        }
+        t.retried := true
+        alloc all := t.script
+        alloc first_len := 4 + ((all[1] << 16) | (all[2] << 8) | all[3])
+        alloc h1 := sha.hash(s0[2], all[0:first_len])
+        t.script := to_bytes([254, 0, 0, length(h1)]) + h1 + all[first_len:]
+        t.first := 3
+        write_record(t, 20, to_bytes([1]))
+        send_hello(t, sh.group, sh.cookie)
+        sh := parse_hello(expect(t, 2, "its hello"))
+        if sh.retry {
+            raise("tls: the server asked twice for another key")
+        }
+    }
+    alloc s := suite(sh.suite)
+    if sh.version == 0 or s == false {
+        raise("tls: the server only offers an old version of TLS or ciphers that are no longer safe")
+    }
+    if (sh.version == 13) != (sh.suite < 5000) {
+        raise("tls: the server chose a cipher that does not go with its version")
+    }
+    t.version := sh.version
+    t.cipher := s[0]
+    t.key_len := s[1]
+    t.hash := s[2]
+    t.first := 3
+    if sh.version == 13 {
+        return handshake13(t, sh)
+    }
+    return handshake12(t, sh)
+}
+
+proc failure(e) {
+    alloc text := "" + e
+    alloc at := u.find(text, "tls: ")
+    if at >= 0 {
+        last_error := text[at + 5:]
+    } else {
+        last_error := "the secure connection failed (" + text + ")"
+    }
+    return false
+}
+
+# Start TLS on the open socket h for the server called `host`. The
+# connection (a dict to hand to read, write and close), or false:
+# error() then says why.
+proc connect(h, host) {
+    alloc t := {
+        h: h, host: u.lower(host), buf: to_bytes([]), bp: 0, hs: to_bytes([]), hp: 0,
+        script: to_bytes([]), version: 0, first: 1, rd: false, wr: false, rd_next: false,
+        cipher: "", key_len: 0, hash: "sha256", random: random_bytes(32), session: random_bytes(32),
+        x_secret: false, x_public: false, ec: {}, retried: false, c_ap: false, s_ap: false,
+        pending: to_bytes([]), ended: false
+    }
+    try {
+        handshake(t)
+    } except e {
+        return failure(e)
+    }
+    last_info := describe(t)
+    return t
+}
+
+# What the newest connection settled on ("TLS 1.3, AES-128-GCM").
+proc info() {
+    return last_info
+}
+
+# Which version and cipher the connection settled on, for the curious.
+proc describe(t) {
+    alloc v := "TLS 1.3"
+    if t.version == 12 {
+        v := "TLS 1.2"
+    }
+    if t.cipher == "chacha" {
+        return v + ", ChaCha20-Poly1305"
+    }
+    return v + ", AES-" + (t.key_len * 8) + "-GCM"
+}
+
+proc read_inner(t) {
+    loop true {
+        if t.ended {
+            return to_bytes([])
+        }
+        alloc r := read_record(t)
+        if r == false {
+            t.ended := true
+            return to_bytes([])
+        }
+        if r[0] == 23 {
+            if length(r[1]) > 0 {
+                return r[1]
+            }
+        } elif r[0] == 21 {
+            alert(t, r[1])
+            t.ended := true
+            return to_bytes([])
+        } elif r[0] == 22 and t.version == 13 {
+            # after the handshake: tickets (not used) and changes of key
+            t.hs := t.hs + r[1]
+            loop length(t.hs) >= 4 {
+                alloc len := (t.hs[1] << 16) | (t.hs[2] << 8) | t.hs[3]
+                if length(t.hs) < 4 + len {
+                    break
+                }
+                alloc kind := t.hs[0]
+                alloc body := t.hs[4:4 + len]
+                t.hs := t.hs[4 + len:]
+                if kind == 24 {
+                    alloc hl := sha.size(t.hash)
+                    t.s_ap := expand_label(t.hash, t.s_ap, "traffic upd", to_bytes([]), hl)
+                    t.rd := keys13(t, t.s_ap)
+                    if length(body) > 0 and body[0] == 1 {
+                        write_record(t, 22, to_bytes([24, 0, 0, 1, 0]))
+                        t.c_ap := expand_label(t.hash, t.c_ap, "traffic upd", to_bytes([]), hl)
+                        t.wr := keys13(t, t.c_ap)
+                    }
+                }
+            }
+        }
+        # anything else (a 1.2 server asking to start over, say) is
+        # passed by
+    }
+    return false
+}
+
+# The next bytes from the server: an empty byte list when it has
+# closed the connection, false on an error (see error()).
+proc read(t) {
+    alloc data := false
+    try {
+        data := read_inner(t)
+    } except e {
+        t.ended := true
+        return failure(e)
+    }
+    return data
+}
+
+# Send bytes to the server. false if that failed.
+proc write(t, data) {
+    try {
+        alloc n := length(data)
+        alloc p := 0
+        loop p < n {
+            alloc k := n - p
+            if k > 16384 {
+                k := 16384
+            }
+            write_record(t, 23, data[p:p + k])
+            p := p + k
+        }
+    } except e {
+        return failure(e)
+    }
+    return true
+}
+
+# Say goodbye. The socket is the caller's to close.
+proc close(t) {
+    try {
+        if t.ended == false and t.wr != false {
+            write_record(t, 21, to_bytes([1, 0]))
+        }
+    } except e {
+        return false
+    }
     return true
 }

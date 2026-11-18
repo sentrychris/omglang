@@ -306,7 +306,7 @@ proc open(p) {
         alloc t := tls.connect(h, host)
         if t == false {
             io.close(h)
-            return {err: tls.error()}
+            return {err: "the secure connection to " + host + " failed: " + tls.error()}
         }
         c.tls := t
     }

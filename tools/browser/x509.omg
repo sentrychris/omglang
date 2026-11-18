@@ -1,0 +1,685 @@
+;;;omg
+
+# tools/browser/x509.omg
+#
+# Certificates (RFC 5280): reading them, checking one certificate's
+# signature with another's key, and deciding whether a server's chain
+# of certificates leads to an authority this browser trusts and is
+# good for the name that was asked for.
+#
+# The trusted authorities are Mozilla's list, in roots.omg; more can
+# be added from a PEM file.
+#
+# What is not checked: whether a certificate has been revoked, name
+# constraints, and certificate policies.
+
+import "util.omg" as u
+import "sha.omg" as sha
+import "pk.omg" as pk
+import "roots.omg" as roots
+
+# --- DER, the way certificates are written --------------------------------------------
+
+# The element starting at pos: [tag, content start, content end,
+# where it starts], or false when it runs past `limit`.
+proc tlv(b, pos, limit) {
+    if pos + 2 > limit {
+        return false
+    }
+    alloc tag := b[pos]
+    alloc len := b[pos + 1]
+    alloc p := pos + 2
+    if len >= 128 {
+        alloc nb := len & 127
+        if nb == 0 or nb > 4 or p + nb > limit {
+            return false
+        }
+        len := 0
+        loop nb > 0 {
+            len := (len << 8) | b[p]
+            p := p + 1
+            nb := nb - 1
+        }
+    }
+    if p + len > limit {
+        return false
+    }
+    return [tag, p, p + len, pos]
+}
+
+# The elements between `from` and `to`, one after another.
+proc elements(b, from, to) {
+    alloc out := []
+    alloc p := from
+    loop p < to {
+        alloc t := tlv(b, p, to)
+        if t == false {
+            raise("broken DER")
+        }
+        append(out, t)
+        p := t[2]
+    }
+    return out
+}
+
+# An object identifier in the usual dotted form.
+proc oid(b, from, to) {
+    if to <= from {
+        return ""
+    }
+    alloc s := "" + (b[from] // 40) + "." + (b[from] % 40)
+    alloc v := 0
+    alloc p := from + 1
+    loop p < to {
+        v := (v << 7) | (b[p] & 127)
+        if b[p] < 128 {
+            s := s + "." + v
+            v := 0
+        }
+        p := p + 1
+    }
+    return s
+}
+
+proc digits(b, at, count) {
+    alloc v := 0
+    alloc i := 0
+    loop i < count {
+        v := v * 10 + (b[at + i] - 48)
+        i := i + 1
+    }
+    return v
+}
+
+# Seconds since 1970 of a date in a certificate.
+proc time_of(b, t) {
+    alloc p := t[1]
+    alloc year := 0
+    if t[0] == 23 {
+        year := digits(b, p, 2)
+        if year >= 50 {
+            year := year + 1900
+        } else {
+            year := year + 2000
+        }
+        p := p + 2
+    } else {
+        year := digits(b, p, 4)
+        p := p + 4
+    }
+    alloc month := digits(b, p, 2)
+    alloc day := digits(b, p + 2, 2)
+    alloc secs := digits(b, p + 4, 2) * 3600 + digits(b, p + 6, 2) * 60 + digits(b, p + 8, 2)
+    if month <= 2 {
+        year := year - 1
+        month := month + 9
+    } else {
+        month := month - 3
+    }
+    alloc era := year // 400
+    alloc yoe := year - era * 400
+    alloc doy := (153 * month + 2) // 5 + day - 1
+    alloc doe := yoe * 365 + yoe // 4 - yoe // 100 + doy
+    return (era * 146097 + doe - 719468) * 86400 + secs
+}
+
+alloc MONTHS := ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"]
+
+# A day in words, for messages: "5 November 2026".
+proc day_text(secs) {
+    alloc z := secs // 86400 + 719468
+    alloc era := z // 146097
+    alloc doe := z - era * 146097
+    alloc yoe := (doe - doe // 1460 + doe // 36524 - doe // 146096) // 365
+    alloc doy := doe - (365 * yoe + yoe // 4 - yoe // 100)
+    alloc mp := (5 * doy + 2) // 153
+    alloc day := doy - (153 * mp + 2) // 5 + 1
+    alloc month := mp + 3
+    alloc year := yoe + era * 400
+    if month > 12 {
+        month := month - 12
+        year := year + 1
+    }
+    return "" + day + " " + MONTHS[month - 1] + " " + year
+}
+
+# --- one certificate ------------------------------------------------------------------
+
+# The name a signature method's identifier stands for: [kind, hash],
+# kind "rsa", "pss" or "ecdsa"; false for the ones not accepted
+# (among them everything on MD5 and SHA-1).
+proc sig_method(id) {
+    if id == "1.2.840.113549.1.1.11" {
+        return ["rsa", "sha256"]
+    }
+    if id == "1.2.840.113549.1.1.12" {
+        return ["rsa", "sha384"]
+    }
+    if id == "1.2.840.113549.1.1.13" {
+        return ["rsa", "sha512"]
+    }
+    if id == "1.2.840.10045.4.3.2" {
+        return ["ecdsa", "sha256"]
+    }
+    if id == "1.2.840.10045.4.3.3" {
+        return ["ecdsa", "sha384"]
+    }
+    if id == "1.2.840.10045.4.3.4" {
+        return ["ecdsa", "sha512"]
+    }
+    if id == "1.2.840.113549.1.1.10" {
+        return ["pss", ""]
+    }
+    return false
+}
+
+proc hash_name(id) {
+    if id == "2.16.840.1.101.3.4.2.1" {
+        return "sha256"
+    }
+    if id == "2.16.840.1.101.3.4.2.2" {
+        return "sha384"
+    }
+    if id == "2.16.840.1.101.3.4.2.3" {
+        return "sha512"
+    }
+    return ""
+}
+
+# The most readable part of a name: its common name, or failing that
+# its organisation.
+proc name_text(b, from, to) {
+    alloc best := ""
+    for set in elements(b, from, to) {
+        for pair in elements(b, set[1], set[2]) {
+            alloc kv := elements(b, pair[1], pair[2])
+            if length(kv) >= 2 {
+                alloc id := oid(b, kv[0][1], kv[0][2])
+                if id == "2.5.4.3" or (id == "2.5.4.10" and best == "") {
+                    try {
+                        best := bytes_to_string(b[kv[1][1]:kv[1][2]])
+                    } except e {
+                        best := ""
+                    }
+                }
+            }
+        }
+    }
+    return best
+}
+
+proc parse_inner(der) {
+    alloc n := length(der)
+    alloc top := tlv(der, 0, n)
+    if top == false or top[0] != 48 {
+        return false
+    }
+    alloc parts := elements(der, top[1], top[2])
+    if length(parts) != 3 or parts[0][0] != 48 or parts[2][0] != 3 {
+        return false
+    }
+    alloc tbs := parts[0]
+    alloc c := {
+        der: der, tbs: der[tbs[3]:tbs[2]], sig: der[parts[2][1] + 1:parts[2][2]],
+        sig_kind: "", sig_hash: "", issuer: false, subject: false, issuer_text: "", subject_text: "",
+        not_before: 0, not_after: 0, key_alg: "", curve: "", key: false, rsa_n: false, rsa_e: false,
+        ca: false, path_len: -1, names: [], ips: [], usage: -1, eku: false
+    }
+    alloc salg := elements(der, parts[1][1], parts[1][2])
+    alloc method := sig_method(oid(der, salg[0][1], salg[0][2]))
+    if method != false {
+        c.sig_kind := method[0]
+        c.sig_hash := method[1]
+        if method[0] == "pss" and length(salg) > 1 {
+            # the hash is the first of the parameters: [0] { algorithm }
+            alloc ps := elements(der, salg[1][1], salg[1][2])
+            if length(ps) > 0 and ps[0][0] == 160 {
+                alloc ha := elements(der, ps[0][1], ps[0][2])
+                alloc hid := elements(der, ha[0][1], ha[0][2])
+                c.sig_hash := hash_name(oid(der, hid[0][1], hid[0][2]))
+            }
+        }
+    }
+    alloc f := elements(der, tbs[1], tbs[2])
+    alloc i := 0
+    if f[0][0] == 160 {
+        i := 1
+    }
+    # serial, signature method, issuer, validity, subject, key
+    alloc issuer := f[i + 2]
+    alloc dates := elements(der, f[i + 3][1], f[i + 3][2])
+    alloc subject := f[i + 4]
+    alloc spki := elements(der, f[i + 5][1], f[i + 5][2])
+    c.issuer := der[issuer[3]:issuer[2]]
+    c.subject := der[subject[3]:subject[2]]
+    c.issuer_text := name_text(der, issuer[1], issuer[2])
+    c.subject_text := name_text(der, subject[1], subject[2])
+    c.not_before := time_of(der, dates[0])
+    c.not_after := time_of(der, dates[1])
+    alloc kalg := elements(der, spki[0][1], spki[0][2])
+    c.key_alg := oid(der, kalg[0][1], kalg[0][2])
+    c.key := der[spki[1][1] + 1:spki[1][2]]
+    if c.key_alg == "1.2.840.113549.1.1.1" or c.key_alg == "1.2.840.113549.1.1.10" {
+        alloc kt := tlv(c.key, 0, length(c.key))
+        alloc ne := elements(c.key, kt[1], kt[2])
+        c.rsa_n := c.key[ne[0][1]:ne[0][2]]
+        c.rsa_e := c.key[ne[1][1]:ne[1][2]]
+        c.key_alg := "rsa"
+    } elif c.key_alg == "1.2.840.10045.2.1" {
+        c.key_alg := "ec"
+        if length(kalg) > 1 {
+            alloc cid := oid(der, kalg[1][1], kalg[1][2])
+            if cid == "1.2.840.10045.3.1.7" {
+                c.curve := "p256"
+            } elif cid == "1.3.132.0.34" {
+                c.curve := "p384"
+            }
+        }
+    }
+    i := i + 6
+    loop i < length(f) {
+        if f[i][0] == 163 {
+            alloc seq := tlv(der, f[i][1], f[i][2])
+            for ext in elements(der, seq[1], seq[2]) {
+                alloc e := elements(der, ext[1], ext[2])
+                alloc id := oid(der, e[0][1], e[0][2])
+                alloc v := e[length(e) - 1]
+                if id == "2.5.29.19" {
+                    alloc bc := tlv(der, v[1], v[2])
+                    for item in elements(der, bc[1], bc[2]) {
+                        if item[0] == 1 {
+                            c.ca := der[item[1]] != 0
+                        } elif item[0] == 2 {
+                            c.path_len := digits_be(der, item[1], item[2])
+                        }
+                    }
+                } elif id == "2.5.29.15" {
+                    alloc ku := tlv(der, v[1], v[2])
+                    if ku[2] - ku[1] >= 2 {
+                        c.usage := der[ku[1] + 1]
+                    }
+                } elif id == "2.5.29.17" {
+                    alloc san := tlv(der, v[1], v[2])
+                    for nm in elements(der, san[1], san[2]) {
+                        if nm[0] == 130 {
+                            append(c.names, u.lower(bytes_to_string(der[nm[1]:nm[2]])))
+                        } elif nm[0] == 135 {
+                            append(c.ips, der[nm[1]:nm[2]])
+                        }
+                    }
+                } elif id == "2.5.29.37" {
+                    alloc eku := tlv(der, v[1], v[2])
+                    alloc ids := []
+                    for item2 in elements(der, eku[1], eku[2]) {
+                        append(ids, oid(der, item2[1], item2[2]))
+                    }
+                    c.eku := ids
+                }
+            }
+        }
+        i := i + 1
+    }
+    return c
+}
+
+proc digits_be(b, from, to) {
+    alloc v := 0
+    alloc p := from
+    loop p < to and p < from + 4 {
+        v := (v << 8) | b[p]
+        p := p + 1
+    }
+    return v
+}
+
+# A certificate from its DER bytes, as a dict (see parse_inner), or
+# false when the bytes are not one.
+proc parse(der) {
+    alloc c := false
+    try {
+        c := parse_inner(der)
+    } except e {
+        return false
+    }
+    return c
+}
+
+# Whether `sig` is the signature of `msg` by the key in certificate
+# c. kind is "rsa" (PKCS #1 v1.5), "pss" or "ecdsa"; alg the hash.
+proc verify(c, kind, alg, msg, sig) {
+    if alg != "sha256" and alg != "sha384" and alg != "sha512" {
+        return false
+    }
+    alloc ok := false
+    try {
+        if kind == "ecdsa" {
+            if c.key_alg != "ec" or c.curve == "" {
+                return false
+            }
+            alloc top := tlv(sig, 0, length(sig))
+            alloc rs := elements(sig, top[1], top[2])
+            alloc r := sig[rs[0][1]:rs[0][2]]
+            alloc s := sig[rs[1][1]:rs[1][2]]
+            ok := pk.ecdsa_verify(c.curve, c.key, sha.hash(alg, msg), r, s)
+        } elif c.key_alg != "rsa" {
+            return false
+        } elif kind == "rsa" {
+            ok := pk.rsa_verify(c.rsa_n, c.rsa_e, alg, msg, sig)
+        } elif kind == "pss" {
+            ok := pk.rsa_pss_verify(c.rsa_n, c.rsa_e, alg, msg, sig)
+        }
+    } except e {
+        return false
+    }
+    return ok
+}
+
+# Whether certificate c was signed by the key of certificate `by`.
+proc signed_by(c, by) {
+    if c.sig_kind == "" {
+        return false
+    }
+    return verify(by, c.sig_kind, c.sig_hash, c.tbs, c.sig)
+}
+
+# --- base64 and PEM ---------------------------------------------------------------------
+
+alloc B64 := []
+
+# The bytes that base64 text (given as bytes) stands for; whatever
+# is not base64 is skipped.
+proc unbase64(b) {
+    if length(B64) == 0 {
+        B64 := list_repeat(-1, 256)
+        alloc abc := string_bytes("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/")
+        alloc k := 0
+        loop k < 64 {
+            B64[abc[k]] := k
+            k := k + 1
+        }
+    }
+    alloc out := bytes_repeat(0, length(b) * 3 // 4 + 3)
+    alloc n := 0
+    alloc acc := 0
+    alloc have := 0
+    for c in b {
+        alloc v := B64[c]
+        if v >= 0 {
+            acc := ((acc << 6) | v) & 16777215
+            have := have + 6
+            if have >= 8 {
+                have := have - 8
+                out[n] := (acc >> have) & 255
+                n := n + 1
+            }
+        }
+    }
+    return out[0:n]
+}
+
+# The certificates in a PEM file, each as DER bytes.
+proc pem_certs(bytes) {
+    alloc out := []
+    alloc begin := string_bytes("-----BEGIN CERTIFICATE-----")
+    alloc stop := string_bytes("-----END CERTIFICATE-----")
+    alloc p := 0
+    loop true {
+        alloc a := u.find_bytes(bytes, begin, p)
+        if a < 0 {
+            break
+        }
+        alloc z := u.find_bytes(bytes, stop, a)
+        if z < 0 {
+            break
+        }
+        append(out, unbase64(bytes[a + length(begin):z]))
+        p := z + length(stop)
+    }
+    return out
+}
+
+# --- the trusted authorities ------------------------------------------------------------
+
+# subject -> the authorities with that subject, each [DER, parsed or
+# false]; filled on first use
+alloc anchors := {}
+alloc anchors_ready := false
+alloc extra := []
+
+proc subject_key(name) {
+    return "" + sha.sha256(name)[0:12]
+}
+
+proc add_anchor(der) {
+    alloc c := parse(der)
+    if c == false {
+        return false
+    }
+    alloc key := subject_key(c.subject)
+    if has_key(anchors, key) == false {
+        anchors[key] := []
+    }
+    append(anchors[key], c)
+    return true
+}
+
+proc load_anchors() {
+    if anchors_ready {
+        return true
+    }
+    anchors_ready := true
+    for text in roots.all() {
+        add_anchor(unbase64(string_bytes(text)))
+    }
+    for der in extra {
+        add_anchor(der)
+    }
+    return true
+}
+
+# Trust the authorities in this PEM text as well: how many it held.
+proc add_pem(bytes) {
+    alloc ders := pem_certs(bytes)
+    for der in ders {
+        if anchors_ready {
+            add_anchor(der)
+        } else {
+            append(extra, der)
+        }
+    }
+    return length(ders)
+}
+
+# --- is this chain good? ----------------------------------------------------------------
+
+# Whether the certificate's name pattern covers the host. A "*"
+# stands for exactly one label, and only the first.
+proc name_matches(pattern, host) {
+    if pattern == host {
+        return true
+    }
+    if u.starts_with(pattern, "*.") {
+        alloc dot := u.find(host, ".")
+        if dot > 0 and host[dot:] == pattern[1:] and u.contains(pattern[2:], ".") {
+            return true
+        }
+    }
+    return false
+}
+
+# The four bytes of "1.2.3.4", or false when host is not an address.
+proc ipv4(host) {
+    alloc parts := u.split(host, ".")
+    if length(parts) != 4 {
+        return false
+    }
+    alloc out := bytes_repeat(0, 4)
+    alloc i := 0
+    loop i < 4 {
+        alloc v := u.to_int(parts[i], -1)
+        if v < 0 or v > 255 or parts[i] != "" + v {
+            return false
+        }
+        out[i] := v
+        i := i + 1
+    }
+    return out
+}
+
+proc covers(c, host) {
+    host := u.lower(host)
+    if u.ends_with(host, ".") {
+        host := host[0:length(host) - 1]
+    }
+    alloc ip := ipv4(host)
+    if ip != false {
+        for a in c.ips {
+            if a == ip {
+                return true
+            }
+        }
+        return false
+    }
+    for nm in c.names {
+        if name_matches(nm, host) {
+            return true
+        }
+    }
+    return false
+}
+
+proc dates_problem(c, now) {
+    if now < c.not_before {
+        return "its certificate (" + c.subject_text + ") is not valid before " + day_text(c.not_before)
+    }
+    if now > c.not_after {
+        return "its certificate (" + c.subject_text + ") ran out on " + day_text(c.not_after)
+    }
+    return ""
+}
+
+alloc why := ""
+
+# Climb from certificate c towards a trusted authority, through the
+# certificates the server sent. `below` counts the authorities
+# already passed. true when one is reached; otherwise `why` says
+# what stood in the way.
+proc climb(c, certs, used, below, now) {
+    alloc key := subject_key(c.issuer)
+    if has_key(anchors, key) {
+        for a in anchors[key] {
+            if a.subject == c.issuer and signed_by(c, a) {
+                alloc late := dates_problem(a, now)
+                if late == "" {
+                    return true
+                }
+                why := late
+            }
+        }
+    }
+    if below >= 8 {
+        return false
+    }
+    alloc i := 1
+    loop i < length(certs) {
+        alloc up := certs[i]
+        if used[i] == false and up != false and up.subject == c.issuer {
+            if up.ca == false or (up.usage >= 0 and (up.usage & 4) == 0) {
+                why := "a certificate in its chain (" + up.subject_text + ") is not allowed to sign others"
+            } elif up.path_len >= 0 and up.path_len < below {
+                why := "its chain of certificates is longer than its issuer allows"
+            } elif dates_problem(up, now) != "" {
+                why := dates_problem(up, now)
+            } elif signed_by(c, up) == false {
+                why := "a signature in its chain of certificates is wrong"
+            } else {
+                used[i] := true
+                if climb(up, certs, used, below + 1, now) {
+                    return true
+                }
+                used[i] := false
+            }
+        }
+        i := i + 1
+    }
+    return false
+}
+
+# Chains that were found good, so that a second connection to the
+# same server need not do the sums again.
+alloc good := {}
+
+# Is the chain of certificates `ders` (the server's own first) good
+# for `host` at time `now` (seconds since 1970)? Returns [problem,
+# certificate]: problem is "" when all is well, and the certificate
+# is the server's own, parsed (false if it cannot be read).
+proc check(ders, host, now) {
+    if length(ders) == 0 {
+        return ["the server sent no certificate", false]
+    }
+    alloc leaf := parse(ders[0])
+    if leaf == false {
+        return ["the server's certificate cannot be read", false]
+    }
+    if covers(leaf, host) == false {
+        alloc shown := leaf.subject_text
+        if length(leaf.names) > 0 {
+            shown := leaf.names[0]
+        }
+        return ["its certificate is for " + shown + ", not for " + host, leaf]
+    }
+    alloc late := dates_problem(leaf, now)
+    if late != "" {
+        return [late, leaf]
+    }
+    if leaf.eku != false {
+        alloc fits := false
+        for id in leaf.eku {
+            if id == "1.3.6.1.5.5.7.3.1" or id == "2.5.29.37.0" {
+                fits := true
+            }
+        }
+        if fits == false {
+            return ["its certificate is not one for web servers", leaf]
+        }
+    }
+    alloc all := to_bytes([])
+    for d in ders {
+        all := all + sha.sha256(d)
+    }
+    alloc memo := "" + sha.sha256(all)
+    if has_key(good, memo) {
+        return ["", leaf]
+    }
+    load_anchors()
+    alloc certs := [leaf]
+    alloc used := [true]
+    alloc i := 1
+    loop i < length(ders) {
+        append(certs, parse(ders[i]))
+        append(used, false)
+        i := i + 1
+    }
+    why := ""
+    # a certificate that is itself on the list needs no issuer
+    alloc key := subject_key(leaf.subject)
+    alloc trusted := false
+    if has_key(anchors, key) {
+        for a in anchors[key] {
+            if a.der == leaf.der {
+                trusted := true
+            }
+        }
+    }
+    if trusted == false and climb(leaf, certs, used, 0, now) == false {
+        if why == "" {
+            why := "its certificate was issued by " + leaf.issuer_text + ", which this browser does not know"
+            if leaf.sig_kind == "" {
+                why := "its certificate is signed in a way this browser does not accept"
+            }
+        }
+        return [why, leaf]
+    }
+    good[memo] := true
+    return ["", leaf]
+}

@@ -1,0 +1,766 @@
+;;;omg
+
+# tools/browser/pk.omg
+#
+# Public-key arithmetic for TLS: agreeing on a secret with X25519
+# (RFC 7748) or the NIST curves P-256 and P-384, and checking ECDSA
+# and RSA signatures (FIPS 186-4, RFC 8017).
+#
+# A big number is a list of 28-bit "limbs", lowest first, so that the
+# product of two limbs and a few of them added stay well inside
+# OMG's 64-bit integers (whose `+` and `*` refuse to overflow).
+# Multiplying modulo a number is done Montgomery's way: numbers are
+# kept multiplied by R = 2^(28k), which turns the division by the
+# modulus into a division by R, a shift.
+#
+# Nothing here runs in constant time. A browser only ever handles
+# its own short-lived secrets with it, but do not sign with this.
+
+import "sha.omg" as sha
+
+alloc M := 268435455
+
+# --- numbers to and from bytes ------------------------------------------------------
+
+# How many limbs hold `count` bytes.
+proc limbs_for(count) {
+    return (count * 8 + 27) // 28
+}
+
+# The number in bytes b (highest byte first when `big`), as k limbs;
+# false when it does not fit.
+proc limbs_of(b, k, big) {
+    alloc out := list_repeat(0, k)
+    alloc acc := 0
+    alloc have := 0
+    alloc j := 0
+    alloc n := length(b)
+    alloc i := 0
+    loop i < n {
+        alloc byte := b[i]
+        if big {
+            byte := b[n - 1 - i]
+        }
+        acc := acc | (byte << have)
+        have := have + 8
+        if have >= 28 {
+            if j < k {
+                out[j] := acc & M
+            } elif (acc & M) != 0 {
+                return false
+            }
+            j := j + 1
+            acc := acc >> 28
+            have := have - 28
+        }
+        i := i + 1
+    }
+    if acc != 0 {
+        if j >= k {
+            return false
+        }
+        out[j] := acc
+    }
+    return out
+}
+
+# The number x as `count` bytes (highest first when `big`).
+proc bytes_of(x, count, big) {
+    alloc out := bytes_repeat(0, count)
+    alloc k := length(x)
+    alloc i := 0
+    loop i < count {
+        alloc at := i * 8
+        alloc limb := at // 28
+        alloc sh := at % 28
+        alloc v := 0
+        if limb < k {
+            v := x[limb] >> sh
+            if sh > 20 and limb + 1 < k {
+                v := v | (x[limb + 1] << (28 - sh))
+            }
+        }
+        if big {
+            out[count - 1 - i] := v & 255
+        } else {
+            out[i] := v & 255
+        }
+        i := i + 1
+    }
+    return out
+}
+
+alloc HEXDIGITS := "0123456789abcdef"
+
+proc hex_bytes(s) {
+    alloc b := string_bytes(s)
+    alloc out := bytes_repeat(0, length(b) // 2)
+    alloc i := 0
+    loop i < length(out) {
+        alloc hi := b[i * 2]
+        alloc lo := b[i * 2 + 1]
+        if hi > 57 {
+            hi := hi - 39
+        }
+        if lo > 57 {
+            lo := lo - 39
+        }
+        out[i] := ((hi - 48) << 4) | (lo - 48)
+        i := i + 1
+    }
+    return out
+}
+
+proc is_zero(x) {
+    for v in x {
+        if v != 0 {
+            return false
+        }
+    }
+    return true
+}
+
+# a >= b, for two numbers of the same length.
+proc geq(a, b) {
+    alloc i := length(a) - 1
+    loop i >= 0 {
+        if a[i] != b[i] {
+            return a[i] > b[i]
+        }
+        i := i - 1
+    }
+    return true
+}
+
+proc same(a, b) {
+    alloc i := 0
+    loop i < length(a) {
+        if a[i] != b[i] {
+            return false
+        }
+        i := i + 1
+    }
+    return true
+}
+
+# How many bits x takes.
+proc bit_length(x) {
+    alloc i := length(x) - 1
+    loop i >= 0 and x[i] == 0 {
+        i := i - 1
+    }
+    if i < 0 {
+        return 0
+    }
+    alloc v := x[i]
+    alloc n := i * 28
+    loop v > 0 {
+        v := v >> 1
+        n := n + 1
+    }
+    return n
+}
+
+proc bit_at(x, i) {
+    return (x[i // 28] >> (i % 28)) & 1
+}
+
+# --- arithmetic modulo n ------------------------------------------------------------
+
+# What is needed to work modulo the odd number n.
+proc field(n) {
+    alloc k := length(n)
+    alloc inv := 1
+    alloc i := 0
+    loop i < 5 {
+        inv := (inv * ((2 - ((n[0] * inv) & M)) & M)) & M
+        i := i + 1
+    }
+    alloc f := {n: n, k: k, n0: (0 - inv) & M, r2: [], one: []}
+    # R mod n, then R*R mod n, by doubling
+    alloc x := list_repeat(0, k)
+    x[0] := 1
+    alloc steps := 2 * k * 28
+    alloc s := 0
+    loop s < steps {
+        alloc c := 0
+        alloc j := 0
+        loop j < k {
+            alloc v := (x[j] << 1) | c
+            x[j] := v & M
+            c := v >> 28
+            j := j + 1
+        }
+        if c != 0 or geq(x, n) {
+            alloc bw := 0
+            j := 0
+            loop j < k {
+                alloc d := x[j] - n[j] - bw
+                x[j] := d & M
+                bw := (d >> 28) & 1
+                j := j + 1
+            }
+        }
+        if s == k * 28 - 1 {
+            f.one := x[0:k]
+        }
+        s := s + 1
+    }
+    f.r2 := x
+    return f
+}
+
+# a * b / R modulo n: the product of two numbers kept in Montgomery's
+# form, in that form.
+proc mmul(f, a, b) {
+    alloc n := f.n
+    alloc k := f.k
+    alloc n0 := f.n0
+    alloc t := list_repeat(0, k + 1)
+    alloc b0 := b[0]
+    alloc m0 := n[0]
+    alloc i := 0
+    loop i < k {
+        alloc ai := a[i]
+        alloc x := t[0] + ai * b0
+        alloc q := ((x & M) * n0) & M
+        alloc c := (x + q * m0) >> 28
+        alloc j := 1
+        loop j < k {
+            x := t[j] + ai * b[j] + q * n[j] + c
+            t[j - 1] := x & M
+            c := x >> 28
+            j := j + 1
+        }
+        x := t[k] + c
+        t[k - 1] := x & M
+        t[k] := x >> 28
+        i := i + 1
+    }
+    alloc over := t[k] != 0
+    alloc r := t[0:k]
+    if over or geq(r, n) {
+        alloc bw := 0
+        alloc j2 := 0
+        loop j2 < k {
+            alloc d := r[j2] - n[j2] - bw
+            r[j2] := d & M
+            bw := (d >> 28) & 1
+            j2 := j2 + 1
+        }
+    }
+    return r
+}
+
+proc madd(f, a, b) {
+    alloc n := f.n
+    alloc k := f.k
+    alloc r := list_repeat(0, k)
+    alloc c := 0
+    alloc j := 0
+    loop j < k {
+        alloc v := a[j] + b[j] + c
+        r[j] := v & M
+        c := v >> 28
+        j := j + 1
+    }
+    if c != 0 or geq(r, n) {
+        alloc bw := 0
+        j := 0
+        loop j < k {
+            alloc d := r[j] - n[j] - bw
+            r[j] := d & M
+            bw := (d >> 28) & 1
+            j := j + 1
+        }
+    }
+    return r
+}
+
+proc msub(f, a, b) {
+    alloc n := f.n
+    alloc k := f.k
+    alloc r := list_repeat(0, k)
+    alloc bw := 0
+    alloc j := 0
+    loop j < k {
+        alloc d := a[j] - b[j] - bw
+        r[j] := d & M
+        bw := (d >> 28) & 1
+        j := j + 1
+    }
+    if bw != 0 {
+        alloc c := 0
+        j := 0
+        loop j < k {
+            alloc v := r[j] + n[j] + c
+            r[j] := v & M
+            c := v >> 28
+            j := j + 1
+        }
+    }
+    return r
+}
+
+# Into Montgomery's form and back.
+proc to_m(f, a) {
+    return mmul(f, a, f.r2)
+}
+
+proc from_m(f, a) {
+    alloc one := list_repeat(0, f.k)
+    one[0] := 1
+    return mmul(f, a, one)
+}
+
+# x less than twice n, brought below n.
+proc below(f, x) {
+    if geq(x, f.n) {
+        return msub(f, x, f.n)
+    }
+    return x
+}
+
+# base to the power e (base and result in Montgomery's form; e a
+# plain number).
+proc mexp(f, base, e) {
+    alloc r := f.one
+    alloc i := bit_length(e) - 1
+    loop i >= 0 {
+        r := mmul(f, r, r)
+        if bit_at(e, i) == 1 {
+            r := mmul(f, r, base)
+        }
+        i := i - 1
+    }
+    return r
+}
+
+# 1 / a modulo the prime n (a and the result in Montgomery's form).
+proc minv(f, a) {
+    alloc e := f.n[0:f.k]
+    # n - 2: n is odd and more than 2, so no borrow past the first limb
+    # unless that limb is 1
+    alloc j := 0
+    alloc bw := 2
+    loop bw != 0 and j < f.k {
+        alloc d := e[j] - bw
+        e[j] := d & M
+        bw := (d >> 28) & 1
+        j := j + 1
+    }
+    return mexp(f, a, e)
+}
+
+# --- X25519 ---------------------------------------------------------------------------
+
+alloc f25519 := false
+alloc a24 := false
+
+# The X25519 function: scalar and u are 32 bytes each, and so is the
+# result. With u = 9 it makes a public key from a secret one.
+proc x25519(scalar, u) {
+    if f25519 == false {
+        f25519 := field(limbs_of(hex_bytes("7fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffed"), 10, true))
+        alloc small := list_repeat(0, 10)
+        small[0] := 121665
+        a24 := to_m(f25519, small)
+    }
+    alloc f := f25519
+    alloc kb := scalar[0:32]
+    kb[0] := kb[0] & 248
+    kb[31] := (kb[31] & 127) | 64
+    alloc k := limbs_of(kb, 10, false)
+    alloc ub := u[0:32]
+    ub[31] := ub[31] & 127
+    alloc x1 := to_m(f, below(f, limbs_of(ub, 10, false)))
+    alloc x2 := f.one
+    alloc z2 := list_repeat(0, 10)
+    alloc x3 := x1
+    alloc z3 := f.one
+    alloc swap := 0
+    alloc t := 254
+    loop t >= 0 {
+        alloc kt := bit_at(k, t)
+        if (swap ^ kt) == 1 {
+            alloc tmp := x2
+            x2 := x3
+            x3 := tmp
+            tmp := z2
+            z2 := z3
+            z3 := tmp
+        }
+        swap := kt
+        alloc a := madd(f, x2, z2)
+        alloc aa := mmul(f, a, a)
+        alloc b := msub(f, x2, z2)
+        alloc bb := mmul(f, b, b)
+        alloc e := msub(f, aa, bb)
+        alloc c := madd(f, x3, z3)
+        alloc d := msub(f, x3, z3)
+        alloc da := mmul(f, d, a)
+        alloc cb := mmul(f, c, b)
+        alloc s := madd(f, da, cb)
+        x3 := mmul(f, s, s)
+        alloc df := msub(f, da, cb)
+        z3 := mmul(f, x1, mmul(f, df, df))
+        x2 := mmul(f, aa, bb)
+        z2 := mmul(f, e, madd(f, aa, mmul(f, a24, e)))
+        t := t - 1
+    }
+    if swap == 1 {
+        x2 := x3
+        z2 := z3
+    }
+    alloc r := from_m(f, mmul(f, x2, minv(f, z2)))
+    return bytes_of(r, 32, false)
+}
+
+# --- the NIST curves ------------------------------------------------------------------
+
+alloc curves := {}
+
+# The curve called "p256" or "p384": y^2 = x^3 - 3x + b modulo p.
+proc curve(name) {
+    if has_key(curves, name) {
+        return curves[name]
+    }
+    alloc p := ""
+    alloc b := ""
+    alloc gx := ""
+    alloc gy := ""
+    alloc n := ""
+    if name == "p256" {
+        p := "ffffffff00000001000000000000000000000000ffffffffffffffffffffffff"
+        b := "5ac635d8aa3a93e7b3ebbd55769886bc651d06b0cc53b0f63bce3c3e27d2604b"
+        gx := "6b17d1f2e12c4247f8bce6e563a440f277037d812deb33a0f4a13945d898c296"
+        gy := "4fe342e2fe1a7f9b8ee7eb4a7c0f9e162bce33576b315ececbb6406837bf51f5"
+        n := "ffffffff00000000ffffffffffffffffbce6faada7179e84f3b9cac2fc632551"
+    } else {
+        p := "fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffeffffffff0000000000000000ffffffff"
+        b := "b3312fa7e23ee7e4988e056be3f82d19181d9c6efe8141120314088f5013875ac656398d8a2ed19d2a85c8edd3ec2aef"
+        gx := "aa87ca22be8b05378eb1c71ef320ad746e1d3b628ba79b9859f741e082542a385502f25dbf55296c3a545e3872760ab7"
+        gy := "3617de4a96262c6f5d9e98bf9292dc29f8f41dbd289a147ce9da3113b5f0b8c00a60b1ce1d7e819d7a431d7c90ea0e5f"
+        n := "ffffffffffffffffffffffffffffffffffffffffffffffffc7634d81f4372ddf581a0db248b0a77aecec196accc52973"
+    }
+    alloc size := length(p) // 2
+    alloc k := limbs_for(size)
+    alloc f := field(limbs_of(hex_bytes(p), k, true))
+    alloc c := {
+        name: name, size: size, k: k, f: f,
+        fn: field(limbs_of(hex_bytes(n), k, true)),
+        b: to_m(f, limbs_of(hex_bytes(b), k, true)),
+        g: [to_m(f, limbs_of(hex_bytes(gx), k, true)), to_m(f, limbs_of(hex_bytes(gy), k, true)), f.one]
+    }
+    curves[name] := c
+    return c
+}
+
+# Points are [X, Y, Z] with x = X/Z^2 and y = Y/Z^3, the numbers in
+# Montgomery's form; Z = 0 is the point at infinity.
+
+proc pt_double(c, p) {
+    alloc f := c.f
+    alloc x := p[0]
+    alloc y := p[1]
+    alloc z := p[2]
+    if is_zero(z) {
+        return p
+    }
+    alloc delta := mmul(f, z, z)
+    alloc gamma := mmul(f, y, y)
+    alloc beta := mmul(f, x, gamma)
+    alloc t := mmul(f, msub(f, x, delta), madd(f, x, delta))
+    alloc alpha := madd(f, madd(f, t, t), t)
+    alloc beta2 := madd(f, beta, beta)
+    alloc beta4 := madd(f, beta2, beta2)
+    alloc x3 := msub(f, mmul(f, alpha, alpha), madd(f, beta4, beta4))
+    alloc yz := madd(f, y, z)
+    alloc z3 := msub(f, msub(f, mmul(f, yz, yz), gamma), delta)
+    alloc g2 := mmul(f, gamma, gamma)
+    alloc g4 := madd(f, g2, g2)
+    g4 := madd(f, g4, g4)
+    alloc y3 := msub(f, mmul(f, alpha, msub(f, beta4, x3)), madd(f, g4, g4))
+    return [x3, y3, z3]
+}
+
+proc pt_add(c, p, q) {
+    alloc f := c.f
+    if is_zero(p[2]) {
+        return q
+    }
+    if is_zero(q[2]) {
+        return p
+    }
+    alloc z1z1 := mmul(f, p[2], p[2])
+    alloc z2z2 := mmul(f, q[2], q[2])
+    alloc u1 := mmul(f, p[0], z2z2)
+    alloc u2 := mmul(f, q[0], z1z1)
+    alloc s1 := mmul(f, mmul(f, p[1], q[2]), z2z2)
+    alloc s2 := mmul(f, mmul(f, q[1], p[2]), z1z1)
+    alloc h := msub(f, u2, u1)
+    alloc r := msub(f, s2, s1)
+    if is_zero(h) {
+        if is_zero(r) {
+            return pt_double(c, p)
+        }
+        return [f.one, f.one, list_repeat(0, f.k)]
+    }
+    r := madd(f, r, r)
+    alloc h2 := madd(f, h, h)
+    alloc i := mmul(f, h2, h2)
+    alloc j := mmul(f, h, i)
+    alloc v := mmul(f, u1, i)
+    alloc x3 := msub(f, msub(f, mmul(f, r, r), j), madd(f, v, v))
+    alloc s1j := mmul(f, s1, j)
+    alloc y3 := msub(f, mmul(f, r, msub(f, v, x3)), madd(f, s1j, s1j))
+    alloc zz := madd(f, p[2], q[2])
+    alloc z3 := mmul(f, msub(f, msub(f, mmul(f, zz, zz), z1z1), z2z2), h)
+    return [x3, y3, z3]
+}
+
+# k1 * p1 + k2 * p2, both at once (k2 false: only k1 * p1).
+proc pt_mul(c, k1, p1, k2, p2) {
+    alloc f := c.f
+    alloc acc := [f.one, f.one, list_repeat(0, f.k)]
+    alloc both := false
+    alloc n := bit_length(k1)
+    if k2 != false {
+        both := pt_add(c, p1, p2)
+        alloc n2 := bit_length(k2)
+        if n2 > n {
+            n := n2
+        }
+    }
+    alloc i := n - 1
+    loop i >= 0 {
+        acc := pt_double(c, acc)
+        alloc b1 := bit_at(k1, i)
+        alloc b2 := 0
+        if k2 != false {
+            b2 := bit_at(k2, i)
+        }
+        if b1 == 1 and b2 == 1 {
+            acc := pt_add(c, acc, both)
+        } elif b1 == 1 {
+            acc := pt_add(c, acc, p1)
+        } elif b2 == 1 {
+            acc := pt_add(c, acc, p2)
+        }
+        i := i - 1
+    }
+    return acc
+}
+
+# The plain x and y of a point, or false for the point at infinity.
+proc pt_affine(c, p) {
+    alloc f := c.f
+    if is_zero(p[2]) {
+        return false
+    }
+    alloc zi := minv(f, p[2])
+    alloc zi2 := mmul(f, zi, zi)
+    return [from_m(f, mmul(f, p[0], zi2)), from_m(f, mmul(f, p[1], mmul(f, zi2, zi)))]
+}
+
+# The point with these coordinates (bytes, highest first), or false
+# when they are not on the curve.
+proc pt_from(c, xb, yb) {
+    alloc f := c.f
+    alloc x := limbs_of(xb, c.k, true)
+    alloc y := limbs_of(yb, c.k, true)
+    if x == false or y == false or geq(x, f.n) or geq(y, f.n) {
+        return false
+    }
+    alloc xm := to_m(f, x)
+    alloc ym := to_m(f, y)
+    alloc x3 := mmul(f, mmul(f, xm, xm), xm)
+    alloc rhs := madd(f, msub(f, x3, madd(f, madd(f, xm, xm), xm)), c.b)
+    if same(mmul(f, ym, ym), rhs) == false {
+        return false
+    }
+    return [xm, ym, f.one]
+}
+
+# A point as TLS and certificates write it: 4, x, y. false if the
+# bytes are not that, or not on the curve.
+proc pt_decode(c, b) {
+    if length(b) != 1 + 2 * c.size or b[0] != 4 {
+        return false
+    }
+    return pt_from(c, b[1:1 + c.size], b[1 + c.size:])
+}
+
+# A fresh secret number for the curve, and the public point that goes
+# with it: [secret limbs, public bytes].
+proc ec_keypair(name) {
+    alloc c := curve(name)
+    alloc d := false
+    loop true {
+        d := limbs_of(random_bytes(c.size), c.k, true)
+        if d != false and is_zero(d) == false and geq(d, c.fn.n) == false {
+            break
+        }
+    }
+    alloc q := pt_affine(c, pt_mul(c, d, c.g, false, false))
+    return [d, to_bytes([4]) + bytes_of(q[0], c.size, true) + bytes_of(q[1], c.size, true)]
+}
+
+# The secret shared with the owner of public point `theirs`: the x
+# of secret * theirs, or false when their point is no good.
+proc ec_shared(name, secret, theirs) {
+    alloc c := curve(name)
+    alloc p := pt_decode(c, theirs)
+    if p == false {
+        return false
+    }
+    alloc s := pt_affine(c, pt_mul(c, secret, p, false, false))
+    if s == false {
+        return false
+    }
+    return bytes_of(s[0], c.size, true)
+}
+
+# Whether (r, s) is the ECDSA signature of `digest` by the owner of
+# the public point `point` (4, x, y).
+proc ecdsa_verify(name, point, digest, rb, sb) {
+    alloc c := curve(name)
+    alloc fn := c.fn
+    alloc q := pt_decode(c, point)
+    alloc r := limbs_of(rb, c.k, true)
+    alloc s := limbs_of(sb, c.k, true)
+    if q == false or r == false or s == false {
+        return false
+    }
+    if is_zero(r) or is_zero(s) or geq(r, fn.n) or geq(s, fn.n) {
+        return false
+    }
+    if length(digest) > c.size {
+        digest := digest[0:c.size]
+    }
+    alloc e := below(fn, limbs_of(digest, c.k, true))
+    alloc w := minv(fn, to_m(fn, s))
+    alloc u1 := from_m(fn, mmul(fn, to_m(fn, e), w))
+    alloc u2 := from_m(fn, mmul(fn, to_m(fn, r), w))
+    alloc sum := pt_affine(c, pt_mul(c, u1, c.g, u2, q))
+    if sum == false {
+        return false
+    }
+    # x modulo n: p is less than twice n on these curves
+    return same(below(fn, sum[0]), r)
+}
+
+# --- RSA ------------------------------------------------------------------------------
+
+alloc rsa_fields := {}
+
+# sig to the power e modulo n, as bytes as long as n; false when sig
+# is not below n. All three are bytes, highest first.
+proc rsa_public(nb, eb, sig) {
+    loop length(nb) > 1 and nb[0] == 0 {
+        nb := nb[1:]
+    }
+    alloc size := length(nb)
+    alloc k := limbs_for(size)
+    alloc n := limbs_of(nb, k, true)
+    alloc s := limbs_of(sig, k, true)
+    alloc e := limbs_of(eb, limbs_for(length(eb)), true)
+    if s == false or (n[0] & 1) == 0 or size < 128 or geq(s, n) {
+        return false
+    }
+    alloc key := "" + sha.sha256(nb)
+    alloc f := false
+    if has_key(rsa_fields, key) {
+        f := rsa_fields[key]
+    } else {
+        f := field(n)
+        rsa_fields[key] := f
+    }
+    return bytes_of(from_m(f, mexp(f, to_m(f, s), e)), size, true)
+}
+
+proc digest_info(alg) {
+    if alg == "sha256" {
+        return hex_bytes("3031300d060960864801650304020105000420")
+    }
+    if alg == "sha384" {
+        return hex_bytes("3041300d060960864801650304020205000430")
+    }
+    return hex_bytes("3051300d060960864801650304020305000440")
+}
+
+# Whether sig is the old-style (PKCS #1 v1.5) RSA signature of the
+# message with hash `alg`.
+proc rsa_verify(nb, eb, alg, msg, sig) {
+    alloc em := rsa_public(nb, eb, sig)
+    if em == false {
+        return false
+    }
+    alloc tail := digest_info(alg) + sha.hash(alg, msg)
+    alloc n := length(em)
+    alloc tn := length(tail)
+    if n < tn + 11 or em[0] != 0 or em[1] != 1 or em[n - tn - 1] != 0 {
+        return false
+    }
+    alloc i := 2
+    loop i < n - tn - 1 {
+        if em[i] != 255 {
+            return false
+        }
+        i := i + 1
+    }
+    return em[n - tn:] == tail
+}
+
+# Whether sig is the RSA-PSS signature of the message with hash
+# `alg` (also the hash of the mask), whatever the length of the salt.
+proc rsa_pss_verify(nb, eb, alg, msg, sig) {
+    alloc em := rsa_public(nb, eb, sig)
+    if em == false {
+        return false
+    }
+    loop length(nb) > 1 and nb[0] == 0 {
+        nb := nb[1:]
+    }
+    alloc mod_bits := bit_length(limbs_of(nb, limbs_for(length(nb)), true))
+    alloc em_bits := mod_bits - 1
+    alloc em_len := (em_bits + 7) // 8
+    if em_len < length(em) {
+        if em[0] != 0 {
+            return false
+        }
+        em := em[1:]
+    }
+    alloc hl := sha.size(alg)
+    if em_len < hl + 2 or em[em_len - 1] != 188 {
+        return false
+    }
+    alloc db_len := em_len - hl - 1
+    alloc h := em[db_len:db_len + hl]
+    alloc top := 255 >> (8 * em_len - em_bits)
+    if (em[0] & (255 ^ top)) != 0 {
+        return false
+    }
+    # the mask: hashes of h with a counter after it
+    alloc db := to_bytes([])
+    alloc counter := 0
+    loop length(db) < db_len {
+        db := db + sha.hash(alg, h + to_bytes([0, 0, counter >> 8, counter & 255]))
+        counter := counter + 1
+    }
+    alloc i := 0
+    loop i < db_len {
+        db[i] := db[i] ^ em[i]
+        i := i + 1
+    }
+    db[0] := db[0] & top
+    i := 0
+    loop i < db_len and db[i] == 0 {
+        i := i + 1
+    }
+    if i >= db_len or db[i] != 1 {
+        return false
+    }
+    alloc salt := db[i + 1:db_len]
+    return sha.hash(alg, bytes_repeat(0, 8) + sha.hash(alg, msg) + salt) == h
+}
