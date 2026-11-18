@@ -16,6 +16,7 @@ tools/
 ├── db/          omgdb, a small SQL database
 ├── site/        a static-site generator, an HTTP server, an example web app and a sample site
 ├── video/       an MP4 reader, an H.264 decoder and a video player
+├── browser/     a web browser: HTTP, TLS, HTML, CSS, layout, fonts, pictures
 ├── lib/         modules the tools import: lib.omg (helpers), http.omg (the HTTP server library)
 └── test-all.omg runs every tool once and reports pass or fail
 ```
@@ -93,6 +94,7 @@ Larger, demo-quality programs that compose the smaller tools.
 | `site/demo_app.omg` | An example application on it: a page, a collection with `GET` and `POST`, an answer that comes later, and one that arrives in pieces. |
 | `db/omgdb.omg`   | A small SQL database written in OMG — a 4-KB paged on-disk format, a recursive-descent SQL parser (`CREATE` / `INSERT` / `SELECT` / `DELETE` / `DROP` with `WHERE` and `ORDER BY`), and a SQLite-style REPL with one-shot `-e` and stdin pipeline modes. See [`db/README.md`](db/README.md). |
 | `video/play.omg` | A video player: `omg --build tools/video/play.omg play`, then `./play clip.mp4`. Plays the H.264 video of an MP4 file in a window, at the file's own pace; space pauses, the arrows jump, `q` quits. Three parts, each usable alone: `video/mp4.omg` reads the file's index and hands out samples, `video/h264.omg` decodes them (Baseline, Main and High profile, the same pictures as ffmpeg bit for bit), and the `window_` builtins show them. `video/mp4info.omg` describes a file and prints a checksum per picture. See [`docs/10-video.md`](../docs/10-video.md). |
+| `browser/browser.omg` | A web browser: `omg --build tools/browser/browser.omg browser`, then `./browser https://example.com`. Fetches pages over HTTP and HTTPS, lays out their HTML and CSS, draws them with the system's fonts, shows PNG, JPEG and GIF pictures, follows links, goes back and forward, and sends forms; `--screenshot out.png` saves a picture of the page without opening a window. It does not run JavaScript. Its parts can be imported alone: `tls.omg` (a TLS 1.3 and 1.2 client), `x509.omg` (certificate checks), `sha.omg`, `aead.omg` and `pk.omg` (hashes, ciphers, curves and RSA), `html.omg`, `css.omg`, `layout.omg`, `font.omg` (TrueType), `image.omg` and `inflate.omg`. See [`docs/11-browser.md`](../docs/11-browser.md). |
 | `edit.omg`       | **OMG edit** — a nano-shaped terminal editor with a sidebar file browser. Open a file directly or hand it a directory and it drops you into the sidebar to pick one. Editor side: scrollable buffer, save / quit, cut / paste lines (kill-chain semantics), forward search, go-to-line, syntax highlighting for `.omg`. Sidebar side: arrow / vi-style navigation, Enter to descend or open, Backspace for parent dir. `^B` toggles sidebar visibility, `^T` swaps focus between panes. Terminal size detected via `stty size`. AOT-compile for crispest input. |
 
 ### Shared helpers

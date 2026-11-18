@@ -1020,7 +1020,7 @@ omglang/
 ├── examples/        programs to read and run: one language feature each
 │   └── games/           interactive terminal games (snake, pong, tetris, rogue)
 ├── tests/           shell-driven test suite (conformance, parity, regression, REPL, builtins)
-├── tools/           programs written in OMG (wc, grep, sort, omgdb, an editor, a web server, a video player)
+├── tools/           programs written in OMG (wc, grep, sort, omgdb, an editor, a web server, a video player, a web browser)
 ├── web/             two pages that forward old playground links to the site
 ├── docs/            the manual: quickstart, language tour, architecture, extending, Windows
 └── vscode/          VS Code extension (highlighting, themes, language server)
@@ -1056,6 +1056,12 @@ Some interesting starting points:
   calling user32 (Windows) directly, and sound sent to PulseAudio or
   PipeWire (Linux) or winmm (Windows) the same way, with no library in
   between. See [`docs/10-video.md`](docs/10-video.md).
+- [`tools/browser/`](tools/browser/): a **web browser** written in OMG:
+  HTTP and HTTPS (TLS 1.3 and 1.2, with the ciphers and the certificate
+  checks), HTML, CSS with floats, tables, flexbox and grid, letters drawn
+  from the system's TrueType fonts, PNG, JPEG and GIF pictures, links,
+  history and forms. No JavaScript. One executable of about 4.8 MB with
+  no library behind it. See [`docs/11-browser.md`](docs/11-browser.md).
 
 ---
 
