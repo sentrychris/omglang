@@ -93,6 +93,8 @@ alloc DOC := false       # the document on show
 alloc DOC_NID := 1       # its number; 0 is the window
 alloc DIRTY := false     # the tree changed since the browser last asked
 alloc SHEETS := false    # a style sheet came, went or changed
+alloc RESTYLE := {}      # the elements whose styles (and those below) are stale, by number
+alloc RESTYLE_ALL := false
 alloc VERSION := 0       # goes up with every change to the tree
 alloc HOST := {}         # what the browser does for the page
 alloc ADDRESS := "about:blank"
@@ -384,9 +386,33 @@ proc index_in(parent, node) {
 }
 
 # The tree changed at `parent`.
+# The styles of `node` and of what is below it are stale. The browser
+# works them out again for these subtrees only (see take_dirty), which
+# on a large page is most of the cost of showing a small change.
+proc restyle(node) {
+    if node.t == 1 {
+        RESTYLE["" + node.nid] := 1
+    } elif node.t == 9 {
+        RESTYLE_ALL := true
+    }
+    return true
+}
+
+# An element changed in a way a selector can see (an attribute, its
+# class): rules like `.a + .b` make that its siblings' business too,
+# so it is the parent that is done again.
+proc restyle_around(node) {
+    alloc p := parent_of(node)
+    if p == false {
+        return restyle(node)
+    }
+    return restyle(p)
+}
+
 proc touched(parent) {
     DIRTY := true
     VERSION := VERSION + 1
+    restyle(parent)
     if parent.t == 1 {
         css.number_kids(parent)
     } elif parent.t == 9 {
@@ -750,6 +776,7 @@ proc collect(node, tag, cls, out) {
 proc set_attr(node, name, value) {
     node.attrs[name] := value
     DIRTY := true
+    restyle_around(node)
     VERSION := VERSION + 1
     if name == "class" or name == "id" or name == "style" {
         css.prepare_attrs(node)
@@ -776,6 +803,7 @@ proc remove_attr(node, name) {
     }
     node.attrs := attrs
     DIRTY := true
+    restyle_around(node)
     VERSION := VERSION + 1
     if name == "class" or name == "id" or name == "style" {
         css.prepare_attrs(node)
@@ -1325,6 +1353,7 @@ proc s_checked(h, node, v) {
     }
     node.checked := on
     DIRTY := true
+    RESTYLE_ALL := true
     return true
 }
 
@@ -2109,7 +2138,10 @@ proc n_style_item(this, args) {
 # -- getComputedStyle(el)
 
 proc computed_value(node, name) {
-    if has_key(HOST, "reflow") {
+    # styles only: the layout is not needed for most answers
+    if has_key(HOST, "restyle") {
+        HOST["restyle"]()
+    } elif has_key(HOST, "reflow") {
         HOST["reflow"]()
     }
     if node.t != 1 or has_key(node, "style") == false {
@@ -5649,10 +5681,41 @@ proc wait_ms() {
 }
 
 # [did the tree change?, did a style sheet?] since the last call.
+# What changed since the browser last asked: [the tree?, the style
+# sheets?, where styles are stale]. The last is false when all of
+# them may be, else a list of [chain, places] (see chain_of) of the
+# elements to work out again along with what is below them.
 proc take_dirty() {
-    alloc out := [DIRTY, SHEETS]
+    alloc roots := false
+    if RESTYLE_ALL == false and SHEETS == false and length(RESTYLE) <= 24 {
+        roots := []
+        for key in dict_keys(RESTYLE) {
+            alloc node := NODES[u.to_int(key, 0)]
+            if type_of(node) != 6 or is_connected(node) == false {
+                continue
+            }
+            alloc ch := chain_of(node)
+            alloc inside := false
+            alloc i := 0
+            loop i < length(ch[0]) - 1 {
+                if has_key(RESTYLE, "" + ch[0][i].nid) {
+                    inside := true
+                    break
+                }
+                i := i + 1
+            }
+            if inside == false {
+                append(roots, ch)
+            }
+        }
+    }
+    alloc out := [DIRTY, SHEETS, roots]
     DIRTY := false
     SHEETS := false
+    RESTYLE := {}
+    RESTYLE_ALL := false
+    RESTYLE := {}
+    RESTYLE_ALL := false
     return out
 }
 
@@ -5681,6 +5744,17 @@ proc fire_window(name, props, kind) {
 
 proc set_focus(node) {
     FOCUS := node
+    return true
+}
+
+# The person followed a link to another part of the page, or went
+# back to one.
+proc moved_to(address) {
+    alloc old := ADDRESS
+    if address != old {
+        ADDRESS := address
+        append(TASKS, [4, old, address])
+    }
     return true
 }
 

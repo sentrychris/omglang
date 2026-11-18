@@ -79,6 +79,11 @@ alloc scripting := true        # --no-js: pages get no engine
 alloc js_on := false           # the page on show has one
 alloc in_script := 0           # scripts are running: the page must stay where it is
 alloc in_after := false
+alloc styled := false          # the whole document has had its styles worked out once
+alloc stale_styles := false    # for the next reflow: the subtrees to do again, or false for all
+alloc layout_stale := false    # styles are up to date (a script asked for one) but the layout is not
+alloc style_fresh := false     # for the next reflow: leave the styles alone
+alloc js_stale := false        # scripts changed the page since it was last laid out
 alloc console_out := false     # --console: what scripts log goes to the terminal
 alloc sheet_cache := {}        # address -> [bytes, where they came from], for this page
 alloc js_down := false         # the element the mouse went down on
@@ -360,7 +365,19 @@ proc set_addr(text) {
 # changed size, a picture arrived, or a <details> opened).
 proc reflow_inner() {
     alloc t0 := time_ms()
-    css.style_tree(doc, view_w(), view_h())
+    if style_fresh and styled {
+        # js_restyle() has just done the styles
+    } elif stale_styles != false and styled {
+        # a script changed a corner of the page
+        for r in stale_styles {
+            css.restyle(r[0], r[1])
+        }
+    } else {
+        css.style_tree(doc, view_w(), view_h())
+        styled := true
+    }
+    stale_styles := false
+    layout_stale := false
     alloc t1 := time_ms()
     root := lay.build(doc)
     alloc t2 := time_ms()
@@ -385,6 +402,8 @@ proc reflow() {
             emit "" + e
         }
         doc := html.parse(string_bytes(error_page(page_url, "The browser could not lay this page out (" + e + ")")))
+        styled := false
+        stale_styles := false
         js_on := false
         dom.leave()
         css.reset()
@@ -434,6 +453,8 @@ proc index_forms(node, form, details) {
 
 proc show_document(bytes, charset, address) {
     alloc d := html.parse(html.to_utf8(bytes, charset))
+    styled := false
+    js_stale := false
     js_on := false
     dom.leave()
     sheet_cache := {}
@@ -896,6 +917,21 @@ proc go(address, method, body, ctype, how, scroll_to) {
         page_url := address
         set_addr(address)
         goto_fragment(address)
+        if js_on {
+            dom.moved_to(address)
+        }
+        dirty := true
+        return true
+    }
+    # back or forward between parts of the page on show
+    if how == 1 and method == "GET" and doc != false and address != page_url and url.without_frag(address) == url.without_frag(page_url) {
+        page_url := address
+        set_addr(address)
+        sy := scroll_to
+        clamp_scroll()
+        if js_on {
+            dom.moved_to(address)
+        }
         dirty := true
         return true
     }
@@ -1839,6 +1875,7 @@ proc tick() {
     alloc ev := window_poll(win)
     alloc n := 0
     loop ev != false and running and n < 200 {
+        js_settle()
         handle(ev)
         n := n + 1
         if win == false {
@@ -1849,6 +1886,7 @@ proc tick() {
     if js_on and busy == false and in_script == 0 and in_after == false {
         js_pump()
     }
+    js_settle()
     alloc now := time_ms()
     if busy or addr_focus or focus != false {
         # the caret blinks, the "working" line moves
@@ -1904,6 +1942,15 @@ proc js_refresh() {
     }
     alloc d := dom.take_dirty()
     if d[0] == false and d[1] == false {
+        if layout_stale {
+            forms := {}
+            index_forms(doc, 0, 0)
+            js_title()
+            style_fresh := true
+            reflow()
+            style_fresh := false
+            return true
+        }
         return false
     }
     if d[1] and halt == false {
@@ -1912,18 +1959,65 @@ proc js_refresh() {
     forms := {}
     index_forms(doc, 0, 0)
     js_title()
+    if d[1] == false {
+        stale_styles := d[2]
+    }
     reflow()
+    stale_styles := false
     return true
 }
 
-# After scripts ran: show what they changed.
-proc js_after() {
-    if in_after {
+# The styles alone, for a script that asks what one is
+# (getComputedStyle): the layout waits until something needs it.
+proc js_restyle() {
+    if js_on == false or styled == false or doc == false {
+        return js_refresh()
+    }
+    alloc d := dom.take_dirty()
+    if d[0] == false and d[1] == false {
         return false
     }
+    if d[1] or d[2] == false {
+        if d[1] and halt == false {
+            load_styles()
+        }
+        forms := {}
+        index_forms(doc, 0, 0)
+        js_title()
+        reflow()
+        return true
+    }
+    try {
+        for r in d[2] {
+            css.restyle(r[0], r[1])
+        }
+        layout_stale := true
+    } except e {
+        reflow()
+    }
+    return true
+}
+
+# After scripts ran: what they changed is laid out when it is next
+# needed (js_settle), not after every script and every timer. A page
+# that takes a hundred small steps to build itself is laid out once.
+proc js_after() {
+    js_stale := true
+    return true
+}
+
+# Lay out what scripts changed, before it is drawn or pointed at.
+proc js_settle() {
+    if js_stale == false or in_after or busy or in_script > 0 {
+        return false
+    }
+    js_stale := false
     in_after := true
     if js_refresh() and halt == false and pending == false {
         load_pictures()
+        if busy == false {
+            set_status("")
+        }
     }
     in_after := false
     return true
@@ -2194,6 +2288,11 @@ proc js_reflow() {
     return true
 }
 
+proc js_restyle_host() {
+    js_restyle()
+    return true
+}
+
 proc js_rect(node) {
     js_refresh()
     if root == false or has_key(node, "nid") == false {
@@ -2307,7 +2406,7 @@ proc js_picture(node) {
 
 proc js_host() {
     return {fetch: js_fetch, navigate: js_navigate, fragment: js_fragment, push_state: js_moved_to,
-            history: js_history, history_length: js_history_length, reflow: js_reflow, rect: js_rect,
+            history: js_history, history_length: js_history_length, reflow: js_reflow, restyle: js_restyle_host, rect: js_rect,
             view: js_view, scroll: js_scroll, title: js_set_title, cookie_get: js_cookie_get,
             cookie_set: js_cookie_set, log: js_log, alert: js_alert, focus: js_focus,
             activate: js_activate, submit: js_submit, hit: js_hit, picture: js_picture}
@@ -2411,6 +2510,7 @@ proc main() {
                 sleep_ms(w)
             }
         }
+        js_settle()
         if dump {
             emit html.outer_html(doc)
         }
