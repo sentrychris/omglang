@@ -1,0 +1,48 @@
+<html lang="en">
+  <head>
+    <title>
+      "A & B < C"
+    <meta charset="utf-8">
+    <style>
+      "p > b { color: red } /* </p> is not markup here */"
+    <script>
+      "if (a < b && c > d) { document.write("<p>not parsed</p>") }"
+  <body class="x y" data-n="3">
+    <p>
+      "One"
+    <p>
+      "Two"
+      <b>
+        "bold"
+        <i>
+          "both"
+      "italic © ☺ ¬anentity; café"
+    <ul>
+      <li>
+        "first"
+      <li>
+        "second"
+        <a href="/x?a=1&b=2" title="T">
+          "link"
+    <table>
+      <tbody>
+        <tr>
+          <td>
+            "cell"
+          <td>
+            "next"
+        <tr>
+          <th colspan="2">
+            "head"
+    <img alt="A picture" src="a.png">
+    <br>
+    <input checked="" disabled="" type="checkbox">
+    <select>
+      <option>
+        "one"
+      <option selected="">
+        "two"
+    <textarea>
+      "<b>kept as text</b>"
+    <pre>
+      "spaces stay"

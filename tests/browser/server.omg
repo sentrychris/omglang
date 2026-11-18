@@ -1,0 +1,128 @@
+;;;omg
+
+# tests/browser/server.omg PORT
+#
+# A web server that misbehaves on purpose, for tests/browser.sh: each
+# path answers in one of the ways a browser has to cope with. It
+# serves one connection at a time and stops when asked for /quit.
+
+alloc port := int(args[1])
+alloc listener := tcp_listen("127.0.0.1", port)
+alloc running := true
+alloc hits := 0
+
+proc find(b, needle, from) {
+    alloc n := length(b)
+    alloc m := length(needle)
+    alloc i := from
+    loop i + m <= n {
+        alloc j := 0
+        loop j < m and b[i + j] == needle[j] {
+            j := j + 1
+        }
+        if j == m {
+            return i
+        }
+        i := i + 1
+    }
+    return -1
+}
+
+proc send(h, text) {
+    alloc b := string_bytes(text)
+    alloc sent := 0
+    loop sent < length(b) {
+        sent := sent + tcp_write(h, b, sent)
+    }
+    return true
+}
+
+proc answer(h, status, headers, body) {
+    return send(h, "HTTP/1.1 " + status + "\r\n" + headers + "Content-Length: " + length(string_bytes(body)) + "\r\n\r\n" + body)
+}
+
+# The value of a header in the request text, or "".
+proc header(req, name) {
+    alloc at := find(string_bytes(req), string_bytes("\r\n" + name + ": "), 0)
+    if at < 0 {
+        return ""
+    }
+    alloc rest := bytes_to_string(string_bytes(req)[at + length(name) + 4:])
+    alloc stop := find(string_bytes(rest), string_bytes("\r\n"), 0)
+    return rest[0:stop]
+}
+
+# Serve requests on h until the client goes away. false: stop the server.
+proc serve(h) {
+    alloc buf := to_bytes([])
+    loop true {
+        alloc stop := find(buf, string_bytes("\r\n\r\n"), 0)
+        if stop < 0 {
+            alloc data := tcp_read(h, 65536)
+            if length(data) == 0 {
+                return true
+            }
+            buf := buf + data
+            continue
+        }
+        alloc head := bytes_to_string(buf[0:stop + 2])
+        alloc want := 0
+        alloc cl := header(head, "Content-Length")
+        if cl != "" {
+            want := int(cl)
+        }
+        loop length(buf) < stop + 4 + want {
+            alloc more := tcp_read(h, 65536)
+            if length(more) == 0 {
+                return true
+            }
+            buf := buf + more
+        }
+        alloc body := bytes_to_string(buf[stop + 4:stop + 4 + want])
+        buf := buf[stop + 4 + want:]
+        alloc line := head[0:find(string_bytes(head), string_bytes("\r\n"), 0)]
+        alloc sp := find(string_bytes(line), string_bytes(" "), 0)
+        alloc method := line[0:sp]
+        alloc path := line[sp + 1:find(string_bytes(line), string_bytes(" "), sp + 1)]
+        hits := hits + 1
+        if path == "/hello" {
+            answer(h, "200 OK", "Content-Type: text/html\r\n", "<p>hello " + hits + "</p>")
+        } elif path == "/chunked" {
+            send(h, "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nTransfer-Encoding: chunked\r\n\r\n5\r\nin th\r\n8;note=1\r\nree part\r\n1\r\ns\r\n0\r\nTrailer: x\r\n\r\n")
+        } elif path == "/gzip" {
+            # "squeezed, then sent" (gzip -9 of that text)
+            alloc gz := to_bytes([31, 139, 8, 0, 0, 0, 0, 0, 2, 255, 43, 46, 44, 77, 77, 173, 74, 77, 209, 81, 40, 201, 72, 205, 83, 40, 78, 205, 43, 1, 0, 117, 242, 106, 89, 19, 0, 0, 0])
+            send(h, "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Encoding: gzip\r\nContent-Length: " + length(gz) + "\r\n\r\n")
+            tcp_write(h, gz)
+        } elif path == "/redirect" {
+            answer(h, "302 Found", "Location: /landed?from=redirect\r\n", "")
+        } elif path == "/loop" {
+            answer(h, "302 Found", "Location: /loop\r\n", "")
+        } elif path == "/cookie" {
+            answer(h, "303 See Other", "Set-Cookie: taste=ginger; Path=/\r\nSet-Cookie: other=1; Path=/elsewhere\r\nLocation: /show\r\n", "")
+        } elif path == "/show" {
+            answer(h, "200 OK", "Content-Type: text/plain\r\n", "cookies: " + header(head, "Cookie"))
+        } elif path == "/until-close" {
+            send(h, "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nConnection: close\r\n\r\nall there is")
+            return true
+        } elif path == "/missing" {
+            answer(h, "404 Not Found", "Content-Type: text/plain\r\n", "nothing here")
+        } elif path == "/quit" {
+            answer(h, "200 OK", "Content-Type: text/plain\r\n", "bye")
+            return false
+        } else {
+            answer(h, "200 OK", "Content-Type: text/plain\r\n", method + " " + path + " [" + header(head, "Content-Type") + "] " + body)
+        }
+    }
+    return true
+}
+
+loop running {
+    alloc h := tcp_accept(listener)
+    try {
+        running := serve(h)
+    } except err {
+        running := true
+    }
+    tcp_close(h)
+}

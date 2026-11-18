@@ -1,0 +1,21 @@
+<!DOCTYPE html>
+<html lang=en>
+<head>
+<title>A &amp; B &lt; C</title>
+<meta charset="utf-8">
+<style>p > b { color: red } /* </p> is not markup here */</style>
+<script>if (a < b && c > d) { document.write("<p>not parsed</p>") }</script>
+</head>
+<body class="x y" data-n=3>
+<!-- a comment <p>with markup</p> -->
+<p>One<p>Two <b>bold <i>both</b> italic</i> &copy; &#x263A; &notanentity; caf&eacute;
+<ul><li>first<li>second <a href=/x?a=1&amp;b=2 TITLE='T'>link</a></ul>
+<table><tr><td>cell<td>next<tr><th colspan=2>head</table>
+<img src="a.png" alt="A picture"><br><input type=checkbox checked disabled>
+<select><option>one<option selected>two</select>
+<textarea>
+ <b>kept as text</b></textarea>
+<pre>
+  spaces   stay</pre>
+</body>
+</html>

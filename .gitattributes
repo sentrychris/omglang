@@ -8,3 +8,9 @@
 bin/omg   binary
 *.exe binary
 *.omgb binary
+
+# Fixtures of the browser's tests: pictures and a gzip file.
+tests/browser/pages/*.png binary
+tests/browser/pages/*.gif binary
+tests/browser/pages/*.jpg binary
+tests/browser/pages/*.gz binary

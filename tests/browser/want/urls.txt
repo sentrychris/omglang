@@ -1,0 +1,24 @@
+HTTP://Example.COM:80/a/./b/../c?q=1#top => http://example.com/a/c?q=1#top [http|example.com|0|/a/c|?q=1|#top]
+https://example.com => https://example.com/ [https|example.com|0|/||]
+https://example.com:8443/x => https://example.com:8443/x [https|example.com|8443|/x||]
+http://user:secret@host.test/p => http://host.test/p [http|host.test|0|/p||]
+http://[::1]:8080/x => http://[::1]:8080/x [http|[::1]|8080|/x||]
+file:///home/me/page.html => file:///home/me/page.html [file||0|/home/me/page.html||]
+data:text/html,<p>hi => data:text/html,<p>hi [data||0|text/html,<p>hi||]
+mailto:someone@example.com => mailto:someone@example.com [mailto||0|someone@example.com||]
+example.com/no-scheme => not an address
+http:///no-host => not an address
+http://a.test/dir/page.html other.html => http://a.test/dir/other.html
+http://a.test/dir/page.html ../up.html => http://a.test/up.html
+http://a.test/dir/page.html ../../../too/far.html => http://a.test/too/far.html
+http://a.test/dir/page.html /root.html => http://a.test/root.html
+http://a.test/dir/page.html //b.test/x => http://b.test/x
+http://a.test/dir/page.html https://c.test/y?z#w => https://c.test/y?z#w
+http://a.test/dir/page.html ?only=query => http://a.test/dir/page.html?only=query
+http://a.test/dir/page.html?old=1#frag #new => http://a.test/dir/page.html?old=1#new
+http://a.test/dir/page.html?old=1#frag  => http://a.test/dir/page.html?old=1
+http://a.test/dir/ sub/./x/../y.html => http://a.test/dir/sub/y.html
+http://a.test/dir/page.html mailto:x@y.test => mailto:x@y.test
+http://a.test/dir/page.html   spaced.html   => http://a.test/dir/spaced.html
+https://a.test/a/b?x=1 c\d.html => https://a.test/a/c/d.html
+about:home #x => about:home#x

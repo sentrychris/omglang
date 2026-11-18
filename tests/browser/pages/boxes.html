@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<style>
+body { margin: 10px }
+div { box-sizing: content-box }
+#a { height: 20px; margin-bottom: 30px }
+#b { height: 20px; margin-top: 10px; padding: 5px; border: 2px solid black; width: 50% }
+#fl { float: left; width: 100px; height: 60px; margin: 4px }
+#fr { float: right; width: 30%; height: 40px }
+#after { clear: both; height: 10px }
+#rel { position: relative; height: 80px }
+#abs { position: absolute; right: 10px; bottom: 5px; width: 40px; height: 20px }
+#mid { width: 200px; height: 10px; margin: 0 auto }
+#flex { display: flex; height: 50px; gap: 10px }
+#f1 { flex: 1 } #f2 { flex: 2 } #f3 { width: 100px; flex: none }
+#col { display: flex; flex-direction: column; align-items: center; width: 300px }
+#c1 { width: 50px; height: 10px } #c2 { width: 150px; height: 20px }
+#grid { display: grid; grid-template-columns: 100px 1fr 2fr; gap: 6px }
+#grid div { height: 15px }
+#g4 { grid-column: 2 / 4 }
+table { border-collapse: collapse } td { padding: 0 }
+#t1 { width: 120px; height: 20px } #t2 { width: 60px; height: 30px }
+#ib1, #ib2 { display: inline-block; width: 70px; height: 25px; vertical-align: top }
+#mm { min-width: 500px; max-width: 300px; height: 5px }
+#bb { box-sizing: border-box; width: 200px; height: 40px; padding: 10px; border: 5px solid black }
+#none { display: none; height: 999px }
+</style>
+<div id=a></div><div id=b></div>
+<div id=fl></div><div id=fr></div><div id=after></div>
+<div id=rel><div id=abs></div><div id=mid></div></div>
+<div id=flex><div id=f1></div><div id=f2></div><div id=f3></div></div>
+<div id=col><div id=c1></div><div id=c2></div></div>
+<div id=grid><div id=g1></div><div id=g2></div><div id=g3></div><div id=g4></div></div>
+<table><tr><td><div id=t1></div></td><td><div id=t2></div></td></tr></table>
+<div id=line><div id=ib1></div><div id=ib2></div></div>
+<div id=mm></div><div id=bb></div><div id=none></div>
