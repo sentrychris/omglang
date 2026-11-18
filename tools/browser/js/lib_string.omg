@@ -1724,7 +1724,7 @@ proc n_hypot(this, args) {
 }
 
 proc n_fround(this, args) {
-    return num1(args)
+    return X["f32_value"](X["f32_bits"](num1(args)))
 }
 
 proc n_imul(this, args) {

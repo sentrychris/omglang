@@ -196,6 +196,14 @@ proc define_from(o, key, desc) {
     if is_object(desc) == false {
         throw_type("Property description must be an object: " + to_str(desc))
     }
+    if H[o][0] == 30 {
+        alloc px := H[o][3]
+        alloc trap := X["trap_of"](H[o], "defineProperty")
+        if trap == false {
+            return define_from(px[0], key, desc)
+        }
+        return to_bool(call(trap, px[1], [px[0], X["key_value"](key), desc]))
+    }
     alloc existed := has_own(o, key)
     alloc g := get(desc, "get")
     alloc s := get(desc, "set")
@@ -284,6 +292,14 @@ proc n_set_prototype_of(this, args) {
 }
 
 proc descriptor(o, key) {
+    if H[o][0] == 30 {
+        alloc px := H[o][3]
+        alloc trap := X["trap_of"](H[o], "getOwnPropertyDescriptor")
+        if trap == false {
+            return descriptor(px[0], key)
+        }
+        return call(trap, px[1], [px[0], X["key_value"](key)])
+    }
     alloc raw := own_raw(o, key)
     if type_of(raw) == 5 {
         if length(raw) != 2 {
@@ -338,8 +354,27 @@ proc n_get_own_property_names(this, args) {
     return new_array(keys)
 }
 
+# The symbols that are keys of the object's own properties.
+proc own_symbols(o) {
+    alloc out := []
+    alloc p := H[o][2]
+    alloc tomb := (H[o][4] & 1) != 0
+    for k in dict_keys(p) {
+        if length(k) > 2 and k[0] == "@" and k[1] == "@" {
+            alloc sym := X["key_value"](k)
+            if type_of(sym) == 2 {
+                if tomb and type_of(p[k]) == 5 and length(p[k]) == 0 {
+                    continue
+                }
+                append(out, sym)
+            }
+        }
+    }
+    return out
+}
+
 proc n_get_own_property_symbols(this, args) {
-    return new_array([])
+    return new_array(own_symbols(to_object(arg(args, 0))))
 }
 
 proc n_object_is(this, args) {
@@ -398,7 +433,7 @@ proc n_object_to_string(this, args) {
     if type_of(tag) == 4 {
         return "[object " + tag + "]"
     }
-    alloc cls := H[o][0]
+    alloc cls := H[X["unproxy"](o)][0]
     if cls < 16 {
         return "[object " + CLASS_NAMES[cls] + "]"
     }
@@ -587,7 +622,7 @@ proc n_symbol_for(this, args) {
     alloc h := new_obj(7, I[7])
     H[h][3] := ["@@for:" + key, key]
     SYMBOLS[key] := h
-    return h
+    return X["note_symbol"]("@@for:" + key, h)
 }
 
 proc n_symbol_key_for(this, args) {
@@ -652,10 +687,75 @@ proc n_boolean_value_of(this, args) {
     return this_bool(this)
 }
 
+# --- Proxy ------------------------------------------------------------------------------
+
+# A proxy of a function: calling it and `new` go to the handler.
+proc n_proxy_call(this, args) {
+    alloc d := X["native_data"]()
+    alloc nt := new_target()
+    alloc target := d[0]
+    if d[1] == 0 {
+        throw_type("Cannot call a proxy that has been revoked")
+    }
+    if type_of(nt) != 0 {
+        alloc ct := get(d[1], "construct")
+        if is_callable(ct) {
+            return call(ct, d[1], [target, new_array(args), nt])
+        }
+        return construct(target, args, target)
+    }
+    alloc at := get(d[1], "apply")
+    if is_callable(at) {
+        return call(at, d[1], [target, this, new_array(args)])
+    }
+    return call(target, this, args)
+}
+
+# Gives [the proxy, its payload].
+proc make_proxy(target, handler) {
+    if is_object(target) == false or is_object(handler) == false {
+        throw_type("Cannot create proxy with a non-object as target or handler")
+    }
+    alloc x := [target, handler]
+    if is_callable(target) {
+        return [X["new_native_with"](n_proxy_call, func_name(H[target][3]), 0, x), x]
+    }
+    alloc h := new_obj(30, H[target][1])
+    H[h][3] := x
+    return [h, x]
+}
+
+proc n_proxy(this, args) {
+    if type_of(new_target()) == 0 {
+        throw_type("Constructor Proxy requires 'new'")
+    }
+    return make_proxy(arg(args, 0), arg(args, 1))[0]
+}
+
+proc n_proxy_revoke(this, args) {
+    alloc x := X["native_data"]()
+    x[1] := 0
+    return U
+}
+
+proc n_proxy_revocable(this, args) {
+    alloc made := make_proxy(arg(args, 0), arg(args, 1))
+    alloc out := new_object()
+    define(out, "proxy", made[0])
+    define(out, "revoke", X["new_native_with"](n_proxy_revoke, "", 0, made[1]))
+    return out
+}
+
 # --- Reflect ----------------------------------------------------------------------------
 
 proc n_reflect_own_keys(this, args) {
-    return new_array(own_keys(to_object(arg(args, 0)), true))
+    alloc o := to_object(arg(args, 0))
+    alloc keys := own_keys(o, true)
+    alloc cls := H[o][0]
+    if cls == 1 or cls == 6 {
+        append(keys, "length")
+    }
+    return new_array(keys + own_symbols(o))
 }
 
 proc n_reflect_has(this, args) {
@@ -969,9 +1069,16 @@ proc ser(holder, key, v, indent) {
     }
     alloc out := ""
     alloc first := true
-    if cls == 1 {
-        alloc items := H[v][3]
-        alloc n := H[v][6]
+    if cls == 1 or (cls == 30 and H[X["unproxy"](v)][0] == 1) {
+        alloc items := []
+        alloc n := 0
+        if cls == 30 {
+            items := array_like_list(v)
+            n := length(items)
+        } else {
+            items := H[v][3]
+            n := H[v][6]
+        }
         alloc i := 0
         alloc parts := []
         loop i < n {
@@ -1404,6 +1511,7 @@ proc inspect(v, depth, top) {
         }
         return to_str(v)
     }
+    v := X["unproxy"](v)
     alloc cls := H[v][0]
     if cls == 7 {
         return "Symbol(" + H[v][3][1] + ")"
@@ -1512,7 +1620,7 @@ proc format_args(args) {
 proc well_known(name) {
     alloc h := new_obj(7, I[7])
     H[h][3] := ["@@" + name, "Symbol." + name]
-    return h
+    return X["note_symbol"]("@@" + name, h)
 }
 
 proc error_type(name, fn, which) {
@@ -1603,6 +1711,10 @@ proc setup() {
     def_ctor("Boolean", n_boolean, 1, bp)
     def(bp, "toString", n_boolean_to_string, 0)
     def(bp, "valueOf", n_boolean_value_of, 0)
+
+    alloc px := new_native(n_proxy, "Proxy", 2)
+    define_hidden(g, "Proxy", px)
+    def(px, "revocable", n_proxy_revocable, 2)
 
     alloc r := new_object()
     define_hidden(g, "Reflect", r)
