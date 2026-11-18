@@ -15,7 +15,7 @@ var g = /a/gi; L(g.source, g.flags, g.global, g.ignoreCase, g.multiline, g.stick
 var st = /foo/y; L(st.test("foofoo"), st.lastIndex, st.test("foofoo"), st.lastIndex, st.test("foofoo"), st.lastIndex);
 try { new RegExp("(") } catch (e) { L(e.name) } try { new RegExp("a", "q") } catch (e) { L(e.name) } try { new RegExp("[b-a]") } catch (e) { L(e.name) }
 L("aBc".replace(/b/i, "x"), /[a-z]+/i.exec("HeLLo")[0], /é/i.test("É"), /é/.test("é"), "ß".toUpperCase(), /[α-ω]+/.exec("xαβγy")[0]);
-L("a-b_c".replace(/[-_](\w)/g, function (_, c) { return c.toUpperCase() }), "  trim  ".replace(/^\s+|\s+$/g, ""), "a.b.c".replace(/\./g, "\\."), "x".replace(/x/, "$0$1"), "abc".replace(/(b)/, "$1$1$2"), "aaa".replaceAll("a", "$&$&"), "aaa".replaceAll(/a/g, "b"));
+L("a-b_c".replace(/[-_](\w)/g, function (_, c) { return c.toUpperCase() }), "  trim  ".replace(/^\s+|\s+$/g, ""), "a.b.c".replace(/\./g, "\\"), "x".replace(/x/, "$0$1"), "abc".replace(/(b)/, "$1$1$2"), "aaa".replaceAll("a", "$&$&"), "aaa".replaceAll(/a/g, "b"));
 L(/^(?:(?:25[0-5]|2[0-4]\d|1?\d?\d)\.){3}(?:25[0-5]|2[0-4]\d|1?\d?\d)$/.test("192.168.1.255"), /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec("#FFaa00").slice(1), /^\s*([+-]?\d*\.?\d+)(px|em|%)?\s*$/.exec(" -1.5em ").slice(1));
 L(/(a*)*b/.test("aaaaaaaaaaaaaaaac"), /(?:a|b)*c/.exec("ababc")[0], /(a+)+$/.test("aaaaaaaaaaaaaaaaaaab") , /x*/.exec("abc"), "abc".replace(/x*/g, "-"), "abc".match(/x*/g), /()|/.exec("a"));
 L(/[\b]/.test("\b"), /\cJ/.test("\n"), /\0/.test("\0"), /[\0-\x1f]/.test("\n"), /a|/.exec("b")[0], /\//.source, /[/]/.test("/"), RegExp.prototype.toString.call(/a/g), /a/ instanceof RegExp, typeof /a/);
