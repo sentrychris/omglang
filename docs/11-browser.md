@@ -523,7 +523,7 @@ not check it again.
 
 `tests/browser.sh` (run by `tests/run.sh browser`) builds
 `tests/browser/check.omg`, a program that exposes each part on the
-command line, and asks 76 things of it, of the browser and of the
+command line, and asks 77 things of it, of the browser and of the
 JavaScript engine. Nothing in it needs the network or a screen.
 
 - **Ciphers and hashes**: 101 vectors in `tests/browser/vectors.txt`,
@@ -561,7 +561,7 @@ JavaScript engine. Nothing in it needs the network or a screen.
   Servers that offer only TLS 1.1, only RSA key exchange, or a
   certificate nobody vouches for must be refused. Skipped where
   `openssl` is not installed.
-- **The JavaScript engine**: twelve scripts in `tests/browser/js/`,
+- **The JavaScript engine**: thirteen scripts in `tests/browser/js/`,
   run by `js/run.omg`. What each
   must print is what Node prints for the same file, byte for byte.
   One of them, `differences.js`, is the other way round: it holds
@@ -594,6 +594,10 @@ is under [What has been run](#what-has-been-run).
   units, and dates are in UTC. A proxy of a function traps calls and
   `new` only. `eval` runs its text at the top level and does not see
   the variables of the function that calls it.
+- **Built through C** (`--target c`, and macOS, where that is how
+  `omg --build` works): a string of a script cannot hold the character
+  with code 0, because a string of the C runtime cannot
+  ([06-runtime.md](06-runtime.md#what-about-strings)).
 - **For scripts in a page**: no canvas, WebSocket, workers, service
   workers or IndexedDB. A `MutationObserver` is never told anything,
   and custom elements are noted but not made. Scripts run when the
