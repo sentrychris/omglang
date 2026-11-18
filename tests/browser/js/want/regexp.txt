@@ -16,7 +16,7 @@ SyntaxError
 SyntaxError
 SyntaxError
 axc | HeLLo | true | true | SS | αβγ
-aBC | trim | a\.b\.c | $0$1 | abb$2c | aaaaaa | bbb
+aBC | trim | a\b\c | $0$1 | abb$2c | aaaaaa | bbb
 true | ["FF","aa","00"] | ["-1.5","em"]
 false | ababc | false | [""] | -a-b-c- | ["","","",""] | ["",""]
 true | true | true | true |  | \/ | true | /a/g | true | object
