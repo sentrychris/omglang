@@ -2384,7 +2384,7 @@ proc main() {
         return 1
     }
     JS_HOST := js_host()
-    if shot != "" {
+    if shot != "" or dump {
         headless := true
         if page_only {
             BAR := 0
@@ -2411,10 +2411,12 @@ proc main() {
         if dump {
             emit html.outer_html(doc)
         }
-        sy := shot_scroll
-        clamp_scroll()
-        redraw()
-        gfx.save_png(shot)
+        if shot != "" {
+            sy := shot_scroll
+            clamp_scroll()
+            redraw()
+            gfx.save_png(shot)
+        }
         net.close_all()
         return 0
     }

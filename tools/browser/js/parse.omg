@@ -85,6 +85,7 @@ alloc S_SWITCH := 65           # value, cases, each [test or false, statements],
 alloc S_BLOCK := 66            # statements, fn?
 alloc S_LABEL := 67            # name, statement
 alloc S_EMPTY := 68
+alloc S_WITH := 69             # object, body
 
 # Flags of a function.
 alloc F_ARROW := 1
@@ -1993,7 +1994,9 @@ proc statement1() {
             reset(m0)
         }
         if k == "with" {
-            fail("with is not supported")
+            next()
+            alloc wo := paren_expr()
+            return [S_WITH, wo, statement()]
         }
     } elif tk == T_ID {
         alloc w := tv
