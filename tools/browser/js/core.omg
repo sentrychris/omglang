@@ -175,11 +175,17 @@ alloc CALL_DEPTH := 0
 alloc HOST_GET := false        # proc(handle, object, key) -> value or MISS
 alloc HOST_SET := false        # proc(handle, object, key, value) -> handled?
 alloc HOST_KEYS := false       # proc(handle, object) -> list of keys
+alloc HOST_DELETE := false     # proc(handle, object, key) -> handled?
 alloc PROMISE_NEW := false     # proc() -> promise
 alloc PROMISE_SETTLE := false  # proc(promise, ok?, value)
 alloc PROMISE_AWAIT := false   # proc(value, coroutine)
 alloc REGEX_NEW := false       # proc(pattern, flags) -> object
 alloc COMPILE := false         # proc(source bytes, name) -> template
+
+proc set_host_delete(d) {
+    HOST_DELETE := d
+    return true
+}
 
 proc set_host_hooks(g, s, k) {
     HOST_GET := g
@@ -1005,7 +1011,7 @@ proc func_name(x) {
     if kind == 1 {
         return x[2]
     }
-    return "bound"
+    return "bound " + func_name(H[x[1]][3])
 }
 
 # The properties a function has without anybody having set them.
@@ -1498,6 +1504,9 @@ proc delete_prop(h, k) {
     }
     if (o[4] & 2) != 0 {
         return false
+    }
+    if o[0] >= 32 and HOST_DELETE != false and HOST_DELETE(h, o, k) {
+        return true
     }
     if has_key(p, k) {
         alloc n := length(p)
@@ -4735,7 +4744,7 @@ proc exports() {
     return {
         H: H, I: I,
         heap: heap, arg: arg, new_obj: new_obj, intrinsics: intrinsics,
-        set_host_hooks: set_host_hooks, set_promise_hooks: set_promise_hooks,
+        set_host_hooks: set_host_hooks, set_host_delete: set_host_delete, set_promise_hooks: set_promise_hooks,
         set_regex_hook: set_regex_hook, set_compile_hook: set_compile_hook,
         new_target: new_target, native_fn: native_fn, nan: nan, inf: inf, is_obj: is_obj,
         is_nullish: is_nullish, is_callable: is_callable, is_array: is_array,

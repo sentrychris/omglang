@@ -367,7 +367,10 @@ proc exchange(c, p, method, body, ctype, referer) {
         head := head + "Referer: " + referer + "\r\n"
     }
     if body != false {
-        head := head + "Content-Type: " + ctype + "\r\nContent-Length: " + length(body) + "\r\n"
+        if ctype != "" {
+            head := head + "Content-Type: " + ctype + "\r\n"
+        }
+        head := head + "Content-Length: " + length(body) + "\r\n"
     }
     head := head + "\r\n"
     alloc out := string_bytes(head)

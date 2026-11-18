@@ -28,6 +28,7 @@
 import "js/core.omg" as c
 import "js/engine.omg" as js
 import "js/lib_promise.omg" as promise
+import "js/lib_typed.omg" as typed
 import "html.omg" as html
 import "css.omg" as css
 import "url.omg" as url
@@ -203,10 +204,21 @@ proc n_prop_set(this, args) {
     return U
 }
 
+# `delete object.key` on one of ours. True when it was dealt with here.
+proc host_delete(h, o, k) {
+    if o[0] == C_DATASET and is_symbol_name(k) == false {
+        return dataset_delete(o, k)
+    }
+    return false
+}
+
 proc host_set(h, o, k, v) {
     alloc cls := o[0]
     if cls == 32 {
         alloc node := NODES[o[3]]
+        if type_of(v) == 2 and v != 0 and length(k) > 2 and k[0] == "o" and k[1] == "n" {
+            note_handler(o[3], k[2:])
+        }
         if has_key(NODE_S, k) {
             NODE_S[k](h, node, v)
             return true
@@ -602,6 +614,9 @@ proc set_text_content(node, s) {
         insert_before(node, new_text(s), false)
     }
     if node.t == 1 and node.tag == "style" {
+        if has_key(node, "rules") {
+            node.rules := []
+        }
         SHEETS := true
     }
     return true
@@ -1434,7 +1449,49 @@ proc g_elements(h, node) {
     if node.tag != "form" {
         return MISS
     }
-    return wrap_list(controls_in(node, []))
+    alloc ctls := controls_in(node, [])
+    alloc list := wrap_list(ctls)
+    # form.elements.name: the control of that name, or all of them
+    # (radio buttons share one) as a list that has a value
+    alloc named := {}
+    alloc order := []
+    for ctl in ctls {
+        for key in [attr_or(ctl, "name", ""), attr_or(ctl, "id", "")] {
+            if key != "" and X["index_of_key"](key) < 0 and key != "length" {
+                if has_key(named, key) == false {
+                    named[key] := []
+                    append(order, key)
+                }
+                alloc seen := false
+                for have in named[key] {
+                    if have.nid == ctl.nid {
+                        seen := true
+                    }
+                }
+                if seen == false {
+                    append(named[key], ctl)
+                }
+            }
+        }
+    }
+    for key2 in order {
+        alloc group := named[key2]
+        if length(group) == 1 {
+            define_hidden(list, key2, wrap(group[0]))
+        } else {
+            alloc gl := wrap_list(group)
+            alloc value := ""
+            for g in group {
+                if g.tag == "input" and is_checked(g) {
+                    value := control_value(g)
+                    break
+                }
+            }
+            define_hidden(gl, "value", value)
+            define_hidden(list, key2, gl)
+        }
+    }
+    return list
 }
 
 proc g_length(h, node) {
@@ -1643,25 +1700,67 @@ proc g_offset_top(h, node) {
     return float(round(rect_of(node)[1]))
 }
 
+# Is the element, or something it sits in, taken out with display: none?
+proc not_shown(node) {
+    if is_connected(node) == false {
+        return true
+    }
+    computed_value(node, "display")
+    alloc at := node
+    loop at != false and at.t == 1 {
+        if has_key(at, "style") == false or css.computed_text(at.style, "display") == "none" {
+            return true
+        }
+        at := parent_of(at)
+    }
+    return false
+}
+
 proc g_offset_parent(h, node) {
-    if node.tag == "body" or node.tag == "html" {
+    if node.tag == "body" or node.tag == "html" or not_shown(node) {
+        return 0
+    }
+    if css.computed_text(node.style, "position") == "fixed" {
         return 0
     }
     return wrap(DOC.body)
+}
+
+# The widths of two borders, in pixels: client sizes leave them out.
+proc borders(node, a, b) {
+    if has_key(node, "style") == false {
+        return 0.0
+    }
+    alloc total := 0.0
+    for side in [a, b] {
+        alloc text := css.computed_text(node.style, "border-" + side + "-width")
+        if u.ends_with(text, "px") {
+            total := total + u.to_number(text[0:length(text) - 2], 0) * 1.0
+        }
+    }
+    return total
 }
 
 proc g_client_width(h, node) {
     if node.tag == "html" or node.tag == "body" {
         return float(view()[0])
     }
-    return float(round(rect_of(node)[2]))
+    alloc w := rect_of(node)[2] * 1.0
+    if w <= 0.0 {
+        return 0.0
+    }
+    return float(round(w - borders(node, "left", "right")))
 }
 
 proc g_client_height(h, node) {
     if node.tag == "html" {
         return float(view()[1])
     }
-    return float(round(rect_of(node)[3]))
+    alloc ht := rect_of(node)[3] * 1.0
+    if ht <= 0.0 {
+        return 0.0
+    }
+    return float(round(ht - borders(node, "top", "bottom")))
 }
 
 proc g_zero(h, node) {
@@ -2008,7 +2107,47 @@ proc style_value(node, name) {
     return found
 }
 
+# "#fff" as browsers give it back: "rgb(255, 255, 255)". Anything
+# that is not a colour in hex comes back as it is.
+proc plain_color(value) {
+    alloc n := length(value)
+    if n < 4 or value[0] != "#" or (n != 4 and n != 5 and n != 7 and n != 9) {
+        return value
+    }
+    alloc digits := []
+    alloc i := 1
+    loop i < n {
+        alloc c := ascii(u.lower(value[i]))
+        if c >= 48 and c <= 57 {
+            append(digits, c - 48)
+        } elif c >= 97 and c <= 102 {
+            append(digits, c - 87)
+        } else {
+            return value
+        }
+        i := i + 1
+    }
+    alloc parts := []
+    if n <= 5 {
+        for d in digits {
+            append(parts, d * 17)
+        }
+    } else {
+        i := 0
+        loop i < length(digits) {
+            append(parts, digits[i] * 16 + digits[i + 1])
+            i := i + 2
+        }
+    }
+    alloc rgb := "" + parts[0] + ", " + parts[1] + ", " + parts[2]
+    if length(parts) == 4 and parts[3] != 255 {
+        return "rgba(" + rgb + ", " + css.number_text(round(parts[3] * 1000.0 / 255.0) / 1000.0) + ")"
+    }
+    return "rgb(" + rgb + ")"
+}
+
 proc style_put(node, name, value) {
+    value := plain_color(value)
     alloc decls := style_decls(attr_or(node, "style", ""))
     alloc out := []
     alloc done := false
@@ -2189,6 +2328,11 @@ proc dataset_get(h, id, k) {
 
 proc dataset_set(h, id, k, v) {
     set_attr(NODES[id], "data-" + css_name(k), to_str(v))
+    return true
+}
+
+proc dataset_delete(o, k) {
+    remove_attr(NODES[o[3]], "data-" + css_name(k))
     return true
 }
 
@@ -2784,7 +2928,7 @@ proc find_id(node, id) {
 proc n_get_element_by_id(this, args) {
     alloc node := node_of(this, "getElementById")
     alloc id := to_str(arg(args, 0))
-    if node.t == 9 {
+    if node.t == 9 and node.nid == DOC_NID {
         return wrap(by_id(id))
     }
     if node.t == 3 or node.t == 8 {
@@ -2913,24 +3057,99 @@ proc n_empty_array(this, args) {
     return new_array([])
 }
 
+# Can the element be the one that keys go to?
+proc focusable(node) {
+    if node.t != 1 or has_key(node.attrs, "disabled") or is_connected(node) == false {
+        return false
+    }
+    alloc tag := node.tag
+    if tag == "input" {
+        return u.lower(attr_or(node, "type", "")) != "hidden"
+    }
+    if tag == "select" or tag == "textarea" or tag == "button" {
+        return true
+    }
+    if (tag == "a" or tag == "area") and has_key(node.attrs, "href") {
+        return true
+    }
+    return has_key(node.attrs, "tabindex") or has_key(node.attrs, "contenteditable")
+}
+
+# A script moves the focus (to nothing, with false): the page is
+# told here, and the browser only shows it.
+proc move_focus(node) {
+    alloc old := FOCUS
+    if old == false and node == false {
+        return false
+    }
+    if old != false and node != false and old.nid == node.nid {
+        return false
+    }
+    FOCUS := node
+    if old != false {
+        fire(old.nid, "blur", false, false, {}, "FocusEvent")
+        fire(old.nid, "focusout", true, false, {}, "FocusEvent")
+    }
+    if node != false and FOCUS != false and FOCUS.nid == node.nid {
+        fire(node.nid, "focus", false, false, {}, "FocusEvent")
+        fire(node.nid, "focusin", true, false, {}, "FocusEvent")
+    }
+    if has_key(HOST, "focus") {
+        HOST["focus"](FOCUS)
+    }
+    return true
+}
+
 proc n_focus(this, args) {
     alloc node := node_of(this, "focus")
-    if has_key(HOST, "focus") {
-        HOST["focus"](node)
+    if focusable(node) {
+        move_focus(node)
     }
     return U
 }
 
 proc n_blur(this, args) {
-    node_of(this, "blur")
-    if has_key(HOST, "focus") {
-        HOST["focus"](false)
+    alloc node := node_of(this, "blur")
+    if FOCUS != false and FOCUS.nid == node.nid {
+        move_focus(false)
     }
     return U
 }
 
 proc n_click(this, args) {
     alloc node := node_of(this, "click")
+    alloc kind := ""
+    if node.t == 1 and node.tag == "input" and has_key(node.attrs, "disabled") == false {
+        kind := u.lower(attr_or(node, "type", ""))
+    }
+    if kind == "checkbox" or kind == "radio" {
+        # a box is ticked before its click is told, and unticked
+        # again if a listener says no
+        alloc was := []
+        alloc scope := form_of(node)
+        if scope == false {
+            scope := DOC
+        }
+        for other in controls_in(scope, []) {
+            if other.tag == "input" and (other.nid == node.nid or (kind == "radio" and u.lower(attr_or(other, "type", "")) == "radio" and attr_or(other, "name", "") == attr_or(node, "name", ""))) {
+                append(was, [other, is_checked(other)])
+            }
+        }
+        alloc before := is_checked(node)
+        s_checked(this, node, kind == "radio" or before == false)
+        if fire(node.nid, "click", true, true, {button: 0.0, clientX: 0.0, clientY: 0.0, detail: 1.0}, "MouseEvent") {
+            if is_checked(node) != before {
+                fire(node.nid, "input", true, false, {}, "Event")
+                fire(node.nid, "change", true, false, {}, "Event")
+            }
+        } else {
+            for pair in was {
+                pair[0].checked := pair[1]
+            }
+            DIRTY := true
+        }
+        return U
+    }
     if fire(node.nid, "click", true, true, {button: 0.0, clientX: 0.0, clientY: 0.0, detail: 1.0}, "MouseEvent") {
         if has_key(HOST, "activate") {
             HOST["activate"](node)
@@ -3109,6 +3328,9 @@ proc n_node_to_string(this, args) {
         alloc node := NODES[H[this][3]]
         if node.t == 1 and (node.tag == "a" or node.tag == "area") {
             return reflect_get(node, REFLECT["href"])
+        }
+        if node.t == 9 {
+            return "[object HTMLDocument]"
         }
         return "[object " + to_str(get(get(this, "constructor"), "name")) + "]"
     }
@@ -3645,6 +3867,34 @@ proc call_listener(fn, target, ev) {
     return U
 }
 
+# el.onclick = f takes its turn among the listeners where it was
+# first set: a mark (-1 in place of a function) is left in the list.
+# A handler with no mark (one written in the HTML) goes first.
+proc note_handler(id, name) {
+    if LIS[id] == false {
+        LIS[id] := {}
+    }
+    alloc d := LIS[id]
+    if has_key(d, name) == false {
+        d[name] := []
+    }
+    for l in d[name] {
+        if l[0] == -1 {
+            return true
+        }
+    }
+    append(d[name], [-1, false, false, true])
+    return true
+}
+
+proc run_handler(handler, target, ev, x) {
+    alloc r := call_listener(handler, target, ev)
+    if type_of(r) == 1 and r == false and x[2] {
+        x[3] := true
+    }
+    return true
+}
+
 proc run_listeners(id, ev, x, phase) {
     alloc d := LIS[id]
     alloc name := x[0]
@@ -3659,11 +3909,16 @@ proc run_listeners(id, ev, x, phase) {
     alloc target := target_object(id)
     x[6] := target
     x[7] := phase
-    if handler != 0 {
-        alloc r := call_listener(handler, target, ev)
-        if type_of(r) == 1 and r == false and x[2] {
-            x[3] := true
+    alloc placed := false
+    if listed {
+        for l0 in d[name] {
+            if l0[0] == -1 {
+                placed := true
+            }
         }
+    }
+    if handler != 0 and placed == false {
+        run_handler(handler, target, ev, x)
         if x[4] == 2 {
             return true
         }
@@ -3676,6 +3931,15 @@ proc run_listeners(id, ev, x, phase) {
             alloc l := list[i]
             i := i + 1
             if l[3] == false {
+                continue
+            }
+            if l[0] == -1 {
+                if handler != 0 {
+                    run_handler(handler, target, ev, x)
+                    if x[4] == 2 {
+                        break
+                    }
+                }
                 continue
             }
             if (phase == 1 and l[1] == false) or (phase == 3 and l[1]) {
@@ -3772,11 +4036,11 @@ proc g_body(h, node) {
     return wrap(node.body)
 }
 
-proc title_node() {
-    if type_of(DOC.head) != 6 {
+proc title_node(doc) {
+    if has_key(doc, "head") == false or type_of(doc.head) != 6 {
         return false
     }
-    for k in DOC.head.kids {
+    for k in doc.head.kids {
         if k.t == 1 and k.tag == "title" {
             return k
         }
@@ -3785,7 +4049,7 @@ proc title_node() {
 }
 
 proc g_title(h, node) {
-    alloc t := title_node()
+    alloc t := title_node(node)
     if t == false {
         return ""
     }
@@ -3793,16 +4057,16 @@ proc g_title(h, node) {
 }
 
 proc s_title(h, node, v) {
-    alloc t := title_node()
+    alloc t := title_node(node)
     if t == false {
-        if type_of(DOC.head) != 6 {
+        if has_key(node, "head") == false or type_of(node.head) != 6 {
             return true
         }
         t := new_element("title")
-        insert_before(DOC.head, t, false)
+        insert_before(node.head, t, false)
     }
     set_text_content(t, to_str(v))
-    if has_key(HOST, "title") {
+    if node.nid == DOC.nid and has_key(HOST, "title") {
         HOST["title"](to_str(v))
     }
 }
@@ -3952,6 +4216,17 @@ proc sheet_node(this) {
         node.rules := []
     }
     return node
+}
+
+proc g_method(h, node) {
+    if node.tag != "form" {
+        return MISS
+    }
+    alloc m := u.lower(attr_or(node, "method", ""))
+    if m == "post" or m == "dialog" {
+        return m
+    }
+    return "get"
 }
 
 proc g_sheet(h, node) {
@@ -5183,7 +5458,9 @@ proc new_headers(d) {
     return h
 }
 
-proc new_response(text, status, where, headers) {
+# `bytes` is the body as it came, or false when the text is all
+# there is (then the bytes are the text's, when a script asks).
+proc new_response(text, bytes, status, where, headers) {
     alloc o := new_obj(0, P["Response"])
     put(o, "status", status * 1.0)
     put(o, "ok", status >= 200 and status < 300)
@@ -5194,7 +5471,143 @@ proc new_response(text, status, where, headers) {
     put(o, "bodyUsed", false)
     put(o, "headers", headers)
     define_hidden(o, "@@body", text)
+    if type_of(bytes) == 5 {
+        define_hidden(o, "@@bytes", typed.new_buffer(bytes))
+    }
     return o
+}
+
+# The body of a response as a new byte list.
+proc response_bytes(this) {
+    alloc text := response_body(this)
+    if has_own(this, "@@bytes") {
+        return typed.bytes_of(get(this, "@@bytes"))
+    }
+    return string_bytes(text)
+}
+
+# The bytes a script gives as text, a buffer, a typed array or a
+# Blob; false for anything else.
+proc bytes_from(v) {
+    if type_of(v) == 4 {
+        return string_bytes(v)
+    }
+    if type_of(v) == 2 and v != 0 {
+        if has_own(v, "@@blob") {
+            return typed.bytes_of(get(v, "@@blob"))
+        }
+        alloc b := typed.bytes_of(v)
+        if type_of(b) == 5 {
+            return b
+        }
+    }
+    return false
+}
+
+# --- Blob: some bytes and what kind of thing they are
+
+proc new_blob(bytes, kind) {
+    alloc o := new_obj(0, P["Blob"])
+    define_hidden(o, "size", length(bytes) * 1.0)
+    define_hidden(o, "type", kind)
+    define_hidden(o, "@@blob", typed.new_buffer(bytes))
+    return o
+}
+
+proc blob_bytes(this) {
+    if type_of(this) != 2 or this == 0 or has_own(this, "@@blob") == false {
+        throw_type("Illegal invocation")
+    }
+    return typed.bytes_of(get(this, "@@blob"))
+}
+
+proc n_blob_ctor(this, args) {
+    if type_of(new_target()) == 0 {
+        throw_type("Failed to construct 'Blob': Please use the 'new' operator.")
+    }
+    alloc all := bytes_repeat(0, 0)
+    alloc parts := arg(args, 0)
+    if type_of(parts) == 2 and parts != 0 {
+        for part in X["array_like_list"](parts) {
+            alloc pb := bytes_from(part)
+            if type_of(pb) != 5 {
+                pb := string_bytes(to_str(part))
+            }
+            all := all + pb
+        }
+    }
+    alloc kind := ""
+    alloc init := arg(args, 1)
+    if type_of(init) == 2 and init != 0 and type_of(get(init, "type")) != 0 {
+        kind := u.lower(to_str(get(init, "type")))
+    }
+    return new_blob(all, kind)
+}
+
+proc n_blob_text(this, args) {
+    return promise.to_promise(bytes_to_string(html.to_utf8(blob_bytes(this), "utf-8")))
+}
+
+proc n_blob_array_buffer(this, args) {
+    return promise.to_promise(typed.new_buffer(blob_bytes(this)))
+}
+
+proc n_blob_slice(this, args) {
+    alloc b := blob_bytes(this)
+    alloc n := length(b)
+    alloc from := 0
+    alloc to := n
+    if type_of(arg(args, 0)) != 0 {
+        from := int(to_integer(args[0]))
+    }
+    if type_of(arg(args, 1)) != 0 {
+        to := int(to_integer(args[1]))
+    }
+    if from < 0 {
+        from := from + n
+    }
+    if to < 0 {
+        to := to + n
+    }
+    if from < 0 {
+        from := 0
+    }
+    if from > n {
+        from := n
+    }
+    if to > n {
+        to := n
+    }
+    if to < from {
+        to := from
+    }
+    alloc kind := ""
+    if type_of(arg(args, 2)) != 0 {
+        kind := u.lower(to_str(args[2]))
+    }
+    return new_blob(b[from:to], kind)
+}
+
+proc n_response_array_buffer(this, args) {
+    return promise.to_promise(typed.new_buffer(response_bytes(this)))
+}
+
+proc n_response_bytes(this, args) {
+    return promise.to_promise(typed.bytes_typed(response_bytes(this)))
+}
+
+proc n_response_blob(this, args) {
+    alloc b := response_bytes(this)
+    alloc kind := ""
+    alloc hs := get(this, "headers")
+    if type_of(hs) == 2 and hs != 0 and H[hs][0] == C_PARAMS {
+        for pair in H[hs][3][0] {
+            if u.lower(pair[0]) == "content-type" {
+                kind := u.lower(pair[1])
+            }
+        }
+    }
+    return promise.to_promise(new_blob(b, kind))
 }
 
 proc response_body(this) {
@@ -5223,7 +5636,13 @@ proc n_response_json(this, args) {
 
 proc n_response_clone(this, args) {
     alloc text := get(this, "@@body")
-    return new_response(text, int(to_num(get(this, "status"))), to_str(get(this, "url")), get(this, "headers"))
+    alloc bytes := false
+    if has_own(this, "@@bytes") {
+        bytes := typed.bytes_of(get(this, "@@bytes"))
+    }
+    alloc copy := new_response(text, bytes, int(to_num(get(this, "status"))), to_str(get(this, "url")), get(this, "headers"))
+    put(copy, "redirected", get(this, "redirected"))
+    return copy
 }
 
 proc n_response_unsupported(this, args) {
@@ -5234,8 +5653,15 @@ proc n_response_unsupported(this, args) {
 
 proc n_response_ctor(this, args) {
     alloc text := ""
+    alloc given := false
     if length(args) > 0 and is_nullish(args[0]) == false {
-        text := to_str(args[0])
+        given := bytes_from(args[0])
+        if type_of(given) == 5 and type_of(args[0]) != 4 {
+            text := bytes_to_string(html.to_utf8(given, "utf-8"))
+        } else {
+            given := false
+            text := to_str(args[0])
+        }
     }
     alloc status := 200
     alloc headers := new_headers({})
@@ -5246,7 +5672,7 @@ proc n_response_ctor(this, args) {
         }
         H[headers][3][0] := pairs_from(get(init, "headers"), H[headers][3])
     }
-    return new_response(text, status, "", headers)
+    return new_response(text, given, status, "", headers)
 }
 
 # What a script may give as the body of a request, as text, and the
@@ -5260,6 +5686,14 @@ proc request_body(v) {
     }
     if type_of(v) == 4 {
         return [v, "text/plain;charset=UTF-8"]
+    }
+    # bytes go as they are; a Blob says what kind they are
+    alloc raw := bytes_from(v)
+    if type_of(raw) == 5 {
+        if has_own(v, "@@blob") {
+            return [raw, to_str(get(v, "type"))]
+        }
+        return [raw, ""]
     }
     return [to_str(v), "text/plain;charset=UTF-8"]
 }
@@ -5310,7 +5744,7 @@ proc n_fetch(this, args) {
         promise.settle(p, false, make_error(9, "Failed to parse URL from " + where))
         return p
     }
-    if body[0] != false and body[1] != "" and has_header(headers, "content-type") == false {
+    if type_of(body[0]) != 1 and body[1] != "" and has_header(headers, "content-type") == false {
         append(headers, ["content-type", body[1]])
     }
     append(TASKS, [1, p, target, method, headers, body[0]])
@@ -5323,7 +5757,9 @@ proc run_fetch(task) {
         promise.settle(task[1], false, make_error(9, "Failed to fetch (" + r.error + ")"))
         return true
     }
-    promise.settle(task[1], true, new_response(body_text(r), r.status, r.url, new_headers(r.headers)))
+    alloc res := new_response(body_text(r), r.body, r.status, r.url, new_headers(r.headers))
+    put(res, "redirected", u.split(r.url, "#")[0] != u.split(task[2], "#")[0])
+    promise.settle(task[1], true, res)
     return true
 }
 
@@ -5445,7 +5881,7 @@ proc n_xhr_send(this, args) {
         dom_error("InvalidStateError", "Failed to execute 'send' on 'XMLHttpRequest': The object's state must be OPENED.")
     }
     alloc body := request_body(arg(args, 0))
-    if body[0] != false and body[1] != "" and has_header(x[4], "content-type") == false {
+    if type_of(body[0]) != 1 and body[1] != "" and has_header(x[4], "content-type") == false {
         append(x[4], ["content-type", body[1]])
     }
     x[11] := true
@@ -6031,6 +6467,7 @@ proc setup() {
         i := i + 1
     }
     c.set_host_hooks(host_get, host_set, host_keys)
+    c.set_host_delete(host_delete)
     alloc g := I[0]
     alloc object_proto := I[1]
 
@@ -6208,7 +6645,7 @@ proc setup() {
              naturalHeight: g_natural_height, complete: g_complete, width: g_width,
              height: g_height, content: g_content_template, namespaceURI: g_namespace,
              shadowRoot: g_null, isContentEditable: g_false, contentEditable: g_content_editable,
-             sheet: g_sheet, assignedSlot: g_null}
+             sheet: g_sheet, assignedSlot: g_null, method: g_method}
     EL_S := {id: s_id, className: s_class_name, classList: s_class_list, innerHTML: s_inner_html,
              outerHTML: s_outer_html, innerText: s_inner_text, hidden: s_hidden, style: s_style,
              tabIndex: s_tab_index, value: s_value, checked: s_checked, selected: s_selected,
@@ -6392,8 +6829,13 @@ proc setup() {
     def(rp, "text", n_response_text, 0)
     def(rp, "json", n_response_json, 0)
     def(rp, "clone", n_response_clone, 0)
-    def(rp, "arrayBuffer", n_response_unsupported, 0)
-    def(rp, "blob", n_response_unsupported, 0)
+    def(rp, "arrayBuffer", n_response_array_buffer, 0)
+    def(rp, "bytes", n_response_bytes, 0)
+    def(rp, "blob", n_response_blob, 0)
+    alloc bp := iface_with("Blob", object_proto, n_blob_ctor, 0, 0)
+    def(bp, "text", n_blob_text, 0)
+    def(bp, "arrayBuffer", n_blob_array_buffer, 0)
+    def(bp, "slice", n_blob_slice, 0)
     def(rp, "formData", n_response_unsupported, 0)
     iface_with("Request", object_proto, n_request_ctor, 1, 0)
     def(g, "fetch", n_fetch, 1)
