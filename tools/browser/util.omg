@@ -388,7 +388,14 @@ proc to_number(s, otherwise) {
 
 # Is v a string? (The language has no way to ask; this is the trick.)
 proc is_str(v) {
-    return v[0:0] == ""
+    alloc yes := false
+    try {
+        yes := v[0:0] == ""
+    } except e {
+        # a number, a dict: nothing that can be cut is no string
+        return false
+    }
+    return yes
 }
 
 # All the bytes of a file, or false.

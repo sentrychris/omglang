@@ -296,9 +296,11 @@ proc redraw() {
     }
     paint.set_caret(paint_caret())
     paint.draw(0, BAR, view_w(), view_h(), sx, sy)
-    draw_scrollbar()
-    draw_bar()
-    draw_status()
+    if BAR > 0 {
+        draw_scrollbar()
+        draw_bar()
+        draw_status()
+    }
     draw_popup()
     if win != false {
         window_draw(win, gfx.pixels(), W)
