@@ -1,0 +1,6335 @@
+;;;omg
+
+# tools/browser/dom.omg
+#
+# The page as scripts see it: document, elements, text, events.
+#
+# The tree is the one html.omg made, and layout reads the same one: a
+# script that adds an element has changed what the page is. Since the
+# nodes of that tree do not point at their parents, this file gives
+# each node a number (.nid) and keeps what a script may ask about it
+# in lists with that number as the index: the node itself, its
+# parent's number, the object scripts hold for it, who listens to it.
+#
+# To a script a node is an object of class 32 whose payload is the
+# node's number. Its properties are not stored: the engine asks
+# host_get() and host_set() below, which look the name up in a table
+# of procs (NODE_G, EL_G and so on). Methods are ordinary functions on
+# the prototypes (Node.prototype has nearly all of them).
+#
+# What the page cannot do by itself it asks the browser for through
+# HOST, a dict of procs that browser.omg hands to attach(): fetch a
+# file, go to another address, lay the page out now, say where an
+# element is on the screen.
+#
+# After a script has run the browser asks take_dirty(), and lays the
+# page out again when something changed.
+
+import "js/core.omg" as c
+import "js/engine.omg" as js
+import "js/lib_promise.omg" as promise
+import "html.omg" as html
+import "css.omg" as css
+import "url.omg" as url
+import "util.omg" as u
+
+alloc X := c.exports()
+alloc H := X["H"]
+alloc I := X["I"]
+alloc arg := X["arg"]
+alloc def := X["def"]
+alloc define_hidden := X["define_hidden"]
+alloc get := X["get"]
+alloc put := X["put"]
+alloc has_own := X["has_own"]
+alloc new_obj := X["new_obj"]
+alloc new_object := X["new_object"]
+alloc new_array := X["new_array"]
+alloc new_native := X["new_native"]
+alloc new_native_with := X["new_native_with"]
+alloc native_data := X["native_data"]
+alloc throw_type := X["throw_type"]
+alloc throw_val := X["throw_val"]
+alloc make_error := X["make_error"]
+alloc to_num := X["to_num"]
+alloc to_str := X["to_str"]
+alloc to_bool := X["to_bool"]
+alloc to_integer := X["to_integer"]
+alloc is_callable := X["is_callable"]
+alloc is_nullish := X["is_nullish"]
+alloc call := X["call"]
+alloc new_target := X["new_target"]
+alloc own_keys := X["own_keys"]
+alloc items_of := X["items_of"]
+alloc caught := X["caught"]
+alloc show := X["show"]
+alloc num_to_str := X["num_to_str"]
+
+proc nothing() {
+}
+
+alloc U := nothing()
+alloc MISS := [0]
+
+alloc C_NODE := 32
+alloc C_STYLE := 33
+alloc C_DATASET := 34
+alloc C_STORAGE := 35
+alloc C_COMPUTED := 36
+alloc C_LOCATION := 37
+alloc C_EVENT := 38
+alloc C_XHR := 39
+alloc C_TOKENS := 40
+alloc C_URL := 41
+alloc C_HISTORY := 42
+alloc C_PARAMS := 43
+alloc NCLASS := 12
+
+alloc NODES := []        # number -> node
+alloc PARENT := []       # number -> its parent's number, or -1
+alloc WRAP := []         # number -> the object scripts hold, or 0
+alloc LIS := []          # number -> false, or {event name: [[function, capture?, once?, alive?], ...]}
+alloc DOC := false       # the document on show
+alloc DOC_NID := 1       # its number; 0 is the window
+alloc DIRTY := false     # the tree changed since the browser last asked
+alloc SHEETS := false    # a style sheet came, went or changed
+alloc VERSION := 0       # goes up with every change to the tree
+alloc HOST := {}         # what the browser does for the page
+alloc ADDRESS := "about:blank"
+alloc BASE := "about:blank"
+alloc READY := "loading"
+alloc CURRENT_SCRIPT := false
+alloc TASKS := []        # work for later: scripts to fetch, events to send
+alloc TASK_AT := 0
+alloc FOCUS := false     # the node that has the keyboard, as the browser told it
+alloc LOG := []          # what console.log printed, when nobody else takes it
+alloc START := 0.0       # when the page was started, in ms
+alloc LOCATION := 0      # the object window.location is
+
+alloc P := {}            # name -> prototype, for "Node", "Element" and the rest
+alloc TAG_PROTO := {}    # tag -> prototype
+alloc NODELIST := 0
+
+# The tables host_get() and host_set() look names up in, one of each
+# for every class of object from 32 on.
+alloc GETS := []
+alloc SETS := []
+alloc GET_ANY := []
+alloc SET_ANY := []
+alloc KEYS_OF := []
+alloc NODE_G := {}
+alloc NODE_S := {}
+alloc EL_G := {}
+alloc EL_S := {}
+alloc DOC_G := {}
+alloc DOC_S := {}
+alloc TEXT_G := {}
+alloc TEXT_S := {}
+
+# --- the engine asks ------------------------------------------------------------------------
+
+proc host_get(h, o, k) {
+    alloc cls := o[0]
+    if cls == 32 {
+        alloc node := NODES[o[3]]
+        if has_key(NODE_G, k) {
+            return NODE_G[k](h, node)
+        }
+        alloc t := node.t
+        if t == 1 {
+            if has_key(EL_G, k) {
+                return EL_G[k](h, node)
+            }
+            if has_key(REFLECT, k) {
+                return reflect_get(node, REFLECT[k])
+            }
+            if node.tag == "form" and X["has_prop"](o[1], k) == false {
+                # form.q is the control named q
+                for ctl in controls_in(node, []) {
+                    if attr_or(ctl, "name", "") == k or attr_or(ctl, "id", "") == k {
+                        return wrap(ctl)
+                    }
+                }
+            }
+        } elif t == 9 {
+            if has_key(DOC_G, k) {
+                return DOC_G[k](h, node)
+            }
+        } elif t == 3 or t == 8 {
+            if has_key(TEXT_G, k) {
+                return TEXT_G[k](h, node)
+            }
+        }
+        return MISS
+    }
+    alloc i := cls - 32
+    if i >= NCLASS {
+        return MISS
+    }
+    alloc tab := GETS[i]
+    if has_key(tab, k) {
+        return tab[k](h, o[3])
+    }
+    alloc any := GET_ANY[i]
+    if any != false {
+        return any(h, o[3], k)
+    }
+    return MISS
+}
+
+proc host_set(h, o, k, v) {
+    alloc cls := o[0]
+    if cls == 32 {
+        alloc node := NODES[o[3]]
+        if has_key(NODE_S, k) {
+            NODE_S[k](h, node, v)
+            return true
+        }
+        alloc t := node.t
+        if t == 1 {
+            if has_key(EL_S, k) {
+                return EL_S[k](h, node, v) != false
+            }
+            if has_key(REFLECT, k) {
+                return reflect_set(node, REFLECT[k], v)
+            }
+        } elif t == 9 {
+            if has_key(DOC_S, k) {
+                DOC_S[k](h, node, v)
+                return true
+            }
+        } elif t == 3 or t == 8 {
+            if has_key(TEXT_S, k) {
+                TEXT_S[k](h, node, v)
+                return true
+            }
+        }
+        # a property scripts may read but not write stays as it is
+        return has_key(NODE_G, k) or (t == 1 and has_key(EL_G, k) and type_of(EL_G[k](h, node)) != 5) or (t == 9 and has_key(DOC_G, k))
+    }
+    alloc i := cls - 32
+    if i >= NCLASS {
+        return false
+    }
+    alloc tab := SETS[i]
+    if has_key(tab, k) {
+        tab[k](h, o[3], v)
+        return true
+    }
+    alloc any := SET_ANY[i]
+    if any != false {
+        return any(h, o[3], k, v)
+    }
+    return has_key(GETS[i], k)
+}
+
+proc host_keys(h, o) {
+    alloc i := o[0] - 32
+    if i > 0 and i < NCLASS and KEYS_OF[i] != false {
+        return KEYS_OF[i](h, o[3])
+    }
+    return []
+}
+
+# --- numbers for nodes ----------------------------------------------------------------------
+
+proc register(node, parent) {
+    alloc id := length(NODES)
+    node.nid := id
+    append(NODES, node)
+    append(PARENT, parent)
+    append(WRAP, 0)
+    append(LIS, false)
+    return id
+}
+
+# Number a node and everything under it.
+proc adopt(node, parent) {
+    alloc id := register(node, parent)
+    if node.t != 3 {
+        for k in node.kids {
+            adopt(k, id)
+        }
+    }
+    return id
+}
+
+proc parent_of(node) {
+    alloc p := PARENT[node.nid]
+    if p < 0 {
+        return false
+    }
+    return NODES[p]
+}
+
+proc proto_of(node) {
+    alloc t := node.t
+    if t == 1 {
+        if has_key(TAG_PROTO, node.tag) {
+            return TAG_PROTO[node.tag]
+        }
+        return P["HTMLElement"]
+    }
+    if t == 3 {
+        return P["Text"]
+    }
+    if t == 9 {
+        return P["Document"]
+    }
+    if t == 8 {
+        return P["Comment"]
+    }
+    if t == 11 {
+        return P["DocumentFragment"]
+    }
+    return P["EventTarget"]
+}
+
+# The object scripts hold for a node; null for `false`.
+proc wrap(node) {
+    if type_of(node) != 6 {
+        return 0
+    }
+    alloc id := node.nid
+    alloc h := WRAP[id]
+    if h != 0 {
+        return h
+    }
+    h := new_obj(32, proto_of(node))
+    H[h][3] := id
+    WRAP[id] := h
+    return h
+}
+
+proc is_node(v) {
+    return type_of(v) == 2 and v != 0 and H[v][0] == 32
+}
+
+# The node behind `this`, for a method called `what`.
+proc node_of(v, what) {
+    if type_of(v) == 2 and v != 0 and H[v][0] == 32 {
+        return NODES[H[v][3]]
+    }
+    throw_type("Failed to execute '" + what + "': the value is not a Node")
+}
+
+proc wrap_list(nodes) {
+    alloc out := []
+    for n in nodes {
+        append(out, wrap(n))
+    }
+    alloc h := new_array(out)
+    H[h][1] := NODELIST
+    return h
+}
+
+proc dom_error(name, msg) {
+    alloc e := make_error(8, msg)
+    define_hidden(e, "name", name)
+    throw_val(e)
+}
+
+# --- the tree -------------------------------------------------------------------------------
+
+proc is_connected(node) {
+    alloc id := node.nid
+    loop id >= 0 {
+        if id == DOC_NID {
+            return true
+        }
+        id := PARENT[id]
+    }
+    return false
+}
+
+proc index_in(parent, node) {
+    alloc kids := parent.kids
+    alloc id := node.nid
+    alloc i := 0
+    alloc n := length(kids)
+    loop i < n {
+        if kids[i].nid == id {
+            return i
+        }
+        i := i + 1
+    }
+    return -1
+}
+
+# The tree changed at `parent`.
+proc touched(parent) {
+    DIRTY := true
+    VERSION := VERSION + 1
+    if parent.t == 1 {
+        css.number_kids(parent)
+    } elif parent.t == 9 {
+        for k in parent.kids {
+            if k.t == 1 {
+                k.ei := 1
+            }
+        }
+    }
+    return true
+}
+
+# Something in the subtree that matters beyond the tree itself: a
+# style sheet, or a script that has not run.
+proc notice(node, added) {
+    if node.t != 1 {
+        return true
+    }
+    alloc tag := node.tag
+    if tag == "style" or tag == "link" {
+        SHEETS := true
+    } elif tag == "script" {
+        if added and has_key(node, "ran") == false {
+            node.ran := true
+            if has_key(node.attrs, "src") {
+                append(TASKS, [0, node])
+            } else {
+                run_script_node(node, false)
+            }
+        }
+        return true
+    }
+    for k in node.kids {
+        if k.t == 1 {
+            notice(k, added)
+        }
+    }
+    return true
+}
+
+# Take a node out of its parent.
+proc detach(node) {
+    alloc pid := PARENT[node.nid]
+    if pid < 0 {
+        return false
+    }
+    alloc parent := NODES[pid]
+    alloc i := index_in(parent, node)
+    if i >= 0 {
+        alloc kids := parent.kids
+        alloc rest := kids[0:i]
+        alloc j := i + 1
+        alloc n := length(kids)
+        loop j < n {
+            append(rest, kids[j])
+            j := j + 1
+        }
+        parent.kids := rest
+    }
+    alloc was := is_connected(parent)
+    PARENT[node.nid] := -1
+    touched(parent)
+    if was {
+        notice(node, false)
+    }
+    return true
+}
+
+# Put `node` among parent's children, in front of `ref` (at the end
+# when ref is false). A fragment gives its children instead.
+proc insert_before(parent, node, ref) {
+    if parent.t == 3 or parent.t == 8 {
+        dom_error("HierarchyRequestError", "This node type does not support this method.")
+    }
+    if node.t == 11 {
+        alloc moving := node.kids
+        node.kids := []
+        for k in moving {
+            PARENT[k.nid] := -1
+        }
+        for k2 in moving {
+            insert_before(parent, k2, ref)
+        }
+        return node
+    }
+    if node.t == 9 {
+        dom_error("HierarchyRequestError", "A document cannot be put inside a node.")
+    }
+    # a node cannot go inside itself
+    alloc up := parent.nid
+    loop up >= 0 {
+        if up == node.nid {
+            dom_error("HierarchyRequestError", "The new child element contains the parent.")
+        }
+        up := PARENT[up]
+    }
+    if ref != false and ref.nid == node.nid {
+        # in front of itself: where it is
+        return node
+    }
+    detach(node)
+    alloc kids := parent.kids
+    alloc at := length(kids)
+    if ref != false {
+        at := index_in(parent, ref)
+        if at < 0 {
+            dom_error("NotFoundError", "The node before which the new node is to be inserted is not a child of this node.")
+        }
+    }
+    if at == length(kids) {
+        append(kids, node)
+    } else {
+        alloc out := kids[0:at]
+        append(out, node)
+        alloc j := at
+        alloc n := length(kids)
+        loop j < n {
+            append(out, kids[j])
+            j := j + 1
+        }
+        parent.kids := out
+    }
+    PARENT[node.nid] := parent.nid
+    touched(parent)
+    if is_connected(parent) {
+        notice(node, true)
+    }
+    return node
+}
+
+proc remove_all(parent) {
+    alloc was := is_connected(parent)
+    alloc old := parent.kids
+    parent.kids := []
+    for k in old {
+        PARENT[k.nid] := -1
+        if was {
+            notice(k, false)
+        }
+    }
+    touched(parent)
+    return true
+}
+
+proc new_text(s) {
+    alloc node := {t: 3, text: s}
+    register(node, -1)
+    return node
+}
+
+proc new_element(tag) {
+    alloc node := html.element(tag, {})
+    register(node, -1)
+    css.prepare_attrs(node)
+    node.ei := 1
+    node.ne := 0
+    return node
+}
+
+# What innerHTML is given, as nodes that are numbered and ready.
+proc fragment_nodes(text, context) {
+    alloc nodes := html.parse_fragment(text, context)
+    for n in nodes {
+        adopt(n, -1)
+        if n.t == 1 {
+            css.prepare(n)
+            n.ei := 1
+        }
+    }
+    return nodes
+}
+
+proc set_text_content(node, s) {
+    if node.t == 3 or node.t == 8 {
+        node.text := s
+        DIRTY := true
+        VERSION := VERSION + 1
+        alloc p := parent_of(node)
+        if p != false and p.t == 1 and p.tag == "style" {
+            SHEETS := true
+        }
+        return true
+    }
+    remove_all(node)
+    if s != "" {
+        insert_before(node, new_text(s), false)
+    }
+    if node.t == 1 and node.tag == "style" {
+        SHEETS := true
+    }
+    return true
+}
+
+proc copy_node(node, deep) {
+    if node.t == 3 or node.t == 8 {
+        alloc tcopy := {t: node.t, text: node.text}
+        if node.t == 8 {
+            tcopy.kids := []
+        }
+        register(tcopy, -1)
+        return tcopy
+    }
+    alloc out := false
+    if node.t == 1 {
+        alloc attrs := {}
+        for name in dict_keys(node.attrs) {
+            attrs[name] := node.attrs[name]
+        }
+        out := html.element(node.tag, attrs)
+        if has_key(node, "value") {
+            out.value := node.value
+        }
+        if has_key(node, "checked") {
+            out.checked := node.checked
+        }
+    } else {
+        out := {t: 11, kids: []}
+    }
+    alloc id := register(out, -1)
+    if node.t == 1 {
+        css.prepare_attrs(out)
+        out.ei := 1
+        out.ne := 0
+    }
+    if deep {
+        for k in node.kids {
+            alloc kc := copy_node(k, true)
+            append(out.kids, kc)
+            PARENT[kc.nid] := id
+        }
+        if node.t == 1 {
+            css.number_kids(out)
+        }
+    }
+    return out
+}
+
+# The elements from the top of the tree down to node, and where each
+# sits among its parent's children: what css.omg matches against.
+proc chain_of(node) {
+    alloc up := []
+    alloc cur := node
+    loop cur != false and cur.t == 1 {
+        append(up, cur)
+        cur := parent_of(cur)
+    }
+    alloc chain := []
+    alloc idx := []
+    alloc i := length(up) - 1
+    loop i >= 0 {
+        alloc el := up[i]
+        append(chain, el)
+        alloc p := parent_of(el)
+        if p == false {
+            append(idx, 0)
+        } else {
+            append(idx, index_in(p, el))
+        }
+        i := i - 1
+    }
+    return [chain, idx]
+}
+
+alloc SEL_CACHE := {}
+
+proc selectors_of(text) {
+    if has_key(SEL_CACHE, text) {
+        return SEL_CACHE[text]
+    }
+    alloc sels := css.selectors(text)
+    if length(sels) == 0 {
+        dom_error("SyntaxError", "'" + text + "' is not a valid selector.")
+    }
+    SEL_CACHE[text] := sels
+    return sels
+}
+
+proc query(node, text, first) {
+    alloc sels := selectors_of(text)
+    alloc out := []
+    if node.t == 1 {
+        alloc ch := chain_of(node)
+        css.select(sels, node, ch[0], ch[1], first, out)
+    } else {
+        css.select(sels, node, [], [], first, out)
+    }
+    return out
+}
+
+proc node_matches(node, text) {
+    alloc ch := chain_of(node)
+    return css.matches(selectors_of(text), ch[0], ch[1])
+}
+
+alloc ID_MAP := {}
+alloc ID_VERSION := -1
+
+proc index_ids(node) {
+    for k in node.kids {
+        if k.t == 1 {
+            if has_key(k.attrs, "id") and has_key(ID_MAP, k.attrs["id"]) == false {
+                ID_MAP[k.attrs["id"]] := k
+            }
+            index_ids(k)
+        }
+    }
+    return true
+}
+
+proc by_id(id) {
+    if ID_VERSION != VERSION {
+        ID_MAP := {}
+        index_ids(DOC)
+        ID_VERSION := VERSION
+    }
+    if has_key(ID_MAP, id) {
+        return ID_MAP[id]
+    }
+    return false
+}
+
+proc collect(node, tag, cls, out) {
+    for k in node.kids {
+        if k.t == 1 {
+            if tag != "" {
+                if tag == "*" or k.tag == tag {
+                    append(out, k)
+                }
+            } else {
+                alloc all := true
+                for want in cls {
+                    alloc found := false
+                    for have in k.cls {
+                        if have == want {
+                            found := true
+                            break
+                        }
+                    }
+                    if found == false {
+                        all := false
+                        break
+                    }
+                }
+                if all {
+                    append(out, k)
+                }
+            }
+            collect(k, tag, cls, out)
+        }
+    }
+    return out
+}
+
+# --- attributes -----------------------------------------------------------------------------
+
+proc set_attr(node, name, value) {
+    node.attrs[name] := value
+    DIRTY := true
+    VERSION := VERSION + 1
+    if name == "class" or name == "id" or name == "style" {
+        css.prepare_attrs(node)
+    } elif node.tag == "link" or (node.tag == "style" and name == "media") {
+        if is_connected(node) {
+            SHEETS := true
+        }
+    } elif name == "value" and node.tag == "input" and has_key(node, "value") {
+        # the attribute is the starting value; what was typed stays
+        return true
+    }
+    return true
+}
+
+proc remove_attr(node, name) {
+    if has_key(node.attrs, name) == false {
+        return false
+    }
+    alloc attrs := {}
+    for k in dict_keys(node.attrs) {
+        if k != name {
+            attrs[k] := node.attrs[k]
+        }
+    }
+    node.attrs := attrs
+    DIRTY := true
+    VERSION := VERSION + 1
+    if name == "class" or name == "id" or name == "style" {
+        css.prepare_attrs(node)
+    }
+    return true
+}
+
+proc attr_or(node, name, otherwise) {
+    if has_key(node.attrs, name) {
+        return node.attrs[name]
+    }
+    return otherwise
+}
+
+# --- what a node's properties are -----------------------------------------------------------
+
+proc g_node_type(h, node) {
+    return float(node.t)
+}
+
+proc g_node_name(h, node) {
+    alloc t := node.t
+    if t == 1 {
+        return u.upper(node.tag)
+    }
+    if t == 3 {
+        return "#text"
+    }
+    if t == 8 {
+        return "#comment"
+    }
+    if t == 9 {
+        return "#document"
+    }
+    return "#document-fragment"
+}
+
+proc g_node_value(h, node) {
+    if node.t == 3 or node.t == 8 {
+        return node.text
+    }
+    return 0
+}
+
+proc s_node_value(h, node, v) {
+    if node.t == 3 or node.t == 8 {
+        set_text_content(node, to_str(v))
+    }
+}
+
+proc g_parent_node(h, node) {
+    return wrap(parent_of(node))
+}
+
+proc g_parent_element(h, node) {
+    alloc p := parent_of(node)
+    if p != false and p.t == 1 {
+        return wrap(p)
+    }
+    return 0
+}
+
+proc kids_of(node) {
+    if node.t == 3 {
+        return []
+    }
+    return node.kids
+}
+
+proc g_child_nodes(h, node) {
+    return wrap_list(kids_of(node))
+}
+
+proc g_first_child(h, node) {
+    alloc kids := kids_of(node)
+    if length(kids) == 0 {
+        return 0
+    }
+    return wrap(kids[0])
+}
+
+proc g_last_child(h, node) {
+    alloc kids := kids_of(node)
+    if length(kids) == 0 {
+        return 0
+    }
+    return wrap(kids[length(kids) - 1])
+}
+
+# The node `step` places along from node among its sisters; elements
+# only when asked.
+proc sibling(node, step, elements) {
+    alloc p := parent_of(node)
+    if p == false {
+        return false
+    }
+    alloc kids := p.kids
+    alloc i := index_in(p, node) + step
+    loop i >= 0 and i < length(kids) {
+        if elements == false or kids[i].t == 1 {
+            return kids[i]
+        }
+        i := i + step
+    }
+    return false
+}
+
+proc g_previous_sibling(h, node) {
+    return wrap(sibling(node, -1, false))
+}
+
+proc g_next_sibling(h, node) {
+    return wrap(sibling(node, 1, false))
+}
+
+proc g_text_content(h, node) {
+    if node.t == 9 {
+        return 0
+    }
+    return html.text_of(node)
+}
+
+proc s_text_content(h, node, v) {
+    if node.t == 9 {
+        return true
+    }
+    if is_nullish(v) {
+        set_text_content(node, "")
+    } else {
+        set_text_content(node, to_str(v))
+    }
+}
+
+proc g_owner_document(h, node) {
+    if node.t == 9 {
+        return 0
+    }
+    return wrap(DOC)
+}
+
+proc g_is_connected(h, node) {
+    return is_connected(node)
+}
+
+proc g_base_uri(h, node) {
+    return BASE
+}
+
+# -- elements
+
+proc g_tag_name(h, node) {
+    return u.upper(node.tag)
+}
+
+proc g_local_name(h, node) {
+    return node.tag
+}
+
+proc g_id(h, node) {
+    return attr_or(node, "id", "")
+}
+
+proc s_id(h, node, v) {
+    set_attr(node, "id", to_str(v))
+}
+
+proc g_class_name(h, node) {
+    return attr_or(node, "class", "")
+}
+
+proc s_class_name(h, node, v) {
+    set_attr(node, "class", to_str(v))
+}
+
+proc g_inner_html(h, node) {
+    if node.t == 1 and node.tag == "template" and has_key(node, "content") {
+        return html.inner_html(NODES[node.content])
+    }
+    return html.inner_html(node)
+}
+
+proc set_inner_html(node, text) {
+    alloc context := "div"
+    if node.t == 1 {
+        context := node.tag
+        if context == "template" {
+            context := "div"
+            node := template_content(node)
+        }
+    }
+    alloc nodes := fragment_nodes(text, context)
+    remove_all(node)
+    for n in nodes {
+        insert_before(node, n, false)
+    }
+    return true
+}
+
+proc s_inner_html(h, node, v) {
+    if is_nullish(v) {
+        set_inner_html(node, "")
+    } else {
+        set_inner_html(node, to_str(v))
+    }
+}
+
+proc g_outer_html(h, node) {
+    return html.outer_html(node)
+}
+
+proc s_outer_html(h, node, v) {
+    alloc p := parent_of(node)
+    if p == false {
+        return true
+    }
+    alloc context := "div"
+    if p.t == 1 {
+        context := p.tag
+    }
+    for n in fragment_nodes(to_str(v), context) {
+        insert_before(p, n, node)
+    }
+    detach(node)
+}
+
+proc visible_text(node, parts) {
+    if node.t == 3 {
+        append(parts, node.text)
+        return true
+    }
+    if node.t == 1 {
+        alloc tag := node.tag
+        if tag == "script" or tag == "style" or tag == "template" {
+            return true
+        }
+        if tag == "br" {
+            append(parts, "\n")
+        }
+    }
+    for k in node.kids {
+        visible_text(k, parts)
+    }
+    return true
+}
+
+proc g_inner_text(h, node) {
+    alloc parts := []
+    visible_text(node, parts)
+    return u.join(parts, "")
+}
+
+proc element_kids(node) {
+    alloc out := []
+    for k in kids_of(node) {
+        if k.t == 1 {
+            append(out, k)
+        }
+    }
+    return out
+}
+
+proc g_children(h, node) {
+    return wrap_list(element_kids(node))
+}
+
+proc g_first_element_child(h, node) {
+    for k in kids_of(node) {
+        if k.t == 1 {
+            return wrap(k)
+        }
+    }
+    return 0
+}
+
+proc g_last_element_child(h, node) {
+    alloc kids := kids_of(node)
+    alloc i := length(kids) - 1
+    loop i >= 0 {
+        if kids[i].t == 1 {
+            return wrap(kids[i])
+        }
+        i := i - 1
+    }
+    return 0
+}
+
+proc g_previous_element_sibling(h, node) {
+    return wrap(sibling(node, -1, true))
+}
+
+proc g_next_element_sibling(h, node) {
+    return wrap(sibling(node, 1, true))
+}
+
+proc g_child_element_count(h, node) {
+    return float(length(element_kids(node)))
+}
+
+proc g_attributes(h, node) {
+    alloc out := []
+    for name in dict_keys(node.attrs) {
+        alloc a := new_object()
+        put(a, "name", name)
+        put(a, "nodeName", name)
+        put(a, "localName", name)
+        put(a, "value", node.attrs[name])
+        put(a, "nodeValue", node.attrs[name])
+        put(a, "specified", true)
+        append(out, a)
+    }
+    return new_array(out)
+}
+
+proc g_hidden(h, node) {
+    return has_key(node.attrs, "hidden")
+}
+
+proc set_bool_attr(node, name, on) {
+    if on {
+        set_attr(node, name, "")
+    } else {
+        remove_attr(node, name)
+    }
+    return true
+}
+
+proc s_hidden(h, node, v) {
+    set_bool_attr(node, "hidden", to_bool(v))
+}
+
+proc sub_object(h, node, key, cls) {
+    alloc o := H[h]
+    alloc hk := "@@" + key
+    if has_key(o[2], hk) {
+        return o[2][hk]
+    }
+    alloc s := new_obj(cls, P[key])
+    H[s][3] := node.nid
+    define_hidden(h, hk, s)
+    return s
+}
+
+proc g_style(h, node) {
+    return sub_object(h, node, "CSSStyleDeclaration", C_STYLE)
+}
+
+proc s_style(h, node, v) {
+    set_attr(node, "style", to_str(v))
+}
+
+proc g_dataset(h, node) {
+    return sub_object(h, node, "DOMStringMap", C_DATASET)
+}
+
+proc g_class_list(h, node) {
+    return sub_object(h, node, "DOMTokenList", C_TOKENS)
+}
+
+proc s_class_list(h, node, v) {
+    set_attr(node, "class", to_str(v))
+}
+
+proc g_tab_index(h, node) {
+    alloc tag := node.tag
+    alloc d := -1.0
+    if tag == "a" or tag == "input" or tag == "button" or tag == "select" or tag == "textarea" {
+        d := 0.0
+    }
+    return float(u.to_int(attr_or(node, "tabindex", ""), int(d)))
+}
+
+# -- form controls: what was typed or ticked lives on the node, where
+# the window keeps it too
+
+proc options_of(node, out) {
+    for k in node.kids {
+        if k.t == 1 {
+            if k.tag == "option" {
+                append(out, k)
+            } else {
+                options_of(k, out)
+            }
+        }
+    }
+    return out
+}
+
+proc selected_index(node) {
+    alloc opts := options_of(node, [])
+    if length(opts) == 0 {
+        return -1
+    }
+    if has_key(node, "sel") and node.sel < length(opts) {
+        return node.sel
+    }
+    alloc i := 0
+    loop i < length(opts) {
+        if has_key(opts[i].attrs, "selected") {
+            return i
+        }
+        i := i + 1
+    }
+    return 0
+}
+
+proc option_value(o) {
+    if has_key(o.attrs, "value") {
+        return o.attrs["value"]
+    }
+    return u.join(u.words(html.text_of(o)), " ")
+}
+
+proc control_value(node) {
+    alloc tag := node.tag
+    if tag == "select" {
+        alloc i := selected_index(node)
+        if i < 0 {
+            return ""
+        }
+        return option_value(options_of(node, [])[i])
+    }
+    if tag == "option" {
+        return option_value(node)
+    }
+    if has_key(node, "value") {
+        return node.value
+    }
+    if tag == "textarea" {
+        alloc s := html.text_of(node)
+        if u.starts_with(s, "\n") {
+            s := s[1:]
+        }
+        return s
+    }
+    if tag == "input" {
+        alloc ty := u.lower(attr_or(node, "type", "text"))
+        if (ty == "checkbox" or ty == "radio") and has_key(node.attrs, "value") == false {
+            return "on"
+        }
+    }
+    return attr_or(node, "value", "")
+}
+
+alloc VALUE_TAGS := {input: 1, textarea: 1, select: 1, option: 1, button: 1, param: 1, data: 1, meter: 1, progress: 1, li: 1, output: 1}
+
+proc g_value(h, node) {
+    if has_key(VALUE_TAGS, node.tag) == false {
+        return MISS
+    }
+    if node.tag == "li" or node.tag == "meter" or node.tag == "progress" {
+        return u.to_number(attr_or(node, "value", "0"), 0) * 1.0
+    }
+    return control_value(node)
+}
+
+proc s_value(h, node, v) {
+    alloc tag := node.tag
+    if has_key(VALUE_TAGS, tag) == false {
+        return false
+    }
+    alloc s := ""
+    if is_nullish(v) == false {
+        s := to_str(v)
+    }
+    if tag == "select" {
+        alloc opts := options_of(node, [])
+        alloc i := 0
+        loop i < length(opts) {
+            if option_value(opts[i]) == s {
+                node.sel := i
+                break
+            }
+            i := i + 1
+        }
+        DIRTY := true
+        return true
+    }
+    if tag == "input" or tag == "textarea" {
+        alloc ty := u.lower(attr_or(node, "type", "text"))
+        if tag == "input" and (ty == "checkbox" or ty == "radio" or ty == "submit" or ty == "button" or ty == "hidden" or ty == "reset" or ty == "image") {
+            set_attr(node, "value", s)
+            return true
+        }
+        node.value := s
+        node.caret := length(u.cps(s))
+        DIRTY := true
+        return true
+    }
+    set_attr(node, "value", s)
+    return true
+}
+
+proc is_checked(node) {
+    if has_key(node, "checked") {
+        return node.checked
+    }
+    return has_key(node.attrs, "checked")
+}
+
+proc g_checked(h, node) {
+    if node.tag != "input" {
+        return MISS
+    }
+    return is_checked(node)
+}
+
+proc form_of(node) {
+    alloc p := parent_of(node)
+    loop p != false and p.t == 1 {
+        if p.tag == "form" {
+            return p
+        }
+        p := parent_of(p)
+    }
+    return false
+}
+
+proc controls_in(node, out) {
+    for k in node.kids {
+        if k.t == 1 {
+            alloc tag := k.tag
+            if tag == "input" or tag == "select" or tag == "textarea" or tag == "button" {
+                append(out, k)
+            }
+            controls_in(k, out)
+        }
+    }
+    return out
+}
+
+proc s_checked(h, node, v) {
+    if node.tag != "input" {
+        return false
+    }
+    alloc on := to_bool(v)
+    if on and u.lower(attr_or(node, "type", "")) == "radio" and has_key(node.attrs, "name") {
+        # the others of its group go off
+        alloc scope := form_of(node)
+        if scope == false {
+            scope := DOC
+        }
+        for other in controls_in(scope, []) {
+            if other.tag == "input" and u.lower(attr_or(other, "type", "")) == "radio" and attr_or(other, "name", "") == node.attrs["name"] {
+                other.checked := false
+            }
+        }
+    }
+    node.checked := on
+    DIRTY := true
+    return true
+}
+
+proc g_selected(h, node) {
+    if node.tag != "option" {
+        return MISS
+    }
+    alloc p := parent_of(node)
+    loop p != false and p.t == 1 and p.tag != "select" {
+        p := parent_of(p)
+    }
+    if p == false or p.t != 1 {
+        return has_key(node.attrs, "selected")
+    }
+    alloc opts := options_of(p, [])
+    alloc i := selected_index(p)
+    return i >= 0 and opts[i].nid == node.nid
+}
+
+proc s_selected(h, node, v) {
+    if node.tag != "option" {
+        return false
+    }
+    alloc p := parent_of(node)
+    loop p != false and p.t == 1 and p.tag != "select" {
+        p := parent_of(p)
+    }
+    if p != false and p.t == 1 and to_bool(v) {
+        alloc opts := options_of(p, [])
+        alloc i := 0
+        loop i < length(opts) {
+            if opts[i].nid == node.nid {
+                p.sel := i
+            }
+            i := i + 1
+        }
+        DIRTY := true
+    }
+    return true
+}
+
+proc g_selected_index(h, node) {
+    if node.tag != "select" {
+        return MISS
+    }
+    return float(selected_index(node))
+}
+
+proc s_selected_index(h, node, v) {
+    if node.tag != "select" {
+        return false
+    }
+    alloc i := to_integer(v)
+    if i >= 0.0 and i < 100000.0 {
+        node.sel := int(i)
+        DIRTY := true
+    }
+    return true
+}
+
+proc g_options(h, node) {
+    if node.tag != "select" and node.tag != "datalist" {
+        return MISS
+    }
+    return wrap_list(options_of(node, []))
+}
+
+proc g_form(h, node) {
+    alloc tag := node.tag
+    if tag == "input" or tag == "select" or tag == "textarea" or tag == "button" or tag == "label" or tag == "option" or tag == "fieldset" {
+        return wrap(form_of(node))
+    }
+    return MISS
+}
+
+proc g_elements(h, node) {
+    if node.tag != "form" {
+        return MISS
+    }
+    return wrap_list(controls_in(node, []))
+}
+
+proc g_length(h, node) {
+    if node.tag == "form" {
+        return float(length(controls_in(node, [])))
+    }
+    if node.tag == "select" {
+        return float(length(options_of(node, [])))
+    }
+    return MISS
+}
+
+proc g_text(h, node) {
+    alloc tag := node.tag
+    if tag == "script" or tag == "a" or tag == "option" or tag == "title" {
+        return html.text_of(node)
+    }
+    return MISS
+}
+
+proc s_text(h, node, v) {
+    alloc tag := node.tag
+    if tag == "script" or tag == "a" or tag == "option" or tag == "title" {
+        set_text_content(node, to_str(v))
+        return true
+    }
+    return false
+}
+
+proc g_label_text(h, node) {
+    if node.tag == "option" {
+        if has_key(node.attrs, "label") {
+            return node.attrs["label"]
+        }
+        return u.join(u.words(html.text_of(node)), " ")
+    }
+    return MISS
+}
+
+proc g_type(h, node) {
+    alloc tag := node.tag
+    if tag == "input" {
+        return u.lower(attr_or(node, "type", "text"))
+    }
+    if tag == "button" {
+        return u.lower(attr_or(node, "type", "submit"))
+    }
+    if tag == "select" {
+        if has_key(node.attrs, "multiple") {
+            return "select-multiple"
+        }
+        return "select-one"
+    }
+    if tag == "textarea" {
+        return "textarea"
+    }
+    if tag == "script" or tag == "style" or tag == "link" or tag == "a" or tag == "source" or tag == "object" or tag == "embed" or tag == "ol" or tag == "ul" or tag == "li" {
+        return attr_or(node, "type", "")
+    }
+    return MISS
+}
+
+proc s_type(h, node, v) {
+    if type_of(g_type(h, node)) == 5 {
+        return false
+    }
+    set_attr(node, "type", to_str(v))
+    return true
+}
+
+# -- the parts of the address a link points at
+
+alloc URL_TAGS := {a: 1, area: 1}
+
+proc link_parts(node) {
+    if has_key(URL_TAGS, node.tag) == false {
+        return false
+    }
+    alloc where := url.resolve(BASE, attr_or(node, "href", ""))
+    return url.parse(where)
+}
+
+proc host_text(p) {
+    if p.port != 0 {
+        return p.host + ":" + p.port
+    }
+    return p.host
+}
+
+proc g_protocol(h, node) {
+    alloc p := link_parts(node)
+    if p == false {
+        if has_key(URL_TAGS, node.tag) {
+            return ":"
+        }
+        return MISS
+    }
+    return p.scheme + ":"
+}
+
+proc g_host(h, node) {
+    alloc p := link_parts(node)
+    if p == false {
+        if has_key(URL_TAGS, node.tag) {
+            return ""
+        }
+        return MISS
+    }
+    return host_text(p)
+}
+
+proc g_hostname(h, node) {
+    alloc p := link_parts(node)
+    if p == false {
+        if has_key(URL_TAGS, node.tag) {
+            return ""
+        }
+        return MISS
+    }
+    return p.host
+}
+
+proc g_pathname(h, node) {
+    alloc p := link_parts(node)
+    if p == false {
+        if has_key(URL_TAGS, node.tag) {
+            return ""
+        }
+        return MISS
+    }
+    return p.path
+}
+
+proc g_search(h, node) {
+    alloc p := link_parts(node)
+    if p == false {
+        if has_key(URL_TAGS, node.tag) {
+            return ""
+        }
+        return MISS
+    }
+    if p.query == "?" {
+        return ""
+    }
+    return p.query
+}
+
+proc g_hash(h, node) {
+    alloc p := link_parts(node)
+    if p == false {
+        if has_key(URL_TAGS, node.tag) {
+            return ""
+        }
+        return MISS
+    }
+    if p.frag == "#" {
+        return ""
+    }
+    return p.frag
+}
+
+proc g_origin(h, node) {
+    alloc p := link_parts(node)
+    if p == false {
+        if has_key(URL_TAGS, node.tag) {
+            return ""
+        }
+        return MISS
+    }
+    return url.origin(p)
+}
+
+# -- where an element is on the page; the browser lays it out first
+
+proc rect_of(node) {
+    if has_key(HOST, "rect") == false {
+        return [0, 0, 0, 0]
+    }
+    alloc r := HOST["rect"](node)
+    if r == false {
+        return [0, 0, 0, 0]
+    }
+    return r
+}
+
+proc view() {
+    if has_key(HOST, "view") {
+        return HOST["view"]()
+    }
+    return [1024, 768, 0, 0, 1024, 768]
+}
+
+proc g_offset_width(h, node) {
+    return float(round(rect_of(node)[2]))
+}
+
+proc g_offset_height(h, node) {
+    return float(round(rect_of(node)[3]))
+}
+
+proc g_offset_left(h, node) {
+    return float(round(rect_of(node)[0]))
+}
+
+proc g_offset_top(h, node) {
+    return float(round(rect_of(node)[1]))
+}
+
+proc g_offset_parent(h, node) {
+    if node.tag == "body" or node.tag == "html" {
+        return 0
+    }
+    return wrap(DOC.body)
+}
+
+proc g_client_width(h, node) {
+    if node.tag == "html" or node.tag == "body" {
+        return float(view()[0])
+    }
+    return float(round(rect_of(node)[2]))
+}
+
+proc g_client_height(h, node) {
+    if node.tag == "html" {
+        return float(view()[1])
+    }
+    return float(round(rect_of(node)[3]))
+}
+
+proc g_zero(h, node) {
+    return 0.0
+}
+
+proc g_scroll_width(h, node) {
+    if node.tag == "html" or node.tag == "body" {
+        return float(view()[4])
+    }
+    return float(round(rect_of(node)[2]))
+}
+
+proc g_scroll_height(h, node) {
+    if node.tag == "html" or node.tag == "body" {
+        return float(view()[5])
+    }
+    return float(round(rect_of(node)[3]))
+}
+
+proc g_scroll_top(h, node) {
+    if node.tag == "html" or node.tag == "body" {
+        return float(view()[3])
+    }
+    return 0.0
+}
+
+proc s_scroll_top(h, node, v) {
+    if (node.tag == "html" or node.tag == "body") and has_key(HOST, "scroll") {
+        HOST["scroll"](view()[2], int(to_integer(v)))
+    }
+    return true
+}
+
+proc g_scroll_left(h, node) {
+    if node.tag == "html" or node.tag == "body" {
+        return float(view()[2])
+    }
+    return 0.0
+}
+
+proc s_scroll_left(h, node, v) {
+    return true
+}
+
+proc g_natural_width(h, node) {
+    if node.tag != "img" {
+        return MISS
+    }
+    if has_key(HOST, "picture") {
+        return float(HOST["picture"](node)[0])
+    }
+    return 0.0
+}
+
+proc g_natural_height(h, node) {
+    if node.tag != "img" {
+        return MISS
+    }
+    if has_key(HOST, "picture") {
+        return float(HOST["picture"](node)[1])
+    }
+    return 0.0
+}
+
+proc g_complete(h, node) {
+    if node.tag != "img" {
+        return MISS
+    }
+    return true
+}
+
+proc g_width(h, node) {
+    alloc tag := node.tag
+    if tag == "img" or tag == "canvas" or tag == "video" or tag == "iframe" or tag == "input" or tag == "table" or tag == "td" or tag == "th" or tag == "object" or tag == "embed" or tag == "svg" {
+        if tag == "img" and is_connected(node) {
+            return float(round(rect_of(node)[2]))
+        }
+        return float(u.to_int(attr_or(node, "width", "0"), 0))
+    }
+    return MISS
+}
+
+proc g_height(h, node) {
+    alloc tag := node.tag
+    if tag == "img" or tag == "canvas" or tag == "video" or tag == "iframe" or tag == "input" or tag == "table" or tag == "td" or tag == "th" or tag == "object" or tag == "embed" or tag == "svg" {
+        if tag == "img" and is_connected(node) {
+            return float(round(rect_of(node)[3]))
+        }
+        return float(u.to_int(attr_or(node, "height", "0"), 0))
+    }
+    return MISS
+}
+
+proc s_width(h, node, v) {
+    if type_of(g_width(h, node)) == 5 {
+        return false
+    }
+    set_attr(node, "width", to_str(v))
+    return true
+}
+
+proc s_height(h, node, v) {
+    if type_of(g_height(h, node)) == 5 {
+        return false
+    }
+    set_attr(node, "height", to_str(v))
+    return true
+}
+
+proc g_content_template(h, node) {
+    if node.tag == "meta" {
+        return attr_or(node, "content", "")
+    }
+    if node.tag == "template" {
+        return wrap(template_content(node))
+    }
+    return MISS
+}
+
+proc s_content(h, node, v) {
+    if node.tag == "meta" {
+        set_attr(node, "content", to_str(v))
+        return true
+    }
+    return false
+}
+
+# Properties that are an attribute under another name. Each is
+# [kind, attribute]: kind 0 text, 1 there or not, 2 an address (given
+# whole), 3 a whole number.
+alloc REFLECT := {
+    title: [0, "title"], lang: [0, "lang"], dir: [0, "dir"], name: [0, "name"], alt: [0, "alt"],
+    placeholder: [0, "placeholder"], rel: [0, "rel"], target: [0, "target"], htmlFor: [0, "for"],
+    accept: [0, "accept"], media: [0, "media"], srcset: [0, "srcset"], sizes: [0, "sizes"],
+    charset: [0, "charset"], crossOrigin: [0, "crossorigin"], integrity: [0, "integrity"],
+    nonce: [0, "nonce"], role: [0, "role"], slot: [0, "slot"], method: [0, "method"],
+    enctype: [0, "enctype"], autocomplete: [0, "autocomplete"], pattern: [0, "pattern"],
+    min: [0, "min"], max: [0, "max"], step: [0, "step"], download: [0, "download"],
+    loading: [0, "loading"], decoding: [0, "decoding"], referrerPolicy: [0, "referrerpolicy"],
+    defaultValue: [0, "value"], httpEquiv: [0, "http-equiv"], scope: [0, "scope"],
+    accessKey: [0, "accesskey"], inputMode: [0, "inputmode"], useMap: [0, "usemap"],
+    disabled: [1, "disabled"], readOnly: [1, "readonly"], required: [1, "required"],
+    multiple: [1, "multiple"], autofocus: [1, "autofocus"], defaultChecked: [1, "checked"],
+    defaultSelected: [1, "selected"], async: [1, "async"], defer: [1, "defer"],
+    noModule: [1, "nomodule"], open: [1, "open"], controls: [1, "controls"], "loop": [1, "loop"],
+    muted: [1, "muted"], autoplay: [1, "autoplay"], noValidate: [1, "novalidate"],
+    draggable: [1, "draggable"], inert: [1, "inert"], reversed: [1, "reversed"],
+    allowFullscreen: [1, "allowfullscreen"], isMap: [1, "ismap"],
+    href: [2, "href"], src: [2, "src"], action: [2, "action"], poster: [2, "poster"],
+    cite: [2, "cite"], formAction: [2, "formaction"], currentSrc: [2, "src"],
+    maxLength: [3, "maxlength"], minLength: [3, "minlength"], size: [3, "size"],
+    cols: [3, "cols"], rows: [3, "rows"], colSpan: [3, "colspan"], rowSpan: [3, "rowspan"],
+    start: [3, "start"], span: [3, "span"]
+}
+
+proc reflect_get(node, r) {
+    alloc kind := r[0]
+    alloc name := r[1]
+    if kind == 0 {
+        return attr_or(node, name, "")
+    }
+    if kind == 1 {
+        return has_key(node.attrs, name)
+    }
+    if kind == 2 {
+        if has_key(node.attrs, name) == false {
+            return ""
+        }
+        alloc whole := url.resolve(BASE, node.attrs[name])
+        if whole == "" {
+            return node.attrs[name]
+        }
+        return whole
+    }
+    alloc d := 0
+    if name == "colspan" or name == "rowspan" or name == "span" or name == "start" {
+        d := 1
+    } elif name == "maxlength" or name == "minlength" {
+        d := -1
+    } elif name == "size" or name == "cols" {
+        d := 20
+    } elif name == "rows" {
+        d := 2
+    }
+    return float(u.to_int(attr_or(node, name, ""), d))
+}
+
+proc reflect_set(node, r, v) {
+    alloc kind := r[0]
+    if kind == 1 {
+        set_bool_attr(node, r[1], to_bool(v))
+    } else {
+        set_attr(node, r[1], to_str(v))
+        if r[1] == "src" and node.tag == "img" {
+            append(TASKS, [3, node, "load"])
+        }
+    }
+    return true
+}
+
+# -- text and comments
+
+proc g_data(h, node) {
+    return node.text
+}
+
+proc s_data(h, node, v) {
+    set_text_content(node, to_str(v))
+}
+
+proc g_text_length(h, node) {
+    return float(length(node.text))
+}
+
+# --- el.style -------------------------------------------------------------------------------
+
+# "backgroundColor" as CSS writes it: "background-color".
+proc css_name(k) {
+    if k == "cssFloat" {
+        return "float"
+    }
+    alloc b := string_bytes(k)
+    alloc plain := true
+    for ch in b {
+        if ch >= 65 and ch <= 90 {
+            plain := false
+            break
+        }
+    }
+    if plain {
+        return k
+    }
+    if length(b) > 2 and b[0] == 45 and b[1] == 45 {
+        return k
+    }
+    alloc out := bytes_repeat(0, 0)
+    if u.starts_with(k, "webkit") or u.starts_with(k, "moz") or u.starts_with(k, "ms") {
+        append(out, 45)
+    }
+    for ch2 in b {
+        if ch2 >= 65 and ch2 <= 90 {
+            append(out, 45)
+            append(out, ch2 + 32)
+        } else {
+            append(out, ch2)
+        }
+    }
+    return bytes_to_string(out)
+}
+
+# "data-user-id" as scripts write it: "userId" (without the "data-").
+proc camel_name(k) {
+    alloc b := string_bytes(k)
+    alloc out := bytes_repeat(0, 0)
+    alloc up := false
+    for ch in b {
+        if ch == 45 {
+            up := true
+        } elif up and ch >= 97 and ch <= 122 {
+            append(out, ch - 32)
+            up := false
+        } else {
+            append(out, ch)
+            up := false
+        }
+    }
+    return bytes_to_string(out)
+}
+
+# The declarations of a style="" text: [[name, value], ...].
+proc style_decls(text) {
+    alloc b := string_bytes(text)
+    alloc n := length(b)
+    alloc out := []
+    alloc start := 0
+    alloc depth := 0
+    alloc quote := 0
+    alloc colon := -1
+    alloc i := 0
+    loop i <= n {
+        alloc ch := 59
+        if i < n {
+            ch := b[i]
+        }
+        if quote != 0 {
+            if ch == quote and i < n {
+                quote := 0
+            } elif i == n {
+                quote := 0
+                continue
+            }
+        } elif ch == 34 or ch == 39 {
+            quote := ch
+        } elif ch == 40 {
+            depth := depth + 1
+        } elif ch == 41 {
+            if depth > 0 {
+                depth := depth - 1
+            }
+        } elif ch == 58 and colon < 0 and depth == 0 {
+            colon := i
+        } elif ch == 59 and (depth == 0 or i == n) {
+            if colon > start {
+                alloc name := u.trim(bytes_to_string(b[start:colon]))
+                alloc value := u.trim(bytes_to_string(b[colon + 1:i]))
+                if u.starts_with(name, "--") == false {
+                    name := u.lower(name)
+                }
+                if name != "" and value != "" {
+                    append(out, [name, value])
+                }
+            }
+            start := i + 1
+            colon := -1
+            depth := 0
+        }
+        i := i + 1
+    }
+    return out
+}
+
+proc decls_text(decls) {
+    alloc parts := []
+    for d in decls {
+        append(parts, d[0] + ": " + d[1] + ";")
+    }
+    return u.join(parts, " ")
+}
+
+proc style_value(node, name) {
+    if has_key(node.attrs, "style") == false {
+        return ""
+    }
+    alloc found := ""
+    for d in style_decls(node.attrs["style"]) {
+        if d[0] == name {
+            found := d[1]
+        }
+    }
+    if u.ends_with(found, "!important") {
+        found := u.trim(found[0:length(found) - 10])
+    }
+    return found
+}
+
+proc style_put(node, name, value) {
+    alloc decls := style_decls(attr_or(node, "style", ""))
+    alloc out := []
+    alloc done := false
+    for d in decls {
+        if d[0] == name {
+            if value != "" and done == false {
+                append(out, [name, value])
+            }
+            done := true
+        } else {
+            append(out, d)
+        }
+    }
+    if done == false and value != "" {
+        append(out, [name, value])
+    }
+    if length(out) == 0 and has_key(node.attrs, "style") == false {
+        return true
+    }
+    set_attr(node, "style", decls_text(out))
+    return true
+}
+
+alloc STYLE_SKIP := {setProperty: 1, getPropertyValue: 1, removeProperty: 1, getPropertyPriority: 1,
+                     item: 1, toString: 1, valueOf: 1, constructor: 1, hasOwnProperty: 1,
+                     toJSON: 1, then: 1, parentRule: 1, isPrototypeOf: 1, propertyIsEnumerable: 1,
+                     toLocaleString: 1, "__proto__": 1}
+
+proc is_symbol_name(k) {
+    return length(k) > 1 and k[0:2] == "@@"
+}
+
+proc style_get(h, id, k) {
+    if has_key(STYLE_SKIP, k) or is_symbol_name(k) {
+        return MISS
+    }
+    return style_value(NODES[id], css_name(k))
+}
+
+proc style_text(v) {
+    if is_nullish(v) {
+        return ""
+    }
+    return u.trim(to_str(v))
+}
+
+proc style_set(h, id, k, v) {
+    if has_key(STYLE_SKIP, k) or is_symbol_name(k) {
+        return false
+    }
+    style_put(NODES[id], css_name(k), style_text(v))
+    return true
+}
+
+proc style_keys(h, id) {
+    alloc out := []
+    for d in style_decls(attr_or(NODES[id], "style", "")) {
+        append(out, camel_name(d[0]))
+    }
+    return out
+}
+
+proc g_css_text(h, id) {
+    return decls_text(style_decls(attr_or(NODES[id], "style", "")))
+}
+
+proc s_css_text(h, id, v) {
+    set_attr(NODES[id], "style", style_text(v))
+}
+
+proc g_style_length(h, id) {
+    return float(length(style_decls(attr_or(NODES[id], "style", ""))))
+}
+
+proc style_this(this) {
+    if type_of(this) == 2 and this != 0 and (H[this][0] == C_STYLE or H[this][0] == C_COMPUTED) {
+        return this
+    }
+    throw_type("Illegal invocation")
+}
+
+proc n_style_set_property(this, args) {
+    alloc s := style_this(this)
+    if H[s][0] == C_STYLE {
+        alloc value := style_text(arg(args, 1))
+        if value != "" and style_text(arg(args, 2)) == "important" {
+            value := value + " !important"
+        }
+        style_put(NODES[H[s][3]], css_name(to_str(arg(args, 0))), value)
+    }
+    return U
+}
+
+proc n_style_get_property_value(this, args) {
+    alloc s := style_this(this)
+    alloc name := css_name(to_str(arg(args, 0)))
+    if H[s][0] == C_COMPUTED {
+        return computed_value(NODES[H[s][3]], name)
+    }
+    return style_value(NODES[H[s][3]], name)
+}
+
+proc n_style_remove_property(this, args) {
+    alloc s := style_this(this)
+    if H[s][0] != C_STYLE {
+        return ""
+    }
+    alloc name := css_name(to_str(arg(args, 0)))
+    alloc old := style_value(NODES[H[s][3]], name)
+    style_put(NODES[H[s][3]], name, "")
+    return old
+}
+
+proc n_style_get_property_priority(this, args) {
+    return ""
+}
+
+proc n_style_item(this, args) {
+    alloc s := style_this(this)
+    alloc decls := style_decls(attr_or(NODES[H[s][3]], "style", ""))
+    alloc i := to_integer(arg(args, 0))
+    if i >= 0.0 and i < float(length(decls)) {
+        return decls[int(i)][0]
+    }
+    return ""
+}
+
+# -- getComputedStyle(el)
+
+proc computed_value(node, name) {
+    if has_key(HOST, "reflow") {
+        HOST["reflow"]()
+    }
+    if node.t != 1 or has_key(node, "style") == false {
+        return ""
+    }
+    alloc st := node.style
+    if name == "width" or name == "height" {
+        alloc shown := css.computed_text(st, "display")
+        if shown != "none" and shown != "inline" and is_connected(node) {
+            alloc r := rect_of(node)
+            if name == "width" {
+                return css.number_text(r[2] * 1.0) + "px"
+            }
+            return css.number_text(r[3] * 1.0) + "px"
+        }
+    }
+    return css.computed_text(st, name)
+}
+
+proc computed_get(h, id, k) {
+    if has_key(STYLE_SKIP, k) or is_symbol_name(k) {
+        return MISS
+    }
+    return computed_value(NODES[id], css_name(k))
+}
+
+proc computed_set(h, id, k, v) {
+    return true
+}
+
+# --- el.dataset -----------------------------------------------------------------------------
+
+proc dataset_get(h, id, k) {
+    if is_symbol_name(k) {
+        return MISS
+    }
+    alloc name := "data-" + css_name(k)
+    alloc node := NODES[id]
+    if has_key(node.attrs, name) {
+        return node.attrs[name]
+    }
+    return MISS
+}
+
+proc dataset_set(h, id, k, v) {
+    set_attr(NODES[id], "data-" + css_name(k), to_str(v))
+    return true
+}
+
+proc dataset_keys(h, id) {
+    alloc out := []
+    for name in dict_keys(NODES[id].attrs) {
+        if u.starts_with(name, "data-") {
+            append(out, camel_name(name[5:]))
+        }
+    }
+    return out
+}
+
+# --- el.classList ---------------------------------------------------------------------------
+
+proc tokens_node(this) {
+    if type_of(this) == 2 and this != 0 and H[this][0] == C_TOKENS {
+        return NODES[H[this][3]]
+    }
+    throw_type("Illegal invocation")
+}
+
+proc class_words(node) {
+    return u.words(attr_or(node, "class", ""))
+}
+
+proc has_word(list, w) {
+    for x in list {
+        if x == w {
+            return true
+        }
+    }
+    return false
+}
+
+proc n_tokens_add(this, args) {
+    alloc node := tokens_node(this)
+    alloc list := class_words(node)
+    alloc changed := false
+    for a in args {
+        alloc w := to_str(a)
+        if w != "" and has_word(list, w) == false {
+            append(list, w)
+            changed := true
+        }
+    }
+    if changed {
+        set_attr(node, "class", u.join(list, " "))
+    }
+    return U
+}
+
+proc n_tokens_remove(this, args) {
+    alloc node := tokens_node(this)
+    alloc gone := []
+    for a in args {
+        append(gone, to_str(a))
+    }
+    alloc out := []
+    alloc changed := false
+    for w in class_words(node) {
+        if has_word(gone, w) {
+            changed := true
+        } else {
+            append(out, w)
+        }
+    }
+    if changed {
+        set_attr(node, "class", u.join(out, " "))
+    }
+    return U
+}
+
+proc n_tokens_toggle(this, args) {
+    alloc node := tokens_node(this)
+    alloc w := to_str(arg(args, 0))
+    alloc have := has_word(class_words(node), w)
+    alloc want := have == false
+    if length(args) > 1 and type_of(args[1]) != 0 {
+        want := to_bool(args[1])
+    }
+    if want and have == false {
+        n_tokens_add(this, [w])
+    } elif want == false and have {
+        n_tokens_remove(this, [w])
+    }
+    return want
+}
+
+proc n_tokens_contains(this, args) {
+    return has_word(class_words(tokens_node(this)), to_str(arg(args, 0)))
+}
+
+proc n_tokens_replace(this, args) {
+    alloc node := tokens_node(this)
+    alloc from := to_str(arg(args, 0))
+    alloc to := to_str(arg(args, 1))
+    alloc out := []
+    alloc hit := false
+    for w in class_words(node) {
+        if w == from {
+            hit := true
+            if has_word(out, to) == false {
+                append(out, to)
+            }
+        } elif has_word(out, w) == false {
+            append(out, w)
+        }
+    }
+    if hit {
+        set_attr(node, "class", u.join(out, " "))
+    }
+    return hit
+}
+
+proc n_tokens_item(this, args) {
+    alloc list := class_words(tokens_node(this))
+    alloc i := to_integer(arg(args, 0))
+    if i >= 0.0 and i < float(length(list)) {
+        return list[int(i)]
+    }
+    return 0
+}
+
+proc n_tokens_to_string(this, args) {
+    return attr_or(tokens_node(this), "class", "")
+}
+
+proc n_tokens_for_each(this, args) {
+    alloc list := class_words(tokens_node(this))
+    alloc i := 0
+    loop i < length(list) {
+        call(arg(args, 0), arg(args, 1), [list[i], float(i), this])
+        i := i + 1
+    }
+    return U
+}
+
+proc n_tokens_values(this, args) {
+    alloc list := new_array(class_words(tokens_node(this)))
+    return call(get(list, "values"), list, [])
+}
+
+proc g_tokens_length(h, id) {
+    return float(length(class_words(NODES[id])))
+}
+
+proc g_tokens_value(h, id) {
+    return attr_or(NODES[id], "class", "")
+}
+
+proc s_tokens_value(h, id, v) {
+    set_attr(NODES[id], "class", to_str(v))
+}
+
+proc tokens_get(h, id, k) {
+    alloc i := u.to_int(k, -1)
+    if i < 0 {
+        return MISS
+    }
+    alloc list := class_words(NODES[id])
+    if i < length(list) {
+        return list[i]
+    }
+    return MISS
+}
+
+# --- localStorage and sessionStorage --------------------------------------------------------
+#
+# Kept while the browser runs, one store for each site; nothing is
+# written to the disk.
+
+alloc STORES := {}       # "origin kind" -> [dict]
+
+proc store_of(kind) {
+    alloc key := ADDRESS
+    alloc p := url.parse(ADDRESS)
+    if p != false {
+        key := url.origin(p)
+    }
+    key := key + " " + kind
+    if has_key(STORES, key) == false {
+        STORES[key] := [{}]
+    }
+    return STORES[key]
+}
+
+proc storage_box(this) {
+    if type_of(this) == 2 and this != 0 and H[this][0] == C_STORAGE {
+        return H[this][3]
+    }
+    throw_type("Illegal invocation")
+}
+
+proc n_storage_get_item(this, args) {
+    alloc box := storage_box(this)
+    alloc k := to_str(arg(args, 0))
+    if has_key(box[0], k) {
+        return box[0][k]
+    }
+    return 0
+}
+
+proc n_storage_set_item(this, args) {
+    alloc box := storage_box(this)
+    box[0][to_str(arg(args, 0))] := to_str(arg(args, 1))
+    return U
+}
+
+proc n_storage_remove_item(this, args) {
+    alloc box := storage_box(this)
+    alloc k := to_str(arg(args, 0))
+    if has_key(box[0], k) {
+        alloc d := {}
+        for name in dict_keys(box[0]) {
+            if name != k {
+                d[name] := box[0][name]
+            }
+        }
+        box[0] := d
+    }
+    return U
+}
+
+proc n_storage_clear(this, args) {
+    alloc box := storage_box(this)
+    box[0] := {}
+    return U
+}
+
+proc n_storage_key(this, args) {
+    alloc keys := dict_keys(storage_box(this)[0])
+    alloc i := to_integer(arg(args, 0))
+    if i >= 0.0 and i < float(length(keys)) {
+        return keys[int(i)]
+    }
+    return 0
+}
+
+proc g_storage_length(h, box) {
+    return float(length(dict_keys(box[0])))
+}
+
+alloc STORAGE_SKIP := {getItem: 1, setItem: 1, removeItem: 1, clear: 1, key: 1, constructor: 1,
+                       toString: 1, valueOf: 1, hasOwnProperty: 1, "__proto__": 1}
+
+proc storage_get(h, box, k) {
+    if has_key(STORAGE_SKIP, k) == false and has_key(box[0], k) {
+        return box[0][k]
+    }
+    return MISS
+}
+
+proc storage_set(h, box, k, v) {
+    if has_key(STORAGE_SKIP, k) or is_symbol_name(k) {
+        return false
+    }
+    box[0][k] := to_str(v)
+    return true
+}
+
+proc storage_keys(h, box) {
+    return dict_keys(box[0])
+}
+
+# --- what a node can be asked to do ---------------------------------------------------------
+
+# An argument that must be a node.
+proc arg_node(args, i, what) {
+    alloc v := arg(args, i)
+    if is_node(v) {
+        return NODES[H[v][3]]
+    }
+    throw_type("Failed to execute '" + what + "' on 'Node': parameter " + (i + 1) + " is not of type 'Node'.")
+}
+
+# For append() and its like: a node as it is, anything else as text.
+proc node_or_text(v) {
+    if is_node(v) {
+        return NODES[H[v][3]]
+    }
+    return new_text(to_str(v))
+}
+
+proc n_append_child(this, args) {
+    alloc parent := node_of(this, "appendChild")
+    insert_before(parent, arg_node(args, 0, "appendChild"), false)
+    return args[0]
+}
+
+proc n_insert_before(this, args) {
+    alloc parent := node_of(this, "insertBefore")
+    alloc node := arg_node(args, 0, "insertBefore")
+    alloc ref := false
+    if is_node(arg(args, 1)) {
+        ref := NODES[H[args[1]][3]]
+    }
+    insert_before(parent, node, ref)
+    return args[0]
+}
+
+proc n_remove_child(this, args) {
+    alloc parent := node_of(this, "removeChild")
+    alloc node := arg_node(args, 0, "removeChild")
+    if PARENT[node.nid] != parent.nid {
+        dom_error("NotFoundError", "Failed to execute 'removeChild' on 'Node': The node to be removed is not a child of this node.")
+    }
+    detach(node)
+    return args[0]
+}
+
+proc n_replace_child(this, args) {
+    alloc parent := node_of(this, "replaceChild")
+    alloc node := arg_node(args, 0, "replaceChild")
+    alloc old := arg_node(args, 1, "replaceChild")
+    if PARENT[old.nid] != parent.nid {
+        dom_error("NotFoundError", "Failed to execute 'replaceChild' on 'Node': The node to be replaced is not a child of this node.")
+    }
+    if old.nid != node.nid {
+        insert_before(parent, node, old)
+        detach(old)
+    }
+    return args[1]
+}
+
+proc n_clone_node(this, args) {
+    alloc node := node_of(this, "cloneNode")
+    return wrap(copy_node(node, to_bool(arg(args, 0))))
+}
+
+proc contains(node, other) {
+    alloc id := other.nid
+    loop id >= 0 {
+        if id == node.nid {
+            return true
+        }
+        id := PARENT[id]
+    }
+    return false
+}
+
+proc n_contains(this, args) {
+    alloc node := node_of(this, "contains")
+    if is_node(arg(args, 0)) == false {
+        return false
+    }
+    return contains(node, NODES[H[args[0]][3]])
+}
+
+proc n_has_child_nodes(this, args) {
+    return length(kids_of(node_of(this, "hasChildNodes"))) > 0
+}
+
+proc n_remove(this, args) {
+    detach(node_of(this, "remove"))
+    return U
+}
+
+proc n_append(this, args) {
+    alloc parent := node_of(this, "append")
+    for a in args {
+        insert_before(parent, node_or_text(a), false)
+    }
+    return U
+}
+
+proc n_prepend(this, args) {
+    alloc parent := node_of(this, "prepend")
+    alloc first := false
+    if length(parent.kids) > 0 {
+        first := parent.kids[0]
+    }
+    for a in args {
+        insert_before(parent, node_or_text(a), first)
+    }
+    return U
+}
+
+proc n_before(this, args) {
+    alloc node := node_of(this, "before")
+    alloc parent := parent_of(node)
+    if parent == false {
+        return U
+    }
+    for a in args {
+        insert_before(parent, node_or_text(a), node)
+    }
+    return U
+}
+
+proc n_after(this, args) {
+    alloc node := node_of(this, "after")
+    alloc parent := parent_of(node)
+    if parent == false {
+        return U
+    }
+    alloc ref := sibling(node, 1, false)
+    for a in args {
+        insert_before(parent, node_or_text(a), ref)
+    }
+    return U
+}
+
+proc n_replace_with(this, args) {
+    alloc node := node_of(this, "replaceWith")
+    alloc parent := parent_of(node)
+    if parent == false {
+        return U
+    }
+    for a in args {
+        insert_before(parent, node_or_text(a), node)
+    }
+    detach(node)
+    return U
+}
+
+proc n_replace_children(this, args) {
+    alloc parent := node_of(this, "replaceChildren")
+    remove_all(parent)
+    for a in args {
+        insert_before(parent, node_or_text(a), false)
+    }
+    return U
+}
+
+proc el_of(this, what) {
+    alloc node := node_of(this, what)
+    if node.t != 1 {
+        throw_type("Failed to execute '" + what + "': the node is not an Element")
+    }
+    return node
+}
+
+proc n_get_attribute(this, args) {
+    alloc node := el_of(this, "getAttribute")
+    alloc name := u.lower(to_str(arg(args, 0)))
+    if has_key(node.attrs, name) {
+        return node.attrs[name]
+    }
+    return 0
+}
+
+proc n_set_attribute(this, args) {
+    alloc node := el_of(this, "setAttribute")
+    set_attr(node, u.lower(to_str(arg(args, 0))), to_str(arg(args, 1)))
+    return U
+}
+
+proc n_remove_attribute(this, args) {
+    alloc node := el_of(this, "removeAttribute")
+    remove_attr(node, u.lower(to_str(arg(args, 0))))
+    return U
+}
+
+proc n_has_attribute(this, args) {
+    alloc node := el_of(this, "hasAttribute")
+    return has_key(node.attrs, u.lower(to_str(arg(args, 0))))
+}
+
+proc n_toggle_attribute(this, args) {
+    alloc node := el_of(this, "toggleAttribute")
+    alloc name := u.lower(to_str(arg(args, 0)))
+    alloc want := has_key(node.attrs, name) == false
+    if length(args) > 1 and type_of(args[1]) != 0 {
+        want := to_bool(args[1])
+    }
+    if want {
+        if has_key(node.attrs, name) == false {
+            set_attr(node, name, "")
+        }
+    } else {
+        remove_attr(node, name)
+    }
+    return want
+}
+
+proc n_get_attribute_names(this, args) {
+    return new_array(dict_keys(el_of(this, "getAttributeNames").attrs))
+}
+
+proc n_has_attributes(this, args) {
+    return length(dict_keys(el_of(this, "hasAttributes").attrs)) > 0
+}
+
+proc n_get_attribute_node(this, args) {
+    alloc node := el_of(this, "getAttributeNode")
+    alloc name := u.lower(to_str(arg(args, 0)))
+    if has_key(node.attrs, name) == false {
+        return 0
+    }
+    alloc a := new_object()
+    put(a, "name", name)
+    put(a, "value", node.attrs[name])
+    put(a, "specified", true)
+    return a
+}
+
+# The same with a namespace in front, which is not looked at.
+proc local_name(v) {
+    alloc name := to_str(v)
+    alloc at := u.find(name, ":")
+    if at >= 0 {
+        name := name[at + 1:]
+    }
+    return u.lower(name)
+}
+
+proc n_get_attribute_ns(this, args) {
+    return n_get_attribute(this, [local_name(arg(args, 1))])
+}
+
+proc n_set_attribute_ns(this, args) {
+    return n_set_attribute(this, [local_name(arg(args, 1)), arg(args, 2)])
+}
+
+proc n_remove_attribute_ns(this, args) {
+    return n_remove_attribute(this, [local_name(arg(args, 1))])
+}
+
+proc n_has_attribute_ns(this, args) {
+    return n_has_attribute(this, [local_name(arg(args, 1))])
+}
+
+proc n_query_selector(this, args) {
+    alloc node := node_of(this, "querySelector")
+    if node.t == 3 or node.t == 8 {
+        return 0
+    }
+    alloc found := query(node, to_str(arg(args, 0)), true)
+    if length(found) == 0 {
+        return 0
+    }
+    return wrap(found[0])
+}
+
+proc n_query_selector_all(this, args) {
+    alloc node := node_of(this, "querySelectorAll")
+    if node.t == 3 or node.t == 8 {
+        return wrap_list([])
+    }
+    return wrap_list(query(node, to_str(arg(args, 0)), false))
+}
+
+proc n_matches(this, args) {
+    return node_matches(el_of(this, "matches"), to_str(arg(args, 0)))
+}
+
+proc n_closest(this, args) {
+    alloc node := el_of(this, "closest")
+    alloc text := to_str(arg(args, 0))
+    alloc cur := node
+    loop cur != false and cur.t == 1 {
+        if node_matches(cur, text) {
+            return wrap(cur)
+        }
+        cur := parent_of(cur)
+    }
+    return 0
+}
+
+proc n_get_elements_by_tag_name(this, args) {
+    alloc node := node_of(this, "getElementsByTagName")
+    if node.t == 3 or node.t == 8 {
+        return wrap_list([])
+    }
+    return wrap_list(collect(node, u.lower(to_str(arg(args, 0))), [], []))
+}
+
+proc n_get_elements_by_class_name(this, args) {
+    alloc node := node_of(this, "getElementsByClassName")
+    alloc names := u.words(to_str(arg(args, 0)))
+    if node.t == 3 or node.t == 8 or length(names) == 0 {
+        return wrap_list([])
+    }
+    return wrap_list(collect(node, "", names, []))
+}
+
+proc find_id(node, id) {
+    for k in node.kids {
+        if k.t == 1 {
+            if has_key(k.attrs, "id") and k.attrs["id"] == id {
+                return k
+            }
+            alloc r := find_id(k, id)
+            if r != false {
+                return r
+            }
+        }
+    }
+    return false
+}
+
+proc n_get_element_by_id(this, args) {
+    alloc node := node_of(this, "getElementById")
+    alloc id := to_str(arg(args, 0))
+    if node.t == 9 {
+        return wrap(by_id(id))
+    }
+    if node.t == 3 or node.t == 8 {
+        return 0
+    }
+    return wrap(find_id(node, id))
+}
+
+proc n_insert_adjacent_html(this, args) {
+    alloc node := el_of(this, "insertAdjacentHTML")
+    alloc where := u.lower(to_str(arg(args, 0)))
+    alloc text := to_str(arg(args, 1))
+    alloc parent := node
+    alloc ref := false
+    if where == "beforebegin" or where == "afterend" {
+        parent := parent_of(node)
+        if parent == false {
+            dom_error("NoModificationAllowedError", "The element has no parent.")
+        }
+        ref := node
+        if where == "afterend" {
+            ref := sibling(node, 1, false)
+        }
+    } elif where == "afterbegin" {
+        if length(node.kids) > 0 {
+            ref := node.kids[0]
+        }
+    } elif where != "beforeend" {
+        dom_error("SyntaxError", "The value provided ('" + where + "') is not one of 'beforebegin', 'afterbegin', 'beforeend', or 'afterend'.")
+    }
+    alloc context := "div"
+    if parent.t == 1 {
+        context := parent.tag
+    }
+    for n in fragment_nodes(text, context) {
+        insert_before(parent, n, ref)
+    }
+    return U
+}
+
+proc insert_adjacent(node, where, what) {
+    if where == "beforebegin" or where == "afterend" {
+        alloc parent := parent_of(node)
+        if parent == false {
+            return false
+        }
+        if where == "afterend" {
+            insert_before(parent, what, sibling(node, 1, false))
+        } else {
+            insert_before(parent, what, node)
+        }
+    } elif where == "afterbegin" {
+        alloc first := false
+        if length(node.kids) > 0 {
+            first := node.kids[0]
+        }
+        insert_before(node, what, first)
+    } else {
+        insert_before(node, what, false)
+    }
+    return true
+}
+
+proc n_insert_adjacent_element(this, args) {
+    alloc node := el_of(this, "insertAdjacentElement")
+    insert_adjacent(node, u.lower(to_str(arg(args, 0))), arg_node(args, 1, "insertAdjacentElement"))
+    return arg(args, 1)
+}
+
+proc n_insert_adjacent_text(this, args) {
+    alloc node := el_of(this, "insertAdjacentText")
+    insert_adjacent(node, u.lower(to_str(arg(args, 0))), new_text(to_str(arg(args, 1))))
+    return U
+}
+
+proc new_rect(x, y, w, h) {
+    alloc o := new_object()
+    put(o, "x", x * 1.0)
+    put(o, "y", y * 1.0)
+    put(o, "width", w * 1.0)
+    put(o, "height", h * 1.0)
+    put(o, "top", y * 1.0)
+    put(o, "left", x * 1.0)
+    put(o, "right", (x + w) * 1.0)
+    put(o, "bottom", (y + h) * 1.0)
+    return o
+}
+
+proc n_get_bounding_client_rect(this, args) {
+    alloc node := node_of(this, "getBoundingClientRect")
+    alloc r := rect_of(node)
+    alloc v := view()
+    return new_rect(r[0] - v[2], r[1] - v[3], r[2], r[3])
+}
+
+proc n_get_client_rects(this, args) {
+    return new_array([n_get_bounding_client_rect(this, args)])
+}
+
+proc n_scroll_into_view(this, args) {
+    alloc node := node_of(this, "scrollIntoView")
+    if has_key(HOST, "scroll") {
+        alloc r := rect_of(node)
+        HOST["scroll"](view()[2], int(r[1]))
+    }
+    return U
+}
+
+proc n_nothing(this, args) {
+    return U
+}
+
+proc n_false(this, args) {
+    return false
+}
+
+proc n_true(this, args) {
+    return true
+}
+
+proc n_null(this, args) {
+    return 0
+}
+
+proc n_empty_array(this, args) {
+    return new_array([])
+}
+
+proc n_focus(this, args) {
+    alloc node := node_of(this, "focus")
+    if has_key(HOST, "focus") {
+        HOST["focus"](node)
+    }
+    return U
+}
+
+proc n_blur(this, args) {
+    node_of(this, "blur")
+    if has_key(HOST, "focus") {
+        HOST["focus"](false)
+    }
+    return U
+}
+
+proc n_click(this, args) {
+    alloc node := node_of(this, "click")
+    if fire(node.nid, "click", true, true, {button: 0.0, clientX: 0.0, clientY: 0.0, detail: 1.0}, "MouseEvent") {
+        if has_key(HOST, "activate") {
+            HOST["activate"](node)
+        }
+    }
+    return U
+}
+
+proc n_submit(this, args) {
+    alloc node := el_of(this, "submit")
+    if has_key(HOST, "submit") {
+        HOST["submit"](node)
+    }
+    return U
+}
+
+proc n_request_submit(this, args) {
+    alloc node := el_of(this, "requestSubmit")
+    if fire(node.nid, "submit", true, true, {}, "Event") {
+        if has_key(HOST, "submit") {
+            HOST["submit"](node)
+        }
+    }
+    return U
+}
+
+proc n_reset(this, args) {
+    alloc node := el_of(this, "reset")
+    for ctl in controls_in(node, []) {
+        if has_key(ctl, "value") {
+            ctl.value := attr_or(ctl, "value", "")
+            if ctl.tag == "textarea" {
+                ctl.value := html.text_of(ctl)
+            }
+            ctl.caret := 0
+        }
+        if has_key(ctl, "checked") {
+            ctl.checked := has_key(ctl.attrs, "checked")
+        }
+        if has_key(ctl, "sel") {
+            ctl.sel := 100000
+        }
+    }
+    DIRTY := true
+    return U
+}
+
+# Where two nodes stand to each other, as compareDocumentPosition
+# counts: 1 apart, 2 other first, 4 other after, 8 other holds this,
+# 16 this holds other.
+proc n_compare_document_position(this, args) {
+    alloc a := node_of(this, "compareDocumentPosition")
+    alloc b := arg_node(args, 0, "compareDocumentPosition")
+    if a.nid == b.nid {
+        return 0.0
+    }
+    alloc pa := []
+    alloc id := a.nid
+    loop id >= 0 {
+        append(pa, id)
+        id := PARENT[id]
+    }
+    alloc pb := []
+    id := b.nid
+    loop id >= 0 {
+        append(pb, id)
+        id := PARENT[id]
+    }
+    alloc i := length(pa) - 1
+    alloc j := length(pb) - 1
+    if pa[i] != pb[j] {
+        return 35.0
+    }
+    loop i >= 0 and j >= 0 and pa[i] == pb[j] {
+        i := i - 1
+        j := j - 1
+    }
+    if i < 0 {
+        return 20.0
+    }
+    if j < 0 {
+        return 10.0
+    }
+    alloc common := NODES[pa[i + 1]]
+    alloc ia := index_in(common, NODES[pa[i]])
+    alloc ib := index_in(common, NODES[pb[j]])
+    if ia < ib {
+        return 4.0
+    }
+    return 2.0
+}
+
+proc n_get_root_node(this, args) {
+    alloc node := node_of(this, "getRootNode")
+    alloc id := node.nid
+    loop PARENT[id] >= 0 {
+        id := PARENT[id]
+    }
+    return wrap(NODES[id])
+}
+
+proc n_is_same_node(this, args) {
+    return is_node(arg(args, 0)) and H[args[0]][3] == node_of(this, "isSameNode").nid
+}
+
+proc n_is_equal_node(this, args) {
+    alloc a := node_of(this, "isEqualNode")
+    if is_node(arg(args, 0)) == false {
+        return false
+    }
+    alloc b := NODES[H[args[0]][3]]
+    return a.t == b.t and html.outer_html(a) == html.outer_html(b)
+}
+
+proc n_normalize(this, args) {
+    alloc node := node_of(this, "normalize")
+    if node.t == 3 or node.t == 8 {
+        return U
+    }
+    alloc out := []
+    alloc last := false
+    for k in node.kids {
+        if k.t == 3 {
+            if k.text == "" {
+                PARENT[k.nid] := -1
+            } elif last != false {
+                last.text := last.text + k.text
+                PARENT[k.nid] := -1
+            } else {
+                last := k
+                append(out, k)
+            }
+        } else {
+            last := false
+            append(out, k)
+            if k.t == 1 {
+                n_normalize(wrap(k), [])
+            }
+        }
+    }
+    node.kids := out
+    touched(node)
+    return U
+}
+
+proc n_split_text(this, args) {
+    alloc node := node_of(this, "splitText")
+    if node.t != 3 {
+        throw_type("Failed to execute 'splitText': the node is not a Text")
+    }
+    alloc cps := u.cps(node.text)
+    alloc at := int(to_integer(arg(args, 0)))
+    if at < 0 or at > length(cps) {
+        dom_error("IndexSizeError", "The offset is larger than the text's length.")
+    }
+    alloc rest := new_text(u.encode_range(cps, at, length(cps)))
+    node.text := u.encode_range(cps, 0, at)
+    alloc parent := parent_of(node)
+    if parent != false {
+        insert_before(parent, rest, sibling(node, 1, false))
+    }
+    DIRTY := true
+    return wrap(rest)
+}
+
+proc n_append_data(this, args) {
+    alloc node := node_of(this, "appendData")
+    if node.t == 3 or node.t == 8 {
+        set_text_content(node, node.text + to_str(arg(args, 0)))
+    }
+    return U
+}
+
+proc n_node_to_string(this, args) {
+    if is_node(this) {
+        alloc node := NODES[H[this][3]]
+        if node.t == 1 and (node.tag == "a" or node.tag == "area") {
+            return reflect_get(node, REFLECT["href"])
+        }
+        return "[object " + to_str(get(get(this, "constructor"), "name")) + "]"
+    }
+    return "[object Object]"
+}
+
+proc n_get_context(this, args) {
+    return 0
+}
+
+proc n_play(this, args) {
+    return promise.to_promise(U)
+}
+
+# -- the document's own
+
+proc n_create_element(this, args) {
+    alloc name := u.lower(to_str(arg(args, 0)))
+    if name == "" {
+        dom_error("InvalidCharacterError", "The tag name provided ('') is not a valid name.")
+    }
+    return wrap(new_element(name))
+}
+
+proc n_create_element_ns(this, args) {
+    return wrap(new_element(local_name(arg(args, 1))))
+}
+
+proc n_create_text_node(this, args) {
+    return wrap(new_text(to_str(arg(args, 0))))
+}
+
+proc n_create_comment(this, args) {
+    alloc node := {t: 8, text: to_str(arg(args, 0)), kids: []}
+    register(node, -1)
+    return wrap(node)
+}
+
+proc new_fragment() {
+    alloc node := {t: 11, kids: []}
+    register(node, -1)
+    return node
+}
+
+proc n_create_document_fragment(this, args) {
+    return wrap(new_fragment())
+}
+
+proc n_get_elements_by_name(this, args) {
+    alloc want := to_str(arg(args, 0))
+    alloc out := []
+    for el in collect(DOC, "*", [], []) {
+        if has_key(el.attrs, "name") and el.attrs["name"] == want {
+            append(out, el)
+        }
+    }
+    return wrap_list(out)
+}
+
+# document.write(): what is written goes where the script that
+# writes it stands, or at the end of the body.
+proc n_write(this, args) {
+    alloc text := ""
+    for a in args {
+        text := text + to_str(a)
+    }
+    alloc parent := DOC.body
+    alloc ref := false
+    if CURRENT_SCRIPT != false and PARENT[CURRENT_SCRIPT.nid] >= 0 {
+        parent := parent_of(CURRENT_SCRIPT)
+        if has_key(CURRENT_SCRIPT, "wrote") == false {
+            CURRENT_SCRIPT.wrote := sibling(CURRENT_SCRIPT, 1, false)
+        }
+        ref := CURRENT_SCRIPT.wrote
+        if ref != false and PARENT[ref.nid] != parent.nid {
+            ref := false
+        }
+        if parent.t != 1 or parent.tag == "head" or parent.tag == "html" {
+            parent := DOC.body
+            ref := false
+        }
+    }
+    if parent == false {
+        return U
+    }
+    for n in fragment_nodes(text, parent.tag) {
+        insert_before(parent, n, ref)
+    }
+    return U
+}
+
+proc n_import_node(this, args) {
+    return wrap(copy_node(arg_node(args, 0, "importNode"), to_bool(arg(args, 1))))
+}
+
+proc n_adopt_node(this, args) {
+    detach(arg_node(args, 0, "adoptNode"))
+    return args[0]
+}
+
+proc n_element_from_point(this, args) {
+    if has_key(HOST, "hit") {
+        return wrap(HOST["hit"](int(to_integer(arg(args, 0))), int(to_integer(arg(args, 1)))))
+    }
+    return 0
+}
+
+proc n_range_fragment(this, args) {
+    alloc frag := new_fragment()
+    for n in fragment_nodes(to_str(arg(args, 0)), "div") {
+        insert_before(frag, n, false)
+    }
+    return wrap(frag)
+}
+
+proc n_create_range(this, args) {
+    alloc r := new_object()
+    for name in ["setStart", "setEnd", "setStartBefore", "setEndAfter", "collapse", "selectNode", "selectNodeContents", "detach", "deleteContents", "insertNode"] {
+        def(r, name, n_nothing, 0)
+    }
+    def(r, "createContextualFragment", n_range_fragment, 1)
+    def(r, "getBoundingClientRect", n_zero_rect, 0)
+    def(r, "getClientRects", n_empty_array, 0)
+    put(r, "collapsed", true)
+    return r
+}
+
+proc n_zero_rect(this, args) {
+    return new_rect(0, 0, 0, 0)
+}
+
+proc n_get_selection(this, args) {
+    alloc s := new_object()
+    for name in ["removeAllRanges", "addRange", "collapse", "empty", "selectAllChildren"] {
+        def(s, name, n_nothing, 0)
+    }
+    def(s, "toString", n_empty_string, 0)
+    put(s, "rangeCount", 0.0)
+    put(s, "isCollapsed", true)
+    put(s, "anchorNode", 0)
+    put(s, "focusNode", 0)
+    return s
+}
+
+proc n_empty_string(this, args) {
+    return ""
+}
+
+# The content of a <template>: its children are moved into a fragment
+# of their own the first time a script asks.
+proc template_content(node) {
+    if has_key(node, "content") == false {
+        alloc frag := new_fragment()
+        alloc moving := node.kids
+        node.kids := []
+        for k in moving {
+            PARENT[k.nid] := frag.nid
+            append(frag.kids, k)
+        }
+        node.content := frag.nid
+        touched(node)
+    }
+    return NODES[node.content]
+}
+
+# --- events ---------------------------------------------------------------------------------
+#
+# An event is an object of class 38 whose payload is
+# [0 name, 1 bubbles?, 2 can be cancelled?, 3 cancelled?, 4 stopped
+# (1 after this target, 2 at once), 5 target, 6 the target being told
+# now, 7 phase, 8 time, 9 on its way?, 10 made by the browser?].
+# Anything else an event carries (clientX, key, detail) is an ordinary
+# property.
+#
+# Anything can be listened to: a node has its number, and any other
+# object is given one the first time, kept in a property scripts
+# cannot reach.
+
+proc new_event(name, bubbles, cancelable, kind) {
+    alloc proto := P["Event"]
+    if has_key(P, kind) {
+        proto := P[kind]
+    }
+    alloc h := new_obj(C_EVENT, proto)
+    H[h][3] := [name, bubbles, cancelable, false, 0, 0, 0, 0, time_ms() * 1.0 - START, false, false]
+    return h
+}
+
+proc event_x(this) {
+    if type_of(this) == 2 and this != 0 and H[this][0] == C_EVENT {
+        return H[this][3]
+    }
+    throw_type("Illegal invocation")
+}
+
+proc g_ev_type(h, x) {
+    return x[0]
+}
+
+proc g_ev_bubbles(h, x) {
+    return x[1]
+}
+
+proc g_ev_cancelable(h, x) {
+    return x[2]
+}
+
+proc g_ev_default_prevented(h, x) {
+    return x[3]
+}
+
+proc g_ev_target(h, x) {
+    return x[5]
+}
+
+proc g_ev_current_target(h, x) {
+    return x[6]
+}
+
+proc g_ev_phase(h, x) {
+    return float(x[7])
+}
+
+proc g_ev_time(h, x) {
+    return x[8]
+}
+
+proc g_ev_trusted(h, x) {
+    return x[10]
+}
+
+proc g_ev_cancel_bubble(h, x) {
+    return x[4] != 0
+}
+
+proc s_ev_cancel_bubble(h, x, v) {
+    if to_bool(v) and x[4] == 0 {
+        x[4] := 1
+    }
+}
+
+proc g_ev_return_value(h, x) {
+    return x[3] == false
+}
+
+proc s_ev_return_value(h, x, v) {
+    if to_bool(v) == false and x[2] {
+        x[3] := true
+    }
+}
+
+proc n_prevent_default(this, args) {
+    alloc x := event_x(this)
+    if x[2] {
+        x[3] := true
+    }
+    return U
+}
+
+proc n_stop_propagation(this, args) {
+    alloc x := event_x(this)
+    if x[4] == 0 {
+        x[4] := 1
+    }
+    return U
+}
+
+proc n_stop_immediate_propagation(this, args) {
+    alloc x := event_x(this)
+    x[4] := 2
+    return U
+}
+
+proc n_composed_path(this, args) {
+    alloc x := event_x(this)
+    if x[5] == 0 {
+        return new_array([])
+    }
+    alloc out := [x[5]]
+    if is_node(x[5]) {
+        alloc id := PARENT[H[x[5]][3]]
+        loop id >= 0 {
+            append(out, wrap(NODES[id]))
+            id := PARENT[id]
+        }
+        append(out, I[0])
+    }
+    return new_array(out)
+}
+
+proc n_init_event(this, args) {
+    alloc x := event_x(this)
+    x[0] := to_str(arg(args, 0))
+    x[1] := to_bool(arg(args, 1))
+    x[2] := to_bool(arg(args, 2))
+    if length(args) > 3 {
+        put(this, "detail", args[3])
+    }
+    return U
+}
+
+# Copy what a script gave as the second argument of new Event().
+proc init_event(h, init) {
+    if X["is_obj"](init) == false {
+        return true
+    }
+    alloc x := H[h][3]
+    for k in own_keys(init, false) {
+        alloc v := get(init, k)
+        if k == "bubbles" {
+            x[1] := to_bool(v)
+        } elif k == "cancelable" {
+            x[2] := to_bool(v)
+        } else {
+            put(h, k, v)
+        }
+    }
+    return true
+}
+
+alloc EVENT_DEFAULTS := {
+    CustomEvent: {detail: 0},
+    MouseEvent: {clientX: 0.0, clientY: 0.0, pageX: 0.0, pageY: 0.0, screenX: 0.0, screenY: 0.0, offsetX: 0.0, offsetY: 0.0, button: 0.0, buttons: 0.0, detail: 0.0, altKey: false, ctrlKey: false, shiftKey: false, metaKey: false, relatedTarget: 0, which: 1.0},
+    KeyboardEvent: {key: "", code: "", keyCode: 0.0, which: 0.0, charCode: 0.0, altKey: false, ctrlKey: false, shiftKey: false, metaKey: false, repeat: false, isComposing: false, location: 0.0},
+    UIEvent: {detail: 0.0},
+    FocusEvent: {relatedTarget: 0},
+    InputEvent: {data: 0, inputType: "", isComposing: false},
+    WheelEvent: {deltaX: 0.0, deltaY: 0.0, deltaZ: 0.0, deltaMode: 0.0, clientX: 0.0, clientY: 0.0},
+    PointerEvent: {clientX: 0.0, clientY: 0.0, pageX: 0.0, pageY: 0.0, button: 0.0, buttons: 0.0, pointerId: 1.0, pointerType: "mouse", isPrimary: true, altKey: false, ctrlKey: false, shiftKey: false, metaKey: false},
+    ErrorEvent: {message: "", filename: "", lineno: 0.0, colno: 0.0, error: 0},
+    MessageEvent: {data: 0, origin: "", source: 0},
+    HashChangeEvent: {oldURL: "", newURL: ""},
+    PopStateEvent: {state: 0},
+    ProgressEvent: {lengthComputable: false, loaded: 0.0, total: 0.0},
+    StorageEvent: {key: 0, oldValue: 0, newValue: 0},
+    TransitionEvent: {propertyName: "", elapsedTime: 0.0},
+    AnimationEvent: {animationName: "", elapsedTime: 0.0},
+    TouchEvent: {},
+    SubmitEvent: {submitter: 0},
+    Event: {}
+}
+
+proc set_event_defaults(h, kind) {
+    if has_key(EVENT_DEFAULTS, kind) {
+        alloc d := EVENT_DEFAULTS[kind]
+        for k in dict_keys(d) {
+            put(h, k, d[k])
+        }
+    }
+    return true
+}
+
+proc n_event_ctor(this, args) {
+    alloc kind := native_data()
+    if type_of(new_target()) == 0 {
+        throw_type("Failed to construct '" + kind + "': Please use the 'new' operator.")
+    }
+    if length(args) == 0 {
+        throw_type("Failed to construct '" + kind + "': 1 argument required, but only 0 present.")
+    }
+    alloc h := new_event(to_str(args[0]), false, false, kind)
+    set_event_defaults(h, kind)
+    init_event(h, arg(args, 1))
+    return h
+}
+
+proc n_create_event(this, args) {
+    alloc kind := to_str(arg(args, 0))
+    if kind == "HTMLEvents" or kind == "Events" {
+        kind := "Event"
+    } elif kind == "MouseEvents" {
+        kind := "MouseEvent"
+    } elif kind == "UIEvents" {
+        kind := "UIEvent"
+    } elif kind == "KeyEvents" or kind == "KeyboardEvents" {
+        kind := "KeyboardEvent"
+    }
+    alloc h := new_event("", false, false, kind)
+    set_event_defaults(h, kind)
+    return h
+}
+
+# The number of anything that can be listened to.
+proc target_nid(v) {
+    if type_of(v) != 2 or v == 0 or v == I[0] {
+        return 0
+    }
+    alloc o := H[v]
+    if o[0] == 32 {
+        return o[3]
+    }
+    if has_key(o[2], "@@target") {
+        return int(o[2]["@@target"])
+    }
+    alloc id := register({t: 0, kids: []}, -1)
+    WRAP[id] := v
+    define_hidden(v, "@@target", float(id))
+    return id
+}
+
+proc target_object(id) {
+    if id == 0 {
+        return I[0]
+    }
+    alloc h := WRAP[id]
+    if h != 0 {
+        return h
+    }
+    return wrap(NODES[id])
+}
+
+proc n_add_event_listener(this, args) {
+    alloc id := target_nid(this)
+    alloc name := to_str(arg(args, 0))
+    alloc fn := arg(args, 1)
+    if type_of(fn) != 2 or fn == 0 {
+        return U
+    }
+    alloc capture := false
+    alloc once := false
+    alloc opts := arg(args, 2)
+    if type_of(opts) == 2 and opts != 0 {
+        capture := to_bool(get(opts, "capture"))
+        once := to_bool(get(opts, "once"))
+    } else {
+        capture := to_bool(opts)
+    }
+    if LIS[id] == false {
+        LIS[id] := {}
+    }
+    alloc d := LIS[id]
+    if has_key(d, name) == false {
+        d[name] := []
+    }
+    for l in d[name] {
+        if l[3] and l[0] == fn and l[1] == capture {
+            return U
+        }
+    }
+    append(d[name], [fn, capture, once, true])
+    return U
+}
+
+proc n_remove_event_listener(this, args) {
+    alloc id := target_nid(this)
+    alloc name := to_str(arg(args, 0))
+    alloc fn := arg(args, 1)
+    alloc capture := false
+    alloc opts := arg(args, 2)
+    if type_of(opts) == 2 and opts != 0 {
+        capture := to_bool(get(opts, "capture"))
+    } else {
+        capture := to_bool(opts)
+    }
+    alloc d := LIS[id]
+    if d == false or has_key(d, name) == false {
+        return U
+    }
+    alloc keep := []
+    for l in d[name] {
+        if l[3] and l[0] == fn and l[1] == capture {
+            l[3] := false
+        } elif l[3] {
+            append(keep, l)
+        }
+    }
+    d[name] := keep
+    return U
+}
+
+# The function in on<name>: a property a script set, or an
+# attribute of the element (onclick="..."), made into a function the
+# first time. 0 when there is none.
+proc on_handler(id, name) {
+    alloc key := "on" + name
+    alloc h := 0
+    if id == 0 {
+        h := I[0]
+    } else {
+        h := WRAP[id]
+    }
+    if h != 0 {
+        alloc v := get(h, key)
+        if is_callable(v) {
+            return v
+        }
+    }
+    alloc node := NODES[id]
+    if id == 0 and DOC != false and type_of(DOC.body) == 6 {
+        # <body onload=""> speaks for the window
+        if name == "load" or name == "resize" or name == "scroll" or name == "hashchange" or name == "popstate" or name == "beforeunload" or name == "unload" {
+            node := DOC.body
+        }
+    }
+    if node.t == 1 and has_key(node.attrs, key) {
+        if has_key(node, "badon") and has_key(node.badon, key) {
+            return 0
+        }
+        alloc fn := 0
+        try {
+            fn := js.make_function("event", node.attrs[key])
+        } except e {
+            promise.report(caught(e))
+            if has_key(node, "badon") == false {
+                node.badon := {}
+            }
+            node.badon[key] := true
+            return 0
+        }
+        if id == 0 {
+            put(I[0], key, fn)
+        } else {
+            put(wrap(node), key, fn)
+        }
+        return fn
+    }
+    return 0
+}
+
+proc call_listener(fn, target, ev) {
+    try {
+        if is_callable(fn) {
+            return call(fn, target, [ev])
+        }
+        alloc he := get(fn, "handleEvent")
+        if is_callable(he) {
+            return call(he, fn, [ev])
+        }
+    } except e {
+        promise.report(caught(e))
+    }
+    return U
+}
+
+proc run_listeners(id, ev, x, phase) {
+    alloc d := LIS[id]
+    alloc name := x[0]
+    alloc handler := 0
+    if phase != 1 {
+        handler := on_handler(id, name)
+    }
+    alloc listed := d != false and has_key(d, name)
+    if handler == 0 and listed == false {
+        return true
+    }
+    alloc target := target_object(id)
+    x[6] := target
+    x[7] := phase
+    if handler != 0 {
+        alloc r := call_listener(handler, target, ev)
+        if type_of(r) == 1 and r == false and x[2] {
+            x[3] := true
+        }
+        if x[4] == 2 {
+            return true
+        }
+    }
+    if listed {
+        alloc list := d[name]
+        alloc n := length(list)
+        alloc i := 0
+        loop i < n {
+            alloc l := list[i]
+            i := i + 1
+            if l[3] == false {
+                continue
+            }
+            if (phase == 1 and l[1] == false) or (phase == 3 and l[1]) {
+                continue
+            }
+            if l[2] {
+                l[3] := false
+            }
+            call_listener(l[0], target, ev)
+            if x[4] == 2 {
+                break
+            }
+        }
+    }
+    return true
+}
+
+# Send event `ev` to the target with number `id`: down from the
+# window, to the target, and back up when the event bubbles. True
+# when nobody cancelled it.
+proc dispatch(id, ev) {
+    alloc x := H[ev][3]
+    x[9] := true
+    x[3] := false
+    x[4] := 0
+    x[5] := target_object(id)
+    alloc path := [id]
+    if id != 0 and NODES[id].t != 0 {
+        alloc p := PARENT[id]
+        loop p >= 0 {
+            append(path, p)
+            p := PARENT[p]
+        }
+        if path[length(path) - 1] == DOC_NID and x[0] != "load" {
+            append(path, 0)
+        }
+    }
+    alloc n := length(path)
+    alloc i := n - 1
+    loop i >= 1 and x[4] == 0 {
+        run_listeners(path[i], ev, x, 1)
+        i := i - 1
+    }
+    if x[4] == 0 {
+        run_listeners(path[0], ev, x, 2)
+    }
+    if x[1] {
+        i := 1
+        loop i < n and x[4] == 0 {
+            run_listeners(path[i], ev, x, 3)
+            i := i + 1
+        }
+    }
+    x[9] := false
+    x[7] := 0
+    x[6] := 0
+    return x[3] == false
+}
+
+proc n_dispatch_event(this, args) {
+    alloc ev := arg(args, 0)
+    if type_of(ev) != 2 or ev == 0 or H[ev][0] != C_EVENT {
+        throw_type("Failed to execute 'dispatchEvent' on 'EventTarget': parameter 1 is not of type 'Event'.")
+    }
+    return dispatch(target_nid(this), ev)
+}
+
+# Make an event and send it. `props` is an OMG dict of what else it
+# carries. True when nobody cancelled it.
+proc fire(id, name, bubbles, cancelable, props, kind) {
+    alloc ev := new_event(name, bubbles, cancelable, kind)
+    set_event_defaults(ev, kind)
+    for k in dict_keys(props) {
+        put(ev, k, props[k])
+    }
+    H[ev][3][10] := true
+    return dispatch(id, ev)
+}
+
+# --- the document's properties --------------------------------------------------------------
+
+proc g_document_element(h, node) {
+    if has_key(node, "root") {
+        return wrap(node.root)
+    }
+    return 0
+}
+
+proc g_head(h, node) {
+    return wrap(node.head)
+}
+
+proc g_body(h, node) {
+    return wrap(node.body)
+}
+
+proc title_node() {
+    if type_of(DOC.head) != 6 {
+        return false
+    }
+    for k in DOC.head.kids {
+        if k.t == 1 and k.tag == "title" {
+            return k
+        }
+    }
+    return false
+}
+
+proc g_title(h, node) {
+    alloc t := title_node()
+    if t == false {
+        return ""
+    }
+    return u.join(u.words(html.text_of(t)), " ")
+}
+
+proc s_title(h, node, v) {
+    alloc t := title_node()
+    if t == false {
+        if type_of(DOC.head) != 6 {
+            return true
+        }
+        t := new_element("title")
+        insert_before(DOC.head, t, false)
+    }
+    set_text_content(t, to_str(v))
+    if has_key(HOST, "title") {
+        HOST["title"](to_str(v))
+    }
+}
+
+proc g_cookie(h, node) {
+    if has_key(HOST, "cookie_get") {
+        return HOST["cookie_get"]()
+    }
+    return ""
+}
+
+proc s_cookie(h, node, v) {
+    if has_key(HOST, "cookie_set") {
+        HOST["cookie_set"](to_str(v))
+    }
+}
+
+proc g_ready_state(h, node) {
+    return READY
+}
+
+proc g_doc_url(h, node) {
+    return ADDRESS
+}
+
+proc g_doc_location(h, node) {
+    return LOCATION
+}
+
+proc s_doc_location(h, node, v) {
+    navigate(to_str(v), false)
+}
+
+proc g_default_view(h, node) {
+    return I[0]
+}
+
+proc g_active_element(h, node) {
+    if FOCUS != false {
+        return wrap(FOCUS)
+    }
+    return wrap(DOC.body)
+}
+
+proc g_current_script(h, node) {
+    return wrap(CURRENT_SCRIPT)
+}
+
+proc g_forms(h, node) {
+    return wrap_list(collect(DOC, "form", [], []))
+}
+
+proc g_images(h, node) {
+    return wrap_list(collect(DOC, "img", [], []))
+}
+
+proc g_scripts(h, node) {
+    return wrap_list(collect(DOC, "script", [], []))
+}
+
+proc g_links(h, node) {
+    alloc out := []
+    for a in collect(DOC, "a", [], []) {
+        if has_key(a.attrs, "href") {
+            append(out, a)
+        }
+    }
+    return wrap_list(out)
+}
+
+proc g_charset(h, node) {
+    return "UTF-8"
+}
+
+proc g_compat_mode(h, node) {
+    if has_key(node, "quirks") and node.quirks {
+        return "BackCompat"
+    }
+    return "CSS1Compat"
+}
+
+proc g_content_type(h, node) {
+    return "text/html"
+}
+
+proc g_doctype(h, node) {
+    if has_key(node, "quirks") and node.quirks {
+        return 0
+    }
+    alloc o := new_object()
+    put(o, "name", "html")
+    put(o, "publicId", "")
+    put(o, "systemId", "")
+    put(o, "nodeType", 10.0)
+    return o
+}
+
+proc g_empty_text(h, node) {
+    return ""
+}
+
+proc g_domain(h, node) {
+    alloc p := url.parse(ADDRESS)
+    if p == false {
+        return ""
+    }
+    return p.host
+}
+
+proc g_doc_hidden(h, node) {
+    return false
+}
+
+proc g_visibility_state(h, node) {
+    return "visible"
+}
+
+proc g_style_sheets(h, node) {
+    return new_array([])
+}
+
+proc g_null(h, node) {
+    return 0
+}
+
+proc g_design_mode(h, node) {
+    return "off"
+}
+
+# --- going places ---------------------------------------------------------------------------
+
+# Go to `where` (as written in the page). Another part of the same
+# page is a matter of scrolling; anything else is for the browser,
+# once the script that asked has returned.
+proc navigate(where, replace) {
+    alloc target := url.resolve(BASE, where)
+    if target == "" {
+        return false
+    }
+    if url.without_frag(target) == url.without_frag(ADDRESS) and u.contains(target, "#") {
+        alloc old := ADDRESS
+        if target != old {
+            ADDRESS := target
+            if has_key(HOST, "fragment") {
+                HOST["fragment"](target, replace)
+            }
+            append(TASKS, [4, old, target])
+        }
+        return true
+    }
+    if has_key(HOST, "navigate") {
+        HOST["navigate"](target, replace)
+    }
+    return true
+}
+
+proc here() {
+    alloc p := url.parse(ADDRESS)
+    if p == false {
+        return {scheme: "about", host: "", port: 0, path: "blank", query: "", frag: ""}
+    }
+    return p
+}
+
+proc g_loc_href(h, x) {
+    return ADDRESS
+}
+
+proc s_loc_href(h, x, v) {
+    navigate(to_str(v), false)
+}
+
+proc g_loc_protocol(h, x) {
+    return here().scheme + ":"
+}
+
+proc g_loc_host(h, x) {
+    return host_text(here())
+}
+
+proc g_loc_hostname(h, x) {
+    return here().host
+}
+
+proc g_loc_port(h, x) {
+    alloc p := here()
+    if p.port == 0 {
+        return ""
+    }
+    return "" + p.port
+}
+
+proc g_loc_pathname(h, x) {
+    return here().path
+}
+
+proc s_loc_pathname(h, x, v) {
+    alloc p := here()
+    p.path := to_str(v)
+    navigate(url.to_string(p), false)
+}
+
+proc g_loc_search(h, x) {
+    alloc q := here().query
+    if q == "?" {
+        return ""
+    }
+    return q
+}
+
+proc s_loc_search(h, x, v) {
+    alloc p := here()
+    alloc q := to_str(v)
+    if q != "" and u.starts_with(q, "?") == false {
+        q := "?" + q
+    }
+    p.query := q
+    navigate(url.to_string(p), false)
+}
+
+proc g_loc_hash(h, x) {
+    alloc f := here().frag
+    if f == "#" {
+        return ""
+    }
+    return f
+}
+
+proc s_loc_hash(h, x, v) {
+    alloc f := to_str(v)
+    if u.starts_with(f, "#") == false {
+        f := "#" + f
+    }
+    navigate(url.without_frag(ADDRESS) + f, false)
+}
+
+proc g_loc_origin(h, x) {
+    alloc p := here()
+    if p.scheme != "http" and p.scheme != "https" {
+        return "null"
+    }
+    return url.origin(p)
+}
+
+proc n_loc_assign(this, args) {
+    navigate(to_str(arg(args, 0)), false)
+    return U
+}
+
+proc n_loc_replace(this, args) {
+    navigate(to_str(arg(args, 0)), true)
+    return U
+}
+
+proc n_loc_reload(this, args) {
+    if has_key(HOST, "navigate") {
+        HOST["navigate"](ADDRESS, true)
+    }
+    return U
+}
+
+proc n_loc_to_string(this, args) {
+    return ADDRESS
+}
+
+# -- history
+
+alloc HIST := []         # the entries pushState made: [address, state]
+alloc HIST_AT := 0
+
+proc g_hist_length(h, x) {
+    if has_key(HOST, "history_length") {
+        return float(HOST["history_length"]())
+    }
+    return float(length(HIST))
+}
+
+proc g_hist_state(h, x) {
+    if HIST_AT < length(HIST) {
+        return HIST[HIST_AT][1]
+    }
+    return 0
+}
+
+proc g_hist_scroll(h, x) {
+    return "auto"
+}
+
+proc push_state(args, replace) {
+    alloc state := arg(args, 0)
+    if type_of(state) == 0 {
+        state := 0
+    }
+    alloc target := ADDRESS
+    if length(args) > 2 and is_nullish(args[2]) == false {
+        target := url.resolve(BASE, to_str(args[2]))
+        if target == "" {
+            target := ADDRESS
+        }
+    }
+    if replace {
+        HIST[HIST_AT] := [target, state]
+    } else {
+        HIST := HIST[0:HIST_AT + 1]
+        append(HIST, [target, state])
+        HIST_AT := length(HIST) - 1
+    }
+    ADDRESS := target
+    if has_key(HOST, "push_state") {
+        HOST["push_state"](target, replace)
+    }
+    return U
+}
+
+proc n_push_state(this, args) {
+    return push_state(args, false)
+}
+
+proc n_replace_state(this, args) {
+    return push_state(args, true)
+}
+
+proc n_hist_go(this, args) {
+    alloc d := int(to_integer(arg(args, 0)))
+    if has_key(HOST, "history") {
+        HOST["history"](d)
+    }
+    return U
+}
+
+proc n_hist_back(this, args) {
+    return n_hist_go(this, [-1.0])
+}
+
+proc n_hist_forward(this, args) {
+    return n_hist_go(this, [1.0])
+}
+
+# The browser is going `step` entries along its history to `address`.
+# True when that is a place this page made with pushState, and so a
+# matter for the page (a popstate event) and not a new page.
+proc history_step(step, address) {
+    alloc to := HIST_AT + step
+    if to < 0 or to >= length(HIST) or HIST[to][0] != address {
+        return false
+    }
+    HIST_AT := to
+    ADDRESS := address
+    fire(0, "popstate", false, false, {state: HIST[to][1]}, "PopStateEvent")
+    promise.run_microtasks()
+    return true
+}
+
+# --- URL and URLSearchParams (and Headers and FormData, which are also lists of pairs) -------
+#
+# The payload of the three: [pairs, the URL object they belong to or
+# 0, names in lower case?].
+
+proc url_x(this) {
+    if type_of(this) == 2 and this != 0 and H[this][0] == C_URL {
+        return H[this][3]
+    }
+    throw_type("Illegal invocation")
+}
+
+proc url_parts(x) {
+    alloc p := url.parse(x[0])
+    if p == false {
+        return {scheme: "about", host: "", port: 0, path: "blank", query: "", frag: ""}
+    }
+    return p
+}
+
+proc n_url_ctor(this, args) {
+    if type_of(new_target()) == 0 {
+        throw_type("Failed to construct 'URL': Please use the 'new' operator.")
+    }
+    alloc text := to_str(arg(args, 0))
+    alloc whole := ""
+    if length(args) > 1 and type_of(args[1]) != 0 {
+        whole := url.resolve(to_str(args[1]), text)
+    } elif url.scheme_len(u.trim(text)) > 0 {
+        whole := url.resolve("about:blank", text)
+    }
+    if whole == "" or url.parse(whole) == false {
+        throw_type("Failed to construct 'URL': Invalid URL")
+    }
+    alloc h := new_obj(C_URL, P["URL"])
+    H[h][3] := [whole]
+    return h
+}
+
+proc n_url_can_parse(this, args) {
+    alloc text := to_str(arg(args, 0))
+    alloc whole := ""
+    if length(args) > 1 and type_of(args[1]) != 0 {
+        whole := url.resolve(to_str(args[1]), text)
+    } elif url.scheme_len(u.trim(text)) > 0 {
+        whole := url.resolve("about:blank", text)
+    }
+    return whole != "" and url.parse(whole) != false
+}
+
+proc g_url_href(h, x) {
+    return x[0]
+}
+
+proc s_url_href(h, x, v) {
+    alloc whole := url.resolve("about:blank", to_str(v))
+    if whole != "" {
+        x[0] := whole
+    }
+}
+
+proc g_url_protocol(h, x) {
+    return url_parts(x).scheme + ":"
+}
+
+proc g_url_host(h, x) {
+    return host_text(url_parts(x))
+}
+
+proc g_url_hostname(h, x) {
+    return url_parts(x).host
+}
+
+proc g_url_port(h, x) {
+    alloc p := url_parts(x)
+    if p.port == 0 {
+        return ""
+    }
+    return "" + p.port
+}
+
+proc g_url_pathname(h, x) {
+    return url_parts(x).path
+}
+
+proc s_url_pathname(h, x, v) {
+    alloc p := url_parts(x)
+    p.path := to_str(v)
+    x[0] := url.to_string(p)
+}
+
+proc g_url_search(h, x) {
+    alloc q := url_parts(x).query
+    if q == "?" {
+        return ""
+    }
+    return q
+}
+
+proc s_url_search(h, x, v) {
+    alloc p := url_parts(x)
+    alloc q := to_str(v)
+    if q != "" and u.starts_with(q, "?") == false {
+        q := "?" + q
+    }
+    p.query := q
+    x[0] := url.to_string(p)
+}
+
+proc g_url_hash(h, x) {
+    alloc f := url_parts(x).frag
+    if f == "#" {
+        return ""
+    }
+    return f
+}
+
+proc s_url_hash(h, x, v) {
+    alloc p := url_parts(x)
+    alloc f := to_str(v)
+    if f != "" and u.starts_with(f, "#") == false {
+        f := "#" + f
+    }
+    p.frag := f
+    x[0] := url.to_string(p)
+}
+
+proc g_url_origin(h, x) {
+    alloc p := url_parts(x)
+    if p.scheme != "http" and p.scheme != "https" {
+        return "null"
+    }
+    return url.origin(p)
+}
+
+proc query_pairs(text) {
+    alloc out := []
+    if u.starts_with(text, "?") {
+        text := text[1:]
+    }
+    if text == "" {
+        return out
+    }
+    for part in u.split(text, "&") {
+        if part == "" {
+            continue
+        }
+        alloc at := u.find(part, "=")
+        alloc k := part
+        alloc v := ""
+        if at >= 0 {
+            k := part[0:at]
+            v := part[at + 1:]
+        }
+        append(out, [bytes_to_string(url.unescape_bytes(u.replace(k, "+", " "))), bytes_to_string(url.unescape_bytes(u.replace(v, "+", " ")))])
+    }
+    return out
+}
+
+proc pairs_text(pairs) {
+    alloc parts := []
+    for p in pairs {
+        append(parts, url.escape(p[0], true) + "=" + url.escape(p[1], true))
+    }
+    return u.join(parts, "&")
+}
+
+proc g_url_search_params(h, x) {
+    alloc o := H[h]
+    if has_key(o[2], "@@params") {
+        alloc old := o[2]["@@params"]
+        H[old][3][0] := query_pairs(g_url_search(h, x))
+        return old
+    }
+    alloc sp := new_obj(C_PARAMS, P["URLSearchParams"])
+    H[sp][3] := [query_pairs(g_url_search(h, x)), h, false]
+    define_hidden(h, "@@params", sp)
+    return sp
+}
+
+proc n_url_to_string(this, args) {
+    return url_x(this)[0]
+}
+
+alloc BLOBS := 0
+
+proc n_create_object_url(this, args) {
+    BLOBS := BLOBS + 1
+    return "blob:null/" + BLOBS
+}
+
+proc params_x(this) {
+    if type_of(this) == 2 and this != 0 and H[this][0] == C_PARAMS {
+        return H[this][3]
+    }
+    throw_type("Illegal invocation")
+}
+
+# The pairs changed: the URL they belong to follows.
+proc params_changed(x) {
+    if x[1] != 0 {
+        alloc ux := H[x[1]][3]
+        alloc p := url_parts(ux)
+        alloc q := pairs_text(x[0])
+        if q != "" {
+            q := "?" + q
+        }
+        p.query := q
+        ux[0] := url.to_string(p)
+    }
+    return true
+}
+
+proc pair_name(x, v) {
+    alloc s := to_str(v)
+    if x[2] {
+        return u.lower(s)
+    }
+    return s
+}
+
+# Pairs from what a script gave: text ("a=1&b=2"), an object, or a
+# list of [name, value].
+proc pairs_from(init, x) {
+    alloc out := []
+    if type_of(init) == 0 or (type_of(init) == 2 and init == 0) {
+        return out
+    }
+    if type_of(init) == 4 {
+        return query_pairs(init)
+    }
+    if type_of(init) != 2 {
+        return query_pairs(to_str(init))
+    }
+    if H[init][0] == C_PARAMS {
+        for p in H[init][3][0] {
+            append(out, [pair_name(x, p[0]), p[1]])
+        }
+        return out
+    }
+    if X["is_array"](init) {
+        for item in items_of(init) {
+            append(out, [pair_name(x, X["get_elem"](item, 0.0)), to_str(X["get_elem"](item, 1.0))])
+        }
+        return out
+    }
+    for k in own_keys(init, false) {
+        append(out, [pair_name(x, k), to_str(get(init, k))])
+    }
+    return out
+}
+
+proc n_params_ctor(this, args) {
+    if type_of(new_target()) == 0 {
+        throw_type("Failed to construct 'URLSearchParams': Please use the 'new' operator.")
+    }
+    alloc h := new_obj(C_PARAMS, P["URLSearchParams"])
+    alloc x := [[], 0, false]
+    x[0] := pairs_from(arg(args, 0), x)
+    H[h][3] := x
+    return h
+}
+
+proc n_headers_ctor(this, args) {
+    if type_of(new_target()) == 0 {
+        throw_type("Failed to construct 'Headers': Please use the 'new' operator.")
+    }
+    alloc h := new_obj(C_PARAMS, P["Headers"])
+    alloc x := [[], 0, true]
+    x[0] := pairs_from(arg(args, 0), x)
+    H[h][3] := x
+    return h
+}
+
+# What a form would send: [name, value] for each control that counts.
+proc form_pairs(form) {
+    alloc out := []
+    for ctl in controls_in(form, []) {
+        if has_key(ctl.attrs, "name") == false or has_key(ctl.attrs, "disabled") {
+            continue
+        }
+        alloc tag := ctl.tag
+        alloc ty := u.lower(attr_or(ctl, "type", "text"))
+        if tag == "button" or (tag == "input" and (ty == "submit" or ty == "reset" or ty == "button" or ty == "image" or ty == "file")) {
+            continue
+        }
+        if tag == "input" and (ty == "checkbox" or ty == "radio") and is_checked(ctl) == false {
+            continue
+        }
+        append(out, [ctl.attrs["name"], control_value(ctl)])
+    }
+    return out
+}
+
+proc n_form_data_ctor(this, args) {
+    if type_of(new_target()) == 0 {
+        throw_type("Failed to construct 'FormData': Please use the 'new' operator.")
+    }
+    alloc h := new_obj(C_PARAMS, P["FormData"])
+    alloc x := [[], 0, false]
+    if is_node(arg(args, 0)) {
+        x[0] := form_pairs(NODES[H[args[0]][3]])
+    }
+    H[h][3] := x
+    return h
+}
+
+proc n_params_get(this, args) {
+    alloc x := params_x(this)
+    alloc name := pair_name(x, arg(args, 0))
+    if x[2] {
+        # the values of a header that came twice are joined
+        alloc all := []
+        for p in x[0] {
+            if p[0] == name {
+                append(all, p[1])
+            }
+        }
+        if length(all) == 0 {
+            return 0
+        }
+        return u.join(all, ", ")
+    }
+    for p2 in x[0] {
+        if p2[0] == name {
+            return p2[1]
+        }
+    }
+    return 0
+}
+
+proc n_params_get_all(this, args) {
+    alloc x := params_x(this)
+    alloc name := pair_name(x, arg(args, 0))
+    alloc out := []
+    for p in x[0] {
+        if p[0] == name {
+            append(out, p[1])
+        }
+    }
+    return new_array(out)
+}
+
+proc n_params_has(this, args) {
+    alloc x := params_x(this)
+    alloc name := pair_name(x, arg(args, 0))
+    for p in x[0] {
+        if p[0] == name {
+            return true
+        }
+    }
+    return false
+}
+
+proc n_params_append(this, args) {
+    alloc x := params_x(this)
+    append(x[0], [pair_name(x, arg(args, 0)), to_str(arg(args, 1))])
+    params_changed(x)
+    return U
+}
+
+proc n_params_set(this, args) {
+    alloc x := params_x(this)
+    alloc name := pair_name(x, arg(args, 0))
+    alloc value := to_str(arg(args, 1))
+    alloc out := []
+    alloc done := false
+    for p in x[0] {
+        if p[0] == name {
+            if done == false {
+                append(out, [name, value])
+                done := true
+            }
+        } else {
+            append(out, p)
+        }
+    }
+    if done == false {
+        append(out, [name, value])
+    }
+    x[0] := out
+    params_changed(x)
+    return U
+}
+
+proc n_params_delete(this, args) {
+    alloc x := params_x(this)
+    alloc name := pair_name(x, arg(args, 0))
+    alloc out := []
+    for p in x[0] {
+        if p[0] != name {
+            append(out, p)
+        }
+    }
+    x[0] := out
+    params_changed(x)
+    return U
+}
+
+proc n_params_to_string(this, args) {
+    return pairs_text(params_x(this)[0])
+}
+
+proc n_params_for_each(this, args) {
+    alloc x := params_x(this)
+    for p in x[0] {
+        call(arg(args, 0), arg(args, 1), [p[1], p[0], this])
+    }
+    return U
+}
+
+proc params_list(this, mode) {
+    alloc out := []
+    for p in params_x(this)[0] {
+        if mode == 0 {
+            append(out, p[0])
+        } elif mode == 1 {
+            append(out, p[1])
+        } else {
+            append(out, new_array([p[0], p[1]]))
+        }
+    }
+    alloc arr := new_array(out)
+    return call(get(arr, "values"), arr, [])
+}
+
+proc n_params_keys(this, args) {
+    return params_list(this, 0)
+}
+
+proc n_params_values(this, args) {
+    return params_list(this, 1)
+}
+
+proc n_params_entries(this, args) {
+    return params_list(this, 2)
+}
+
+proc n_params_sort(this, args) {
+    alloc x := params_x(this)
+    alloc out := []
+    for p in x[0] {
+        append(out, p)
+        alloc j := length(out) - 1
+        loop j > 0 and out[j - 1][0] > p[0] {
+            out[j] := out[j - 1]
+            j := j - 1
+        }
+        out[j] := p
+    }
+    x[0] := out
+    params_changed(x)
+    return U
+}
+
+proc g_params_size(h, x) {
+    return float(length(x[0]))
+}
+
+# --- the window -----------------------------------------------------------------------------
+
+proc g_inner_width(this, args) {
+    return float(view()[0])
+}
+
+proc g_inner_height(this, args) {
+    return float(view()[1])
+}
+
+proc g_scroll_x(this, args) {
+    return float(view()[2])
+}
+
+proc g_scroll_y(this, args) {
+    return float(view()[3])
+}
+
+proc g_win_location(this, args) {
+    return LOCATION
+}
+
+proc s_win_location(this, args) {
+    navigate(to_str(arg(args, 0)), false)
+    return U
+}
+
+proc g_win_origin(this, args) {
+    return g_loc_origin(0, 0)
+}
+
+proc n_console(this, args) {
+    alloc level := native_data()
+    alloc text := js.format_args(args)
+    if has_key(HOST, "log") {
+        HOST["log"](level, text)
+    } else {
+        append(LOG, text)
+    }
+    return U
+}
+
+proc n_console_assert(this, args) {
+    if to_bool(arg(args, 0)) == false {
+        alloc text := "Assertion failed"
+        if length(args) > 1 {
+            text := text + ": " + js.format_args(args[1:])
+        }
+        if has_key(HOST, "log") {
+            HOST["log"]("error", text)
+        } else {
+            append(LOG, text)
+        }
+    }
+    return U
+}
+
+proc n_alert(this, args) {
+    alloc text := ""
+    if length(args) > 0 {
+        text := to_str(args[0])
+    }
+    if has_key(HOST, "alert") {
+        HOST["alert"](text)
+    } else {
+        append(LOG, "alert: " + text)
+    }
+    return U
+}
+
+proc n_confirm(this, args) {
+    n_alert(this, args)
+    return true
+}
+
+proc n_prompt(this, args) {
+    n_alert(this, args)
+    if length(args) > 1 and type_of(args[1]) != 0 {
+        return to_str(args[1])
+    }
+    return 0
+}
+
+proc n_get_computed_style(this, args) {
+    alloc node := arg_node(args, 0, "getComputedStyle")
+    alloc h := new_obj(C_COMPUTED, P["CSSStyleDeclaration"])
+    H[h][3] := node.nid
+    return h
+}
+
+proc n_match_media(this, args) {
+    alloc text := to_str(arg(args, 0))
+    alloc o := new_obj(0, P["EventTarget"])
+    alloc holds := false
+    try {
+        holds := css.media_query(text)
+    } except e {
+        holds := false
+    }
+    put(o, "matches", holds)
+    put(o, "media", text)
+    put(o, "onchange", 0)
+    def(o, "addListener", n_nothing, 1)
+    def(o, "removeListener", n_nothing, 1)
+    return o
+}
+
+proc now_ms() {
+    return time_ms() * 1.0 - START
+}
+
+proc n_performance_now(this, args) {
+    return now_ms()
+}
+
+proc n_raf_run(this, args) {
+    alloc fn := native_data()
+    return call(fn, U, [now_ms()])
+}
+
+proc n_request_animation_frame(this, args) {
+    alloc fn := arg(args, 0)
+    if is_callable(fn) == false {
+        throw_type("Failed to execute 'requestAnimationFrame' on 'Window': parameter 1 is not of type 'Function'.")
+    }
+    return float(promise.add_timer(new_native_with(n_raf_run, "", 0, fn), 16, -1, []))
+}
+
+proc n_time_remaining(this, args) {
+    return 50.0
+}
+
+proc n_idle_run(this, args) {
+    alloc fn := native_data()
+    alloc deadline := new_object()
+    put(deadline, "didTimeout", false)
+    def(deadline, "timeRemaining", n_time_remaining, 0)
+    return call(fn, U, [deadline])
+}
+
+proc n_request_idle_callback(this, args) {
+    alloc fn := arg(args, 0)
+    if is_callable(fn) == false {
+        return 0.0
+    }
+    return float(promise.add_timer(new_native_with(n_idle_run, "", 0, fn), 1, -1, []))
+}
+
+proc n_cancel_timer(this, args) {
+    alloc v := to_num(arg(args, 0))
+    if v == v and v > 0.0 and v < 9007199254740992.0 {
+        promise.cancel_timer(int(v))
+    }
+    return U
+}
+
+proc scroll_args(args, by) {
+    alloc v := view()
+    alloc x := 0.0
+    alloc y := 0.0
+    alloc a := arg(args, 0)
+    if type_of(a) == 2 and a != 0 {
+        alloc left := get(a, "left")
+        alloc top := get(a, "top")
+        if by == false {
+            x := v[2] * 1.0
+            y := v[3] * 1.0
+        }
+        if type_of(left) != 0 {
+            x := to_num(left)
+        }
+        if type_of(top) != 0 {
+            y := to_num(top)
+        }
+    } else {
+        x := to_num(a)
+        y := to_num(arg(args, 1))
+    }
+    if x != x {
+        x := 0.0
+    }
+    if y != y {
+        y := 0.0
+    }
+    if by {
+        x := x + v[2]
+        y := y + v[3]
+    }
+    if has_key(HOST, "scroll") {
+        HOST["scroll"](int(x), int(y))
+    }
+    return U
+}
+
+proc n_scroll_to(this, args) {
+    return scroll_args(args, false)
+}
+
+proc n_scroll_by(this, args) {
+    return scroll_args(args, true)
+}
+
+proc n_post_message(this, args) {
+    append(TASKS, [8, arg(args, 0)])
+    return U
+}
+
+proc n_structured_clone(this, args) {
+    alloc json := get(I[0], "JSON")
+    alloc text := call(get(json, "stringify"), json, [arg(args, 0)])
+    if type_of(text) != 4 {
+        return arg(args, 0)
+    }
+    return call(get(json, "parse"), json, [text])
+}
+
+proc n_report_error(this, args) {
+    promise.report(arg(args, 0))
+    return U
+}
+
+proc n_open(this, args) {
+    if length(args) > 0 and to_str(args[0]) != "" {
+        navigate(to_str(args[0]), false)
+    }
+    return 0
+}
+
+proc n_image_ctor(this, args) {
+    alloc node := new_element(native_data())
+    if length(args) > 0 and type_of(args[0]) != 0 {
+        node.attrs["width"] := to_str(args[0])
+    }
+    if length(args) > 1 and type_of(args[1]) != 0 {
+        node.attrs["height"] := to_str(args[1])
+    }
+    return wrap(node)
+}
+
+proc n_option_ctor(this, args) {
+    alloc node := new_element("option")
+    if length(args) > 0 and type_of(args[0]) != 0 {
+        insert_before(node, new_text(to_str(args[0])), false)
+    }
+    if length(args) > 1 and type_of(args[1]) != 0 {
+        node.attrs["value"] := to_str(args[1])
+    }
+    return wrap(node)
+}
+
+proc n_illegal_ctor(this, args) {
+    throw_type("Illegal constructor")
+}
+
+proc n_event_target_ctor(this, args) {
+    return new_obj(0, P["EventTarget"])
+}
+
+proc n_dom_exception(this, args) {
+    alloc msg := ""
+    if length(args) > 0 and type_of(args[0]) != 0 {
+        msg := to_str(args[0])
+    }
+    alloc e := make_error(8, msg)
+    H[e][1] := P["DOMException"]
+    alloc name := "Error"
+    if length(args) > 1 and type_of(args[1]) != 0 {
+        name := to_str(args[1])
+    }
+    define_hidden(e, "name", name)
+    define_hidden(e, "code", 0.0)
+    return e
+}
+
+proc n_random_uuid(this, args) {
+    alloc b := random_bytes(16)
+    b[6] := (b[6] & 15) | 64
+    b[8] := (b[8] & 63) | 128
+    alloc hex := "0123456789abcdef"
+    alloc out := ""
+    alloc i := 0
+    loop i < 16 {
+        if i == 4 or i == 6 or i == 8 or i == 10 {
+            out := out + "-"
+        }
+        out := out + hex[b[i] >> 4] + hex[b[i] & 15]
+        i := i + 1
+    }
+    return out
+}
+
+proc n_get_random_values(this, args) {
+    alloc a := arg(args, 0)
+    if X["is_array"](a) {
+        alloc items := items_of(a)
+        alloc b := random_bytes(length(items) * 4)
+        alloc i := 0
+        loop i < length(items) {
+            items[i] := (b[i * 4] | (b[i * 4 + 1] << 8) | (b[i * 4 + 2] << 16) | (b[i * 4 + 3] << 24)) * 1.0
+            i := i + 1
+        }
+    }
+    return a
+}
+
+proc n_css_supports(this, args) {
+    return false
+}
+
+proc n_css_escape(this, args) {
+    alloc s := to_str(arg(args, 0))
+    alloc out := ""
+    for ch in s {
+        alloc c := string_bytes(ch)[0]
+        if (c >= 48 and c <= 57) or (c >= 65 and c <= 90) or (c >= 97 and c <= 122) or c == 45 or c == 95 or c >= 128 {
+            out := out + ch
+        } else {
+            out := out + "\\" + ch
+        }
+    }
+    return out
+}
+
+# -- observers: nothing is watched. An IntersectionObserver is told
+# once that what it observes is in view, which is what pages that
+# load pictures late wait for; a ResizeObserver is told the size once.
+
+proc n_observer_ctor(this, args) {
+    alloc kind := native_data()
+    if type_of(new_target()) == 0 {
+        throw_type("Failed to construct '" + kind + "': Please use the 'new' operator.")
+    }
+    alloc o := new_obj(0, P[kind])
+    define_hidden(o, "@@callback", arg(args, 0))
+    define_hidden(o, "@@kind", kind)
+    return o
+}
+
+proc n_observe(this, args) {
+    if type_of(this) != 2 or this == 0 or has_own(this, "@@kind") == false {
+        return U
+    }
+    alloc kind := get(this, "@@kind")
+    if (kind == "IntersectionObserver" or kind == "ResizeObserver") and is_node(arg(args, 0)) {
+        append(TASKS, [5, this, args[0], kind])
+    }
+    return U
+}
+
+proc run_observer(task) {
+    alloc ob := task[1]
+    alloc el := task[2]
+    alloc node := NODES[H[el][3]]
+    alloc r := rect_of(node)
+    alloc v := view()
+    alloc entry := new_object()
+    put(entry, "target", el)
+    if task[3] == "IntersectionObserver" {
+        put(entry, "isIntersecting", true)
+        put(entry, "intersectionRatio", 1.0)
+        put(entry, "boundingClientRect", new_rect(r[0] - v[2], r[1] - v[3], r[2], r[3]))
+        put(entry, "intersectionRect", new_rect(r[0] - v[2], r[1] - v[3], r[2], r[3]))
+        put(entry, "rootBounds", new_rect(0, 0, v[0], v[1]))
+        put(entry, "time", now_ms())
+    } else {
+        put(entry, "contentRect", new_rect(0, 0, r[2], r[3]))
+        alloc size := new_object()
+        put(size, "inlineSize", r[2] * 1.0)
+        put(size, "blockSize", r[3] * 1.0)
+        put(entry, "contentBoxSize", new_array([size]))
+        put(entry, "borderBoxSize", new_array([size]))
+    }
+    alloc cb := get(ob, "@@callback")
+    if is_callable(cb) {
+        call(cb, ob, [new_array([entry]), ob])
+    }
+    return true
+}
+
+proc n_abort(this, args) {
+    alloc signal := get(this, "signal")
+    if type_of(signal) == 2 and signal != 0 and to_bool(get(signal, "aborted")) == false {
+        put(signal, "aborted", true)
+        alloc reason := arg(args, 0)
+        if type_of(reason) == 0 {
+            reason := make_error(8, "signal is aborted without reason")
+            define_hidden(reason, "name", "AbortError")
+        }
+        put(signal, "reason", reason)
+        fire(target_nid(signal), "abort", false, false, {}, "Event")
+    }
+    return U
+}
+
+proc n_abort_controller(this, args) {
+    if type_of(new_target()) == 0 {
+        throw_type("Failed to construct 'AbortController': Please use the 'new' operator.")
+    }
+    alloc o := new_obj(0, P["AbortController"])
+    alloc signal := new_obj(0, P["EventTarget"])
+    put(signal, "aborted", false)
+    put(signal, "reason", U)
+    put(signal, "onabort", 0)
+    put(o, "signal", signal)
+    return o
+}
+
+proc n_ce_define(this, args) {
+    define_hidden(this, "@@ce:" + to_str(arg(args, 0)), arg(args, 1))
+    return U
+}
+
+proc n_ce_get(this, args) {
+    alloc key := "@@ce:" + to_str(arg(args, 0))
+    if has_own(this, key) {
+        return get(this, key)
+    }
+    return U
+}
+
+proc n_ce_when_defined(this, args) {
+    return promise.new_promise()
+}
+
+# --- fetch and XMLHttpRequest ---------------------------------------------------------------
+#
+# The browser fetches one thing at a time and waits for it, so a
+# request a script makes is put off until the script has returned;
+# the page stands still while it is fetched.
+
+# Ask the browser. Gives the dict net.omg gives: {status, error, url,
+# body, headers}.
+proc host_fetch(where, method, headers, body) {
+    if has_key(HOST, "fetch") == false {
+        return {status: 0, error: "no network here", url: where, body: bytes_repeat(0, 0), headers: {}}
+    }
+    return HOST["fetch"](where, method, headers, body)
+}
+
+proc body_text(r) {
+    alloc charset := "utf-8"
+    if has_key(r.headers, "content-type") {
+        alloc ct := u.lower(r.headers["content-type"])
+        alloc at := u.find(ct, "charset=")
+        if at >= 0 {
+            charset := u.trim(u.replace(u.split(ct[at + 8:], ";")[0], "\"", ""))
+        }
+    }
+    return bytes_to_string(html.to_utf8(r.body, charset))
+}
+
+alloc STATUS_TEXT := {"200": "OK", "201": "Created", "204": "No Content", "301": "Moved Permanently", "302": "Found", "304": "Not Modified", "400": "Bad Request", "401": "Unauthorized", "403": "Forbidden", "404": "Not Found", "405": "Method Not Allowed", "500": "Internal Server Error", "502": "Bad Gateway", "503": "Service Unavailable"}
+
+proc status_text(code) {
+    if has_key(STATUS_TEXT, "" + code) {
+        return STATUS_TEXT["" + code]
+    }
+    return ""
+}
+
+proc new_headers(d) {
+    alloc h := new_obj(C_PARAMS, P["Headers"])
+    alloc pairs := []
+    for k in dict_keys(d) {
+        append(pairs, [u.lower(k), "" + d[k]])
+    }
+    H[h][3] := [pairs, 0, true]
+    return h
+}
+
+proc new_response(text, status, where, headers) {
+    alloc o := new_obj(0, P["Response"])
+    put(o, "status", status * 1.0)
+    put(o, "ok", status >= 200 and status < 300)
+    put(o, "statusText", status_text(status))
+    put(o, "url", where)
+    put(o, "redirected", false)
+    put(o, "type", "basic")
+    put(o, "bodyUsed", false)
+    put(o, "headers", headers)
+    define_hidden(o, "@@body", text)
+    return o
+}
+
+proc response_body(this) {
+    if type_of(this) != 2 or this == 0 or has_own(this, "@@body") == false {
+        throw_type("Illegal invocation")
+    }
+    put(this, "bodyUsed", true)
+    return get(this, "@@body")
+}
+
+proc n_response_text(this, args) {
+    return promise.to_promise(response_body(this))
+}
+
+proc n_response_json(this, args) {
+    alloc text := response_body(this)
+    alloc p := promise.new_promise()
+    alloc json := get(I[0], "JSON")
+    try {
+        promise.settle(p, true, call(get(json, "parse"), json, [text]))
+    } except e {
+        promise.settle(p, false, caught(e))
+    }
+    return p
+}
+
+proc n_response_clone(this, args) {
+    alloc text := get(this, "@@body")
+    return new_response(text, int(to_num(get(this, "status"))), to_str(get(this, "url")), get(this, "headers"))
+}
+
+proc n_response_unsupported(this, args) {
+    alloc p := promise.new_promise()
+    promise.settle(p, false, make_error(9, "This browser keeps the body of a response as text only"))
+    return p
+}
+
+proc n_response_ctor(this, args) {
+    alloc text := ""
+    if length(args) > 0 and is_nullish(args[0]) == false {
+        text := to_str(args[0])
+    }
+    alloc status := 200
+    alloc headers := new_headers({})
+    alloc init := arg(args, 1)
+    if type_of(init) == 2 and init != 0 {
+        if type_of(get(init, "status")) != 0 {
+            status := int(to_integer(get(init, "status")))
+        }
+        H[headers][3][0] := pairs_from(get(init, "headers"), H[headers][3])
+    }
+    return new_response(text, status, "", headers)
+}
+
+# What a script may give as the body of a request, as text, and the
+# kind of content it is ("" when the script must say).
+proc request_body(v) {
+    if is_nullish(v) {
+        return [false, ""]
+    }
+    if type_of(v) == 2 and H[v][0] == C_PARAMS {
+        return [pairs_text(H[v][3][0]), "application/x-www-form-urlencoded;charset=UTF-8"]
+    }
+    if type_of(v) == 4 {
+        return [v, "text/plain;charset=UTF-8"]
+    }
+    return [to_str(v), "text/plain;charset=UTF-8"]
+}
+
+proc has_header(pairs, name) {
+    for p in pairs {
+        if u.lower(p[0]) == name {
+            return true
+        }
+    }
+    return false
+}
+
+proc n_fetch(this, args) {
+    alloc p := promise.new_promise()
+    alloc input := arg(args, 0)
+    alloc where := ""
+    alloc method := "GET"
+    alloc headers := []
+    alloc body := [false, ""]
+    alloc init := arg(args, 1)
+    if type_of(input) == 2 and input != 0 and has_own(input, "@@request") {
+        where := to_str(get(input, "url"))
+        method := to_str(get(input, "method"))
+        headers := pairs_from(get(input, "headers"), [[], 0, true])
+        body := request_body(get(input, "@@reqbody"))
+    } else {
+        where := to_str(input)
+    }
+    if type_of(init) == 2 and init != 0 {
+        if type_of(get(init, "method")) != 0 {
+            method := u.upper(to_str(get(init, "method")))
+        }
+        if type_of(get(init, "headers")) != 0 {
+            headers := pairs_from(get(init, "headers"), [[], 0, true])
+        }
+        if type_of(get(init, "body")) != 0 {
+            body := request_body(get(init, "body"))
+        }
+        alloc signal := get(init, "signal")
+        if type_of(signal) == 2 and signal != 0 and to_bool(get(signal, "aborted")) {
+            promise.settle(p, false, get(signal, "reason"))
+            return p
+        }
+    }
+    alloc target := url.resolve(BASE, where)
+    if target == "" {
+        promise.settle(p, false, make_error(9, "Failed to parse URL from " + where))
+        return p
+    }
+    if body[0] != false and body[1] != "" and has_header(headers, "content-type") == false {
+        append(headers, ["content-type", body[1]])
+    }
+    append(TASKS, [1, p, target, method, headers, body[0]])
+    return p
+}
+
+proc run_fetch(task) {
+    alloc r := host_fetch(task[2], task[3], task[4], task[5])
+    if r.status == 0 {
+        promise.settle(task[1], false, make_error(9, "Failed to fetch (" + r.error + ")"))
+        return true
+    }
+    promise.settle(task[1], true, new_response(body_text(r), r.status, r.url, new_headers(r.headers)))
+    return true
+}
+
+proc n_request_ctor(this, args) {
+    alloc o := new_obj(0, P["Request"])
+    alloc input := arg(args, 0)
+    alloc init := arg(args, 1)
+    alloc where := to_str(input)
+    if type_of(input) == 2 and input != 0 and has_own(input, "@@request") {
+        where := to_str(get(input, "url"))
+    }
+    alloc target := url.resolve(BASE, where)
+    put(o, "url", target)
+    put(o, "method", "GET")
+    alloc hs := new_headers({})
+    put(o, "headers", hs)
+    define_hidden(o, "@@request", true)
+    define_hidden(o, "@@reqbody", U)
+    if type_of(init) == 2 and init != 0 {
+        if type_of(get(init, "method")) != 0 {
+            put(o, "method", u.upper(to_str(get(init, "method"))))
+        }
+        if type_of(get(init, "headers")) != 0 {
+            H[hs][3][0] := pairs_from(get(init, "headers"), H[hs][3])
+        }
+        if type_of(get(init, "body")) != 0 {
+            define_hidden(o, "@@reqbody", get(init, "body"))
+        }
+    }
+    return o
+}
+
+# An XMLHttpRequest is an object of class 39; its payload:
+# [0 number, 1 method, 2 address, 3 asynchronous?, 4 headers to send,
+# 5 readyState, 6 status, 7 the answer as text, 8 the answer's
+# headers, 9 responseType, 10 where the answer came from, 11 sent?,
+# 12 timeout, 13 withCredentials].
+
+proc xhr_x(this) {
+    if type_of(this) == 2 and this != 0 and H[this][0] == C_XHR {
+        return H[this][3]
+    }
+    throw_type("Illegal invocation")
+}
+
+proc n_xhr_ctor(this, args) {
+    if type_of(new_target()) == 0 {
+        throw_type("Failed to construct 'XMLHttpRequest': Please use the 'new' operator.")
+    }
+    alloc h := new_obj(C_XHR, P["XMLHttpRequest"])
+    alloc id := register({t: 0, kids: []}, -1)
+    WRAP[id] := h
+    define_hidden(h, "@@target", float(id))
+    H[h][3] := [id, "GET", "", true, [], 0, 0, "", {}, "", "", false, 0.0, false]
+    return h
+}
+
+proc xhr_state(h, x, state) {
+    x[5] := state
+    fire(x[0], "readystatechange", false, false, {}, "Event")
+    return true
+}
+
+proc n_xhr_open(this, args) {
+    alloc x := xhr_x(this)
+    x[1] := u.upper(to_str(arg(args, 0)))
+    x[2] := url.resolve(BASE, to_str(arg(args, 1)))
+    x[3] := true
+    if length(args) > 2 and type_of(args[2]) != 0 {
+        x[3] := to_bool(args[2])
+    }
+    x[4] := []
+    x[6] := 0
+    x[7] := ""
+    x[8] := {}
+    x[11] := false
+    xhr_state(this, x, 1)
+    return U
+}
+
+proc n_xhr_set_request_header(this, args) {
+    alloc x := xhr_x(this)
+    append(x[4], [to_str(arg(args, 0)), to_str(arg(args, 1))])
+    return U
+}
+
+proc run_xhr(h, body) {
+    alloc x := H[h][3]
+    if x[11] == false {
+        # abort() came first
+        return false
+    }
+    alloc r := host_fetch(x[2], x[1], x[4], body)
+    alloc progress := {lengthComputable: false, loaded: 0.0, total: 0.0}
+    if r.status == 0 {
+        x[6] := 0
+        x[5] := 4
+        fire(x[0], "readystatechange", false, false, {}, "Event")
+        fire(x[0], "error", false, false, progress, "ProgressEvent")
+        fire(x[0], "loadend", false, false, progress, "ProgressEvent")
+        return false
+    }
+    x[6] := r.status
+    x[7] := body_text(r)
+    x[8] := r.headers
+    x[10] := r.url
+    progress := {lengthComputable: true, loaded: length(r.body) * 1.0, total: length(r.body) * 1.0}
+    xhr_state(h, x, 2)
+    xhr_state(h, x, 3)
+    xhr_state(h, x, 4)
+    fire(x[0], "load", false, false, progress, "ProgressEvent")
+    fire(x[0], "loadend", false, false, progress, "ProgressEvent")
+    return true
+}
+
+proc n_xhr_send(this, args) {
+    alloc x := xhr_x(this)
+    if x[5] != 1 {
+        dom_error("InvalidStateError", "Failed to execute 'send' on 'XMLHttpRequest': The object's state must be OPENED.")
+    }
+    alloc body := request_body(arg(args, 0))
+    if body[0] != false and body[1] != "" and has_header(x[4], "content-type") == false {
+        append(x[4], ["content-type", body[1]])
+    }
+    x[11] := true
+    if x[3] {
+        append(TASKS, [2, this, body[0]])
+    } else {
+        run_xhr(this, body[0])
+    }
+    return U
+}
+
+proc n_xhr_abort(this, args) {
+    alloc x := xhr_x(this)
+    if x[11] and x[5] != 4 {
+        x[11] := false
+        x[5] := 0
+        fire(x[0], "abort", false, false, {}, "ProgressEvent")
+        fire(x[0], "loadend", false, false, {}, "ProgressEvent")
+    }
+    return U
+}
+
+proc n_xhr_get_response_header(this, args) {
+    alloc x := xhr_x(this)
+    alloc name := u.lower(to_str(arg(args, 0)))
+    if has_key(x[8], name) {
+        return "" + x[8][name]
+    }
+    return 0
+}
+
+proc n_xhr_get_all_response_headers(this, args) {
+    alloc x := xhr_x(this)
+    alloc out := ""
+    for k in dict_keys(x[8]) {
+        out := out + k + ": " + x[8][k] + "\r\n"
+    }
+    return out
+}
+
+proc g_xhr_ready_state(h, x) {
+    return float(x[5])
+}
+
+proc g_xhr_status(h, x) {
+    return float(x[6])
+}
+
+proc g_xhr_status_text(h, x) {
+    return status_text(x[6])
+}
+
+proc g_xhr_response_text(h, x) {
+    return x[7]
+}
+
+proc g_xhr_response(h, x) {
+    if x[9] == "json" {
+        if x[5] != 4 {
+            return 0
+        }
+        alloc json := get(I[0], "JSON")
+        try {
+            return call(get(json, "parse"), json, [x[7]])
+        } except e {
+            caught(e)
+            return 0
+        }
+    }
+    return x[7]
+}
+
+proc g_xhr_response_type(h, x) {
+    return x[9]
+}
+
+proc s_xhr_response_type(h, x, v) {
+    x[9] := to_str(v)
+}
+
+proc g_xhr_response_url(h, x) {
+    return x[10]
+}
+
+proc g_xhr_timeout(h, x) {
+    return x[12]
+}
+
+proc s_xhr_timeout(h, x, v) {
+    x[12] := to_num(v)
+}
+
+proc g_xhr_with_credentials(h, x) {
+    return x[13]
+}
+
+proc s_xhr_with_credentials(h, x, v) {
+    x[13] := to_bool(v)
+}
+
+proc g_xhr_upload(h, x) {
+    alloc o := H[h]
+    if has_key(o[2], "@@upload") {
+        return o[2]["@@upload"]
+    }
+    alloc up := new_obj(0, P["EventTarget"])
+    define_hidden(h, "@@upload", up)
+    return up
+}
+
+proc g_xhr_null(h, x) {
+    return 0
+}
+
+# --- scripts --------------------------------------------------------------------------------
+
+alloc SCRIPT_TYPES := {"": 1, "text/javascript": 1, "application/javascript": 1, "application/x-javascript": 1,
+                       "text/ecmascript": 1, "application/ecmascript": 1, "text/jscript": 1, "text/javascript1.5": 1}
+alloc INLINE_COUNT := 0
+
+proc script_runs(node) {
+    alloc ty := u.lower(u.trim(attr_or(node, "type", "")))
+    alloc semi := u.find(ty, ";")
+    if semi >= 0 {
+        ty := u.trim(ty[0:semi])
+    }
+    if has_key(SCRIPT_TYPES, ty) == false {
+        return false
+    }
+    alloc lang := u.lower(u.trim(attr_or(node, "language", "")))
+    return lang == "" or u.starts_with(lang, "javascript") or lang == "jscript" or lang == "ecmascript"
+}
+
+# Old pages hide their scripts from browsers that know none: the
+# text starts with "<!--", which JavaScript takes for a comment.
+proc unhide(text) {
+    alloc t := u.trim(text)
+    if u.starts_with(t, "<!--") == false {
+        return text
+    }
+    alloc at := u.find(text, "<!--")
+    alloc out := text[0:at] + "//" + text[at + 4:]
+    alloc t2 := u.trim(out)
+    if u.ends_with(t2, "-->") {
+        alloc lines := u.split(t2, "\n")
+        alloc last := u.trim(lines[length(lines) - 1])
+        if last == "-->" {
+            alloc end := u.find(out, "-->")
+            alloc cut := length(t2) - 3
+            out := t2[0:cut] + "//"
+        }
+    }
+    return out
+}
+
+# Run the script of a <script> element: fetched when it names a
+# file, its own text otherwise.
+proc run_script_node(node, later) {
+    if script_runs(node) == false {
+        return false
+    }
+    alloc bytes := bytes_repeat(0, 0)
+    alloc name := ""
+    alloc external := has_key(node.attrs, "src")
+    if external {
+        alloc where := url.resolve(BASE, node.attrs["src"])
+        if where == "" {
+            return false
+        }
+        alloc r := host_fetch(where, "GET", [], false)
+        if r.status < 200 or r.status >= 300 {
+            promise.report("Could not load the script " + where)
+            fire(node.nid, "error", false, false, {}, "Event")
+            return false
+        }
+        alloc charset := u.lower(attr_or(node, "charset", ""))
+        if has_key(r.headers, "content-type") {
+            alloc ct := u.lower(r.headers["content-type"])
+            alloc at := u.find(ct, "charset=")
+            if at >= 0 {
+                charset := u.trim(u.replace(u.split(ct[at + 8:], ";")[0], "\"", ""))
+            }
+        }
+        if charset == "" or charset == "utf-8" or charset == "utf8" {
+            bytes := r.body
+        } else {
+            bytes := html.to_utf8(r.body, charset)
+        }
+        name := r.url
+    } else {
+        alloc text := html.text_of(node)
+        if u.trim(text) == "" {
+            return false
+        }
+        bytes := string_bytes(unhide(text))
+        INLINE_COUNT := INLINE_COUNT + 1
+        name := "script " + INLINE_COUNT + " of the page"
+    }
+    alloc before := CURRENT_SCRIPT
+    CURRENT_SCRIPT := node
+    alloc out := js.run(bytes, name)
+    CURRENT_SCRIPT := before
+    if out[0] == false {
+        promise.report(out[1])
+    }
+    promise.run_microtasks()
+    if external {
+        fire(node.nid, "load", false, false, {}, "Event")
+    }
+    return true
+}
+
+# Run the scripts the page came with, in the order they stand in.
+# `stop` is a proc that says when to give up (the page asked to go
+# somewhere else).
+proc run_scripts(stop) {
+    for node in collect(DOC, "script", [], []) {
+        if has_key(node, "ran") or is_connected(node) == false {
+            continue
+        }
+        node.ran := true
+        run_script_node(node, false)
+        if stop() {
+            return false
+        }
+    }
+    READY := "interactive"
+    fire(DOC_NID, "readystatechange", false, false, {}, "Event")
+    fire(DOC_NID, "DOMContentLoaded", true, false, {}, "Event")
+    promise.run_microtasks()
+    return true
+}
+
+# Everything the page needs has come: tell it.
+proc finish_load() {
+    READY := "complete"
+    fire(DOC_NID, "readystatechange", false, false, {}, "Event")
+    fire(0, "load", false, false, {}, "Event")
+    fire(0, "pageshow", false, false, {persisted: false}, "Event")
+    promise.run_microtasks()
+    return true
+}
+
+# --- work that waits ------------------------------------------------------------------------
+
+proc run_task(task) {
+    alloc kind := task[0]
+    try {
+        if kind == 0 {
+            if is_connected(task[1]) {
+                run_script_node(task[1], true)
+            }
+        } elif kind == 1 {
+            run_fetch(task)
+        } elif kind == 2 {
+            run_xhr(task[1], task[2])
+        } elif kind == 3 {
+            fire(task[1].nid, task[2], false, false, {}, "Event")
+        } elif kind == 4 {
+            fire(0, "hashchange", false, false, {oldURL: task[1], newURL: task[2]}, "HashChangeEvent")
+        } elif kind == 5 {
+            run_observer(task)
+        } elif kind == 8 {
+            fire(0, "message", false, false, {data: task[1], origin: g_loc_origin(0, 0), source: I[0]}, "MessageEvent")
+        }
+    } except e {
+        promise.report(caught(e))
+    }
+    return true
+}
+
+proc say_errors() {
+    for v in js.take_errors() {
+        alloc text := "Uncaught " + X["describe"](v)
+        if type_of(v) == 4 {
+            text := v
+        }
+        if has_key(HOST, "log") {
+            HOST["log"]("error", text)
+        } else {
+            append(LOG, text)
+        }
+    }
+    return true
+}
+
+# Do what waits: the requests scripts made, the timers that are due.
+# True when something ran.
+proc pump() {
+    alloc did := false
+    alloc n := 0
+    loop TASK_AT < length(TASKS) and n < 8 {
+        alloc task := TASKS[TASK_AT]
+        TASKS[TASK_AT] := 0
+        TASK_AT := TASK_AT + 1
+        run_task(task)
+        promise.run_microtasks()
+        did := true
+        n := n + 1
+    }
+    if TASK_AT > 0 and TASK_AT >= length(TASKS) {
+        TASKS := []
+        TASK_AT := 0
+    }
+    alloc due := promise.next_due()
+    if due >= 0 and due <= time_ms() {
+        promise.run_timers()
+        did := true
+    }
+    if promise.run_microtasks() > 0 {
+        did := true
+    }
+    say_errors()
+    return did
+}
+
+# How long the browser may sleep before pump() has work: 0 when
+# there is some now, -1 when none is in sight.
+proc wait_ms() {
+    if TASK_AT < length(TASKS) {
+        return 0
+    }
+    alloc due := promise.next_due()
+    if due < 0 {
+        return -1
+    }
+    alloc w := due - time_ms()
+    if w < 0 {
+        return 0
+    }
+    return w
+}
+
+# [did the tree change?, did a style sheet?] since the last call.
+proc take_dirty() {
+    alloc out := [DIRTY, SHEETS]
+    DIRTY := false
+    SHEETS := false
+    return out
+}
+
+proc is_dirty() {
+    return DIRTY or SHEETS
+}
+
+# An event from the window (a click, a key): send it, then let the
+# promises it settled run. True when the page did not cancel it.
+proc fire_node(node, name, bubbles, cancelable, props, kind) {
+    if has_key(node, "nid") == false {
+        return true
+    }
+    alloc ok := fire(node.nid, name, bubbles, cancelable, props, kind)
+    promise.run_microtasks()
+    say_errors()
+    return ok
+}
+
+proc fire_window(name, props, kind) {
+    alloc ok := fire(0, name, false, false, props, kind)
+    promise.run_microtasks()
+    say_errors()
+    return ok
+}
+
+proc set_focus(node) {
+    FOCUS := node
+    return true
+}
+
+proc set_address(address) {
+    ADDRESS := address
+    return true
+}
+
+proc take_log() {
+    alloc out := LOG
+    LOG := []
+    return out
+}
+
+# Run a piece of script in the page (for tests, and "javascript:"
+# links). Gives [true, value as text] or [false, what was thrown].
+proc evaluate(text) {
+    alloc r := js.run(string_bytes(text), "evaluate")
+    promise.run_microtasks()
+    if r[0] == false {
+        say_errors()
+        return [false, X["describe"](r[1])]
+    }
+    say_errors()
+    return [true, js.format_args([r[1]])]
+}
+
+# Does the page have anything for the engine to do?
+proc wants_engine(node) {
+    for k in node.kids {
+        if k.t == 1 {
+            if k.tag == "script" {
+                if script_runs(k) {
+                    return true
+                }
+            } else {
+                for name in dict_keys(k.attrs) {
+                    if length(name) > 2 and name[0:2] == "on" {
+                        return true
+                    }
+                }
+                if u.starts_with(u.lower(u.trim(attr_or(k, "href", ""))), "javascript:") {
+                    return true
+                }
+                if wants_engine(k) {
+                    return true
+                }
+            }
+        }
+    }
+    return false
+}
+
+# --- putting it all in place ----------------------------------------------------------------
+
+# A kind of object scripts know by name ("Node", "Element"): a
+# prototype, and a constructor that hangs on the window.
+proc iface_with(name, parent, fn, nargs, data) {
+    alloc proto := new_obj(0, parent)
+    alloc ctor := new_native_with(fn, name, nargs, data)
+    define_hidden(ctor, "prototype", proto)
+    define_hidden(proto, "constructor", ctor)
+    define_hidden(proto, "@@toStringTag", name)
+    define_hidden(I[0], name, ctor)
+    P[name] := proto
+    return proto
+}
+
+proc iface(name, parent) {
+    return iface_with(name, parent, n_illegal_ctor, 0, 0)
+}
+
+alloc TAG_NAMES := {
+    a: "HTMLAnchorElement", area: "HTMLAreaElement", audio: "HTMLAudioElement", br: "HTMLBRElement",
+    base: "HTMLBaseElement", body: "HTMLBodyElement", button: "HTMLButtonElement",
+    canvas: "HTMLCanvasElement", dl: "HTMLDListElement", details: "HTMLDetailsElement",
+    dialog: "HTMLDialogElement", div: "HTMLDivElement", embed: "HTMLEmbedElement",
+    fieldset: "HTMLFieldSetElement", form: "HTMLFormElement", h1: "HTMLHeadingElement",
+    h2: "HTMLHeadingElement", h3: "HTMLHeadingElement", h4: "HTMLHeadingElement",
+    h5: "HTMLHeadingElement", h6: "HTMLHeadingElement", head: "HTMLHeadElement", hr: "HTMLHRElement",
+    html: "HTMLHtmlElement", iframe: "HTMLIFrameElement", img: "HTMLImageElement",
+    input: "HTMLInputElement", label: "HTMLLabelElement", legend: "HTMLLegendElement",
+    li: "HTMLLIElement", link: "HTMLLinkElement", meta: "HTMLMetaElement", ol: "HTMLOListElement",
+    optgroup: "HTMLOptGroupElement", option: "HTMLOptionElement", p: "HTMLParagraphElement",
+    pre: "HTMLPreElement", script: "HTMLScriptElement", select: "HTMLSelectElement",
+    source: "HTMLSourceElement", span: "HTMLSpanElement", style: "HTMLStyleElement",
+    table: "HTMLTableElement", tbody: "HTMLTableSectionElement", thead: "HTMLTableSectionElement",
+    tfoot: "HTMLTableSectionElement", td: "HTMLTableCellElement", th: "HTMLTableCellElement",
+    tr: "HTMLTableRowElement", template: "HTMLTemplateElement", textarea: "HTMLTextAreaElement",
+    title: "HTMLTitleElement", ul: "HTMLUListElement", video: "HTMLVideoElement",
+    object: "HTMLObjectElement", progress: "HTMLProgressElement", slot: "HTMLSlotElement",
+    picture: "HTMLPictureElement", time: "HTMLTimeElement", output: "HTMLOutputElement"
+}
+
+proc g_implementation(h, node) {
+    alloc o := new_object()
+    def(o, "hasFeature", n_true, 0)
+    return o
+}
+
+proc g_fonts(h, node) {
+    alloc o := new_obj(0, P["EventTarget"])
+    put(o, "ready", promise.to_promise(o))
+    put(o, "status", "loaded")
+    def(o, "load", n_play, 0)
+    def(o, "check", n_true, 0)
+    return o
+}
+
+proc g_namespace(h, node) {
+    return "http://www.w3.org/1999/xhtml"
+}
+
+proc g_false(h, node) {
+    return false
+}
+
+proc g_content_editable(h, node) {
+    return attr_or(node, "contenteditable", "inherit")
+}
+
+proc s_tab_index(h, node, v) {
+    set_attr(node, "tabindex", to_str(v))
+}
+
+proc s_inner_text(h, node, v) {
+    s_text_content(h, node, v)
+}
+
+proc s_nothing(h, node, v) {
+    return true
+}
+
+proc setup() {
+    P := {}
+    TAG_PROTO := {}
+    GETS := []
+    SETS := []
+    GET_ANY := []
+    SET_ANY := []
+    KEYS_OF := []
+    alloc i := 0
+    loop i < NCLASS {
+        append(GETS, {})
+        append(SETS, {})
+        append(GET_ANY, false)
+        append(SET_ANY, false)
+        append(KEYS_OF, false)
+        i := i + 1
+    }
+    c.set_host_hooks(host_get, host_set, host_keys)
+    alloc g := I[0]
+    alloc object_proto := I[1]
+
+    # -- what can be listened to, and the kinds of node
+    alloc et := iface_with("EventTarget", object_proto, n_event_target_ctor, 0, 0)
+    def(et, "addEventListener", n_add_event_listener, 2)
+    def(et, "removeEventListener", n_remove_event_listener, 2)
+    def(et, "dispatchEvent", n_dispatch_event, 1)
+    def(g, "addEventListener", n_add_event_listener, 2)
+    def(g, "removeEventListener", n_remove_event_listener, 2)
+    def(g, "dispatchEvent", n_dispatch_event, 1)
+
+    alloc np := iface("Node", et)
+    alloc node_ctor := get(np, "constructor")
+    alloc consts := {ELEMENT_NODE: 1.0, ATTRIBUTE_NODE: 2.0, TEXT_NODE: 3.0, CDATA_SECTION_NODE: 4.0,
+                     PROCESSING_INSTRUCTION_NODE: 7.0, COMMENT_NODE: 8.0, DOCUMENT_NODE: 9.0,
+                     DOCUMENT_TYPE_NODE: 10.0, DOCUMENT_FRAGMENT_NODE: 11.0,
+                     DOCUMENT_POSITION_DISCONNECTED: 1.0, DOCUMENT_POSITION_PRECEDING: 2.0,
+                     DOCUMENT_POSITION_FOLLOWING: 4.0, DOCUMENT_POSITION_CONTAINS: 8.0,
+                     DOCUMENT_POSITION_CONTAINED_BY: 16.0}
+    for name in dict_keys(consts) {
+        define_hidden(np, name, consts[name])
+        define_hidden(node_ctor, name, consts[name])
+    }
+    alloc methods := {
+        appendChild: n_append_child, insertBefore: n_insert_before, removeChild: n_remove_child,
+        replaceChild: n_replace_child, cloneNode: n_clone_node, contains: n_contains,
+        hasChildNodes: n_has_child_nodes, remove: n_remove, append: n_append, prepend: n_prepend,
+        before: n_before, after: n_after, replaceWith: n_replace_with,
+        replaceChildren: n_replace_children, getAttribute: n_get_attribute,
+        setAttribute: n_set_attribute, removeAttribute: n_remove_attribute,
+        hasAttribute: n_has_attribute, toggleAttribute: n_toggle_attribute,
+        getAttributeNames: n_get_attribute_names, hasAttributes: n_has_attributes,
+        getAttributeNode: n_get_attribute_node, getAttributeNS: n_get_attribute_ns,
+        setAttributeNS: n_set_attribute_ns, removeAttributeNS: n_remove_attribute_ns,
+        hasAttributeNS: n_has_attribute_ns, querySelector: n_query_selector,
+        querySelectorAll: n_query_selector_all, matches: n_matches, webkitMatchesSelector: n_matches,
+        closest: n_closest, getElementsByTagName: n_get_elements_by_tag_name,
+        getElementsByClassName: n_get_elements_by_class_name, getElementById: n_get_element_by_id,
+        insertAdjacentHTML: n_insert_adjacent_html, insertAdjacentElement: n_insert_adjacent_element,
+        insertAdjacentText: n_insert_adjacent_text, getBoundingClientRect: n_get_bounding_client_rect,
+        getClientRects: n_get_client_rects, scrollIntoView: n_scroll_into_view,
+        scrollIntoViewIfNeeded: n_scroll_into_view, focus: n_focus, blur: n_blur, click: n_click,
+        submit: n_submit, requestSubmit: n_request_submit, reset: n_reset,
+        compareDocumentPosition: n_compare_document_position, getRootNode: n_get_root_node,
+        isSameNode: n_is_same_node, isEqualNode: n_is_equal_node, normalize: n_normalize,
+        splitText: n_split_text, appendData: n_append_data, toString: n_node_to_string,
+        getContext: n_get_context, play: n_play, pause: n_nothing, load: n_nothing,
+        select: n_nothing, setSelectionRange: n_nothing, setCustomValidity: n_nothing,
+        checkValidity: n_true, reportValidity: n_true, scrollTo: n_nothing, scroll: n_nothing,
+        scrollBy: n_nothing, getAnimations: n_empty_array, setPointerCapture: n_nothing,
+        releasePointerCapture: n_nothing, hasPointerCapture: n_false, showModal: n_nothing,
+        close: n_nothing, show: n_nothing, attachInternals: n_null
+    }
+    for name2 in dict_keys(methods) {
+        def(np, name2, methods[name2], 1)
+    }
+    alloc ep := iface("Element", np)
+    alloc hp := iface("HTMLElement", ep)
+    iface("SVGElement", ep)
+    alloc cd := iface("CharacterData", np)
+    iface("Text", cd)
+    iface("Comment", cd)
+    iface("DocumentFragment", np)
+    iface("ShadowRoot", P["DocumentFragment"])
+    alloc dp := iface("Document", np)
+    define_hidden(g, "HTMLDocument", get(dp, "constructor"))
+    for tag in dict_keys(TAG_NAMES) {
+        alloc iname := TAG_NAMES[tag]
+        if has_key(P, iname) == false {
+            iface(iname, hp)
+        }
+        TAG_PROTO[tag] := P[iname]
+    }
+    TAG_PROTO["svg"] := P["SVGElement"]
+    iface("HTMLUnknownElement", hp)
+    iface("HTMLMediaElement", hp)
+    NODELIST := new_obj(0, I[3])
+    P["NodeList"] := NODELIST
+    alloc nl_ctor := new_native(n_illegal_ctor, "NodeList", 0)
+    define_hidden(nl_ctor, "prototype", NODELIST)
+    define_hidden(g, "NodeList", nl_ctor)
+    define_hidden(g, "HTMLCollection", nl_ctor)
+    def(NODELIST, "item", n_list_item, 1)
+    def(NODELIST, "namedItem", n_list_named_item, 1)
+
+    alloc doc_methods := {
+        createElement: n_create_element, createElementNS: n_create_element_ns,
+        createTextNode: n_create_text_node, createComment: n_create_comment,
+        createDocumentFragment: n_create_document_fragment, createEvent: n_create_event,
+        getElementsByName: n_get_elements_by_name, write: n_write, writeln: n_write,
+        open: n_nothing, close: n_nothing, hasFocus: n_true, importNode: n_import_node,
+        adoptNode: n_adopt_node, elementFromPoint: n_element_from_point, execCommand: n_false,
+        queryCommandSupported: n_false, getSelection: n_get_selection, createRange: n_create_range
+    }
+    for name3 in dict_keys(doc_methods) {
+        def(dp, name3, doc_methods[name3], 1)
+    }
+
+    NODE_G := {nodeType: g_node_type, nodeName: g_node_name, nodeValue: g_node_value,
+               parentNode: g_parent_node, parentElement: g_parent_element, childNodes: g_child_nodes,
+               firstChild: g_first_child, lastChild: g_last_child,
+               previousSibling: g_previous_sibling, nextSibling: g_next_sibling,
+               textContent: g_text_content, ownerDocument: g_owner_document,
+               isConnected: g_is_connected, baseURI: g_base_uri, children: g_children,
+               firstElementChild: g_first_element_child, lastElementChild: g_last_element_child,
+               childElementCount: g_child_element_count,
+               previousElementSibling: g_previous_element_sibling,
+               nextElementSibling: g_next_element_sibling}
+    NODE_S := {nodeValue: s_node_value, textContent: s_text_content}
+    EL_G := {tagName: g_tag_name, localName: g_local_name, id: g_id, className: g_class_name,
+             classList: g_class_list, innerHTML: g_inner_html, outerHTML: g_outer_html,
+             innerText: g_inner_text, attributes: g_attributes, hidden: g_hidden, style: g_style,
+             dataset: g_dataset, tabIndex: g_tab_index, value: g_value, checked: g_checked,
+             selected: g_selected, selectedIndex: g_selected_index, options: g_options,
+             form: g_form, elements: g_elements, length: g_length, text: g_text,
+             label: g_label_text, type: g_type, protocol: g_protocol, host: g_host,
+             hostname: g_hostname, pathname: g_pathname, search: g_search, hash: g_hash,
+             origin: g_origin, offsetWidth: g_offset_width, offsetHeight: g_offset_height,
+             offsetLeft: g_offset_left, offsetTop: g_offset_top, offsetParent: g_offset_parent,
+             clientWidth: g_client_width, clientHeight: g_client_height, clientLeft: g_zero,
+             clientTop: g_zero, scrollWidth: g_scroll_width, scrollHeight: g_scroll_height,
+             scrollTop: g_scroll_top, scrollLeft: g_scroll_left, naturalWidth: g_natural_width,
+             naturalHeight: g_natural_height, complete: g_complete, width: g_width,
+             height: g_height, content: g_content_template, namespaceURI: g_namespace,
+             shadowRoot: g_null, isContentEditable: g_false, contentEditable: g_content_editable,
+             sheet: g_null, assignedSlot: g_null}
+    EL_S := {id: s_id, className: s_class_name, classList: s_class_list, innerHTML: s_inner_html,
+             outerHTML: s_outer_html, innerText: s_inner_text, hidden: s_hidden, style: s_style,
+             tabIndex: s_tab_index, value: s_value, checked: s_checked, selected: s_selected,
+             selectedIndex: s_selected_index, text: s_text, type: s_type, scrollTop: s_scroll_top,
+             scrollLeft: s_scroll_left, width: s_width, height: s_height, content: s_content}
+    DOC_G := {documentElement: g_document_element, head: g_head, body: g_body, title: g_title,
+              cookie: g_cookie, readyState: g_ready_state, URL: g_doc_url, documentURI: g_doc_url,
+              location: g_doc_location, defaultView: g_default_view,
+              activeElement: g_active_element, currentScript: g_current_script, forms: g_forms,
+              images: g_images, links: g_links, scripts: g_scripts, anchors: g_links,
+              characterSet: g_charset, charset: g_charset, inputEncoding: g_charset,
+              compatMode: g_compat_mode, contentType: g_content_type, doctype: g_doctype,
+              referrer: g_empty_text, domain: g_domain, hidden: g_doc_hidden,
+              visibilityState: g_visibility_state, styleSheets: g_style_sheets,
+              scrollingElement: g_document_element, fullscreenElement: g_null,
+              designMode: g_design_mode, dir: g_empty_text, lastModified: g_empty_text,
+              implementation: g_implementation, fonts: g_fonts}
+    DOC_S := {title: s_title, cookie: s_cookie, location: s_doc_location, domain: s_nothing,
+              designMode: s_nothing, dir: s_nothing}
+    TEXT_G := {data: g_data, length: g_text_length, wholeText: g_data}
+    TEXT_S := {data: s_data}
+
+    # -- style, dataset, classList
+    alloc sp := iface("CSSStyleDeclaration", object_proto)
+    def(sp, "setProperty", n_style_set_property, 2)
+    def(sp, "getPropertyValue", n_style_get_property_value, 1)
+    def(sp, "removeProperty", n_style_remove_property, 1)
+    def(sp, "getPropertyPriority", n_style_get_property_priority, 1)
+    def(sp, "item", n_style_item, 1)
+    GETS[C_STYLE - 32] := {cssText: g_css_text, length: g_style_length}
+    SETS[C_STYLE - 32] := {cssText: s_css_text}
+    GET_ANY[C_STYLE - 32] := style_get
+    SET_ANY[C_STYLE - 32] := style_set
+    KEYS_OF[C_STYLE - 32] := style_keys
+    GET_ANY[C_COMPUTED - 32] := computed_get
+    SET_ANY[C_COMPUTED - 32] := computed_set
+    iface("DOMStringMap", object_proto)
+    GET_ANY[C_DATASET - 32] := dataset_get
+    SET_ANY[C_DATASET - 32] := dataset_set
+    KEYS_OF[C_DATASET - 32] := dataset_keys
+    alloc tp := iface("DOMTokenList", object_proto)
+    def(tp, "add", n_tokens_add, 1)
+    def(tp, "remove", n_tokens_remove, 1)
+    def(tp, "toggle", n_tokens_toggle, 1)
+    def(tp, "contains", n_tokens_contains, 1)
+    def(tp, "replace", n_tokens_replace, 2)
+    def(tp, "item", n_tokens_item, 1)
+    def(tp, "toString", n_tokens_to_string, 0)
+    def(tp, "forEach", n_tokens_for_each, 1)
+    alloc tv := def(tp, "values", n_tokens_values, 0)
+    define_hidden(tp, "@@iterator", tv)
+    GETS[C_TOKENS - 32] := {length: g_tokens_length, value: g_tokens_value}
+    SETS[C_TOKENS - 32] := {value: s_tokens_value}
+    GET_ANY[C_TOKENS - 32] := tokens_get
+
+    # -- storage
+    alloc stp := iface("Storage", object_proto)
+    def(stp, "getItem", n_storage_get_item, 1)
+    def(stp, "setItem", n_storage_set_item, 2)
+    def(stp, "removeItem", n_storage_remove_item, 1)
+    def(stp, "clear", n_storage_clear, 0)
+    def(stp, "key", n_storage_key, 1)
+    GETS[C_STORAGE - 32] := {length: g_storage_length}
+    GET_ANY[C_STORAGE - 32] := storage_get
+    SET_ANY[C_STORAGE - 32] := storage_set
+    KEYS_OF[C_STORAGE - 32] := storage_keys
+    for kind in ["localStorage", "sessionStorage"] {
+        alloc st := new_obj(C_STORAGE, stp)
+        H[st][3] := store_of(kind)
+        define_hidden(g, kind, st)
+    }
+
+    # -- events
+    alloc evp := iface_with("Event", object_proto, n_event_ctor, 1, "Event")
+    def(evp, "preventDefault", n_prevent_default, 0)
+    def(evp, "stopPropagation", n_stop_propagation, 0)
+    def(evp, "stopImmediatePropagation", n_stop_immediate_propagation, 0)
+    def(evp, "composedPath", n_composed_path, 0)
+    def(evp, "initEvent", n_init_event, 3)
+    def(evp, "initCustomEvent", n_init_event, 4)
+    def(evp, "initMouseEvent", n_init_event, 3)
+    def(evp, "initUIEvent", n_init_event, 3)
+    def(evp, "getModifierState", n_false, 1)
+    alloc phases := {NONE: 0.0, CAPTURING_PHASE: 1.0, AT_TARGET: 2.0, BUBBLING_PHASE: 3.0}
+    for pn in dict_keys(phases) {
+        define_hidden(evp, pn, phases[pn])
+        define_hidden(get(evp, "constructor"), pn, phases[pn])
+    }
+    alloc uip := iface_with("UIEvent", evp, n_event_ctor, 1, "UIEvent")
+    alloc mp := iface_with("MouseEvent", uip, n_event_ctor, 1, "MouseEvent")
+    iface_with("PointerEvent", mp, n_event_ctor, 1, "PointerEvent")
+    iface_with("WheelEvent", mp, n_event_ctor, 1, "WheelEvent")
+    for ek in ["KeyboardEvent", "FocusEvent", "InputEvent", "TouchEvent"] {
+        iface_with(ek, uip, n_event_ctor, 1, ek)
+    }
+    for ek2 in ["CustomEvent", "ErrorEvent", "MessageEvent", "HashChangeEvent", "PopStateEvent", "ProgressEvent", "StorageEvent", "TransitionEvent", "AnimationEvent", "SubmitEvent"] {
+        iface_with(ek2, evp, n_event_ctor, 1, ek2)
+    }
+    GETS[C_EVENT - 32] := {type: g_ev_type, bubbles: g_ev_bubbles, cancelable: g_ev_cancelable,
+                           defaultPrevented: g_ev_default_prevented, target: g_ev_target,
+                           srcElement: g_ev_target, currentTarget: g_ev_current_target,
+                           eventPhase: g_ev_phase, timeStamp: g_ev_time, isTrusted: g_ev_trusted,
+                           cancelBubble: g_ev_cancel_bubble, returnValue: g_ev_return_value}
+    SETS[C_EVENT - 32] := {cancelBubble: s_ev_cancel_bubble, returnValue: s_ev_return_value}
+
+    # -- addresses
+    alloc lp := iface("Location", object_proto)
+    def(lp, "assign", n_loc_assign, 1)
+    def(lp, "replace", n_loc_replace, 1)
+    def(lp, "reload", n_loc_reload, 0)
+    def(lp, "toString", n_loc_to_string, 0)
+    GETS[C_LOCATION - 32] := {href: g_loc_href, protocol: g_loc_protocol, host: g_loc_host,
+                              hostname: g_loc_hostname, port: g_loc_port, pathname: g_loc_pathname,
+                              search: g_loc_search, hash: g_loc_hash, origin: g_loc_origin}
+    SETS[C_LOCATION - 32] := {href: s_loc_href, pathname: s_loc_pathname, search: s_loc_search,
+                              hash: s_loc_hash}
+    LOCATION := new_obj(C_LOCATION, lp)
+    H[LOCATION][3] := 0
+    X["def_getter"](g, "location", g_win_location)
+    X["def_setter"](g, "location", s_win_location)
+    alloc hip := iface("History", object_proto)
+    def(hip, "pushState", n_push_state, 2)
+    def(hip, "replaceState", n_replace_state, 2)
+    def(hip, "go", n_hist_go, 1)
+    def(hip, "back", n_hist_back, 0)
+    def(hip, "forward", n_hist_forward, 0)
+    GETS[C_HISTORY - 32] := {length: g_hist_length, state: g_hist_state, scrollRestoration: g_hist_scroll}
+    SETS[C_HISTORY - 32] := {scrollRestoration: s_nothing}
+    alloc hist := new_obj(C_HISTORY, hip)
+    H[hist][3] := 0
+    define_hidden(g, "history", hist)
+
+    alloc up := iface_with("URL", object_proto, n_url_ctor, 1, 0)
+    def(up, "toString", n_url_to_string, 0)
+    def(up, "toJSON", n_url_to_string, 0)
+    alloc url_ctor := get(up, "constructor")
+    def(url_ctor, "canParse", n_url_can_parse, 1)
+    def(url_ctor, "createObjectURL", n_create_object_url, 1)
+    def(url_ctor, "revokeObjectURL", n_nothing, 1)
+    define_hidden(g, "webkitURL", url_ctor)
+    GETS[C_URL - 32] := {href: g_url_href, protocol: g_url_protocol, host: g_url_host,
+                         hostname: g_url_hostname, port: g_url_port, pathname: g_url_pathname,
+                         search: g_url_search, hash: g_url_hash, origin: g_url_origin,
+                         searchParams: g_url_search_params, username: g_empty_text,
+                         password: g_empty_text}
+    SETS[C_URL - 32] := {href: s_url_href, pathname: s_url_pathname, search: s_url_search,
+                         hash: s_url_hash}
+    alloc pp := iface_with("URLSearchParams", object_proto, n_params_ctor, 0, 0)
+    alloc hdp := iface_with("Headers", object_proto, n_headers_ctor, 0, 0)
+    alloc fdp := iface_with("FormData", object_proto, n_form_data_ctor, 0, 0)
+    for pr in [pp, hdp, fdp] {
+        def(pr, "get", n_params_get, 1)
+        def(pr, "getAll", n_params_get_all, 1)
+        def(pr, "has", n_params_has, 1)
+        def(pr, "append", n_params_append, 2)
+        def(pr, "set", n_params_set, 2)
+        def(pr, "delete", n_params_delete, 1)
+        def(pr, "forEach", n_params_for_each, 1)
+        def(pr, "keys", n_params_keys, 0)
+        def(pr, "values", n_params_values, 0)
+        alloc pe := def(pr, "entries", n_params_entries, 0)
+        define_hidden(pr, "@@iterator", pe)
+    }
+    def(pp, "toString", n_params_to_string, 0)
+    def(pp, "sort", n_params_sort, 0)
+    GETS[C_PARAMS - 32] := {size: g_params_size}
+
+    # -- requests
+    alloc rp := iface_with("Response", object_proto, n_response_ctor, 0, 0)
+    def(rp, "text", n_response_text, 0)
+    def(rp, "json", n_response_json, 0)
+    def(rp, "clone", n_response_clone, 0)
+    def(rp, "arrayBuffer", n_response_unsupported, 0)
+    def(rp, "blob", n_response_unsupported, 0)
+    def(rp, "formData", n_response_unsupported, 0)
+    iface_with("Request", object_proto, n_request_ctor, 1, 0)
+    def(g, "fetch", n_fetch, 1)
+    alloc xp := iface_with("XMLHttpRequest", et, n_xhr_ctor, 0, 0)
+    def(xp, "open", n_xhr_open, 2)
+    def(xp, "send", n_xhr_send, 0)
+    def(xp, "abort", n_xhr_abort, 0)
+    def(xp, "setRequestHeader", n_xhr_set_request_header, 2)
+    def(xp, "getResponseHeader", n_xhr_get_response_header, 1)
+    def(xp, "getAllResponseHeaders", n_xhr_get_all_response_headers, 0)
+    def(xp, "overrideMimeType", n_nothing, 1)
+    alloc states := {UNSENT: 0.0, OPENED: 1.0, HEADERS_RECEIVED: 2.0, LOADING: 3.0, DONE: 4.0}
+    for sn in dict_keys(states) {
+        define_hidden(xp, sn, states[sn])
+        define_hidden(get(xp, "constructor"), sn, states[sn])
+    }
+    GETS[C_XHR - 32] := {readyState: g_xhr_ready_state, status: g_xhr_status,
+                         statusText: g_xhr_status_text, responseText: g_xhr_response_text,
+                         response: g_xhr_response, responseType: g_xhr_response_type,
+                         responseURL: g_xhr_response_url, timeout: g_xhr_timeout,
+                         withCredentials: g_xhr_with_credentials, upload: g_xhr_upload,
+                         responseXML: g_xhr_null}
+    SETS[C_XHR - 32] := {responseType: s_xhr_response_type, timeout: s_xhr_timeout,
+                         withCredentials: s_xhr_with_credentials}
+
+    # -- observers and the rest of what pages expect to find
+    for ob in ["MutationObserver", "IntersectionObserver", "ResizeObserver", "PerformanceObserver"] {
+        alloc obp := iface_with(ob, object_proto, n_observer_ctor, 1, ob)
+        def(obp, "observe", n_observe, 1)
+        def(obp, "unobserve", n_nothing, 1)
+        def(obp, "disconnect", n_nothing, 0)
+        def(obp, "takeRecords", n_empty_array, 0)
+    }
+    define_hidden(g, "WebKitMutationObserver", get(P["MutationObserver"], "constructor"))
+    alloc acp := iface_with("AbortController", object_proto, n_abort_controller, 0, 0)
+    def(acp, "abort", n_abort, 0)
+    alloc dxp := iface_with("DOMException", I[8], n_dom_exception, 0, 0)
+    define_hidden(g, "Image", new_native_with(n_image_ctor, "Image", 0, "img"))
+    define_hidden(g, "Audio", new_native_with(n_image_ctor, "Audio", 0, "audio"))
+    define_hidden(g, "Option", new_native(n_option_ctor, "Option", 0))
+    H[get(g, "Image")][2]["prototype"] := P["HTMLImageElement"]
+    H[get(g, "Option")][2]["prototype"] := P["HTMLOptionElement"]
+
+    for name4 in ["window", "self", "top", "parent", "frames", "globalThis"] {
+        define_hidden(g, name4, g)
+    }
+    define_hidden(g, "document", wrap(DOC))
+    alloc win_getters := {innerWidth: g_inner_width, innerHeight: g_inner_height,
+                          outerWidth: g_inner_width, outerHeight: g_inner_height,
+                          scrollX: g_scroll_x, scrollY: g_scroll_y, pageXOffset: g_scroll_x,
+                          pageYOffset: g_scroll_y, origin: g_win_origin}
+    for name5 in dict_keys(win_getters) {
+        X["def_getter"](g, name5, win_getters[name5])
+    }
+    alloc win_fns := {alert: n_alert, confirm: n_confirm, prompt: n_prompt,
+                      getComputedStyle: n_get_computed_style, matchMedia: n_match_media,
+                      requestAnimationFrame: n_request_animation_frame,
+                      webkitRequestAnimationFrame: n_request_animation_frame,
+                      cancelAnimationFrame: n_cancel_timer, requestIdleCallback: n_request_idle_callback,
+                      cancelIdleCallback: n_cancel_timer, scrollTo: n_scroll_to, scroll: n_scroll_to,
+                      scrollBy: n_scroll_by, postMessage: n_post_message,
+                      structuredClone: n_structured_clone, reportError: n_report_error,
+                      open: n_open, close: n_nothing, focus: n_nothing, blur: n_nothing,
+                      print: n_nothing, stop: n_nothing, getSelection: n_get_selection,
+                      captureEvents: n_nothing, releaseEvents: n_nothing}
+    for name6 in dict_keys(win_fns) {
+        def(g, name6, win_fns[name6], 1)
+    }
+    alloc statics := {devicePixelRatio: 1.0, name: "", closed: false, length: 0.0, opener: 0,
+                      frameElement: 0, isSecureContext: true, status: "", screenX: 0.0, screenY: 0.0,
+                      screenLeft: 0.0, screenTop: 0.0, event: U, onload: 0, onerror: 0,
+                      onunhandledrejection: 0, onresize: 0, onscroll: 0, onhashchange: 0,
+                      onpopstate: 0, onmessage: 0, onbeforeunload: 0, onunload: 0, onpageshow: 0,
+                      ontouchstart: U}
+    for name7 in dict_keys(statics) {
+        if name7 != "ontouchstart" and name7 != "event" {
+            define_hidden(g, name7, statics[name7])
+        }
+    }
+
+    alloc console := new_object()
+    for level in ["log", "info", "warn", "error", "debug", "trace", "dir", "table", "group", "groupCollapsed"] {
+        define_hidden(console, level, new_native_with(n_console, level, 0, level))
+    }
+    for quiet in ["groupEnd", "time", "timeEnd", "timeLog", "count", "countReset", "clear", "profile", "profileEnd", "timeStamp"] {
+        def(console, quiet, n_nothing, 0)
+    }
+    def(console, "assert", n_console_assert, 2)
+    define_hidden(g, "console", console)
+
+    alloc nav := new_object()
+    alloc nav_values := {userAgent: "Mozilla/5.0 (X11; Linux x86_64) OMGBrowser/0.1", appName: "Netscape",
+                         appCodeName: "Mozilla", appVersion: "5.0 (X11)", platform: "Linux x86_64",
+                         product: "Gecko", productSub: "20030107", vendor: "", vendorSub: "",
+                         language: "en-US", onLine: true, cookieEnabled: true, javaEnabled: 0,
+                         hardwareConcurrency: 1.0, maxTouchPoints: 0.0, doNotTrack: 0,
+                         webdriver: false, pdfViewerEnabled: false}
+    for name8 in dict_keys(nav_values) {
+        if name8 != "javaEnabled" {
+            put(nav, name8, nav_values[name8])
+        }
+    }
+    put(nav, "languages", new_array(["en-US", "en"]))
+    put(nav, "plugins", new_array([]))
+    put(nav, "mimeTypes", new_array([]))
+    def(nav, "javaEnabled", n_false, 0)
+    def(nav, "sendBeacon", n_false, 2)
+    define_hidden(g, "navigator", nav)
+    define_hidden(g, "clientInformation", nav)
+
+    alloc v := view()
+    alloc screen := new_object()
+    alloc screen_values := {width: v[0] * 1.0, height: v[1] * 1.0, availWidth: v[0] * 1.0,
+                            availHeight: v[1] * 1.0, colorDepth: 24.0, pixelDepth: 24.0,
+                            availLeft: 0.0, availTop: 0.0}
+    for name9 in dict_keys(screen_values) {
+        put(screen, name9, screen_values[name9])
+    }
+    alloc orientation := new_obj(0, et)
+    put(orientation, "type", "landscape-primary")
+    put(orientation, "angle", 0.0)
+    put(screen, "orientation", orientation)
+    define_hidden(g, "screen", screen)
+
+    alloc perf := new_obj(0, et)
+    def(perf, "now", n_performance_now, 0)
+    def(perf, "mark", n_nothing, 1)
+    def(perf, "measure", n_nothing, 1)
+    def(perf, "clearMarks", n_nothing, 0)
+    def(perf, "clearMeasures", n_nothing, 0)
+    def(perf, "getEntries", n_empty_array, 0)
+    def(perf, "getEntriesByType", n_empty_array, 1)
+    def(perf, "getEntriesByName", n_empty_array, 1)
+    put(perf, "timeOrigin", START)
+    alloc timing := new_object()
+    put(timing, "navigationStart", START)
+    put(timing, "domContentLoadedEventEnd", START)
+    put(timing, "loadEventEnd", START)
+    put(perf, "timing", timing)
+    define_hidden(g, "performance", perf)
+
+    alloc crypto := new_object()
+    def(crypto, "randomUUID", n_random_uuid, 0)
+    def(crypto, "getRandomValues", n_get_random_values, 1)
+    define_hidden(g, "crypto", crypto)
+    alloc cssns := new_object()
+    def(cssns, "supports", n_css_supports, 1)
+    def(cssns, "escape", n_css_escape, 1)
+    define_hidden(g, "CSS", cssns)
+    alloc ce := new_object()
+    def(ce, "define", n_ce_define, 2)
+    def(ce, "get", n_ce_get, 1)
+    def(ce, "whenDefined", n_ce_when_defined, 1)
+    def(ce, "upgrade", n_nothing, 1)
+    define_hidden(g, "customElements", ce)
+    return true
+}
+
+proc n_list_item(this, args) {
+    alloc v := X["get_elem"](this, to_integer(arg(args, 0)))
+    if type_of(v) == 0 {
+        return 0
+    }
+    return v
+}
+
+proc n_list_named_item(this, args) {
+    alloc want := to_str(arg(args, 0))
+    if X["is_array"](this) {
+        for h in items_of(this) {
+            if is_node(h) {
+                alloc node := NODES[H[h][3]]
+                if node.t == 1 and (attr_or(node, "id", "") == want or attr_or(node, "name", "") == want) {
+                    return h
+                }
+            }
+        }
+    }
+    return 0
+}
+
+# Start a fresh engine for the document `doc`, which came from
+# `address`; `base` is what the addresses written in it are counted
+# from, and `host` what the browser does for the page (see the top).
+proc attach(doc, address, base, host) {
+    js.start()
+    NODES := []
+    PARENT := []
+    WRAP := []
+    LIS := []
+    DOC := doc
+    ADDRESS := address
+    BASE := base
+    HOST := host
+    DIRTY := false
+    SHEETS := false
+    VERSION := 0
+    ID_VERSION := -1
+    ID_MAP := {}
+    SEL_CACHE := {}
+    TASKS := []
+    TASK_AT := 0
+    READY := "loading"
+    CURRENT_SCRIPT := false
+    FOCUS := false
+    HIST := [[address, 0]]
+    HIST_AT := 0
+    LOG := []
+    INLINE_COUNT := 0
+    START := time_ms() * 1.0
+    register({t: 0, kids: []}, -1)
+    adopt(doc, -1)
+    css.prepare_doc(doc)
+    setup()
+    return true
+}
+
+# Is a page with scripts on show?
+proc attached() {
+    return DOC != false
+}
+
+# The page is going away.
+proc leave() {
+    DOC := false
+    NODES := []
+    PARENT := []
+    WRAP := []
+    LIS := []
+    TASKS := []
+    TASK_AT := 0
+    HOST := {}
+    return true
+}

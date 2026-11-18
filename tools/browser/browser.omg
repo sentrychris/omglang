@@ -21,6 +21,10 @@
 #     --page-only         with --screenshot: the page without the bar
 #     --proxy HOST:PORT   go through an HTTP proxy
 #     --ca-file FILE      trust the certificates in this PEM file too
+#     --no-js             do not run the scripts of pages
+#     --console           print what scripts log (console.log) on the terminal
+#     --wait MS           with --screenshot: how long scripts may go on (3000)
+#     --dump              with --screenshot: print the page as HTML, as scripts left it
 #
 # Keys: Ctrl+L address, Enter go, Alt+Left / Backspace back, Alt+Right
 # forward, F5 / Ctrl+R reload, Escape stop, arrows, Space, PageUp,
@@ -43,6 +47,7 @@ import "io.omg" as io
 import "net.omg" as net
 import "tls.omg" as tls
 import "image.omg" as image
+import "dom.omg" as dom
 
 alloc BAR := 42                # the height of the bar at the top
 alloc SB := 12                 # the width of the scroll bar
@@ -68,6 +73,22 @@ alloc doc_h := 0
 alloc pictures := {}           # address -> [w, h, data], or false for one that failed
 alloc forms := {}              # uid -> the <form>, <details> or <label> element
 alloc next_uid := 1
+
+# Scripts.
+alloc scripting := true        # --no-js: pages get no engine
+alloc js_on := false           # the page on show has one
+alloc in_script := 0           # scripts are running: the page must stay where it is
+alloc in_after := false
+alloc console_out := false     # --console: what scripts log goes to the terminal
+alloc sheet_cache := {}        # address -> [bytes, where they came from], for this page
+alloc js_down := false         # the element the mouse went down on
+alloc js_over := false         # the element the mouse is over
+alloc js_moved := 0            # when the page was last told the mouse moved
+alloc js_hist := 0             # history.back() and its like: steps to take
+alloc js_sx := 0               # the scroll the page was last told about
+alloc js_sy := 0
+alloc focus_value := ""        # what was in the field when it got the keyboard
+alloc JS_HOST := {}
 
 # where the user has been
 alloc past := []               # each [address, scroll]
@@ -364,6 +385,8 @@ proc reflow() {
             emit "" + e
         }
         doc := html.parse(string_bytes(error_page(page_url, "The browser could not lay this page out (" + e + ")")))
+        js_on := false
+        dom.leave()
         css.reset()
         reflow_inner()
     }
@@ -411,6 +434,11 @@ proc index_forms(node, form, details) {
 
 proc show_document(bytes, charset, address) {
     alloc d := html.parse(html.to_utf8(bytes, charset))
+    js_on := false
+    dom.leave()
+    sheet_cache := {}
+    js_down := false
+    js_over := false
     doc := d
     root := false
     page_url := address
@@ -454,12 +482,24 @@ proc load_sheet(address, media, depth) {
         return false
     }
     sheet_count := sheet_count + 1
+    if has_key(sheet_cache, address) {
+        # asked for again because a script changed the page
+        alloc had := sheet_cache[address]
+        if had != false {
+            add_sheet(had[0], had[1], media, depth)
+        }
+        return had != false
+    }
     set_status("Loading " + address)
     tick()
     alloc r := net.fetch(address, "GET", false, "", base_url)
     if r.status != 200 or length(r.body) == 0 {
+        if r.status != 0 {
+            sheet_cache[address] := false
+        }
         return false
     }
+    sheet_cache[address] := [r.body, r.url]
     add_sheet(r.body, r.url, media, depth)
     return true
 }
@@ -485,6 +525,10 @@ proc load_styles() {
     css.reset()
     if has_key(doc, "quirks") and doc.quirks {
         css.add_quirks()
+    }
+    if scripting {
+        # what a page says to browsers without scripts is not for this one
+        css.add_sheet(string_bytes("noscript { display: none !important }"), 0, -1)
     }
     sheet_count := 0
     alloc nodes := []
@@ -606,8 +650,9 @@ proc load_pictures() {
             tick()
         }
         alloc im := get_picture(where)
-        if im != false {
+        if im != false and (has_key(node, "img_at") == false or node.img_at != where) {
             node.img := im
+            node.img_at := where
             changed := true
         }
         if changed and time_ms() - last > 700 {
@@ -646,7 +691,7 @@ proc load_pictures() {
     return true
 }
 
-alloc HOME := "<!DOCTYPE html><title>OMG browser</title><style>body{font-family:sans-serif;max-width:640px;margin:70px auto;color:#222;line-height:1.5}h1{font-size:34px;margin-bottom:0}p.s{color:#666;margin-top:4px}code{background:#f1f3f4;padding:1px 5px;border-radius:4px}li{margin:6px 0}</style><h1>OMG browser</h1><p class=s>A web browser written in OMG.</p><p>Type an address or a search in the bar above and press Enter.</p><ul><li><code>Ctrl+L</code> goes to the address bar<li><code>Alt+Left</code> and <code>Alt+Right</code> go back and forward<li><code>F5</code> loads the page again, <code>Escape</code> stops<li>arrows, <code>Space</code>, <code>PageUp</code>, <code>PageDown</code>, <code>Home</code> and <code>End</code> scroll</ul><p>Places to start: <a href=\"https://example.com/\">example.com</a>, <a href=\"https://en.wikipedia.org/wiki/Web_browser\">Wikipedia on web browsers</a>, <a href=\"https://news.ycombinator.com/\">Hacker News</a>, <a href=\"https://lite.duckduckgo.com/lite/\">DuckDuckGo</a>.</p><p>JavaScript does not run here, so pages that are built by scripts stay empty.</p>"
+alloc HOME := "<!DOCTYPE html><title>OMG browser</title><style>body{font-family:sans-serif;max-width:640px;margin:70px auto;color:#222;line-height:1.5}h1{font-size:34px;margin-bottom:0}p.s{color:#666;margin-top:4px}code{background:#f1f3f4;padding:1px 5px;border-radius:4px}li{margin:6px 0}</style><h1>OMG browser</h1><p class=s>A web browser written in OMG.</p><p>Type an address or a search in the bar above and press Enter.</p><ul><li><code>Ctrl+L</code> goes to the address bar<li><code>Alt+Left</code> and <code>Alt+Right</code> go back and forward<li><code>F5</code> loads the page again, <code>Escape</code> stops<li>arrows, <code>Space</code>, <code>PageUp</code>, <code>PageDown</code>, <code>Home</code> and <code>End</code> scroll</ul><p>Places to start: <a href=\"https://example.com/\">example.com</a>, <a href=\"https://en.wikipedia.org/wiki/Web_browser\">Wikipedia on web browsers</a>, <a href=\"https://news.ycombinator.com/\">Hacker News</a>, <a href=\"https://lite.duckduckgo.com/lite/\">DuckDuckGo</a>.</p><p>JavaScript runs here, in an engine written in OMG like the rest; <code>--no-js</code> turns it off.</p>"
 
 proc error_page(address, why) {
     return "<!DOCTYPE html><title>Problem loading page</title><style>body{font-family:sans-serif;max-width:560px;margin:90px auto;color:#222;line-height:1.5}h1{font-size:24px}p.a{color:#666;word-break:break-all}</style><h1>This page could not be loaded</h1><p>" + net.html_escape(why) + ".</p><p class=a>" + net.html_escape(address) + "</p>"
@@ -777,6 +822,9 @@ proc load(address, method, body, ctype, how, scroll_to) {
     }
     set_addr(final)
     addr_focus := false
+    if scripting and halt == false and dom.wants_engine(doc) {
+        js_boot(final)
+    }
     reflow()
     goto_fragment(final)
     if scroll_to > 0 {
@@ -794,6 +842,16 @@ proc load(address, method, body, ctype, how, scroll_to) {
         sy := scroll_to
         clamp_scroll()
     }
+    if js_on and halt == false and pending == false {
+        in_script := in_script + 1
+        dom.finish_load()
+        in_script := in_script - 1
+        if js_refresh() {
+            load_pictures()
+        }
+    }
+    js_sx := sx
+    js_sy := sy
     busy := false
     set_status("")
     dirty := true
@@ -821,7 +879,9 @@ proc go(address, method, body, ctype, how, scroll_to) {
     if address == "" {
         return false
     }
-    if busy {
+    if busy or in_script > 0 {
+        # what is under way lets go first: a download, or the script
+        # that asked for this
         pending := [address, method, body, ctype, how, scroll_to]
         halt := true
         io.stop()
@@ -855,7 +915,9 @@ proc go_back() {
     if at > 0 {
         past[at][1] := sy
         at := at - 1
-        go(past[at][0], "GET", false, "", 1, past[at][1])
+        if js_step(-1) == false {
+            go(past[at][0], "GET", false, "", 1, past[at][1])
+        }
     }
     return true
 }
@@ -864,7 +926,9 @@ proc go_forward() {
     if at < length(past) - 1 {
         past[at][1] := sy
         at := at + 1
-        go(past[at][0], "GET", false, "", 1, past[at][1])
+        if js_step(1) == false {
+            go(past[at][0], "GET", false, "", 1, past[at][1])
+        }
     }
     return true
 }
@@ -903,7 +967,20 @@ proc submit(by) {
     if has_key(by, "form") == false or by.form == 0 {
         return false
     }
+    if has_key(forms, "" + by.form) == false {
+        return false
+    }
     alloc form := forms["" + by.form]
+    if js_live() {
+        if js_event(form, "submit", true, true, {}, "SubmitEvent") == false or pending != false {
+            return true
+        }
+    }
+    return send_form(form, by)
+}
+
+# Send a form; `by` is the button that was pressed, or a field.
+proc send_form(form, by) {
     alloc pairs := ""
     for c in controls_of(form, []) {
         if has_key(c.attrs, "name") == false or has_key(c.attrs, "disabled") {
@@ -976,6 +1053,18 @@ proc submit(by) {
 }
 
 proc set_focus(node) {
+    alloc old := focus
+    alloc same := old != false and node != false and uid_of(old) == uid_of(node)
+    if js_on and same == false {
+        dom.set_focus(node)
+        if old != false and js_live() {
+            if has_key(old, "value") and old.value != focus_value {
+                js_event(old, "change", true, false, {}, "Event")
+            }
+            js_event(old, "blur", false, false, {}, "FocusEvent")
+            js_event(old, "focusout", true, false, {}, "FocusEvent")
+        }
+    }
     focus := node
     if node == false {
         paint.set_focus(0)
@@ -986,6 +1075,13 @@ proc set_focus(node) {
         }
         if has_key(node, "caret") == false {
             node.caret := length(u.cps(node.value))
+        }
+        if same == false {
+            focus_value := node.value
+            if js_live() {
+                js_event(node, "focus", false, false, {}, "FocusEvent")
+                js_event(node, "focusin", true, false, {}, "FocusEvent")
+            }
         }
     }
     blink_at := time_ms()
@@ -1169,6 +1265,33 @@ proc key(name, held) {
         }
         return true
     }
+    if js_live() {
+        alloc kt := focus
+        if kt == false and type_of(doc.body) == 6 {
+            kt := doc.body
+        }
+        if kt != false {
+            alloc kp := key_props(name, held)
+            alloc go_on := js_event(kt, "keydown", true, true, kp, "KeyboardEvent")
+            if go_on and pending == false and js_on {
+                if length(kp["key"]) == 1 or name == "enter" {
+                    go_on := js_event(kt, "keypress", true, true, key_props(name, held), "KeyboardEvent")
+                }
+                if go_on and pending == false and js_on {
+                    key_default(name, held)
+                }
+            }
+            if pending == false and js_on {
+                js_event(kt, "keyup", true, true, key_props(name, held), "KeyboardEvent")
+            }
+            return true
+        }
+    }
+    return key_default(name, held)
+}
+
+# What a key does when the page has not said otherwise.
+proc key_default(name, held) {
     if focus != false and is_text_field(focus) {
         if name == "enter" and focus.tag != "textarea" {
             submit(focus)
@@ -1191,9 +1314,13 @@ proc key(name, held) {
             r2 := edit(cps, focus.caret, name, held)
         }
         if r2 != false {
+            alloc before := focus.value
             focus.value := u.encode(r2[0])
             focus.caret := r2[1]
             dirty := true
+            if js_live() and focus.value != before {
+                js_event(focus, "input", true, false, {data: 0, inputType: "insertText"}, "InputEvent")
+            }
             return true
         }
     }
@@ -1265,6 +1392,9 @@ proc moved(x, y) {
         }
         set_status("")
         return true
+    }
+    if js_live() {
+        js_move(x, y)
     }
     alloc node := under(x, y)
     hover := node
@@ -1423,7 +1553,19 @@ proc mouse_down(x, y, button) {
         if x >= popup[1] and x < popup[1] + popup[3] and y >= popup[2] + 1 {
             alloc i := (y - popup[2] - 1) // row + popup[5]
             if i < length(popup[4]) {
-                popup[0].sel := i
+                alloc chose := popup[0]
+                alloc had := -1
+                if has_key(chose, "sel") {
+                    had := chose.sel
+                }
+                chose.sel := i
+                popup := false
+                dirty := true
+                if js_live() and had != i {
+                    js_event(chose, "input", true, false, {}, "Event")
+                    js_event(chose, "change", true, false, {}, "Event")
+                }
+                return true
             }
         }
         popup := false
@@ -1490,6 +1632,21 @@ proc mouse_down(x, y, button) {
         }
         return true
     }
+    js_down := false
+    if js_live() {
+        alloc jt := js_target(x, y)
+        if jt != false {
+            js_down := jt
+            alloc may := js_event(jt, "mousedown", true, true, mouse_props(x, y, button, 1), "MouseEvent")
+            if pending != false or js_on == false {
+                return true
+            }
+            if may == false {
+                press := under(x, y)
+                return true
+            }
+        }
+    }
     alloc node := under(x, y)
     press := node
     if node == false {
@@ -1508,6 +1665,24 @@ proc mouse_up(x, y, button) {
         dirty := true
         return true
     }
+    if js_live() and y >= BAR {
+        alloc jt := js_target(x, y)
+        alloc down := js_down
+        js_down := false
+        if jt != false {
+            js_event(jt, "mouseup", true, true, mouse_props(x, y, button, 0), "MouseEvent")
+            if pending == false and js_on and button == 1 and down != false and has_key(down, "nid") and has_key(jt, "nid") and down.nid == jt.nid {
+                if js_event(jt, "click", true, true, mouse_props(x, y, button, 0), "MouseEvent") == false {
+                    press := false
+                    return true
+                }
+            }
+            if pending != false or js_on == false {
+                press := false
+                return true
+            }
+        }
+    }
     if button != 1 or press == false {
         return true
     }
@@ -1516,6 +1691,26 @@ proc mouse_up(x, y, button) {
     press := false
     if node == false or uid_of(node) != uid_of(was) {
         return true
+    }
+    return activate(node)
+}
+
+# What a click on a link, a button or a field does.
+proc activate(node) {
+    if node.tag == "a" and has_key(node.attrs, "href") and u.starts_with(u.lower(u.trim(node.attrs["href"])), "javascript:") {
+        if js_on {
+            alloc code := u.trim(node.attrs["href"])
+            js_run(bytes_to_string(url.unescape_bytes(code[11:])))
+        }
+        return true
+    }
+    if node.tag == "input" and js_live() {
+        alloc ty := lay.input_type(node)
+        if ty == "checkbox" or ty == "radio" {
+            js_event(node, "input", true, false, {}, "Event")
+            js_event(node, "change", true, false, {}, "Event")
+            return true
+        }
     }
     alloc link := href_of(node)
     if link != "" {
@@ -1590,6 +1785,12 @@ proc resized(w, h) {
     popup := false
     reflow()
     dirty := true
+    if js_live() {
+        in_script := in_script + 1
+        dom.fire_window("resize", {}, "UIEvent")
+        in_script := in_script - 1
+        js_after()
+    }
     return true
 }
 
@@ -1644,6 +1845,9 @@ proc tick() {
         }
         ev := window_poll(win)
     }
+    if js_on and busy == false and in_script == 0 and in_after == false {
+        js_pump()
+    }
     alloc now := time_ms()
     if busy or addr_focus or focus != false {
         # the caret blinks, the "working" line moves
@@ -1657,6 +1861,455 @@ proc tick() {
     return true
 }
 
+# --- scripts ------------------------------------------------------------------------------------
+#
+# dom.omg is the page as scripts see it; here is what the browser does
+# for it (the procs of JS_HOST) and when it lets scripts run: while a
+# page loads, when the user does something, and from tick() for
+# timers and requests.
+
+# May the page be told about what the user does?
+proc js_live() {
+    return js_on and in_script == 0 and busy == false
+}
+
+proc js_stopped() {
+    return halt or pending != false or running == false
+}
+
+proc js_title() {
+    alloc t := ""
+    for n in html.find_all(doc, "title", []) {
+        t := u.join(u.words(html.text_of(n)), " ")
+        break
+    }
+    if t != title {
+        title := t
+        if win != false {
+            if t == "" {
+                window_title(win, page_url)
+            } else {
+                window_title(win, t)
+            }
+        }
+    }
+    return true
+}
+
+# Lay the page out again if a script changed it. True when it did.
+proc js_refresh() {
+    if js_on == false {
+        return false
+    }
+    alloc d := dom.take_dirty()
+    if d[0] == false and d[1] == false {
+        return false
+    }
+    if d[1] and halt == false {
+        load_styles()
+    }
+    forms := {}
+    index_forms(doc, 0, 0)
+    js_title()
+    reflow()
+    return true
+}
+
+# After scripts ran: show what they changed.
+proc js_after() {
+    if in_after {
+        return false
+    }
+    in_after := true
+    if js_refresh() and halt == false and pending == false {
+        load_pictures()
+    }
+    in_after := false
+    return true
+}
+
+# Start an engine for the page and run the scripts it came with.
+proc js_boot(address) {
+    set_status("Running the scripts of " + address)
+    tick()
+    alloc t0 := time_ms()
+    dom.attach(doc, address, base_url, JS_HOST)
+    js_on := true
+    in_script := in_script + 1
+    dom.run_scripts(js_stopped)
+    in_script := in_script - 1
+    if verbose {
+        emit "scripts " + (time_ms() - t0) + " ms"
+    }
+    alloc d := dom.take_dirty()
+    if d[1] and halt == false {
+        load_styles()
+    }
+    forms := {}
+    index_forms(doc, 0, 0)
+    js_title()
+    return true
+}
+
+# Tell the page about something that happened to one of its nodes.
+# True when no script cancelled it.
+proc js_event(node, name, bubbles, cancelable, props, kind) {
+    if js_on == false {
+        return true
+    }
+    in_script := in_script + 1
+    alloc ok := dom.fire_node(node, name, bubbles, cancelable, props, kind)
+    in_script := in_script - 1
+    js_after()
+    return ok
+}
+
+proc js_run(text) {
+    in_script := in_script + 1
+    dom.evaluate(text)
+    in_script := in_script - 1
+    js_after()
+    return true
+}
+
+# Timers that are due, requests that wait.
+proc js_pump() {
+    if js_live() == false {
+        return false
+    }
+    if sx != js_sx or sy != js_sy {
+        js_sx := sx
+        js_sy := sy
+        js_event(doc, "scroll", true, false, {}, "Event")
+    }
+    in_script := in_script + 1
+    alloc did := dom.pump()
+    in_script := in_script - 1
+    if did {
+        js_after()
+    }
+    return did
+}
+
+# From the outermost loop only: go where a script asked to go.
+proc js_idle() {
+    if busy or in_script > 0 {
+        return false
+    }
+    if js_hist != 0 {
+        alloc d := js_hist
+        js_hist := 0
+        if d < 0 {
+            go_back()
+        } else {
+            go_forward()
+        }
+    }
+    if pending != false {
+        alloc p := pending
+        pending := false
+        halt := false
+        go(p[0], p[1], p[2], p[3], p[4], p[5])
+    }
+    return true
+}
+
+# The entry the history now stands at: is it one the page made
+# itself with pushState? Then the page is told, and nothing loads.
+proc js_step(step) {
+    if js_live() == false {
+        return false
+    }
+    in_script := in_script + 1
+    alloc ok := dom.history_step(step, past[at][0])
+    in_script := in_script - 1
+    if ok {
+        page_url := past[at][0]
+        set_addr(page_url)
+        js_after()
+        dirty := true
+    }
+    return ok
+}
+
+# The element at a place in the window, for an event.
+proc js_target(x, y) {
+    if root == false or y < BAR or x >= W - SB {
+        return false
+    }
+    alloc node := paint.node_at(root, x + sx, y - BAR + sy)
+    if node == false or has_key(node, "nid") == false {
+        return false
+    }
+    if node.t != 1 {
+        node := dom.parent_of(node)
+    }
+    return node
+}
+
+proc mouse_props(x, y, button, held) {
+    alloc b := 0.0
+    if button == 2 {
+        b := 1.0
+    } elif button == 3 {
+        b := 2.0
+    }
+    return {clientX: x * 1.0, clientY: (y - BAR) * 1.0, pageX: (x + sx) * 1.0, pageY: (y - BAR + sy) * 1.0,
+            screenX: x * 1.0, screenY: y * 1.0, offsetX: 0.0, offsetY: 0.0, button: b, buttons: held * 1.0,
+            detail: 1.0, which: b + 1.0}
+}
+
+alloc KEYS := {enter: ["Enter", "Enter", 13], escape: ["Escape", "Escape", 27], space: [" ", "Space", 32],
+               left: ["ArrowLeft", "ArrowLeft", 37], up: ["ArrowUp", "ArrowUp", 38],
+               right: ["ArrowRight", "ArrowRight", 39], down: ["ArrowDown", "ArrowDown", 40],
+               backspace: ["Backspace", "Backspace", 8], tab: ["Tab", "Tab", 9],
+               delete: ["Delete", "Delete", 46], home: ["Home", "Home", 36], end: ["End", "End", 35],
+               pageup: ["PageUp", "PageUp", 33], pagedown: ["PageDown", "PageDown", 34]}
+
+proc key_props(name, held) {
+    alloc key := name
+    alloc code := ""
+    alloc kc := 0
+    if has_key(KEYS, name) {
+        key := KEYS[name][0]
+        code := KEYS[name][1]
+        kc := KEYS[name][2]
+    } elif length(name) > 1 and name[0:1] == "f" and u.to_int(name[1:], 0) > 0 {
+        key := "F" + name[1:]
+        code := key
+        kc := 111 + u.to_int(name[1:], 0)
+    } elif length(string_bytes(name)) == 1 {
+        alloc ch := string_bytes(name)[0]
+        if ch >= 97 and ch <= 122 {
+            kc := ch - 32
+            code := "Key" + chr(ch - 32)
+        } elif ch >= 65 and ch <= 90 {
+            kc := ch
+            code := "Key" + name
+        } elif ch >= 48 and ch <= 57 {
+            kc := ch
+            code := "Digit" + name
+        } else {
+            kc := ch
+        }
+    }
+    return {key: key, code: code, keyCode: kc * 1.0, which: kc * 1.0, charCode: 0.0,
+            shiftKey: (held & 1) != 0, ctrlKey: (held & 2) != 0, altKey: (held & 4) != 0}
+}
+
+# The mouse moved over the page.
+proc js_move(x, y) {
+    alloc jt := js_target(x, y)
+    alloc props := mouse_props(x, y, 0, 0)
+    alloc same := jt != false and js_over != false and jt.nid == js_over.nid
+    if same == false {
+        alloc old := js_over
+        js_over := jt
+        if old != false and has_key(old, "nid") {
+            js_event(old, "mouseout", true, true, props, "MouseEvent")
+            js_event(old, "mouseleave", false, false, mouse_props(x, y, 0, 0), "MouseEvent")
+        }
+        if jt != false and js_live() {
+            js_event(jt, "mouseover", true, true, mouse_props(x, y, 0, 0), "MouseEvent")
+            js_event(jt, "mouseenter", false, false, mouse_props(x, y, 0, 0), "MouseEvent")
+        }
+    }
+    if jt != false and js_live() and time_ms() - js_moved >= 30 {
+        js_moved := time_ms()
+        js_event(jt, "mousemove", true, true, mouse_props(x, y, 0, 0), "MouseEvent")
+    }
+    return true
+}
+
+# -- what the page asks the browser for
+
+proc js_fetch(where, method, headers, body) {
+    alloc b := false
+    alloc ctype := ""
+    if body != false {
+        b := string_bytes(body)
+        ctype := "text/plain;charset=UTF-8"
+    }
+    set_status("Loading " + where)
+    net.set_extra(headers)
+    alloc r := net.fetch(where, method, b, ctype, page_url)
+    net.set_extra([])
+    if busy == false {
+        set_status("")
+    }
+    if verbose {
+        emit "script fetched " + where + ": " + r.status + ", " + length(r.body) + " bytes"
+    }
+    return r
+}
+
+proc js_navigate(where, replace) {
+    alloc how := 0
+    if replace {
+        how := 1
+    }
+    go(where, "GET", false, "", how, 0)
+    return true
+}
+
+# The page moved to another part of itself, or (with pushState) says
+# it is somewhere else now.
+proc js_moved_to(target, replace) {
+    if at < 0 {
+        return false
+    }
+    if replace {
+        past[at][0] := target
+    } else {
+        past[at][1] := sy
+        past := past[0:at + 1]
+        append(past, [target, 0])
+        at := length(past) - 1
+    }
+    page_url := target
+    set_addr(target)
+    dirty := true
+    return true
+}
+
+proc js_fragment(target, replace) {
+    js_moved_to(target, replace)
+    js_refresh()
+    goto_fragment(target)
+    return true
+}
+
+proc js_history(delta) {
+    js_hist := delta
+    return true
+}
+
+proc js_history_length() {
+    return length(past)
+}
+
+proc js_reflow() {
+    js_refresh()
+    return true
+}
+
+proc js_rect(node) {
+    js_refresh()
+    if root == false or has_key(node, "nid") == false {
+        return false
+    }
+    return paint.rect_of(root, node.nid)
+}
+
+proc js_view() {
+    return [view_w(), view_h(), sx, sy, doc_w, doc_h]
+}
+
+proc js_scroll(x, y) {
+    js_refresh()
+    sx := x
+    sy := y
+    clamp_scroll()
+    dirty := true
+    return true
+}
+
+proc js_set_title(text) {
+    js_title()
+    return true
+}
+
+proc js_cookie_get() {
+    alloc p := url.parse(page_url)
+    if p == false or (p.scheme != "http" and p.scheme != "https") {
+        return ""
+    }
+    return net.cookies_for(p)
+}
+
+proc js_cookie_set(text) {
+    alloc p := url.parse(page_url)
+    if p != false and (p.scheme == "http" or p.scheme == "https") {
+        net.set_cookie(p, text)
+    }
+    return true
+}
+
+proc js_log(level, text) {
+    if console_out {
+        emit text
+    } elif verbose {
+        emit "console." + level + ": " + text
+    }
+    return true
+}
+
+proc js_alert(text) {
+    if console_out {
+        emit "alert: " + text
+    }
+    set_status(text)
+    return true
+}
+
+proc js_focus(node) {
+    if node == false {
+        set_focus(false)
+    } elif node.t == 1 and is_text_field(node) and has_key(node, "style") {
+        set_focus(node)
+    }
+    return true
+}
+
+proc js_activate(node) {
+    if node.t != 1 {
+        return false
+    }
+    alloc tag := node.tag
+    if tag == "input" {
+        alloc ty := lay.input_type(node)
+        if ty == "checkbox" {
+            node.checked := is_checked(node) == false
+            dirty := true
+            return true
+        }
+        if ty == "radio" {
+            press_on(node, -1)
+            return true
+        }
+    }
+    alloc link := href_of(node)
+    if link != "" or tag == "button" or tag == "input" or tag == "summary" or tag == "label" {
+        activate(node)
+    }
+    return true
+}
+
+proc js_submit(form) {
+    send_form(form, {attrs: {}})
+    return true
+}
+
+proc js_hit(x, y) {
+    js_refresh()
+    return js_target(x, y + BAR)
+}
+
+proc js_picture(node) {
+    if has_key(node, "img") and node.img != false {
+        return [node.img[0], node.img[1]]
+    }
+    return [0, 0]
+}
+
+proc js_host() {
+    return {fetch: js_fetch, navigate: js_navigate, fragment: js_fragment, push_state: js_moved_to,
+            history: js_history, history_length: js_history_length, reflow: js_reflow, rect: js_rect,
+            view: js_view, scroll: js_scroll, title: js_set_title, cookie_get: js_cookie_get,
+            cookie_set: js_cookie_set, log: js_log, alert: js_alert, focus: js_focus,
+            activate: js_activate, submit: js_submit, hit: js_hit, picture: js_picture}
+}
+
 # --- start --------------------------------------------------------------------------------------
 
 proc main() {
@@ -1664,6 +2317,8 @@ proc main() {
     alloc shot := ""
     alloc shot_scroll := 0
     alloc page_only := false
+    alloc dump := false
+    alloc patience := 3000
     alloc i := 1
     loop i < length(args) {
         alloc a := args[i]
@@ -1682,6 +2337,15 @@ proc main() {
             i := i + 1
         } elif a == "--verbose" {
             verbose := true
+        } elif a == "--no-js" {
+            scripting := false
+        } elif a == "--console" {
+            console_out := true
+        } elif a == "--dump" {
+            dump := true
+        } elif a == "--wait" and i + 1 < length(args) {
+            patience := u.to_int(args[i + 1], patience)
+            i := i + 1
         } elif a == "--page-only" {
             page_only := true
         } elif a == "--proxy" and i + 1 < length(args) {
@@ -1719,6 +2383,7 @@ proc main() {
         emit "browser: no usable font found on this system"
         return 1
     }
+    JS_HOST := js_host()
     if shot != "" {
         headless := true
         if page_only {
@@ -1727,6 +2392,25 @@ proc main() {
         }
         gfx.resize(W, H)
         go(start, "GET", false, "", 0, 0)
+        # let the page's scripts have their say: timers, requests
+        alloc until := time_ms() + patience
+        loop js_on or pending != false {
+            js_pump()
+            js_idle()
+            if js_on == false {
+                continue
+            }
+            alloc w := dom.wait_ms()
+            if w < 0 or time_ms() + w > until {
+                break
+            }
+            if w > 0 {
+                sleep_ms(w)
+            }
+        }
+        if dump {
+            emit html.outer_html(doc)
+        }
         sy := shot_scroll
         clamp_scroll()
         redraw()
@@ -1741,6 +2425,7 @@ proc main() {
     go(start, "GET", false, "", 0, 0)
     loop running {
         tick()
+        js_idle()
         if running and dirty == false {
             sleep_ms(8)
         }
