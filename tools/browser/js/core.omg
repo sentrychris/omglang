@@ -91,6 +91,14 @@ proc heap() {
     return H
 }
 
+# An argument of a native function, undefined when it was not given.
+proc arg(args, i) {
+    if i < length(args) {
+        return args[i]
+    }
+    return U
+}
+
 proc new_obj(cls, proto) {
     alloc o := [cls, proto, {}, 0, 0, false]
     ALLOCS := ALLOCS + 1
@@ -826,11 +834,18 @@ proc stack_trace() {
     return out
 }
 
+alloc ERROR_NAMES := {"8": "Error", "9": "TypeError", "10": "RangeError", "11": "ReferenceError",
+    "12": "SyntaxError", "21": "EvalError", "22": "URIError"}
+
 proc make_error(which, msg) {
     alloc h := new_obj(3, I[which])
     alloc o := H[h]
     o[2]["message"] := msg
-    o[2]["stack"] := stack_trace()
+    alloc head := ERROR_NAMES["" + which]
+    if msg != "" {
+        head := head + ": " + msg
+    }
+    o[2]["stack"] := head + stack_trace()
     o[5] := {message: 1, stack: 1}
     return h
 }
@@ -926,10 +941,20 @@ proc describe(v) {
             } except e {
                 THROWN := false
             }
-            if msg == "" {
-                return name + stack
+            alloc head := name
+            if msg != "" {
+                head := name + ": " + msg
             }
-            return name + ": " + msg + stack
+            # the stack starts with a line like `head`; ours is the one to trust
+            alloc at := 0
+            alloc ns := length(stack)
+            loop at < ns and stack[at] != "\n" {
+                at := at + 1
+            }
+            if at < ns {
+                return head + stack[at:]
+            }
+            return head
         }
     }
     alloc s := ""
@@ -1499,7 +1524,7 @@ proc own_keys(h, all) {
                 continue
             }
         }
-        if all == false and hid != false and has_key(hid, k) {
+        if all == false and hid != false and has_key(hid, k) and hid[k] == 1 {
             continue
         }
         if index_of_key(k) >= 0 {
@@ -1563,7 +1588,9 @@ proc enum_keys(v) {
             alloc hid := H[h][5]
             if hid != false {
                 for hk in dict_keys(hid) {
-                    seen[hk] := 1
+                    if hid[hk] == 1 {
+                        seen[hk] := 1
+                    }
                 }
             }
         }
@@ -1627,6 +1654,82 @@ proc def(target, name, fn, nargs) {
     alloc h := new_native(fn, name, nargs)
     define_hidden(target, name, h)
     return h
+}
+
+# Strings put end to end with `sep` between them, in one go.
+proc str_join(parts, sep) {
+    alloc n := length(parts)
+    if n == 0 {
+        return ""
+    }
+    if n == 1 {
+        return parts[0]
+    }
+    if n == 2 {
+        return parts[0] + sep + parts[1]
+    }
+    alloc sb := string_bytes(sep)
+    alloc ns := length(sb)
+    alloc bs := []
+    alloc total := ns * (n - 1)
+    for p in parts {
+        alloc pb := string_bytes(p)
+        append(bs, pb)
+        total := total + length(pb)
+    }
+    alloc out := bytes_repeat(0, total)
+    alloc at := 0
+    alloc i := 0
+    for pb2 in bs {
+        if i > 0 and ns > 0 {
+            bytes_copy(sb, 0, out, at, ns)
+            at := at + ns
+        }
+        alloc np := length(pb2)
+        if np > 0 {
+            bytes_copy(pb2, 0, out, at, np)
+            at := at + np
+        }
+        i := i + 1
+    }
+    return bytes_to_string(out)
+}
+
+# A constructor written in OMG: a global function `name` whose
+# instances have `proto` as their prototype.
+proc def_ctor(name, fn, nargs, proto) {
+    alloc h := new_native(fn, name, nargs)
+    define_hidden(h, "prototype", proto)
+    define_hidden(proto, "constructor", h)
+    define_hidden(GLOBAL, name, h)
+    return h
+}
+
+# The items of an array, or of anything with a length and numbered
+# properties, as a new OMG list.
+proc array_like_list(v) {
+    if type_of(v) == 2 and v != 0 {
+        alloc o := H[v]
+        if o[0] == 1 {
+            return o[3][0:o[6]]
+        }
+        alloc n := to_integer(get_r(v, "length", v))
+        alloc out := []
+        alloc i := 0
+        loop i < n {
+            append(out, get_r(v, "" + i, v))
+            i := i + 1
+        }
+        return out
+    }
+    if type_of(v) == 4 {
+        alloc out2 := []
+        for ch in v {
+            append(out2, ch)
+        }
+        return out2
+    }
+    return []
 }
 
 proc def_getter(target, name, fn) {
@@ -4182,12 +4285,21 @@ alloc I_LIST_ITER_PROTO := 25
 # A new, empty world: a heap with the objects everything else hangs
 # from. The library files then fill them.
 proc init() {
-    H := [0]
+    # H and I are emptied, not made anew: the library files hold on to them
     FREE := []
-    NFREE := 0
+    alloc k := length(H) - 1
+    NFREE := k
+    loop k >= 1 {
+        H[k] := 0
+        append(FREE, k)
+        k := k - 1
+    }
+    k := 0
+    loop k < 64 {
+        I[k] := 0
+        k := k + 1
+    }
     ALLOCS := 0
-    I := list_repeat(0, 64)
-    S := list_repeat(0, 2048)
     SP := 0
     FR := []
     FP := 0
@@ -4201,7 +4313,7 @@ proc init() {
     H[OBJECT_PROTO][4] := 4
     I[1] := OBJECT_PROTO
     alloc i := 2
-    loop i <= 25 {
+    loop i <= 31 {
         if i != 20 {
             alloc h := new_obj(0, OBJECT_PROTO)
             H[h][4] := 4
@@ -4240,4 +4352,53 @@ proc intrinsic(i) {
 
 proc undefined() {
     return U
+}
+
+# Everything here that the library files use, as values they can call
+# at the cost of a call inside this file (a call through the name of
+# an imported file costs seven times as much). The lists are the ones
+# this file works on: H the heap, I the intrinsic objects.
+proc exports() {
+    return {
+        H: H, I: I,
+        heap: heap, arg: arg, new_obj: new_obj, intrinsics: intrinsics,
+        set_host_hooks: set_host_hooks, set_promise_hooks: set_promise_hooks,
+        set_regex_hook: set_regex_hook, set_compile_hook: set_compile_hook,
+        new_target: new_target, native_fn: native_fn, nan: nan, inf: inf, is_obj: is_obj,
+        is_nullish: is_nullish, is_callable: is_callable, is_array: is_array,
+        class_of: class_of, num_to_str: num_to_str, num_key: num_key,
+        is_space_byte: is_space_byte, str_to_num: str_to_num, typeof_str: typeof_str,
+        to_bool: to_bool, to_num: to_num, to_str: to_str, to_key: to_key,
+        to_integer: to_integer, wrap32: wrap32, to_int32: to_int32, to_uint32: to_uint32,
+        floor_f: floor_f, trunc_f: trunc_f, rel_index: rel_index, line_of: line_of,
+        stack_trace: stack_trace, make_error: make_error, throw_val: throw_val,
+        throw_type: throw_type, throw_range: throw_range, throw_ref: throw_ref,
+        throw_syntax: throw_syntax, throw_error: throw_error, caught: caught, show: show,
+        describe: describe, index_of_key: index_of_key, func_name: func_name,
+        func_prop: func_prop, get_r: get_r, get: get, getv: getv, get_elem: get_elem,
+        arr_set: arr_set, arr_set_length: arr_set_length, put_r: put_r, put: put, putv: putv,
+        put_elem: put_elem, define: define, hide: hide, define_hidden: define_hidden,
+        define_accessor: define_accessor, has_own: has_own, has_prop: has_prop,
+        own_raw: own_raw, delete_prop: delete_prop, is_symbol_key: is_symbol_key,
+        own_keys: own_keys, enum_keys: enum_keys, new_object: new_object, new_array: new_array,
+        items_of: items_of, new_native: new_native, new_native_with: new_native_with,
+        native_data: native_data, def: def, str_join: str_join, def_ctor: def_ctor,
+        array_like_list: array_like_list, def_getter: def_getter, def_setter: def_setter,
+        new_symbol: new_symbol, invoke: invoke, new_coroutine: new_coroutine,
+        co_resume: co_resume, async_step: async_step, call: call, call0: call0, call1: call1,
+        construct: construct, ctor_result: ctor_result, to_prim: to_prim, to_object: to_object,
+        add_slow: add_slow, lt_slow: lt_slow, le_slow: le_slow, strict_eq: strict_eq,
+        same_value: same_value, loose_eq: loose_eq, is_neg_zero: is_neg_zero, div_f: div_f,
+        div_slow: div_slow, mod_f: mod_f, mod_slow: mod_slow, pow_f: pow_f,
+        instance_of: instance_of, has_in: has_in, get_global: get_global, make_iter: make_iter,
+        iter_step: iter_step, iter_list: iter_list, iter_result: iter_result,
+        new_iter_object: new_iter_object, n_iter_next: n_iter_next, n_iter_self: n_iter_self,
+        gen_resume: gen_resume, n_gen_next: n_gen_next, n_gen_throw: n_gen_throw,
+        n_gen_return: n_gen_return, make_closure: make_closure, def_class: def_class,
+        def_method: def_method, super_call: super_call, super_home: super_home,
+        copy_props: copy_props, template_object: template_object, concat_strs: concat_strs,
+        delete_elem: delete_elem, typeof_global: typeof_global, set_proto_of: set_proto_of,
+        not_callable: not_callable, run_script: run_script, closure_of: closure_of, init: init,
+        global_object: global_object, intrinsic: intrinsic, undefined: undefined
+    }
 }

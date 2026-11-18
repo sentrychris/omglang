@@ -1,0 +1,728 @@
+;;;omg
+
+# tools/browser/js/lib_promise.omg
+#
+# The standard library of the JavaScript engine: Promise, the queue
+# of small jobs behind it (which is also what `await` waits on), and
+# the timers: setTimeout, setInterval and their clear functions.
+#
+# Nothing here runs by itself. Whoever embeds the engine calls
+# run_microtasks() when a script or an event handler has returned,
+# and run_timers() when next_due() says a timer is due. Mistakes
+# nobody caught (a timer function that throws, a promise rejected
+# with nobody listening) are kept for the embedder to show:
+# take_errors() and take_unhandled().
+#
+# A promise keeps [state, value, reactions, handled?]; state is 0
+# while it waits, 1 kept, 2 broken. A reaction is one of
+#
+#     [0, on kept, on broken, the promise then() gave back]
+#     [1, coroutine]                 an async function waiting
+#     [2, proc(ok, value, data), data]   something written in OMG
+#     [3, promise]                   hand the outcome on as it is
+
+import "core.omg" as c
+
+alloc X := c.exports()
+alloc H := X["H"]
+alloc I := X["I"]
+alloc arg := X["arg"]
+alloc def := X["def"]
+alloc def_ctor := X["def_ctor"]
+alloc define_hidden := X["define_hidden"]
+alloc get := X["get"]
+alloc put := X["put"]
+alloc new_obj := X["new_obj"]
+alloc new_object := X["new_object"]
+alloc new_array := X["new_array"]
+alloc new_native_with := X["new_native_with"]
+alloc native_data := X["native_data"]
+alloc throw_type := X["throw_type"]
+alloc throw_val := X["throw_val"]
+alloc make_error := X["make_error"]
+alloc to_num := X["to_num"]
+alloc to_str := X["to_str"]
+alloc is_callable := X["is_callable"]
+alloc call := X["call"]
+alloc new_target := X["new_target"]
+alloc iter_list := X["iter_list"]
+alloc async_step := X["async_step"]
+alloc caught := X["caught"]
+alloc show := X["show"]
+
+proc nothing() {
+}
+
+alloc U := nothing()
+
+alloc MQ := []          # the jobs waiting, in order
+alloc MQH := 0          # the next one to run
+alloc DRAINING := false
+alloc REJECTED := []    # promises broken while nobody listened
+alloc ERRORS := []      # values thrown where nothing could catch them
+alloc EVAL := false     # proc(text), for setTimeout("text")
+alloc THEN_FN := 0      # Promise.prototype.then, as it was made
+
+alloc TIMERS := []      # [id, due (ms), function, arguments, every (ms) or -1, alive?]
+alloc NEXT_TIMER := 1
+
+proc set_eval(f) {
+    EVAL := f
+    return true
+}
+
+# --- Promises -------------------------------------------------------------------------------
+
+proc new_promise() {
+    alloc h := new_obj(12, I[15])
+    H[h][3] := [0, U, [], false]
+    return h
+}
+
+proc is_promise(v) {
+    return type_of(v) == 2 and v != 0 and H[v][0] == 12
+}
+
+proc fulfill(p, v) {
+    alloc x := H[p][3]
+    if x[0] != 0 {
+        return false
+    }
+    alloc rs := x[2]
+    x[0] := 1
+    x[1] := v
+    x[2] := []
+    for r in rs {
+        append(MQ, [0, r, true, v])
+    }
+    return true
+}
+
+proc reject_promise(p, v) {
+    alloc x := H[p][3]
+    if x[0] != 0 {
+        return false
+    }
+    alloc rs := x[2]
+    x[0] := 2
+    x[1] := v
+    x[2] := []
+    for r in rs {
+        append(MQ, [0, r, false, v])
+    }
+    if x[3] == false {
+        append(REJECTED, p)
+    }
+    return true
+}
+
+# Settle promise p with v the way a resolve function does: a value
+# with a then() is waited for.
+proc resolve_promise(p, v) {
+    if H[p][3][0] != 0 {
+        return false
+    }
+    if type_of(v) == 2 and v != 0 {
+        if v == p {
+            return reject_promise(p, make_error(9, "Chaining cycle detected for promise #<Promise>"))
+        }
+        alloc then := U
+        try {
+            then := get(v, "then")
+        } except e {
+            return reject_promise(p, caught(e))
+        }
+        if is_callable(then) {
+            append(MQ, [2, p, v, then])
+            return true
+        }
+    }
+    return fulfill(p, v)
+}
+
+# What the engine calls when an async function ends.
+proc settle(p, ok, v) {
+    if ok {
+        return resolve_promise(p, v)
+    }
+    return reject_promise(p, v)
+}
+
+# Have reaction r told about promise p.
+proc then_react(p, r) {
+    alloc x := H[p][3]
+    x[3] := true
+    if x[0] == 0 {
+        append(x[2], r)
+    } else {
+        append(MQ, [0, r, x[0] == 1, x[1]])
+    }
+    return true
+}
+
+# Any value as a promise.
+proc to_promise(v) {
+    if is_promise(v) {
+        return v
+    }
+    alloc p := new_promise()
+    resolve_promise(p, v)
+    return p
+}
+
+# Call proc f(ok, value, data) once promise-or-value v is settled.
+proc then_native(v, f, data) {
+    return then_react(to_promise(v), [2, f, data])
+}
+
+# What the engine calls for `await v` inside coroutine co.
+proc await_value(v, co) {
+    return then_react(to_promise(v), [1, co])
+}
+
+proc n_resolve_fn(this, args) {
+    alloc d := native_data()
+    if d[1][0] {
+        return U
+    }
+    d[1][0] := true
+    resolve_promise(d[0], arg(args, 0))
+    return U
+}
+
+proc n_reject_fn(this, args) {
+    alloc d := native_data()
+    if d[1][0] {
+        return U
+    }
+    d[1][0] := true
+    reject_promise(d[0], arg(args, 0))
+    return U
+}
+
+# [resolve function, reject function, [used?]] for promise p.
+proc resolvers(p) {
+    alloc flag := [false]
+    return [new_native_with(n_resolve_fn, "", 1, [p, flag]), new_native_with(n_reject_fn, "", 1, [p, flag]), flag]
+}
+
+proc report(v) {
+    append(ERRORS, v)
+    return true
+}
+
+proc run_job(job) {
+    alloc kind := job[0]
+    if kind == 0 {
+        alloc r := job[1]
+        alloc ok := job[2]
+        alloc v := job[3]
+        alloc rk := r[0]
+        if rk == 0 {
+            alloc handler := r[2]
+            if ok {
+                handler := r[1]
+            }
+            if is_callable(handler) == false {
+                if ok {
+                    fulfill(r[3], v)
+                } else {
+                    reject_promise(r[3], v)
+                }
+                return true
+            }
+            alloc out := U
+            try {
+                out := call(handler, U, [v])
+            } except e {
+                reject_promise(r[3], caught(e))
+                return true
+            }
+            resolve_promise(r[3], out)
+            return true
+        }
+        if rk == 1 {
+            if ok {
+                async_step(r[1], 0, v)
+            } else {
+                async_step(r[1], 1, v)
+            }
+            return true
+        }
+        if rk == 2 {
+            try {
+                r[1](ok, v, r[2])
+            } except e2 {
+                report(caught(e2))
+            }
+            return true
+        }
+        if ok {
+            fulfill(r[1], v)
+        } else {
+            reject_promise(r[1], v)
+        }
+        return true
+    }
+    if kind == 1 {
+        try {
+            call(job[1], U, [])
+        } except e3 {
+            report(caught(e3))
+        }
+        return true
+    }
+    # kind 2: promise job[1] was resolved with job[2], whose then() is job[3]
+    alloc target := job[1]
+    alloc src := job[2]
+    if is_promise(src) and job[3] == THEN_FN {
+        then_react(src, [3, target])
+        return true
+    }
+    alloc fns := resolvers(target)
+    try {
+        call(job[3], src, [fns[0], fns[1]])
+    } except e4 {
+        alloc thrown := caught(e4)
+        if fns[2][0] == false {
+            fns[2][0] := true
+            reject_promise(target, thrown)
+        }
+    }
+    return true
+}
+
+# Run the waiting jobs, and those they add, until none is left.
+# Gives the number run.
+proc run_microtasks() {
+    if DRAINING {
+        return 0
+    }
+    DRAINING := true
+    alloc n := 0
+    loop MQH < length(MQ) {
+        alloc job := MQ[MQH]
+        MQ[MQH] := 0
+        MQH := MQH + 1
+        run_job(job)
+        n := n + 1
+    }
+    MQ := []
+    MQH := 0
+    DRAINING := false
+    return n
+}
+
+# The promises that were broken and still have nobody listening;
+# each is given once.
+proc take_unhandled() {
+    alloc out := []
+    for p in REJECTED {
+        alloc x := H[p][3]
+        if x[3] == false {
+            x[3] := true
+            append(out, x[1])
+        }
+    }
+    REJECTED := []
+    return out
+}
+
+# The values thrown out of timers and jobs since the last call.
+proc take_errors() {
+    alloc out := ERRORS
+    ERRORS := []
+    return out
+}
+
+# [state, value] of a promise: 0 waiting, 1 kept, 2 broken.
+proc state_of(p) {
+    alloc x := H[p][3]
+    return [x[0], x[1]]
+}
+
+proc this_promise(this, what) {
+    if is_promise(this) == false {
+        throw_type("Method Promise.prototype." + what + " called on incompatible receiver " + show(this))
+    }
+    return this
+}
+
+proc n_promise(this, args) {
+    if type_of(new_target()) == 0 {
+        throw_type("Promise constructor cannot be invoked without 'new'")
+    }
+    alloc ex := arg(args, 0)
+    if is_callable(ex) == false {
+        throw_type("Promise resolver " + show(ex) + " is not a function")
+    }
+    alloc p := new_promise()
+    alloc fns := resolvers(p)
+    try {
+        call(ex, U, [fns[0], fns[1]])
+    } except e {
+        alloc thrown := caught(e)
+        if fns[2][0] == false {
+            fns[2][0] := true
+            reject_promise(p, thrown)
+        }
+    }
+    return p
+}
+
+proc n_then(this, args) {
+    alloc p := this_promise(this, "then")
+    alloc out := new_promise()
+    then_react(p, [0, arg(args, 0), arg(args, 1), out])
+    return out
+}
+
+proc n_catch(this, args) {
+    return call(get(this, "then"), this, [U, arg(args, 0)])
+}
+
+# After the function of finally() has run: data is [promise to
+# settle, was the first outcome kept?, its value].
+proc finally_done(ok, v, data) {
+    if ok == false {
+        reject_promise(data[0], v)
+    } elif data[1] {
+        fulfill(data[0], data[2])
+    } else {
+        reject_promise(data[0], data[2])
+    }
+    return true
+}
+
+proc n_finally_kept(this, args) {
+    alloc f := native_data()
+    alloc v := arg(args, 0)
+    alloc out := new_promise()
+    then_native(call(f, U, []), finally_done, [out, true, v])
+    return out
+}
+
+proc n_finally_broken(this, args) {
+    alloc f := native_data()
+    alloc v := arg(args, 0)
+    alloc out := new_promise()
+    then_native(call(f, U, []), finally_done, [out, false, v])
+    return out
+}
+
+proc n_finally(this, args) {
+    alloc f := arg(args, 0)
+    alloc then := get(this, "then")
+    if is_callable(f) == false {
+        return call(then, this, [f, f])
+    }
+    return call(then, this, [new_native_with(n_finally_kept, "", 1, f), new_native_with(n_finally_broken, "", 1, f)])
+}
+
+proc n_promise_resolve(this, args) {
+    return to_promise(arg(args, 0))
+}
+
+proc n_promise_reject(this, args) {
+    alloc p := new_promise()
+    reject_promise(p, arg(args, 0))
+    return p
+}
+
+proc settled_record(ok, v) {
+    alloc o := new_object()
+    if ok {
+        put(o, "status", "fulfilled")
+        put(o, "value", v)
+    } else {
+        put(o, "status", "rejected")
+        put(o, "reason", v)
+    }
+    return o
+}
+
+# One of the promises given to all(), allSettled(), any() or race()
+# has settled. data: [result, values, [how many still wait], index,
+# which function].
+proc combine_step(ok, v, data) {
+    alloc result := data[0]
+    alloc mode := data[4]
+    if mode == 3 {
+        if ok {
+            fulfill(result, v)
+        } else {
+            reject_promise(result, v)
+        }
+        return true
+    }
+    if mode == 0 and ok == false {
+        reject_promise(result, v)
+        return true
+    }
+    if mode == 2 and ok {
+        fulfill(result, v)
+        return true
+    }
+    if mode == 1 {
+        data[1][data[3]] := settled_record(ok, v)
+    } else {
+        data[1][data[3]] := v
+    }
+    data[2][0] := data[2][0] - 1
+    if data[2][0] == 0 {
+        if mode == 2 {
+            alloc err := make_error(8, "All promises were rejected")
+            define_hidden(err, "name", "AggregateError")
+            define_hidden(err, "errors", new_array(data[1]))
+            reject_promise(result, err)
+        } else {
+            fulfill(result, new_array(data[1]))
+        }
+    }
+    return true
+}
+
+proc combine(args, mode) {
+    alloc result := new_promise()
+    alloc items := []
+    try {
+        items := iter_list(arg(args, 0))
+    } except e {
+        reject_promise(result, caught(e))
+        return result
+    }
+    alloc n := length(items)
+    if n == 0 {
+        if mode == 2 {
+            alloc err := make_error(8, "All promises were rejected")
+            define_hidden(err, "name", "AggregateError")
+            define_hidden(err, "errors", new_array([]))
+            reject_promise(result, err)
+        } elif mode != 3 {
+            fulfill(result, new_array([]))
+        }
+        return result
+    }
+    alloc values := []
+    alloc left := [n]
+    alloc i := 0
+    loop i < n {
+        append(values, U)
+        i := i + 1
+    }
+    i := 0
+    loop i < n {
+        then_native(items[i], combine_step, [result, values, left, i, mode])
+        i := i + 1
+    }
+    return result
+}
+
+proc n_all(this, args) {
+    return combine(args, 0)
+}
+
+proc n_all_settled(this, args) {
+    return combine(args, 1)
+}
+
+proc n_any(this, args) {
+    return combine(args, 2)
+}
+
+proc n_race(this, args) {
+    return combine(args, 3)
+}
+
+proc n_with_resolvers(this, args) {
+    alloc p := new_promise()
+    alloc fns := resolvers(p)
+    alloc o := new_object()
+    put(o, "promise", p)
+    put(o, "resolve", fns[0])
+    put(o, "reject", fns[1])
+    return o
+}
+
+proc n_queue_microtask(this, args) {
+    alloc f := arg(args, 0)
+    if is_callable(f) == false {
+        throw_type("The \"callback\" argument must be of type function. Received " + show(f))
+    }
+    append(MQ, [1, f])
+    return U
+}
+
+# --- Timers ---------------------------------------------------------------------------------
+
+# Have function fn called with `args` in `delay` ms, and again every
+# `every` ms unless that is -1. Gives the timer's number.
+proc add_timer(fn, delay, every, args) {
+    alloc id := NEXT_TIMER
+    NEXT_TIMER := NEXT_TIMER + 1
+    append(TIMERS, [id, time_ms() + delay, fn, args, every, true])
+    return id
+}
+
+proc cancel_timer(id) {
+    for t in TIMERS {
+        if t[0] == id {
+            t[5] := false
+        }
+    }
+    return true
+}
+
+proc delay_of(v) {
+    alloc d := to_num(v)
+    if d != d or d < 0.0 {
+        return 0
+    }
+    if d > 2147483647.0 {
+        return 0
+    }
+    return int(d)
+}
+
+proc timer_from(args, repeat) {
+    alloc fn := arg(args, 0)
+    if is_callable(fn) == false {
+        fn := to_str(fn)
+    }
+    alloc delay := delay_of(arg(args, 1))
+    alloc rest := []
+    if length(args) > 2 {
+        rest := args[2:]
+    }
+    alloc every := -1
+    if repeat {
+        if delay < 1 {
+            delay := 1
+        }
+        every := delay
+    }
+    return float(add_timer(fn, delay, every, rest))
+}
+
+proc n_set_timeout(this, args) {
+    return timer_from(args, false)
+}
+
+proc n_set_interval(this, args) {
+    return timer_from(args, true)
+}
+
+proc n_clear_timer(this, args) {
+    alloc v := to_num(arg(args, 0))
+    if v == v and v > 0.0 and v < 9007199254740992.0 {
+        cancel_timer(int(v))
+    }
+    return U
+}
+
+# When the next timer is due, in the ms of time_ms(), or -1 when no
+# timer waits.
+proc next_due() {
+    alloc best := -1
+    for t in TIMERS {
+        if t[5] and (best < 0 or t[1] < best) {
+            best := t[1]
+        }
+    }
+    return best
+}
+
+# How many timers wait.
+proc timers_waiting() {
+    alloc n := 0
+    for t in TIMERS {
+        if t[5] {
+            n := n + 1
+        }
+    }
+    return n
+}
+
+# Forget every timer and every waiting job: a page is going away.
+proc reset() {
+    TIMERS := []
+    MQ := []
+    MQH := 0
+    REJECTED := []
+    ERRORS := []
+    DRAINING := false
+    return true
+}
+
+# Run the timers that are due now, the earliest first, and the jobs
+# each leaves behind. Gives the number run.
+proc run_timers() {
+    alloc now := time_ms()
+    alloc due := []
+    alloc keep := []
+    for t in TIMERS {
+        if t[5] {
+            append(keep, t)
+            if t[1] <= now {
+                # insertion sort by time, then by number
+                append(due, t)
+                alloc j := length(due) - 1
+                loop j > 0 and (due[j - 1][1] > t[1] or (due[j - 1][1] == t[1] and due[j - 1][0] > t[0])) {
+                    due[j] := due[j - 1]
+                    j := j - 1
+                }
+                due[j] := t
+            }
+        }
+    }
+    TIMERS := keep
+    alloc n := 0
+    for t2 in due {
+        if t2[5] {
+            if t2[4] < 0 {
+                t2[5] := false
+            } else {
+                t2[1] := time_ms() + t2[4]
+            }
+            try {
+                if type_of(t2[2]) == 4 {
+                    if EVAL != false {
+                        EVAL(t2[2])
+                    }
+                } else {
+                    call(t2[2], U, t2[3])
+                }
+            } except e {
+                report(caught(e))
+            }
+            n := n + 1
+            run_microtasks()
+        }
+    }
+    return n
+}
+
+proc setup() {
+    alloc g := I[0]
+    alloc pp := I[15]
+    alloc ctor := def_ctor("Promise", n_promise, 1, pp)
+    THEN_FN := def(pp, "then", n_then, 2)
+    def(pp, "catch", n_catch, 1)
+    def(pp, "finally", n_finally, 1)
+    define_hidden(pp, "@@toStringTag", "Promise")
+    def(ctor, "resolve", n_promise_resolve, 1)
+    def(ctor, "reject", n_promise_reject, 1)
+    def(ctor, "all", n_all, 1)
+    def(ctor, "allSettled", n_all_settled, 1)
+    def(ctor, "any", n_any, 1)
+    def(ctor, "race", n_race, 1)
+    def(ctor, "withResolvers", n_with_resolvers, 0)
+    def(g, "queueMicrotask", n_queue_microtask, 1)
+    def(g, "setTimeout", n_set_timeout, 2)
+    def(g, "setInterval", n_set_interval, 2)
+    def(g, "clearTimeout", n_clear_timer, 1)
+    def(g, "clearInterval", n_clear_timer, 1)
+    X["set_promise_hooks"](new_promise, settle, await_value)
+    reset()
+    return true
+}

@@ -1,0 +1,1271 @@
+;;;omg
+
+# tools/browser/js/lib_coll.omg
+#
+# The standard library of the JavaScript engine: Map, Set, WeakMap,
+# WeakSet and Date.
+#
+# A Map keeps [index, keys, values, count]: `index` is an OMG dict
+# from a text made of the key (see key_text) to its place in the two
+# lists, which are in the order things were added. OMG dicts and
+# lists cannot lose an entry, so a deleted one is marked (place -1,
+# key GONE) and the lot is made anew when the marks get many.
+#
+# The weak ones are not weak: they hold on to their keys. With no
+# collector running behind the program's back, nobody can tell.
+#
+# Dates count in UTC only: the local time zone is taken to be UTC.
+
+import "core.omg" as c
+
+alloc X := c.exports()
+alloc H := X["H"]
+alloc I := X["I"]
+alloc arg := X["arg"]
+alloc def := X["def"]
+alloc def_ctor := X["def_ctor"]
+alloc def_getter := X["def_getter"]
+alloc define_hidden := X["define_hidden"]
+alloc get := X["get"]
+alloc get_elem := X["get_elem"]
+alloc new_obj := X["new_obj"]
+alloc new_array := X["new_array"]
+alloc new_iter_object := X["new_iter_object"]
+alloc throw_type := X["throw_type"]
+alloc throw_range := X["throw_range"]
+alloc to_str := X["to_str"]
+alloc to_num := X["to_num"]
+alloc to_integer := X["to_integer"]
+alloc to_prim := X["to_prim"]
+alloc num_key := X["num_key"]
+alloc num_to_str := X["num_to_str"]
+alloc is_callable := X["is_callable"]
+alloc is_nullish := X["is_nullish"]
+alloc class_of := X["class_of"]
+alloc call := X["call"]
+alloc new_target := X["new_target"]
+alloc iter_list := X["iter_list"]
+alloc floor_f := X["floor_f"]
+alloc show := X["show"]
+
+proc nothing() {
+}
+
+alloc U := nothing()
+alloc NAN := X["nan"]()
+alloc INF := X["inf"]()
+alloc GONE := []
+
+# --- Map and Set ----------------------------------------------------------------------------
+
+# A text that is the same for two values exactly when a Map takes
+# them for the same key.
+proc key_text(v) {
+    alloc t := type_of(v)
+    if t == 4 {
+        return "s" + v
+    }
+    if t == 3 {
+        if v != v {
+            return "nNaN"
+        }
+        return "n" + num_key(v)
+    }
+    if t == 2 {
+        return "o" + v
+    }
+    if t == 1 {
+        if v {
+            return "b1"
+        }
+        return "b0"
+    }
+    return "u"
+}
+
+proc map_of(this, cls, what) {
+    if class_of(this) != cls {
+        throw_type("Method " + what + " called on incompatible receiver " + show(this))
+    }
+    return H[this][3]
+}
+
+proc coll_find(m, v) {
+    alloc k := key_text(v)
+    alloc index := m[0]
+    if has_key(index, k) {
+        return index[k]
+    }
+    return -1
+}
+
+proc coll_set(m, key, value) {
+    alloc k := key_text(key)
+    alloc index := m[0]
+    if has_key(index, k) {
+        alloc at := index[k]
+        if at >= 0 {
+            m[2][at] := value
+            return true
+        }
+    }
+    index[k] := length(m[1])
+    if type_of(key) == 3 and key == 0.0 {
+        key := 0.0
+    }
+    append(m[1], key)
+    append(m[2], value)
+    m[3] := m[3] + 1
+    return true
+}
+
+proc coll_delete(m, key) {
+    alloc k := key_text(key)
+    alloc index := m[0]
+    if has_key(index, k) == false {
+        return false
+    }
+    alloc at := index[k]
+    if at < 0 {
+        return false
+    }
+    index[k] := -1
+    m[1][at] := GONE
+    m[2][at] := U
+    m[3] := m[3] - 1
+    alloc n := length(m[1])
+    if n > 32 and n > m[3] * 2 {
+        # more marks than entries: make it anew
+        alloc keys := []
+        alloc values := []
+        alloc ni := {}
+        alloc i := 0
+        loop i < n {
+            alloc kk := m[1][i]
+            if type_of(kk) != 5 {
+                ni[key_text(kk)] := length(keys)
+                append(keys, kk)
+                append(values, m[2][i])
+            }
+            i := i + 1
+        }
+        m[0] := ni
+        m[1] := keys
+        m[2] := values
+    }
+    return true
+}
+
+proc coll_clear(m) {
+    m[0] := {}
+    m[1] := []
+    m[2] := []
+    m[3] := 0
+    return true
+}
+
+# The entries as they are now: mode 0 keys, 1 values, 2 [key, value].
+proc coll_list(m, mode) {
+    alloc out := []
+    alloc keys := m[1]
+    alloc n := length(keys)
+    alloc i := 0
+    loop i < n {
+        alloc k := keys[i]
+        if type_of(k) != 5 {
+            if mode == 0 {
+                append(out, k)
+            } elif mode == 1 {
+                append(out, m[2][i])
+            } else {
+                append(out, new_array([k, m[2][i]]))
+            }
+        }
+        i := i + 1
+    }
+    return out
+}
+
+proc n_map(this, args) {
+    if type_of(new_target()) == 0 {
+        throw_type("Constructor Map requires 'new'")
+    }
+    alloc h := new_obj(10, I[18])
+    alloc m := [{}, [], [], 0]
+    H[h][3] := m
+    alloc src := arg(args, 0)
+    if is_nullish(src) == false {
+        for e in iter_list(src) {
+            coll_set(m, get_elem(e, 0.0), get_elem(e, 1.0))
+        }
+    }
+    return h
+}
+
+proc n_map_get(this, args) {
+    alloc m := map_of(this, 10, "Map.prototype.get")
+    alloc at := coll_find(m, arg(args, 0))
+    if at < 0 {
+        return U
+    }
+    return m[2][at]
+}
+
+proc n_map_set(this, args) {
+    coll_set(map_of(this, 10, "Map.prototype.set"), arg(args, 0), arg(args, 1))
+    return this
+}
+
+proc n_map_has(this, args) {
+    return coll_find(map_of(this, 10, "Map.prototype.has"), arg(args, 0)) >= 0
+}
+
+proc n_map_delete(this, args) {
+    return coll_delete(map_of(this, 10, "Map.prototype.delete"), arg(args, 0))
+}
+
+proc n_map_clear(this, args) {
+    coll_clear(map_of(this, 10, "Map.prototype.clear"))
+    return U
+}
+
+proc n_map_size(this, args) {
+    return map_of(this, 10, "get Map.prototype.size")[3] * 1.0
+}
+
+proc n_map_for_each(this, args) {
+    alloc m := map_of(this, 10, "Map.prototype.forEach")
+    alloc f := arg(args, 0)
+    alloc t := arg(args, 1)
+    alloc i := 0
+    # by place, so that what the function adds is visited too
+    loop i < length(m[1]) {
+        alloc k := m[1][i]
+        if type_of(k) != 5 {
+            call(f, t, [m[2][i], k, this])
+        }
+        i := i + 1
+    }
+    return U
+}
+
+proc n_map_keys(this, args) {
+    return new_iter_object([3, coll_list(map_of(this, 10, "Map.prototype.keys"), 0), 0])
+}
+
+proc n_map_values(this, args) {
+    return new_iter_object([3, coll_list(map_of(this, 10, "Map.prototype.values"), 1), 0])
+}
+
+proc n_map_entries(this, args) {
+    return new_iter_object([3, coll_list(map_of(this, 10, "Map.prototype.entries"), 2), 0])
+}
+
+proc n_set(this, args) {
+    if type_of(new_target()) == 0 {
+        throw_type("Constructor Set requires 'new'")
+    }
+    alloc h := new_obj(11, I[19])
+    alloc m := [{}, [], [], 0]
+    H[h][3] := m
+    alloc src := arg(args, 0)
+    if is_nullish(src) == false {
+        for v in iter_list(src) {
+            coll_set(m, v, v)
+        }
+    }
+    return h
+}
+
+proc n_set_add(this, args) {
+    alloc v := arg(args, 0)
+    coll_set(map_of(this, 11, "Set.prototype.add"), v, v)
+    return this
+}
+
+proc n_set_has(this, args) {
+    return coll_find(map_of(this, 11, "Set.prototype.has"), arg(args, 0)) >= 0
+}
+
+proc n_set_delete(this, args) {
+    return coll_delete(map_of(this, 11, "Set.prototype.delete"), arg(args, 0))
+}
+
+proc n_set_clear(this, args) {
+    coll_clear(map_of(this, 11, "Set.prototype.clear"))
+    return U
+}
+
+proc n_set_size(this, args) {
+    return map_of(this, 11, "get Set.prototype.size")[3] * 1.0
+}
+
+proc n_set_for_each(this, args) {
+    alloc m := map_of(this, 11, "Set.prototype.forEach")
+    alloc f := arg(args, 0)
+    alloc t := arg(args, 1)
+    alloc i := 0
+    loop i < length(m[1]) {
+        alloc k := m[1][i]
+        if type_of(k) != 5 {
+            call(f, t, [k, k, this])
+        }
+        i := i + 1
+    }
+    return U
+}
+
+proc n_set_values(this, args) {
+    return new_iter_object([3, coll_list(map_of(this, 11, "Set.prototype.values"), 0), 0])
+}
+
+proc n_set_entries(this, args) {
+    alloc m := map_of(this, 11, "Set.prototype.entries")
+    alloc out := []
+    for k in coll_list(m, 0) {
+        append(out, new_array([k, k]))
+    }
+    return new_iter_object([3, out, 0])
+}
+
+# WeakMap and WeakSet: the same, for objects only, and with less to them.
+alloc C_WEAKMAP := 16
+alloc C_WEAKSET := 17
+
+proc weak_key(v) {
+    if type_of(v) != 2 or v == 0 {
+        throw_type("Invalid value used as weak map key")
+    }
+    return v
+}
+
+proc n_weak_map(this, args) {
+    if type_of(new_target()) == 0 {
+        throw_type("Constructor WeakMap requires 'new'")
+    }
+    alloc h := new_obj(C_WEAKMAP, I[23])
+    alloc m := [{}, [], [], 0]
+    H[h][3] := m
+    alloc src := arg(args, 0)
+    if is_nullish(src) == false {
+        for e in iter_list(src) {
+            coll_set(m, weak_key(get_elem(e, 0.0)), get_elem(e, 1.0))
+        }
+    }
+    return h
+}
+
+proc n_wm_get(this, args) {
+    alloc m := map_of(this, C_WEAKMAP, "WeakMap.prototype.get")
+    alloc at := coll_find(m, arg(args, 0))
+    if at < 0 {
+        return U
+    }
+    return m[2][at]
+}
+
+proc n_wm_set(this, args) {
+    coll_set(map_of(this, C_WEAKMAP, "WeakMap.prototype.set"), weak_key(arg(args, 0)), arg(args, 1))
+    return this
+}
+
+proc n_wm_has(this, args) {
+    return coll_find(map_of(this, C_WEAKMAP, "WeakMap.prototype.has"), arg(args, 0)) >= 0
+}
+
+proc n_wm_delete(this, args) {
+    return coll_delete(map_of(this, C_WEAKMAP, "WeakMap.prototype.delete"), arg(args, 0))
+}
+
+proc n_weak_set(this, args) {
+    if type_of(new_target()) == 0 {
+        throw_type("Constructor WeakSet requires 'new'")
+    }
+    alloc h := new_obj(C_WEAKSET, I[24])
+    alloc m := [{}, [], [], 0]
+    H[h][3] := m
+    alloc src := arg(args, 0)
+    if is_nullish(src) == false {
+        for v in iter_list(src) {
+            coll_set(m, weak_key(v), true)
+        }
+    }
+    return h
+}
+
+proc n_ws_add(this, args) {
+    coll_set(map_of(this, C_WEAKSET, "WeakSet.prototype.add"), weak_key(arg(args, 0)), true)
+    return this
+}
+
+proc n_ws_has(this, args) {
+    return coll_find(map_of(this, C_WEAKSET, "WeakSet.prototype.has"), arg(args, 0)) >= 0
+}
+
+proc n_ws_delete(this, args) {
+    return coll_delete(map_of(this, C_WEAKSET, "WeakSet.prototype.delete"), arg(args, 0))
+}
+
+proc n_weak_ref(this, args) {
+    alloc h := new_obj(15, I[26])
+    H[h][3] := arg(args, 0)
+    return h
+}
+
+proc n_deref(this, args) {
+    if class_of(this) != 15 {
+        return U
+    }
+    return H[this][3]
+}
+
+# --- Date -----------------------------------------------------------------------------------
+
+alloc DAY_NAMES := ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"]
+alloc MONTH_NAMES := ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+alloc MS_DAY := 86400000
+
+proc fdiv(a, b) {
+    alloc q := a // b
+    if q * b > a {
+        q := q - 1
+    }
+    return q
+}
+
+# Days since 1970-01-01 of a date; month from 0, and months and days
+# out of range carry over.
+proc days_from(y, m, d) {
+    y := y + fdiv(m, 12)
+    m := m - fdiv(m, 12) * 12
+    alloc yy := y
+    if m < 2 {
+        yy := y - 1
+    }
+    alloc era := fdiv(yy, 400)
+    alloc yoe := yy - era * 400
+    alloc mp := (m + 10) % 12
+    alloc doy := (153 * mp + 2) // 5
+    alloc doe := yoe * 365 + yoe // 4 - yoe // 100 + doy
+    return era * 146097 + doe - 719468 + d - 1
+}
+
+# [year, month from 0, day of the month] of a day count.
+proc civil(days) {
+    alloc z := days + 719468
+    alloc era := fdiv(z, 146097)
+    alloc doe := z - era * 146097
+    alloc yoe := (doe - doe // 1460 + doe // 36524 - doe // 146096) // 365
+    alloc y := yoe + era * 400
+    alloc doy := doe - (365 * yoe + yoe // 4 - yoe // 100)
+    alloc mp := (5 * doy + 2) // 153
+    alloc d := doy - (153 * mp + 2) // 5 + 1
+    alloc m := mp + 3
+    if m > 12 {
+        m := m - 12
+    }
+    if m <= 2 {
+        y := y + 1
+    }
+    return [y, m - 1, d]
+}
+
+# The fields of a time: [year, month, day, hours, minutes, seconds,
+# ms, weekday]; t is a whole number of ms.
+proc fields(t) {
+    alloc days := fdiv(t, MS_DAY)
+    alloc rest := t - days * MS_DAY
+    alloc c := civil(days)
+    alloc wd := (days + 4) % 7
+    if wd < 0 {
+        wd := wd + 7
+    }
+    return [c[0], c[1], c[2], rest // 3600000, (rest // 60000) % 60, (rest // 1000) % 60, rest % 1000, wd]
+}
+
+# The time of fields (floats or NaN), or NaN.
+proc make_time(f) {
+    for v in f {
+        if v != v or v == INF or v == INF * -1.0 {
+            return NAN
+        }
+    }
+    alloc y := int(f[0])
+    alloc mo := int(f[1])
+    if y > 400000 or y < -400000 or mo > 5000000 or mo < -5000000 {
+        return NAN
+    }
+    alloc days := days_from(y, mo, 1) * 1.0 + floor_f(f[2]) - 1.0
+    alloc t := days * 86400000.0 + floor_f(f[3]) * 3600000.0 + floor_f(f[4]) * 60000.0 + floor_f(f[5]) * 1000.0 + floor_f(f[6])
+    if t > 8640000000000000.0 or t < -8640000000000000.0 {
+        return NAN
+    }
+    return t
+}
+
+proc two(n) {
+    if n < 10 {
+        return "0" + n
+    }
+    return "" + n
+}
+
+proc three(n) {
+    if n < 10 {
+        return "00" + n
+    }
+    if n < 100 {
+        return "0" + n
+    }
+    return "" + n
+}
+
+proc year_text(y) {
+    if y >= 0 and y <= 9999 {
+        alloc s := "" + y
+        loop length(s) < 4 {
+            s := "0" + s
+        }
+        return s
+    }
+    alloc a := y
+    alloc sign := "+"
+    if y < 0 {
+        a := 0 - y
+        sign := "-"
+    }
+    alloc s2 := "" + a
+    loop length(s2) < 6 {
+        s2 := "0" + s2
+    }
+    return sign + s2
+}
+
+# Reading a date written as text. Gives the time, or NaN.
+proc month_number(word) {
+    if length(word) < 3 {
+        return -1
+    }
+    alloc w := word[0:3]
+    alloc i := 0
+    loop i < 12 {
+        if MONTH_NAMES[i] == w {
+            return i
+        }
+        i := i + 1
+    }
+    return -1
+}
+
+proc capitalise(w) {
+    # "JANUARY" and "january" to "Jan"
+    alloc b := string_bytes(w)
+    alloc n := length(b)
+    alloc i := 0
+    loop i < n {
+        alloc ch := b[i]
+        if i == 0 {
+            if ch >= 97 and ch <= 122 {
+                b[i] := ch - 32
+            }
+        } elif ch >= 65 and ch <= 90 {
+            b[i] := ch + 32
+        }
+        i := i + 1
+    }
+    return bytes_to_string(b)
+}
+
+proc digits_at(b, i, n) {
+    # [value, how many digits], from b[i]
+    alloc v := 0
+    alloc k := 0
+    loop i + k < n and b[i + k] >= 48 and b[i + k] <= 57 and k < 9 {
+        v := v * 10 + b[i + k] - 48
+        k := k + 1
+    }
+    return [v, k]
+}
+
+proc parse_iso(b) {
+    # YYYY-MM-DD[THH:MM[:SS[.sss]]][Z|+HH:MM]; false when it is not that
+    alloc n := length(b)
+    alloc i := 0
+    alloc sign := 1
+    if n > 0 and (b[0] == 43 or b[0] == 45) {
+        if b[0] == 45 {
+            sign := -1
+        }
+        i := 1
+    }
+    alloc y := digits_at(b, i, n)
+    if y[1] < 4 {
+        return false
+    }
+    i := i + y[1]
+    alloc mo := 1
+    alloc d := 1
+    alloc local := false
+    if i < n and b[i] == 45 {
+        alloc m := digits_at(b, i + 1, n)
+        if m[1] != 2 {
+            return false
+        }
+        mo := m[0]
+        i := i + 3
+        if i < n and b[i] == 45 {
+            alloc dd := digits_at(b, i + 1, n)
+            if dd[1] != 2 {
+                return false
+            }
+            d := dd[0]
+            i := i + 3
+        }
+    }
+    alloc h := 0
+    alloc mi := 0
+    alloc s := 0
+    alloc ms := 0
+    if i < n and (b[i] == 84 or b[i] == 116 or b[i] == 32) {
+        alloc hh := digits_at(b, i + 1, n)
+        if hh[1] != 2 or i + 3 >= n or b[i + 3] != 58 {
+            return false
+        }
+        alloc mm := digits_at(b, i + 4, n)
+        if mm[1] != 2 {
+            return false
+        }
+        h := hh[0]
+        mi := mm[0]
+        i := i + 6
+        local := true
+        if i < n and b[i] == 58 {
+            alloc ss := digits_at(b, i + 1, n)
+            if ss[1] != 2 {
+                return false
+            }
+            s := ss[0]
+            i := i + 3
+            if i < n and (b[i] == 46 or b[i] == 44) {
+                alloc fr := digits_at(b, i + 1, n)
+                if fr[1] == 0 {
+                    return false
+                }
+                ms := fr[0]
+                alloc k := fr[1]
+                loop k < 3 {
+                    ms := ms * 10
+                    k := k + 1
+                }
+                loop k > 3 {
+                    ms := ms // 10
+                    k := k - 1
+                }
+                i := i + 1 + fr[1]
+            }
+        }
+    }
+    alloc offset := 0
+    if i < n and (b[i] == 90 or b[i] == 122) {
+        i := i + 1
+    } elif i < n and (b[i] == 43 or b[i] == 45) {
+        alloc osign := 1
+        if b[i] == 45 {
+            osign := -1
+        }
+        alloc oh := digits_at(b, i + 1, n)
+        if oh[1] != 2 {
+            return false
+        }
+        i := i + 3
+        alloc om := [0, 0]
+        if i < n and b[i] == 58 {
+            i := i + 1
+        }
+        om := digits_at(b, i, n)
+        i := i + om[1]
+        offset := osign * (oh[0] * 60 + om[0])
+    }
+    if i != n {
+        return false
+    }
+    if mo < 1 or mo > 12 or d < 1 or d > 31 or h > 24 or mi > 59 or s > 59 {
+        return NAN
+    }
+    alloc t := make_time([sign * y[0] * 1.0, (mo - 1) * 1.0, d * 1.0, h * 1.0, mi * 1.0, s * 1.0, ms * 1.0])
+    return t - offset * 60000.0
+}
+
+proc parse_date(text) {
+    alloc b := string_bytes(text)
+    alloc n := length(b)
+    alloc a := 0
+    loop a < n and b[a] <= 32 {
+        a := a + 1
+    }
+    loop n > a and b[n - 1] <= 32 {
+        n := n - 1
+    }
+    if a > 0 or n < length(b) {
+        b := b[a:n]
+        n := length(b)
+    }
+    alloc iso := parse_iso(b)
+    if iso != false {
+        return iso
+    }
+    # words and numbers in any of the usual orders
+    alloc year := -1
+    alloc month := -1
+    alloc day := -1
+    alloc h := -1
+    alloc mi := 0
+    alloc s := 0
+    alloc offset := 0
+    alloc pm := 0
+    alloc nums := []
+    alloc i := 0
+    loop i < n {
+        alloc ch := b[i]
+        if ch >= 48 and ch <= 57 {
+            alloc d := digits_at(b, i, n)
+            alloc after := i + d[1]
+            if after < n and b[after] == 58 and h < 0 {
+                # a time
+                h := d[0]
+                alloc m2 := digits_at(b, after + 1, n)
+                mi := m2[0]
+                i := after + 1 + m2[1]
+                if i < n and b[i] == 58 {
+                    alloc s2 := digits_at(b, i + 1, n)
+                    s := s2[0]
+                    i := i + 1 + s2[1]
+                    if i < n and b[i] == 46 {
+                        i := i + 1 + digits_at(b, i + 1, n)[1]
+                    }
+                }
+            } else {
+                append(nums, d)
+                i := after
+            }
+        } elif (ch | 32) >= 97 and (ch | 32) <= 122 {
+            alloc j := i
+            loop j < n and (b[j] | 32) >= 97 and (b[j] | 32) <= 122 {
+                j := j + 1
+            }
+            alloc word := capitalise(bytes_to_string(b[i:j]))
+            alloc mn := month_number(word)
+            if word == "Am" or word == "Pm" {
+                if word == "Pm" {
+                    pm := 1
+                } else {
+                    pm := 2
+                }
+            } elif mn >= 0 and month < 0 {
+                month := mn
+            } elif word == "Gmt" or word == "Utc" or word == "Z" or word == "Ut" {
+                if j < n and (b[j] == 43 or b[j] == 45) {
+                    alloc osign := 1
+                    if b[j] == 45 {
+                        osign := -1
+                    }
+                    alloc od := digits_at(b, j + 1, n)
+                    j := j + 1 + od[1]
+                    if od[1] <= 2 {
+                        offset := osign * od[0] * 60
+                        if j < n and b[j] == 58 {
+                            alloc om := digits_at(b, j + 1, n)
+                            offset := offset + osign * om[0]
+                            j := j + 1 + om[1]
+                        }
+                    } else {
+                        offset := osign * ((od[0] // 100) * 60 + od[0] % 100)
+                    }
+                }
+            } elif word == "T" and length(nums) > 0 {
+                word := word
+            }
+            i := j
+        } elif (ch == 43 or ch == 45) and h >= 0 and i + 4 < n + 1 and digits_at(b, i + 1, n)[1] == 4 {
+            alloc od2 := digits_at(b, i + 1, n)
+            alloc osign2 := 1
+            if ch == 45 {
+                osign2 := -1
+            }
+            offset := osign2 * ((od2[0] // 100) * 60 + od2[0] % 100)
+            i := i + 5
+        } elif ch == 40 {
+            loop i < n and b[i] != 41 {
+                i := i + 1
+            }
+        } else {
+            i := i + 1
+        }
+    }
+    # give the numbers their meaning
+    alloc k := length(nums)
+    if month >= 0 {
+        if k < 1 {
+            return NAN
+        }
+        if k == 1 {
+            # "June 2008"
+            if nums[0][1] >= 3 {
+                year := nums[0][0]
+                day := 1
+            } else {
+                return NAN
+            }
+        } elif nums[0][1] >= 3 {
+            year := nums[0][0]
+            day := nums[1][0]
+        } else {
+            day := nums[0][0]
+            year := nums[1][0]
+            if nums[1][1] <= 2 {
+                if year < 50 {
+                    year := year + 2000
+                } else {
+                    year := year + 1900
+                }
+            }
+        }
+    } else {
+        if k < 3 {
+            return NAN
+        }
+        if nums[0][1] >= 3 {
+            # 2008/06/03
+            year := nums[0][0]
+            month := nums[1][0] - 1
+            day := nums[2][0]
+        } else {
+            # 06/03/2008
+            month := nums[0][0] - 1
+            day := nums[1][0]
+            year := nums[2][0]
+            if nums[2][1] <= 2 {
+                if year < 50 {
+                    year := year + 2000
+                } else {
+                    year := year + 1900
+                }
+            }
+        }
+    }
+    if month < 0 or month > 11 or day < 1 or day > 31 {
+        return NAN
+    }
+    if h < 0 {
+        h := 0
+    }
+    if pm == 1 and h < 12 {
+        h := h + 12
+    } elif pm == 2 and h == 12 {
+        h := 0
+    }
+    alloc t := make_time([year * 1.0, month * 1.0, day * 1.0, h * 1.0, mi * 1.0, s * 1.0, 0.0])
+    return t - offset * 60000.0
+}
+
+proc date_new(t) {
+    alloc h := new_obj(8, I[17])
+    H[h][3] := t
+    return h
+}
+
+proc time_clip(t) {
+    if t != t or t > 8640000000000000.0 or t < -8640000000000000.0 {
+        return NAN
+    }
+    if t < 0.0 {
+        alloc m := floor_f(t * -1.0)
+        return m * -1.0 + 0.0
+    }
+    return floor_f(t)
+}
+
+proc now() {
+    return time_ms() * 1.0
+}
+
+proc date_text(t) {
+    if t != t {
+        return "Invalid Date"
+    }
+    alloc f := fields(int(t))
+    return DAY_NAMES[f[7]] + " " + MONTH_NAMES[f[1]] + " " + two(f[2]) + " " + year_text(f[0]) + " " + two(f[3]) + ":" + two(f[4]) + ":" + two(f[5]) + " GMT+0000 (Coordinated Universal Time)"
+}
+
+proc n_date(this, args) {
+    if type_of(new_target()) == 0 {
+        return date_text(now())
+    }
+    alloc n := length(args)
+    if n == 0 {
+        return date_new(now())
+    }
+    if n == 1 {
+        alloc v := args[0]
+        if class_of(v) == 8 {
+            return date_new(H[v][3])
+        }
+        v := to_prim(v, 2)
+        if type_of(v) == 4 {
+            return date_new(parse_date(v))
+        }
+        return date_new(time_clip(to_num(v)))
+    }
+    alloc f := [NAN, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0]
+    alloc i := 0
+    loop i < n and i < 7 {
+        f[i] := to_num(args[i])
+        i := i + 1
+    }
+    if f[0] == f[0] and f[0] >= 0.0 and f[0] <= 99.0 {
+        f[0] := 1900.0 + floor_f(f[0])
+    }
+    return date_new(make_time(f))
+}
+
+proc n_date_now(this, args) {
+    return now()
+}
+
+proc n_date_parse(this, args) {
+    return parse_date(to_str(arg(args, 0)))
+}
+
+proc n_date_utc(this, args) {
+    alloc f := [NAN, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0]
+    alloc i := 0
+    loop i < length(args) and i < 7 {
+        f[i] := to_num(args[i])
+        i := i + 1
+    }
+    if f[0] == f[0] and f[0] >= 0.0 and f[0] <= 99.0 {
+        f[0] := 1900.0 + floor_f(f[0])
+    }
+    return make_time(f)
+}
+
+proc this_time(this) {
+    if class_of(this) != 8 {
+        throw_type("this is not a Date object.")
+    }
+    return H[this][3]
+}
+
+# A getter for field number `which` of the date.
+proc field_of(this, which) {
+    alloc t := this_time(this)
+    if t != t {
+        return NAN
+    }
+    return fields(int(t))[which] * 1.0
+}
+
+proc n_get_time(this, args) {
+    return this_time(this)
+}
+
+proc n_get_full_year(this, args) {
+    return field_of(this, 0)
+}
+
+proc n_get_year(this, args) {
+    return field_of(this, 0) - 1900.0
+}
+
+proc n_get_month(this, args) {
+    return field_of(this, 1)
+}
+
+proc n_get_date(this, args) {
+    return field_of(this, 2)
+}
+
+proc n_get_hours(this, args) {
+    return field_of(this, 3)
+}
+
+proc n_get_minutes(this, args) {
+    return field_of(this, 4)
+}
+
+proc n_get_seconds(this, args) {
+    return field_of(this, 5)
+}
+
+proc n_get_milliseconds(this, args) {
+    return field_of(this, 6)
+}
+
+proc n_get_day(this, args) {
+    return field_of(this, 7)
+}
+
+proc n_get_timezone_offset(this, args) {
+    this_time(this)
+    return 0.0
+}
+
+# Set fields `first`.. of the date from the arguments.
+proc set_fields(this, args, first, max) {
+    alloc t := this_time(this)
+    if t != t {
+        if first != 0 {
+            return NAN
+        }
+        t := 0.0
+    }
+    alloc f := fields(int(t))
+    alloc ff := [f[0] * 1.0, f[1] * 1.0, f[2] * 1.0, f[3] * 1.0, f[4] * 1.0, f[5] * 1.0, f[6] * 1.0]
+    alloc i := 0
+    if length(args) == 0 {
+        ff[first] := NAN
+    }
+    loop i < length(args) and i < max {
+        ff[first + i] := to_num(args[i])
+        i := i + 1
+    }
+    alloc nt := make_time(ff)
+    H[this][3] := nt
+    return nt
+}
+
+proc n_set_time(this, args) {
+    this_time(this)
+    alloc t := time_clip(to_num(arg(args, 0)))
+    H[this][3] := t
+    return t
+}
+
+proc n_set_full_year(this, args) {
+    return set_fields(this, args, 0, 3)
+}
+
+proc n_set_month(this, args) {
+    return set_fields(this, args, 1, 2)
+}
+
+proc n_set_date(this, args) {
+    return set_fields(this, args, 2, 1)
+}
+
+proc n_set_hours(this, args) {
+    return set_fields(this, args, 3, 4)
+}
+
+proc n_set_minutes(this, args) {
+    return set_fields(this, args, 4, 3)
+}
+
+proc n_set_seconds(this, args) {
+    return set_fields(this, args, 5, 2)
+}
+
+proc n_set_milliseconds(this, args) {
+    return set_fields(this, args, 6, 1)
+}
+
+proc n_to_iso_string(this, args) {
+    alloc t := this_time(this)
+    if t != t {
+        throw_range("Invalid time value")
+    }
+    alloc f := fields(int(t))
+    return year_text(f[0]) + "-" + two(f[1] + 1) + "-" + two(f[2]) + "T" + two(f[3]) + ":" + two(f[4]) + ":" + two(f[5]) + "." + three(f[6]) + "Z"
+}
+
+proc n_to_json(this, args) {
+    alloc t := this_time(this)
+    if t != t {
+        return 0
+    }
+    return n_to_iso_string(this, args)
+}
+
+proc n_date_to_string(this, args) {
+    return date_text(this_time(this))
+}
+
+proc n_to_date_string(this, args) {
+    alloc t := this_time(this)
+    if t != t {
+        return "Invalid Date"
+    }
+    alloc f := fields(int(t))
+    return DAY_NAMES[f[7]] + " " + MONTH_NAMES[f[1]] + " " + two(f[2]) + " " + year_text(f[0])
+}
+
+proc n_to_time_string(this, args) {
+    alloc t := this_time(this)
+    if t != t {
+        return "Invalid Date"
+    }
+    alloc f := fields(int(t))
+    return two(f[3]) + ":" + two(f[4]) + ":" + two(f[5]) + " GMT+0000 (Coordinated Universal Time)"
+}
+
+proc n_to_utc_string(this, args) {
+    alloc t := this_time(this)
+    if t != t {
+        return "Invalid Date"
+    }
+    alloc f := fields(int(t))
+    return DAY_NAMES[f[7]] + ", " + two(f[2]) + " " + MONTH_NAMES[f[1]] + " " + year_text(f[0]) + " " + two(f[3]) + ":" + two(f[4]) + ":" + two(f[5]) + " GMT"
+}
+
+proc locale_date(f) {
+    return "" + (f[1] + 1) + "/" + f[2] + "/" + f[0]
+}
+
+proc locale_time(f) {
+    alloc h := f[3] % 12
+    if h == 0 {
+        h := 12
+    }
+    alloc half := " AM"
+    if f[3] >= 12 {
+        half := " PM"
+    }
+    return "" + h + ":" + two(f[4]) + ":" + two(f[5]) + half
+}
+
+proc n_to_locale_date_string(this, args) {
+    alloc t := this_time(this)
+    if t != t {
+        return "Invalid Date"
+    }
+    return locale_date(fields(int(t)))
+}
+
+proc n_to_locale_time_string(this, args) {
+    alloc t := this_time(this)
+    if t != t {
+        return "Invalid Date"
+    }
+    return locale_time(fields(int(t)))
+}
+
+proc n_to_locale_string(this, args) {
+    alloc t := this_time(this)
+    if t != t {
+        return "Invalid Date"
+    }
+    alloc f := fields(int(t))
+    return locale_date(f) + ", " + locale_time(f)
+}
+
+proc n_date_to_primitive(this, args) {
+    alloc hint := arg(args, 0)
+    if type_of(hint) == 4 and hint == "number" {
+        return this_time(this)
+    }
+    return date_text(this_time(this))
+}
+
+# --- putting it in place ----------------------------------------------------------------
+
+proc setup() {
+    alloc g := I[0]
+    alloc mp := I[18]
+    def_ctor("Map", n_map, 0, mp)
+    def(mp, "get", n_map_get, 1)
+    def(mp, "set", n_map_set, 2)
+    def(mp, "has", n_map_has, 1)
+    def(mp, "delete", n_map_delete, 1)
+    def(mp, "clear", n_map_clear, 0)
+    def(mp, "forEach", n_map_for_each, 1)
+    def(mp, "keys", n_map_keys, 0)
+    def(mp, "values", n_map_values, 0)
+    alloc me := def(mp, "entries", n_map_entries, 0)
+    define_hidden(mp, "@@iterator", me)
+    define_hidden(mp, "@@toStringTag", "Map")
+    def_getter(mp, "size", n_map_size)
+
+    alloc sp := I[19]
+    def_ctor("Set", n_set, 0, sp)
+    def(sp, "add", n_set_add, 1)
+    def(sp, "has", n_set_has, 1)
+    def(sp, "delete", n_set_delete, 1)
+    def(sp, "clear", n_set_clear, 0)
+    def(sp, "forEach", n_set_for_each, 1)
+    def(sp, "entries", n_set_entries, 0)
+    alloc sv := def(sp, "values", n_set_values, 0)
+    define_hidden(sp, "keys", sv)
+    define_hidden(sp, "@@iterator", sv)
+    define_hidden(sp, "@@toStringTag", "Set")
+    def_getter(sp, "size", n_set_size)
+
+    alloc wmp := I[23]
+    def_ctor("WeakMap", n_weak_map, 0, wmp)
+    def(wmp, "get", n_wm_get, 1)
+    def(wmp, "set", n_wm_set, 2)
+    def(wmp, "has", n_wm_has, 1)
+    def(wmp, "delete", n_wm_delete, 1)
+    define_hidden(wmp, "@@toStringTag", "WeakMap")
+    alloc wsp := I[24]
+    def_ctor("WeakSet", n_weak_set, 0, wsp)
+    def(wsp, "add", n_ws_add, 1)
+    def(wsp, "has", n_ws_has, 1)
+    def(wsp, "delete", n_ws_delete, 1)
+    define_hidden(wsp, "@@toStringTag", "WeakSet")
+    alloc wrp := I[26]
+    def_ctor("WeakRef", n_weak_ref, 1, wrp)
+    def(wrp, "deref", n_deref, 0)
+
+    alloc dp := I[17]
+    alloc d := def_ctor("Date", n_date, 7, dp)
+    def(d, "now", n_date_now, 0)
+    def(d, "parse", n_date_parse, 1)
+    def(d, "UTC", n_date_utc, 7)
+    def(dp, "getTime", n_get_time, 0)
+    def(dp, "valueOf", n_get_time, 0)
+    def(dp, "getFullYear", n_get_full_year, 0)
+    def(dp, "getUTCFullYear", n_get_full_year, 0)
+    def(dp, "getYear", n_get_year, 0)
+    def(dp, "getMonth", n_get_month, 0)
+    def(dp, "getUTCMonth", n_get_month, 0)
+    def(dp, "getDate", n_get_date, 0)
+    def(dp, "getUTCDate", n_get_date, 0)
+    def(dp, "getDay", n_get_day, 0)
+    def(dp, "getUTCDay", n_get_day, 0)
+    def(dp, "getHours", n_get_hours, 0)
+    def(dp, "getUTCHours", n_get_hours, 0)
+    def(dp, "getMinutes", n_get_minutes, 0)
+    def(dp, "getUTCMinutes", n_get_minutes, 0)
+    def(dp, "getSeconds", n_get_seconds, 0)
+    def(dp, "getUTCSeconds", n_get_seconds, 0)
+    def(dp, "getMilliseconds", n_get_milliseconds, 0)
+    def(dp, "getUTCMilliseconds", n_get_milliseconds, 0)
+    def(dp, "getTimezoneOffset", n_get_timezone_offset, 0)
+    def(dp, "setTime", n_set_time, 1)
+    def(dp, "setFullYear", n_set_full_year, 3)
+    def(dp, "setUTCFullYear", n_set_full_year, 3)
+    def(dp, "setMonth", n_set_month, 2)
+    def(dp, "setUTCMonth", n_set_month, 2)
+    def(dp, "setDate", n_set_date, 1)
+    def(dp, "setUTCDate", n_set_date, 1)
+    def(dp, "setHours", n_set_hours, 4)
+    def(dp, "setUTCHours", n_set_hours, 4)
+    def(dp, "setMinutes", n_set_minutes, 3)
+    def(dp, "setUTCMinutes", n_set_minutes, 3)
+    def(dp, "setSeconds", n_set_seconds, 2)
+    def(dp, "setUTCSeconds", n_set_seconds, 2)
+    def(dp, "setMilliseconds", n_set_milliseconds, 1)
+    def(dp, "setUTCMilliseconds", n_set_milliseconds, 1)
+    def(dp, "toISOString", n_to_iso_string, 0)
+    def(dp, "toJSON", n_to_json, 1)
+    def(dp, "toString", n_date_to_string, 0)
+    def(dp, "toDateString", n_to_date_string, 0)
+    def(dp, "toTimeString", n_to_time_string, 0)
+    def(dp, "toUTCString", n_to_utc_string, 0)
+    def(dp, "toGMTString", n_to_utc_string, 0)
+    def(dp, "toLocaleDateString", n_to_locale_date_string, 0)
+    def(dp, "toLocaleTimeString", n_to_locale_time_string, 0)
+    def(dp, "toLocaleString", n_to_locale_string, 0)
+    def(dp, "@@toPrimitive", n_date_to_primitive, 1)
+    return true
+}
