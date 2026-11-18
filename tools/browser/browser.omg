@@ -566,7 +566,12 @@ proc load_styles() {
             }
         }
         if node.tag == "style" {
-            add_sheet(string_bytes(html.text_of(node)), base_url, media, 0)
+            alloc text := html.text_of(node)
+            if has_key(node, "rules") {
+                # what scripts added with sheet.insertRule()
+                text := text + "\n" + u.join(node.rules, "\n")
+            }
+            add_sheet(string_bytes(text), base_url, media, 0)
         } else {
             alloc where := url.resolve(base_url, node.attrs["href"])
             if where != "" {

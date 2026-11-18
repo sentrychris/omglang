@@ -93,6 +93,7 @@ alloc DOC := false       # the document on show
 alloc DOC_NID := 1       # its number; 0 is the window
 alloc DIRTY := false     # the tree changed since the browser last asked
 alloc SHEETS := false    # a style sheet came, went or changed
+alloc SHEET_OBJ := {}    # the sheet object of each <style> that was asked for one
 alloc RESTYLE := {}      # the elements whose styles (and those below) are stale, by number
 alloc RESTYLE_ALL := false
 alloc VERSION := 0       # goes up with every change to the tree
@@ -3919,8 +3920,106 @@ proc g_visibility_state(h, node) {
     return "visible"
 }
 
+# --- style.sheet: rules added one at a time -------------------------------------------------
+#
+# Libraries that write CSS from scripts (styled-components, emotion)
+# do not set the text of a <style>: they call sheet.insertRule() for
+# each rule. The rules added that way are kept on the element, in
+# node.rules, and the browser reads them after the element's text.
+# cssRules shows those rules only, not the ones in the text.
+
+proc sheet_of(node) {
+    alloc key := "" + node.nid
+    if has_key(SHEET_OBJ, key) {
+        return SHEET_OBJ[key]
+    }
+    alloc h := new_obj(0, P["CSSStyleSheet"])
+    define_hidden(h, "@@node", node.nid * 1.0)
+    SHEET_OBJ[key] := h
+    return h
+}
+
+proc sheet_node(this) {
+    alloc id := U
+    if type_of(this) == 2 and this != 0 {
+        id := get(this, "@@node")
+    }
+    if type_of(id) != 3 {
+        throw_type("Illegal invocation")
+    }
+    alloc node := NODES[int(id)]
+    if has_key(node, "rules") == false {
+        node.rules := []
+    }
+    return node
+}
+
+proc g_sheet(h, node) {
+    if node.tag == "style" {
+        return sheet_of(node)
+    }
+    return 0
+}
+
 proc g_style_sheets(h, node) {
-    return new_array([])
+    alloc out := []
+    for el in collect(node, "style", [], []) {
+        append(out, sheet_of(el))
+    }
+    return new_array(out)
+}
+
+proc n_insert_rule(this, args) {
+    alloc node := sheet_node(this)
+    alloc text := to_str(arg(args, 0))
+    alloc n := length(node.rules)
+    alloc at := 0
+    if type_of(arg(args, 1)) != 0 {
+        at := int(to_integer(args[1]))
+    }
+    if at < 0 or at > n {
+        throw_val(dom_error("IndexSizeError", "The index provided (" + at + ") is larger than the maximum index (" + n + ")."))
+    }
+    if u.find(text, "{") <= 0 or u.find(text, "}") < 0 {
+        throw_val(dom_error("SyntaxError", "Failed to parse the rule '" + text + "'."))
+    }
+    node.rules := node.rules[0:at] + [text] + node.rules[at:]
+    SHEETS := true
+    DIRTY := true
+    return at * 1.0
+}
+
+proc n_delete_rule(this, args) {
+    alloc node := sheet_node(this)
+    alloc at := int(to_integer(arg(args, 0)))
+    if at < 0 or at >= length(node.rules) {
+        throw_val(dom_error("IndexSizeError", "The index provided (" + at + ") is larger than the maximum index."))
+    }
+    node.rules := node.rules[0:at] + node.rules[at + 1:]
+    SHEETS := true
+    DIRTY := true
+    return U
+}
+
+proc n_css_rules(this, args) {
+    alloc node := sheet_node(this)
+    alloc out := []
+    for text in node.rules {
+        alloc r := X["new_object"]()
+        put(r, "cssText", text)
+        alloc brace := u.find(text, "{")
+        if brace > 0 {
+            put(r, "selectorText", u.trim(text[0:brace]))
+        }
+        put(r, "type", 1.0)
+        put(r, "parentStyleSheet", this)
+        append(out, r)
+    }
+    return new_array(out)
+}
+
+proc n_owner_node(this, args) {
+    return wrap(sheet_node(this))
 }
 
 proc g_null(h, node) {
@@ -6109,7 +6208,7 @@ proc setup() {
              naturalHeight: g_natural_height, complete: g_complete, width: g_width,
              height: g_height, content: g_content_template, namespaceURI: g_namespace,
              shadowRoot: g_null, isContentEditable: g_false, contentEditable: g_content_editable,
-             sheet: g_null, assignedSlot: g_null}
+             sheet: g_sheet, assignedSlot: g_null}
     EL_S := {id: s_id, className: s_class_name, classList: s_class_list, innerHTML: s_inner_html,
              outerHTML: s_outer_html, innerText: s_inner_text, hidden: s_hidden, style: s_style,
              tabIndex: s_tab_index, value: s_value, checked: s_checked, selected: s_selected,
@@ -6133,6 +6232,17 @@ proc setup() {
     TEXT_S := {data: s_data}
 
     # -- style, dataset, classList
+    alloc ssp := iface("CSSStyleSheet", object_proto)
+    def(ssp, "insertRule", n_insert_rule, 2)
+    def(ssp, "deleteRule", n_delete_rule, 1)
+    def(ssp, "removeRule", n_delete_rule, 1)
+    X["def_getter"](ssp, "cssRules", n_css_rules)
+    X["def_getter"](ssp, "rules", n_css_rules)
+    X["def_getter"](ssp, "ownerNode", n_owner_node)
+    define_hidden(ssp, "disabled", false)
+    define_hidden(ssp, "href", 0)
+    define_hidden(ssp, "type", "text/css")
+    SHEET_OBJ := {}
     alloc sp := iface("CSSStyleDeclaration", object_proto)
     def(sp, "setProperty", n_style_set_property, 2)
     def(sp, "getPropertyValue", n_style_get_property_value, 1)
