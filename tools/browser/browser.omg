@@ -971,7 +971,8 @@ proc submit(by) {
         return false
     }
     alloc form := forms["" + by.form]
-    if js_live() {
+    if js_on {
+        # also when a script is what pressed the button
         if js_event(form, "submit", true, true, {}, "SubmitEvent") == false or pending != false {
             return true
         }
@@ -2268,13 +2269,15 @@ proc js_activate(node) {
     alloc tag := node.tag
     if tag == "input" {
         alloc ty := lay.input_type(node)
-        if ty == "checkbox" {
-            node.checked := is_checked(node) == false
+        if ty == "checkbox" or ty == "radio" {
+            if ty == "checkbox" {
+                node.checked := is_checked(node) == false
+            } else {
+                press_on(node, -1)
+            }
             dirty := true
-            return true
-        }
-        if ty == "radio" {
-            press_on(node, -1)
+            js_event(node, "input", true, false, {}, "Event")
+            js_event(node, "change", true, false, {}, "Event")
             return true
         }
     }

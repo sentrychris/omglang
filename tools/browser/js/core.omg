@@ -2928,6 +2928,9 @@ proc n_gen_return(this, args) {
 proc make_closure(t, e, f) {
     alloc h := new_obj(2, FUNCTION_PROTO)
     alloc x := [0, t, e, U, 0, 0, false]
+    if (t[4] & 6) == 4 {
+        H[h][1] := I[27]
+    }
     if (t[4] & 1) != 0 {
         x[3] := f[3]
         x[4] := H[f[4]][3][4]
