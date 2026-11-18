@@ -1,0 +1,5 @@
+true 0,1,2,3
+2 0
+1 128512
+undefined undefined
+function true

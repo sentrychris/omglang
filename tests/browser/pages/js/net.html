@@ -1,0 +1,118 @@
+<!DOCTYPE html>
+<html>
+<head><meta charset="utf-8"><title>Scripts and the network</title></head>
+<body>
+<p id="out"></p>
+<script>
+// Served by tests/browser/server.omg as /page/net.html. Each line is
+// printed with console.log; tests/browser/want/js-net.txt is what
+// Chromium prints for it. One request at a time, because that server
+// serves one connection at a time.
+function show(v) { return typeof v === "string" ? v : JSON.stringify(v); }
+function L() { console.log(Array.prototype.map.call(arguments, show).join(" | ")); }
+function here(address) { return address.replace(location.origin, ""); }
+
+(async function () {
+  var r = await fetch("/json?a=1&b=two", { headers: { "X-Test": "hi" } });
+  L(r.status, r.ok, r.headers.get("content-type"), r.headers.get("x-reply"), r.headers.has("x-none"), await r.json());
+
+  r = await fetch("/missing");
+  L(r.status, r.ok, r.statusText, await r.text());
+
+  r = await fetch("/redirect");
+  L(r.status, r.redirected, here(r.url), await r.text());
+
+  r = await fetch("/echo", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ n: 1 }) });
+  L(await r.text());
+  r = await fetch("/echo", { method: "POST", body: new URLSearchParams({ a: "1", b: "x y" }) });
+  L(await r.text());
+  r = await fetch("/echo", { method: "PUT", body: "plain words" });
+  L(await r.text());
+
+  r = await fetch(new Request("/json?from=request", { headers: new Headers({ "X-Test": "req" }) }));
+  var copy = r.clone();
+  L((await r.text()).length, (await copy.json()).sent, r.bodyUsed);
+
+  r = await fetch("/chunked");
+  L(new TextDecoder().decode(await r.arrayBuffer()));
+  r = await fetch("/gzip");
+  L(await r.text());
+
+  try { await fetch("http://127.0.0.1:1/"); L("no error"); } catch (e) { L(e.name); }
+  var stop = new AbortController();
+  stop.abort();
+  try { await fetch("/json", { signal: stop.signal }); L("not stopped"); } catch (e) { L(e.name); }
+
+  await new Promise(function (done) {
+    var x = new XMLHttpRequest(), states = [];
+    x.open("GET", "/json?x=2");
+    x.setRequestHeader("X-Test", "xhr");
+    x.onreadystatechange = function () { states.push(x.readyState); };
+    x.onload = function () {
+      L(x.status, x.statusText, x.getResponseHeader("X-Reply"), x.responseText, states.join(""), here(x.responseURL));
+      done();
+    };
+    x.send();
+  });
+  await new Promise(function (done) {
+    var x = new XMLHttpRequest();
+    x.open("POST", "/echo");
+    x.responseType = "text";
+    x.setRequestHeader("Content-Type", "text/x-test");
+    x.addEventListener("loadend", function (e) { L(e.type, x.status, x.response); done(); });
+    x.send("posted");
+  });
+  await new Promise(function (done) {
+    var x = new XMLHttpRequest();
+    x.open("GET", "/json?as=json");
+    x.responseType = "json";
+    x.onload = function () { L(x.response.asked, typeof x.response); done(); };
+    x.onerror = function () { L("error"); done(); };
+    x.send();
+  });
+  await new Promise(function (done) {
+    var x = new XMLHttpRequest();
+    x.open("GET", "/missing");
+    x.onload = function () { L(x.status, x.responseText); done(); };
+    x.send();
+  });
+
+  document.cookie = "made=here; path=/";
+  r = await fetch("/show");
+  L(await r.text(), document.cookie);
+  r = await fetch("/cookie");
+  L(await r.text(), document.cookie, here(r.url));
+
+  await new Promise(function (done) {
+    var s = document.createElement("script");
+    s.src = "/page/net-extra.js";
+    s.onload = done;
+    document.head.appendChild(s);
+  });
+  L(typeof extra, extra());
+  await new Promise(function (done) {
+    var s = document.createElement("script");
+    s.src = "/page/not-there.js";
+    s.onload = function () { L("loaded?"); done(); };
+    s.onerror = function (e) { L("script", e.type); done(); };
+    document.head.appendChild(s);
+  });
+
+  r = await fetch("/page/net-extra.js");
+  L(r.headers.get("Content-Type"), (await r.text()).split("\n").length);
+  var blob = new Blob(["héllo ", new Uint8Array([119, 111]), new Blob(["rld"])], { type: "Text/Plain" });
+  L(blob.size, blob.type, await blob.text(), new Uint8Array(await blob.slice(1, 3).arrayBuffer()).join(","), blob.slice(-3).size);
+  r = await fetch("/echo", { method: "POST", body: blob });
+  L(await r.text());
+  r = await fetch("/echo", { method: "POST", body: new Uint8Array([98, 121, 116, 101, 115]) });
+  L((await r.blob()).size, r.bodyUsed);
+  r = new Response("grüße");
+  L((await r.clone().arrayBuffer()).byteLength, await r.text());
+
+  L(location.pathname, location.protocol, location.port.length > 0, document.title);
+  document.getElementById("out").textContent = "done";
+  L(document.getElementById("out").textContent);
+})().catch(function (e) { L("failed", String(e)); });
+</script>
+</body>
+</html>

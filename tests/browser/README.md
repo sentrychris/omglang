@@ -17,9 +17,19 @@ Where the expected answers come from:
 | `pages/boxes.html`, `want/boxes.txt` | boxes without text, and where each must be | by hand: every line of `boxes.txt` was worked out from the CSS rules before it was kept |
 | `pages/paint.html` | borders, a gradient, round corners, a see-through disc, pictures | its checksum is the same from the Linux and the Windows build |
 | `urls.txt`, `want/urls.txt` | addresses to take apart and links to resolve | by hand |
+| `js/*.js`, `js/want/*.txt` | scripts for the JavaScript engine alone (`tools/browser/js/run.omg`), each printing lines | `TZ=UTC node script.js` with Node 22: the engine must print the same, byte for byte |
+| `js/differences.js` | what the engine does differently from Node, on purpose or not yet (no holes in arrays, no BigInt, strings counted in characters and not in UTF-16 units, ...) | by hand; its answers are the engine's own, so that a change in any of them is noticed |
+| `pages/js/dom.html`, `events.html`, `want/js-*.txt` | pages whose scripts read and change the tree, send events, fill in forms, set timers, ask for styles and sizes, and print what they find with `console.log` | Chromium (through Playwright) opened the same file; the lines are its console |
+| `pages/js/net.html`, `net-extra.js`, `want/js-net.txt` | `fetch`, `XMLHttpRequest`, cookies, redirects, bodies of every kind, a script added later, against `server.omg` (which hands the page out as `/page/net.html`) | Chromium against the same server, without its own "Failed to load resource" lines |
 
 The private keys of the certificates were thrown away: nothing here
 can sign anything. The handshake tests make a fresh key each run.
 
 The layout and painting pages hold no text, because which fonts a
-machine has decides how wide text is.
+machine has decides how wide text is. For the same reason the pages
+with scripts ask only for the sizes of boxes whose sizes CSS gives.
+
+To make the answers of a page again after changing it, open it in
+Chrome or Chromium and copy the console; `Math.tan` and other sums
+whose last digit may differ between machines are printed with
+`toFixed`.

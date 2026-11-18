@@ -1,0 +1,23 @@
+const L = (...a) => console.log(a.map(x => typeof x === "string" ? x : JSON.stringify(x)).join(" | "));
+L("abc".toUpperCase(), "ÀÉî".toLowerCase(), "straße".toUpperCase(), " \t x y \n".trim(), "abc".charAt(1), "abc".charCodeAt(1), "abc"[2], "abc".at(-1));
+L("hello world".indexOf("o"), "hello world".lastIndexOf("o"), "hello".indexOf("z"), "héllo wörld".indexOf("ö"), "abcabc".indexOf("c", 3), "abc".includes("bc"), "abc".startsWith("ab"), "abc".endsWith("bc"));
+L("abcdef".slice(1, -1), "abcdef".substring(4, 1), "abcdef".substr(-3, 2), "abcdef".slice(-2), "abc".repeat(3), "5".padStart(3, "0"), "5".padEnd(3, "ab"));
+L("a,b,,c".split(","), "abc".split(""), "a b c".split(" ", 2), "abc".split(), "".split(","), "".split(""));
+L("aXbXc".replace("X", "-"), "aXbXc".replaceAll("X", "-"), "abc".replace("b", "[$&$&]"), "abc".replace("b", (m, i) => m.toUpperCase() + i), "x".concat(1, 2));
+L(String(123), String(null), String(undefined), String(true), String([1, [2, 3]]), String({}), String(Symbol("d")), `${1}${"a"}`);
+L(String.fromCharCode(72, 105), String.fromCharCode(0x20AC), "€".charCodeAt(0), "a".localeCompare("b"), "b".localeCompare("a"), "a".localeCompare("a"));
+L((255).toString(16), (255).toString(2), (0.5).toString(2), (-255).toString(36), (3.14159).toFixed(2), (1.005).toFixed(2), (0).toFixed(2), (1234.5678).toFixed(0), (0.000001234).toFixed(8), (-1.5).toFixed(0), (2.5).toFixed(0));
+L((1234.5678).toPrecision(6), (0.00001234).toPrecision(2), (123456789).toPrecision(3), (1.5).toExponential(3), (12345).toExponential(), (0).toPrecision(3), (99.99).toPrecision(3));
+L(Number("12"), Number(" 0x1f "), Number(""), Number("1e3"), Number("abc"), Number(null), Number(undefined), Number(true), Number([5]), Number("12px"), +"-.5", +".", Number("Infinity"), Number("-0"));
+L(parseInt("42px"), parseInt("0x1F"), parseInt("101", 2), parseInt(""), parseInt("-7.9"), parseFloat("3.14abc"), parseFloat(".5"), parseFloat("-1e-2x"), parseFloat("abc"), parseInt("z", 36));
+L(Number.isInteger(5), Number.isInteger(5.5), Number.MAX_SAFE_INTEGER, Number.EPSILON > 0, Number.MIN_VALUE > 0, Number.MAX_VALUE, isNaN("x"), isFinite("5"), Number.isNaN("x"));
+L(1e21, 1e-7, 123456789012345680000, 0.000001, 1.5e300, 100, 1/3, -1e-7, 5e-324, 1.7976931348623157e308, 0.1 + 0.2, 1e21 + 1, 2 ** 53, 2 ** 53 + 2, 123456789.123456789);
+L(Math.floor(-1.5), Math.ceil(-1.5), Math.round(-1.5), Math.round(2.5), Math.round(-0.4), Math.trunc(-1.7), Math.sign(-3), Math.abs(-3), Math.max(1, 5, 3), Math.min(), Math.max(), Math.max(1, NaN));
+L(Math.sqrt(2), Math.cbrt(27), Math.pow(2, 0.5), Math.hypot(3, 4), Math.exp(1), Math.log(Math.E), Math.log2(8), Math.log10(1000), Math.sin(1), Math.cos(1));
+L([Math.atan(1), Math.atan2(1, -1), Math.asin(0.5), Math.acos(0.5), Math.atan(0.1), Math.atan(100), Math.sinh(1), Math.cosh(1), Math.tanh(1), Math.tan(1)].map(function (x) { return x.toFixed(12) }).join(" "), Math.imul(0x7fffffff, 3), Math.clz32(1));
+L(encodeURIComponent("a b&c/d?é€"), encodeURI("http://x/a b?q=é&r=1#h"), decodeURIComponent("a%20b%C3%A9"), decodeURI("%41%2F"), escape("a b+é€"), unescape("%u20AC%E9%20"), btoa("hello"), atob("aGVsbG8="));
+L(typeof Math.random(), Math.random() < 1, [..."héy"], "abc".split("").reverse().join(""), "a-b_c".split(/[-_]/), "x".codePointAt(0), "%E4%F6%FC");
+try { decodeURIComponent("%E4") } catch (e) { L(e.name, e.message) }
+L(5 % 3, -5 % 3, 5 % -3, 5.5 % 2, -5.5 % 2, 2 ** -1, 7 / 0, -7 / 0, 0 / 0, 1 / -0, 10 % 0, 1e300 * 1e300, 2 ** 1024, (-8) ** (1 / 3));
+L(1 << 31, 1 << 32, -1 >>> 0, -1 >> 1, 5 ^ 1, ~5, 0xffffffff | 0, 2 ** 32 + 5 | 0, 1.9 | 0, -1.9 | 0, "8" >> 1, null | 0, NaN | 0);
+L("b" + 1 + 2, 1 + 2 + "b", "5" - 2, "5" * "2", [] + {}, [1, 2] + [3], null + "x", true + 1, undefined + 1, "a" < "b", "a" < "B", "10" < "9", 10 < "9", null >= 0, undefined == 0, NaN != NaN, [] == false, "" == 0, "1" == 1, null == false);

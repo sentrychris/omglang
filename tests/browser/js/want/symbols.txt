@@ -1,0 +1,8 @@
+3 true true true 4 0,1,length
+2 3 0 {}
+2 Symbol(a) a
+AsyncFunction false object [object AsyncFunction]
+true function true
+true true
+value 1[object Promise]
+42 true

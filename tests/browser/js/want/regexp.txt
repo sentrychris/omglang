@@ -1,0 +1,26 @@
+true | false | ["a","b","c"] | ["555-1234","555","1234"] | 4
+04/03/2020 | bbb | a[b|a|c|$]c | []
+John Smith | a<1@1>b<22@3>c<333@6>
+["a","b","c","d"] | ["a","b","c"] | ["a","b","c",""] | ["a","1","b","2","c","3",""] | ["a","b","c"] | [""] | ["a"] | ["","a","b",""]
+["1:2","2:3","5:6","6:7"] | 0
+["oo","oo"] | null | ["fo","f","o"] | null | ["T","Q"] | 4 | -1
+["a110","b222"]
+{"year":"2021","mon":"07"} | 07/2021 | ["b",null,"b"] | 2
+false | true | true | false | true | true | true | true | true | false
+aaa | aa | aaaa | aa | <a><b> | <a> | aaab | ["abcd","a","bcd",""]
+hello hello | true | 2 | 42 | 17 | 50
+ 12 3 | ab | ab | - | bob.x+y@ex-ample.co.uk | true
+a | gi | true | true | false | false | /a/gi | a\/b | true | g | i | /(?:)/
+true | 3 | true | 6 | false | 0
+SyntaxError
+SyntaxError
+SyntaxError
+axc | HeLLo | true | true | SS | αβγ
+aBC | trim | a\.b\.c | $0$1 | abb$2c | aaaaaa | bbb
+true | ["FF","aa","00"] | ["-1.5","em"]
+false | ababc | false | [""] | -a-b-c- | ["","","",""] | ["",""]
+true | true | true | true |  | \/ | true | /a/g | true | object
+tpl 1 and 2 | camel-case-string | [["x","1"],["y","2"]] | 1234567 | abbc
+a | b,c | a,b | ["a","b","c"] | true | true
+false | 0 | bbb | 0 | ba | {} | ["0","index","input","groups"]
+中文 | héllo | false | false | true | true

@@ -1,0 +1,18 @@
+var u = new Uint8Array([1, 2, 300, -1]);
+console.log(u.length, u[2], u[3], u.join(), Array.from(u).join(), JSON.stringify(u), Object.prototype.toString.call(u));
+var b = new ArrayBuffer(16), f = new Float64Array(b), i32 = new Int32Array(b), u8 = new Uint8Array(b, 8, 4);
+f[0] = 1.5; f[1] = -0.1;
+console.log(i32[0], i32[1], i32[2], i32[3], u8.join(), b.byteLength, u8.byteOffset, u8.buffer === b);
+var f32 = new Float32Array([0.1, 1e40, -1e-50, 16777217, 1.401298464324817e-45, NaN, 3.4028235e38, 1e-40]);
+console.log(Array.from(f32).join(' '), Math.fround(5.5), Math.fround(5.05));
+var i16 = Int16Array.from([32767, 32768, -32769, 1.9, -1.9, '7']); console.log(i16.join(), Int16Array.BYTES_PER_ELEMENT, i16.byteLength);
+var c = new Uint8ClampedArray([300, -5, 1.5, 2.5, 0.5, 254.5]); console.log(c.join());
+var s = u.subarray(1, 3); s[0] = 99; console.log(u.join(), s.length, u.slice(-2).join(), u.map(function (x) { return x * 2; }).constructor.name);
+console.log(new Float64Array([3, 1, 10, 2]).sort().join(), new Uint32Array([4294967295, -1, 4294967296])[1], [...new Uint16Array(3).fill(7)].join());
+var dv = new DataView(new ArrayBuffer(12));
+dv.setUint16(0, 0x1234); dv.setUint16(2, 0x1234, true); dv.setFloat32(4, 1.5); dv.setInt32(8, -2, true);
+console.log(dv.getUint8(0), dv.getUint8(1), dv.getUint8(2), dv.getUint16(0), dv.getUint16(0, true), dv.getFloat32(4), dv.getInt32(8, true), dv.getUint32(8, true), dv.byteLength);
+var enc = new TextEncoder().encode('héllo €'); console.log(enc.length, enc.join(), new TextDecoder().decode(enc), new TextDecoder('utf-8').decode(enc.subarray(0, 1)));
+console.log(u instanceof Uint8Array, ArrayBuffer.isView(u), Array.isArray(u), Object.getPrototypeOf(Uint8Array).name, u.indexOf(99), u.includes(1), 2 in u, 9 in u, Object.keys(u).join());
+u.set([7, 8], 2); console.log(u.join(), u.reverse().join(), u.at(-1), u.reduce(function (a, b) { return a + b; }), typeof u.BYTES_PER_ELEMENT);
+u[10] = 5; console.log(u.length, u[10], new Uint8Array(b.slice(0, 2)).length, new Int8Array(2).toString());

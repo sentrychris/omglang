@@ -42,14 +42,58 @@ proc answer(h, status, headers, body) {
 }
 
 # The value of a header in the request text, or "".
+# The same bytes with A to Z made small: the names of headers may be
+# written either way.
+proc small(b) {
+    alloc out := b[0:]
+    alloc i := 0
+    loop i < length(out) {
+        if out[i] >= 65 and out[i] <= 90 {
+            out[i] := out[i] + 32
+        }
+        i := i + 1
+    }
+    return out
+}
+
 proc header(req, name) {
-    alloc at := find(string_bytes(req), string_bytes("\r\n" + name + ": "), 0)
+    alloc at := find(small(string_bytes(req)), small(string_bytes("\r\n" + name + ": ")), 0)
     if at < 0 {
         return ""
     }
     alloc rest := bytes_to_string(string_bytes(req)[at + length(name) + 4:])
     alloc stop := find(string_bytes(rest), string_bytes("\r\n"), 0)
     return rest[0:stop]
+}
+
+# The bytes of a file in tests/browser/pages/js, or false. The name
+# may hold letters, digits, "-" and "." only, so it cannot lead out.
+proc page_file(name) {
+    alloc ok := length(name) > 0 and name[0] != "."
+    for ch in string_bytes(name) {
+        alloc fine := (ch >= 97 and ch <= 122) or (ch >= 48 and ch <= 57) or ch == 45 or ch == 46
+        if fine == false {
+            ok := false
+        }
+    }
+    if ok == false {
+        return false
+    }
+    try {
+        alloc f := file_open("tests/browser/pages/js/" + name, "rb")
+        alloc data := to_bytes([])
+        loop true {
+            alloc part := file_read(f, 65536)
+            if length(part) == 0 {
+                break
+            }
+            data := data + part
+        }
+        file_close(f)
+        return data
+    } except err {
+        return false
+    }
 }
 
 # Serve requests on h until the client goes away. false: stop the server.
@@ -107,6 +151,26 @@ proc serve(h) {
             return true
         } elif path == "/missing" {
             answer(h, "404 Not Found", "Content-Type: text/plain\r\n", "nothing here")
+        } elif length(path) > 6 and path[0:6] == "/page/" {
+            # a file of tests/browser/pages/js, so that a page's
+            # scripts can ask this server for more
+            alloc name := path[6:]
+            alloc kind := "text/html"
+            if length(name) > 3 and name[length(name) - 3:] == ".js" {
+                kind := "text/javascript"
+            }
+            alloc page := page_file(name)
+            if page == false {
+                answer(h, "404 Not Found", "Content-Type: text/plain\r\n", "no such page")
+            } else {
+                send(h, "HTTP/1.1 200 OK\r\nContent-Type: " + kind + "\r\nContent-Length: " + length(page) + "\r\n\r\n")
+                alloc sent := 0
+                loop sent < length(page) {
+                    sent := sent + tcp_write(h, page, sent)
+                }
+            }
+        } elif length(path) >= 5 and path[0:5] == "/json" {
+            answer(h, "200 OK", "Content-Type: application/json\r\nX-Reply: yes\r\n", "{\"ok\":true,\"asked\":\"" + path[5:] + "\",\"sent\":\"" + header(head, "X-Test") + "\"}")
         } elif path == "/quit" {
             answer(h, "200 OK", "Content-Type: text/plain\r\n", "bye")
             return false
