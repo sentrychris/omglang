@@ -28,6 +28,7 @@ SUITES=(
     http
     db
     video
+    browser
     web
     parity
 )

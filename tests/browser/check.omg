@@ -1,0 +1,347 @@
+;;;omg
+
+# tests/browser/check.omg
+#
+# Asks the parts of the browser in tools/browser one question each
+# and prints the answer as text, for tests/browser.sh to compare.
+#
+#   check.omg crypto FILE          run the vectors in FILE (see README.md)
+#   check.omg cert CHAIN HOST TIME [AUTHORITIES]
+#                                  is this chain good for HOST at TIME?
+#   check.omg url FILE             resolve the addresses listed in FILE
+#   check.omg dom FILE             the tree the HTML parser builds
+#   check.omg boxes FILE WIDTH     the boxes the layout makes of a page
+#   check.omg image FILE [OUT]     size and checksum of a decoded picture
+#                                  (and its RGBA bytes into OUT)
+#   check.omg gunzip FILE          checksum of what a .gz file holds
+#   check.omg sum FILE             checksum of a file
+#   check.omg fonts                is there a font to measure text with?
+#   check.omg fetch URL [AUTHORITIES]
+#                                  status, type and body of an address
+
+import "../../tools/browser/util.omg" as u
+import "../../tools/browser/sha.omg" as sha
+import "../../tools/browser/aead.omg" as aead
+import "../../tools/browser/pk.omg" as pk
+import "../../tools/browser/x509.omg" as x509
+import "../../tools/browser/tls.omg" as tls
+import "../../tools/browser/url.omg" as url
+import "../../tools/browser/html.omg" as html
+import "../../tools/browser/css.omg" as css
+import "../../tools/browser/layout.omg" as lay
+import "../../tools/browser/image.omg" as image
+import "../../tools/browser/inflate.omg" as inflate
+import "../../tools/browser/net.omg" as net
+import "../../tools/browser/font.omg" as font
+
+alloc HEX := "0123456789abcdef"
+
+proc hx(b) {
+    alloc out := bytes_repeat(0, length(b) * 2)
+    alloc digits := string_bytes(HEX)
+    alloc i := 0
+    for c in b {
+        out[i] := digits[c >> 4]
+        out[i + 1] := digits[c & 15]
+        i := i + 2
+    }
+    return bytes_to_string(out)
+}
+
+proc unhex(s) {
+    if s == "-" {
+        return to_bytes([])
+    }
+    return pk.hex_bytes(s)
+}
+
+proc lines_of(path) {
+    alloc b := u.read_bytes(path)
+    if b == false {
+        emit "check: cannot read " + path
+        exit(2)
+    }
+    return u.split(u.replace(bytes_to_string(b), "\r", ""), "\n")
+}
+
+# One vector to a line: what it is, then hex fields ("-" for empty),
+# the expected answer last.
+proc crypto(path) {
+    alloc count := {}
+    alloc order := []
+    alloc wrong := 0
+    for line in lines_of(path) {
+        if line == "" or u.starts_with(line, "#") {
+            continue
+        }
+        alloc p := u.split(line, " ")
+        alloc kind := p[0]
+        alloc ok := false
+        if kind == "hash" {
+            ok := hx(sha.hash(p[1], unhex(p[2]))) == p[3]
+        } elif kind == "hmac" {
+            ok := hx(sha.hmac(p[1], unhex(p[2]), unhex(p[3]))) == p[4]
+        } elif kind == "hkdf" {
+            alloc want := unhex(p[5])
+            ok := sha.hkdf_expand(p[1], sha.hkdf_extract(p[1], unhex(p[2]), unhex(p[3])), unhex(p[4]), length(want)) == want
+        } elif kind == "aead" {
+            # cipher key nonce extra plain sealed
+            alloc c := aead.new(p[1], unhex(p[2]))
+            alloc sealed := aead.seal(c, unhex(p[3]), unhex(p[4]), unhex(p[5]))
+            ok := hx(sealed) == p[6] and aead.open(c, unhex(p[3]), unhex(p[4]), sealed) == unhex(p[5])
+            sealed[length(sealed) - 1] := sealed[length(sealed) - 1] ^ 1
+            ok := ok and aead.open(c, unhex(p[3]), unhex(p[4]), sealed) == false
+        } elif kind == "x25519" {
+            ok := hx(pk.x25519(unhex(p[1]), unhex(p[2]))) == p[3]
+        } elif kind == "ecdh" {
+            # curve, our secret, their point, the shared secret
+            alloc cv := pk.curve(p[1])
+            ok := hx(pk.ec_shared(p[1], pk.limbs_of(unhex(p[2]), cv.k, true), unhex(p[3]))) == p[4]
+        } elif kind == "ecdsa" {
+            # curve hash point message r s
+            alloc d := sha.hash(p[2], unhex(p[4]))
+            ok := pk.ecdsa_verify(p[1], unhex(p[3]), d, unhex(p[5]), unhex(p[6]))
+            d[0] := d[0] ^ 1
+            ok := ok and pk.ecdsa_verify(p[1], unhex(p[3]), d, unhex(p[5]), unhex(p[6])) == false
+        } elif kind == "rsa" or kind == "pss" {
+            # hash n e message signature
+            alloc msg := unhex(p[4])
+            if kind == "rsa" {
+                ok := pk.rsa_verify(unhex(p[2]), unhex(p[3]), p[1], msg, unhex(p[5]))
+                msg[0] := msg[0] ^ 1
+                ok := ok and pk.rsa_verify(unhex(p[2]), unhex(p[3]), p[1], msg, unhex(p[5])) == false
+            } else {
+                ok := pk.rsa_pss_verify(unhex(p[2]), unhex(p[3]), p[1], msg, unhex(p[5]))
+                msg[0] := msg[0] ^ 1
+                ok := ok and pk.rsa_pss_verify(unhex(p[2]), unhex(p[3]), p[1], msg, unhex(p[5])) == false
+            }
+        } else {
+            emit "check: unknown vector " + kind
+            exit(2)
+        }
+        if has_key(count, kind) == false {
+            count[kind] := 0
+            append(order, kind)
+        }
+        count[kind] := count[kind] + 1
+        if ok == false {
+            wrong := wrong + 1
+            emit "WRONG: " + line[0:60]
+        }
+    }
+    for k in order {
+        emit k + ": " + count[k]
+    }
+    emit "wrong: " + wrong
+    return wrong
+}
+
+proc cert() {
+    if length(args) > 5 {
+        x509.add_pem(u.read_bytes(args[5]))
+    }
+    alloc ders := x509.pem_certs(u.read_bytes(args[2]))
+    alloc r := x509.check(ders, args[3], u.to_int(args[4], 0))
+    if r[0] == "" {
+        emit "good"
+    } else {
+        emit r[0]
+    }
+    return 0
+}
+
+# Lines "BASE REF": what REF means on a page at BASE. Lines with
+# one word: how that address reads once taken apart and put together.
+proc urls(path) {
+    for line in lines_of(path) {
+        if line == "" or u.starts_with(line, "#") {
+            continue
+        }
+        alloc sp := u.find(line, " ")
+        if sp < 0 {
+            alloc p := url.parse(line)
+            if p == false {
+                emit line + " => not an address"
+            } else {
+                emit line + " => " + url.to_string(p) + " [" + p.scheme + "|" + p.host + "|" + p.port + "|" + p.path + "|" + p.query + "|" + p.frag + "]"
+            }
+        } else {
+            emit line + " => " + url.resolve(line[0:sp], line[sp + 1:])
+        }
+    }
+    return 0
+}
+
+proc squeeze(s) {
+    return u.join(u.words(s), " ")
+}
+
+proc dom(node, depth) {
+    alloc pad := ""
+    alloc i := 0
+    loop i < depth {
+        pad := pad + "  "
+        i := i + 1
+    }
+    for k in node.kids {
+        if k.t == 3 {
+            alloc text := squeeze(k.text)
+            if text != "" {
+                emit pad + "\"" + text + "\""
+            }
+        } elif k.t == 1 {
+            alloc line := pad + "<" + k.tag
+            alloc names := dict_keys(k.attrs)
+            # in order of the alphabet, so that the dump does not depend
+            # on how a dict keeps its keys
+            alloc a := 1
+            loop a < length(names) {
+                alloc v := names[a]
+                alloc b := a - 1
+                loop b >= 0 and names[b] > v {
+                    names[b + 1] := names[b]
+                    b := b - 1
+                }
+                names[b + 1] := v
+                a := a + 1
+            }
+            for name in names {
+                line := line + " " + name + "=\"" + k.attrs[name] + "\""
+            }
+            emit line + ">"
+            dom(k, depth + 1)
+        }
+    }
+    return 0
+}
+
+alloc KINDS := ["?", "block", "inline", "text", "br", "replaced", "table", "rows", "row", "flex", "grid"]
+
+proc near(v) {
+    return floor(v + 0.5)
+}
+
+proc boxes(box, depth, ax, ay) {
+    alloc pad := ""
+    alloc i := 0
+    loop i < depth {
+        pad := pad + "  "
+        i := i + 1
+    }
+    for k in box.kids {
+        if k.kind == 3 or k.kind == 4 {
+            continue
+        }
+        alloc name := ""
+        if k.node != false {
+            name := " " + k.node.tag
+            if has_key(k.node.attrs, "id") {
+                name := name + "#" + k.node.attrs["id"]
+            }
+        }
+        alloc x := ax + k.x
+        alloc y := ay + k.y
+        emit pad + KINDS[k.kind] + name + " " + near(x) + "," + near(y) + " " + near(k.w) + "x" + near(k.h)
+        boxes(k, depth + 1, x, y)
+    }
+    return 0
+}
+
+proc main() {
+    if length(args) < 3 and (length(args) < 2 or args[1] != "fonts") {
+        emit "usage: check.omg crypto|cert|url|dom|boxes|image|gunzip|sum|fetch ..."
+        return 2
+    }
+    alloc what := args[1]
+    if what == "fonts" {
+        # can text be measured on this machine at all?
+        if font.pick(["sans-serif"], 16, false, false) == false {
+            emit "none"
+        } else {
+            emit "found"
+        }
+        return 0
+    }
+    if what == "crypto" {
+        return crypto(args[2])
+    }
+    if what == "cert" {
+        return cert()
+    }
+    if what == "url" {
+        return urls(args[2])
+    }
+    if what == "fetch" {
+        if length(args) > 3 {
+            tls.add_ca_file(args[3])
+        }
+        alloc r := net.fetch(args[2], "GET", false, "", "")
+        if r.status == 0 {
+            emit "failed: " + r.error
+            return 1
+        }
+        alloc kind := ""
+        if has_key(r.headers, "content-type") {
+            kind := r.headers["content-type"]
+        }
+        emit "" + r.status + " " + kind + " " + r.url
+        if length(args) > 3 {
+            emit tls.info()
+        }
+        emit bytes_to_string(r.body)
+        net.close_all()
+        return 0
+    }
+    alloc bytes := u.read_bytes(args[2])
+    if bytes == false {
+        emit "check: cannot read " + args[2]
+        return 2
+    }
+    if what == "dom" {
+        return dom(html.parse(bytes), 0)
+    }
+    if what == "boxes" {
+        alloc doc := html.parse(bytes)
+        css.reset()
+        for st in html.find_all(doc, "style", []) {
+            css.add_sheet(string_bytes(html.text_of(st)), 1, -1)
+        }
+        alloc w := u.to_int(args[3], 800)
+        css.style_tree(doc, w, 600)
+        alloc root := lay.build(doc)
+        lay.layout(root, w, 600)
+        return boxes(root, 0, 0, 0)
+    }
+    if what == "image" {
+        alloc im := image.decode(bytes)
+        if im == false {
+            emit "not a picture"
+            return 1
+        }
+        emit "" + im[0] + "x" + im[1] + " " + hx(sha.sha256(im[2]))
+        if length(args) > 3 {
+            # the pixels themselves, to compare with another decoder's
+            alloc h := file_open(args[3], "wb")
+            file_write(h, im[2])
+            file_close(h)
+        }
+        return 0
+    }
+    if what == "gunzip" {
+        alloc out := inflate.gunzip(bytes)
+        if out == false {
+            emit "broken"
+            return 1
+        }
+        emit "" + length(out) + " " + hx(sha.sha256(out))
+        return 0
+    }
+    if what == "sum" {
+        emit hx(sha.sha256(bytes))
+        return 0
+    }
+    emit "check: unknown question " + what
+    return 2
+}
+
+exit(main())

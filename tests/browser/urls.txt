@@ -1,0 +1,25 @@
+# One address: how it reads taken apart. Two: the second as written on a page at the first.
+HTTP://Example.COM:80/a/./b/../c?q=1#top
+https://example.com
+https://example.com:8443/x
+http://user:secret@host.test/p
+http://[::1]:8080/x
+file:///home/me/page.html
+data:text/html,<p>hi
+mailto:someone@example.com
+example.com/no-scheme
+http:///no-host
+http://a.test/dir/page.html other.html
+http://a.test/dir/page.html ../up.html
+http://a.test/dir/page.html ../../../too/far.html
+http://a.test/dir/page.html /root.html
+http://a.test/dir/page.html //b.test/x
+http://a.test/dir/page.html https://c.test/y?z#w
+http://a.test/dir/page.html ?only=query
+http://a.test/dir/page.html?old=1#frag #new
+http://a.test/dir/page.html?old=1#frag 
+http://a.test/dir/ sub/./x/../y.html
+http://a.test/dir/page.html mailto:x@y.test
+http://a.test/dir/page.html   spaced.html  
+https://a.test/a/b?x=1 c\d.html
+about:home #x
