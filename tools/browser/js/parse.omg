@@ -1,0 +1,2061 @@
+;;;omg
+
+# tools/browser/js/parse.omg
+#
+# JavaScript, from text to a tree.
+#
+#     import "parse.omg" as jsparse
+#     alloc tree := jsparse.program(string_bytes("let x = 1 + 2"))
+#
+# program() returns [statements, strict?, has a function?], or raises "SyntaxError: ..."
+# with the line the trouble is on. A node of the tree is a list whose
+# first item says what it is; the numbers are below, each with the
+# items that follow it.
+#
+# The lexer works on bytes and hands out one token at a time, because
+# what a "/" means (divide, or the start of a regular expression)
+# depends on where the parser is, and only the parser knows.
+#
+# What is read: the language as of ES2020 less modules: let and const,
+# arrow functions, classes with fields and accessors, template
+# literals, destructuring, spread and rest, default parameters,
+# generators, async and await, for-of, optional chaining, ?? and the
+# logical assignments, exponentiation, getters and setters, labels.
+# Not read: import and export (export is skipped over, import is an
+# error), with, and BigInt (a number with an n is read as a number).
+
+# --- what the tree is made of --------------------------------------------------------
+
+# Expressions.
+alloc N_NUM := 1               # value
+alloc N_STR := 2               # value
+alloc N_TPL := 3               # strings, expressions between them
+alloc N_TAGTPL := 4            # tag, strings, raw strings, expressions
+alloc N_REGEX := 5             # pattern, flags
+alloc N_ID := 6                # name
+alloc N_THIS := 7
+alloc N_SUPER := 8
+alloc N_NULL := 9
+alloc N_TRUE := 10
+alloc N_FALSE := 11
+alloc N_ARR := 12              # elements (false for a hole)
+alloc N_OBJ := 13              # properties, each [kind, key, value, computed]:
+                               #   kind 0 value, 1 getter, 2 setter, 3 spread
+alloc N_FUNC := 14             # name, parameters, statements, flags, has a function
+                               #   inside it?, names `arguments`?, line
+alloc N_CLASS := 15            # name, superclass or false, members, each
+                               #   [kind, key, value, computed, static]:
+                               #   kind 0 method, 1 getter, 2 setter, 3 field, 4 static block
+alloc N_UNARY := 16            # operator, operand
+alloc N_UPDATE := 17           # operator, prefix?, operand
+alloc N_BINARY := 18           # operator, left, right
+alloc N_LOGICAL := 19          # operator, left, right
+alloc N_ASSIGN := 20           # operator, target, value
+alloc N_COND := 21             # test, then, else
+alloc N_CALL := 22             # callee, arguments, optional?, line
+alloc N_NEW := 23              # callee, arguments, line
+alloc N_MEMBER := 24           # object, name, optional?
+alloc N_INDEX := 25            # object, expression, optional?
+alloc N_SEQ := 26              # expressions
+alloc N_SPREAD := 27           # operand
+alloc N_YIELD := 28            # operand or false, delegate?
+alloc N_AWAIT := 29            # operand
+alloc N_OPTCHAIN := 30         # a chain with a ?. in it
+alloc N_NEWTARGET := 31
+
+# Statements. One that statement() read has its line as a last item
+# more. "fn?" is whether a function is written somewhere inside, which
+# decides where the variables of a block are kept.
+alloc S_EXPR := 50             # expression
+alloc S_VAR := 51              # kind ("var", "let", "const"), [target, value or false]...
+alloc S_FUNC := 52             # an N_FUNC
+alloc S_CLASS := 53            # an N_CLASS
+alloc S_RETURN := 54           # value or false
+alloc S_IF := 55               # test, then, else or false
+alloc S_FOR := 56              # init statement or false, test, update, body, fn?
+alloc S_FORIN := 57            # kind or "", target, object, body, fn?
+alloc S_FOROF := 58            # kind or "", target, iterable, body, await?, fn?
+alloc S_WHILE := 59            # test, body
+alloc S_DOWHILE := 60          # body, test
+alloc S_BREAK := 61            # label or ""
+alloc S_CONTINUE := 62         # label or ""
+alloc S_THROW := 63            # value
+alloc S_TRY := 64              # block, catch target or false, handler or false, finally or false
+alloc S_SWITCH := 65           # value, cases, each [test or false, statements], fn?
+alloc S_BLOCK := 66            # statements, fn?
+alloc S_LABEL := 67            # name, statement
+alloc S_EMPTY := 68
+
+# Flags of a function.
+alloc F_ARROW := 1
+alloc F_GEN := 2
+alloc F_ASYNC := 4
+alloc F_METHOD := 8            # cannot be called with new, has no prototype
+alloc F_CTOR := 16             # the constructor of a class
+alloc F_DERIVED := 32          # ... of a class that extends another
+alloc F_STRICT := 64
+alloc F_EXPR := 128            # a function expression (its name is known inside it only)
+alloc F_FIELDS := 256          # made up by the parser to set the fields of a class
+
+# Kinds of token.
+alloc T_EOF := 0
+alloc T_NUM := 1
+alloc T_STR := 2
+alloc T_ID := 3
+alloc T_KW := 4
+alloc T_P := 5
+alloc T_TPL := 6
+alloc T_REGEX := 7
+alloc T_PRIV := 8
+
+alloc KEYWORDS := {
+    "break": 1, "case": 1, "catch": 1, "class": 1, "const": 1, "continue": 1, "debugger": 1,
+    "default": 1, "delete": 1, "do": 1, "else": 1, "export": 1, "extends": 1, "finally": 1,
+    "for": 1, "function": 1, "if": 1, "import": 1, "in": 1, "instanceof": 1, "new": 1,
+    "return": 1, "super": 1, "switch": 1, "this": 1, "throw": 1, "try": 1, "typeof": 1,
+    "var": 1, "void": 1, "while": 1, "with": 1, "null": 1, "true": 1, "false": 1, "enum": 1
+}
+
+alloc BINPREC := {
+    "??": 1, "||": 2, "&&": 3, "|": 4, "^": 5, "&": 6,
+    "==": 7, "!=": 7, "===": 7, "!==": 7,
+    "<": 8, ">": 8, "<=": 8, ">=": 8,
+    "<<": 9, ">>": 9, ">>>": 9, "+": 10, "-": 10, "*": 11, "/": 11, "%": 11, "**": 12
+}
+
+alloc ASSIGN_OPS := {
+    "=": 1, "+=": 1, "-=": 1, "*=": 1, "/=": 1, "%=": 1, "**=": 1, "<<=": 1, ">>=": 1,
+    ">>>=": 1, "&=": 1, "|=": 1, "^=": 1, "&&=": 1, "||=": 1, "??=": 1
+}
+
+alloc PUNCT := {
+    "{": 1, "}": 1, "(": 1, ")": 1, "[": 1, "]": 1, ";": 1, ",": 1, "<": 1, ">": 1,
+    "<=": 1, ">=": 1, "==": 1, "!=": 1, "===": 1, "!==": 1, "+": 1, "-": 1, "*": 1,
+    "/": 1, "%": 1, "**": 1, "++": 1, "--": 1, "<<": 1, ">>": 1, ">>>": 1, "&": 1,
+    "|": 1, "^": 1, "!": 1, "~": 1, "&&": 1, "||": 1, "??": 1, "?": 1, "?.": 1, ":": 1,
+    "=": 1, "+=": 1, "-=": 1, "*=": 1, "/=": 1, "%=": 1, "**=": 1, "<<=": 1, ">>=": 1,
+    ">>>=": 1, "&=": 1, "|=": 1, "^=": 1, "&&=": 1, "||=": 1, "??=": 1, "=>": 1, ".": 1,
+    "...": 1, "@": 1
+}
+
+# One-character strings, so that the commonest tokens cost no work.
+alloc ONE := []
+
+# --- the lexer -------------------------------------------------------------------------
+
+alloc B := []                  # the source
+alloc N := 0
+alloc pos := 0                 # where the next token will be looked for
+alloc tk := 0                  # the current token: its kind,
+alloc tv := ""                 # its text or value,
+alloc tnl := false             # whether a line ended before it,
+alloc tstart := 0              # and where it starts
+alloc line := 1                # the line `pos` is on
+alloc tline := 1               # the line the current token is on
+alloc nfn := 0                 # functions read so far, to tell who has one inside
+alloc saw_args := false        # the function being read names `arguments`
+
+proc fail(msg) {
+    raise("SyntaxError: " + msg + " (line " + tline + ")")
+}
+
+proc setup() {
+    if length(ONE) == 0 {
+        alloc i := 0
+        loop i < 128 {
+            append(ONE, chr(i))
+            i := i + 1
+        }
+    }
+    return true
+}
+
+proc is_id_start(c) {
+    return (c >= 97 and c <= 122) or (c >= 65 and c <= 90) or c == 36 or c == 95 or c >= 128 or c == 92
+}
+
+proc is_id_part(c) {
+    return (c >= 97 and c <= 122) or (c >= 65 and c <= 90) or (c >= 48 and c <= 57) or c == 36 or c == 95 or c >= 128 or c == 92
+}
+
+proc hex_val(c) {
+    if c >= 48 and c <= 57 {
+        return c - 48
+    }
+    if c >= 97 and c <= 102 {
+        return c - 87
+    }
+    if c >= 65 and c <= 70 {
+        return c - 55
+    }
+    return -1
+}
+
+# Put code point cp on the end of the byte list out, as UTF-8.
+proc put_cp(out, cp) {
+    if cp < 128 {
+        append(out, cp)
+    } elif cp < 2048 {
+        append(out, 192 | (cp >> 6))
+        append(out, 128 | (cp & 63))
+    } elif cp < 65536 {
+        append(out, 224 | (cp >> 12))
+        append(out, 128 | ((cp >> 6) & 63))
+        append(out, 128 | (cp & 63))
+    } else {
+        append(out, 240 | (cp >> 18))
+        append(out, 128 | ((cp >> 12) & 63))
+        append(out, 128 | ((cp >> 6) & 63))
+        append(out, 128 | (cp & 63))
+    }
+    return true
+}
+
+alloc esc_end := 0             # where read_escape() stopped
+
+# The escape that starts after the backslash at p - 1. Puts what it
+# stands for on `out` and leaves the place after it in esc_end.
+proc read_escape(out, p) {
+    alloc b := B
+    alloc c := b[p]
+    p := p + 1
+    if c == 110 {
+        append(out, 10)
+    } elif c == 116 {
+        append(out, 9)
+    } elif c == 114 {
+        append(out, 13)
+    } elif c == 98 {
+        append(out, 8)
+    } elif c == 102 {
+        append(out, 12)
+    } elif c == 118 {
+        append(out, 11)
+    } elif c == 48 and (p >= N or b[p] < 48 or b[p] > 57) {
+        append(out, 0)
+    } elif c == 120 {
+        alloc v := 0
+        if p + 1 < N and hex_val(b[p]) >= 0 and hex_val(b[p + 1]) >= 0 {
+            v := hex_val(b[p]) * 16 + hex_val(b[p + 1])
+            p := p + 2
+        } else {
+            fail("bad \\x escape")
+        }
+        put_cp(out, v)
+    } elif c == 117 {
+        alloc cp := 0
+        if p < N and b[p] == 123 {
+            p := p + 1
+            loop p < N and b[p] != 125 {
+                alloc h := hex_val(b[p])
+                if h < 0 {
+                    fail("bad \\u escape")
+                }
+                cp := cp * 16 + h
+                p := p + 1
+            }
+            p := p + 1
+        } else {
+            alloc k := 0
+            loop k < 4 {
+                alloc h2 := -1
+                if p < N {
+                    h2 := hex_val(b[p])
+                }
+                if h2 < 0 {
+                    fail("bad \\u escape")
+                }
+                cp := cp * 16 + h2
+                p := p + 1
+                k := k + 1
+            }
+            # two halves of a character past U+FFFF
+            if cp >= 55296 and cp < 56320 and p + 5 < N and b[p] == 92 and b[p + 1] == 117 {
+                alloc lo := 0
+                alloc k2 := 0
+                alloc good := true
+                loop k2 < 4 {
+                    alloc h3 := hex_val(b[p + 2 + k2])
+                    if h3 < 0 {
+                        good := false
+                    }
+                    lo := lo * 16 + h3
+                    k2 := k2 + 1
+                }
+                if good and lo >= 56320 and lo < 57344 {
+                    cp := 65536 + ((cp - 55296) << 10) + (lo - 56320)
+                    p := p + 6
+                }
+            }
+        }
+        if cp >= 55296 and cp < 57344 {
+            cp := 65533
+        }
+        if cp > 1114111 {
+            cp := 65533
+        }
+        put_cp(out, cp)
+    } elif c == 13 {
+        if p < N and b[p] == 10 {
+            p := p + 1
+        }
+        line := line + 1
+    } elif c == 10 {
+        line := line + 1
+    } elif c >= 49 and c <= 55 {
+        # an old octal escape
+        alloc ov := c - 48
+        if p < N and b[p] >= 48 and b[p] <= 55 {
+            ov := ov * 8 + b[p] - 48
+            p := p + 1
+        }
+        put_cp(out, ov)
+    } else {
+        append(out, c)
+    }
+    esc_end := p
+    return true
+}
+
+proc scan_number(p) {
+    alloc b := B
+    alloc n := N
+    alloc start := p
+    alloc c := b[p]
+    if c == 48 and p + 1 < n {
+        alloc x := b[p + 1] | 32
+        alloc base := 0
+        if x == 120 {
+            base := 16
+        } elif x == 111 {
+            base := 8
+        } elif x == 98 {
+            base := 2
+        }
+        if base > 0 {
+            p := p + 2
+            alloc v := 0.0
+            loop p < n {
+                alloc d := b[p]
+                if d == 95 {
+                    p := p + 1
+                    continue
+                }
+                alloc h := hex_val(d)
+                if h < 0 or h >= base {
+                    break
+                }
+                v := v * base + h
+                p := p + 1
+            }
+            if p < n and b[p] == 110 {
+                p := p + 1
+            }
+            tk := T_NUM
+            tv := v
+            pos := p
+            return true
+        }
+    }
+    alloc under := false
+    loop p < n and ((b[p] >= 48 and b[p] <= 57) or b[p] == 95) {
+        if b[p] == 95 {
+            under := true
+        }
+        p := p + 1
+    }
+    alloc whole := true
+    if p < n and b[p] == 46 {
+        whole := false
+        p := p + 1
+        loop p < n and ((b[p] >= 48 and b[p] <= 57) or b[p] == 95) {
+            p := p + 1
+        }
+    }
+    if p < n and (b[p] | 32) == 101 {
+        alloc q := p + 1
+        if q < n and (b[q] == 43 or b[q] == 45) {
+            q := q + 1
+        }
+        if q < n and b[q] >= 48 and b[q] <= 57 {
+            whole := false
+            p := q
+            loop p < n and b[p] >= 48 and b[p] <= 57 {
+                p := p + 1
+            }
+        }
+    }
+    alloc text := bytes_to_string(b[start:p])
+    if under {
+        alloc clean := []
+        for ch in b[start:p] {
+            if ch != 95 {
+                append(clean, ch)
+            }
+        }
+        text := bytes_to_string(clean)
+    }
+    if p < n and b[p] == 110 {
+        p := p + 1
+    }
+    alloc val := 0.0
+    if whole and p - start < 16 {
+        val := int(text) * 1.0
+    } else {
+        if b[start] == 46 {
+            text := "0" + text
+        }
+        if b[p - 1] == 46 {
+            text := text + "0"
+        }
+        val := float(text) * 1.0
+    }
+    tk := T_NUM
+    tv := val
+    pos := p
+    return true
+}
+
+proc scan_string(p) {
+    alloc b := B
+    alloc n := N
+    alloc q := b[p]
+    alloc s := p + 1
+    alloc i := s
+    # most strings have nothing odd in them
+    loop i < n {
+        alloc c := b[i]
+        if c == q or c == 92 or c == 10 {
+            break
+        }
+        i := i + 1
+    }
+    if i >= n {
+        fail("a string is not closed")
+    }
+    if b[i] == q {
+        tk := T_STR
+        tv := bytes_to_string(b[s:i])
+        pos := i + 1
+        return true
+    }
+    alloc out := []
+    alloc k := s
+    loop k < i {
+        append(out, b[k])
+        k := k + 1
+    }
+    loop i < n {
+        alloc c2 := b[i]
+        if c2 == q {
+            break
+        }
+        if c2 == 92 {
+            read_escape(out, i + 1)
+            i := esc_end
+        } elif c2 == 10 {
+            fail("a string is not closed")
+        } else {
+            append(out, c2)
+            i := i + 1
+        }
+    }
+    if i >= n {
+        fail("a string is not closed")
+    }
+    tk := T_STR
+    tv := bytes_to_string(out)
+    pos := i + 1
+    return true
+}
+
+# Read the next token into tk, tv, tnl, tstart.
+proc next() {
+    alloc b := B
+    alloc n := N
+    alloc p := pos
+    alloc nl := false
+    loop p < n {
+        alloc c := b[p]
+        if c == 32 or c == 9 or c == 13 or c == 11 or c == 12 {
+            p := p + 1
+        } elif c == 10 {
+            nl := true
+            line := line + 1
+            p := p + 1
+        } elif c == 47 and p + 1 < n and b[p + 1] == 47 {
+            p := p + 2
+            loop p < n and b[p] != 10 {
+                p := p + 1
+            }
+        } elif c == 47 and p + 1 < n and b[p + 1] == 42 {
+            p := p + 2
+            loop p + 1 < n and (b[p] != 42 or b[p + 1] != 47) {
+                if b[p] == 10 {
+                    nl := true
+                    line := line + 1
+                }
+                p := p + 1
+            }
+            p := p + 2
+        } elif c == 194 and p + 1 < n and b[p + 1] == 160 {
+            p := p + 2
+        } elif c == 226 and p + 2 < n and b[p + 1] == 128 and (b[p + 2] == 168 or b[p + 2] == 169) {
+            nl := true
+            p := p + 3
+        } elif c == 239 and p + 2 < n and b[p + 1] == 187 and b[p + 2] == 191 {
+            p := p + 3
+        } elif c == 60 and p + 3 < n and b[p + 1] == 33 and b[p + 2] == 45 and b[p + 3] == 45 {
+            # "<!--" hides the rest of a line, a habit of old pages
+            loop p < n and b[p] != 10 {
+                p := p + 1
+            }
+        } elif c == 45 and nl and p + 2 < n and b[p + 1] == 45 and b[p + 2] == 62 {
+            loop p < n and b[p] != 10 {
+                p := p + 1
+            }
+        } elif c == 35 and p == 0 and p + 1 < n and b[p + 1] == 33 {
+            loop p < n and b[p] != 10 {
+                p := p + 1
+            }
+        } else {
+            break
+        }
+    }
+    tnl := nl
+    tstart := p
+    tline := line
+    if p >= n {
+        tk := T_EOF
+        tv := ""
+        pos := p
+        return true
+    }
+    alloc c0 := b[p]
+    if is_id_start(c0) {
+        alloc e := p + 1
+        alloc plain := c0 != 92
+        loop e < n and is_id_part(b[e]) {
+            if b[e] == 92 {
+                plain := false
+            }
+            e := e + 1
+        }
+        alloc text := ""
+        if plain {
+            text := bytes_to_string(b[p:e])
+        } else {
+            # a name spelt with \u escapes
+            alloc out := []
+            alloc i := p
+            loop i < e {
+                if b[i] == 92 {
+                    read_escape(out, i + 1)
+                    i := esc_end
+                } else {
+                    append(out, b[i])
+                    i := i + 1
+                }
+            }
+            text := bytes_to_string(out)
+        }
+        if plain and has_key(KEYWORDS, text) {
+            tk := T_KW
+        } else {
+            tk := T_ID
+        }
+        tv := text
+        pos := e
+        return true
+    }
+    if (c0 >= 48 and c0 <= 57) or (c0 == 46 and p + 1 < n and b[p + 1] >= 48 and b[p + 1] <= 57) {
+        return scan_number(p)
+    }
+    if c0 == 34 or c0 == 39 {
+        return scan_string(p)
+    }
+    if c0 == 96 {
+        tk := T_TPL
+        tv := "`"
+        pos := p + 1
+        return true
+    }
+    if c0 == 35 {
+        alloc e2 := p + 1
+        loop e2 < n and is_id_part(b[e2]) {
+            e2 := e2 + 1
+        }
+        tk := T_PRIV
+        tv := bytes_to_string(b[p:e2])
+        pos := e2
+        return true
+    }
+    tk := T_P
+    # ( ) [ ] { } ; , : ~ stand alone
+    if c0 == 40 or c0 == 41 or c0 == 91 or c0 == 93 or c0 == 123 or c0 == 125 or c0 == 59 or c0 == 44 or c0 == 58 or c0 == 126 {
+        tv := ONE[c0]
+        pos := p + 1
+        return true
+    }
+    if c0 >= 128 {
+        fail("a character that does not belong here")
+    }
+    alloc len := 4
+    if p + len > n {
+        len := n - p
+    }
+    loop len > 1 {
+        alloc s := bytes_to_string(b[p:p + len])
+        if has_key(PUNCT, s) {
+            # "a?.5:b" is a conditional, not a chain
+            if s == "?." and p + 2 < n and b[p + 2] >= 48 and b[p + 2] <= 57 {
+                len := len - 1
+                continue
+            }
+            tv := s
+            pos := p + len
+            return true
+        }
+        len := len - 1
+    }
+    alloc s1 := ONE[c0]
+    if has_key(PUNCT, s1) == false {
+        fail("unexpected character " + s1)
+    }
+    tv := s1
+    pos := p + 1
+    return true
+}
+
+# The current token is a "/" or "/=" that starts a regular expression:
+# read it again as one.
+proc rescan_regex() {
+    alloc b := B
+    alloc n := N
+    alloc p := tstart + 1
+    alloc in_class := false
+    loop p < n {
+        alloc c := b[p]
+        if c == 10 {
+            fail("a regular expression is not closed")
+        }
+        if c == 92 {
+            p := p + 2
+            continue
+        }
+        if c == 91 {
+            in_class := true
+        } elif c == 93 {
+            in_class := false
+        } elif c == 47 and in_class == false {
+            break
+        }
+        p := p + 1
+    }
+    if p >= n {
+        fail("a regular expression is not closed")
+    }
+    alloc pattern := bytes_to_string(b[tstart + 1:p])
+    p := p + 1
+    alloc f := p
+    loop p < n and is_id_part(b[p]) {
+        p := p + 1
+    }
+    tk := T_REGEX
+    tv := [pattern, bytes_to_string(b[f:p])]
+    pos := p
+    return true
+}
+
+proc mark() {
+    return [pos, tk, tv, tnl, tstart, line, tline]
+}
+
+proc reset(m) {
+    pos := m[0]
+    tk := m[1]
+    tv := m[2]
+    tnl := m[3]
+    tstart := m[4]
+    line := m[5]
+    tline := m[6]
+    return true
+}
+
+# --- small things the parser asks all the time ------------------------------------------
+
+proc is_p(s) {
+    return tk == T_P and tv == s
+}
+
+proc is_kw(s) {
+    return tk == T_KW and tv == s
+}
+
+proc is_id(s) {
+    return tk == T_ID and tv == s
+}
+
+proc eat_p(s) {
+    if tk == T_P and tv == s {
+        next()
+        return true
+    }
+    return false
+}
+
+proc tok_text() {
+    if tk == T_EOF {
+        return "the end of the script"
+    }
+    if tk == T_NUM {
+        return "a number"
+    }
+    if tk == T_STR {
+        return "a string"
+    }
+    if tk == T_REGEX {
+        return "a regular expression"
+    }
+    return "" + tv
+}
+
+proc expect_p(s) {
+    if tk == T_P and tv == s {
+        next()
+        return true
+    }
+    fail("expected " + s + " but found " + tok_text())
+}
+
+# A statement ends at a ";", at a "}", at the end, or where a line ends.
+proc semi() {
+    if tk == T_P and tv == ";" {
+        next()
+        return true
+    }
+    if (tk == T_P and tv == "}") or tk == T_EOF or tnl {
+        return true
+    }
+    fail("unexpected " + tok_text())
+}
+
+alloc no_in := false           # inside the head of a for: "in" is not an operator
+alloc in_gen := false          # inside a generator: yield is an operator
+alloc in_async := false        # inside an async function: await is an operator
+alloc strict := false
+
+# --- expressions ------------------------------------------------------------------------
+
+proc num_key(v) {
+    if v < 1000000000000000.0 and v > -1000000000000000.0 and v == floor(v) {
+        return "" + int(v)
+    }
+    return "" + v
+}
+
+# A template literal; the opening ` has been read (pos is after it).
+# Returns [cooked strings, raw strings, expressions].
+proc template_parts() {
+    alloc b := B
+    alloc n := N
+    alloc cooked := []
+    alloc raws := []
+    alloc exprs := []
+    alloc p := pos
+    loop true {
+        alloc out := []
+        alloc rs := p
+        loop p < n {
+            alloc c := b[p]
+            if c == 96 {
+                break
+            }
+            if c == 36 and p + 1 < n and b[p + 1] == 123 {
+                break
+            }
+            if c == 92 {
+                read_escape(out, p + 1)
+                p := esc_end
+            } elif c == 13 {
+                # a line end in a template is always \n
+                append(out, 10)
+                p := p + 1
+                if p < n and b[p] == 10 {
+                    p := p + 1
+                }
+                line := line + 1
+            } else {
+                if c == 10 {
+                    line := line + 1
+                }
+                append(out, c)
+                p := p + 1
+            }
+        }
+        if p >= n {
+            fail("a template is not closed")
+        }
+        append(cooked, bytes_to_string(out))
+        append(raws, bytes_to_string(b[rs:p]))
+        if b[p] == 96 {
+            pos := p + 1
+            next()
+            return [cooked, raws, exprs]
+        }
+        pos := p + 2
+        next()
+        alloc old_in := no_in
+        no_in := false
+        append(exprs, expression())
+        no_in := old_in
+        if is_p("}") == false {
+            fail("expected } in a template")
+        }
+        # the scanning goes on right after the }
+        p := pos
+    }
+}
+
+proc property_key() {
+    # returns [key, computed]; a key that is not computed is a string
+    if tk == T_ID or tk == T_KW or tk == T_STR or tk == T_PRIV {
+        alloc k := tv
+        next()
+        return [k, false]
+    }
+    if tk == T_NUM {
+        alloc k2 := num_key(tv)
+        next()
+        return [k2, false]
+    }
+    if is_p("[") {
+        next()
+        alloc old_in := no_in
+        no_in := false
+        alloc e := assign()
+        no_in := old_in
+        expect_p("]")
+        return [e, true]
+    }
+    fail("expected a property name but found " + tok_text())
+}
+
+# The parameters of a function, the "(" being the current token.
+proc parameters() {
+    expect_p("(")
+    alloc ps := []
+    loop is_p(")") == false {
+        if is_p("...") {
+            next()
+            append(ps, [N_SPREAD, binding_target()])
+        } else {
+            alloc t := binding_target()
+            if eat_p("=") {
+                alloc old_in := no_in
+                no_in := false
+                t := [N_ASSIGN, "=", t, assign()]
+                no_in := old_in
+            }
+            append(ps, t)
+        }
+        if eat_p(",") == false {
+            break
+        }
+    }
+    expect_p(")")
+    return ps
+}
+
+# The statements between { and } of a function.
+proc function_body(flags) {
+    alloc old_gen := in_gen
+    alloc old_async := in_async
+    alloc old_in := no_in
+    alloc old_strict := strict
+    in_gen := (flags & F_GEN) != 0
+    in_async := (flags & F_ASYNC) != 0
+    no_in := false
+    expect_p("{")
+    alloc body := []
+    alloc first := true
+    loop is_p("}") == false {
+        if tk == T_EOF {
+            fail("a function is not closed")
+        }
+        if first and tk == T_STR and tv == "use strict" {
+            strict := true
+        }
+        if tk != T_STR {
+            first := false
+        }
+        append(body, statement())
+    }
+    alloc was_strict := strict
+    in_gen := old_gen
+    in_async := old_async
+    no_in := old_in
+    strict := old_strict
+    next()
+    return [body, was_strict]
+}
+
+# A function, from its parameters on; `name` is "" when it has none.
+proc function_rest(name, flags) {
+    alloc ln := tline
+    alloc old_args := saw_args
+    saw_args := false
+    nfn := nfn + 1
+    alloc n0 := nfn
+    alloc old_gen := in_gen
+    alloc old_async := in_async
+    # parameters may hold yield and await as names or as operators
+    in_gen := (flags & F_GEN) != 0
+    in_async := (flags & F_ASYNC) != 0
+    alloc ps := parameters()
+    in_gen := old_gen
+    in_async := old_async
+    alloc fb := function_body(flags)
+    if fb[1] or strict {
+        flags := flags | F_STRICT
+    }
+    alloc node := [N_FUNC, name, ps, fb[0], flags, nfn != n0, saw_args, ln]
+    saw_args := old_args
+    return node
+}
+
+# "function" is the current token.
+proc function_expr(flags, is_decl) {
+    next()
+    if eat_p("*") {
+        flags := flags | F_GEN
+    }
+    alloc name := ""
+    if tk == T_ID {
+        name := tv
+        next()
+    } elif is_decl {
+        fail("a function needs a name")
+    }
+    if is_decl == false {
+        flags := flags | F_EXPR
+    }
+    return function_rest(name, flags)
+}
+
+proc arrow_from(items, flags) {
+    # items are expressions that have to be read again as parameters;
+    # the tree has one shape for both
+    next()
+    alloc ln := tline
+    nfn := nfn + 1
+    alloc n0 := nfn
+    alloc plain := true
+    for it in items {
+        if it[0] != N_ID {
+            plain := false
+        }
+    }
+    alloc old_gen := in_gen
+    alloc old_async := in_async
+    alloc f := flags | F_ARROW
+    if strict {
+        f := f | F_STRICT
+    }
+    if is_p("{") {
+        alloc fb := function_body(f & F_ASYNC)
+        if fb[1] {
+            f := f | F_STRICT
+        }
+        return [N_FUNC, "", items, fb[0], f, nfn != n0 or plain == false, false, ln]
+    }
+    in_gen := false
+    in_async := (f & F_ASYNC) != 0
+    alloc e := assign()
+    in_gen := old_gen
+    in_async := old_async
+    return [N_FUNC, "", items, [[S_RETURN, e, ln]], f, nfn != n0 or plain == false, false, ln]
+}
+
+proc class_expr(is_decl) {
+    nfn := nfn + 1
+    alloc cln := tline
+    next()
+    alloc name := ""
+    if tk == T_ID and (tv != "extends") {
+        name := tv
+        next()
+    } elif is_decl {
+        fail("a class needs a name")
+    }
+    alloc parent := false
+    if is_kw("extends") {
+        next()
+        parent := lhs()
+    }
+    expect_p("{")
+    alloc members := []
+    alloc old_strict := strict
+    strict := true
+    loop is_p("}") == false {
+        if eat_p(";") {
+            continue
+        }
+        if tk == T_EOF {
+            fail("a class is not closed")
+        }
+        alloc is_static := false
+        if is_id("static") {
+            alloc m := mark()
+            next()
+            if is_p("(") or is_p("=") or is_p(";") or is_p("}") {
+                reset(m)
+            } elif is_p("{") {
+                # static { ... }
+                alloc fb := function_body(0)
+                append(members, [4, "", [N_FUNC, "", [], fb[0], F_METHOD | F_STRICT, true, false, tline], false, true])
+                continue
+            } else {
+                is_static := true
+            }
+        }
+        alloc kind := 0
+        alloc flags := F_METHOD | F_STRICT
+        if is_id("async") {
+            alloc m2 := mark()
+            next()
+            if is_p("(") or is_p("=") or is_p(";") or is_p("}") or tnl {
+                reset(m2)
+            } else {
+                flags := flags | F_ASYNC
+            }
+        }
+        if is_p("*") {
+            next()
+            flags := flags | F_GEN
+        }
+        if (is_id("get") or is_id("set")) and (flags & (F_ASYNC | F_GEN)) == 0 {
+            alloc m3 := mark()
+            alloc which := tv
+            next()
+            if is_p("(") or is_p("=") or is_p(";") or is_p("}") {
+                reset(m3)
+            } elif which == "get" {
+                kind := 1
+            } else {
+                kind := 2
+            }
+        }
+        alloc pk := property_key()
+        if is_p("(") {
+            alloc fname := ""
+            if pk[1] == false {
+                fname := pk[0]
+            }
+            if kind == 0 and is_static == false and pk[1] == false and pk[0] == "constructor" {
+                flags := (flags & ~F_METHOD) | F_CTOR
+                if parent != false {
+                    flags := flags | F_DERIVED
+                }
+                fname := name
+            }
+            append(members, [kind, pk[0], function_rest(fname, flags), pk[1], is_static])
+        } else {
+            # a field
+            alloc init := false
+            if eat_p("=") {
+                alloc old_async := in_async
+                alloc old_gen := in_gen
+                in_async := false
+                in_gen := false
+                init := assign()
+                in_async := old_async
+                in_gen := old_gen
+            }
+            semi()
+            append(members, [3, pk[0], init, pk[1], is_static])
+        }
+    }
+    strict := old_strict
+    next()
+    return [N_CLASS, name, parent, members, cln]
+}
+
+proc object_literal() {
+    next()
+    alloc props := []
+    alloc old_in := no_in
+    no_in := false
+    loop is_p("}") == false {
+        if is_p("...") {
+            next()
+            append(props, [3, "", assign(), false])
+        } else {
+            alloc flags := F_METHOD
+            alloc kind := 0
+            alloc is_method := false
+            if is_id("async") {
+                alloc m := mark()
+                next()
+                if is_p("(") or is_p(":") or is_p(",") or is_p("}") or is_p("=") or tnl {
+                    reset(m)
+                } else {
+                    flags := flags | F_ASYNC
+                    is_method := true
+                }
+            }
+            if is_p("*") {
+                next()
+                flags := flags | F_GEN
+                is_method := true
+            }
+            if (is_id("get") or is_id("set")) and is_method == false {
+                alloc m2 := mark()
+                alloc which := tv
+                next()
+                if is_p("(") or is_p(":") or is_p(",") or is_p("}") or is_p("=") {
+                    reset(m2)
+                } elif which == "get" {
+                    kind := 1
+                } else {
+                    kind := 2
+                }
+            }
+            alloc was_id := tk == T_ID
+            alloc pk := property_key()
+            if is_p("(") {
+                alloc fname := ""
+                if pk[1] == false {
+                    fname := pk[0]
+                }
+                if strict {
+                    flags := flags | F_STRICT
+                }
+                append(props, [kind, pk[0], function_rest(fname, flags), pk[1]])
+            } elif eat_p(":") {
+                append(props, [0, pk[0], assign(), pk[1]])
+            } elif was_id and pk[1] == false {
+                # { a } and, in a pattern, { a = 1 }
+                alloc v := [N_ID, pk[0]]
+                if eat_p("=") {
+                    v := [N_ASSIGN, "=", v, assign()]
+                }
+                append(props, [0, pk[0], v, false])
+            } else {
+                fail("unexpected " + tok_text() + " in an object")
+            }
+        }
+        if eat_p(",") == false {
+            break
+        }
+    }
+    no_in := old_in
+    expect_p("}")
+    return [N_OBJ, props]
+}
+
+proc array_literal() {
+    next()
+    alloc items := []
+    alloc old_in := no_in
+    no_in := false
+    loop is_p("]") == false {
+        if is_p(",") {
+            next()
+            append(items, false)
+            continue
+        }
+        if is_p("...") {
+            next()
+            append(items, [N_SPREAD, assign()])
+        } else {
+            append(items, assign())
+        }
+        if eat_p(",") == false {
+            break
+        }
+    }
+    no_in := old_in
+    expect_p("]")
+    return [N_ARR, items]
+}
+
+proc arguments() {
+    # "(" is the current token
+    next()
+    alloc args := []
+    alloc old_in := no_in
+    no_in := false
+    loop is_p(")") == false {
+        if is_p("...") {
+            next()
+            append(args, [N_SPREAD, assign()])
+        } else {
+            append(args, assign())
+        }
+        if eat_p(",") == false {
+            break
+        }
+    }
+    no_in := old_in
+    expect_p(")")
+    return args
+}
+
+proc paren() {
+    next()
+    if is_p(")") {
+        next()
+        if is_p("=>") == false {
+            fail("unexpected )")
+        }
+        return arrow_from([], 0)
+    }
+    alloc items := []
+    alloc spread := false
+    alloc old_in := no_in
+    no_in := false
+    loop true {
+        if is_p("...") {
+            next()
+            append(items, [N_SPREAD, binding_target()])
+            spread := true
+        } else {
+            append(items, assign())
+        }
+        if eat_p(",") {
+            if is_p(")") {
+                break
+            }
+            continue
+        }
+        break
+    }
+    no_in := old_in
+    expect_p(")")
+    if is_p("=>") and tnl == false {
+        return arrow_from(items, 0)
+    }
+    if spread {
+        fail("unexpected ...")
+    }
+    if length(items) == 1 {
+        alloc one := items[0]
+        # (a?.b).c is not part of the chain inside the brackets
+        return one
+    }
+    return [N_SEQ, items]
+}
+
+proc primary() {
+    alloc k := tk
+    if k == T_ID {
+        alloc name := tv
+        next()
+        if name == "arguments" {
+            saw_args := true
+        }
+        if name == "async" and tnl == false {
+            if is_kw("function") {
+                return function_expr(F_ASYNC, false)
+            }
+            if tk == T_ID and tv != "of" {
+                # async x => ...
+                alloc m := mark()
+                alloc pname := tv
+                next()
+                if is_p("=>") and tnl == false {
+                    return arrow_from([[N_ID, pname]], F_ASYNC)
+                }
+                reset(m)
+            }
+        }
+        return [N_ID, name]
+    }
+    if k == T_NUM {
+        alloc v := tv
+        next()
+        return [N_NUM, v]
+    }
+    if k == T_STR {
+        alloc s := tv
+        next()
+        return [N_STR, s]
+    }
+    if k == T_TPL {
+        alloc parts := template_parts()
+        return [N_TPL, parts[0], parts[2]]
+    }
+    if k == T_P {
+        alloc p := tv
+        if p == "(" {
+            return paren()
+        }
+        if p == "[" {
+            return array_literal()
+        }
+        if p == "{" {
+            return object_literal()
+        }
+        if p == "/" or p == "/=" {
+            rescan_regex()
+            alloc r := tv
+            next()
+            return [N_REGEX, r[0], r[1]]
+        }
+    }
+    if k == T_KW {
+        alloc w := tv
+        if w == "this" {
+            next()
+            return [N_THIS]
+        }
+        if w == "null" {
+            next()
+            return [N_NULL]
+        }
+        if w == "true" {
+            next()
+            return [N_TRUE]
+        }
+        if w == "false" {
+            next()
+            return [N_FALSE]
+        }
+        if w == "function" {
+            return function_expr(0, false)
+        }
+        if w == "class" {
+            return class_expr(false)
+        }
+        if w == "super" {
+            next()
+            return [N_SUPER]
+        }
+        if w == "new" {
+            return new_expr()
+        }
+        if w == "import" {
+            fail("import is not supported")
+        }
+    }
+    if k == T_PRIV {
+        # #name in obj
+        alloc pn := tv
+        next()
+        return [N_STR, pn]
+    }
+    fail("unexpected " + tok_text())
+}
+
+proc new_expr() {
+    alloc ln := tline
+    next()
+    if is_p(".") {
+        next()
+        if is_id("target") == false {
+            fail("expected new.target")
+        }
+        next()
+        return [N_NEWTARGET]
+    }
+    alloc callee := false
+    if is_kw("new") {
+        callee := new_expr()
+    } else {
+        callee := primary()
+    }
+    # the things that bind tighter than the call
+    loop true {
+        if is_p(".") {
+            next()
+            if tk != T_ID and tk != T_KW and tk != T_PRIV {
+                fail("expected a property name")
+            }
+            callee := [N_MEMBER, callee, tv, false]
+            next()
+        } elif is_p("[") {
+            next()
+            alloc old_in := no_in
+            no_in := false
+            alloc e := expression()
+            no_in := old_in
+            expect_p("]")
+            callee := [N_INDEX, callee, e, false]
+        } else {
+            break
+        }
+    }
+    alloc args := []
+    if is_p("(") {
+        args := arguments()
+    }
+    return [N_NEW, callee, args, ln]
+}
+
+# A primary with what may follow it: .x [x] (x) `x` ?.x
+proc lhs() {
+    alloc e := primary()
+    alloc chain := false
+    loop true {
+        if tk == T_P {
+            alloc p := tv
+            if p == "." {
+                next()
+                if tk != T_ID and tk != T_KW and tk != T_PRIV {
+                    fail("expected a property name but found " + tok_text())
+                }
+                e := [N_MEMBER, e, tv, false]
+                next()
+                continue
+            }
+            if p == "(" {
+                alloc cl := tline
+                alloc args := arguments()
+                if is_p("=>") and tnl == false and e[0] == N_ID and e[1] == "async" {
+                    return arrow_from(args, F_ASYNC)
+                }
+                e := [N_CALL, e, args, false, cl]
+                continue
+            }
+            if p == "[" {
+                next()
+                alloc old_in := no_in
+                no_in := false
+                alloc ix := expression()
+                no_in := old_in
+                expect_p("]")
+                e := [N_INDEX, e, ix, false]
+                continue
+            }
+            if p == "?." {
+                next()
+                chain := true
+                if is_p("(") {
+                    alloc cl2 := tline
+                    e := [N_CALL, e, arguments(), true, cl2]
+                } elif is_p("[") {
+                    next()
+                    alloc old_in2 := no_in
+                    no_in := false
+                    alloc ix2 := expression()
+                    no_in := old_in2
+                    expect_p("]")
+                    e := [N_INDEX, e, ix2, true]
+                } else {
+                    if tk != T_ID and tk != T_KW and tk != T_PRIV {
+                        fail("expected a property name but found " + tok_text())
+                    }
+                    e := [N_MEMBER, e, tv, true]
+                    next()
+                }
+                continue
+            }
+        } elif tk == T_TPL {
+            alloc parts := template_parts()
+            e := [N_TAGTPL, e, parts[0], parts[1], parts[2]]
+            continue
+        }
+        break
+    }
+    if chain {
+        return [N_OPTCHAIN, e]
+    }
+    return e
+}
+
+proc unary() {
+    if tk == T_P {
+        alloc p := tv
+        if p == "!" or p == "-" or p == "+" or p == "~" {
+            next()
+            alloc arg := unary()
+            if p == "-" and arg[0] == N_NUM {
+                return [N_NUM, 0.0 - arg[1]]
+            }
+            return [N_UNARY, p, arg]
+        }
+        if p == "++" or p == "--" {
+            next()
+            return [N_UPDATE, p, true, unary()]
+        }
+    } elif tk == T_KW {
+        alloc w := tv
+        if w == "typeof" or w == "void" or w == "delete" {
+            next()
+            return [N_UNARY, w, unary()]
+        }
+    } elif tk == T_ID and tv == "await" and in_async {
+        next()
+        return [N_AWAIT, unary()]
+    }
+    alloc e := lhs()
+    if tk == T_P and (tv == "++" or tv == "--") and tnl == false {
+        alloc op := tv
+        next()
+        return [N_UPDATE, op, false, e]
+    }
+    return e
+}
+
+proc binop(minprec) {
+    alloc left := unary()
+    loop true {
+        alloc op := ""
+        alloc prec := 0
+        if tk == T_P {
+            if has_key(BINPREC, tv) {
+                op := tv
+                prec := BINPREC[op]
+            }
+        } elif tk == T_KW {
+            if tv == "instanceof" or (tv == "in" and no_in == false) {
+                op := tv
+                prec := 8
+            }
+        }
+        if prec == 0 or prec < minprec {
+            break
+        }
+        next()
+        alloc right := false
+        if op == "**" {
+            right := binop(prec)
+        } else {
+            right := binop(prec + 1)
+        }
+        if op == "&&" or op == "||" or op == "??" {
+            left := [N_LOGICAL, op, left, right]
+        } else {
+            left := [N_BINARY, op, left, right]
+        }
+    }
+    return left
+}
+
+proc assign() {
+    if tk == T_ID and tv == "yield" and in_gen {
+        next()
+        if tnl or is_p(")") or is_p("]") or is_p("}") or is_p(",") or is_p(";") or is_p(":") or tk == T_EOF or is_kw("in") {
+            return [N_YIELD, false, false]
+        }
+        if eat_p("*") {
+            return [N_YIELD, assign(), true]
+        }
+        return [N_YIELD, assign(), false]
+    }
+    alloc left := binop(0)
+    if tk == T_P {
+        alloc p := tv
+        if p == "?" {
+            next()
+            alloc old_in := no_in
+            no_in := false
+            alloc a := assign()
+            no_in := old_in
+            expect_p(":")
+            alloc b := assign()
+            return [N_COND, left, a, b]
+        }
+        if p == "=>" and tnl == false and left[0] == N_ID {
+            return arrow_from([left], 0)
+        }
+        if has_key(ASSIGN_OPS, p) {
+            alloc t := left[0]
+            if t != N_ID and t != N_MEMBER and t != N_INDEX and ((t != N_ARR and t != N_OBJ) or p != "=") {
+                fail("this cannot be assigned to")
+            }
+            next()
+            return [N_ASSIGN, p, left, assign()]
+        }
+    }
+    return left
+}
+
+proc expression() {
+    alloc e := assign()
+    if is_p(",") {
+        alloc items := [e]
+        loop eat_p(",") {
+            append(items, assign())
+        }
+        return [N_SEQ, items]
+    }
+    return e
+}
+
+# --- declarations and patterns ------------------------------------------------------
+
+# What a declaration or a parameter gives a value to: a name, or a
+# pattern that takes a value apart. Patterns have the shape of the
+# array and object literals they look like.
+proc binding_target() {
+    if tk == T_ID {
+        alloc name := tv
+        next()
+        return [N_ID, name]
+    }
+    if is_p("[") {
+        next()
+        alloc items := []
+        loop is_p("]") == false {
+            if is_p(",") {
+                next()
+                append(items, false)
+                continue
+            }
+            if is_p("...") {
+                next()
+                append(items, [N_SPREAD, binding_target()])
+            } else {
+                alloc t := binding_target()
+                if eat_p("=") {
+                    alloc old_in := no_in
+                    no_in := false
+                    t := [N_ASSIGN, "=", t, assign()]
+                    no_in := old_in
+                }
+                append(items, t)
+            }
+            if eat_p(",") == false {
+                break
+            }
+        }
+        expect_p("]")
+        return [N_ARR, items]
+    }
+    if is_p("{") {
+        next()
+        alloc props := []
+        loop is_p("}") == false {
+            if is_p("...") {
+                next()
+                append(props, [3, "", binding_target(), false])
+            } else {
+                alloc was_id := tk == T_ID
+                alloc pk := property_key()
+                alloc t2 := false
+                if eat_p(":") {
+                    t2 := binding_target()
+                } elif was_id and pk[1] == false {
+                    t2 := [N_ID, pk[0]]
+                } else {
+                    fail("expected : in a pattern")
+                }
+                if eat_p("=") {
+                    alloc old_in2 := no_in
+                    no_in := false
+                    t2 := [N_ASSIGN, "=", t2, assign()]
+                    no_in := old_in2
+                }
+                append(props, [0, pk[0], t2, pk[1]])
+            }
+            if eat_p(",") == false {
+                break
+            }
+        }
+        expect_p("}")
+        return [N_OBJ, props]
+    }
+    fail("expected a name but found " + tok_text())
+}
+
+# var, let or const, the keyword being the current token.
+proc var_decl(kind) {
+    next()
+    alloc decls := []
+    loop true {
+        alloc t := binding_target()
+        alloc init := false
+        if eat_p("=") {
+            init := assign()
+        }
+        append(decls, [t, init])
+        if eat_p(",") == false {
+            break
+        }
+    }
+    return [S_VAR, kind, decls]
+}
+
+# Is the "let" that is the current token the start of a declaration?
+proc let_starts_decl() {
+    alloc m := mark()
+    next()
+    alloc yes := tk == T_ID or is_p("[") or is_p("{")
+    reset(m)
+    return yes
+}
+
+# --- statements ---------------------------------------------------------------------
+
+proc block() {
+    alloc n0 := nfn
+    expect_p("{")
+    alloc body := []
+    loop is_p("}") == false {
+        if tk == T_EOF {
+            fail("a block is not closed")
+        }
+        append(body, statement())
+    }
+    next()
+    return [S_BLOCK, body, nfn != n0]
+}
+
+proc paren_expr() {
+    expect_p("(")
+    alloc old_in := no_in
+    no_in := false
+    alloc e := expression()
+    no_in := old_in
+    expect_p(")")
+    return e
+}
+
+proc for_statement() {
+    alloc n0 := nfn
+    next()
+    alloc is_await := false
+    if is_id("await") {
+        next()
+        is_await := true
+    }
+    expect_p("(")
+    alloc init := false
+    if is_p(";") == false {
+        no_in := true
+        if is_kw("var") or is_kw("const") or (is_id("let") and let_starts_decl()) {
+            alloc kind := tv
+            next()
+            alloc target := binding_target()
+            if is_kw("in") {
+                no_in := false
+                next()
+                alloc obj := expression()
+                expect_p(")")
+                alloc b1 := statement()
+                return [S_FORIN, kind, target, obj, b1, nfn != n0]
+            }
+            if is_id("of") {
+                no_in := false
+                next()
+                alloc it := assign()
+                expect_p(")")
+                alloc b2 := statement()
+                return [S_FOROF, kind, target, it, b2, is_await, nfn != n0]
+            }
+            alloc decls := []
+            alloc first := false
+            if eat_p("=") {
+                first := assign()
+            }
+            append(decls, [target, first])
+            loop eat_p(",") {
+                alloc t2 := binding_target()
+                alloc i2 := false
+                if eat_p("=") {
+                    i2 := assign()
+                }
+                append(decls, [t2, i2])
+            }
+            init := [S_VAR, kind, decls]
+        } else {
+            alloc e := expression()
+            if is_kw("in") {
+                no_in := false
+                next()
+                alloc obj2 := expression()
+                expect_p(")")
+                alloc b3 := statement()
+                return [S_FORIN, "", e, obj2, b3, nfn != n0]
+            }
+            if is_id("of") {
+                no_in := false
+                next()
+                alloc it2 := assign()
+                expect_p(")")
+                alloc b4 := statement()
+                return [S_FOROF, "", e, it2, b4, is_await, nfn != n0]
+            }
+            init := [S_EXPR, e]
+        }
+        no_in := false
+    }
+    expect_p(";")
+    alloc test := false
+    if is_p(";") == false {
+        test := expression()
+    }
+    expect_p(";")
+    alloc update := false
+    if is_p(")") == false {
+        update := expression()
+    }
+    expect_p(")")
+    alloc b5 := statement()
+    return [S_FOR, init, test, update, b5, nfn != n0]
+}
+
+proc try_statement() {
+    next()
+    alloc body := block()
+    alloc param := false
+    alloc handler := false
+    alloc final := false
+    if is_kw("catch") {
+        next()
+        if eat_p("(") {
+            param := binding_target()
+            expect_p(")")
+        }
+        handler := block()
+    }
+    if is_kw("finally") {
+        next()
+        final := block()
+    }
+    if handler == false and final == false {
+        fail("try needs a catch or a finally")
+    }
+    return [S_TRY, body, param, handler, final]
+}
+
+proc switch_statement() {
+    alloc n0 := nfn
+    next()
+    alloc value := paren_expr()
+    expect_p("{")
+    alloc cases := []
+    loop is_p("}") == false {
+        alloc test := false
+        if is_kw("case") {
+            next()
+            test := expression()
+        } elif is_kw("default") {
+            next()
+        } else {
+            fail("expected case or default")
+        }
+        expect_p(":")
+        alloc body := []
+        loop is_p("}") == false and is_kw("case") == false and is_kw("default") == false {
+            if tk == T_EOF {
+                fail("a switch is not closed")
+            }
+            append(body, statement())
+        }
+        append(cases, [test, body])
+    }
+    next()
+    return [S_SWITCH, value, cases, nfn != n0]
+}
+
+# A statement, with the line it starts on as its last item.
+proc statement() {
+    alloc ln := tline
+    alloc s := statement1()
+    append(s, ln)
+    return s
+}
+
+proc statement1() {
+    if tk == T_P {
+        if tv == "{" {
+            return block()
+        }
+        if tv == ";" {
+            next()
+            return [S_EMPTY]
+        }
+    } elif tk == T_KW {
+        alloc k := tv
+        if k == "var" or k == "const" {
+            alloc d := var_decl(k)
+            semi()
+            return d
+        }
+        if k == "function" {
+            return [S_FUNC, function_expr(0, true)]
+        }
+        if k == "class" {
+            return [S_CLASS, class_expr(true)]
+        }
+        if k == "if" {
+            next()
+            alloc test := paren_expr()
+            alloc a := statement()
+            alloc b := false
+            if is_kw("else") {
+                next()
+                b := statement()
+            }
+            return [S_IF, test, a, b]
+        }
+        if k == "for" {
+            return for_statement()
+        }
+        if k == "while" {
+            next()
+            alloc wt := paren_expr()
+            return [S_WHILE, wt, statement()]
+        }
+        if k == "do" {
+            next()
+            alloc body := statement()
+            if is_kw("while") == false {
+                fail("expected while after do")
+            }
+            next()
+            alloc dt := paren_expr()
+            eat_p(";")
+            return [S_DOWHILE, body, dt]
+        }
+        if k == "return" {
+            next()
+            alloc rv := false
+            if is_p(";") == false and is_p("}") == false and tk != T_EOF and tnl == false {
+                rv := expression()
+            }
+            semi()
+            return [S_RETURN, rv]
+        }
+        if k == "break" or k == "continue" {
+            next()
+            alloc label := ""
+            if tk == T_ID and tnl == false {
+                label := tv
+                next()
+            }
+            semi()
+            if k == "break" {
+                return [S_BREAK, label]
+            }
+            return [S_CONTINUE, label]
+        }
+        if k == "throw" {
+            next()
+            if tnl {
+                fail("a line end after throw")
+            }
+            alloc tvl := expression()
+            semi()
+            return [S_THROW, tvl]
+        }
+        if k == "try" {
+            return try_statement()
+        }
+        if k == "switch" {
+            return switch_statement()
+        }
+        if k == "debugger" {
+            next()
+            semi()
+            return [S_EMPTY]
+        }
+        if k == "export" {
+            # no modules here, but what is exported is still declared
+            next()
+            if is_kw("default") {
+                next()
+                if is_kw("function") or is_kw("class") {
+                    return statement()
+                }
+                alloc de := assign()
+                semi()
+                return [S_EXPR, de]
+            }
+            if is_p("{") or is_p("*") {
+                loop tk != T_EOF and is_p(";") == false and tnl == false {
+                    next()
+                }
+                loop tk != T_EOF and is_p("}") == false and is_p(";") == false {
+                    next()
+                }
+                if is_p("}") {
+                    next()
+                    if is_id("from") {
+                        next()
+                        next()
+                    }
+                }
+                semi()
+                return [S_EMPTY]
+            }
+            return statement()
+        }
+        if k == "import" {
+            alloc m0 := mark()
+            next()
+            if is_p("(") == false and is_p(".") == false {
+                fail("import is not supported")
+            }
+            reset(m0)
+        }
+        if k == "with" {
+            fail("with is not supported")
+        }
+    } elif tk == T_ID {
+        alloc w := tv
+        if w == "let" and let_starts_decl() {
+            alloc ld := var_decl("let")
+            semi()
+            return ld
+        }
+        if w == "async" {
+            alloc m := mark()
+            next()
+            if is_kw("function") and tnl == false {
+                return [S_FUNC, function_expr(F_ASYNC, true)]
+            }
+            reset(m)
+        }
+        # a label?
+        alloc m2 := mark()
+        next()
+        if is_p(":") {
+            next()
+            return [S_LABEL, w, statement()]
+        }
+        reset(m2)
+    }
+    alloc e := expression()
+    semi()
+    return [S_EXPR, e]
+}
+
+# The statements of a script. `bytes` is its text.
+proc program(bytes) {
+    setup()
+    B := bytes
+    N := length(bytes)
+    pos := 0
+    line := 1
+    tline := 1
+    no_in := false
+    in_gen := false
+    in_async := false
+    strict := false
+    nfn := 0
+    saw_args := false
+    next()
+    alloc body := []
+    alloc first := true
+    loop tk != T_EOF {
+        if first and tk == T_STR and tv == "use strict" {
+            strict := true
+        }
+        if tk != T_STR {
+            first := false
+        }
+        append(body, statement())
+    }
+    return [body, strict, nfn != 0]
+}
+
+# The body of a function made by `new Function(parameters, body)`.
+proc function_text(params, body) {
+    alloc src := "(function anonymous(" + params + "\n) {\n" + body + "\n})"
+    alloc r := program(string_bytes(src))
+    return r[0][0][1]
+}

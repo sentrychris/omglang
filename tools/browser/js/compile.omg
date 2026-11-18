@@ -1,0 +1,2154 @@
+;;;omg
+
+# tools/browser/js/compile.omg
+#
+# JavaScript, from the tree parse.omg makes to the code core.omg runs.
+#
+#     alloc t := jscompile.script(tree, "page.js", false)
+#
+# A function becomes a "template":
+#
+#     [0] code      a list of numbers: an instruction, then what it needs
+#     [1] consts    the strings, numbers and inner templates it names
+#     [2] registers how many
+#     [3] params    how many arguments land in registers 0..n-1
+#     [4] flags     those of the parser, + 512 keeps its arguments,
+#                   + 1024 is a script
+#     [5] name
+#     [6] lines     pc, line, pc, line ...
+#     [7] source    the name of the file
+#     [8] length    what f.length says
+#     [9] names     pc of a call, what it calls, ... for "x is not a function"
+#
+# Where a variable lives is decided here. A function with no function
+# inside it keeps its variables in registers. One with functions
+# inside keeps them all in environment records, which the inner
+# functions hold on to; a block that declares variables and has a
+# function inside it gets a record of its own each time it is entered,
+# so that every turn of a loop gives its closures their own variables.
+# At the top of a script, variables are properties of the global
+# object.
+#
+# Not done: the "temporal dead zone" (a let read before its
+# declaration is undefined, not an error), and const is let.
+
+alloc N_NUM := 1
+alloc N_STR := 2
+alloc N_TPL := 3
+alloc N_TAGTPL := 4
+alloc N_REGEX := 5
+alloc N_ID := 6
+alloc N_THIS := 7
+alloc N_SUPER := 8
+alloc N_NULL := 9
+alloc N_TRUE := 10
+alloc N_FALSE := 11
+alloc N_ARR := 12
+alloc N_OBJ := 13
+alloc N_FUNC := 14
+alloc N_CLASS := 15
+alloc N_UNARY := 16
+alloc N_UPDATE := 17
+alloc N_BINARY := 18
+alloc N_LOGICAL := 19
+alloc N_ASSIGN := 20
+alloc N_COND := 21
+alloc N_CALL := 22
+alloc N_NEW := 23
+alloc N_MEMBER := 24
+alloc N_INDEX := 25
+alloc N_SEQ := 26
+alloc N_SPREAD := 27
+alloc N_YIELD := 28
+alloc N_AWAIT := 29
+alloc N_OPTCHAIN := 30
+alloc N_NEWTARGET := 31
+alloc S_EXPR := 50
+alloc S_VAR := 51
+alloc S_FUNC := 52
+alloc S_CLASS := 53
+alloc S_RETURN := 54
+alloc S_IF := 55
+alloc S_FOR := 56
+alloc S_FORIN := 57
+alloc S_FOROF := 58
+alloc S_WHILE := 59
+alloc S_DOWHILE := 60
+alloc S_BREAK := 61
+alloc S_CONTINUE := 62
+alloc S_THROW := 63
+alloc S_TRY := 64
+alloc S_SWITCH := 65
+alloc S_BLOCK := 66
+alloc S_LABEL := 67
+alloc S_EMPTY := 68
+
+# The instructions; core.omg says what each does.
+alloc OP_GETR := 0
+alloc OP_SETR := 1
+alloc OP_CONST := 2
+alloc OP_POP := 3
+alloc OP_GETE0 := 4
+alloc OP_SETE0 := 5
+alloc OP_GETP := 6
+alloc OP_CALL := 7
+alloc OP_JF := 8
+alloc OP_JMP := 9
+alloc OP_ADD := 10
+alloc OP_LT := 11
+alloc OP_GETEL := 12
+alloc OP_RET := 13
+alloc OP_GETG := 14
+alloc OP_GETM := 15
+alloc OP_GETE := 16
+alloc OP_SETE := 17
+alloc OP_SETP := 18
+alloc OP_SETEL := 19
+alloc OP_UNDEF := 20
+alloc OP_TRUE := 21
+alloc OP_FALSE := 22
+alloc OP_NULL := 23
+alloc OP_DUP := 24
+alloc OP_SUB := 25
+alloc OP_MUL := 26
+alloc OP_SEQ := 27
+alloc OP_SNE := 28
+alloc OP_INC := 29
+alloc OP_JT := 30
+alloc OP_THIS := 31
+alloc OP_DIV := 32
+alloc OP_MOD := 33
+alloc OP_EQ := 34
+alloc OP_NE := 35
+alloc OP_LE := 36
+alloc OP_GT := 37
+alloc OP_GE := 38
+alloc OP_NOT := 39
+alloc OP_NEG := 40
+alloc OP_AND := 41
+alloc OP_OR := 42
+alloc OP_COALESCE := 43
+alloc OP_TYPEOF := 44
+alloc OP_DEC := 45
+alloc OP_TONUM := 46
+alloc OP_SETG := 47
+alloc OP_NEWOBJ := 48
+alloc OP_NEWARR := 49
+alloc OP_INITP := 50
+alloc OP_APPEND := 51
+alloc OP_CLOSURE := 52
+alloc OP_NEW := 53
+alloc OP_RETU := 54
+alloc OP_DUP2 := 55
+alloc OP_SWAP := 56
+alloc OP_GETELM := 57
+alloc OP_BAND := 58
+alloc OP_BOR := 59
+alloc OP_BXOR := 60
+alloc OP_SHL := 61
+alloc OP_SHR := 62
+alloc OP_USHR := 63
+alloc OP_BNOT := 64
+alloc OP_PLUS := 65
+alloc OP_EXP := 66
+alloc OP_IN := 67
+alloc OP_INSTANCEOF := 68
+alloc OP_DELP := 69
+alloc OP_DELEL := 70
+alloc OP_TYPEOFG := 71
+alloc OP_DECLG := 72
+alloc OP_PUSHENV := 73
+alloc OP_POPENV := 74
+alloc OP_COPYENV := 75
+alloc OP_TRY := 76
+alloc OP_ENDTRY := 77
+alloc OP_THROW := 78
+alloc OP_SETRI := 79
+alloc OP_ENDFIN := 80
+alloc OP_GETITER := 81
+alloc OP_ITERNEXT := 82
+alloc OP_FORIN := 83
+alloc OP_ITERVAL := 84
+alloc OP_ITERREST := 85
+alloc OP_DEFAULT := 86
+alloc OP_OBJREST := 87
+alloc OP_INITEL := 88
+alloc OP_INITGET := 89
+alloc OP_INITSET := 90
+alloc OP_INITGETEL := 91
+alloc OP_INITSETEL := 92
+alloc OP_SPREADOBJ := 93
+alloc OP_APPENDSPREAD := 94
+alloc OP_CALLSPREAD := 95
+alloc OP_NEWSPREAD := 96
+alloc OP_CONCAT := 97
+alloc OP_REGEX := 98
+alloc OP_TPLOBJ := 99
+alloc OP_DEFCLASS := 100
+alloc OP_DEFMETHOD := 101
+alloc OP_DEFMETHODEL := 102
+alloc OP_GETSUPER := 103
+alloc OP_SUPERCALL := 104
+alloc OP_SUPERCALLSPREAD := 105
+alloc OP_CALLEE := 106
+alloc OP_ARGUMENTS := 107
+alloc OP_REST := 108
+alloc OP_NEWTARGET := 109
+alloc OP_YIELD := 110
+alloc OP_AWAIT := 111
+alloc OP_OPTJ := 112
+alloc OP_OPTJ2 := 113
+alloc OP_SETFIELDS := 114
+alloc OP_GETSUPEREL := 115
+alloc OP_NOP := 116
+alloc OP_STATICINIT := 117
+alloc OP_ROT3 := 118
+alloc OP_SETPROTO := 119
+alloc OP_THROWCONST := 120
+alloc OP_TOKEY := 121
+
+alloc BINOPS := {
+    "+": 10, "-": 25, "*": 26, "/": 32, "%": 33, "**": 66,
+    "==": 34, "!=": 35, "===": 27, "!==": 28,
+    "<": 11, "<=": 36, ">": 37, ">=": 38,
+    "&": 58, "|": 59, "^": 60, "<<": 61, ">>": 62, ">>>": 63,
+    "in": 67, "instanceof": 68
+}
+
+alloc ASSIGNOPS := {
+    "+=": 10, "-=": 25, "*=": 26, "/=": 32, "%=": 33, "**=": 66,
+    "&=": 58, "|=": 59, "^=": 60, "<<=": 61, ">>=": 62, ">>>=": 63
+}
+
+# --- the function being compiled -------------------------------------------------------
+
+alloc CODE := []
+alloc KS := []
+alloc KMAP := {}
+alloc NREG := 0
+alloc LINES := []
+alloc NAMES := []
+alloc LAST_LINE := 0
+alloc IS_ENV := false          # its variables live in environment records
+alloc IS_SCRIPT := false
+alloc FN_SCOPE := 0            # the index in SC of its outermost scope
+alloc CTRL := []               # what a break, continue or return has to get out of
+alloc NCTRL := 0
+alloc RRET := -1               # the register a return value waits in while finally blocks run
+alloc OPTS := false            # the jumps of the ?. chain being compiled
+alloc SRC := ""
+alloc SAVED := []              # the above, of the functions around this one
+alloc NSAVED := 0
+
+# Scopes, innermost last, through all the functions being compiled.
+# One is [names, owns a record?, slots in the record, where its
+# PUSHENV is, global?]; a name gives [0, register], [1, slot, index of
+# the scope whose record it is in] or [2].
+alloc SC := []
+alloc NSC := 0
+
+proc fail(msg) {
+    raise("SyntaxError: " + msg)
+}
+
+proc here() {
+    return length(CODE)
+}
+
+proc emit1(op) {
+    append(CODE, op)
+    return true
+}
+
+proc emit2(op, a) {
+    append(CODE, op)
+    append(CODE, a)
+    return true
+}
+
+proc emit3(op, a, b) {
+    append(CODE, op)
+    append(CODE, a)
+    append(CODE, b)
+    return true
+}
+
+# A jump whose target is not known yet; returns where to write it.
+proc jump(op) {
+    append(CODE, op)
+    append(CODE, 0)
+    return length(CODE) - 1
+}
+
+proc patch(at) {
+    CODE[at] := length(CODE)
+    return true
+}
+
+proc patch_all(list) {
+    alloc n := length(CODE)
+    for at in list {
+        CODE[at] := n
+    }
+    return true
+}
+
+proc kstr(s) {
+    alloc key := "s" + s
+    if has_key(KMAP, key) {
+        return KMAP[key]
+    }
+    append(KS, s)
+    KMAP[key] := length(KS) - 1
+    return length(KS) - 1
+}
+
+proc knum(f) {
+    alloc key := "n" + f
+    if has_key(KMAP, key) {
+        return KMAP[key]
+    }
+    append(KS, f)
+    KMAP[key] := length(KS) - 1
+    return length(KS) - 1
+}
+
+proc kany(v) {
+    append(KS, v)
+    return length(KS) - 1
+}
+
+proc new_reg() {
+    NREG := NREG + 1
+    return NREG - 1
+}
+
+proc mark(line) {
+    if line != LAST_LINE and line > 0 {
+        append(LINES, length(CODE))
+        append(LINES, line)
+        LAST_LINE := line
+    }
+    return true
+}
+
+# The line a statement is on (statement() of the parser put it last).
+proc line_of(s) {
+    alloc last := s[length(s) - 1]
+    if type_of(last) == 2 {
+        return last
+    }
+    return 0
+}
+
+# --- scopes -----------------------------------------------------------------------------
+
+proc push_scope(owns) {
+    alloc sc := [{}, owns, 1, -1, false]
+    if NSC < length(SC) {
+        SC[NSC] := sc
+    } else {
+        append(SC, sc)
+    }
+    NSC := NSC + 1
+    if owns {
+        sc[3] := jump(OP_PUSHENV)
+    }
+    return sc
+}
+
+proc pop_scope() {
+    NSC := NSC - 1
+    alloc sc := SC[NSC]
+    if sc[1] {
+        CODE[sc[3]] := sc[2] - 1
+    }
+    return true
+}
+
+# Declare `name` in scope number si; gives where it lives.
+proc declare_in(name, si) {
+    alloc sc := SC[si]
+    alloc names := sc[0]
+    if has_key(names, name) {
+        return names[name]
+    }
+    alloc entry := [2]
+    if sc[4] {
+        entry := [2]
+    } elif IS_ENV {
+        alloc j := si
+        loop j > FN_SCOPE and SC[j][1] == false {
+            j := j - 1
+        }
+        alloc owner := SC[j]
+        entry := [1, owner[2], j]
+        owner[2] := owner[2] + 1
+    } else {
+        entry := [0, new_reg()]
+    }
+    names[name] := entry
+    return entry
+}
+
+# The scope a let, const or class written here belongs to.
+proc lex_scope() {
+    if IS_SCRIPT and NSC - 1 == FN_SCOPE {
+        return 0
+    }
+    return NSC - 1
+}
+
+# The scope a var or a function declaration written here belongs to.
+proc var_scope() {
+    if IS_SCRIPT {
+        return 0
+    }
+    return FN_SCOPE
+}
+
+proc resolve(name) {
+    alloc i := NSC - 1
+    loop i >= 0 {
+        alloc names := SC[i][0]
+        if has_key(names, name) {
+            return names[name]
+        }
+        i := i - 1
+    }
+    return [2]
+}
+
+proc depth_to(owner) {
+    alloc d := 0
+    alloc i := NSC - 1
+    loop i > owner {
+        if SC[i][1] {
+            d := d + 1
+        }
+        i := i - 1
+    }
+    return d
+}
+
+proc load(name) {
+    alloc e := resolve(name)
+    alloc k := e[0]
+    if k == 0 {
+        emit2(OP_GETR, e[1])
+    } elif k == 1 {
+        alloc d := depth_to(e[2])
+        if d == 0 {
+            emit2(OP_GETE0, e[1])
+        } else {
+            emit3(OP_GETE, d, e[1])
+        }
+    } elif name == "undefined" {
+        emit1(OP_UNDEF)
+    } else {
+        emit2(OP_GETG, kstr(name))
+    }
+    return true
+}
+
+# Store the top of the stack in variable `name`; it stays on the stack.
+proc store(name) {
+    alloc e := resolve(name)
+    alloc k := e[0]
+    if k == 0 {
+        emit2(OP_SETR, e[1])
+    } elif k == 1 {
+        alloc d := depth_to(e[2])
+        if d == 0 {
+            emit2(OP_SETE0, e[1])
+        } else {
+            emit3(OP_SETE, d, e[1])
+        }
+    } else {
+        emit2(OP_SETG, kstr(name))
+    }
+    return true
+}
+
+# --- what a statement list declares -------------------------------------------------------
+
+proc pattern_names(t, out) {
+    alloc k := t[0]
+    if k == N_ID {
+        append(out, t[1])
+    } elif k == N_ARR {
+        for el in t[1] {
+            if el != false {
+                pattern_names(el, out)
+            }
+        }
+    } elif k == N_OBJ {
+        for p in t[1] {
+            pattern_names(p[2], out)
+        }
+    } elif k == N_ASSIGN {
+        pattern_names(t[2], out)
+    } elif k == N_SPREAD {
+        pattern_names(t[1], out)
+    }
+    return out
+}
+
+# The names var declares, and function declarations inside blocks,
+# anywhere in these statements (not inside functions).
+proc collect_vars(stmts, out, top) {
+    for s in stmts {
+        collect_vars1(s, out, top)
+    }
+    return out
+}
+
+proc collect_vars1(s, out, top) {
+    alloc k := s[0]
+    if k == S_VAR {
+        if s[1] == "var" {
+            for d in s[2] {
+                pattern_names(d[0], out)
+            }
+        }
+    } elif k == S_FUNC {
+        append(out, s[1][1])
+    } elif k == S_IF {
+        collect_vars1(s[2], out, false)
+        if s[3] != false {
+            collect_vars1(s[3], out, false)
+        }
+    } elif k == S_FOR {
+        if s[1] != false {
+            collect_vars1(s[1], out, false)
+        }
+        collect_vars1(s[4], out, false)
+    } elif k == S_FORIN or k == S_FOROF {
+        if s[1] == "var" {
+            pattern_names(s[2], out)
+        }
+        collect_vars1(s[4], out, false)
+    } elif k == S_WHILE {
+        collect_vars1(s[2], out, false)
+    } elif k == S_DOWHILE {
+        collect_vars1(s[1], out, false)
+    } elif k == S_TRY {
+        collect_vars(s[1][1], out, false)
+        if s[3] != false {
+            collect_vars(s[3][1], out, false)
+        }
+        if s[4] != false {
+            collect_vars(s[4][1], out, false)
+        }
+    } elif k == S_SWITCH {
+        for c in s[2] {
+            collect_vars(c[1], out, false)
+        }
+    } elif k == S_BLOCK {
+        collect_vars(s[1], out, false)
+    } elif k == S_LABEL {
+        collect_vars1(s[2], out, false)
+    }
+    return out
+}
+
+# The names let, const and class declare right in these statements.
+proc lexicals(stmts) {
+    alloc out := []
+    for s in stmts {
+        alloc k := s[0]
+        if k == S_VAR {
+            if s[1] != "var" {
+                for d in s[2] {
+                    pattern_names(d[0], out)
+                }
+            }
+        } elif k == S_CLASS {
+            append(out, s[1][1])
+        }
+    }
+    return out
+}
+
+# --- getting out: break, continue, return ---------------------------------------------------
+
+alloc C_LOOP := 1              # [1, labels, breaks, continues, is a switch?]
+alloc C_TRY := 2               # [2]
+alloc C_FIN := 3               # [3, rt, rv, jumps to the finally block]
+alloc C_ENV := 4               # [4]
+alloc C_LABEL := 5             # [5, name, breaks]
+
+proc push_ctrl(entry) {
+    if NCTRL < length(CTRL) {
+        CTRL[NCTRL] := entry
+    } else {
+        append(CTRL, entry)
+    }
+    NCTRL := NCTRL + 1
+    return entry
+}
+
+proc pop_ctrl() {
+    NCTRL := NCTRL - 1
+    return true
+}
+
+# Leave what entry number i of CTRL stands for.
+proc unwind(i) {
+    alloc c := CTRL[i]
+    alloc k := c[0]
+    if k == C_TRY {
+        emit1(OP_ENDTRY)
+    } elif k == C_ENV {
+        emit1(OP_POPENV)
+    } elif k == C_FIN {
+        # run the finally block and come back to just after this
+        emit1(OP_ENDTRY)
+        emit3(OP_SETRI, c[1], 3)
+        emit3(OP_SETRI, c[2], 0)
+        alloc at := length(CODE) - 1
+        append(c[3], jump(OP_JMP))
+        CODE[at] := length(CODE)
+    }
+    return true
+}
+
+proc has_label(labels, name) {
+    for l in labels {
+        if l == name {
+            return true
+        }
+    }
+    return false
+}
+
+proc do_break(label) {
+    alloc i := NCTRL - 1
+    loop i >= 0 {
+        alloc c := CTRL[i]
+        if c[0] == C_LOOP {
+            if label == "" or has_label(c[1], label) {
+                append(c[2], jump(OP_JMP))
+                return true
+            }
+        } elif c[0] == C_LABEL and label != "" and c[1] == label {
+            append(c[2], jump(OP_JMP))
+            return true
+        }
+        unwind(i)
+        i := i - 1
+    }
+    fail("break outside a loop")
+}
+
+proc do_continue(label) {
+    alloc i := NCTRL - 1
+    loop i >= 0 {
+        alloc c := CTRL[i]
+        if c[0] == C_LOOP and c[4] == false {
+            if label == "" or has_label(c[1], label) {
+                append(c[3], jump(OP_JMP))
+                return true
+            }
+        }
+        unwind(i)
+        i := i - 1
+    }
+    fail("continue outside a loop")
+}
+
+proc do_return(value) {
+    alloc crosses := false
+    alloc i := NCTRL - 1
+    loop i >= 0 {
+        if CTRL[i][0] == C_FIN {
+            crosses := true
+        }
+        i := i - 1
+    }
+    if crosses == false {
+        if value == false {
+            emit1(OP_RETU)
+        } else {
+            expr(value)
+            emit1(OP_RET)
+        }
+        return true
+    }
+    if RRET < 0 {
+        RRET := new_reg()
+    }
+    if value == false {
+        emit1(OP_UNDEF)
+    } else {
+        expr(value)
+    }
+    emit2(OP_SETR, RRET)
+    emit1(OP_POP)
+    i := NCTRL - 1
+    loop i >= 0 {
+        unwind(i)
+        i := i - 1
+    }
+    emit2(OP_GETR, RRET)
+    emit1(OP_RET)
+    return true
+}
+
+# --- expressions ------------------------------------------------------------------------------
+
+# What a call calls, in words, for the error when it is no function.
+proc callee_text(n, depth) {
+    alloc k := n[0]
+    if k == N_ID {
+        return n[1]
+    }
+    if k == N_THIS {
+        return "this"
+    }
+    if k == N_SUPER {
+        return "super"
+    }
+    if k == N_MEMBER and depth < 4 {
+        return callee_text(n[1], depth + 1) + "." + n[2]
+    }
+    if k == N_INDEX and depth < 4 {
+        return callee_text(n[1], depth + 1) + "[...]"
+    }
+    if k == N_CALL and depth < 4 {
+        return callee_text(n[1], depth + 1) + "(...)"
+    }
+    if k == N_OPTCHAIN {
+        return callee_text(n[1], depth)
+    }
+    return "(intermediate value)"
+}
+
+proc has_spread(items) {
+    if length(items) > 64 {
+        return true
+    }
+    for it in items {
+        if it != false and it[0] == N_SPREAD {
+            return true
+        }
+    }
+    return false
+}
+
+# Leave an array of these items (some may be spreads) on the stack.
+proc array_of(items) {
+    if has_spread(items) == false {
+        for it in items {
+            if it == false {
+                emit1(OP_UNDEF)
+            } else {
+                expr(it)
+            }
+        }
+        emit2(OP_NEWARR, length(items))
+        return true
+    }
+    emit2(OP_NEWARR, 0)
+    for it2 in items {
+        if it2 == false {
+            emit1(OP_UNDEF)
+            emit1(OP_APPEND)
+        } elif it2[0] == N_SPREAD {
+            expr(it2[1])
+            emit1(OP_APPENDSPREAD)
+        } else {
+            expr(it2)
+            emit1(OP_APPEND)
+        }
+    }
+    return true
+}
+
+# An expression that may be a function or class with no name of its
+# own, which then takes `name`.
+proc expr_named(n, name) {
+    if n[0] == N_FUNC and n[1] == "" {
+        emit2(OP_CLOSURE, kany(function(n, name)))
+        return true
+    }
+    if n[0] == N_CLASS and n[1] == "" {
+        class_expr(n, name)
+        return true
+    }
+    return expr(n)
+}
+
+proc opt_jump(op) {
+    if OPTS == false {
+        OPTS := []
+    }
+    append(OPTS, jump(op))
+    return true
+}
+
+# The function and the `this` of a call: [f this] on the stack.
+proc callee(c) {
+    alloc k := c[0]
+    if k == N_MEMBER {
+        if c[1][0] == N_SUPER {
+            emit2(OP_GETSUPER, kstr(c[2]))
+            emit1(OP_THIS)
+            return true
+        }
+        expr(c[1])
+        if c[3] {
+            opt_jump(OP_OPTJ)
+        }
+        emit2(OP_GETM, kstr(c[2]))
+        return true
+    }
+    if k == N_INDEX {
+        if c[1][0] == N_SUPER {
+            expr(c[2])
+            emit1(OP_GETSUPEREL)
+            emit1(OP_THIS)
+            return true
+        }
+        expr(c[1])
+        if c[3] {
+            opt_jump(OP_OPTJ)
+        }
+        expr(c[2])
+        emit1(OP_GETELM)
+        return true
+    }
+    expr(c)
+    emit1(OP_UNDEF)
+    return true
+}
+
+proc call_expr(n) {
+    alloc c := n[1]
+    alloc args := n[2]
+    if c[0] == N_SUPER {
+        mark(n[4])
+        if has_spread(args) {
+            array_of(args)
+            emit1(OP_SUPERCALLSPREAD)
+        } else {
+            for a in args {
+                expr(a)
+            }
+            emit2(OP_SUPERCALL, length(args))
+        }
+        return true
+    }
+    callee(c)
+    if n[3] {
+        opt_jump(OP_OPTJ2)
+    }
+    if has_spread(args) {
+        array_of(args)
+        mark(n[4])
+        append(NAMES, length(CODE))
+        append(NAMES, callee_text(c, 0))
+        emit1(OP_CALLSPREAD)
+    } else {
+        for a2 in args {
+            expr(a2)
+        }
+        mark(n[4])
+        append(NAMES, length(CODE))
+        append(NAMES, callee_text(c, 0))
+        emit2(OP_CALL, length(args))
+    }
+    return true
+}
+
+proc update_expr(n, want) {
+    alloc op := OP_INC
+    if n[1] == "--" {
+        op := OP_DEC
+    }
+    alloc prefix := n[2] or want == false
+    alloc t := n[3]
+    alloc k := t[0]
+    if k == N_ID {
+        load(t[1])
+        if prefix {
+            emit1(op)
+            store(t[1])
+        } else {
+            emit1(OP_TONUM)
+            emit1(OP_DUP)
+            emit1(op)
+            store(t[1])
+            emit1(OP_POP)
+        }
+        return true
+    }
+    alloc tmp := -1
+    if prefix == false {
+        tmp := new_reg()
+    }
+    if k == N_MEMBER {
+        expr(t[1])
+        emit1(OP_DUP)
+        emit2(OP_GETP, kstr(t[2]))
+        if prefix {
+            emit1(op)
+            emit2(OP_SETP, kstr(t[2]))
+        } else {
+            emit1(OP_TONUM)
+            emit2(OP_SETR, tmp)
+            emit1(op)
+            emit2(OP_SETP, kstr(t[2]))
+            emit1(OP_POP)
+            emit2(OP_GETR, tmp)
+        }
+        return true
+    }
+    if k == N_INDEX {
+        expr(t[1])
+        expr(t[2])
+        emit1(OP_DUP2)
+        emit1(OP_GETEL)
+        if prefix {
+            emit1(op)
+            emit1(OP_SETEL)
+        } else {
+            emit1(OP_TONUM)
+            emit2(OP_SETR, tmp)
+            emit1(op)
+            emit1(OP_SETEL)
+            emit1(OP_POP)
+            emit2(OP_GETR, tmp)
+        }
+        return true
+    }
+    fail("this cannot be counted up or down")
+}
+
+proc assign_expr(n) {
+    alloc op := n[1]
+    alloc t := n[2]
+    alloc k := t[0]
+    if op == "=" {
+        if k == N_ID {
+            expr_named(n[3], t[1])
+            store(t[1])
+        } elif k == N_MEMBER {
+            expr(t[1])
+            expr(n[3])
+            emit2(OP_SETP, kstr(t[2]))
+        } elif k == N_INDEX {
+            expr(t[1])
+            expr(t[2])
+            expr(n[3])
+            emit1(OP_SETEL)
+        } else {
+            expr(n[3])
+            emit1(OP_DUP)
+            store_to(t, false)
+        }
+        return true
+    }
+    if op == "&&=" or op == "||=" or op == "??=" {
+        alloc jop := OP_AND
+        if op == "||=" {
+            jop := OP_OR
+        } elif op == "??=" {
+            jop := OP_COALESCE
+        }
+        if k == N_ID {
+            load(t[1])
+            alloc j := jump(jop)
+            expr_named(n[3], t[1])
+            store(t[1])
+            patch(j)
+        } elif k == N_MEMBER {
+            expr(t[1])
+            emit1(OP_DUP)
+            emit2(OP_GETP, kstr(t[2]))
+            alloc j2 := jump(jop)
+            expr(n[3])
+            emit2(OP_SETP, kstr(t[2]))
+            alloc e2 := jump(OP_JMP)
+            patch(j2)
+            emit1(OP_SWAP)
+            emit1(OP_POP)
+            patch(e2)
+        } elif k == N_INDEX {
+            expr(t[1])
+            expr(t[2])
+                emit1(OP_DUP2)
+            emit1(OP_GETEL)
+            alloc j3 := jump(jop)
+            expr(n[3])
+            emit1(OP_SETEL)
+            alloc e3 := jump(OP_JMP)
+            patch(j3)
+            emit1(OP_ROT3)
+            emit1(OP_POP)
+            emit1(OP_SWAP)
+            emit1(OP_POP)
+            patch(e3)
+        } else {
+            fail("this cannot be assigned to")
+        }
+        return true
+    }
+    alloc bop := ASSIGNOPS[op]
+    if k == N_ID {
+        load(t[1])
+        expr(n[3])
+        emit1(bop)
+        store(t[1])
+    } elif k == N_MEMBER {
+        expr(t[1])
+        emit1(OP_DUP)
+        emit2(OP_GETP, kstr(t[2]))
+        expr(n[3])
+        emit1(bop)
+        emit2(OP_SETP, kstr(t[2]))
+    } elif k == N_INDEX {
+        expr(t[1])
+        expr(t[2])
+        emit1(OP_DUP2)
+        emit1(OP_GETEL)
+        expr(n[3])
+        emit1(bop)
+        emit1(OP_SETEL)
+    } else {
+        fail("this cannot be assigned to")
+    }
+    return true
+}
+
+# Give the top of the stack to a target (a name, a property, or a
+# pattern that takes it apart), and drop it. With `declaring`, names
+# are made in the innermost scope if they are not there yet.
+proc store_to(t, declaring) {
+    alloc k := t[0]
+    if k == N_ID {
+        if declaring {
+            alloc found := false
+            alloc i := NSC - 1
+            loop i >= FN_SCOPE and found == false {
+                found := has_key(SC[i][0], t[1])
+                i := i - 1
+            }
+            if found == false {
+                declare_in(t[1], lex_scope())
+            }
+        }
+        store(t[1])
+        emit1(OP_POP)
+    } elif k == N_MEMBER {
+        expr(t[1])
+        emit1(OP_SWAP)
+        emit2(OP_SETP, kstr(t[2]))
+        emit1(OP_POP)
+    } elif k == N_INDEX {
+        expr(t[1])
+        expr(t[2])
+        emit1(OP_ROT3)
+        emit1(OP_SETEL)
+        emit1(OP_POP)
+    } elif k == N_ASSIGN {
+        alloc j := jump(OP_DEFAULT)
+        if t[2][0] == N_ID {
+            expr_named(t[3], t[2][1])
+        } else {
+            expr(t[3])
+        }
+        patch(j)
+        store_to(t[2], declaring)
+    } elif k == N_ARR {
+        alloc r := new_reg()
+        emit1(OP_GETITER)
+        emit2(OP_SETR, r)
+        emit1(OP_POP)
+        for el in t[1] {
+            if el == false {
+                emit2(OP_ITERVAL, r)
+                emit1(OP_POP)
+            } elif el[0] == N_SPREAD {
+                emit2(OP_ITERREST, r)
+                store_to(el[1], declaring)
+            } else {
+                emit2(OP_ITERVAL, r)
+                store_to(el, declaring)
+            }
+        }
+    } elif k == N_OBJ {
+        alloc seen := []
+        for p in t[1] {
+            if p[0] == 3 {
+                emit2(OP_OBJREST, kany(seen))
+                store_to(p[2], declaring)
+            } else {
+                emit1(OP_DUP)
+                if p[3] {
+                    expr(p[1])
+                    emit1(OP_GETEL)
+                } else {
+                    emit2(OP_GETP, kstr(p[1]))
+                    append(seen, p[1])
+                }
+                store_to(p[2], declaring)
+            }
+        }
+        emit1(OP_POP)
+    } else {
+        fail("this cannot be assigned to")
+    }
+    return true
+}
+
+proc object_expr(n) {
+    emit1(OP_NEWOBJ)
+    for p in n[1] {
+        alloc kind := p[0]
+        if kind == 3 {
+            expr(p[2])
+            emit1(OP_SPREADOBJ)
+        } elif p[3] {
+            expr(p[1])
+            if kind == 0 {
+                expr(p[2])
+                emit1(OP_INITEL)
+            } else {
+                emit2(OP_CLOSURE, kany(function(p[2], "")))
+                if kind == 1 {
+                    emit1(OP_INITGETEL)
+                } else {
+                    emit1(OP_INITSETEL)
+                }
+            }
+        } elif kind == 0 {
+            expr_named(p[2], p[1])
+            if p[1] == "__proto__" and (p[2][0] != N_ID or p[2][1] != "__proto__") {
+                emit1(OP_SETPROTO)
+            } else {
+                emit2(OP_INITP, kstr(p[1]))
+            }
+        } else {
+            emit2(OP_CLOSURE, kany(function(p[2], p[1])))
+            if kind == 1 {
+                emit2(OP_INITGET, kstr(p[1]))
+            } else {
+                emit2(OP_INITSET, kstr(p[1]))
+            }
+        }
+    }
+    return true
+}
+
+proc class_expr(n, hint) {
+    alloc name := n[1]
+    if name == "" {
+        name := hint
+    }
+    alloc line := n[4]
+    alloc has_super := n[2] != false
+    if has_super {
+        expr(n[2])
+    }
+    alloc inner := n[1] != ""
+    if inner {
+        # the class can name itself inside its body
+        alloc owns := IS_ENV
+        push_scope(owns)
+        if owns {
+            push_ctrl([C_ENV])
+        }
+        declare_in(n[1], NSC - 1)
+    }
+    alloc ctor := false
+    alloc ctor_at := -1
+    alloc fields := []
+    alloc statics := []
+    alloc mi := -1
+    for m in n[3] {
+        mi := mi + 1
+        if m[0] == 0 and m[4] == false and m[3] == false and m[1] == "constructor" {
+            ctor := m[2]
+            ctor_at := mi
+        } elif m[0] == 3 or m[0] == 4 {
+            alloc st := false
+            if m[0] == 4 {
+                # static { ... }: its statements, as a block
+                st := [S_BLOCK, m[2][3], true, line]
+            } else {
+                alloc target := [N_MEMBER, [N_THIS], m[1], false]
+                if m[3] {
+                    target := [N_INDEX, [N_THIS], m[1], false]
+                }
+                alloc v := m[2]
+                if v == false {
+                    v := [N_ID, "undefined"]
+                }
+                st := [S_EXPR, [N_ASSIGN, "=", target, v], line]
+            }
+            if m[4] {
+                append(statics, st)
+            } else {
+                append(fields, st)
+            }
+        }
+    }
+    if ctor == false {
+        if has_super {
+            alloc sargs := [[N_SPREAD, [N_ID, "args"]]]
+            ctor := [N_FUNC, name, sargs, [[S_EXPR, [N_CALL, [N_SUPER], sargs, false, line], line]], 16 | 32 | 64, false, false, line]
+        } else {
+            ctor := [N_FUNC, name, [], [], 16 | 64, false, false, line]
+        }
+    }
+    emit2(OP_CLOSURE, kany(function(ctor, name)))
+    alloc hs := 0
+    if has_super {
+        hs := 1
+    }
+    emit2(OP_DEFCLASS, hs)
+    if inner {
+        emit1(OP_SWAP)
+        store(n[1])
+        emit1(OP_SWAP)
+    }
+    mi := -1
+    for m2 in n[3] {
+        mi := mi + 1
+        alloc kind := m2[0]
+        if kind > 2 or mi == ctor_at {
+            continue
+        }
+        alloc flags := kind
+        if m2[4] {
+            flags := flags | 4
+        }
+        if m2[3] {
+            expr(m2[1])
+            emit2(OP_CLOSURE, kany(function(m2[2], "")))
+            emit2(OP_DEFMETHODEL, flags)
+        } else {
+            emit2(OP_CLOSURE, kany(function(m2[2], m2[1])))
+            emit3(OP_DEFMETHOD, kstr(m2[1]), flags)
+        }
+    }
+    if length(fields) > 0 {
+        alloc ff := [N_FUNC, "<fields>", [], fields, 8 | 64 | 256, true, false, line]
+        emit2(OP_CLOSURE, kany(function(ff, "<fields>")))
+        emit1(OP_SETFIELDS)
+    }
+    if length(statics) > 0 {
+        alloc sf := [N_FUNC, "<static>", [], statics, 8 | 64, true, false, line]
+        emit2(OP_CLOSURE, kany(function(sf, "<static>")))
+        emit1(OP_STATICINIT)
+    }
+    emit1(OP_POP)
+    if inner {
+        if SC[NSC - 1][1] {
+            emit1(OP_POPENV)
+            pop_ctrl()
+        }
+        pop_scope()
+    }
+    return true
+}
+
+# Leave the value of expression n on the stack.
+proc expr(n) {
+    alloc k := n[0]
+    if k == N_ID {
+        return load(n[1])
+    }
+    if k == N_NUM {
+        return emit2(OP_CONST, knum(n[1]))
+    }
+    if k == N_STR {
+        return emit2(OP_CONST, kstr(n[1]))
+    }
+    if k == N_MEMBER {
+        if n[1][0] == N_SUPER {
+            return emit2(OP_GETSUPER, kstr(n[2]))
+        }
+        expr(n[1])
+        if n[3] {
+            opt_jump(OP_OPTJ)
+        }
+        return emit2(OP_GETP, kstr(n[2]))
+    }
+    if k == N_CALL {
+        return call_expr(n)
+    }
+    if k == N_BINARY {
+        expr(n[2])
+        expr(n[3])
+        return emit1(BINOPS[n[1]])
+    }
+    if k == N_INDEX {
+        if n[1][0] == N_SUPER {
+            expr(n[2])
+            return emit1(OP_GETSUPEREL)
+        }
+        expr(n[1])
+        if n[3] {
+            opt_jump(OP_OPTJ)
+        }
+        expr(n[2])
+        return emit1(OP_GETEL)
+    }
+    if k == N_ASSIGN {
+        return assign_expr(n)
+    }
+    if k == N_THIS {
+        return emit1(OP_THIS)
+    }
+    if k == N_LOGICAL {
+        expr(n[2])
+        alloc jop := OP_AND
+        if n[1] == "||" {
+            jop := OP_OR
+        } elif n[1] == "??" {
+            jop := OP_COALESCE
+        }
+        alloc j := jump(jop)
+        expr(n[3])
+        return patch(j)
+    }
+    if k == N_UNARY {
+        alloc op := n[1]
+        if op == "typeof" {
+            if n[2][0] == N_ID and resolve(n[2][1])[0] == 2 {
+                return emit2(OP_TYPEOFG, kstr(n[2][1]))
+            }
+            expr(n[2])
+            return emit1(OP_TYPEOF)
+        }
+        if op == "delete" {
+            alloc t := n[2]
+            if t[0] == N_OPTCHAIN {
+                t := t[1]
+            }
+            if t[0] == N_MEMBER {
+                expr(t[1])
+                return emit2(OP_DELP, kstr(t[2]))
+            }
+            if t[0] == N_INDEX {
+                expr(t[1])
+                expr(t[2])
+                return emit1(OP_DELEL)
+            }
+            expr(t)
+            emit1(OP_POP)
+            return emit1(OP_TRUE)
+        }
+        expr(n[2])
+        if op == "!" {
+            return emit1(OP_NOT)
+        }
+        if op == "-" {
+            return emit1(OP_NEG)
+        }
+        if op == "+" {
+            return emit1(OP_PLUS)
+        }
+        if op == "~" {
+            return emit1(OP_BNOT)
+        }
+        # void
+        emit1(OP_POP)
+        return emit1(OP_UNDEF)
+    }
+    if k == N_COND {
+        expr(n[1])
+        alloc j1 := jump(OP_JF)
+        expr(n[2])
+        alloc j2 := jump(OP_JMP)
+        patch(j1)
+        expr(n[3])
+        return patch(j2)
+    }
+    if k == N_UPDATE {
+        return update_expr(n, true)
+    }
+    if k == N_FUNC {
+        return emit2(OP_CLOSURE, kany(function(n, n[1])))
+    }
+    if k == N_OBJ {
+        return object_expr(n)
+    }
+    if k == N_ARR {
+        return array_of(n[1])
+    }
+    if k == N_NEW {
+        expr(n[1])
+        if has_spread(n[2]) {
+            array_of(n[2])
+            mark(n[3])
+            return emit1(OP_NEWSPREAD)
+        }
+        for a in n[2] {
+            expr(a)
+        }
+        mark(n[3])
+        return emit2(OP_NEW, length(n[2]))
+    }
+    if k == N_TRUE {
+        return emit1(OP_TRUE)
+    }
+    if k == N_FALSE {
+        return emit1(OP_FALSE)
+    }
+    if k == N_NULL {
+        return emit1(OP_NULL)
+    }
+    if k == N_TPL {
+        alloc strs := n[1]
+        alloc exprs := n[2]
+        if length(exprs) == 0 {
+            return emit2(OP_CONST, kstr(strs[0]))
+        }
+        alloc count := 0
+        alloc i := 0
+        loop i < length(strs) {
+            if strs[i] != "" {
+                emit2(OP_CONST, kstr(strs[i]))
+                count := count + 1
+            }
+            if i < length(exprs) {
+                expr(exprs[i])
+                count := count + 1
+            }
+            i := i + 1
+        }
+        return emit2(OP_CONCAT, count)
+    }
+    if k == N_SEQ {
+        alloc first := true
+        for e in n[1] {
+            if first == false {
+                emit1(OP_POP)
+            }
+            expr(e)
+            first := false
+        }
+        return true
+    }
+    if k == N_OPTCHAIN {
+        alloc old := OPTS
+        OPTS := []
+        expr(n[1])
+        patch_all(OPTS)
+        OPTS := old
+        return true
+    }
+    if k == N_CLASS {
+        return class_expr(n, "")
+    }
+    if k == N_REGEX {
+        return emit2(OP_REGEX, kany([n[1], n[2]]))
+    }
+    if k == N_AWAIT {
+        expr(n[1])
+        return emit1(OP_AWAIT)
+    }
+    if k == N_YIELD {
+        if n[2] {
+            # yield* x: yield each thing x gives
+            alloc r := new_reg()
+            expr(n[1])
+            emit1(OP_GETITER)
+            emit2(OP_SETR, r)
+            emit1(OP_POP)
+            alloc top := here()
+            emit3(OP_ITERNEXT, r, 0)
+            alloc out := length(CODE) - 1
+            emit1(OP_YIELD)
+            emit1(OP_POP)
+            emit2(OP_JMP, top)
+            patch(out)
+            return emit1(OP_UNDEF)
+        }
+        if n[1] == false {
+            emit1(OP_UNDEF)
+        } else {
+            expr(n[1])
+        }
+        return emit1(OP_YIELD)
+    }
+    if k == N_TAGTPL {
+        callee(n[1])
+        emit2(OP_TPLOBJ, kany([n[2], n[3], 0]))
+        for e2 in n[4] {
+            expr(e2)
+        }
+        append(NAMES, length(CODE))
+        append(NAMES, callee_text(n[1], 0))
+        return emit2(OP_CALL, length(n[4]) + 1)
+    }
+    if k == N_NEWTARGET {
+        return emit1(OP_NEWTARGET)
+    }
+    if k == N_SUPER {
+        fail("'super' keyword unexpected here")
+    }
+    if k == N_SPREAD {
+        fail("unexpected ...")
+    }
+    fail("an expression the compiler does not know (" + k + ")")
+}
+
+# An expression whose value is not wanted.
+proc expr_drop(n) {
+    if n[0] == N_UPDATE {
+        update_expr(n, false)
+    } else {
+        expr(n)
+    }
+    emit1(OP_POP)
+    return true
+}
+
+# --- statements -----------------------------------------------------------------------------
+
+# Make the closures of the function declarations right in these
+# statements, before anything else runs.
+proc hoist_functions(stmts) {
+    for s in stmts {
+        if s[0] == S_FUNC {
+            alloc f := s[1]
+            emit2(OP_CLOSURE, kany(function(f, f[1])))
+            store(f[1])
+            emit1(OP_POP)
+        }
+    }
+    return true
+}
+
+proc statements(stmts) {
+    for s in stmts {
+        statement(s, [])
+    }
+    return true
+}
+
+# { ... }: `param` is the target a catch block starts by giving the
+# error to (on the stack), or false; -1 when there is no error either.
+proc block(stmts, has_fn, param) {
+    alloc lex := lexicals(stmts)
+    alloc pnames := []
+    if param != false and param != -1 {
+        pattern_names(param, pnames)
+    }
+    alloc n := length(lex) + length(pnames)
+    if n == 0 and param == -1 {
+        hoist_functions(stmts)
+        statements(stmts)
+        return true
+    }
+    if param != -1 and n == 0 {
+        # catch { } with nothing to bind
+        emit1(OP_POP)
+        hoist_functions(stmts)
+        statements(stmts)
+        return true
+    }
+    alloc owns := IS_ENV and has_fn
+    alloc si := NSC
+    push_scope(owns)
+    if owns {
+        push_ctrl([C_ENV])
+    }
+    for nm in pnames {
+        declare_in(nm, si)
+    }
+    for nm2 in lex {
+        declare_in(nm2, si)
+    }
+    if param != -1 {
+        if param == false {
+            emit1(OP_POP)
+        } else {
+            store_to(param, false)
+        }
+    }
+    hoist_functions(stmts)
+    statements(stmts)
+    if owns {
+        emit1(OP_POPENV)
+        pop_ctrl()
+    }
+    pop_scope()
+    return true
+}
+
+proc var_statement(s) {
+    alloc kind := s[1]
+    for d in s[2] {
+        alloc t := d[0]
+        if d[1] == false {
+            if kind != "var" and t[0] == N_ID {
+                emit1(OP_UNDEF)
+                store(t[1])
+                emit1(OP_POP)
+            }
+        } elif t[0] == N_ID {
+            expr_named(d[1], t[1])
+            store(t[1])
+            emit1(OP_POP)
+        } else {
+            expr(d[1])
+            store_to(t, false)
+        }
+    }
+    return true
+}
+
+# The statement of a loop or an if; a function declared right there
+# (not in a block) is made on the spot.
+proc loop_body(s) {
+    if s[0] == S_FUNC {
+        emit2(OP_CLOSURE, kany(function(s[1], s[1][1])))
+        store(s[1][1])
+        emit1(OP_POP)
+        return true
+    }
+    statement(s, [])
+    return true
+}
+
+proc for_statement(s, labels) {
+    alloc init := s[1]
+    alloc lex := []
+    if init != false and init[0] == S_VAR and init[1] != "var" {
+        for d in init[2] {
+            pattern_names(d[0], lex)
+        }
+    }
+    alloc scoped := length(lex) > 0
+    alloc owns := scoped and IS_ENV and s[5]
+    if scoped {
+        alloc si := NSC
+        push_scope(owns)
+        if owns {
+            push_ctrl([C_ENV])
+        }
+        for nm in lex {
+            declare_in(nm, si)
+        }
+    }
+    if init != false {
+        if init[0] == S_VAR {
+            var_statement(init)
+        } else {
+            expr_drop(init[1])
+        }
+    }
+    alloc top := here()
+    alloc out := -1
+    if s[2] != false {
+        expr(s[2])
+        out := jump(OP_JF)
+    }
+    alloc c := push_ctrl([C_LOOP, labels, [], [], false])
+    loop_body(s[4])
+    pop_ctrl()
+    patch_all(c[3])
+    if owns {
+        emit1(OP_COPYENV)
+    }
+    if s[3] != false {
+        expr_drop(s[3])
+    }
+    emit2(OP_JMP, top)
+    if out >= 0 {
+        patch(out)
+    }
+    patch_all(c[2])
+    if scoped {
+        if owns {
+            emit1(OP_POPENV)
+            pop_ctrl()
+        }
+        pop_scope()
+    }
+    return true
+}
+
+# for (x in o) and for (x of o)
+proc for_each(s, labels, is_of) {
+    alloc kind := s[1]
+    alloc target := s[2]
+    alloc has_fn := s[5]
+    if is_of {
+        has_fn := s[6]
+    }
+    alloc r := new_reg()
+    expr(s[3])
+    if is_of {
+        emit1(OP_GETITER)
+    } else {
+        emit1(OP_FORIN)
+    }
+    emit2(OP_SETR, r)
+    emit1(OP_POP)
+    alloc top := here()
+    emit3(OP_ITERNEXT, r, 0)
+    alloc out := length(CODE) - 1
+    alloc c := push_ctrl([C_LOOP, labels, [], [], false])
+    alloc scoped := kind == "let" or kind == "const"
+    alloc owns := scoped and IS_ENV and has_fn
+    if scoped {
+        alloc si := NSC
+        push_scope(owns)
+        if owns {
+            push_ctrl([C_ENV])
+        }
+        alloc names := []
+        pattern_names(target, names)
+        for nm in names {
+            declare_in(nm, si)
+        }
+    }
+    if is_of and s[5] {
+        emit1(OP_AWAIT)
+    }
+    store_to(target, false)
+    loop_body(s[4])
+    if scoped {
+        if owns {
+            emit1(OP_POPENV)
+            pop_ctrl()
+        }
+        pop_scope()
+    }
+    pop_ctrl()
+    patch_all(c[3])
+    emit2(OP_JMP, top)
+    patch(out)
+    patch_all(c[2])
+    return true
+}
+
+proc try_statement(s) {
+    alloc has_catch := s[3] != false
+    alloc has_fin := s[4] != false
+    alloc rt := -1
+    alloc rv := -1
+    alloc fin := false
+    alloc fin_handler := -1
+    if has_fin {
+        rt := new_reg()
+        rv := new_reg()
+        emit3(OP_SETRI, rt, 0)
+        fin_handler := jump(OP_TRY)
+        fin := push_ctrl([C_FIN, rt, rv, []])
+    }
+    if has_catch {
+        alloc handler := jump(OP_TRY)
+        push_ctrl([C_TRY])
+        block(s[1][1], s[1][2], -1)
+        pop_ctrl()
+        emit1(OP_ENDTRY)
+        alloc after := jump(OP_JMP)
+        patch(handler)
+        block(s[3][1], s[3][2], s[2])
+        patch(after)
+    } else {
+        block(s[1][1], s[1][2], -1)
+    }
+    if has_fin {
+        pop_ctrl()
+        emit1(OP_ENDTRY)
+        alloc to_fin := jump(OP_JMP)
+        patch(fin_handler)
+        emit2(OP_SETR, rv)
+        emit1(OP_POP)
+        emit3(OP_SETRI, rt, 1)
+        patch(to_fin)
+        patch_all(fin[3])
+        block(s[4][1], s[4][2], -1)
+        emit3(OP_ENDFIN, rt, rv)
+    }
+    return true
+}
+
+proc switch_statement(s, labels) {
+    alloc r := new_reg()
+    expr(s[1])
+    emit2(OP_SETR, r)
+    emit1(OP_POP)
+    alloc all := []
+    for c in s[2] {
+        for st in c[1] {
+            append(all, st)
+        }
+    }
+    alloc lex := lexicals(all)
+    alloc scoped := length(lex) > 0
+    alloc owns := scoped and IS_ENV and s[3]
+    if scoped {
+        alloc si := NSC
+        push_scope(owns)
+        if owns {
+            push_ctrl([C_ENV])
+        }
+        for nm in lex {
+            declare_in(nm, si)
+        }
+    }
+    hoist_functions(all)
+    alloc jumps := []
+    alloc default_at := -1
+    alloc i := 0
+    for c2 in s[2] {
+        if c2[0] == false {
+            default_at := i
+            append(jumps, -1)
+        } else {
+            emit2(OP_GETR, r)
+            expr(c2[0])
+            emit1(OP_SEQ)
+            append(jumps, jump(OP_JT))
+        }
+        i := i + 1
+    }
+    alloc to_default := jump(OP_JMP)
+    alloc ctl := push_ctrl([C_LOOP, labels, [], [], true])
+    i := 0
+    for c3 in s[2] {
+        if jumps[i] >= 0 {
+            patch(jumps[i])
+        } else {
+            patch(to_default)
+        }
+        statements(c3[1])
+        i := i + 1
+    }
+    if default_at < 0 {
+        patch(to_default)
+    }
+    pop_ctrl()
+    patch_all(ctl[2])
+    if scoped {
+        if owns {
+            emit1(OP_POPENV)
+            pop_ctrl()
+        }
+        pop_scope()
+    }
+    return true
+}
+
+proc statement(s, labels) {
+    alloc k := s[0]
+    mark(line_of(s))
+    if k == S_EXPR {
+        return expr_drop(s[1])
+    }
+    if k == S_VAR {
+        return var_statement(s)
+    }
+    if k == S_RETURN {
+        return do_return(s[1])
+    }
+    if k == S_IF {
+        expr(s[1])
+        alloc j := jump(OP_JF)
+        loop_body(s[2])
+        if s[3] == false {
+            return patch(j)
+        }
+        alloc j2 := jump(OP_JMP)
+        patch(j)
+        loop_body(s[3])
+        return patch(j2)
+    }
+    if k == S_BLOCK {
+        return block(s[1], s[2], -1)
+    }
+    if k == S_FOR {
+        return for_statement(s, labels)
+    }
+    if k == S_WHILE {
+        alloc top := here()
+        expr(s[1])
+        alloc out := jump(OP_JF)
+        alloc c := push_ctrl([C_LOOP, labels, [], [], false])
+        loop_body(s[2])
+        pop_ctrl()
+        patch_all(c[3])
+        emit2(OP_JMP, top)
+        patch(out)
+        return patch_all(c[2])
+    }
+    if k == S_DOWHILE {
+        alloc top2 := here()
+        alloc c2 := push_ctrl([C_LOOP, labels, [], [], false])
+        loop_body(s[1])
+        pop_ctrl()
+        patch_all(c2[3])
+        expr(s[2])
+        emit2(OP_JT, top2)
+        return patch_all(c2[2])
+    }
+    if k == S_FORIN {
+        return for_each(s, labels, false)
+    }
+    if k == S_FOROF {
+        return for_each(s, labels, true)
+    }
+    if k == S_BREAK {
+        return do_break(s[1])
+    }
+    if k == S_CONTINUE {
+        return do_continue(s[1])
+    }
+    if k == S_THROW {
+        expr(s[1])
+        return emit1(OP_THROW)
+    }
+    if k == S_TRY {
+        return try_statement(s)
+    }
+    if k == S_SWITCH {
+        return switch_statement(s, labels)
+    }
+    if k == S_FUNC {
+        # made when its block was entered
+        return true
+    }
+    if k == S_CLASS {
+        class_expr(s[1], "")
+        store(s[1][1])
+        return emit1(OP_POP)
+    }
+    if k == S_LABEL {
+        alloc inner := s[2]
+        alloc ik := inner[0]
+        if ik == S_FOR or ik == S_FORIN or ik == S_FOROF or ik == S_WHILE or ik == S_DOWHILE or ik == S_LABEL {
+            alloc more := labels + [s[1]]
+            return statement(inner, more)
+        }
+        alloc lc := push_ctrl([C_LABEL, s[1], []])
+        statement(inner, [])
+        pop_ctrl()
+        return patch_all(lc[2])
+    }
+    if k == S_EMPTY {
+        return true
+    }
+    fail("a statement the compiler does not know (" + k + ")")
+}
+
+# --- functions ----------------------------------------------------------------------------------
+
+proc save_state() {
+    alloc st := [CODE, KS, KMAP, NREG, LINES, NAMES, LAST_LINE, IS_ENV, IS_SCRIPT, FN_SCOPE, CTRL, NCTRL, RRET, OPTS]
+    if NSAVED < length(SAVED) {
+        SAVED[NSAVED] := st
+    } else {
+        append(SAVED, st)
+    }
+    NSAVED := NSAVED + 1
+    CODE := []
+    KS := []
+    KMAP := {}
+    NREG := 0
+    LINES := []
+    NAMES := []
+    LAST_LINE := 0
+    IS_SCRIPT := false
+    CTRL := []
+    NCTRL := 0
+    RRET := -1
+    OPTS := false
+    return true
+}
+
+proc restore_state() {
+    NSAVED := NSAVED - 1
+    alloc st := SAVED[NSAVED]
+    SAVED[NSAVED] := 0
+    CODE := st[0]
+    KS := st[1]
+    KMAP := st[2]
+    NREG := st[3]
+    LINES := st[4]
+    NAMES := st[5]
+    LAST_LINE := st[6]
+    IS_ENV := st[7]
+    IS_SCRIPT := st[8]
+    FN_SCOPE := st[9]
+    CTRL := st[10]
+    NCTRL := st[11]
+    RRET := st[12]
+    OPTS := st[13]
+    return true
+}
+
+# The template of function node n.
+proc function(n, name) {
+    alloc params := n[2]
+    alloc body := n[3]
+    alloc flags := n[4]
+    alloc outer_nsc := NSC
+    save_state()
+    IS_ENV := n[5]
+    FN_SCOPE := NSC
+    mark(n[7])
+    alloc np := 0
+    alloc declared := -1
+    alloc rest := false
+    for p in params {
+        if p[0] == N_SPREAD {
+            rest := p[1]
+            break
+        }
+        if p[0] == N_ASSIGN and declared < 0 {
+            declared := np
+        }
+        np := np + 1
+    }
+    if declared < 0 {
+        declared := np
+    }
+    NREG := np
+    push_scope(IS_ENV)
+    alloc si := FN_SCOPE
+    # the parameters
+    alloc i := 0
+    loop i < np {
+        alloc p2 := params[i]
+        if p2[0] == N_ID {
+            if IS_ENV {
+                alloc e := declare_in(p2[1], si)
+                emit2(OP_GETR, i)
+                emit2(OP_SETE0, e[1])
+                emit1(OP_POP)
+            } else {
+                SC[si][0][p2[1]] := [0, i]
+            }
+        }
+        i := i + 1
+    }
+    i := 0
+    loop i < np {
+        alloc p3 := params[i]
+        if p3[0] != N_ID {
+            emit2(OP_GETR, i)
+            store_to(p3, true)
+        }
+        i := i + 1
+    }
+    if rest != false {
+        emit2(OP_REST, np)
+        store_to(rest, true)
+        flags := flags | 512
+    }
+    alloc names := SC[si][0]
+    if n[6] and (flags & 1) == 0 and has_key(names, "arguments") == false {
+        declare_in("arguments", si)
+        emit1(OP_ARGUMENTS)
+        store("arguments")
+        emit1(OP_POP)
+        flags := flags | 512
+    }
+    if (flags & 128) != 0 and n[1] != "" and has_key(names, n[1]) == false {
+        # a function expression can call itself by its name
+        declare_in(n[1], si)
+        emit1(OP_CALLEE)
+        store(n[1])
+        emit1(OP_POP)
+    }
+    for v in collect_vars(body, [], true) {
+        declare_in(v, si)
+    }
+    for l in lexicals(body) {
+        declare_in(l, si)
+    }
+    hoist_functions(body)
+    statements(body)
+    emit1(OP_RETU)
+    pop_scope()
+    if NSC != outer_nsc {
+        fail("internal: scopes out of step")
+    }
+    alloc t := [CODE, KS, NREG, np, flags, name, LINES, SRC, declared, NAMES]
+    restore_state()
+    return t
+}
+
+# The template of a whole script. With want_value, the script returns
+# the value of its last statement when that is an expression (eval).
+proc script(tree, source, want_value) {
+    alloc body := tree[0]
+    SRC := source
+    SC := []
+    NSC := 0
+    SAVED := []
+    NSAVED := 0
+    CODE := []
+    KS := []
+    KMAP := {}
+    NREG := 0
+    LINES := []
+    NAMES := []
+    LAST_LINE := 0
+    CTRL := []
+    NCTRL := 0
+    RRET := -1
+    OPTS := false
+    IS_SCRIPT := true
+    IS_ENV := tree[2]
+    # scope 0: the global object; scope 1: the record for what blocks declare
+    alloc g := push_scope(false)
+    g[4] := true
+    FN_SCOPE := 1
+    push_scope(IS_ENV)
+    for v in collect_vars(body, [], true) {
+        emit2(OP_DECLG, kstr(v))
+    }
+    hoist_functions(body)
+    alloc n := length(body)
+    alloc i := 0
+    for s in body {
+        i := i + 1
+        if want_value and i == n and s[0] == S_EXPR {
+            mark(line_of(s))
+            expr(s[1])
+            emit1(OP_RET)
+        } else {
+            statement(s, [])
+        }
+    }
+    emit1(OP_RETU)
+    pop_scope()
+    pop_scope()
+    alloc flags := 1024
+    if tree[1] {
+        flags := flags | 64
+    }
+    return [CODE, KS, NREG, 0, flags, "", LINES, source, 0, NAMES]
+}
+
+# The template of one function, written at the top level (what
+# `new Function` makes). `node` is its N_FUNC.
+proc toplevel_function(node, source) {
+    SRC := source
+    SC := []
+    NSC := 0
+    SAVED := []
+    NSAVED := 0
+    CODE := []
+    KS := []
+    KMAP := {}
+    NREG := 0
+    IS_SCRIPT := false
+    IS_ENV := false
+    FN_SCOPE := 0
+    alloc g := push_scope(false)
+    g[4] := true
+    alloc t := function(node, node[1])
+    pop_scope()
+    return t
+}

@@ -1,0 +1,38 @@
+;;;omg
+
+# tools/browser/js/engine.omg
+#
+# The JavaScript engine, put together: text in, a running program out.
+#
+#     import "js/engine.omg" as js
+#     js.start()
+#     alloc r := js.run(string_bytes("1 + 2"), "example.js")
+#
+# run() gives [true, value] or [false, the thrown value]; describe()
+# of core.omg turns either into text.
+
+import "parse.omg" as parse
+import "compile.omg" as compile
+import "core.omg" as c
+
+# Compile a script; raises "SyntaxError: ..." on bad text.
+proc compile_script(bytes, name, want_value) {
+    return compile.script(parse.program(bytes), name, want_value)
+}
+
+proc start() {
+    c.init()
+    return true
+}
+
+# Run the text of a script. Never raises.
+proc run(bytes, name) {
+    alloc out := c.undefined()
+    try {
+        alloc t := compile_script(bytes, name, false)
+        out := c.run_script(t)
+    } except e {
+        return [false, c.caught(e)]
+    }
+    return [true, out]
+}
