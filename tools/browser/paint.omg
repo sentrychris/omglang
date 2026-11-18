@@ -1310,3 +1310,151 @@ proc take_wanted() {
     wanted := []
     return w
 }
+
+# --- where things are, for scripts ---------------------------------------------------------------
+#
+# Scripts ask where an element is (getBoundingClientRect) and what is
+# at a point (a click goes to the deepest element under the mouse,
+# whatever it is). Both walk the boxes; a node is known by the number
+# dom.omg gave it (.nid).
+
+alloc found := false           # [x0, y0, x1, y1] so far
+
+proc grow_found(x0, y0, x1, y1) {
+    if found == false {
+        found := [x0, y0, x1, y1]
+        return true
+    }
+    if x0 < found[0] {
+        found[0] := x0
+    }
+    if y0 < found[1] {
+        found[1] := y0
+    }
+    if x1 > found[2] {
+        found[2] := x1
+    }
+    if y1 > found[3] {
+        found[3] := y1
+    }
+    return true
+}
+
+proc is_nid(node, nid) {
+    return node != false and has_key(node, "nid") and node.nid == nid
+}
+
+proc find_rect(box, nid, ax, ay) {
+    if has_key(box, "lines") {
+        for line in box.lines {
+            for fr in line[3] {
+                if fr[0] == 2 {
+                    if is_nid(fr[5].node, nid) {
+                        grow_found(ax + fr[1], ay + fr[3], ax + fr[2], ay + fr[4])
+                    }
+                } elif fr[0] == 1 {
+                    if is_nid(fr[8].node, nid) {
+                        alloc f := fr[4]
+                        grow_found(ax + fr[1], ay + fr[2] - f.asc, ax + fr[1] + fr[3], ay + fr[2] + f.desc)
+                    }
+                }
+            }
+        }
+    }
+    for k in box.kids {
+        alloc kind := k.kind
+        if kind == 3 or kind == 4 {
+            continue
+        }
+        if kind == 2 {
+            # its pieces are in the lines; blocks inside it are placed
+            # from the same corner
+            find_rect(k, nid, ax, ay)
+            continue
+        }
+        alloc kx := ax + k.x
+        alloc ky := ay + k.y
+        if is_nid(k.node, nid) {
+            grow_found(kx, ky, kx + k.w, ky + k.h)
+            return true
+        }
+        if find_rect(k, nid, kx, ky) {
+            return true
+        }
+    }
+    return false
+}
+
+# Where the element with number nid is on the page: [x, y, w, h], or
+# false when it has no box.
+proc rect_of(root, nid) {
+    if is_nid(root.node, nid) {
+        return [0, 0, root.w, root.h]
+    }
+    found := false
+    find_rect(root, nid, 0, 0)
+    alloc r := found
+    found := false
+    if r == false {
+        return false
+    }
+    return [r[0], r[1], r[2] - r[0], r[3] - r[1]]
+}
+
+proc at_point(box, x, y, ax, ay) {
+    alloc kids := box.kids
+    alloc i := length(kids) - 1
+    loop i >= 0 {
+        alloc k := kids[i]
+        i := i - 1
+        alloc kind := k.kind
+        if kind == 3 or kind == 4 {
+            continue
+        }
+        if kind == 2 {
+            alloc r2 := at_point(k, x, y, ax, ay)
+            if r2 != false {
+                return r2
+            }
+            continue
+        }
+        alloc kx := ax + k.x
+        alloc ky := ay + k.y
+        alloc r := at_point(k, x, y, kx, ky)
+        if r != false {
+            return r
+        }
+        if x >= kx and x < kx + k.w and y >= ky and y < ky + k.h and k.node != false {
+            return k.node
+        }
+    }
+    if has_key(box, "lines") {
+        alloc best := false
+        for line in box.lines {
+            for fr in line[3] {
+                if fr[0] == 2 {
+                    if x >= ax + fr[1] and x < ax + fr[2] and y >= ay + fr[3] and y < ay + fr[4] and fr[5].node != false {
+                        best := fr[5].node
+                    }
+                } elif fr[0] == 1 {
+                    alloc f := fr[4]
+                    if x >= ax + fr[1] and x < ax + fr[1] + fr[3] and y >= ay + fr[2] - f.asc and y < ay + fr[2] + f.desc and fr[8].node != false {
+                        return fr[8].node
+                    }
+                }
+            }
+        }
+        return best
+    }
+    return false
+}
+
+# The deepest node at a point of the page: an element, or the text
+# under the point; false outside everything.
+proc node_at(root, x, y) {
+    alloc r := at_point(root, x, y, 0, 0)
+    if r == false and x >= 0 and y >= 0 and x < root.w and y < root.h {
+        return root.node
+    }
+    return r
+}

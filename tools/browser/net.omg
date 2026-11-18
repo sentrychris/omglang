@@ -326,6 +326,16 @@ proc open(p) {
 
 # Send a request on c and read the answer: {status, headers, cookies,
 # body, keep} or false if the connection failed.
+# Headers a script asked to be sent with the next requests, each
+# [name, value]; fetch() and XMLHttpRequest set them and take them
+# off again.
+alloc extra := []
+
+proc set_extra(list) {
+    extra := list
+    return true
+}
+
 proc exchange(c, p, method, body, ctype, referer) {
     alloc target := p.path + p.query
     if c.proxied {
@@ -336,7 +346,19 @@ proc exchange(c, p, method, body, ctype, referer) {
     if p.port != 0 {
         host := host + ":" + p.port
     }
-    alloc head := method + " " + target + " HTTP/1.1\r\nHost: " + host + "\r\nUser-Agent: " + AGENT + "\r\nAccept: text/html,application/xhtml+xml,image/png,image/jpeg,image/gif,*/*;q=0.8\r\nAccept-Language: en\r\nAccept-Encoding: gzip, deflate\r\nConnection: keep-alive\r\n"
+    alloc accept := "text/html,application/xhtml+xml,image/png,image/jpeg,image/gif,*/*;q=0.8"
+    alloc more := ""
+    for h in extra {
+        alloc hn := u.lower(h[0])
+        if hn == "accept" {
+            accept := h[1]
+        } elif hn == "content-type" {
+            ctype := h[1]
+        } elif hn != "host" and hn != "content-length" and hn != "cookie" and hn != "user-agent" and hn != "connection" and hn != "accept-encoding" and hn != "accept-language" and hn != "referer" {
+            more := more + h[0] + ": " + u.replace(u.replace(h[1], "\r", " "), "\n", " ") + "\r\n"
+        }
+    }
+    alloc head := method + " " + target + " HTTP/1.1\r\nHost: " + host + "\r\nUser-Agent: " + AGENT + "\r\nAccept: " + accept + "\r\nAccept-Language: en\r\nAccept-Encoding: gzip, deflate\r\nConnection: keep-alive\r\n" + more
     alloc cookie := cookies_for(p)
     if cookie != "" {
         head := head + "Cookie: " + cookie + "\r\n"

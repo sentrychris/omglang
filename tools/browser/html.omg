@@ -771,6 +771,122 @@ proc parse(bytes) {
     return result
 }
 
+# --- pieces of a page, and a tree back into text ---------------------------------
+
+# The nodes `text` makes when it stands inside an element with the
+# tag `context`: what setting innerHTML means.
+proc parse_fragment(text, context) {
+    if has_key(RAW, context) {
+        if text == "" {
+            return []
+        }
+        return [{t: 3, text: text}]
+    }
+    alloc lead := "<body>"
+    alloc down := []
+    if context == "table" {
+        lead := "<body><table>"
+        down := ["table"]
+    } elif context == "tbody" or context == "thead" or context == "tfoot" {
+        lead := "<body><table><" + context + ">"
+        down := ["table", context]
+    } elif context == "tr" {
+        lead := "<body><table><tbody><tr>"
+        down := ["table", "tbody", "tr"]
+    } elif context == "select" or context == "optgroup" {
+        lead := "<body><select>"
+        down := ["select"]
+    }
+    alloc d := parse(string_bytes("<!DOCTYPE html>" + lead + text))
+    alloc node := d.body
+    for tag in down {
+        alloc next := false
+        for k in node.kids {
+            if k.t == 1 and k.tag == tag {
+                next := k
+                break
+            }
+        }
+        if next == false {
+            return []
+        }
+        node := next
+    }
+    return node.kids
+}
+
+proc escape_text(s, in_attr) {
+    alloc plain := true
+    for ch in s {
+        if ch == "&" or ch == "<" or ch == ">" or ch == "\"" {
+            plain := false
+            break
+        }
+    }
+    if plain {
+        return s
+    }
+    alloc out := u.replace(s, "&", "&amp;")
+    if in_attr {
+        return u.replace(out, "\"", "&quot;")
+    }
+    return u.replace(u.replace(out, "<", "&lt;"), ">", "&gt;")
+}
+
+# The node as HTML text, in pieces added to `parts`.
+proc write_html(node, parts, raw) {
+    if node.t == 3 {
+        if raw {
+            append(parts, node.text)
+        } else {
+            append(parts, escape_text(node.text, false))
+        }
+        return true
+    }
+    if node.t == 8 {
+        append(parts, "<!--" + node.text + "-->")
+        return true
+    }
+    if node.t != 1 {
+        for k in node.kids {
+            write_html(k, parts, false)
+        }
+        return true
+    }
+    alloc open := "<" + node.tag
+    for name in dict_keys(node.attrs) {
+        open := open + " " + name + "=\"" + escape_text(node.attrs[name], true) + "\""
+    }
+    append(parts, open + ">")
+    if has_key(VOID, node.tag) {
+        return true
+    }
+    alloc inner_raw := node.tag == "script" or node.tag == "style" or node.tag == "xmp"
+    for k2 in node.kids {
+        write_html(k2, parts, inner_raw)
+    }
+    append(parts, "</" + node.tag + ">")
+    return true
+}
+
+proc outer_html(node) {
+    alloc parts := []
+    write_html(node, parts, false)
+    return u.join(parts, "")
+}
+
+proc inner_html(node) {
+    if node.t == 3 or node.t == 8 {
+        return ""
+    }
+    alloc parts := []
+    alloc raw := node.t == 1 and (node.tag == "script" or node.tag == "style" or node.tag == "xmp")
+    for k in node.kids {
+        write_html(k, parts, raw)
+    }
+    return u.join(parts, "")
+}
+
 # --- the encoding of a page -----------------------------------------------------
 
 # The name of the encoding a page declares in its first bytes

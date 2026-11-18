@@ -4266,7 +4266,10 @@ proc hints_of(node, d) {
 }
 
 # Note on each element what matching needs to know about it.
-proc prepare(node) {
+# What the selectors and the cascade ask of an element's attributes,
+# worked out once: its classes, its id, the declarations of its
+# style="". Call again when one of the three attributes changes.
+proc prepare_attrs(node) {
     alloc attrs := node.attrs
     if has_key(attrs, "class") {
         node.cls := u.words(attrs["class"])
@@ -4284,6 +4287,25 @@ proc prepare(node) {
     } else {
         node.sd := EMPTY
     }
+    return true
+}
+
+# Number the element children of a node (.ei, from 1) and count them
+# (.ne). Call again when its children change.
+proc number_kids(node) {
+    alloc n := 0
+    for k in node.kids {
+        if k.t == 1 {
+            n := n + 1
+            k.ei := n
+        }
+    }
+    node.ne := n
+    return n
+}
+
+proc prepare(node) {
+    prepare_attrs(node)
     alloc n := 0
     for k in node.kids {
         if k.t == 1 {
@@ -4294,6 +4316,214 @@ proc prepare(node) {
     }
     node.ne := n
     return true
+}
+
+# prepare() for a whole document, once.
+proc prepare_doc(doc) {
+    if has_key(doc, "prepared") == false {
+        doc.root.ei := 1
+        prepare(doc.root)
+        doc.prepared := true
+    }
+    return true
+}
+
+# --- a computed style back into text (getComputedStyle) ------------------------------------
+
+proc number_text(n) {
+    if type_of(n) == 3 {
+        if n == floor(n) and n < 1000000000000000.0 and n > -1000000000000000.0 {
+            return "" + int(n)
+        }
+        alloc r := round(n * 10000.0) / 10000.0
+        return "" + r
+    }
+    return "" + n
+}
+
+proc color_text(v) {
+    if type_of(v) != 2 {
+        return "rgba(0, 0, 0, 0)"
+    }
+    alloc a := (v >> 24) & 255
+    alloc rgb := "" + ((v >> 16) & 255) + ", " + ((v >> 8) & 255) + ", " + (v & 255)
+    if a == 255 {
+        return "rgb(" + rgb + ")"
+    }
+    return "rgba(" + rgb + ", " + number_text(round(a * 1000.0 / 255.0) / 1000.0) + ")"
+}
+
+proc length_text(v) {
+    alloc t := type_of(v)
+    if t == 4 {
+        return v
+    }
+    if t == 2 or t == 3 {
+        return number_text(v) + "px"
+    }
+    if t != 5 or length(v) < 2 {
+        return ""
+    }
+    alloc k := v[0]
+    if k == 0 {
+        return number_text(v[1]) + "px"
+    }
+    if k == 1 {
+        return number_text(v[1]) + "%"
+    }
+    if k == 3 {
+        return "auto"
+    }
+    if k == 4 {
+        return "none"
+    }
+    return ""
+}
+
+# What a script is told the computed value of a property is; "" for
+# a property this browser does not keep.
+proc computed_text(st, name) {
+    if u.starts_with(name, "--") {
+        if has_key(st, "-vars") and has_key(st["-vars"], name) {
+            return u.trim("" + st["-vars"][name])
+        }
+        return ""
+    }
+    if name == "margin" or name == "padding" {
+        alloc parts := []
+        for side in SIDES {
+            append(parts, computed_text(st, name + "-" + side))
+        }
+        if parts[0] == parts[1] and parts[1] == parts[2] and parts[2] == parts[3] {
+            return parts[0]
+        }
+        return u.join(parts, " ")
+    }
+    if name == "overflow" {
+        return computed_text(st, "overflow-x")
+    }
+    if has_key(PROPS, name) == false {
+        return ""
+    }
+    alloc v := get(st, name)
+    alloc kind := PROPS[name][0]
+    if kind == 5 {
+        if v == "currentcolor" {
+            v := get(st, "color")
+        }
+        return color_text(v)
+    }
+    alloc t := type_of(v)
+    if t == 4 {
+        return v
+    }
+    if name == "opacity" or name == "font-weight" or name == "z-index" or name == "flex-grow" or name == "flex-shrink" or name == "order" {
+        if t == 2 or t == 3 {
+            return number_text(v)
+        }
+        return ""
+    }
+    if name == "font-family" {
+        if t == 5 {
+            return u.join(v, ", ")
+        }
+        return ""
+    }
+    if name == "line-height" {
+        if t == 5 and length(v) > 0 and v[0] == 13 {
+            return "normal"
+        }
+    }
+    if t == 1 {
+        return ""
+    }
+    return length_text(v)
+}
+
+# --- selectors asked from outside (querySelector, matches) ---------------------------------
+
+# Selectors as text ("a, b > c") ready for the two procs below; an
+# empty list when the text is not selectors this understands.
+proc selectors(text) {
+    alloc b := string_bytes(text)
+    alloc out := []
+    for s in parse_selectors(b, 0, length(b)) {
+        if s[2] == 0 {
+            append(out, s[0])
+        }
+    }
+    return out
+}
+
+proc select_walk(sels, kids, d, first, out) {
+    alloc n := length(kids)
+    alloc i := 0
+    loop i < n {
+        alloc k := kids[i]
+        if k.t == 1 {
+            if length(path) <= d {
+                append(path, k)
+                append(pidx, i)
+            } else {
+                path[d] := k
+                pidx[d] := i
+            }
+            for s in sels {
+                if match_from(s, 0, d) {
+                    append(out, k)
+                    break
+                }
+            }
+            if first and length(out) > 0 {
+                return true
+            }
+            if length(k.kids) > 0 {
+                select_walk(sels, k.kids, d + 1, first, out)
+                if first and length(out) > 0 {
+                    return true
+                }
+            }
+        }
+        i := i + 1
+    }
+    return true
+}
+
+# The elements below `scope` that one of the selectors fits, in page
+# order, added to `out`; the first only when `first`. `chain` is the
+# elements from the root of the tree down to scope (empty when scope
+# is the document), and `idx` where each sits among its parent's
+# children.
+proc select(sels, scope, chain, idx, first, out) {
+    path := []
+    pidx := []
+    alloc i := 0
+    loop i < length(chain) {
+        append(path, chain[i])
+        append(pidx, idx[i])
+        i := i + 1
+    }
+    select_walk(sels, scope.kids, length(chain), first, out)
+    path := []
+    pidx := []
+    return out
+}
+
+# Does one of the selectors fit the last element of `chain`?
+proc matches(sels, chain, idx) {
+    path := chain
+    pidx := idx
+    alloc d := length(chain) - 1
+    alloc hit := false
+    for s in sels {
+        if match_from(s, 0, d) {
+            hit := true
+            break
+        }
+    }
+    path := []
+    pidx := []
+    return hit
 }
 
 proc style_node(node, ps, d) {
@@ -4366,11 +4596,7 @@ proc style_tree(doc, w, h) {
         media_state[i] := 0
         i := i + 1
     }
-    if has_key(doc, "prepared") == false {
-        doc.root.ei := 1
-        prepare(doc.root)
-        doc.prepared := true
-    }
+    prepare_doc(doc)
     path := []
     pidx := []
     style_node(doc.root, false, 0)
