@@ -1069,6 +1069,11 @@ proc step_inner() {
         alloc bname := bspec[0]
         alloc bargc := bspec[1]
         alloc bargs := vm_pop_n(bargc)
+        if bname == "type_of" and is_vm_closure(bargs[0]) {
+            # A closure is a dict to this VM; to the program it is a proc.
+            vm_push(7)
+            return false
+        }
         vm_push(call_builtin(bname, bargs))
         return false
     }

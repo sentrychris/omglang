@@ -243,6 +243,7 @@ proc emit_builtin(name, argc) {
     if name == "clipboard_get" and argc == 1 { return emit_builtin1("omg_builtin_clipboard_get") }
     if name == "clipboard_set" and argc == 2 { return emit_builtin2("omg_builtin_clipboard_set") }
     if name == "random_bytes" and argc == 1 { return emit_builtin1("omg_builtin_random_bytes") }
+    if name == "type_of" and argc == 1 { return emit_builtin1("omg_builtin_type_of") }
     # Sound, the same.
     if name == "audio_open"   and argc == 2 { return emit_builtin2("omg_builtin_audio_open") }
     if name == "audio_write"  and argc == 3 { return emit_builtin3("omg_builtin_audio_write") }

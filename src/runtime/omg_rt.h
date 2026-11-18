@@ -4031,6 +4031,22 @@ static Value omg_builtin_clipboard_set(Value win, Value text) {
     return omg_builtin_window_unavailable("clipboard_set");
 }
 
+/* type_of(v): what kind of value v is: 0 none, 1 bool, 2 int,
+ * 3 float, 4 string, 5 list (a byte list too), 6 dict, 7 proc. */
+static Value omg_builtin_type_of(Value v) {
+    switch (v.tag) {
+        case OMG_BOOL:    return omg_int(1);
+        case OMG_INT:     return omg_int(2);
+        case OMG_FLOAT:   return omg_int(3);
+        case OMG_STR:     return omg_int(4);
+        case OMG_LIST:
+        case OMG_BYTES:   return omg_int(5);
+        case OMG_DICT:    return omg_int(6);
+        case OMG_CLOSURE: return omg_int(7);
+        default:          return omg_int(0);
+    }
+}
+
 /* random_bytes(n): n bytes nobody can guess, from the system, as a
  * byte list. /dev/urandom where there is one; on Windows the function
  * advapi32 has under the name SystemFunction036 (RtlGenRandom). */
@@ -4271,6 +4287,7 @@ static Value omg_call_builtin(Value name, Value args) {
         if (strcmp(n, "window_close") == 0)    return omg_builtin_window_close(a[0]);
         if (strcmp(n, "clipboard_get") == 0)   return omg_builtin_clipboard_get(a[0]);
         if (strcmp(n, "random_bytes") == 0)    return omg_builtin_random_bytes(a[0]);
+        if (strcmp(n, "type_of") == 0)         return omg_builtin_type_of(a[0]);
         if (strcmp(n, "audio_played") == 0)    return omg_builtin_audio_played(a[0]);
         if (strcmp(n, "audio_close") == 0)     return omg_builtin_audio_close(a[0]);
         if (strcmp(n, "file_size") == 0)       return omg_builtin_file_size(a[0]);
