@@ -133,7 +133,7 @@ proc n_array(this, args) {
 }
 
 proc n_is_array(this, args) {
-    return class_of(arg(args, 0)) == 1
+    return class_of(X["unproxy"](arg(args, 0))) == 1
 }
 
 proc n_of(this, args) {
@@ -385,6 +385,12 @@ proc n_join(this, args) {
 
 proc n_to_string(this, args) {
     if class_of(this) != 1 {
+        if type_of(this) == 2 and this != 0 {
+            alloc j := get(this, "join")
+            if is_callable(j) {
+                return call(j, this, [])
+            }
+        }
         return "[object Object]"
     }
     return n_join(this, [])

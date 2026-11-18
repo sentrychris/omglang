@@ -20,6 +20,7 @@ import "lib_string.omg" as string
 import "lib_regexp.omg" as regexp
 import "lib_coll.omg" as coll
 import "lib_promise.omg" as promise
+import "lib_typed.omg" as typed
 
 # Compile a script; raises "SyntaxError: ..." on bad text.
 proc compile_script(bytes, name, want_value) {
@@ -46,6 +47,7 @@ proc start() {
     regexp.setup()
     coll.setup()
     promise.setup()
+    typed.setup()
     promise.set_eval(eval_text)
     string.set_regex_fns(regexp.fns())
     regexp.set_expand(string.expand_fn())

@@ -1,0 +1,597 @@
+;;;omg
+
+# tools/browser/js/lib_typed.omg
+#
+# The standard library of the JavaScript engine: ArrayBuffer, the
+# typed arrays, DataView, TextEncoder and TextDecoder.
+#
+# The bytes are an OMG byte list, which the buffer and every array
+# looking into it share; core.omg knows how to read and write one
+# item (ta_get, ta_set), and what the payloads look like. The methods
+# that only read are Array's own, which work on anything with a
+# length; the ones here are those that must give a typed array back.
+
+import "core.omg" as c
+
+alloc X := c.exports()
+alloc H := X["H"]
+alloc I := X["I"]
+alloc arg := X["arg"]
+alloc def := X["def"]
+alloc def_getter := X["def_getter"]
+alloc define_hidden := X["define_hidden"]
+alloc get := X["get"]
+alloc new_obj := X["new_obj"]
+alloc new_array := X["new_array"]
+alloc new_native := X["new_native"]
+alloc new_native_with := X["new_native_with"]
+alloc native_data := X["native_data"]
+alloc throw_type := X["throw_type"]
+alloc throw_range := X["throw_range"]
+alloc to_str := X["to_str"]
+alloc to_num := X["to_num"]
+alloc to_bool := X["to_bool"]
+alloc to_integer := X["to_integer"]
+alloc is_callable := X["is_callable"]
+alloc class_of := X["class_of"]
+alloc call := X["call"]
+alloc new_target := X["new_target"]
+alloc iter_list := X["iter_list"]
+alloc array_like_list := X["array_like_list"]
+alloc rel_index := X["rel_index"]
+alloc ta_get := X["ta_get"]
+alloc ta_set := X["ta_set"]
+alloc bytes_num := X["bytes_num"]
+alloc num_bytes := X["num_bytes"]
+
+proc nothing() {
+}
+
+alloc U := nothing()
+
+alloc NAMES := ["Int8Array", "Uint8Array", "Uint8ClampedArray", "Int16Array", "Uint16Array",
+                "Int32Array", "Uint32Array", "Float32Array", "Float64Array"]
+alloc SIZE := [1, 1, 1, 2, 2, 4, 4, 4, 8]
+alloc PROTOS := []             # the prototype of each kind
+alloc BUFFER_PROTO := 0
+alloc VIEW_PROTO := 0
+alloc SCRATCH := bytes_repeat(0, 8)
+
+# --- making them ----------------------------------------------------------------------------
+
+proc new_buffer(bytes) {
+    alloc h := new_obj(18, BUFFER_PROTO)
+    H[h][3] := [bytes]
+    return h
+}
+
+# A typed array of n items looking into `bytes` from `offset`;
+# `buffer` is the ArrayBuffer around those bytes, or 0 to make one.
+proc new_typed(kind, bytes, offset, n, buffer) {
+    alloc h := new_obj(19, PROTOS[kind])
+    if buffer == 0 {
+        buffer := new_buffer(bytes)
+    }
+    H[h][3] := [bytes, offset, n, kind, buffer]
+    return h
+}
+
+proc typed_from_list(kind, items) {
+    alloc n := length(items)
+    alloc h := new_typed(kind, bytes_repeat(0, n * SIZE[kind]), 0, n, 0)
+    alloc x := H[h][3]
+    alloc i := 0
+    loop i < n {
+        ta_set(x, i, items[i])
+        i := i + 1
+    }
+    return h
+}
+
+# A Uint8Array around an OMG byte list, which is used as it is.
+proc bytes_typed(bytes) {
+    return new_typed(1, bytes, 0, length(bytes), 0)
+}
+
+# The bytes something stands for (a typed array, a buffer, a
+# DataView) as a new byte list, or false when it is none of them.
+proc bytes_of(v) {
+    alloc cls := class_of(v)
+    if cls == 18 {
+        alloc b := H[v][3][0]
+        return b[0:]
+    }
+    if cls == 19 {
+        alloc x := H[v][3]
+        alloc bx := x[0]
+        return bx[x[1]:x[1] + x[2] * SIZE[x[3]]]
+    }
+    if cls == 20 {
+        alloc d := H[v][3]
+        alloc bd := d[0]
+        return bd[d[1]:d[1] + d[2]]
+    }
+    return false
+}
+
+proc typed_x(this, what) {
+    if class_of(this) != 19 {
+        throw_type(what + " needs a typed array")
+    }
+    return H[this][3]
+}
+
+# --- ArrayBuffer ----------------------------------------------------------------------------
+
+proc n_buffer(this, args) {
+    if type_of(new_target()) == 0 {
+        throw_type("Constructor ArrayBuffer requires 'new'")
+    }
+    alloc n := to_integer(arg(args, 0))
+    if n < 0 or n > 1073741824 {
+        throw_range("Array buffer allocation failed")
+    }
+    return new_buffer(bytes_repeat(0, n))
+}
+
+proc n_buffer_length(this, args) {
+    if class_of(this) != 18 {
+        throw_type("byteLength needs an ArrayBuffer")
+    }
+    return length(H[this][3][0]) * 1.0
+}
+
+proc n_buffer_slice(this, args) {
+    if class_of(this) != 18 {
+        throw_type("slice needs an ArrayBuffer")
+    }
+    alloc b := H[this][3][0]
+    alloc n := length(b)
+    alloc from := rel_index(arg(args, 0), n, 0)
+    alloc to := rel_index(arg(args, 1), n, n)
+    if to < from {
+        to := from
+    }
+    return new_buffer(b[from:to])
+}
+
+proc n_is_view(this, args) {
+    alloc cls := class_of(arg(args, 0))
+    return cls == 19 or cls == 20
+}
+
+# --- the typed arrays -----------------------------------------------------------------------
+
+proc n_typed(this, args) {
+    alloc kind := native_data()
+    if type_of(new_target()) == 0 {
+        throw_type("Constructor " + NAMES[kind] + " requires 'new'")
+    }
+    alloc size := SIZE[kind]
+    alloc a := arg(args, 0)
+    alloc t := type_of(a)
+    if t != 2 or a == 0 {
+        alloc n := 0
+        if t != 0 {
+            n := to_integer(a)
+        }
+        if n < 0 or n * size > 1073741824 {
+            throw_range("Invalid typed array length: " + to_str(a))
+        }
+        return new_typed(kind, bytes_repeat(0, n * size), 0, n, 0)
+    }
+    alloc cls := H[a][0]
+    if cls == 18 {
+        alloc bytes := H[a][3][0]
+        alloc total := length(bytes)
+        alloc off := to_integer(arg(args, 1))
+        if off < 0 or off > total or off % size != 0 {
+            throw_range("start offset of " + NAMES[kind] + " should be a multiple of " + size)
+        }
+        alloc count := (total - off) / size
+        if type_of(arg(args, 2)) != 0 {
+            count := to_integer(args[2])
+            if count < 0 or off + count * size > total {
+                throw_range("Invalid typed array length: " + count)
+            }
+        } elif (total - off) % size != 0 {
+            throw_range("byte length of " + NAMES[kind] + " should be a multiple of " + size)
+        }
+        return new_typed(kind, bytes, off, int(count), a)
+    }
+    if cls != 19 and cls != 1 and type_of(get(a, "@@iterator")) != 0 {
+        return typed_from_list(kind, iter_list(a))
+    }
+    return typed_from_list(kind, array_like_list(a))
+}
+
+proc n_typed_abstract(this, args) {
+    throw_type("Abstract class TypedArray not directly constructable")
+}
+
+proc n_length(this, args) {
+    if class_of(this) != 19 {
+        return U
+    }
+    return H[this][3][2] * 1.0
+}
+
+proc n_byte_length(this, args) {
+    alloc x := typed_x(this, "byteLength")
+    return x[2] * SIZE[x[3]] * 1.0
+}
+
+proc n_byte_offset(this, args) {
+    return typed_x(this, "byteOffset")[1] * 1.0
+}
+
+proc n_buffer_of(this, args) {
+    return typed_x(this, "buffer")[4]
+}
+
+proc n_tag(this, args) {
+    if class_of(this) != 19 {
+        return U
+    }
+    return NAMES[H[this][3][3]]
+}
+
+proc n_set(this, args) {
+    alloc x := typed_x(this, "set")
+    alloc items := array_like_list(arg(args, 0))
+    alloc at := to_integer(arg(args, 1))
+    if at < 0 or at + length(items) > x[2] {
+        throw_range("offset is out of bounds")
+    }
+    for it in items {
+        ta_set(x, at, it)
+        at := at + 1
+    }
+    return U
+}
+
+proc n_subarray(this, args) {
+    alloc x := typed_x(this, "subarray")
+    alloc n := x[2]
+    alloc from := rel_index(arg(args, 0), n, 0)
+    alloc to := rel_index(arg(args, 1), n, n)
+    if to < from {
+        to := from
+    }
+    return new_typed(x[3], x[0], x[1] + from * SIZE[x[3]], to - from, x[4])
+}
+
+proc n_slice(this, args) {
+    alloc x := typed_x(this, "slice")
+    alloc n := x[2]
+    alloc from := rel_index(arg(args, 0), n, 0)
+    alloc to := rel_index(arg(args, 1), n, n)
+    if to < from {
+        to := from
+    }
+    alloc size := SIZE[x[3]]
+    alloc b := x[0]
+    return new_typed(x[3], b[x[1] + from * size:x[1] + to * size], 0, to - from, 0)
+}
+
+# map and filter are Array's, with the answer made typed again.
+proc n_map(this, args) {
+    alloc x := typed_x(this, "map")
+    return typed_from_list(x[3], array_like_list(call(get(I[3], "map"), this, args)))
+}
+
+proc n_filter(this, args) {
+    alloc x := typed_x(this, "filter")
+    return typed_from_list(x[3], array_like_list(call(get(I[3], "filter"), this, args)))
+}
+
+proc n_by_number(this, args) {
+    alloc a := args[0]
+    alloc b := args[1]
+    if a < b {
+        return -1.0
+    }
+    if a > b {
+        return 1.0
+    }
+    return 0.0
+}
+
+proc n_sort(this, args) {
+    alloc x := typed_x(this, "sort")
+    alloc f := arg(args, 0)
+    if is_callable(f) == false {
+        f := new_native(n_by_number, "", 2)
+    }
+    alloc sorted := array_like_list(call(get(I[3], "sort"), new_array(array_like_list(this)), [f]))
+    alloc i := 0
+    for it in sorted {
+        ta_set(x, i, it)
+        i := i + 1
+    }
+    return this
+}
+
+proc kind_of_ctor(ctor) {
+    alloc k := U
+    if type_of(ctor) == 2 and ctor != 0 {
+        k := get(ctor, "@@kind")
+    }
+    if type_of(k) != 3 {
+        throw_type("this is not a typed array constructor")
+    }
+    return int(k)
+}
+
+proc n_from(this, args) {
+    alloc kind := kind_of_ctor(this)
+    alloc src := arg(args, 0)
+    alloc items := []
+    if type_of(src) == 2 and src != 0 and type_of(get(src, "@@iterator")) != 0 {
+        items := iter_list(src)
+    } else {
+        items := array_like_list(src)
+    }
+    alloc f := arg(args, 1)
+    if is_callable(f) {
+        alloc i := 0
+        loop i < length(items) {
+            items[i] := call(f, arg(args, 2), [items[i], i * 1.0])
+            i := i + 1
+        }
+    }
+    return typed_from_list(kind, items)
+}
+
+proc n_of(this, args) {
+    return typed_from_list(kind_of_ctor(this), args[0:])
+}
+
+# --- DataView -------------------------------------------------------------------------------
+
+proc n_view(this, args) {
+    if type_of(new_target()) == 0 {
+        throw_type("Constructor DataView requires 'new'")
+    }
+    alloc buf := arg(args, 0)
+    if class_of(buf) != 18 {
+        throw_type("First argument to DataView constructor must be an ArrayBuffer")
+    }
+    alloc bytes := H[buf][3][0]
+    alloc total := length(bytes)
+    alloc off := to_integer(arg(args, 1))
+    if off < 0 or off > total {
+        throw_range("Start offset " + off + " is outside the bounds of the buffer")
+    }
+    alloc n := total - off
+    if type_of(arg(args, 2)) != 0 {
+        n := to_integer(args[2])
+        if n < 0 or off + n > total {
+            throw_range("Invalid DataView length " + n)
+        }
+    }
+    alloc h := new_obj(20, VIEW_PROTO)
+    H[h][3] := [bytes, off, n, buf]
+    return h
+}
+
+proc view_x(this) {
+    if class_of(this) != 20 {
+        throw_type("this is not a DataView")
+    }
+    return H[this][3]
+}
+
+proc view_at(x, args, size) {
+    alloc at := to_integer(arg(args, 0))
+    if at < 0 or at + size > x[2] {
+        throw_range("Offset is outside the bounds of the DataView")
+    }
+    return x[1] + at
+}
+
+proc n_view_get(this, args) {
+    alloc kind := native_data()
+    alloc x := view_x(this)
+    alloc size := SIZE[kind]
+    alloc at := view_at(x, args, size)
+    if size == 1 or to_bool(arg(args, 1)) {
+        return bytes_num(x[0], at, kind)
+    }
+    alloc b := x[0]
+    alloc i := 0
+    loop i < size {
+        SCRATCH[i] := b[at + size - 1 - i]
+        i := i + 1
+    }
+    return bytes_num(SCRATCH, 0, kind)
+}
+
+proc n_view_set(this, args) {
+    alloc kind := native_data()
+    alloc x := view_x(this)
+    alloc size := SIZE[kind]
+    alloc at := view_at(x, args, size)
+    if size == 1 or to_bool(arg(args, 2)) {
+        num_bytes(x[0], at, kind, arg(args, 1))
+        return U
+    }
+    num_bytes(SCRATCH, 0, kind, arg(args, 1))
+    alloc b := x[0]
+    alloc i := 0
+    loop i < size {
+        b[at + size - 1 - i] := SCRATCH[i]
+        i := i + 1
+    }
+    return U
+}
+
+proc n_view_buffer(this, args) {
+    return view_x(this)[3]
+}
+
+proc n_view_length(this, args) {
+    return view_x(this)[2] * 1.0
+}
+
+proc n_view_offset(this, args) {
+    return view_x(this)[1] * 1.0
+}
+
+# --- TextEncoder and TextDecoder ------------------------------------------------------------
+
+proc n_encoder(this, args) {
+    if type_of(new_target()) == 0 {
+        throw_type("Constructor TextEncoder requires 'new'")
+    }
+    alloc h := new_obj(0, get(X["native_fn"](), "prototype"))
+    return h
+}
+
+proc n_encode(this, args) {
+    alloc s := ""
+    if type_of(arg(args, 0)) != 0 {
+        s := to_str(args[0])
+    }
+    return bytes_typed(string_bytes(s))
+}
+
+proc n_decoder(this, args) {
+    if type_of(new_target()) == 0 {
+        throw_type("Constructor TextDecoder requires 'new'")
+    }
+    alloc label := "utf-8"
+    if type_of(arg(args, 0)) != 0 {
+        label := to_str(args[0])
+    }
+    alloc h := new_obj(0, get(X["native_fn"](), "prototype"))
+    define_hidden(h, "@@label", label)
+    return h
+}
+
+proc n_decoder_encoding(this, args) {
+    alloc l := get(this, "@@label")
+    if type_of(l) != 4 {
+        return U
+    }
+    if l == "utf8" or l == "UTF-8" or l == "unicode-1-1-utf-8" {
+        return "utf-8"
+    }
+    return l
+}
+
+proc latin1(b) {
+    alloc parts := []
+    for v in b {
+        append(parts, chr(v))
+    }
+    return X["str_join"](parts, "")
+}
+
+proc n_decode(this, args) {
+    alloc v := arg(args, 0)
+    if type_of(v) == 0 {
+        return ""
+    }
+    alloc b := bytes_of(v)
+    if b == false {
+        throw_type("The argument of decode must be an ArrayBuffer or a view of one")
+    }
+    alloc enc := n_decoder_encoding(this, [])
+    if enc != "utf-8" {
+        return latin1(b)
+    }
+    if length(b) >= 3 and b[0] == 239 and b[1] == 187 and b[2] == 191 {
+        b := b[3:]
+    }
+    alloc s := ""
+    try {
+        s := bytes_to_string(b)
+    } except e {
+        s := latin1(b)
+    }
+    return s
+}
+
+# --- setting up -----------------------------------------------------------------------------
+
+proc setup() {
+    alloc g := I[0]
+    alloc op := I[1]
+    alloc fp := I[2]
+
+    BUFFER_PROTO := new_obj(0, op)
+    alloc bc := X["def_ctor"]("ArrayBuffer", n_buffer, 1, BUFFER_PROTO)
+    def(bc, "isView", n_is_view, 1)
+    def_getter(BUFFER_PROTO, "byteLength", n_buffer_length)
+    def(BUFFER_PROTO, "slice", n_buffer_slice, 2)
+    define_hidden(BUFFER_PROTO, "@@toStringTag", "ArrayBuffer")
+
+    # what all the kinds share
+    alloc tp := new_obj(0, op)
+    alloc tc := new_native(n_typed_abstract, "TypedArray", 0)
+    define_hidden(tc, "prototype", tp)
+    define_hidden(tp, "constructor", tc)
+    def(tc, "from", n_from, 1)
+    def(tc, "of", n_of, 0)
+    def_getter(tp, "length", n_length)
+    def_getter(tp, "byteLength", n_byte_length)
+    def_getter(tp, "byteOffset", n_byte_offset)
+    def_getter(tp, "buffer", n_buffer_of)
+    def_getter(tp, "@@toStringTag", n_tag)
+    def(tp, "set", n_set, 1)
+    def(tp, "subarray", n_subarray, 2)
+    def(tp, "slice", n_slice, 2)
+    def(tp, "map", n_map, 1)
+    def(tp, "filter", n_filter, 1)
+    def(tp, "sort", n_sort, 1)
+    alloc ap := I[3]
+    for name in ["forEach", "indexOf", "lastIndexOf", "includes", "join", "find", "findIndex",
+                 "findLast", "findLastIndex", "some", "every", "reduce", "reduceRight", "at",
+                 "keys", "entries", "values", "reverse", "fill", "copyWithin", "toString",
+                 "toLocaleString", "@@iterator"] {
+        define_hidden(tp, name, get(ap, name))
+    }
+
+    PROTOS := []
+    alloc kind := 0
+    loop kind < 9 {
+        alloc proto := new_obj(0, tp)
+        alloc ctor := new_native_with(n_typed, NAMES[kind], 3, kind)
+        H[ctor][1] := tc
+        define_hidden(ctor, "prototype", proto)
+        define_hidden(proto, "constructor", ctor)
+        define_hidden(ctor, "BYTES_PER_ELEMENT", SIZE[kind] * 1.0)
+        define_hidden(proto, "BYTES_PER_ELEMENT", SIZE[kind] * 1.0)
+        define_hidden(ctor, "@@kind", kind * 1.0)
+        define_hidden(g, NAMES[kind], ctor)
+        append(PROTOS, proto)
+        kind := kind + 1
+    }
+
+    VIEW_PROTO := new_obj(0, op)
+    X["def_ctor"]("DataView", n_view, 1, VIEW_PROTO)
+    def_getter(VIEW_PROTO, "buffer", n_view_buffer)
+    def_getter(VIEW_PROTO, "byteLength", n_view_length)
+    def_getter(VIEW_PROTO, "byteOffset", n_view_offset)
+    define_hidden(VIEW_PROTO, "@@toStringTag", "DataView")
+    alloc views := ["Int8", "Uint8", "", "Int16", "Uint16", "Int32", "Uint32", "Float32", "Float64"]
+    alloc vk := 0
+    loop vk < 9 {
+        if views[vk] != "" {
+            define_hidden(VIEW_PROTO, "get" + views[vk], new_native_with(n_view_get, "get" + views[vk], 1, vk))
+            define_hidden(VIEW_PROTO, "set" + views[vk], new_native_with(n_view_set, "set" + views[vk], 2, vk))
+        }
+        vk := vk + 1
+    }
+
+    alloc ep := new_obj(0, op)
+    X["def_ctor"]("TextEncoder", n_encoder, 0, ep)
+    def(ep, "encode", n_encode, 1)
+    define_hidden(ep, "encoding", "utf-8")
+    alloc dp := new_obj(0, op)
+    X["def_ctor"]("TextDecoder", n_decoder, 0, dp)
+    def(dp, "decode", n_decode, 1)
+    def_getter(dp, "encoding", n_decoder_encoding)
+    return true
+}
