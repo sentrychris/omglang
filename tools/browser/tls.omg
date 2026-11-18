@@ -29,6 +29,14 @@ import "x509.omg" as x509
 alloc last_error := ""
 alloc last_info := ""
 alloc TIMEOUT := 20000
+alloc trace := false
+
+# Say on the terminal what goes on in the handshakes (for finding
+# out why a server and this code do not get on).
+proc set_trace(on) {
+    trace := on
+    return true
+}
 
 proc error() {
     return last_error
@@ -301,6 +309,9 @@ proc alert(t, body) {
 
 # Send a handshake message and remember it for the transcript.
 proc send_handshake(t, kind, body) {
+    if trace {
+        emit "tls: send handshake message " + kind + ", " + length(body) + " bytes"
+    }
     alloc msg := to_bytes([kind]) + u24(length(body)) + body
     t.script := t.script + msg
     return write_record(t, 22, msg)
@@ -324,6 +335,9 @@ proc next_handshake(t) {
                 }
                 if raw[0] != 0 {
                     t.script := t.script + raw
+                }
+                if trace {
+                    emit "tls: got handshake message " + raw[0] + ", " + len + " bytes"
                 }
                 return [raw[0], raw[4:]]
             }
@@ -665,6 +679,9 @@ proc handshake12(t, sh) {
 proc handshake(t) {
     send_hello(t, 29, false)
     alloc sh := parse_hello(expect(t, 2, "its hello"))
+    if trace {
+        emit "tls: server hello: version " + sh.version + ", suite " + sh.suite + ", group " + sh.group + ", retry " + sh.retry
+    }
     if sh.retry {
         # the server wants a key for another curve: say hello again
         alloc s0 := suite(sh.suite)

@@ -47,6 +47,10 @@ proc height() {
 
 # Draw only inside this rectangle from now on (and inside the picture).
 proc clip(x0, y0, x1, y1) {
+    x0 := floor(x0)
+    y0 := floor(y0)
+    x1 := floor(x1)
+    y1 := floor(y1)
     if x0 < 0 { x0 := 0 }
     if y0 < 0 { y0 := 0 }
     if x1 > cw { x1 := cw }
@@ -70,6 +74,10 @@ proc unclip() {
 
 # Fill the rectangle with a colour, which may be see-through.
 proc fill(x, y, w, h, color) {
+    x := floor(x)
+    y := floor(y)
+    w := floor(w)
+    h := floor(h)
     alloc a := (color >> 24) & 255
     if a == 0 {
         return 0
@@ -120,6 +128,11 @@ proc fill(x, y, w, h, color) {
 
 # The outline of a rectangle, t pixels thick, inside it.
 proc frame(x, y, w, h, t, color) {
+    x := floor(x)
+    y := floor(y)
+    w := floor(w)
+    h := floor(h)
+    t := floor(t)
     fill(x, y, w, t, color)
     fill(x, y + h - t, w, t, color)
     fill(x, y + t, t, h - 2 * t, color)
@@ -182,6 +195,8 @@ proc blit(bm, bw, bh, x, y, color) {
 # Draw the characters list[from:to] (Unicode numbers) in font f, the
 # pen starting at x on the baseline y. Returns where the pen ends.
 proc text(f, list, from, to, x, y, color) {
+    x := floor(x)
+    y := floor(y)
     alloc i := from
     loop i < to {
         alloc cp := list[i]
@@ -199,6 +214,10 @@ proc text(f, list, from, to, x, y, color) {
 # green, blue, alpha), and it goes into the rectangle dw x dh at
 # (dx, dy), stretched or shrunk to fit.
 proc image(data, iw, ih, dx, dy, dw, dh) {
+    dx := floor(dx)
+    dy := floor(dy)
+    dw := floor(dw)
+    dh := floor(dh)
     if dw <= 0 or dh <= 0 or iw <= 0 or ih <= 0 {
         return 0
     }
@@ -460,6 +479,12 @@ proc corner(x, y, r, rin, cx, cy, color) {
 # A rectangle with round corners of radius r: filled when t is 0,
 # otherwise only its edge, t pixels thick.
 proc round_rect(x, y, w, h, r, t, color) {
+    x := floor(x)
+    y := floor(y)
+    w := floor(w)
+    h := floor(h)
+    r := floor(r)
+    t := floor(t)
     if w <= 0 or h <= 0 {
         return 0
     }
@@ -607,6 +632,10 @@ proc polygon(pts, color) {
 # direction: angle in degrees as CSS counts them (0 up, 90 to the
 # right, 180 down); stops is [[colour, place 0..1], ...] in order.
 proc gradient(x, y, w, h, angle, stops) {
+    x := floor(x)
+    y := floor(y)
+    w := floor(w)
+    h := floor(h)
     alloc ns := length(stops)
     if ns == 0 or w <= 0 or h <= 0 {
         return 0
