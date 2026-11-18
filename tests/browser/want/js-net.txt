@@ -1,0 +1,26 @@
+200 | true | application/json | yes | false | {"ok":true,"asked":"?a=1&b=two","sent":"hi"}
+404 | false | Not Found | nothing here
+200 | true | /landed?from=redirect | GET /landed?from=redirect [] 
+POST /echo [application/json] {"n":1}
+POST /echo [application/x-www-form-urlencoded;charset=UTF-8] a=1&b=x+y
+PUT /echo [text/plain;charset=UTF-8] plain words
+48 | req | true
+in three parts
+squeezed, then sent
+TypeError
+AbortError
+200 | OK | yes | {"ok":true,"asked":"?x=2","sent":"xhr"} | 234 | /json?x=2
+loadend | 200 | POST /echo [text/x-test] posted
+?as=json | object
+404 | nothing here
+cookies: made=here | made=here
+cookies: made=here; taste=ginger | made=here; taste=ginger | /show
+function | from a script added later
+script | error
+text/javascript | 3
+12 | text/plain | héllo world | 195,169 | 3
+POST /echo [text/plain] héllo world
+19 | true
+7 | grüße
+/page/net.html | http: | true | Scripts and the network
+done

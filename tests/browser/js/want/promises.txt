@@ -1,0 +1,48 @@
+start
+executor
+f1 start | 10
+true | true | function | [object Promise] | 1 | Promise
+TypeError
+TypeError
+TypeError
+end of script
+then | 1
+p | a
+TypeError | in executor
+rejected | 3
+micro
+all empty | []
+f1 mid | 10
+f2 | RangeError
+thenable then
+thenable then
+withResolvers | wr
+then2 | 2
+all rejected | r1
+settled | [{"status":"fulfilled","value":1},{"status":"rejected","reason":"x"}]
+any | 2
+any none | AggregateError | [1] | All promises were rejected
+f1 b | 11
+arrow
+method | 6
+from thenable
+await thenable | from thenable
+caught | boom
+f1 caught | aw
+order | ["a",1,2,"b",3,4,"c",5]
+nested
+finally
+f1 done | 22
+finally rejects | fin
+finally keeps | keep
+after | rec
+after sleep: ["a","b"]
+all: [1,2,3]
+cycle: TypeError
+for await: [1,2]
+loop: 10
+race: fast
+slept: yes
+ticks: 3
+timeout 0: ran
+timeout 20: x | y

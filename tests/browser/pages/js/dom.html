@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html><head><title>Test one</title>
+<!-- tests/browser.sh: what this page prints with console.log is compared with
+     tests/browser/want/js-dom.txt, which is what Chromium prints for it. -->
+<style>.big { font-size: 30px } #main p { color: red }</style>
+</head>
+<body class="home page">
+<div id="main" data-user-id="42"><p class="a b">Hello <b>world</b></p><p>Second</p></div>
+<ul id="list"><li>one</li><li class="sel">two</li><li>three</li></ul>
+<form id="f" action="/go"><input name="q" value="abc"><input type="checkbox" name="c" checked><select name="s"><option value="1">One<option value="2" selected>Two</select><textarea name="t">text here</textarea><button type="button" id="btn" onclick="console.log('inline click', this.id, event.type)">Go</button></form>
+<script>
+var L = function () { console.log(Array.prototype.map.call(arguments, function (x) { return typeof x === "string" ? x : JSON.stringify(x) }).join(" | ")) };
+L(document.title, document.body.className, document.readyState, typeof window, window === this, document.documentElement.tagName, document.head.nodeName);
+var main = document.getElementById("main");
+L(main.id, main.tagName, main.children.length, main.firstChild.nodeName, main.firstElementChild.textContent, main.dataset.userId, main.getAttribute("data-user-id"), main.innerHTML);
+L(document.querySelector("#main p.a b").textContent, document.querySelectorAll("li").length, document.querySelector("li.sel").textContent, document.querySelectorAll("ul > li:nth-child(odd)").length, document.querySelector("li:last-child").innerHTML, document.querySelector("nope"));
+var p = document.createElement("p"); p.textContent = "Added <b>"; p.className = "new"; p.id = "np"; main.appendChild(p);
+L(main.children.length, main.lastChild === p, p.parentNode === main, p.outerHTML, document.getElementById("np") === p, p.isConnected, document.createElement("i").isConnected);
+p.classList.add("x", "y"); p.classList.remove("new"); p.classList.toggle("z"); L(p.className, p.classList.contains("x"), p.classList.length, p.classList[0]);
+p.style.color = "blue"; p.style.backgroundColor = "#fff"; p.style.setProperty("margin-top", "4px"); L(p.getAttribute("style"), p.style.color, p.style.backgroundColor, p.style.marginTop, p.style.cssText);
+p.style.color = ""; L(p.style.cssText, p.style.length);
+main.insertBefore(document.createTextNode("T"), main.firstChild); L(main.firstChild.nodeType, main.firstChild.data, main.childNodes.length);
+main.removeChild(main.firstChild); L(main.childNodes.length, main.firstChild.nodeName);
+var ul = document.getElementById("list"); ul.innerHTML = "<li>a</li><li>b</li>"; L(ul.children.length, ul.innerHTML, ul.lastElementChild.previousElementSibling.textContent);
+ul.insertAdjacentHTML("beforeend", "<li>c</li>"); ul.insertAdjacentHTML("afterbegin", "<li>z</li>"); L(ul.textContent);
+var frag = document.createDocumentFragment(); for (var i = 0; i < 3; i++) { var li = document.createElement("li"); li.textContent = "f" + i; frag.appendChild(li) } ul.appendChild(frag); L(ul.children.length, frag.childNodes.length, ul.lastChild.textContent);
+ul.children[0].remove(); L(ul.firstElementChild.textContent); var c = ul.cloneNode(true); L(c.children.length, c.parentNode, c.id); 
+var f = document.getElementById("f"); L(f.elements.length, f.q.value, f.elements[1].checked, f.elements[2].value, f.elements[2].selectedIndex, f.elements[3].value, f.method, f.q.type, f.elements[1].type);
+L(document.forms.length, document.querySelector("input[name=q]").value, document.querySelector("[type=checkbox]").name, document.body.contains(p), p.closest("div").id, p.matches("#main > p"), p.matches("ul p"));
+var q = document.querySelector("input"); q.value = "typed"; L(q.value, q.getAttribute("value"), q.defaultValue); q.setAttribute("placeholder", "ph"); L(q.placeholder, q.hasAttribute("placeholder"), q.disabled); q.disabled = true; L(q.hasAttribute("disabled"), q.outerHTML);
+var log = []; 
+document.body.addEventListener("click", function (e) { log.push("body bubble " + e.target.id + " " + e.eventPhase + " " + (e.currentTarget === document.body)) });
+document.body.addEventListener("click", function (e) { log.push("body capture") }, true);
+main.addEventListener("click", function (e) { log.push("main " + (this === main)) });
+p.addEventListener("click", function (e) { log.push("p1"); }, { once: true });
+p.onclick = function (e) { log.push("p onclick " + e.type + " " + e.bubbles + " " + (e instanceof MouseEvent) + " " + (e instanceof Event)) };
+window.addEventListener("click", function () { log.push("window") });
+p.click(); p.click(); L(log); log = [];
+main.addEventListener("custom", function (e) { log.push("custom " + e.detail.x); e.stopPropagation() }); document.addEventListener("custom", function () { log.push("doc should not see") });
+var r = p.dispatchEvent(new CustomEvent("custom", { bubbles: true, detail: { x: 7 } })); L(log, r);
+var ev = new Event("x", { cancelable: true }); p.addEventListener("x", function (e) { e.preventDefault() }); L(p.dispatchEvent(ev), ev.defaultPrevented);
+document.getElementById("btn").click();
+L(location.search, location.hash, location.href === document.URL, String(location) === location.href, /dom\.html$/.test(location.pathname));
+L(typeof navigator.userAgent, window.innerWidth > 0, typeof performance.now(), (localStorage.removeItem("k"), localStorage.getItem("k")), (localStorage.setItem("k", "v"), localStorage.k), typeof requestAnimationFrame);
+var u = new URL("/a/b?x=1&y=two#h", "https://example.com:8080/base/"); L(u.href, u.origin, u.host, u.pathname, u.search, u.hash, u.searchParams.get("y"), [...u.searchParams.keys()]); u.searchParams.set("z", "a b"); L(u.href, String(u));
+var sp = new URLSearchParams("a=1&b=2&a=3"); L(sp.getAll("a"), sp.toString(), sp.has("b"), [...sp].length);
+L(document.body instanceof HTMLElement, p instanceof HTMLParagraphElement, p instanceof Element, p instanceof Node, document instanceof Document, p.nodeType === Node.ELEMENT_NODE, Object.prototype.toString.call(p), String(document), p.constructor.name);
+setTimeout(function () { L("timeout", document.readyState) }, 150);
+document.addEventListener("DOMContentLoaded", function () { L("DOMContentLoaded", document.readyState) });
+window.onload = function () { L("load", document.readyState) };
+requestAnimationFrame(function (t) { L("raf", typeof t) });
+Promise.resolve().then(function () { L("microtask") });
+p.expando = { a: 1 }; L(document.getElementById("np").expando, "id" in p, "nope" in p, p.nope);
+var el = document.createElement("div"); el.innerHTML = "<span>a</span>text<em>b</em>"; L(el.childNodes.length, el.children.length, el.innerHTML, el.textContent, el.querySelector("em").textContent);
+var t = document.createElement("table"); t.innerHTML = "<tr><td>1</td><td>2</td></tr>"; L(t.innerHTML, t.querySelectorAll("td").length);
+L(getComputedStyle(document.body).display, typeof document.cookie, document.compatMode, document.querySelectorAll("#main p, li").length, main.getElementsByTagName("p").length, document.getElementsByClassName("a b").length);
+try { document.querySelector("p:::") } catch (e) { L(e.name) } try { main.appendChild(document.body) } catch (e) { L(e.name) } try { main.removeChild(ul) } catch (e) { L(e.name) }
+</script>
+<p id="after">after script</p>
+<script>L(document.getElementById("after").textContent, document.scripts.length, document.currentScript.tagName)</script>
+</body></html>

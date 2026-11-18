@@ -1,0 +1,14 @@
+var s1 = Symbol('a'), s2 = Symbol.for('b');
+var o = {x: 1, [s1]: 2, [s2]: 3, [Symbol.iterator]: 4};
+var syms = Object.getOwnPropertySymbols(o);
+console.log(syms.length, syms[0] === s1, syms[1] === s2, syms[2] === Symbol.iterator, Reflect.ownKeys(o).length, Reflect.ownKeys([1,2]).join());
+var m = {}; syms.forEach(function (s) { m[s] = o[s]; }); console.log(m[s1], m[s2], Object.keys(m).length, JSON.stringify(m));
+delete o[s1]; console.log(Object.getOwnPropertySymbols(o).length, s1.toString(), s1.description);
+var AF = Object.getPrototypeOf(async function () {}).constructor;
+console.log(AF.name, AF === Function, typeof AF.prototype, Object.prototype.toString.call(async function () {}));
+var f = new AF('a', 'b', 'return await a + b');
+var p = f(1, Promise.resolve(2)); console.log(p instanceof Promise, typeof f, f instanceof Function);
+p.then(function (v) { console.log('value', v); });
+var g = new AF(['__self', 'scope'], 'with (scope) { __self.result = x * 2 }; __self.finished = true; return __self.result;');
+var self = {}; g(self, {x: 21}).catch(function (e) { console.log('err', e); }).then(function () { console.log(self.result, self.finished); });
+console.log(Object.getPrototypeOf(function () {}) === Function.prototype, Object.getPrototypeOf(async () => 1) === AF.prototype);

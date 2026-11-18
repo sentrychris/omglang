@@ -1,0 +1,38 @@
+["submit submit true true","submit submit true true"]
+["click true","input true","change true","click false","input false","change false"] | true
+["radio 2"] | false | true | 2 | 2
+1 | 2 | true | B | b
+abc | text | false | a | true
+["q","r","s","t"] | abc | false | q=abc&r=1&s=a&t=text
+by setter | abc
+true
+["focus","focusin true","blur"] | true
+["doc-capture:1:B:undefined","ul-capture:1:B:UL","b:2:B:B","ul:3:B:UL","doc:3:B:undefined"]
+["doc-capture:1:B:undefined","ul-capture:1:B:UL","b:2:B:B"]
+["first","second"]
+["delegated 2 B","delegated 1 LI"]
+1
+["a KeyA true false true false"] | 5 | 7 | 1 | false | mousemove
+{"n":1} | made | false | false | false | number | null
+0 | 2 | 11 | 0 | <li class="made">from a template</li><p>second</p>
+3 | 1 | from a template
+T | hi there | 1 | true | null
+made | A | 1
+B<hr><li></li>RA<li data-n="2">two <b>bold</b></li><li class="made">from a template</li>
+px<i></i> | 3 | true | 16
+<li class="n">new</li><li>and</li><li>2</li>
+HR
+<div id="box" data-some-key="v">box</div> | ["someKey"] | true | false | false
+a | ["a"] | a | a
+132 | 52 | 132 | 52 | 130 | 50 | 5px | 1px | block
+0 | none | null
+50% | true | false
+rgb(1, 2, 3) | 1 | 2
+rgb(4, 5, 6)
+rgb(0, 0, 0)
+#two | {"page":2} | true
+ | null
+aGVsbG8= | hello | a%20b%26c%2Fd | grüße | {"a":[1,{"b":2}]} | number
+function | function | function | function | object | object | object | true | false
+hashchange | #third | #third | events.html
+["script","micro","promise","t0","t30","3 ticks"]

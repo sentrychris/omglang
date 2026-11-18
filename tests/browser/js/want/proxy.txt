@@ -1,0 +1,15 @@
+1 2 true false
+{"a":5,"b":6,"c":3} a,b,c true {"a":5,"b":6}
+get a | get b | get a | has a | has z | set c | set a | keys | del c | get toJSON | keys | get a | get b | get a | keys | forin a | forin b
+true 3 2,4,6 [1,2,3] true
+1,2,3,4 4 [object Array]
+0=x,1=y,length=2 2
+30 function object
+{"made":2}
+1
+true
+sym:true sym:false
+2 1 true
+def x 1 1 true
+42 object
+1 1 1

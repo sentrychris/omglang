@@ -1,0 +1,42 @@
+Test one | home page | loading | object | true | HTML | HEAD
+main | DIV | 2 | P | Hello world | 42 | 42 | <p class="a b">Hello <b>world</b></p><p>Second</p>
+world | 3 | two | 2 | three | null
+3 | true | true | <p class="new" id="np">Added &lt;b&gt;</p> | true | true | false
+x y z | true | 3 | x
+color: blue; background-color: rgb(255, 255, 255); margin-top: 4px; | blue | rgb(255, 255, 255) | 4px | color: blue; background-color: rgb(255, 255, 255); margin-top: 4px;
+background-color: rgb(255, 255, 255); margin-top: 4px; | 2
+3 | T | 4
+3 | P
+2 | <li>a</li><li>b</li> | a
+zabc
+7 | 0 | f2
+a
+6 | null | list
+5 | abc | true | 2 | 1 | text here | get | text | checkbox
+1 | abc | c | true | main | true | false
+typed | abc | abc
+ph | true | false
+true | <input name="q" value="abc" placeholder="ph" disabled="">
+["body capture","p1","p onclick click true true true","main true","body bubble np 3 true","window","body capture","p onclick click true true true","main true","body bubble np 3 true","window"]
+["custom 7"] | true
+false | true
+inline click btn click
+ |  | true | true | true
+string | true | number | null | v | function
+https://example.com:8080/a/b?x=1&y=two#h | https://example.com:8080 | example.com:8080 | /a/b | ?x=1&y=two | #h | two | ["x","y"]
+https://example.com:8080/a/b?x=1&y=two&z=a+b#h | https://example.com:8080/a/b?x=1&y=two&z=a+b#h
+["1","3"] | a=1&b=2&a=3 | true | 3
+true | true | true | true | true | true | [object HTMLParagraphElement] | [object HTMLDocument] | HTMLParagraphElement
+{"a":1} | true | false | 
+3 | 2 | <span>a</span>text<em>b</em> | atextb | b
+<tbody><tr><td>1</td><td>2</td></tr></tbody> | 2
+block | string | CSS1Compat | 9 | 3 | 1
+SyntaxError
+HierarchyRequestError
+NotFoundError
+microtask
+after script | 2 | SCRIPT
+DOMContentLoaded | interactive
+load | complete
+raf | number
+timeout | complete

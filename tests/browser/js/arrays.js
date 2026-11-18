@@ -1,0 +1,42 @@
+const L = (...a) => console.log(a.map(x => typeof x === "string" ? x : JSON.stringify(x)).join(" | "));
+var a = [3, 1, 2];
+L(a.push(4, 5), a, a.pop(), a.shift(), a.unshift(9, 8), a, a.length);
+L(a.slice(1, 3), a.slice(-2), a.splice(1, 2), a, a.splice(1, 0, "x", "y"), a, a.splice(-1), a, a.splice(1), a);
+L([1, 2, 3].concat([4, [5]], 6), [1, 2, 3].join("-"), [1, null, undefined, 2].join(), [[1, 2], [3]].toString(), [3, 1, 2].reverse());
+L([1, 2, 3, 2].indexOf(2), [1, 2, 3, 2].lastIndexOf(2), [1, NaN].includes(NaN), [1, NaN].indexOf(NaN), [1, 2, 3].includes(2, 2));
+L([1, 2, 3].map(x => x * 2), [1, 2, 3, 4].filter(x => x % 2), [1, 2, 3].reduce((s, x) => s + x), [1, 2, 3].reduce((s, x) => s + x, 10), [1, 2, 3].reduceRight((s, x) => s + x, ""));
+L([1, 2, 3].find(x => x > 1), [1, 2, 3].findIndex(x => x > 5), [1, 2, 3].findLast(x => x < 3), [1, 2, 3].some(x => x > 2), [1, 2, 3].every(x => x > 2), [].every(x => false));
+L([3, 1, 10, 2].sort(), [3, 1, 10, 2].sort((x, y) => x - y), ["b", "a", "C"].sort(), [3, undefined, 1].sort(), [5, 4, 3, 2, 1, 9, 8, 7, 6, 0, 11, 15, 13, 12, 14, 10].sort((a, b) => b - a));
+var people = [{ n: "a", g: 2 }, { n: "b", g: 1 }, { n: "c", g: 2 }, { n: "d", g: 1 }];
+L(people.sort((x, y) => x.g - y.g).map(p => p.n).join(""));
+L([1, [2, [3, [4]]]].flat(), [1, [2, [3, [4]]]].flat(Infinity), [1, 2].flatMap(x => [x, x * 2]), new Array(3).fill(0), [1, 2, 3].fill(9, 1), [1, 2, 3].at(-1), [1, 2, 3, 4, 5].copyWithin(0, 3));
+L(Array.isArray([]), Array.isArray({}), Array.of(1, 2), Array.from("abc"), Array.from({ length: 3 }, (_, i) => i * 2), Array.from(new Set([1, 1, 2])), Array.from([1, 2].entries()), [...[1, 2].keys()]);
+L(Array(3).length, new Array(2, 3), [, 1].length, [1, 2, 3].length = 1, typeof [].forEach, [..."ab"].entries().next());
+var s = 0; [1, 2, 3].forEach((x, i, arr) => { s += x * i + arr.length }); L(s);
+var b = [1, 2, 3]; b.length = 1; b[3] = 4; L(b, b.length, 3 in b);
+L(Array.prototype.slice.call({ 0: "a", 1: "b", length: 2 }), Array.prototype.map.call("abc", c => c + c), [].concat.apply([], [[1], [2, 3]]), Math.max.apply(null, [1, 5, 2]));
+function args() { return Array.prototype.slice.call(arguments, 1) } L(args(1, 2, 3));
+var o = { a: 1, b: { c: 2 }, d: [1, 2] };
+L(Object.keys(o), Object.values(o), Object.entries(o), Object.assign({}, o, { e: 5 }), { ...o, a: 9 }, Object.fromEntries([["x", 1], ["y", 2]]));
+L(Object.getOwnPropertyNames("ab"), "a" in o, o.hasOwnProperty("a"), o.hasOwnProperty("toString"), Object.getPrototypeOf(o) === Object.prototype, Object.create(null) instanceof Object);
+var fr = Object.freeze({ x: 1 }); fr.x = 2; fr.y = 3; L(fr, Object.isFrozen(fr), Object.isFrozen({}));
+var dp = {}; Object.defineProperty(dp, "h", { value: 1 }); Object.defineProperty(dp, "g", { get() { return 7 }, enumerable: true }); L(dp, dp.h, dp.g, Object.keys(dp), Object.getOwnPropertyDescriptor(dp, "h").value, typeof Object.getOwnPropertyDescriptor(dp, "g").get);
+L({}.toString(), Object.prototype.toString.call([]), Object.prototype.toString.call(null), Object.prototype.toString.call(function () { }), Object.prototype.toString.call(new Date(0)).length, String(function f() { }).slice(0, 10));
+for (var k in { z: 1, 2: 1, a: 1, 1: 1 }) L(k);
+function P() { this.own = 1 } P.prototype.inh = 2; var ks = []; for (var k in new P()) ks.push(k); L(ks);
+L(JSON.stringify({ a: [1, { b: 2 }], c: "x\ny\"z", d: undefined, e: null, f: () => 1, g: NaN, h: new Date(0), i: true }), JSON.stringify([undefined, function () { }]), JSON.stringify("é\u0001"), JSON.stringify({ a: 1, b: [1, 2] }, null, 2));
+L(JSON.stringify({ a: 1, b: 2, c: { a: 3, d: 4 } }, ["a", "c"]), JSON.stringify({ a: 1, b: 2 }, (k, v) => typeof v === "number" ? v * 2 : v), JSON.stringify({ toJSON() { return "custom" } }), JSON.stringify(undefined), JSON.stringify(null), JSON.stringify(1.5));
+L(JSON.parse('{"a":[1,2,{"b":null}],"c":"x\\ny\\u00e9\\ud83d\\ude00","d":-1.5e2,"e":true}'), JSON.parse("[]"), JSON.parse('"s"'), JSON.parse(" 12 "), JSON.parse('{"a":1}', (k, v) => typeof v === "number" ? v + 1 : v));
+try { JSON.parse("{a:1}") } catch (e) { L(e.name) }
+try { JSON.parse("") } catch (e) { L(e.name) }
+var cyc = {}; cyc.self = cyc; try { JSON.stringify(cyc) } catch (e) { L(e.name) }
+L(typeof Symbol(), Symbol("x").toString(), Symbol("x").description, Symbol.for("k") === Symbol.for("k"), Symbol() === Symbol(), typeof Symbol.iterator);
+var sy = Symbol("p"); var so = { [sy]: 1, q: 2 }; L(so[sy], Object.keys(so), JSON.stringify(so));
+class It { *[Symbol.iterator]() { yield 1; yield 2 } } L([...new It()], Array.from(new It()));
+var it = { from: 1, to: 3, [Symbol.iterator]() { var c = this.from, t = this.to; return { next: () => c <= t ? { value: c++, done: false } : { value: undefined, done: true } } } }; L([...it]);
+L(new Error("m").message, new TypeError("t").name, new RangeError("r") instanceof Error, String(new Error("s")), Object.prototype.toString.call(new Error("x")), new Error("c", { cause: 5 }).cause);
+class MyErr extends Error { constructor(m) { super(m); this.name = "MyErr"; this.extra = 1 } } var me = new MyErr("boo"); L(me instanceof MyErr, me instanceof Error, me.message, me.name, String(me), me.extra, typeof me.stack);
+L([1, 2, 3].toString(), String([1, [2, 3]]), [] + "", [null] + "", [undefined, 1] + "", ({}) + "", `${[1, 2]}`);
+function Fn(a, b) { this.a = a } Fn.prototype.get = function () { return this.a }; var bound = Fn.prototype.get.bind({ a: 5 }); L(new Fn(3).get(), bound(), Fn.length, Fn.name, bound.name, (function () { }).name, (() => { }).name, Fn.call({}, 1), typeof Fn.apply);
+var nf = new Function("a", "b", "return a * b"); L(nf(3, 4), eval("1 + 2"), eval("var ev = 5; ev * 2"), typeof ev, new Boolean(false) ? 1 : 2, Boolean(""), !!"0");
+L(Reflect.ownKeys({ a: 1, b: 2 }), Reflect.has({ a: 1 }, "a"), Reflect.get({ a: 5 }, "a"), Reflect.apply(Math.max, null, [1, 2]), Reflect.construct(Date, [0]) instanceof Date, typeof globalThis);

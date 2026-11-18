@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html><head><title>Events and forms</title>
+<!-- tests/browser.sh: what this page prints with console.log is compared with
+     tests/browser/want/js-events.txt, which is what Chromium prints for it. -->
+<style>#box { width: 120px; height: 40px; padding: 5px; border: 1px solid black; margin: 0 }</style>
+</head>
+<body>
+<div id="box">box</div>
+<form id="f" action="#sent"><input name="q" value="abc"><input type="checkbox" name="c" id="c">
+<input type="radio" name="r" value="1" id="r1" checked><input type="radio" name="r" value="2" id="r2">
+<select name="s" id="s"><option value="a">A<option value="b">B</select><textarea name="t">text</textarea>
+<button id="go">Go</button><button type="button" id="plain">Plain</button></form>
+<ul id="list"><li data-n="1">one</li><li data-n="2">two <b>bold</b></li></ul>
+<template id="tpl"><li class="made">from a template</li><p>second</p></template>
+<script>
+var L = function () { console.log(Array.prototype.map.call(arguments, function (x) { return typeof x === "string" ? x : JSON.stringify(x) }).join(" | ")) };
+var $ = function (id) { return document.getElementById(id) };
+var log = [];
+
+// forms
+var f = $("f");
+f.addEventListener("submit", function (e) { log.push("submit " + e.type + " " + e.cancelable + " " + (e.target === f)); e.preventDefault() });
+$("go").click(); $("plain").click(); f.requestSubmit(); L(log); log = [];
+var c = $("c");
+c.addEventListener("click", function () { log.push("click " + c.checked) });
+c.addEventListener("input", function () { log.push("input " + c.checked) });
+c.addEventListener("change", function () { log.push("change " + c.checked) });
+c.click(); c.click(); c.checked = true; L(log, c.checked); log = [];
+$("r2").addEventListener("change", function (e) { log.push("radio " + e.target.value) });
+$("r2").click(); L(log, $("r1").checked, $("r2").checked, f.elements.r.value, new FormData(f).get("r")); log = [];
+var s = $("s"); s.value = "b"; L(s.selectedIndex, s.options.length, s.options[1].selected, s.options[1].text, s.value);
+f.q.value = "changed"; f.t.value = "more"; f.reset(); L(f.q.value, f.t.value, c.checked, s.value, $("r1").checked);
+var fd = new FormData(f); L([...fd.keys()], fd.get("q"), fd.has("c"), new URLSearchParams(fd).toString());
+var setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value").set; setter.call(f.q, "by setter"); L(f.q.value, f.q.getAttribute("value"));
+
+// focus
+f.q.addEventListener("focus", function () { log.push("focus") }); f.q.addEventListener("blur", function () { log.push("blur") });
+f.q.addEventListener("focusin", function (e) { log.push("focusin " + e.bubbles) }); 
+f.q.focus(); L(document.activeElement === f.q); f.q.blur(); L(log, document.activeElement === document.body); log = [];
+
+// how an event travels
+var list = $("list"), bold = list.querySelector("b");
+function note(name) { return function (e) { log.push(name + ":" + e.eventPhase + ":" + e.target.tagName + ":" + e.currentTarget.tagName) } }
+document.addEventListener("ping", note("doc-capture"), true); list.addEventListener("ping", note("ul-capture"), { capture: true });
+bold.addEventListener("ping", note("b")); list.addEventListener("ping", note("ul")); document.addEventListener("ping", note("doc"));
+bold.dispatchEvent(new Event("ping", { bubbles: true })); L(log); log = [];
+bold.dispatchEvent(new Event("ping")); L(log); log = [];
+var stop1 = function (e) { log.push("first"); e.stopImmediatePropagation() }; list.addEventListener("pong", stop1); list.addEventListener("pong", function () { log.push("second") });
+list.dispatchEvent(new Event("pong")); list.removeEventListener("pong", stop1); list.dispatchEvent(new Event("pong")); L(log); log = [];
+list.addEventListener("click", function (e) { var li = e.target.closest("li"); log.push("delegated " + li.dataset.n + " " + e.target.tagName) });
+bold.click(); list.firstElementChild.click(); L(log); log = [];
+var once = 0; list.addEventListener("once", function () { once++ }, { once: true }); list.dispatchEvent(new Event("once")); list.dispatchEvent(new Event("once")); L(once);
+var ke = new KeyboardEvent("keydown", { key: "a", code: "KeyA", ctrlKey: true, bubbles: true }); document.addEventListener("keydown", function (e) { log.push(e.key + " " + e.code + " " + e.ctrlKey + " " + e.shiftKey + " " + (e instanceof KeyboardEvent) + " " + e.isTrusted) });
+f.q.dispatchEvent(ke); var me = new MouseEvent("mousemove", { clientX: 5, clientY: 7, buttons: 1 }); L(log, me.clientX, me.clientY, me.buttons, me.bubbles, me.type); log = [];
+var ce = new CustomEvent("made", { detail: { n: 1 } }); L(ce.detail, ce.type, ce.bubbles, ce.cancelable, ce.defaultPrevented, typeof ce.timeStamp, ce.target);
+
+// templates, parsing, changing the tree
+var tpl = $("tpl"); L(tpl.children.length, tpl.content.children.length, tpl.content.nodeType, document.querySelectorAll(".made").length, tpl.innerHTML);
+list.appendChild(tpl.content.firstElementChild.cloneNode(true)); L(list.children.length, document.querySelectorAll(".made").length, list.lastElementChild.textContent);
+var parsed = new DOMParser().parseFromString("<title>T</title><p id='x'>hi <i>there</i></p>", "text/html"); L(parsed.title, parsed.getElementById("x").textContent, parsed.body.children.length, parsed !== document, document.getElementById("x"));
+var other = document.implementation.createHTMLDocument("made"); other.body.innerHTML = "<a href='/p'>link</a>"; L(other.title, other.body.firstChild.tagName, other.querySelectorAll("a").length);
+var li1 = list.firstElementChild; li1.before("B", document.createElement("hr")); li1.after("A"); li1.replaceWith(document.createElement("li"), "R"); L(list.innerHTML);
+list.replaceChildren(); list.append("x", document.createElement("i")); list.prepend("p"); L(list.innerHTML, list.childNodes.length, list.contains(list.firstChild), document.body.compareDocumentPosition(list) & 16);
+list.innerHTML = "<li>1</li><li>2</li>"; list.firstChild.outerHTML = "<li class='n'>new</li><li>and</li>"; L(list.innerHTML); list.lastChild.insertAdjacentElement("beforebegin", document.createElement("hr")); L(list.children[2].tagName);
+var box = $("box"); box.dataset.someKey = "v"; box.dataset.n = 3; delete box.dataset.n; L(box.outerHTML, Object.keys(box.dataset), box.classList.toggle("on"), box.classList.toggle("on"), box.classList.replace("a", "b"));
+box.classList.add("a", "b", "a"); box.classList.remove("b"); L(box.className, [...box.classList], box.classList.value, box.classList.item(0));
+
+// sizes and styles
+var r = box.getBoundingClientRect(); L(r.width, r.height, box.offsetWidth, box.offsetHeight, box.clientWidth, box.clientHeight, getComputedStyle(box).paddingLeft, getComputedStyle(box).borderTopWidth, getComputedStyle(box).display);
+box.style.display = "none"; L(box.offsetWidth, getComputedStyle(box).display, box.offsetParent); box.style.display = ""; box.style.width = "50%"; L(box.style.width, box.getBoundingClientRect().width > 0, box.hidden);
+var st = document.createElement("style"); document.head.appendChild(st); st.sheet.insertRule("#box { color: rgb(1, 2, 3) }", 0); L(getComputedStyle(box).color, st.sheet.cssRules.length, document.styleSheets.length);
+st.textContent = "#box { color: rgb(4, 5, 6) }"; L(getComputedStyle(box).color); st.remove(); L(getComputedStyle(box).color);
+
+// history, and what else a page has to hand
+history.pushState({ page: 2 }, "", "#two"); L(location.hash, history.state, history.length > 1); history.replaceState(null, "", location.pathname + location.search); L(location.hash, history.state);
+window.addEventListener("hashchange", function (e) { L("hashchange", location.hash, e.newURL.slice(-6), e.oldURL.slice(-11)) }); location.hash = "third";
+L(btoa("hello"), atob("aGVsbG8="), encodeURIComponent("a b&c/d"), new TextDecoder().decode(new TextEncoder().encode("grüße")), structuredClone({ a: [1, { b: 2 }] }), typeof crypto.getRandomValues(new Uint8Array(4))[0]);
+L(typeof fetch, typeof XMLHttpRequest, typeof MutationObserver, typeof IntersectionObserver, typeof customElements, typeof localStorage, typeof sessionStorage, "onclick" in box, "ontouchstart" in window);
+
+// timers
+var order = [];
+setTimeout(function () { order.push("t0") }, 0); setTimeout(function () { order.push("t30") }, 30); var dead = setTimeout(function () { order.push("never") }, 5); clearTimeout(dead);
+var n = 0, iv = setInterval(function () { n++; if (n == 3) { clearInterval(iv); order.push("3 ticks") } }, 60);
+queueMicrotask(function () { order.push("micro") }); Promise.resolve().then(function () { order.push("promise") }); order.push("script");
+setTimeout(function () { L(order) }, 400);
+</script>
+</body></html>

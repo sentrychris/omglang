@@ -1,0 +1,25 @@
+var L = function () { console.log(Array.prototype.map.call(arguments, function (x) { return typeof x === "string" ? x : JSON.stringify(x) }).join(" | ")) };
+L(/a+b/.test("xaab"), /^a+b$/.test("xaab"), "aXbXc".split(/x/i), /(\d+)-(\d+)/.exec("tel 555-1234 x"), /(\d+)-(\d+)/.exec("tel 555-1234 x").index);
+L("2020-03-04".replace(/(\d+)-(\d+)-(\d+)/, "$3/$2/$1"), "aaa".replace(/a/g, "b"), "abc".replace(/b/, "[$&|$`|$'|$$]"), "x".replace(/(y)?x/, "[$1]"));
+L("john smith".replace(/\b\w/g, function (c) { return c.toUpperCase() }), "a1b22c333".replace(/\d+/g, function (m, off, str) { return "<" + m + "@" + off + ">" }));
+L("a,b;c d".split(/[,; ]/), "abc".split(""), "a1b2c3".split(/\d/), "a1b2c3".split(/(\d)/), "abc".split(/(?:)/), "".split(/x/), "abc".split(/b/, 1), " a  b ".split(/\s+/));
+var re = /o/g; var r = []; var mm; while ((mm = re.exec("foo boo")) !== null) r.push(mm.index + ":" + re.lastIndex); L(r, re.lastIndex);
+L("foo boo".match(/o+/g), "foo".match(/x/g), "foo".match(/(f)(o)/), "foo".match(/x/), "The Quick".match(/[A-Z]/g), "foo boo".search(/b/), "foo".search(/x/));
+L([..."a1b2".matchAll(/[a-z](\d)/g)].map(function (m) { return m[0] + m[1] + m.index }));
+L(/(?<year>\d{4})-(?<mon>\d\d)/.exec("on 2021-07-09").groups, "2021-07".replace(/(?<y>\d+)-(?<m>\d+)/, "$<m>/$<y>"), /(a)|(b)/.exec("b"), /(a)?b/.exec("b").length);
+L(/a.c/.test("a\nc"), /a.c/s.test("a\nc"), /^b/m.test("a\nb"), /^b/.test("a\nb"), /a$/m.test("a\nb"), /\bfoo\b/.test("a foo b"), /\Bfoo/.test("afoo"), /\x41B\t/.test("AB\t"), /[\]\\^-]/.test("^"), /[^a-c]/.test("abc"));
+L(/a{2,3}/.exec("aaaa")[0], /a{2,3}?/.exec("aaaa")[0], /a{2,}/.exec("aaaa")[0], /a{2}/.exec("aaaa")[0], /<.+>/.exec("<a><b>")[0], /<.+?>/.exec("<a><b>")[0], /a*?b/.exec("aaab")[0], /(a|ab)(c|bcd)(d*)/.exec("abcd"));
+L(/(\w+)\s\1/.exec("hello hello world")[0], /(?=a)ab/.test("ab"), /a(?!b)/.exec("abac").index, /(?<=\$)\d+/.exec("cost $42")[0], /(?<!\$)\b\d+/.exec("cost $42 or 17")[0], /\d+(?=%)/.exec("50% of 30")[0]);
+L(/[\d\s]+/.exec("ab 12 3x")[0], /\D+/.exec("12ab3")[0], /\S+/.exec("  ab ")[0], /\W/.exec("ab-c")[0], /[\w.+-]+@[\w-]+\.[\w.]+/.exec("mail bob.x+y@ex-ample.co.uk now")[0], /^[\w$]+$/.test("a$b_1"));
+var g = /a/gi; L(g.source, g.flags, g.global, g.ignoreCase, g.multiline, g.sticky, String(g), new RegExp("a/b").source, new RegExp("\\d+", "g").test("x1"), new RegExp(/x/g).flags, new RegExp(/x/g, "i").flags, String(new RegExp("")));
+var st = /foo/y; L(st.test("foofoo"), st.lastIndex, st.test("foofoo"), st.lastIndex, st.test("foofoo"), st.lastIndex);
+try { new RegExp("(") } catch (e) { L(e.name) } try { new RegExp("a", "q") } catch (e) { L(e.name) } try { new RegExp("[b-a]") } catch (e) { L(e.name) }
+L("aBc".replace(/b/i, "x"), /[a-z]+/i.exec("HeLLo")[0], /é/i.test("É"), /é/.test("é"), "ß".toUpperCase(), /[α-ω]+/.exec("xαβγy")[0]);
+L("a-b_c".replace(/[-_](\w)/g, function (_, c) { return c.toUpperCase() }), "  trim  ".replace(/^\s+|\s+$/g, ""), "a.b.c".replace(/\./g, "\\."), "x".replace(/x/, "$0$1"), "abc".replace(/(b)/, "$1$1$2"), "aaa".replaceAll("a", "$&$&"), "aaa".replaceAll(/a/g, "b"));
+L(/^(?:(?:25[0-5]|2[0-4]\d|1?\d?\d)\.){3}(?:25[0-5]|2[0-4]\d|1?\d?\d)$/.test("192.168.1.255"), /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec("#FFaa00").slice(1), /^\s*([+-]?\d*\.?\d+)(px|em|%)?\s*$/.exec(" -1.5em ").slice(1));
+L(/(a*)*b/.test("aaaaaaaaaaaaaaaac"), /(?:a|b)*c/.exec("ababc")[0], /(a+)+$/.test("aaaaaaaaaaaaaaaaaaab") , /x*/.exec("abc"), "abc".replace(/x*/g, "-"), "abc".match(/x*/g), /()|/.exec("a"));
+L(/[\b]/.test("\b"), /\cJ/.test("\n"), /\0/.test("\0"), /[\0-\x1f]/.test("\n"), /a|/.exec("b")[0], /\//.source, /[/]/.test("/"), RegExp.prototype.toString.call(/a/g), /a/ instanceof RegExp, typeof /a/);
+L("tpl ${a} and ${b}".replace(/\$\{(\w+)\}/g, function (_, n) { return { a: 1, b: 2 }[n] }), "CamelCaseString".replace(/([a-z])([A-Z])/g, "$1-$2").toLowerCase(), "x=1&y=2".split("&").map(function (p) { return p.split("=") }), "1,234,567".replace(/,/g, ""), "abc".replace("b", function (m) { return m + m }));
+var lazy = /^(.*?),(.*)$/.exec("a,b,c"); L(lazy[1], lazy[2], /^(.*),(.*)$/.exec("a,b,c")[1], "a , b,c".split(/\s*,\s*/), /^[^\s@]+@[^\s@]+$/.test("a@b"), /(?:^|\s)foo(?:\s|$)/.test("bar foo"));
+re = /a/g; re.lastIndex = 5; L(re.test("aaa"), re.lastIndex, "aaa".replace(re, "b"), re.lastIndex, /a/g.exec("ba").input, JSON.stringify(/a/), Object.keys(/a/.exec("a")));
+L(/[一-鿿]+/.exec("ab中文cd")[0], /\p{L}+/u.exec("12héllo3")[0], /\p{Lu}/u.test("a"), /[^\x00-\x7F]/.test("abc"), /\u{1F600}/u.test("😀"), /^.$/u.test("😀"));

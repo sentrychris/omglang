@@ -8,7 +8,10 @@
 # Pillow, the certificates with openssl (tests/browser/README.md says
 # how each file was made). The handshakes are held with `openssl
 # s_server` where there is an openssl, and plain HTTP with
-# tests/browser/server.omg, which answers awkwardly on purpose.
+# tests/browser/server.omg, which answers awkwardly on purpose. The
+# JavaScript engine is compared with Node, and pages with scripts with
+# Chromium: what each printed is kept in tests/browser/js/want and
+# tests/browser/want/js-*.txt.
 
 set -u
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
@@ -183,6 +186,49 @@ assert_eq "an error status still has a body" "404 text/plain $BR_AT/missing
 nothing here" "$(br fetch $BR_AT/missing)"
 assert_contains "a server that is not there is reported" "failed: could not connect" \
     "$(br fetch http://127.0.0.1:19970/)"
+
+# === JavaScript ==============================================================
+section "Browser: JavaScript"
+
+# The engine alone first: each script of tests/browser/js prints
+# lines, and want/ holds what Node prints for the same script
+# (differences.js is the exception: it holds what this engine does
+# differently, on purpose or not yet, and its answers are its own).
+"$OMG_NATIVE" --build tools/browser/js/run.omg "$BR_W/js" >/dev/null 2>&1
+if is_executable "$BR_W/js"; then
+    pass "the JavaScript engine builds"
+else
+    fail "the JavaScript engine builds"
+fi
+for br_js in tests/browser/js/*.js; do
+    br_name=$(basename "$br_js" .js)
+    assert_eq "script $br_name.js prints what it should" \
+        "$(tr -d '\r' < "tests/browser/js/want/$br_name.txt")" \
+        "$("$BR_W/js" "$br_js" 2>&1 | tr -d '\r')"
+done
+
+# Then pages, whose scripts print with console.log; want/js-*.txt is
+# what Chromium prints for the same page. The boxes these pages ask
+# the size of hold no text. `br_page ADDRESS`: what the page printed,
+# without what the browser itself says about a file it could not get.
+br_page() {
+    "$BR_W/browser" --console --dump --wait 3000 "$1" 2>&1 | tr -d '\r' |
+        sed '/^<html>/,$d' | grep -v '^Could not load the script'
+}
+if [ "$(br fonts)" = "found" ]; then
+    assert_eq "scripts read and change the page as in Chromium" \
+        "$(tr -d '\r' < tests/browser/want/js-dom.txt)" "$(br_page tests/browser/pages/js/dom.html)"
+    assert_eq "events, forms, timers, styles and sizes as in Chromium" \
+        "$(tr -d '\r' < tests/browser/want/js-events.txt)" "$(br_page tests/browser/pages/js/events.html)"
+    # the test server hands the page out, so that its scripts may ask
+    # the same server for more
+    assert_eq "fetch, XMLHttpRequest, cookies and added scripts as in Chromium" \
+        "$(tr -d '\r' < tests/browser/want/js-net.txt)" "$(br_page "$BR_AT/page/net.html")"
+    assert_eq "with --no-js the scripts of a page do not run" "" \
+        "$("$BR_W/browser" --no-js --console --dump tests/browser/pages/js/dom.html 2>&1 | tr -d '\r' | sed '/^<html>/,$d')"
+else
+    echo "  (no TrueType font found on this machine: pages with scripts not tested)"
+fi
 
 curl -s -m 5 "$BR_AT/quit" >/dev/null 2>&1
 kill $BR_PID 2>/dev/null
