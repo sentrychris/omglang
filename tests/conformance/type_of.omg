@@ -1,0 +1,51 @@
+;;;omg
+# type_of: a number for each kind of value.
+proc nothing() {
+}
+proc double(x) {
+    return x * 2
+}
+proc adder(n) {
+    proc add(x) {
+        return x + n
+    }
+    return add
+}
+emit type_of(nothing())
+emit type_of(true)
+emit type_of(1 == 2)
+emit type_of(42)
+emit type_of(-7)
+emit type_of(1.5)
+emit type_of(1 / 2)
+emit type_of(7 // 2)
+emit type_of("")
+emit type_of("text")
+emit type_of([])
+emit type_of([1, "two", 3.0])
+emit type_of(to_bytes([1, 2, 3]))
+emit type_of(bytes_repeat(0, 4))
+emit type_of({})
+emit type_of({a: 1})
+emit type_of(freeze({a: 1}))
+emit type_of(adder(1))
+
+# telling values apart without knowing what they are
+alloc things := [1, 2.5, "three", [4], {five: 5}, false, nothing()]
+alloc names := ["none", "bool", "int", "float", "string", "list", "dict", "proc"]
+for t in things {
+    emit names[type_of(t)]
+}
+
+# a proc that takes numbers or lists of them
+proc total(v) {
+    if type_of(v) == 5 {
+        alloc s := 0
+        for x in v {
+            s := s + total(x)
+        }
+        return s
+    }
+    return v
+}
+emit total([1, [2, 3], [[4], 5]])

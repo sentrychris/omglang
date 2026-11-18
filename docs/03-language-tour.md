@@ -392,6 +392,12 @@ native OMG executable running the program, or `false` when there is
 none, as in the browser)
 
 **Reflection**
+`type_of(v)`: what kind of value `v` is, as an int: `0` none (what a proc
+that returns nothing gives), `1` bool, `2` int, `3` float, `4` string,
+`5` list (a byte list too), `6` dict, `7` proc. A number and not a
+name, because the programs that need it (an interpreter looking at
+every value it handles) ask millions of times a second.
+
 `call_builtin(name, args_list)` — dispatches to another builtin. Used by
 the OMG-in-OMG interpreter; rarely useful in user code.
 

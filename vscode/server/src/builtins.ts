@@ -1305,6 +1305,19 @@ export const BUILTINS: readonly BuiltinDoc[] = [
 
     // --- Reflection ---------------------------------------------------------
     b({
+        name: 'type_of',
+        category: 'Reflection',
+        signatures: ['type_of(value)'],
+        params: [{ name: 'value', doc: 'Any value.' }],
+        minArgs: 1, maxArgs: 1,
+        summary: 'What kind of value this is, as a small int.',
+        details: '`0` none (what a proc that returns nothing gives), `1` bool, `2` int, `3` float, `4` string, `5` list (a byte list too), `6` dict (a frozen one too), `7` proc. It is a number and not a name because the programs that need it, such as an interpreter looking at every value it handles, ask millions of times a second.',
+        returns: 'An int from 0 to 7.',
+        returnType: 'int',
+        example: 'emit type_of(42)              # → 2\nemit type_of(4.2)             # → 3\nemit type_of("forty-two")     # → 4\nemit type_of([4, 2])          # → 5\nemit type_of({four: 2})       # → 6',
+        see: ['length']
+    }),
+    b({
         name: 'call_builtin',
         category: 'Reflection',
         signatures: ['call_builtin(name, args)'],

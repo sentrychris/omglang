@@ -863,6 +863,7 @@ Always available, no import needed.
 | `interrupted()`                | how many times the program has been asked to stop (Ctrl-C, SIGTERM); from the first call on, those are counted instead of ending it |
 | `executable_path()`            | path of the native OMG executable running the program, or `false` where there is none (in the browser) |
 | **Reflection**                 |                                                       |
+| `type_of(v)`                   | what kind of value `v` is, as an int: `0` none, `1` bool, `2` int, `3` float, `4` string, `5` list, `6` dict, `7` proc |
 | `call_builtin(name, args)`     | call a builtin by name (advanced)                     |
 
 The runtime also hands you three special globals every program can read:
