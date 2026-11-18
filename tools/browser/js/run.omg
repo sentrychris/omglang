@@ -6,7 +6,7 @@
 # to the terminal: the engine without a page around it.
 #
 #     omg --build tools/browser/js/run.omg jsrun
-#     ./jsrun script.js [more.js ...]
+#     ./jsrun [--collect-always] script.js [more.js ...]
 #
 # The files run one after the other in the same world, then whatever
 # they left waiting (promises, timers) runs until nothing is left.
@@ -57,6 +57,11 @@ proc main() {
     c.def(g, "print", n_log, 0)
     alloc failed := false
     alloc i := 1
+    if i < length(args) and args[i] == "--collect-always" {
+        # for testing the collector: free what is unreachable whenever it may
+        js.collect_always(true)
+        i := i + 1
+    }
     loop i < length(args) {
         if file_exists(args[i]) == false {
             emit "jsrun: no such file: " + args[i]
@@ -70,6 +75,7 @@ proc main() {
         if settle() {
             failed := true
         }
+        js.collect_if_due()
         i := i + 1
     }
     # what the scripts left for later: timers, and the jobs they start
@@ -86,6 +92,7 @@ proc main() {
         if settle() {
             failed := true
         }
+        js.collect_if_due()
     }
     if failed {
         exit(1)

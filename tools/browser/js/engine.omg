@@ -55,7 +55,35 @@ proc start() {
     promise.set_eval(eval_text)
     string.set_regex_fns(regexp.fns())
     regexp.set_expand(string.expand_fn())
+    c.add_roots(base.gc_roots)
+    c.add_roots(promise.gc_roots)
+    c.add_roots(typed.gc_roots)
+    c.set_weak_prune(coll.weak_prune)
     return true
+}
+
+# Free the objects nothing reaches any more, if enough were made
+# since the last time to be worth it. Only between two pieces of work:
+# after a script, a handler or a timer has returned. Gives how many
+# were freed, -1 when it did not look.
+proc collect_if_due() {
+    if c.gc_due() {
+        return c.collect()
+    }
+    return -1
+}
+
+proc collect() {
+    return c.collect()
+}
+
+# For testing: collect at every chance.
+proc collect_always(on) {
+    return c.set_gc_always(on)
+}
+
+proc gc_stats() {
+    return c.gc_stats()
 }
 
 # The arguments of console.log as a line of text.

@@ -206,13 +206,24 @@ for br_js in tests/browser/js/*.js; do
         "$(tr -d '\r' < "tests/browser/js/want/$br_name.txt")" \
         "$("$BR_W/js" "$br_js" 2>&1 | tr -d '\r')"
 done
+# The same again with the collector running whenever it may (after
+# each script and each timer) instead of when enough garbage has
+# gathered: freeing something that is still in use would show.
+br_bad=""
+for br_js in tests/browser/js/*.js; do
+    br_name=$(basename "$br_js" .js)
+    if [ "$("$BR_W/js" --collect-always "$br_js" 2>&1 | tr -d '\r')" != "$(tr -d '\r' < "tests/browser/js/want/$br_name.txt")" ]; then
+        br_bad="$br_bad $br_name.js"
+    fi
+done
+assert_eq "the scripts print the same while memory is collected at every chance" "" "$br_bad"
 
 # Then pages, whose scripts print with console.log; want/js-*.txt is
 # what Chromium prints for the same page. The boxes these pages ask
 # the size of hold no text. `br_page ADDRESS`: what the page printed,
 # without what the browser itself says about a file it could not get.
 br_page() {
-    "$BR_W/browser" --console --dump --wait 3000 "$1" 2>&1 | tr -d '\r' |
+    "$BR_W/browser" --console --dump --wait 3000 "$@" 2>&1 | tr -d '\r' |
         sed '/^<html>/,$d' | grep -v '^Could not load the script'
 }
 if [ "$(br fonts)" = "found" ]; then
@@ -224,6 +235,20 @@ if [ "$(br fonts)" = "found" ]; then
     # the same server for more
     assert_eq "fetch, XMLHttpRequest, cookies and added scripts as in Chromium" \
         "$(tr -d '\r' < tests/browser/want/js-net.txt)" "$(br_page "$BR_AT/page/net.html")"
+    # elements and listeners that scripts hold in every way there is,
+    # while timers make and drop thousands of others
+    assert_eq "what scripts still hold is there after timers made garbage" \
+        "$(tr -d '\r' < tests/browser/want/js-collector.txt)" "$(br_page tests/browser/pages/js/collector.html)"
+    assert_eq "... and when memory is collected after every timer" \
+        "$(tr -d '\r' < tests/browser/want/js-collector.txt)" \
+        "$(br_page --collect-always tests/browser/pages/js/collector.html)"
+    assert_eq "the other pages print the same while memory is collected at every chance" \
+        "$(tr -d '\r' < tests/browser/want/js-dom.txt)
+$(tr -d '\r' < tests/browser/want/js-events.txt)
+$(tr -d '\r' < tests/browser/want/js-net.txt)" \
+        "$(br_page --collect-always tests/browser/pages/js/dom.html)
+$(br_page --collect-always tests/browser/pages/js/events.html)
+$(br_page --collect-always "$BR_AT/page/net.html")"
     assert_eq "with --no-js the scripts of a page do not run" "" \
         "$("$BR_W/browser" --no-js --console --dump tests/browser/pages/js/dom.html 2>&1 | tr -d '\r' | sed '/^<html>/,$d')"
 else

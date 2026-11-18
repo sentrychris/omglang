@@ -90,6 +90,10 @@ alloc NODES := []        # number -> node
 alloc PARENT := []       # number -> its parent's number, or -1
 alloc WRAP := []         # number -> the object scripts hold, or 0
 alloc LIS := []          # number -> false, or {event name: [[function, capture?, once?, alive?], ...]}
+alloc TARGETS := []      # the numbers given to event targets that are not nodes (a request, a signal)
+alloc TRACED := bytes_repeat(0, 0)   # during a collection: number -> its tree was found alive
+alloc QUEUE := []        # ... and the numbers still to look at
+alloc QN := 0
 alloc DOC := false       # the document on show
 alloc DOC_NID := 1       # its number; 0 is the window
 alloc DIRTY := false     # the tree changed since the browser last asked
@@ -202,6 +206,19 @@ proc n_prop_set(this, args) {
     }
     host_set(this, H[this], key, arg(args, 0))
     return U
+}
+
+# A name no script defined: an element of the page with that id can
+# be had by its id alone, as a global variable.
+proc global_miss(name) {
+    if DOC == false {
+        return MISS
+    }
+    alloc node := by_id(name)
+    if type_of(node) != 6 {
+        return MISS
+    }
+    return wrap(node)
 }
 
 # `delete object.key` on one of ours. True when it was dealt with here.
@@ -615,7 +632,8 @@ proc set_text_content(node, s) {
     }
     if node.t == 1 and node.tag == "style" {
         if has_key(node, "rules") {
-            node.rules := []
+            # new text, a new sheet: what scripts had inserted is gone
+            node.rules_of := false
         }
         SHEETS := true
     }
@@ -3729,6 +3747,7 @@ proc target_nid(v) {
     }
     alloc id := register({t: 0, kids: []}, -1)
     WRAP[id] := v
+    append(TARGETS, id)
     define_hidden(v, "@@target", float(id))
     return id
 }
@@ -4188,9 +4207,68 @@ proc g_visibility_state(h, node) {
 #
 # Libraries that write CSS from scripts (styled-components, emotion)
 # do not set the text of a <style>: they call sheet.insertRule() for
-# each rule. The rules added that way are kept on the element, in
-# node.rules, and the browser reads them after the element's text.
-# cssRules shows those rules only, not the ones in the text.
+# each rule. The first time a script asks for the sheet's rules, the
+# element's text is cut into rules (node.rules) and from then on the
+# browser reads those, as long as the text they were cut from
+# (node.rules_of) is still the element's text: new text makes a new
+# sheet, as it does elsewhere.
+
+# The rules at the top level of a sheet's text, each as text.
+proc split_rules(text) {
+    alloc b := string_bytes(text)
+    alloc n := length(b)
+    alloc out := []
+    alloc from := 0
+    alloc depth := 0
+    alloc i := 0
+    loop i < n {
+        alloc ch := b[i]
+        if ch == 47 and i + 1 < n and b[i + 1] == 42 {
+            # a comment; one between two rules belongs to neither
+            alloc before := u.trim(bytes_to_string(b[from:i]))
+            i := i + 2
+            loop i + 1 < n and (b[i] != 42 or b[i + 1] != 47) {
+                i := i + 1
+            }
+            i := u.min(i + 2, n)
+            if depth == 0 and before == "" {
+                from := i
+            }
+            continue
+        }
+        if ch == 34 or ch == 39 {
+            # a string
+            i := i + 1
+            loop i < n and b[i] != ch {
+                if b[i] == 92 {
+                    i := i + 1
+                }
+                i := i + 1
+            }
+        } elif ch == 123 {
+            depth := depth + 1
+        } elif ch == 125 {
+            depth := depth - 1
+            if depth <= 0 {
+                depth := 0
+                alloc rule := u.trim(bytes_to_string(b[from:i + 1]))
+                if rule != "" and rule != "}" {
+                    append(out, rule)
+                }
+                from := i + 1
+            }
+        } elif ch == 59 and depth == 0 {
+            # @import and its like end at a semicolon
+            alloc line := u.trim(bytes_to_string(b[from:i + 1]))
+            if line != "" and line != ";" {
+                append(out, line)
+            }
+            from := i + 1
+        }
+        i := i + 1
+    }
+    return out
+}
 
 proc sheet_of(node) {
     alloc key := "" + node.nid
@@ -4212,8 +4290,10 @@ proc sheet_node(this) {
         throw_type("Illegal invocation")
     }
     alloc node := NODES[int(id)]
-    if has_key(node, "rules") == false {
-        node.rules := []
+    alloc text := html.text_of(node)
+    if has_key(node, "rules") == false or node.rules_of != text {
+        node.rules := split_rules(text)
+        node.rules_of := text
     }
     return node
 }
@@ -4283,10 +4363,18 @@ proc n_css_rules(this, args) {
         alloc r := X["new_object"]()
         put(r, "cssText", text)
         alloc brace := u.find(text, "{")
-        if brace > 0 {
+        alloc kind := 1.0
+        if u.starts_with(text, "@") {
+            kind := 0.0
+            for at_rule in [["@import", 3.0], ["@media", 4.0], ["@font-face", 5.0], ["@keyframes", 7.0], ["@supports", 12.0]] {
+                if u.starts_with(text, at_rule[0]) {
+                    kind := at_rule[1]
+                }
+            }
+        } elif brace > 0 {
             put(r, "selectorText", u.trim(text[0:brace]))
         }
-        put(r, "type", 1.0)
+        put(r, "type", kind)
         put(r, "parentStyleSheet", this)
         append(out, r)
     }
@@ -6258,12 +6346,253 @@ proc is_dirty() {
     return DIRTY or SHEETS
 }
 
+# --- what the collector needs to know about nodes --------------------------------------------
+#
+# The engine frees the objects no script can reach (js/core.omg). A
+# node is not such an object, but three things hang on it that are:
+# the object scripts hold for it (WRAP), which may carry properties a
+# script put there; its listeners (LIS); and for a <template> the
+# fragment with its contents.
+#
+# A node is alive when it is in the document, when the browser holds
+# it, or when a script holds any node of the tree it is in (from one
+# node a script can walk to all the others). What is alive is found
+# tree by tree; a node that is not alive after a collection is
+# forgotten: NODES no longer holds it.
+
+proc gc_node(id) {
+    if id >= 0 and id < length(TRACED) and TRACED[id] == 0 {
+        append(QUEUE, id)
+    }
+    return true
+}
+
+proc gc_listeners(id) {
+    alloc ls := LIS[id]
+    if type_of(ls) != 6 {
+        return true
+    }
+    for name in dict_keys(ls) {
+        for entry in ls[name] {
+            if type_of(entry[0]) == 2 and entry[0] > 0 {
+                c.gc_mark(entry[0])
+            }
+        }
+    }
+    return true
+}
+
+proc gc_tree(node) {
+    alloc id := node.nid
+    if TRACED[id] == 1 {
+        return true
+    }
+    TRACED[id] := 1
+    if WRAP[id] != 0 {
+        c.gc_mark(WRAP[id])
+    }
+    gc_listeners(id)
+    if has_key(node, "content") {
+        gc_node(node.content)
+    }
+    if node.t != 3 {
+        for k in node.kids {
+            gc_tree(k)
+        }
+    }
+    return true
+}
+
+# The collector met an object of ours.
+proc host_trace(h, o) {
+    alloc cls := o[0]
+    alloc x := o[3]
+    if cls == 32 or cls == C_STYLE or cls == C_DATASET or cls == C_COMPUTED or cls == C_TOKENS {
+        if type_of(x) == 2 {
+            gc_node(x)
+        }
+        return true
+    }
+    c.gc_walk(x)
+    return true
+}
+
+# What this file holds when no script is running.
+proc gc_roots() {
+    TRACED := bytes_repeat(0, length(NODES))
+    QUEUE := []
+    QN := 0
+    if length(NODES) == 0 {
+        return []
+    }
+    # the window and its listeners
+    TRACED[0] := 1
+    gc_listeners(0)
+    if DOC != false {
+        gc_node(DOC.nid)
+    }
+    for held in [FOCUS, CURRENT_SCRIPT] {
+        if type_of(held) == 6 and has_key(held, "nid") {
+            gc_node(held.nid)
+        }
+    }
+    if has_key(HOST, "held") {
+        for node in HOST["held"]() {
+            if type_of(node) == 6 and has_key(node, "nid") {
+                gc_node(node.nid)
+            }
+        }
+    }
+    alloc out := [P, TAG_PROTO, NODELIST, LOCATION, HIST]
+    alloc i := TASK_AT
+    loop i < length(TASKS) {
+        alloc task := TASKS[i]
+        if type_of(task) == 5 {
+            if task[0] == 0 or task[0] == 3 {
+                # a script to fetch, an event for a node
+                if has_key(task[1], "nid") {
+                    gc_node(task[1].nid)
+                }
+            } else {
+                append(out, task)
+            }
+        }
+        i := i + 1
+    }
+    return out
+}
+
+# The marking ran dry: is there more to find from here? Trees that
+# were found alive since, targets whose object is alive (their
+# listeners are then too), sheets of elements that are.
+proc gc_step() {
+    alloc did := false
+    loop QN < length(QUEUE) {
+        alloc id := QUEUE[QN]
+        QN := QN + 1
+        if TRACED[id] == 0 and type_of(NODES[id]) == 6 {
+            alloc top := id
+            alloc hops := 0
+            loop PARENT[top] >= 0 and type_of(NODES[PARENT[top]]) == 6 and hops < 100000 {
+                top := PARENT[top]
+                hops := hops + 1
+            }
+            gc_tree(NODES[top])
+            gc_tree(NODES[id])
+            did := true
+        }
+    }
+    for tid in TARGETS {
+        if TRACED[tid] == 0 and WRAP[tid] != 0 and c.gc_marked(WRAP[tid]) {
+            TRACED[tid] := 1
+            gc_listeners(tid)
+            did := true
+        }
+    }
+    for key in dict_keys(SHEET_OBJ) {
+        alloc sheet := SHEET_OBJ[key]
+        alloc sid := u.to_int(key, -1)
+        if sheet != 0 and sid >= 0 and sid < length(TRACED) {
+            if TRACED[sid] == 1 and c.gc_marked(sheet) == false {
+                c.gc_mark(sheet)
+                did := true
+            } elif TRACED[sid] == 0 and c.gc_marked(sheet) {
+                gc_node(sid)
+                did := true
+            }
+        }
+    }
+    return did or QN < length(QUEUE)
+}
+
+# The sweep is over: forget the nodes that were not found alive.
+proc gc_done() {
+    alloc n := length(NODES)
+    alloc id := 1
+    loop id < n {
+        if TRACED[id] == 0 and type_of(NODES[id]) == 6 {
+            NODES[id] := false
+            LIS[id] := false
+            WRAP[id] := 0
+        }
+        id := id + 1
+    }
+    alloc targets := []
+    for tid in TARGETS {
+        if TRACED[tid] == 1 {
+            append(targets, tid)
+        }
+    }
+    TARGETS := targets
+    alloc sheets := {}
+    for key in dict_keys(SHEET_OBJ) {
+        alloc sid := u.to_int(key, -1)
+        if sid >= 0 and sid < n and TRACED[sid] == 1 {
+            sheets[key] := SHEET_OBJ[key]
+        }
+    }
+    SHEET_OBJ := sheets
+    alloc stale := {}
+    for key2 in dict_keys(RESTYLE) {
+        alloc rid := u.to_int(key2, -1)
+        if rid >= 0 and rid < n and TRACED[rid] == 1 {
+            stale[key2] := RESTYLE[key2]
+        }
+    }
+    RESTYLE := stale
+    TRACED := bytes_repeat(0, 0)
+    QUEUE := []
+    QN := 0
+    return true
+}
+
+# A node the browser still held after scripts had let go of it, and
+# now sends something to: it is known again, with what is below it.
+proc revive(node) {
+    if type_of(node) != 6 or has_key(node, "nid") == false {
+        return false
+    }
+    alloc id := node.nid
+    if id >= length(NODES) or type_of(NODES[id]) == 6 {
+        return true
+    }
+    NODES[id] := node
+    if PARENT[id] >= 0 and type_of(NODES[PARENT[id]]) != 6 {
+        PARENT[id] := -1
+    }
+    if node.t != 3 {
+        for k in node.kids {
+            revive(k)
+        }
+    }
+    return true
+}
+
+# Between two pieces of work: free what scripts no longer reach, when
+# enough was made to be worth it. Gives [ms, objects freed, objects
+# left] when it did, else false.
+proc collect_if_due() {
+    if js.collect_if_due() < 0 {
+        return false
+    }
+    alloc s := js.gc_stats()
+    return [s[1], s[2], s[3]]
+}
+
+proc collect_always() {
+    return js.collect_always(true)
+}
+
+# --- what the browser calls ------------------------------------------------------------------
+
+
 # An event from the window (a click, a key): send it, then let the
 # promises it settled run. True when the page did not cancel it.
 proc fire_node(node, name, bubbles, cancelable, props, kind) {
     if has_key(node, "nid") == false {
         return true
     }
+    revive(node)
     alloc ok := fire(node.nid, name, bubbles, cancelable, props, kind)
     promise.run_microtasks()
     say_errors()
@@ -6278,6 +6607,7 @@ proc fire_window(name, props, kind) {
 }
 
 proc set_focus(node) {
+    revive(node)
     FOCUS := node
     return true
 }
@@ -6468,6 +6798,11 @@ proc setup() {
     }
     c.set_host_hooks(host_get, host_set, host_keys)
     c.set_host_delete(host_delete)
+    c.set_host_trace(host_trace)
+    c.set_global_miss(global_miss)
+    c.add_roots(gc_roots)
+    c.add_gc_step(gc_step)
+    c.add_gc_done(gc_done)
     alloc g := I[0]
     alloc object_proto := I[1]
 
@@ -7028,6 +7363,8 @@ proc attach(doc, address, base, host) {
     PARENT := []
     WRAP := []
     LIS := []
+    TARGETS := []
+    SHEET_OBJ := {}
     DOC := doc
     ADDRESS := address
     BASE := base

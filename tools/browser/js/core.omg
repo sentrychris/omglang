@@ -18,7 +18,8 @@
 # its prototype and back, a DOM node at its parent), OMG frees a value
 # when nothing refers to it any more, and loops of references are
 # never freed. Loops of numbers are no loops. Dropping the heap frees
-# everything, and sweep() frees what a running page no longer reaches.
+# everything, and collect() (near the end of this file) frees what a
+# running page no longer reaches.
 #
 # An object in the heap is a list:
 #
@@ -87,6 +88,7 @@ alloc H := [0]                 # H[0] is null and holds nothing
 alloc FREE := []               # places in H that are free again
 alloc NFREE := 0
 alloc ALLOCS := 0              # objects made since the last sweep
+alloc FRAME_TAG := "@frame"    # the last item of a coroutine's frame
 
 proc heap() {
     return H
@@ -176,6 +178,7 @@ alloc HOST_GET := false        # proc(handle, object, key) -> value or MISS
 alloc HOST_SET := false        # proc(handle, object, key, value) -> handled?
 alloc HOST_KEYS := false       # proc(handle, object) -> list of keys
 alloc HOST_DELETE := false     # proc(handle, object, key) -> handled?
+alloc GLOBAL_MISS := false     # proc(name) -> value or MISS, for a global name nothing defines
 alloc PROMISE_NEW := false     # proc() -> promise
 alloc PROMISE_SETTLE := false  # proc(promise, ok?, value)
 alloc PROMISE_AWAIT := false   # proc(value, coroutine)
@@ -184,6 +187,11 @@ alloc COMPILE := false         # proc(source bytes, name) -> template
 
 proc set_host_delete(d) {
     HOST_DELETE := d
+    return true
+}
+
+proc set_global_miss(f) {
+    GLOBAL_MISS := f
     return true
 }
 
@@ -2231,7 +2239,7 @@ proc new_coroutine(fn, x, t, this, args) {
             this := GLOBAL
         }
     }
-    alloc f := [t[0], t[1], r, this, fn, 0, 0, x[2], false, false, U, 0, 0, 0, 0, t]
+    alloc f := [t[0], t[1], r, this, fn, 0, 0, x[2], false, false, U, 0, 0, 0, 0, t, FRAME_TAG]
     if (fl & 512) != 0 {
         f[9] := args
     }
@@ -2732,6 +2740,12 @@ proc get_global(name) {
     if has_prop(GLOBAL, name) {
         return get_r(GLOBAL, name, GLOBAL)
     }
+    if GLOBAL_MISS != false {
+        alloc v := GLOBAL_MISS(name)
+        if type_of(v) != 5 {
+            return v
+        }
+    }
     throw_ref(name + " is not defined")
 }
 
@@ -3106,6 +3120,12 @@ proc delete_elem(o, key) {
 proc typeof_global(name) {
     if has_prop(GLOBAL, name) {
         return typeof_str(get_r(GLOBAL, name, GLOBAL))
+    }
+    if GLOBAL_MISS != false {
+        alloc v := GLOBAL_MISS(name)
+        if type_of(v) != 5 {
+            return typeof_str(v)
+        }
     }
     return "undefined"
 }
@@ -4114,7 +4134,8 @@ proc exec(base) {
                                     pc := pc + 2
                                 } else {
                                     # 73 PUSHENV n   a new environment of n variables
-                                    e := list_repeat(U, code[pc + 1] + 1)
+                                    # (one place more than asked, at the end: the collector's mark)
+                                    e := list_repeat(U, code[pc + 1] + 2)
                                     e[0] := E
                                     E := e
                                     pc := pc + 2
@@ -4659,6 +4680,380 @@ proc closure_of(t) {
     return fn
 }
 
+# --- the collector ----------------------------------------------------------------------------
+#
+# Mark and sweep, run only between two pieces of work (a script has
+# returned, a timer has run), when no frame is alive and no native
+# function holds an object in an OMG variable. What is alive then is
+# what can be reached from the global object and the intrinsics, from
+# what the library files and the embedder say they hold (ROOTS), and
+# from there on through prototypes, properties and what each class
+# keeps in [3].
+#
+# An int anywhere in such a structure is taken for an object, so a
+# count or a position may keep an object alive that nothing uses; it
+# can never free one that is used. Three things are known by their
+# shape and not walked blindly: templates (code is numbers), the
+# frames of coroutines, and environment records, which carry a mark
+# in their last place because many closures share one.
+
+alloc MARK := bytes_repeat(0, 0)   # one byte for each place in H
+alloc WORK := []               # marked, their insides not yet looked at
+alloc WN := 0
+alloc NMARKED := 0
+alloc EPOCH := 0.0             # the number of this collection, the mark of environments
+alloc WEAK := []               # the WeakMaps and WeakSets met
+alloc WREFS := []              # the WeakRefs met
+alloc ROOTS := []              # procs: each gives a value to walk
+alloc GC_STEPS := []           # procs run when the marking runs dry; true: there is more
+alloc GC_DONE := []            # procs run after the sweep
+alloc HOST_TRACE := false      # proc(handle, object) for an object of the embedder
+alloc WEAK_PRUNE := false      # proc(collection, MARK): drop the entries whose key is gone
+alloc LIVE := 0                # objects the last collection left
+alloc GC_ALWAYS := false       # collect at every chance (for testing)
+alloc GC_RUNS := 0
+alloc GC_LAST := [0, 0, 0]     # of the last collection: ms, freed, left
+
+proc add_roots(f) {
+    append(ROOTS, f)
+    return true
+}
+
+proc add_gc_step(f) {
+    append(GC_STEPS, f)
+    return true
+}
+
+proc add_gc_done(f) {
+    append(GC_DONE, f)
+    return true
+}
+
+proc set_host_trace(f) {
+    HOST_TRACE := f
+    return true
+}
+
+proc set_weak_prune(f) {
+    WEAK_PRUNE := f
+    return true
+}
+
+proc set_gc_always(on) {
+    GC_ALWAYS := on
+    return true
+}
+
+# The object at h is alive.
+proc gc_mark(h) {
+    if h > 0 and h < length(MARK) and MARK[h] == 0 and type_of(H[h]) == 5 {
+        MARK[h] := 1
+        NMARKED := NMARKED + 1
+        if WN < length(WORK) {
+            WORK[WN] := h
+        } else {
+            append(WORK, h)
+        }
+        WN := WN + 1
+    }
+    return true
+}
+
+# During a collection: has h been found alive?
+proc gc_marked(h) {
+    return h > 0 and h < length(MARK) and MARK[h] == 1
+}
+
+proc gc_env(e) {
+    loop type_of(e) == 5 {
+        alloc last := length(e) - 1
+        alloc m := e[last]
+        if type_of(m) == 3 and m == EPOCH {
+            return true
+        }
+        e[last] := EPOCH
+        alloc i := 1
+        loop i < last {
+            alloc v := e[i]
+            alloc t := type_of(v)
+            if t == 2 {
+                if v > 0 {
+                    gc_mark(v)
+                }
+            } elif t == 5 or t == 6 {
+                gc_walk(v)
+            }
+            i := i + 1
+        }
+        e := e[0]
+    }
+    return true
+}
+
+# The frame of a coroutine that is waiting.
+proc gc_frame(f) {
+    gc_walk(f[2])
+    gc_walk(f[3])
+    gc_walk(f[4])
+    gc_env(f[7])
+    if type_of(f[8]) == 5 {
+        # the environments its try blocks would go back to
+        alloc i := 0
+        loop i < f[13] and i < length(f[8]) {
+            gc_env(f[8][i][2])
+            i := i + 1
+        }
+    }
+    gc_walk(f[9])
+    gc_walk(f[10])
+    return true
+}
+
+# Any OMG value that may hold objects: an int is one, lists and dicts
+# are gone through.
+proc gc_walk(v) {
+    alloc t := type_of(v)
+    if t == 2 {
+        if v > 0 {
+            gc_mark(v)
+        }
+        return true
+    }
+    if t == 5 {
+        if length(v) == 17 and type_of(v[16]) == 4 and v[16] == FRAME_TAG {
+            return gc_frame(v)
+        }
+        for item in v {
+            alloc ti := type_of(item)
+            if ti == 2 {
+                if item > 0 {
+                    gc_mark(item)
+                }
+            } elif ti == 5 or ti == 6 {
+                gc_walk(item)
+            }
+        }
+        return true
+    }
+    if t == 6 {
+        for k in dict_keys(v) {
+            alloc dv := v[k]
+            alloc td := type_of(dv)
+            if td == 2 or td == 5 or td == 6 {
+                gc_walk(dv)
+            }
+        }
+    }
+    return true
+}
+
+# Look inside the object at h, which is marked.
+proc gc_trace(h) {
+    alloc o := H[h]
+    if o[1] > 0 {
+        gc_mark(o[1])
+    }
+    alloc p := o[2]
+    for k in dict_keys(p) {
+        alloc v := p[k]
+        alloc t := type_of(v)
+        if t == 2 {
+            if v > 0 {
+                gc_mark(v)
+            }
+        } elif t == 5 {
+            # a getter and a setter
+            for part in v {
+                if type_of(part) == 2 and part > 0 {
+                    gc_mark(part)
+                }
+            }
+        }
+    }
+    alloc cls := o[0]
+    alloc x := o[3]
+    if cls == 1 {
+        alloc n := o[6]
+        alloc i := 0
+        loop i < n {
+            alloc item := x[i]
+            alloc ti := type_of(item)
+            if ti == 2 {
+                if item > 0 {
+                    gc_mark(item)
+                }
+            } elif ti == 5 or ti == 6 {
+                gc_walk(item)
+            }
+            i := i + 1
+        }
+    } elif cls == 2 {
+        alloc kind := x[0]
+        if kind == 0 {
+            # x[1] is the template: code, no objects
+            gc_env(x[2])
+            gc_walk(x[3])
+            gc_walk(x[4])
+            gc_walk(x[5])
+            gc_walk(x[6])
+        } elif kind == 1 {
+            gc_walk(x[4])
+        } else {
+            gc_walk(x[1])
+            gc_walk(x[2])
+            gc_walk(x[3])
+        }
+    } elif cls == 10 or cls == 11 {
+        gc_walk(x[1])
+        gc_walk(x[2])
+    } elif cls == 16 or cls == 17 {
+        append(WEAK, h)
+    } elif cls == 15 {
+        append(WREFS, h)
+    } elif cls == 19 {
+        gc_walk(x[4])
+    } elif cls == 20 {
+        gc_walk(x[3])
+    } elif cls >= 32 {
+        if HOST_TRACE != false {
+            HOST_TRACE(h, o)
+        }
+    } elif cls == 0 or cls == 3 or cls == 12 or cls == 13 or cls == 14 or cls == 30 {
+        gc_walk(x)
+    }
+    # 4 to 9 and 18 keep no objects: a boolean, a number, a string, a
+    # symbol's name, a time, a compiled pattern, bytes
+    return true
+}
+
+# What a WeakMap holds for a key lives as long as the key does.
+# True when that found something new.
+proc gc_weak_round() {
+    alloc before := NMARKED
+    alloc wi := 0
+    loop wi < length(WEAK) {
+        alloc h := WEAK[wi]
+        if H[h][0] == 16 {
+            alloc m := H[h][3]
+            alloc keys := m[1]
+            alloc values := m[2]
+            alloc i := 0
+            alloc n := length(keys)
+            loop i < n {
+                alloc key := keys[i]
+                if type_of(key) == 2 and MARK[key] == 1 {
+                    gc_walk(values[i])
+                }
+                i := i + 1
+            }
+        }
+        wi := wi + 1
+    }
+    return NMARKED != before
+}
+
+# Is this a moment at which collect() may run?
+proc gc_can() {
+    return FP == 0 and length(MARK) == 0
+}
+
+# Has enough been made since the last collection to be worth one?
+proc gc_due() {
+    if gc_can() == false {
+        return false
+    }
+    if GC_ALWAYS {
+        return true
+    }
+    alloc limit := LIVE
+    if limit < 100000 {
+        limit := 100000
+    }
+    return ALLOCS > limit
+}
+
+# Free every object that nothing can reach. Gives how many were freed.
+proc collect() {
+    if gc_can() == false {
+        return 0
+    }
+    alloc t0 := time_ms()
+    alloc n := length(H)
+    MARK := bytes_repeat(0, n)
+    WN := 0
+    NMARKED := 0
+    EPOCH := EPOCH + 1.0
+    WEAK := []
+    WREFS := []
+    gc_walk(I)
+    gc_walk(EXC)
+    gc_walk(TPL_ROOTS)
+    gc_walk(SYM_OF)
+    for r in ROOTS {
+        gc_walk(r())
+    }
+    loop true {
+        loop WN > 0 {
+            WN := WN - 1
+            gc_trace(WORK[WN])
+        }
+        alloc more := false
+        for step in GC_STEPS {
+            if step() {
+                more := true
+            }
+        }
+        if gc_weak_round() {
+            more := true
+        }
+        if WN == 0 and more == false {
+            break
+        }
+    }
+    for w in WREFS {
+        alloc target := H[w][3]
+        if type_of(target) == 2 and target > 0 and MARK[target] == 0 {
+            H[w][3] := U
+        }
+    }
+    if WEAK_PRUNE != false {
+        for wm in WEAK {
+            WEAK_PRUNE(H[wm][3], MARK)
+        }
+    }
+    alloc freed := 0
+    FREE := []
+    alloc h := n - 1
+    loop h >= 1 {
+        if MARK[h] == 0 {
+            if type_of(H[h]) == 5 {
+                H[h] := 0
+                freed := freed + 1
+            }
+            append(FREE, h)
+        }
+        h := h - 1
+    }
+    NFREE := length(FREE)
+    for done in GC_DONE {
+        done()
+    }
+    LIVE := NMARKED
+    ALLOCS := 0
+    MARK := bytes_repeat(0, 0)
+    WORK := []
+    WEAK := []
+    WREFS := []
+    GC_RUNS := GC_RUNS + 1
+    GC_LAST := [time_ms() - t0, freed, LIVE]
+    return freed
+}
+
+# [collections so far, ms the last one took, objects it freed, objects it left]
+proc gc_stats() {
+    return [GC_RUNS, GC_LAST[0], GC_LAST[1], GC_LAST[2]]
+}
+
 # --- the start --------------------------------------------------------------------------------
 
 alloc I_LIST_ITER_PROTO := 25
@@ -4681,6 +5076,13 @@ proc init() {
         k := k + 1
     }
     ALLOCS := 0
+    LIVE := 0
+    ROOTS := []
+    GC_STEPS := []
+    GC_DONE := []
+    HOST_TRACE := false
+    GLOBAL_MISS := false
+    MARK := bytes_repeat(0, 0)
     SP := 0
     FR := []
     FP := 0
@@ -4784,6 +5186,7 @@ proc exports() {
         copy_props: copy_props, template_object: template_object, concat_strs: concat_strs,
         delete_elem: delete_elem, typeof_global: typeof_global, set_proto_of: set_proto_of,
         not_callable: not_callable, run_script: run_script, closure_of: closure_of, init: init,
-        global_object: global_object, intrinsic: intrinsic, undefined: undefined
+        global_object: global_object, intrinsic: intrinsic, undefined: undefined,
+        gc_mark: gc_mark, gc_walk: gc_walk, gc_marked: gc_marked
     }
 }

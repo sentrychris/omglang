@@ -71,6 +71,18 @@ proc set_eval(f) {
     return true
 }
 
+# What this file holds on to, for the collector.
+proc gc_roots() {
+    alloc out := [THEN_FN, REJECTED, ERRORS, MQ]
+    for t in TIMERS {
+        if t[5] {
+            append(out, t[2])
+            append(out, t[3])
+        }
+    }
+    return out
+}
+
 # --- Promises -------------------------------------------------------------------------------
 
 proc new_promise() {

@@ -328,6 +328,21 @@ proc n_set_entries(this, args) {
     return new_iter_object([3, out, 0])
 }
 
+# After a collection: take out of a WeakMap or WeakSet the entries
+# whose key was not found alive (marks[key] is 0).
+proc weak_prune(m, marks) {
+    alloc dead := []
+    for key in m[1] {
+        if type_of(key) == 2 and marks[key] == 0 {
+            append(dead, key)
+        }
+    }
+    for gone in dead {
+        coll_delete(m, gone)
+    }
+    return true
+}
+
 # WeakMap and WeakSet: the same, for objects only, and with less to them.
 alloc C_WEAKMAP := 16
 alloc C_WEAKSET := 17

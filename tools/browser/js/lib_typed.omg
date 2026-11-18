@@ -59,6 +59,10 @@ alloc SCRATCH := bytes_repeat(0, 8)
 
 # --- making them ----------------------------------------------------------------------------
 
+proc gc_roots() {
+    return [PROTOS, BUFFER_PROTO, VIEW_PROTO]
+}
+
 proc new_buffer(bytes) {
     alloc h := new_obj(18, BUFFER_PROTO)
     H[h][3] := [bytes]
