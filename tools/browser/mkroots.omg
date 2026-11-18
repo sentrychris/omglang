@@ -1,0 +1,71 @@
+;;;omg
+
+# tools/browser/mkroots.omg
+#
+# Writes roots.omg, the list of certificate authorities the browser
+# trusts, from Mozilla's list in the form curl publishes it:
+#
+#     curl -o cacert.pem https://curl.se/ca/cacert.pem
+#     omg tools/browser/mkroots.omg cacert.pem tools/browser/roots.omg
+#
+# Run it again whenever the list should be brought up to date.
+
+import "util.omg" as u
+
+proc main() {
+    if length(args) < 3 {
+        emit "usage: omg mkroots.omg cacert.pem roots.omg"
+        return 2
+    }
+    alloc bytes := u.read_bytes(args[1])
+    if bytes == false {
+        emit "mkroots: cannot read " + args[1]
+        return 1
+    }
+    alloc lines := u.split(u.replace(bytes_to_string(bytes), "\r", ""), "\n")
+    alloc dated := ""
+    alloc names := []
+    alloc certs := []
+    alloc cur := ""
+    alloc inside := false
+    alloc prev := ""
+    for line in lines {
+        if u.starts_with(line, "## Certificate data from Mozilla") {
+            dated := u.trim(line[2:])
+        }
+        if line == "-----BEGIN CERTIFICATE-----" {
+            inside := true
+            cur := ""
+        } elif line == "-----END CERTIFICATE-----" {
+            inside := false
+            append(certs, cur)
+        } elif inside {
+            cur := cur + line
+        } elif u.starts_with(line, "====") {
+            append(names, prev)
+        }
+        prev := line
+    }
+    if length(certs) == 0 or length(names) != length(certs) {
+        emit "mkroots: " + args[1] + " does not look like curl's cacert.pem"
+        return 1
+    }
+    alloc out := ";;;omg\n\n# tools/browser/roots.omg\n#\n# The certificate authorities the browser trusts: " + length(certs) + " certificates,\n# each as base64 of its DER form.\n#\n# " + dated + "\n# (Mozilla Public License 2.0), taken from https://curl.se/ca/cacert.pem.\n#\n# Written by mkroots.omg: do not edit, run that again.\n\nproc all() {\n    return [\n"
+    alloc i := 0
+    loop i < length(certs) {
+        alloc tail := ","
+        if i == length(certs) - 1 {
+            tail := ""
+        }
+        out := out + "        # " + names[i] + "\n        \"" + certs[i] + "\"" + tail + "\n"
+        i := i + 1
+    }
+    out := out + "    ]\n}\n"
+    alloc h := file_open(args[2], "wb")
+    file_write(h, string_bytes(out))
+    file_close(h)
+    emit "wrote " + args[2] + ": " + length(certs) + " certificates"
+    return 0
+}
+
+exit(main())

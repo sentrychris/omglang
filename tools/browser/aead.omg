@@ -1,0 +1,685 @@
+;;;omg
+
+# tools/browser/aead.omg
+#
+# The two ciphers TLS seals its records with: ChaCha20-Poly1305
+# (RFC 8439) and AES in Galois/counter mode (NIST SP 800-38D), with
+# keys of 128 or 256 bits. Each both hides the bytes and proves that
+# nobody altered them: seal() adds a 16-byte tag, open() gives false
+# when the tag does not fit.
+#
+# Nothing here runs in constant time: the look-up tables of AES and
+# the branches are what a hobby browser can afford, not what a bank
+# should use.
+
+alloc M32 := 4294967295
+alloc M26 := 67108863
+
+proc le32(b, i) {
+    return b[i] | (b[i + 1] << 8) | (b[i + 2] << 16) | (b[i + 3] << 24)
+}
+
+# --- ChaCha20 --------------------------------------------------------------------------
+
+# XOR the ChaCha20 key stream into `count` bytes of `src` from `from`,
+# writing to `dst` at `to`. `kw` is the key as 8 words, `nw` the nonce
+# as 3, `counter` the number of the first 64-byte block.
+proc chacha_xor(kw, nw, counter, src, from, dst, to, count) {
+    alloc k0 := kw[0]
+    alloc k1 := kw[1]
+    alloc k2 := kw[2]
+    alloc k3 := kw[3]
+    alloc k4 := kw[4]
+    alloc k5 := kw[5]
+    alloc k6 := kw[6]
+    alloc k7 := kw[7]
+    alloc n0 := nw[0]
+    alloc n1 := nw[1]
+    alloc n2 := nw[2]
+    alloc out := list_repeat(0, 16)
+    alloc done := 0
+    loop done < count {
+        alloc x0 := 1634760805
+        alloc x1 := 857760878
+        alloc x2 := 2036477234
+        alloc x3 := 1797285236
+        alloc x4 := k0
+        alloc x5 := k1
+        alloc x6 := k2
+        alloc x7 := k3
+        alloc x8 := k4
+        alloc x9 := k5
+        alloc x10 := k6
+        alloc x11 := k7
+        alloc x12 := counter
+        alloc x13 := n0
+        alloc x14 := n1
+        alloc x15 := n2
+        alloc r := 0
+        loop r < 10 {
+            x0 := (x0 + x4) & M32
+            x12 := x12 ^ x0
+            x12 := ((x12 << 16) | (x12 >> 16)) & M32
+            x8 := (x8 + x12) & M32
+            x4 := x4 ^ x8
+            x4 := ((x4 << 12) | (x4 >> 20)) & M32
+            x0 := (x0 + x4) & M32
+            x12 := x12 ^ x0
+            x12 := ((x12 << 8) | (x12 >> 24)) & M32
+            x8 := (x8 + x12) & M32
+            x4 := x4 ^ x8
+            x4 := ((x4 << 7) | (x4 >> 25)) & M32
+
+            x1 := (x1 + x5) & M32
+            x13 := x13 ^ x1
+            x13 := ((x13 << 16) | (x13 >> 16)) & M32
+            x9 := (x9 + x13) & M32
+            x5 := x5 ^ x9
+            x5 := ((x5 << 12) | (x5 >> 20)) & M32
+            x1 := (x1 + x5) & M32
+            x13 := x13 ^ x1
+            x13 := ((x13 << 8) | (x13 >> 24)) & M32
+            x9 := (x9 + x13) & M32
+            x5 := x5 ^ x9
+            x5 := ((x5 << 7) | (x5 >> 25)) & M32
+
+            x2 := (x2 + x6) & M32
+            x14 := x14 ^ x2
+            x14 := ((x14 << 16) | (x14 >> 16)) & M32
+            x10 := (x10 + x14) & M32
+            x6 := x6 ^ x10
+            x6 := ((x6 << 12) | (x6 >> 20)) & M32
+            x2 := (x2 + x6) & M32
+            x14 := x14 ^ x2
+            x14 := ((x14 << 8) | (x14 >> 24)) & M32
+            x10 := (x10 + x14) & M32
+            x6 := x6 ^ x10
+            x6 := ((x6 << 7) | (x6 >> 25)) & M32
+
+            x3 := (x3 + x7) & M32
+            x15 := x15 ^ x3
+            x15 := ((x15 << 16) | (x15 >> 16)) & M32
+            x11 := (x11 + x15) & M32
+            x7 := x7 ^ x11
+            x7 := ((x7 << 12) | (x7 >> 20)) & M32
+            x3 := (x3 + x7) & M32
+            x15 := x15 ^ x3
+            x15 := ((x15 << 8) | (x15 >> 24)) & M32
+            x11 := (x11 + x15) & M32
+            x7 := x7 ^ x11
+            x7 := ((x7 << 7) | (x7 >> 25)) & M32
+
+            x0 := (x0 + x5) & M32
+            x15 := x15 ^ x0
+            x15 := ((x15 << 16) | (x15 >> 16)) & M32
+            x10 := (x10 + x15) & M32
+            x5 := x5 ^ x10
+            x5 := ((x5 << 12) | (x5 >> 20)) & M32
+            x0 := (x0 + x5) & M32
+            x15 := x15 ^ x0
+            x15 := ((x15 << 8) | (x15 >> 24)) & M32
+            x10 := (x10 + x15) & M32
+            x5 := x5 ^ x10
+            x5 := ((x5 << 7) | (x5 >> 25)) & M32
+
+            x1 := (x1 + x6) & M32
+            x12 := x12 ^ x1
+            x12 := ((x12 << 16) | (x12 >> 16)) & M32
+            x11 := (x11 + x12) & M32
+            x6 := x6 ^ x11
+            x6 := ((x6 << 12) | (x6 >> 20)) & M32
+            x1 := (x1 + x6) & M32
+            x12 := x12 ^ x1
+            x12 := ((x12 << 8) | (x12 >> 24)) & M32
+            x11 := (x11 + x12) & M32
+            x6 := x6 ^ x11
+            x6 := ((x6 << 7) | (x6 >> 25)) & M32
+
+            x2 := (x2 + x7) & M32
+            x13 := x13 ^ x2
+            x13 := ((x13 << 16) | (x13 >> 16)) & M32
+            x8 := (x8 + x13) & M32
+            x7 := x7 ^ x8
+            x7 := ((x7 << 12) | (x7 >> 20)) & M32
+            x2 := (x2 + x7) & M32
+            x13 := x13 ^ x2
+            x13 := ((x13 << 8) | (x13 >> 24)) & M32
+            x8 := (x8 + x13) & M32
+            x7 := x7 ^ x8
+            x7 := ((x7 << 7) | (x7 >> 25)) & M32
+
+            x3 := (x3 + x4) & M32
+            x14 := x14 ^ x3
+            x14 := ((x14 << 16) | (x14 >> 16)) & M32
+            x9 := (x9 + x14) & M32
+            x4 := x4 ^ x9
+            x4 := ((x4 << 12) | (x4 >> 20)) & M32
+            x3 := (x3 + x4) & M32
+            x14 := x14 ^ x3
+            x14 := ((x14 << 8) | (x14 >> 24)) & M32
+            x9 := (x9 + x14) & M32
+            x4 := x4 ^ x9
+            x4 := ((x4 << 7) | (x4 >> 25)) & M32
+            r := r + 1
+        }
+        out[0] := (x0 + 1634760805) & M32
+        out[1] := (x1 + 857760878) & M32
+        out[2] := (x2 + 2036477234) & M32
+        out[3] := (x3 + 1797285236) & M32
+        out[4] := (x4 + k0) & M32
+        out[5] := (x5 + k1) & M32
+        out[6] := (x6 + k2) & M32
+        out[7] := (x7 + k3) & M32
+        out[8] := (x8 + k4) & M32
+        out[9] := (x9 + k5) & M32
+        out[10] := (x10 + k6) & M32
+        out[11] := (x11 + k7) & M32
+        out[12] := (x12 + counter) & M32
+        out[13] := (x13 + n0) & M32
+        out[14] := (x14 + n1) & M32
+        out[15] := (x15 + n2) & M32
+        alloc left := count - done
+        if left >= 64 {
+            alloc w := 0
+            alloc s := from + done
+            alloc d := to + done
+            loop w < 16 {
+                alloc v := out[w]
+                dst[d] := src[s] ^ (v & 255)
+                dst[d + 1] := src[s + 1] ^ ((v >> 8) & 255)
+                dst[d + 2] := src[s + 2] ^ ((v >> 16) & 255)
+                dst[d + 3] := src[s + 3] ^ (v >> 24)
+                s := s + 4
+                d := d + 4
+                w := w + 1
+            }
+            done := done + 64
+        } else {
+            alloc i := 0
+            loop i < left {
+                dst[to + done + i] := src[from + done + i] ^ ((out[i >> 2] >> ((i & 3) * 8)) & 255)
+                i := i + 1
+            }
+            done := count
+        }
+        counter := (counter + 1) & M32
+    }
+    return true
+}
+
+# --- Poly1305 --------------------------------------------------------------------------
+
+# The Poly1305 tag of `count` bytes of m from `from`, a whole number
+# of 16-byte blocks, under the 32-byte one-time key.
+proc poly1305(key, m, from, count) {
+    alloc r0 := le32(key, 0) & 67108863
+    alloc r1 := (le32(key, 3) >> 2) & 67108611
+    alloc r2 := (le32(key, 6) >> 4) & 67092735
+    alloc r3 := (le32(key, 9) >> 6) & 66076671
+    alloc r4 := (le32(key, 12) >> 8) & 1048575
+    alloc s1 := r1 * 5
+    alloc s2 := r2 * 5
+    alloc s3 := r3 * 5
+    alloc s4 := r4 * 5
+    alloc h0 := 0
+    alloc h1 := 0
+    alloc h2 := 0
+    alloc h3 := 0
+    alloc h4 := 0
+    alloc p := from
+    alloc stop := from + count
+    loop p < stop {
+        h0 := h0 + (le32(m, p) & M26)
+        h1 := h1 + ((le32(m, p + 3) >> 2) & M26)
+        h2 := h2 + ((le32(m, p + 6) >> 4) & M26)
+        h3 := h3 + ((le32(m, p + 9) >> 6) & M26)
+        h4 := h4 + ((le32(m, p + 12) >> 8) | 16777216)
+        alloc d0 := h0 * r0 + h1 * s4 + h2 * s3 + h3 * s2 + h4 * s1
+        alloc d1 := h0 * r1 + h1 * r0 + h2 * s4 + h3 * s3 + h4 * s2
+        alloc d2 := h0 * r2 + h1 * r1 + h2 * r0 + h3 * s4 + h4 * s3
+        alloc d3 := h0 * r3 + h1 * r2 + h2 * r1 + h3 * r0 + h4 * s4
+        alloc d4 := h0 * r4 + h1 * r3 + h2 * r2 + h3 * r1 + h4 * r0
+        d1 := d1 + (d0 >> 26)
+        h0 := d0 & M26
+        d2 := d2 + (d1 >> 26)
+        h1 := d1 & M26
+        d3 := d3 + (d2 >> 26)
+        h2 := d2 & M26
+        d4 := d4 + (d3 >> 26)
+        h3 := d3 & M26
+        h0 := h0 + (d4 >> 26) * 5
+        h4 := d4 & M26
+        h1 := h1 + (h0 >> 26)
+        h0 := h0 & M26
+        p := p + 16
+    }
+    h2 := h2 + (h1 >> 26)
+    h1 := h1 & M26
+    h3 := h3 + (h2 >> 26)
+    h2 := h2 & M26
+    h4 := h4 + (h3 >> 26)
+    h3 := h3 & M26
+    h0 := h0 + (h4 >> 26) * 5
+    h4 := h4 & M26
+    h1 := h1 + (h0 >> 26)
+    h0 := h0 & M26
+    # h - p, kept when it is not negative
+    alloc g0 := h0 + 5
+    alloc g1 := h1 + (g0 >> 26)
+    g0 := g0 & M26
+    alloc g2 := h2 + (g1 >> 26)
+    g1 := g1 & M26
+    alloc g3 := h3 + (g2 >> 26)
+    g2 := g2 & M26
+    alloc g4 := h4 + (g3 >> 26) - 67108864
+    g3 := g3 & M26
+    if g4 >= 0 {
+        h0 := g0
+        h1 := g1
+        h2 := g2
+        h3 := g3
+        h4 := g4
+    }
+    alloc w0 := (h0 | (h1 << 26)) & M32
+    alloc w1 := ((h1 >> 6) | (h2 << 20)) & M32
+    alloc w2 := ((h2 >> 12) | (h3 << 14)) & M32
+    alloc w3 := ((h3 >> 18) | (h4 << 8)) & M32
+    alloc f := w0 + le32(key, 16)
+    w0 := f & M32
+    f := w1 + le32(key, 20) + (f >> 32)
+    w1 := f & M32
+    f := w2 + le32(key, 24) + (f >> 32)
+    w2 := f & M32
+    f := w3 + le32(key, 28) + (f >> 32)
+    w3 := f & M32
+    alloc tag := bytes_repeat(0, 16)
+    alloc ws := [w0, w1, w2, w3]
+    alloc i := 0
+    loop i < 16 {
+        tag[i] := (ws[i >> 2] >> ((i & 3) * 8)) & 255
+        i := i + 1
+    }
+    return tag
+}
+
+proc put_le64(b, at, v) {
+    alloc i := 0
+    loop i < 8 {
+        b[at + i] := (v >> (i * 8)) & 255
+        i := i + 1
+    }
+    return true
+}
+
+# The tag over the extra data and the sealed bytes (`ct` from
+# `from`, `count` of them).
+proc chacha_tag(c, nw, aad, ct, from, count) {
+    alloc zero := bytes_repeat(0, 64)
+    alloc pk := bytes_repeat(0, 64)
+    chacha_xor(c.kw, nw, 0, zero, 0, pk, 0, 64)
+    alloc an := length(aad)
+    alloc ap := ((an + 15) // 16) * 16
+    alloc cp := ((count + 15) // 16) * 16
+    alloc mac := bytes_repeat(0, ap + cp + 16)
+    bytes_copy(aad, 0, mac, 0, an)
+    bytes_copy(ct, from, mac, ap, count)
+    put_le64(mac, ap + cp, an)
+    put_le64(mac, ap + cp + 8, count)
+    return poly1305(pk, mac, 0, ap + cp + 16)
+}
+
+proc nonce_words(nonce) {
+    return [le32(nonce, 0), le32(nonce, 4), le32(nonce, 8)]
+}
+
+# --- AES ----------------------------------------------------------------------------------
+
+alloc SBOX := []
+alloc TE0 := []
+alloc TE1 := []
+alloc TE2 := []
+alloc TE3 := []
+
+proc aes_init() {
+    # powers of 3 in the field of 256 elements give every inverse
+    alloc pw := list_repeat(0, 256)
+    alloc lg := list_repeat(0, 256)
+    alloc x := 1
+    alloc i := 0
+    loop i < 256 {
+        pw[i] := x
+        lg[x] := i
+        alloc x2 := x << 1
+        if x2 > 255 {
+            x2 := x2 ^ 283
+        }
+        x := x ^ x2
+        i := i + 1
+    }
+    SBOX := list_repeat(0, 256)
+    TE0 := list_repeat(0, 256)
+    TE1 := list_repeat(0, 256)
+    TE2 := list_repeat(0, 256)
+    TE3 := list_repeat(0, 256)
+    i := 0
+    loop i < 256 {
+        alloc inv := 0
+        if i != 0 {
+            inv := pw[(255 - lg[i]) % 255]
+        }
+        alloc s := inv ^ (inv << 1) ^ (inv << 2) ^ (inv << 3) ^ (inv << 4)
+        s := (s ^ (s >> 8) ^ 99) & 255
+        SBOX[i] := s
+        alloc d := s << 1
+        if d > 255 {
+            d := d ^ 283
+        }
+        alloc t := (d << 24) | (s << 16) | (s << 8) | (d ^ s)
+        TE0[i] := t
+        TE1[i] := ((t >> 8) | (t << 24)) & M32
+        TE2[i] := ((t >> 16) | (t << 16)) & M32
+        TE3[i] := ((t >> 24) | (t << 8)) & M32
+        i := i + 1
+    }
+    return true
+}
+
+proc sub_word(w) {
+    return (SBOX[w >> 24] << 24) | (SBOX[(w >> 16) & 255] << 16) | (SBOX[(w >> 8) & 255] << 8) | SBOX[w & 255]
+}
+
+# The round keys of a 16- or 32-byte key.
+proc aes_keys(key) {
+    if length(SBOX) == 0 {
+        aes_init()
+    }
+    alloc nk := length(key) // 4
+    alloc total := (nk + 7) * 4
+    alloc rk := list_repeat(0, total)
+    alloc i := 0
+    loop i < nk {
+        rk[i] := (key[i * 4] << 24) | (key[i * 4 + 1] << 16) | (key[i * 4 + 2] << 8) | key[i * 4 + 3]
+        i := i + 1
+    }
+    alloc rcon := 1
+    loop i < total {
+        alloc t := rk[i - 1]
+        if i % nk == 0 {
+            t := sub_word(((t << 8) | (t >> 24)) & M32) ^ (rcon << 24)
+            rcon := rcon << 1
+            if rcon > 255 {
+                rcon := rcon ^ 283
+            }
+        } elif nk > 6 and i % nk == 4 {
+            t := sub_word(t)
+        }
+        rk[i] := rk[i - nk] ^ t
+        i := i + 1
+    }
+    return rk
+}
+
+# Encipher the block (a, b, c, d) into the four words of `out`.
+proc aes_block(rk, a, b, c, d, out) {
+    alloc rounds := length(rk) // 4 - 1
+    alloc s0 := a ^ rk[0]
+    alloc s1 := b ^ rk[1]
+    alloc s2 := c ^ rk[2]
+    alloc s3 := d ^ rk[3]
+    alloc k := 4
+    alloc r := 1
+    loop r < rounds {
+        alloc t0 := TE0[s0 >> 24] ^ TE1[(s1 >> 16) & 255] ^ TE2[(s2 >> 8) & 255] ^ TE3[s3 & 255] ^ rk[k]
+        alloc t1 := TE0[s1 >> 24] ^ TE1[(s2 >> 16) & 255] ^ TE2[(s3 >> 8) & 255] ^ TE3[s0 & 255] ^ rk[k + 1]
+        alloc t2 := TE0[s2 >> 24] ^ TE1[(s3 >> 16) & 255] ^ TE2[(s0 >> 8) & 255] ^ TE3[s1 & 255] ^ rk[k + 2]
+        alloc t3 := TE0[s3 >> 24] ^ TE1[(s0 >> 16) & 255] ^ TE2[(s1 >> 8) & 255] ^ TE3[s2 & 255] ^ rk[k + 3]
+        s0 := t0
+        s1 := t1
+        s2 := t2
+        s3 := t3
+        k := k + 4
+        r := r + 1
+    }
+    out[0] := ((SBOX[s0 >> 24] << 24) | (SBOX[(s1 >> 16) & 255] << 16) | (SBOX[(s2 >> 8) & 255] << 8) | SBOX[s3 & 255]) ^ rk[k]
+    out[1] := ((SBOX[s1 >> 24] << 24) | (SBOX[(s2 >> 16) & 255] << 16) | (SBOX[(s3 >> 8) & 255] << 8) | SBOX[s0 & 255]) ^ rk[k + 1]
+    out[2] := ((SBOX[s2 >> 24] << 24) | (SBOX[(s3 >> 16) & 255] << 16) | (SBOX[(s0 >> 8) & 255] << 8) | SBOX[s1 & 255]) ^ rk[k + 2]
+    out[3] := ((SBOX[s3 >> 24] << 24) | (SBOX[(s0 >> 16) & 255] << 16) | (SBOX[(s1 >> 8) & 255] << 8) | SBOX[s2 & 255]) ^ rk[k + 3]
+    return true
+}
+
+# --- GCM ----------------------------------------------------------------------------------
+
+alloc LAST4 := [0, 7200, 14400, 9312, 28800, 27808, 18624, 21728, 57600, 64800, 55616, 50528, 37248, 36256, 43456, 46560]
+alloc M60 := 1152921504606846975
+alloc M63 := 9223372036854775807
+
+proc be64(b, i) {
+    return (b[i] << 56) | (b[i + 1] << 48) | (b[i + 2] << 40) | (b[i + 3] << 32) | (b[i + 4] << 24) | (b[i + 5] << 16) | (b[i + 6] << 8) | b[i + 7]
+}
+
+# The 16 multiples of the hash key that gcm_mult looks up, as the
+# high and low halves of 128-bit numbers.
+proc gcm_tables(c) {
+    alloc out := [0, 0, 0, 0]
+    aes_block(c.rk, 0, 0, 0, 0, out)
+    alloc vh := (out[0] << 32) | out[1]
+    alloc vl := (out[2] << 32) | out[3]
+    alloc hh := list_repeat(0, 16)
+    alloc hl := list_repeat(0, 16)
+    hh[8] := vh
+    hl[8] := vl
+    alloc i := 4
+    loop i > 0 {
+        alloc t := (vl & 1) * 3774873600
+        vl := (vh << 63) | ((vl >> 1) & M63)
+        vh := ((vh >> 1) & M63) ^ (t << 32)
+        hh[i] := vh
+        hl[i] := vl
+        i := i >> 1
+    }
+    i := 2
+    loop i <= 8 {
+        alloc j := 1
+        loop j < i {
+            hh[i + j] := hh[i] ^ hh[j]
+            hl[i + j] := hl[i] ^ hl[j]
+            j := j + 1
+        }
+        i := i * 2
+    }
+    c.hh := hh
+    c.hl := hl
+    return true
+}
+
+# The running hash y (two halves in a list) takes in `count` bytes of
+# m from `from`, the last block filled out with zeros.
+proc ghash(c, y, m, from, count) {
+    alloc hh := c.hh
+    alloc hl := c.hl
+    alloc yh := y[0]
+    alloc yl := y[1]
+    alloc p := from
+    alloc stop := from + count
+    alloc last := bytes_repeat(0, 16)
+    loop p < stop {
+        if p + 16 <= stop {
+            yh := yh ^ be64(m, p)
+            yl := yl ^ be64(m, p + 8)
+        } else {
+            bytes_copy(m, p, last, 0, stop - p)
+            yh := yh ^ be64(last, 0)
+            yl := yl ^ be64(last, 8)
+        }
+        # times the hash key, four bits at a time from the far end
+        alloc lo := yl & 15
+        alloc zh := hh[lo]
+        alloc zl := hl[lo]
+        alloc i := 15
+        loop i >= 0 {
+            alloc byte := 0
+            if i >= 8 {
+                byte := (yl >> ((15 - i) * 8)) & 255
+            } else {
+                byte := (yh >> ((7 - i) * 8)) & 255
+            }
+            alloc rem := 0
+            if i != 15 {
+                lo := byte & 15
+                rem := zl & 15
+                zl := (zh << 60) | ((zl >> 4) & M60)
+                zh := ((zh >> 4) & M60) ^ (LAST4[rem] << 48) ^ hh[lo]
+                zl := zl ^ hl[lo]
+            }
+            alloc hi := byte >> 4
+            rem := zl & 15
+            zl := (zh << 60) | ((zl >> 4) & M60)
+            zh := ((zh >> 4) & M60) ^ (LAST4[rem] << 48) ^ hh[hi]
+            zl := zl ^ hl[hi]
+            i := i - 1
+        }
+        yh := zh
+        yl := zl
+        p := p + 16
+    }
+    y[0] := yh
+    y[1] := yl
+    return true
+}
+
+# Counter mode from block number 2, and the tag: returns the tag.
+# `sealing` says whether `src` is the plain text (the tag is always
+# over the sealed bytes).
+proc gcm_run(c, nonce, aad, src, from, count, dst, to, sealing) {
+    alloc n0 := (nonce[0] << 24) | (nonce[1] << 16) | (nonce[2] << 8) | nonce[3]
+    alloc n1 := (nonce[4] << 24) | (nonce[5] << 16) | (nonce[6] << 8) | nonce[7]
+    alloc n2 := (nonce[8] << 24) | (nonce[9] << 16) | (nonce[10] << 8) | nonce[11]
+    alloc y := [0, 0]
+    ghash(c, y, aad, 0, length(aad))
+    if sealing == false {
+        ghash(c, y, src, from, count)
+    }
+    alloc ks := [0, 0, 0, 0]
+    alloc rk := c.rk
+    alloc ctr := 2
+    alloc done := 0
+    loop done < count {
+        aes_block(rk, n0, n1, n2, ctr, ks)
+        ctr := ctr + 1
+        alloc left := count - done
+        alloc s := from + done
+        alloc d := to + done
+        if left >= 16 {
+            alloc w := 0
+            loop w < 4 {
+                alloc v := ks[w]
+                dst[d] := src[s] ^ (v >> 24)
+                dst[d + 1] := src[s + 1] ^ ((v >> 16) & 255)
+                dst[d + 2] := src[s + 2] ^ ((v >> 8) & 255)
+                dst[d + 3] := src[s + 3] ^ (v & 255)
+                s := s + 4
+                d := d + 4
+                w := w + 1
+            }
+            done := done + 16
+        } else {
+            alloc i := 0
+            loop i < left {
+                dst[d + i] := src[s + i] ^ ((ks[i >> 2] >> (24 - (i & 3) * 8)) & 255)
+                i := i + 1
+            }
+            done := count
+        }
+    }
+    if sealing {
+        ghash(c, y, dst, to, count)
+    }
+    alloc lens := bytes_repeat(0, 16)
+    alloc abits := length(aad) * 8
+    alloc cbits := count * 8
+    alloc i2 := 0
+    loop i2 < 8 {
+        lens[7 - i2] := (abits >> (i2 * 8)) & 255
+        lens[15 - i2] := (cbits >> (i2 * 8)) & 255
+        i2 := i2 + 1
+    }
+    ghash(c, y, lens, 0, 16)
+    aes_block(rk, n0, n1, n2, 1, ks)
+    alloc th := y[0] ^ ((ks[0] << 32) | ks[1])
+    alloc tl := y[1] ^ ((ks[2] << 32) | ks[3])
+    alloc tag := bytes_repeat(0, 16)
+    i2 := 0
+    loop i2 < 8 {
+        tag[i2] := (th >> (56 - i2 * 8)) & 255
+        tag[8 + i2] := (tl >> (56 - i2 * 8)) & 255
+        i2 := i2 + 1
+    }
+    return tag
+}
+
+# --- the two under one face ---------------------------------------------------------------
+
+# A cipher ready for use: `kind` is "chacha" or "aes", `key` 32 bytes
+# for ChaCha20 and 16 or 32 for AES.
+proc new(kind, key) {
+    if kind == "chacha" {
+        alloc kw := list_repeat(0, 8)
+        alloc i := 0
+        loop i < 8 {
+            kw[i] := le32(key, i * 4)
+            i := i + 1
+        }
+        return {kind: kind, kw: kw}
+    }
+    alloc c := {kind: kind, rk: aes_keys(key), hh: [], hl: []}
+    gcm_tables(c)
+    return c
+}
+
+# Seal: the hidden bytes followed by the 16-byte tag. `nonce` is 12
+# bytes and must never be used twice with one key; `aad` is extra
+# data that is vouched for but not hidden.
+proc seal(c, nonce, aad, plain) {
+    alloc n := length(plain)
+    alloc out := bytes_repeat(0, n + 16)
+    alloc tag := false
+    if c.kind == "chacha" {
+        alloc nw := nonce_words(nonce)
+        chacha_xor(c.kw, nw, 1, plain, 0, out, 0, n)
+        tag := chacha_tag(c, nw, aad, out, 0, n)
+    } else {
+        tag := gcm_run(c, nonce, aad, plain, 0, n, out, 0, true)
+    }
+    bytes_copy(tag, 0, out, n, 16)
+    return out
+}
+
+# Open what seal() made: the plain bytes, or false when the data or
+# the extra data was altered.
+proc open(c, nonce, aad, data) {
+    alloc n := length(data) - 16
+    if n < 0 {
+        return false
+    }
+    alloc out := bytes_repeat(0, n)
+    alloc tag := false
+    if c.kind == "chacha" {
+        alloc nw := nonce_words(nonce)
+        tag := chacha_tag(c, nw, aad, data, 0, n)
+    } else {
+        tag := gcm_run(c, nonce, aad, data, 0, n, out, 0, false)
+    }
+    alloc diff := 0
+    alloc i := 0
+    loop i < 16 {
+        diff := diff | (tag[i] ^ data[n + i])
+        i := i + 1
+    }
+    if diff != 0 {
+        return false
+    }
+    if c.kind == "chacha" {
+        chacha_xor(c.kw, nonce_words(nonce), 1, data, 0, out, 0, n)
+    }
+    return out
+}

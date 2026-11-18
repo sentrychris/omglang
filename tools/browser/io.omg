@@ -40,7 +40,14 @@ proc read(h, max, timeout) {
         }
         alloc r := tcp_poll([h], [], 30)
         if length(r[0]) > 0 {
-            return tcp_read(h, max)
+            alloc data := to_bytes([])
+            try {
+                data := tcp_read(h, max)
+            } except e {
+                # the line was cut: the same to us as a close
+                return to_bytes([])
+            }
+            return data
         }
         waited := waited + 30
         if waited >= timeout {
