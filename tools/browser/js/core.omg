@@ -1,0 +1,4243 @@
+;;;omg
+
+# tools/browser/js/core.omg
+#
+# The heart of the JavaScript engine: what a value is, what an object
+# is, and the loop that runs compiled code.
+#
+# Values. A JavaScript value is an OMG value, told apart by type_of():
+#
+#     undefined    none (what a proc that returns nothing gives)
+#     true, false  a bool
+#     a number     a float, always
+#     a string     a string
+#     an object    an int: its place in the heap H; null is 0
+#
+# So an object is never an OMG reference. That is the whole memory
+# plan: objects point at each other in every direction (a function at
+# its prototype and back, a DOM node at its parent), OMG frees a value
+# when nothing refers to it any more, and loops of references are
+# never freed. Loops of numbers are no loops. Dropping the heap frees
+# everything, and sweep() frees what a running page no longer reaches.
+#
+# An object in the heap is a list:
+#
+#     [0] class      what kind (C_ARRAY, C_FUNC ...), 0 for a plain one
+#     [1] prototype  a handle, or 0
+#     [2] props      a dict, key to value; a value that is an OMG list
+#                    is no value: [getter, setter] is an accessor,
+#                    [] is a property that was deleted (OMG dicts
+#                    cannot lose a key)
+#     [3] x          what the class keeps: an array's items, a
+#                    function's code, a date's time
+#     [4] flags      1: props holds lists; 2: frozen; 4: every property
+#                    is hidden from for-in; 8: not extensible
+#     [5] hidden     a dict of the keys for-in does not see, or false
+#     [6] count      arrays only: how many items of [3] are in use (OMG
+#                    lists cannot shrink)
+#
+# Code. compile.omg turns a function into a "template": a list of
+# numbers to be run by exec() below, a stack machine. Local variables
+# sit in registers (a list per call) or, in functions that have
+# functions inside them, in environment records (lists that point at
+# the one outside them), so that a closure is its template plus the
+# record that was current when it was made.
+#
+# Calls from JavaScript to JavaScript do not recurse in OMG: the
+# caller's state goes on the list FR and the loop goes on in the
+# callee. A native function that calls back (forEach, a getter) does
+# recurse, through call().
+#
+# Errors travel as OMG errors: throw_val() puts the value in EXC and
+# raises; run() catches, looks for a try in the frames it owns, and
+# goes on there or raises again for the run() outside it.
+
+# --- classes of object ---------------------------------------------------------------
+
+alloc C_OBJECT := 0
+alloc C_ARRAY := 1
+alloc C_FUNC := 2
+alloc C_ERROR := 3
+alloc C_BOOL := 4
+alloc C_NUM := 5
+alloc C_STR := 6
+alloc C_SYMBOL := 7
+alloc C_DATE := 8
+alloc C_REGEXP := 9
+alloc C_MAP := 10
+alloc C_SET := 11
+alloc C_PROMISE := 12
+alloc C_GEN := 13
+alloc C_ITER := 14
+alloc C_WEAKREF := 15
+alloc C_HOST := 32             # this and above: objects of the embedder (the DOM)
+
+proc nothing() {
+}
+
+alloc U := nothing()           # undefined
+alloc MISS := [0]              # "not here", from the hooks of host objects
+alloc DONE := [1]              # "no more", from iterators
+alloc GONE := []               # a deleted property
+
+# --- the heap -------------------------------------------------------------------------
+
+alloc H := [0]                 # H[0] is null and holds nothing
+alloc FREE := []               # places in H that are free again
+alloc NFREE := 0
+alloc ALLOCS := 0              # objects made since the last sweep
+
+proc heap() {
+    return H
+}
+
+proc new_obj(cls, proto) {
+    alloc o := [cls, proto, {}, 0, 0, false]
+    ALLOCS := ALLOCS + 1
+    if NFREE > 0 {
+        NFREE := NFREE - 1
+        alloc h := FREE[NFREE]
+        H[h] := o
+        return h
+    }
+    append(H, o)
+    return length(H) - 1
+}
+
+# The intrinsic objects, by number, so that other files can reach
+# them through one shared list.
+alloc I := list_repeat(0, 64)
+alloc I_GLOBAL := 0
+alloc I_OBJECT_PROTO := 1
+alloc I_FUNCTION_PROTO := 2
+alloc I_ARRAY_PROTO := 3
+alloc I_STRING_PROTO := 4
+alloc I_NUMBER_PROTO := 5
+alloc I_BOOLEAN_PROTO := 6
+alloc I_SYMBOL_PROTO := 7
+alloc I_ERROR_PROTO := 8
+alloc I_TYPE_ERROR := 9
+alloc I_RANGE_ERROR := 10
+alloc I_REFERENCE_ERROR := 11
+alloc I_SYNTAX_ERROR := 12
+alloc I_ITER_PROTO := 13
+alloc I_GEN_PROTO := 14
+alloc I_PROMISE_PROTO := 15
+alloc I_REGEXP_PROTO := 16
+alloc I_DATE_PROTO := 17
+alloc I_MAP_PROTO := 18
+alloc I_SET_PROTO := 19
+alloc I_ARRAY_VALUES := 20     # Array.prototype.values, to see that nobody replaced it
+alloc I_EVAL_ERROR := 21
+alloc I_URI_ERROR := 22
+alloc I_WEAKMAP_PROTO := 23
+alloc I_WEAKSET_PROTO := 24
+
+alloc GLOBAL := 0
+alloc OBJECT_PROTO := 0
+alloc FUNCTION_PROTO := 0
+alloc ARRAY_PROTO := 0
+alloc STRING_PROTO := 0
+alloc NUMBER_PROTO := 0
+alloc BOOLEAN_PROTO := 0
+alloc SYMBOL_PROTO := 0
+
+proc intrinsics() {
+    return I
+}
+
+# --- the state of the machine -----------------------------------------------------------
+
+alloc S := list_repeat(0, 2048)   # the operand stack, shared by every frame
+alloc SP := 0                  # its top, when exec() is not holding it in a local
+alloc FR := []                 # the frames that are waiting for a call to come back
+alloc FP := 0                  # how many
+alloc CUR := false             # the frame that is running
+alloc EXC := 0                 # the value being thrown
+alloc THROWN := false          # an OMG error in flight is a JavaScript throw
+alloc RESUME_THROW := false    # exec() is to start by throwing EXC
+alloc YIELDED := 0             # exec() came back because of 1: yield, 2: await
+alloc YSTACK := []             # ... and this was on the operand stack
+alloc NEW_TARGET := 0          # a native is being called by `new`: the constructor asked for
+alloc NATIVE_FN := 0           # the native function being called
+alloc CALL_DEPTH := 0
+
+# Hooks other files fill in.
+alloc HOST_GET := false        # proc(handle, object, key) -> value or MISS
+alloc HOST_SET := false        # proc(handle, object, key, value) -> handled?
+alloc HOST_KEYS := false       # proc(handle, object) -> list of keys
+alloc PROMISE_NEW := false     # proc() -> promise
+alloc PROMISE_SETTLE := false  # proc(promise, ok?, value)
+alloc PROMISE_AWAIT := false   # proc(value, coroutine)
+alloc REGEX_NEW := false       # proc(pattern, flags) -> object
+alloc COMPILE := false         # proc(source bytes, name) -> template
+
+proc set_host_hooks(g, s, k) {
+    HOST_GET := g
+    HOST_SET := s
+    HOST_KEYS := k
+    return true
+}
+
+proc set_promise_hooks(n, s, a) {
+    PROMISE_NEW := n
+    PROMISE_SETTLE := s
+    PROMISE_AWAIT := a
+    return true
+}
+
+proc set_regex_hook(r) {
+    REGEX_NEW := r
+    return true
+}
+
+proc set_compile_hook(c) {
+    COMPILE := c
+    return true
+}
+
+proc new_target() {
+    return NEW_TARGET
+}
+
+proc native_fn() {
+    return NATIVE_FN
+}
+
+# --- numbers and strings ---------------------------------------------------------------
+
+alloc INF := bits_to_float(9218868437227405312)
+alloc NAN := bits_to_float(9221120237041090560)
+alloc NEG_INF := bits_to_float(-4503599627370496)
+
+proc nan() {
+    return NAN
+}
+
+proc inf() {
+    return INF
+}
+
+proc is_obj(v) {
+    return type_of(v) == 2 and v != 0
+}
+
+proc is_nullish(v) {
+    alloc t := type_of(v)
+    return t == 0 or (t == 2 and v == 0)
+}
+
+proc is_callable(v) {
+    if type_of(v) != 2 or v == 0 {
+        return false
+    }
+    return H[v][0] == 2
+}
+
+proc is_array(v) {
+    if type_of(v) != 2 or v == 0 {
+        return false
+    }
+    return H[v][0] == 1
+}
+
+proc class_of(v) {
+    if type_of(v) != 2 or v == 0 {
+        return -1
+    }
+    return H[v][0]
+}
+
+# The digits of a float OMG wrote with all seventeen of them, cut down
+# to the fewest that still mean the same float.
+proc shortest_digits(f, digits, n10) {
+    alloc lo := 1
+    alloc hi := length(digits)
+    alloc best := digits
+    alloc best_n := n10
+    alloc neg := f < 0.0
+    loop lo < hi {
+        alloc mid := (lo + hi) // 2
+        # round the digits to `mid` places
+        alloc d := []
+        for ch in digits[0:mid] {
+            append(d, ascii(ch) - 48)
+        }
+        alloc n2 := n10
+        if ascii(digits[mid]) - 48 >= 5 {
+            alloc i := mid - 1
+            loop i >= 0 {
+                if d[i] < 9 {
+                    d[i] := d[i] + 1
+                    break
+                }
+                d[i] := 0
+                i := i - 1
+            }
+            if i < 0 {
+                d := [1] + d
+                n2 := n2 + 1
+                d := d[0:mid]
+            }
+        }
+        alloc s := ""
+        for x in d {
+            s := s + x
+        }
+        alloc text := "0." + s + "e" + n2
+        if neg {
+            text := "-" + text
+        }
+        if float(text) == f {
+            hi := mid
+            best := s
+            best_n := n2
+        } else {
+            lo := mid + 1
+        }
+    }
+    return [best, best_n]
+}
+
+# A number as JavaScript writes it.
+proc num_to_str(f) {
+    if f != f {
+        return "NaN"
+    }
+    if f == 0.0 {
+        return "0"
+    }
+    if f < 1000000000000000.0 and f > -1000000000000000.0 {
+        if f == floor(f) {
+            return "" + int(f)
+        }
+    } elif f == INF {
+        return "Infinity"
+    } elif f == NEG_INF {
+        return "-Infinity"
+    }
+    alloc s := "" + f
+    alloc neg := false
+    if s[0] == "-" {
+        neg := true
+        s := s[1:]
+    }
+    # take OMG's text apart: digits, and where the point belongs
+    alloc mant := s
+    alloc ex := 0
+    alloc epos := -1
+    alloc i := 0
+    alloc n := length(s)
+    loop i < n {
+        if s[i] == "e" {
+            epos := i
+            break
+        }
+        i := i + 1
+    }
+    if epos >= 0 {
+        mant := s[0:epos]
+        alloc et := s[epos + 1:]
+        if et[0] == "+" {
+            et := et[1:]
+        }
+        ex := int(et)
+    }
+    alloc digits := ""
+    alloc point := -1
+    alloc k := 0
+    for ch in mant {
+        if ch == "." {
+            point := k
+        } else {
+            digits := digits + ch
+            k := k + 1
+        }
+    }
+    if point < 0 {
+        point := k
+    }
+    # value = 0.digits x 10^(point + ex), once leading zeros are gone
+    alloc n10 := point + ex
+    alloc lead := 0
+    loop lead < length(digits) - 1 and digits[lead] == "0" {
+        lead := lead + 1
+    }
+    digits := digits[lead:]
+    n10 := n10 - lead
+    alloc end := length(digits)
+    loop end > 1 and digits[end - 1] == "0" {
+        end := end - 1
+    }
+    digits := digits[0:end]
+    if length(digits) >= 17 {
+        alloc sd := shortest_digits(f, digits, n10)
+        digits := sd[0]
+        n10 := sd[1]
+        end := length(digits)
+        loop end > 1 and digits[end - 1] == "0" {
+            end := end - 1
+        }
+        digits := digits[0:end]
+    }
+    alloc kk := length(digits)
+    alloc out := ""
+    if kk <= n10 and n10 <= 21 {
+        out := digits
+        alloc z := n10 - kk
+        loop z > 0 {
+            out := out + "0"
+            z := z - 1
+        }
+    } elif n10 > 0 and n10 <= 21 {
+        out := digits[0:n10] + "." + digits[n10:]
+    } elif n10 > -6 and n10 <= 0 {
+        out := "0."
+        alloc z2 := 0 - n10
+        loop z2 > 0 {
+            out := out + "0"
+            z2 := z2 - 1
+        }
+        out := out + digits
+    } else {
+        alloc e := n10 - 1
+        out := digits[0:1]
+        if kk > 1 {
+            out := out + "." + digits[1:]
+        }
+        if e < 0 {
+            out := out + "e-" + (0 - e)
+        } else {
+            out := out + "e+" + e
+        }
+    }
+    if neg {
+        return "-" + out
+    }
+    return out
+}
+
+# A number as the name of a property: 1 is "1".
+proc num_key(f) {
+    if f < 1000000000000000.0 and f > -1000000000000000.0 {
+        if f == floor(f) {
+            return "" + int(f)
+        }
+    }
+    return num_to_str(f)
+}
+
+proc is_space_byte(c) {
+    return c == 32 or (c >= 9 and c <= 13) or c == 160
+}
+
+# What a string is as a number; NaN when it is none.
+proc str_to_num(s) {
+    alloc b := string_bytes(s)
+    alloc n := length(b)
+    alloc i := 0
+    loop i < n {
+        alloc c := b[i]
+        if c == 32 or (c >= 9 and c <= 13) {
+            i := i + 1
+        } elif c == 194 and i + 1 < n and b[i + 1] == 160 {
+            i := i + 2
+        } elif c == 239 and i + 2 < n and b[i + 1] == 187 and b[i + 2] == 191 {
+            i := i + 3
+        } else {
+            break
+        }
+    }
+    loop n > i {
+        alloc c2 := b[n - 1]
+        if c2 == 32 or (c2 >= 9 and c2 <= 13) {
+            n := n - 1
+        } elif c2 == 160 and n - 2 >= i and b[n - 2] == 194 {
+            n := n - 2
+        } else {
+            break
+        }
+    }
+    if i >= n {
+        return 0.0
+    }
+    alloc start := i
+    alloc neg := false
+    if b[i] == 45 {
+        neg := true
+        i := i + 1
+    } elif b[i] == 43 {
+        i := i + 1
+    }
+    if i >= n {
+        return NAN
+    }
+    if b[i] == 73 {
+        if bytes_to_string(b[i:n]) == "Infinity" {
+            if neg {
+                return NEG_INF
+            }
+            return INF
+        }
+        return NAN
+    }
+    if b[i] == 48 and i + 1 < n and i == start {
+        alloc x := b[i + 1] | 32
+        alloc base := 0
+        if x == 120 {
+            base := 16
+        } elif x == 111 {
+            base := 8
+        } elif x == 98 {
+            base := 2
+        }
+        if base > 0 {
+            alloc v := 0.0
+            alloc j := i + 2
+            if j >= n {
+                return NAN
+            }
+            loop j < n {
+                alloc d := b[j]
+                alloc h := -1
+                if d >= 48 and d <= 57 {
+                    h := d - 48
+                } elif (d | 32) >= 97 and (d | 32) <= 102 {
+                    h := (d | 32) - 87
+                }
+                if h < 0 or h >= base {
+                    return NAN
+                }
+                v := v * base + h
+                j := j + 1
+            }
+            return v
+        }
+    }
+    # digits [. digits] [e [+-] digits]
+    alloc j2 := i
+    alloc nd := 0
+    alloc whole := true
+    loop j2 < n and b[j2] >= 48 and b[j2] <= 57 {
+        j2 := j2 + 1
+        nd := nd + 1
+    }
+    alloc text := bytes_to_string(b[i:j2])
+    if nd == 0 {
+        text := "0"
+    }
+    if j2 < n and b[j2] == 46 {
+        whole := false
+        j2 := j2 + 1
+        alloc fs := j2
+        loop j2 < n and b[j2] >= 48 and b[j2] <= 57 {
+            j2 := j2 + 1
+            nd := nd + 1
+        }
+        if j2 > fs {
+            text := text + "." + bytes_to_string(b[fs:j2])
+        }
+    }
+    if nd == 0 {
+        return NAN
+    }
+    if j2 < n and (b[j2] | 32) == 101 {
+        whole := false
+        alloc es := j2 + 1
+        alloc sign := ""
+        if es < n and (b[es] == 43 or b[es] == 45) {
+            if b[es] == 45 {
+                sign := "-"
+            }
+            es := es + 1
+        }
+        alloc ee := es
+        loop ee < n and b[ee] >= 48 and b[ee] <= 57 {
+            ee := ee + 1
+        }
+        if ee == es {
+            return NAN
+        }
+        text := text + "e" + sign + bytes_to_string(b[es:ee])
+        j2 := ee
+    }
+    if j2 != n {
+        return NAN
+    }
+    alloc r := 0.0
+    if whole and nd < 16 {
+        r := int(text) * 1.0
+    } else {
+        try {
+            r := float(text) * 1.0
+        } except e {
+            r := NAN
+        }
+    }
+    if neg {
+        return r * -1.0
+    }
+    return r
+}
+
+proc typeof_str(v) {
+    alloc t := type_of(v)
+    if t == 3 {
+        return "number"
+    }
+    if t == 4 {
+        return "string"
+    }
+    if t == 0 {
+        return "undefined"
+    }
+    if t == 1 {
+        return "boolean"
+    }
+    if v == 0 {
+        return "object"
+    }
+    alloc c := H[v][0]
+    if c == 2 {
+        return "function"
+    }
+    if c == 7 {
+        return "symbol"
+    }
+    return "object"
+}
+
+proc to_bool(v) {
+    alloc t := type_of(v)
+    if t == 1 {
+        return v
+    }
+    if t == 3 {
+        return v != 0.0 and v == v
+    }
+    if t == 4 {
+        return v != ""
+    }
+    if t == 0 {
+        return false
+    }
+    return v != 0
+}
+
+proc to_num(v) {
+    alloc t := type_of(v)
+    if t == 3 {
+        return v
+    }
+    if t == 4 {
+        return str_to_num(v)
+    }
+    if t == 1 {
+        if v {
+            return 1.0
+        }
+        return 0.0
+    }
+    if t == 0 {
+        return NAN
+    }
+    if v == 0 {
+        return 0.0
+    }
+    if H[v][0] == 7 {
+        throw_type("Cannot convert a Symbol value to a number")
+    }
+    return to_num(to_prim(v, 0))
+}
+
+proc to_str(v) {
+    alloc t := type_of(v)
+    if t == 4 {
+        return v
+    }
+    if t == 3 {
+        return num_to_str(v)
+    }
+    if t == 1 {
+        if v {
+            return "true"
+        }
+        return "false"
+    }
+    if t == 0 {
+        return "undefined"
+    }
+    if v == 0 {
+        return "null"
+    }
+    if H[v][0] == 7 {
+        throw_type("Cannot convert a Symbol value to a string")
+    }
+    return to_str(to_prim(v, 1))
+}
+
+# The key a value names a property by.
+proc to_key(v) {
+    alloc t := type_of(v)
+    if t == 4 {
+        return v
+    }
+    if t == 3 {
+        return num_key(v)
+    }
+    if t == 2 and v != 0 {
+        alloc o := H[v]
+        if o[0] == 7 {
+            return o[3][0]
+        }
+    }
+    return to_str(v)
+}
+
+# A number as a whole OMG number, for indexes and counts: NaN is 0,
+# and what is too big is cut to +-2^53.
+proc to_integer(v) {
+    alloc f := v
+    if type_of(v) != 3 {
+        f := to_num(v)
+    }
+    if f != f {
+        return 0
+    }
+    if f >= 9007199254740992.0 {
+        return 9007199254740992
+    }
+    if f <= -9007199254740992.0 {
+        return -9007199254740992
+    }
+    return int(f)
+}
+
+proc wrap32(x) {
+    x := x & 4294967295
+    if x >= 2147483648 {
+        return x - 4294967296
+    }
+    return x
+}
+
+proc to_int32(v) {
+    alloc f := v
+    if type_of(v) != 3 {
+        f := to_num(v)
+    }
+    if f != f or f == INF or f == NEG_INF {
+        return 0
+    }
+    if f < 2147483648.0 and f >= -2147483648.0 {
+        return int(f)
+    }
+    if f > 9000000000000000000.0 or f < -9000000000000000000.0 {
+        # past what an OMG int holds: bring it down in float first
+        alloc q := floor_f(f / 4294967296.0)
+        f := f - q * 4294967296.0
+    }
+    return wrap32(int(f))
+}
+
+proc to_uint32(v) {
+    return to_int32(v) & 4294967295
+}
+
+# floor() of a float as a float, for floats past the range of an int.
+proc floor_f(f) {
+    if f < 9000000000000000.0 and f > -9000000000000000.0 {
+        return floor(f) * 1.0
+    }
+    return f
+}
+
+proc trunc_f(f) {
+    if f < 9000000000000000.0 and f > -9000000000000000.0 {
+        return int(f) * 1.0
+    }
+    return f
+}
+
+# An index a caller gave (may be negative, counting from the end, may
+# be far out), brought into 0..n.
+proc rel_index(v, n, otherwise) {
+    if type_of(v) == 0 {
+        return otherwise
+    }
+    alloc i := to_integer(v)
+    if i < 0 {
+        i := i + n
+        if i < 0 {
+            return 0
+        }
+        return i
+    }
+    if i > n {
+        return n
+    }
+    return i
+}
+
+# --- errors ----------------------------------------------------------------------------
+
+proc line_of(t, pc) {
+    alloc lines := t[6]
+    alloc n := length(lines)
+    alloc line := 0
+    alloc i := 0
+    loop i + 1 < n {
+        if lines[i] > pc {
+            break
+        }
+        line := lines[i + 1]
+        i := i + 2
+    }
+    return line
+}
+
+# Where the program is, one line a frame, innermost first.
+proc stack_trace() {
+    alloc out := ""
+    alloc count := 0
+    alloc f := CUR
+    alloc i := FP
+    loop count < 12 {
+        if f != false {
+            alloc t := f[15]
+            alloc name := t[5]
+            if name == "" {
+                name := "<anonymous>"
+            }
+            alloc line := line_of(t, f[5])
+            out := out + "\n    at " + name + " (" + t[7]
+            if line > 0 {
+                out := out + ":" + line
+            }
+            out := out + ")"
+            count := count + 1
+        }
+        i := i - 1
+        if i < 0 {
+            break
+        }
+        f := FR[i]
+    }
+    return out
+}
+
+proc make_error(which, msg) {
+    alloc h := new_obj(3, I[which])
+    alloc o := H[h]
+    o[2]["message"] := msg
+    o[2]["stack"] := stack_trace()
+    o[5] := {message: 1, stack: 1}
+    return h
+}
+
+proc throw_val(v) {
+    EXC := v
+    THROWN := true
+    raise("js")
+}
+
+proc throw_type(msg) {
+    EXC := make_error(9, msg)
+    THROWN := true
+    raise("js")
+}
+
+proc throw_range(msg) {
+    EXC := make_error(10, msg)
+    THROWN := true
+    raise("js")
+}
+
+proc throw_ref(msg) {
+    EXC := make_error(11, msg)
+    THROWN := true
+    raise("js")
+}
+
+proc throw_syntax(msg) {
+    EXC := make_error(12, msg)
+    THROWN := true
+    raise("js")
+}
+
+proc throw_error(msg) {
+    EXC := make_error(8, msg)
+    THROWN := true
+    raise("js")
+}
+
+# The value that was thrown, when a call into the engine raised.
+# Turns an OMG error that was no throw into an Error.
+proc caught(e) {
+    if THROWN == false {
+        alloc text := "" + e
+        if length(text) > 26 and text[0:26] == "RuntimeError: SyntaxError:" {
+            EXC := make_error(12, text[27:])
+        } else {
+            EXC := make_error(8, "internal error: " + text)
+        }
+    }
+    THROWN := false
+    return EXC
+}
+
+# A short text for any value, for messages. Never throws.
+proc show(v) {
+    alloc t := type_of(v)
+    if t == 4 {
+        return "\"" + v + "\""
+    }
+    if t == 2 and v != 0 {
+        alloc c := H[v][0]
+        if c == 2 {
+            return "function"
+        }
+        if c == 1 {
+            return "[object Array]"
+        }
+        if c == 7 {
+            return "Symbol()"
+        }
+        return "#<Object>"
+    }
+    return to_str(v)
+}
+
+# An error, or anything else thrown, as text for a person.
+proc describe(v) {
+    if type_of(v) == 2 and v != 0 {
+        alloc o := H[v]
+        if o[0] == 3 {
+            alloc name := "Error"
+            alloc msg := ""
+            alloc stack := ""
+            try {
+                name := to_str(get(v, "name"))
+                msg := to_str(get(v, "message"))
+                alloc st := get(v, "stack")
+                if type_of(st) == 4 {
+                    stack := st
+                }
+            } except e {
+                THROWN := false
+            }
+            if msg == "" {
+                return name + stack
+            }
+            return name + ": " + msg + stack
+        }
+    }
+    alloc s := ""
+    try {
+        s := to_str(v)
+    } except e {
+        THROWN := false
+        s := "(a value that cannot be shown)"
+    }
+    return s
+}
+
+# --- properties -------------------------------------------------------------------------
+
+# The array index a key is, or -1.
+proc index_of_key(k) {
+    alloc n := length(k)
+    if n == 0 or n > 10 {
+        return -1
+    }
+    alloc c := ascii(k[0])
+    if c < 48 or c > 57 {
+        return -1
+    }
+    if n == 1 {
+        return c - 48
+    }
+    if c == 48 {
+        return -1
+    }
+    alloc v := 0
+    for ch in k {
+        alloc d := ascii(ch) - 48
+        if d < 0 or d > 9 {
+            return -1
+        }
+        v := v * 10 + d
+    }
+    return v
+}
+
+proc func_name(x) {
+    alloc kind := x[0]
+    if kind == 0 {
+        return x[1][5]
+    }
+    if kind == 1 {
+        return x[2]
+    }
+    return "bound"
+}
+
+# The properties a function has without anybody having set them.
+proc func_prop(h, o, k) {
+    alloc x := o[3]
+    if k == "prototype" {
+        if x[0] == 0 and (x[1][4] & 13) == 0 {
+            alloc pr := 0
+            if (x[1][4] & 2) != 0 {
+                pr := new_obj(0, I[14])
+            } else {
+                pr := new_obj(0, OBJECT_PROTO)
+                H[pr][2]["constructor"] := h
+                H[pr][5] := {constructor: 1}
+            }
+            o[2]["prototype"] := pr
+            if o[5] == false {
+                o[5] := {}
+            }
+            o[5]["prototype"] := 1
+            return pr
+        }
+        return MISS
+    }
+    if k == "name" {
+        return func_name(x)
+    }
+    if k == "length" {
+        if x[0] == 0 {
+            return x[1][8] * 1.0
+        }
+        if x[0] == 1 {
+            return x[3] * 1.0
+        }
+        return 0.0
+    }
+    return MISS
+}
+
+# Property k of object h, looked for along the prototypes; `recv` is
+# what a getter is given as `this`.
+proc get_r(h, k, recv) {
+    alloc hh := H
+    loop h != 0 {
+        alloc o := hh[h]
+        alloc p := o[2]
+        if has_key(p, k) {
+            alloc v := p[k]
+            if (o[4] & 1) != 0 and type_of(v) == 5 {
+                if length(v) != 0 {
+                    alloc g := v[0]
+                    if g == 0 {
+                        return U
+                    }
+                    return call(g, recv, [])
+                }
+                # deleted: look further
+            } else {
+                return v
+            }
+        }
+        alloc c := o[0]
+        if c != 0 {
+            if c == 1 {
+                if k == "length" {
+                    return o[6] * 1.0
+                }
+                alloc i := index_of_key(k)
+                if i >= 0 {
+                    if i < o[6] {
+                        return o[3][i]
+                    }
+                    return U
+                }
+            } elif c == 2 {
+                alloc r := func_prop(h, o, k)
+                if type_of(r) != 5 {
+                    return r
+                }
+            } elif c >= 32 {
+                alloc r2 := HOST_GET(h, o, k)
+                if type_of(r2) != 5 {
+                    return r2
+                }
+            } elif c == 6 {
+                alloc s := o[3]
+                if k == "length" {
+                    return length(s) * 1.0
+                }
+                alloc i2 := index_of_key(k)
+                if i2 >= 0 and i2 < length(s) {
+                    return s[i2]
+                }
+            }
+        }
+        h := o[1]
+    }
+    return U
+}
+
+proc get(h, k) {
+    return get_r(h, k, h)
+}
+
+# Property k of any value.
+proc getv(v, k) {
+    alloc t := type_of(v)
+    if t == 2 {
+        if v == 0 {
+            throw_type("Cannot read properties of null (reading '" + k + "')")
+        }
+        return get_r(v, k, v)
+    }
+    if t == 4 {
+        if k == "length" {
+            return length(v) * 1.0
+        }
+        alloc i := index_of_key(k)
+        if i >= 0 {
+            if i < length(v) {
+                return v[i]
+            }
+            return U
+        }
+        return get_r(STRING_PROTO, k, v)
+    }
+    if t == 3 {
+        return get_r(NUMBER_PROTO, k, v)
+    }
+    if t == 1 {
+        return get_r(BOOLEAN_PROTO, k, v)
+    }
+    throw_type("Cannot read properties of undefined (reading '" + k + "')")
+}
+
+# v[key], key being any value.
+proc get_elem(v, key) {
+    alloc tk := type_of(key)
+    if tk == 3 and type_of(v) == 2 and v != 0 {
+        alloc o := H[v]
+        if o[0] == 1 and key >= 0.0 and key < 4294967295.0 {
+            alloc ia := int(key)
+            if ia == key {
+                if ia < o[6] {
+                    return o[3][ia]
+                }
+                return U
+            }
+        }
+    }
+    if tk == 3 and type_of(v) == 4 {
+        if key >= 0.0 and key < 4294967295.0 {
+            alloc i := int(key)
+            if i == key {
+                if i < length(v) {
+                    return v[i]
+                }
+                return U
+            }
+        }
+    }
+    if tk == 4 {
+        return getv(v, key)
+    }
+    if is_nullish(v) {
+        throw_type("Cannot read properties of " + to_str(v) + " (reading '" + to_key(key) + "')")
+    }
+    return getv(v, to_key(key))
+}
+
+proc arr_set(o, i, v) {
+    alloc n := o[6]
+    alloc a := o[3]
+    if i < n {
+        a[i] := v
+        return true
+    }
+    alloc cap := length(a)
+    if i < cap {
+        alloc j := n
+        loop j < i {
+            a[j] := U
+            j := j + 1
+        }
+        a[i] := v
+        o[6] := i + 1
+        return true
+    }
+    if i - cap > 50000000 {
+        throw_range("Invalid array length")
+    }
+    alloc j2 := n
+    loop j2 < cap {
+        a[j2] := U
+        j2 := j2 + 1
+    }
+    loop cap < i {
+        append(a, U)
+        cap := cap + 1
+    }
+    append(a, v)
+    o[6] := i + 1
+    return true
+}
+
+proc arr_set_length(o, n2) {
+    alloc n := o[6]
+    alloc a := o[3]
+    if n2 < n {
+        if n2 == 0 and n > 64 {
+            o[3] := []
+        } else {
+            alloc j := n2
+            loop j < n {
+                a[j] := U
+                j := j + 1
+            }
+        }
+        o[6] := n2
+        return true
+    }
+    if n2 > n {
+        if n2 - n > 50000000 {
+            throw_range("Invalid array length")
+        }
+        arr_set(o, n2 - 1, U)
+    }
+    return true
+}
+
+# Give property k of object h the value v; `recv` is what a setter is
+# given as `this`.
+proc put_r(h, k, v, recv) {
+    alloc o := H[h]
+    alloc p := o[2]
+    alloc fl := o[4]
+    if has_key(p, k) {
+        if (fl & 1) != 0 {
+            alloc cur := p[k]
+            if type_of(cur) == 5 and length(cur) != 0 {
+                if cur[1] != 0 {
+                    call(cur[1], recv, [v])
+                }
+                return true
+            }
+        }
+        if (fl & 2) != 0 {
+            return false
+        }
+        p[k] := v
+        return true
+    }
+    alloc c := o[0]
+    if c != 0 {
+        if c == 1 {
+            if k == "length" {
+                arr_set_length(o, to_integer(v))
+                return true
+            }
+            alloc i := index_of_key(k)
+            if i >= 0 {
+                if (fl & 2) != 0 {
+                    return false
+                }
+                arr_set(o, i, v)
+                return true
+            }
+        } elif c >= 32 {
+            if HOST_SET(h, o, k, v) {
+                return true
+            }
+        }
+    }
+    # a setter further up?
+    alloc q := o[1]
+    loop q != 0 {
+        alloc oq := H[q]
+        if (oq[4] & 1) != 0 {
+            alloc pq := oq[2]
+            if has_key(pq, k) {
+                alloc cq := pq[k]
+                if type_of(cq) == 5 and length(cq) != 0 {
+                    if cq[1] != 0 {
+                        call(cq[1], recv, [v])
+                    }
+                    return true
+                }
+            }
+        }
+        if oq[0] >= 32 and q != h {
+            if HOST_SET(q, oq, k, v) {
+                return true
+            }
+        }
+        q := oq[1]
+    }
+    if (fl & 10) != 0 {
+        return false
+    }
+    p[k] := v
+    return true
+}
+
+proc put(h, k, v) {
+    return put_r(h, k, v, h)
+}
+
+proc putv(target, k, v) {
+    if type_of(target) == 2 {
+        if target == 0 {
+            throw_type("Cannot set properties of null (setting '" + k + "')")
+        }
+        return put_r(target, k, v, target)
+    }
+    if type_of(target) == 0 {
+        throw_type("Cannot set properties of undefined (setting '" + k + "')")
+    }
+    return false
+}
+
+proc put_elem(target, key, v) {
+    if type_of(key) == 4 {
+        return putv(target, key, v)
+    }
+    return putv(target, to_key(key), v)
+}
+
+# Set an own property, whatever is up the chain (what a literal does).
+proc define(h, k, v) {
+    alloc o := H[h]
+    if o[0] == 1 {
+        alloc i := index_of_key(k)
+        if i >= 0 {
+            arr_set(o, i, v)
+            return true
+        }
+    }
+    o[2][k] := v
+    return true
+}
+
+proc hide(h, k) {
+    alloc o := H[h]
+    if o[5] == false {
+        o[5] := {}
+    }
+    o[5][k] := 1
+    return true
+}
+
+proc define_hidden(h, k, v) {
+    alloc o := H[h]
+    o[2][k] := v
+    if o[5] == false {
+        o[5] := {}
+    }
+    o[5][k] := 1
+    return true
+}
+
+# which: 0 the getter, 1 the setter.
+proc define_accessor(h, k, which, fn) {
+    alloc o := H[h]
+    alloc p := o[2]
+    alloc pair := [0, 0]
+    if has_key(p, k) {
+        alloc cur := p[k]
+        if type_of(cur) == 5 and length(cur) == 2 {
+            pair := cur
+        }
+    }
+    pair[which] := fn
+    p[k] := pair
+    o[4] := o[4] | 1
+    return true
+}
+
+# Is k a property of the object itself (not of its prototypes)?
+proc has_own(h, k) {
+    alloc o := H[h]
+    alloc p := o[2]
+    if has_key(p, k) {
+        if (o[4] & 1) != 0 {
+            alloc v := p[k]
+            if type_of(v) == 5 and length(v) == 0 {
+                return false
+            }
+        }
+        return true
+    }
+    alloc c := o[0]
+    if c == 1 {
+        if k == "length" {
+            return true
+        }
+        alloc i := index_of_key(k)
+        return i >= 0 and i < o[6]
+    }
+    if c == 2 {
+        return type_of(func_prop(h, o, k)) != 5
+    }
+    if c >= 32 {
+        return type_of(HOST_GET(h, o, k)) != 5
+    }
+    if c == 6 {
+        if k == "length" {
+            return true
+        }
+        alloc i2 := index_of_key(k)
+        return i2 >= 0 and i2 < length(o[3])
+    }
+    return false
+}
+
+proc has_prop(h, k) {
+    loop h != 0 {
+        if has_own(h, k) {
+            return true
+        }
+        h := H[h][1]
+    }
+    return false
+}
+
+# The raw own property: a value, an accessor pair, or MISS.
+proc own_raw(h, k) {
+    alloc o := H[h]
+    alloc p := o[2]
+    if has_key(p, k) {
+        alloc v := p[k]
+        if type_of(v) == 5 and length(v) == 0 {
+            return MISS
+        }
+        return v
+    }
+    if has_own(h, k) {
+        return get_r(h, k, h)
+    }
+    return MISS
+}
+
+proc delete_prop(h, k) {
+    alloc o := H[h]
+    alloc p := o[2]
+    if (o[4] & 2) != 0 {
+        return false
+    }
+    if has_key(p, k) {
+        alloc n := length(p)
+        if n <= 24 {
+            # few enough to make the dict again without the key
+            alloc q := {}
+            for kk in dict_keys(p) {
+                if kk != k {
+                    q[kk] := p[kk]
+                }
+            }
+            o[2] := q
+        } else {
+            p[k] := GONE
+            o[4] := o[4] | 1
+        }
+        return true
+    }
+    if o[0] == 1 {
+        alloc i := index_of_key(k)
+        if i >= 0 and i < o[6] {
+            o[3][i] := U
+        }
+    }
+    return true
+}
+
+proc is_symbol_key(k) {
+    return length(k) > 2 and k[0] == "@" and k[1] == "@"
+}
+
+# The names of the object's own properties, in JavaScript's order:
+# indexes first, then the rest as they were added. Symbols are left
+# out. With `all`, hidden ones too.
+proc own_keys(h, all) {
+    alloc o := H[h]
+    alloc c := o[0]
+    alloc out := []
+    if c == 1 {
+        alloc i := 0
+        alloc n := o[6]
+        loop i < n {
+            append(out, "" + i)
+            i := i + 1
+        }
+    } elif c == 6 {
+        alloc i3 := 0
+        alloc n3 := length(o[3])
+        loop i3 < n3 {
+            append(out, "" + i3)
+            i3 := i3 + 1
+        }
+    } elif c >= 32 and HOST_KEYS != false {
+        out := HOST_KEYS(h, o)
+    }
+    alloc fl := o[4]
+    if (fl & 4) != 0 and all == false {
+        return out
+    }
+    alloc p := o[2]
+    alloc hid := o[5]
+    alloc ints := []
+    alloc strs := []
+    for k in dict_keys(p) {
+        if length(k) > 2 and k[0] == "@" and k[1] == "@" {
+            continue
+        }
+        if (fl & 1) != 0 {
+            alloc v := p[k]
+            if type_of(v) == 5 and length(v) == 0 {
+                continue
+            }
+        }
+        if all == false and hid != false and has_key(hid, k) {
+            continue
+        }
+        if index_of_key(k) >= 0 {
+            append(ints, k)
+        } else {
+            append(strs, k)
+        }
+    }
+    alloc ni := length(ints)
+    if ni > 1 {
+        # insertion sort; they are nearly always in order already
+        alloc a := 1
+        loop a < ni {
+            alloc x := ints[a]
+            alloc xv := index_of_key(x)
+            alloc b := a - 1
+            loop b >= 0 and index_of_key(ints[b]) > xv {
+                ints[b + 1] := ints[b]
+                b := b - 1
+            }
+            ints[b + 1] := x
+            a := a + 1
+        }
+    }
+    for k2 in ints {
+        append(out, k2)
+    }
+    for k3 in strs {
+        append(out, k3)
+    }
+    return out
+}
+
+# The keys a for-in loop goes through: the object's own and its
+# prototypes', each once.
+proc enum_keys(v) {
+    alloc out := []
+    if type_of(v) == 4 {
+        alloc i := 0
+        loop i < length(v) {
+            append(out, "" + i)
+            i := i + 1
+        }
+        return out
+    }
+    if type_of(v) != 2 or v == 0 {
+        return out
+    }
+    alloc seen := {}
+    alloc h := v
+    alloc depth := 0
+    loop h != 0 {
+        for k in own_keys(h, false) {
+            if has_key(seen, k) == false {
+                seen[k] := 1
+                append(out, k)
+            }
+        }
+        if depth > 0 or H[h][5] != false {
+            # what an object hides, it hides from those below it too
+            alloc hid := H[h][5]
+            if hid != false {
+                for hk in dict_keys(hid) {
+                    seen[hk] := 1
+                }
+            }
+        }
+        h := H[h][1]
+        depth := depth + 1
+    }
+    return out
+}
+
+# --- making objects ----------------------------------------------------------------------
+
+proc new_object() {
+    return new_obj(0, OBJECT_PROTO)
+}
+
+# An array around the OMG list `items`, which is used as it is.
+proc new_array(items) {
+    alloc o := [1, ARRAY_PROTO, {}, items, 0, false, length(items)]
+    ALLOCS := ALLOCS + 1
+    if NFREE > 0 {
+        NFREE := NFREE - 1
+        alloc h := FREE[NFREE]
+        H[h] := o
+        return h
+    }
+    append(H, o)
+    return length(H) - 1
+}
+
+# The items of an array as an OMG list of exactly its length. The
+# list is the array's own when it fits; do not keep it.
+proc items_of(h) {
+    alloc o := H[h]
+    alloc a := o[3]
+    if length(a) == o[6] {
+        return a
+    }
+    return a[0:o[6]]
+}
+
+proc new_native(fn, name, nargs) {
+    alloc h := new_obj(2, FUNCTION_PROTO)
+    H[h][3] := [1, fn, name, nargs, 0, true]
+    return h
+}
+
+# A native function that carries something of its own, which it reads
+# with native_data() as the first thing it does.
+proc new_native_with(fn, name, nargs, data) {
+    alloc h := new_obj(2, FUNCTION_PROTO)
+    H[h][3] := [1, fn, name, nargs, data, true]
+    return h
+}
+
+proc native_data() {
+    return H[NATIVE_FN][3][4]
+}
+
+# Give object `target` a method written in OMG.
+proc def(target, name, fn, nargs) {
+    alloc h := new_native(fn, name, nargs)
+    define_hidden(target, name, h)
+    return h
+}
+
+proc def_getter(target, name, fn) {
+    alloc h := new_native(fn, name, 0)
+    define_accessor(target, name, 0, h)
+    hide(target, name)
+    return h
+}
+
+proc def_setter(target, name, fn) {
+    alloc h := new_native(fn, name, 1)
+    define_accessor(target, name, 1, h)
+    return h
+}
+
+proc new_symbol(desc) {
+    alloc h := new_obj(7, SYMBOL_PROTO)
+    H[h][3] := ["@@sym:" + h + ":" + desc, desc]
+    return h
+}
+
+# --- calling -----------------------------------------------------------------------------
+
+proc grow_stack() {
+    alloc i := 0
+    loop i < 1024 {
+        append(S, 0)
+        i := i + 1
+    }
+    return true
+}
+
+# Run closure `fn` (its record x, its template t) in a frame of its
+# own, to the end, and return what it returns.
+proc invoke(fn, x, t, this, args, nt, cflag) {
+    alloc fl := t[4]
+    alloc n := length(args)
+    alloc r := list_repeat(U, t[2])
+    alloc np := t[3]
+    if n < np {
+        np := n
+    }
+    alloc i := 0
+    loop i < np {
+        r[i] := args[i]
+        i := i + 1
+    }
+    if (fl & 1) != 0 {
+        this := x[3]
+    } elif (fl & 64) == 0 and cflag == 0 {
+        alloc tt := type_of(this)
+        if tt == 0 or (tt == 2 and this == 0) {
+            this := GLOBAL
+        }
+    }
+    alloc saved_sp := SP
+    if FP >= length(FR) {
+        append(FR, CUR)
+    } else {
+        FR[FP] := CUR
+    }
+    FP := FP + 1
+    if FP > 6000 {
+        FP := FP - 1
+        throw_range("Maximum call stack size exceeded")
+    }
+    alloc base := FP
+    alloc f := [t[0], t[1], r, this, fn, 0, saved_sp, x[2], false, false, nt, cflag, saved_sp, 0, 0, t]
+    if (fl & 512) != 0 {
+        f[9] := args
+    }
+    if (fl & 1) != 0 and x[6] != false {
+        f[9] := x[6]
+    }
+    CUR := f
+    if saved_sp + 300 > length(S) {
+        grow_stack()
+    }
+    alloc out := U
+    alloc ok := false
+    try {
+        out := run(base)
+        ok := true
+    } except e {
+        ok := false
+        if THROWN == false {
+            caught(e)
+        }
+    }
+    FP := base - 1
+    CUR := FR[FP]
+    SP := saved_sp
+    if ok == false {
+        THROWN := true
+        raise("js")
+    }
+    return out
+}
+
+# A coroutine: a frame that can stop in the middle (at a yield or an
+# await) and go on later. [state, frame, saved stack, extra]; state 0
+# not started, 1 stopped, 2 running, 3 finished.
+proc new_coroutine(fn, x, t, this, args) {
+    alloc fl := t[4]
+    alloc n := length(args)
+    alloc r := list_repeat(U, t[2])
+    alloc np := t[3]
+    if n < np {
+        np := n
+    }
+    alloc i := 0
+    loop i < np {
+        r[i] := args[i]
+        i := i + 1
+    }
+    if (fl & 1) != 0 {
+        this := x[3]
+    } elif (fl & 64) == 0 {
+        alloc tt := type_of(this)
+        if tt == 0 or (tt == 2 and this == 0) {
+            this := GLOBAL
+        }
+    }
+    alloc f := [t[0], t[1], r, this, fn, 0, 0, x[2], false, false, U, 0, 0, 0, 0, t]
+    if (fl & 512) != 0 {
+        f[9] := args
+    }
+    if (fl & 1) != 0 and x[6] != false {
+        f[9] := x[6]
+    }
+    return [0, f, [], 0]
+}
+
+alloc CO_DONE := false         # the last co_resume() ran the frame to its end
+
+# Let coroutine `co` go on. mode 0: hand it `v` (the value of its
+# yield or await); 1: throw v inside it. Returns what it yielded,
+# awaited or returned; YIELDED says which (0 for returned).
+proc co_resume(co, mode, v) {
+    alloc state := co[0]
+    if state == 2 {
+        throw_type("Generator is already running")
+    }
+    alloc f := co[1]
+    alloc saved := co[2]
+    alloc saved_sp := SP
+    if FP >= length(FR) {
+        append(FR, CUR)
+    } else {
+        FR[FP] := CUR
+    }
+    FP := FP + 1
+    if FP > 6000 {
+        FP := FP - 1
+        throw_range("Maximum call stack size exceeded")
+    }
+    alloc base := FP
+    f[6] := saved_sp
+    f[12] := saved_sp
+    alloc ns := length(saved)
+    if saved_sp + ns + 300 > length(S) {
+        grow_stack()
+    }
+    alloc i := 0
+    loop i < ns {
+        S[saved_sp + i] := saved[i]
+        i := i + 1
+    }
+    alloc sp := saved_sp + ns
+    if state == 1 {
+        if mode == 0 {
+            S[sp] := v
+            sp := sp + 1
+        } else {
+            RESUME_THROW := true
+            EXC := v
+        }
+    } elif mode == 1 {
+        RESUME_THROW := true
+        EXC := v
+    }
+    SP := sp
+    co[0] := 2
+    CUR := f
+    YIELDED := 0
+    alloc out := U
+    alloc ok := false
+    try {
+        out := run(base)
+        ok := true
+    } except e {
+        ok := false
+        if THROWN == false {
+            caught(e)
+        }
+    }
+    FP := base - 1
+    CUR := FR[FP]
+    SP := saved_sp
+    if ok == false {
+        co[0] := 3
+        co[2] := []
+        YIELDED := 0
+        THROWN := true
+        raise("js")
+    }
+    if YIELDED != 0 {
+        co[0] := 1
+        co[2] := YSTACK
+        YSTACK := []
+    } else {
+        co[0] := 3
+        co[2] := []
+    }
+    return out
+}
+
+# One step of an async function: run it to its next await or its end.
+proc async_step(co, mode, v) {
+    alloc out := U
+    alloc ok := false
+    try {
+        out := co_resume(co, mode, v)
+        ok := true
+    } except e {
+        ok := false
+        if THROWN == false {
+            caught(e)
+        }
+        THROWN := false
+    }
+    alloc how := YIELDED
+    YIELDED := 0
+    if ok == false {
+        PROMISE_SETTLE(co[3], false, EXC)
+        return true
+    }
+    if how == 2 {
+        PROMISE_AWAIT(out, co)
+        return true
+    }
+    PROMISE_SETTLE(co[3], true, out)
+    return true
+}
+
+# Call function `fn` with `this` and a list of arguments.
+proc call(fn, this, args) {
+    if type_of(fn) != 2 or fn == 0 {
+        throw_type(show(fn) + " is not a function")
+    }
+    alloc o := H[fn]
+    if o[0] != 2 {
+        throw_type(show(fn) + " is not a function")
+    }
+    alloc x := o[3]
+    alloc k := x[0]
+    if k == 1 {
+        NATIVE_FN := fn
+        NEW_TARGET := U
+        return x[1](this, args)
+    }
+    if k == 2 {
+        return call(x[1], x[2], x[3] + args)
+    }
+    alloc t := x[1]
+    alloc fl := t[4]
+    if (fl & 22) != 0 {
+        if (fl & 16) != 0 {
+            throw_type("Class constructor " + t[5] + " cannot be invoked without 'new'")
+        }
+        if (fl & 2) != 0 {
+            alloc g := new_obj(13, 0)
+            alloc pr := get(fn, "prototype")
+            if type_of(pr) != 2 or pr == 0 {
+                pr := I[14]
+            }
+            H[g][1] := pr
+            H[g][3] := new_coroutine(fn, x, t, this, args)
+            return g
+        }
+        alloc co := new_coroutine(fn, x, t, this, args)
+        alloc p := PROMISE_NEW()
+        co[3] := p
+        async_step(co, 0, U)
+        return p
+    }
+    return invoke(fn, x, t, this, args, U, 0)
+}
+
+proc call0(fn, this) {
+    return call(fn, this, [])
+}
+
+proc call1(fn, this, a) {
+    return call(fn, this, [a])
+}
+
+# `new fn(...args)`; nt is the constructor that was asked for (fn
+# itself, unless a class further down called super()).
+proc construct(fn, args, nt) {
+    if type_of(fn) != 2 or fn == 0 {
+        throw_type(show(fn) + " is not a constructor")
+    }
+    alloc o := H[fn]
+    if o[0] != 2 {
+        throw_type(show(fn) + " is not a constructor")
+    }
+    alloc x := o[3]
+    alloc k := x[0]
+    if k == 1 {
+        NATIVE_FN := fn
+        NEW_TARGET := nt
+        alloc r := x[1](U, args)
+        NEW_TARGET := U
+        if nt != fn and type_of(r) == 2 and r != 0 {
+            alloc pr := get(nt, "prototype")
+            if type_of(pr) == 2 and pr != 0 {
+                H[r][1] := pr
+            }
+        }
+        return r
+    }
+    if k == 2 {
+        if nt == fn {
+            nt := x[1]
+        }
+        return construct(x[1], x[3] + args, nt)
+    }
+    alloc t := x[1]
+    alloc fl := t[4]
+    if (fl & 15) != 0 {
+        throw_type(t[5] + " is not a constructor")
+    }
+    alloc this := U
+    alloc cflag := 3
+    if (fl & 32) == 0 {
+        cflag := 1
+        alloc pr2 := get(nt, "prototype")
+        if type_of(pr2) != 2 or pr2 == 0 {
+            pr2 := OBJECT_PROTO
+        }
+        this := new_obj(0, pr2)
+        if x[5] != 0 {
+            call(x[5], this, [])
+        }
+    }
+    return invoke(fn, x, t, this, args, nt, cflag)
+}
+
+# What `new` gives when a constructor's body ended with value v.
+proc ctor_result(f, v) {
+    if type_of(v) == 2 and v != 0 {
+        return v
+    }
+    alloc this := f[3]
+    if type_of(this) == 0 {
+        throw_ref("Must call super constructor in derived class before accessing 'this' or returning from derived constructor")
+    }
+    return this
+}
+
+# --- conversions that may call into the program -------------------------------------------
+
+# An object as a plain value. hint 0: a number is wanted, 1: a string,
+# 2: no wish (a date then gives a string).
+proc to_prim(v, hint) {
+    if type_of(v) != 2 or v == 0 {
+        return v
+    }
+    alloc c := H[v][0]
+    if c == 7 {
+        return v
+    }
+    alloc ex := get_r(v, "@@toPrimitive", v)
+    if type_of(ex) == 2 and ex != 0 {
+        alloc name := "default"
+        if hint == 0 {
+            name := "number"
+        } elif hint == 1 {
+            name := "string"
+        }
+        alloc r0 := call(ex, v, [name])
+        if type_of(r0) == 2 and r0 != 0 and H[r0][0] != 7 {
+            throw_type("Cannot convert object to primitive value")
+        }
+        return r0
+    }
+    alloc first := "valueOf"
+    alloc second := "toString"
+    if hint == 1 or (hint == 2 and c == 8) {
+        first := "toString"
+        second := "valueOf"
+    }
+    alloc f := get_r(v, first, v)
+    if is_callable(f) {
+        alloc r := call(f, v, [])
+        if type_of(r) != 2 or r == 0 or H[r][0] == 7 {
+            return r
+        }
+    }
+    f := get_r(v, second, v)
+    if is_callable(f) {
+        alloc r2 := call(f, v, [])
+        if type_of(r2) != 2 or r2 == 0 or H[r2][0] == 7 {
+            return r2
+        }
+    }
+    throw_type("Cannot convert object to primitive value")
+}
+
+# The object a plain value is seen as when a property is asked of it.
+proc to_object(v) {
+    alloc t := type_of(v)
+    if t == 2 {
+        if v == 0 {
+            throw_type("Cannot convert undefined or null to object")
+        }
+        return v
+    }
+    if t == 0 {
+        throw_type("Cannot convert undefined or null to object")
+    }
+    alloc h := 0
+    if t == 4 {
+        h := new_obj(6, STRING_PROTO)
+    } elif t == 3 {
+        h := new_obj(5, NUMBER_PROTO)
+    } else {
+        h := new_obj(4, BOOLEAN_PROTO)
+    }
+    H[h][3] := v
+    return h
+}
+
+# --- operators, where the quick way in exec() did not fit -------------------------------
+
+proc add_slow(a, b) {
+    a := to_prim(a, 2)
+    b := to_prim(b, 2)
+    if type_of(a) == 4 or type_of(b) == 4 {
+        return to_str(a) + to_str(b)
+    }
+    return to_num(a) + to_num(b)
+}
+
+proc lt_slow(a, b) {
+    a := to_prim(a, 0)
+    b := to_prim(b, 0)
+    if type_of(a) == 4 and type_of(b) == 4 {
+        return a < b
+    }
+    return to_num(a) < to_num(b)
+}
+
+proc le_slow(a, b) {
+    a := to_prim(a, 0)
+    b := to_prim(b, 0)
+    if type_of(a) == 4 and type_of(b) == 4 {
+        return a <= b
+    }
+    return to_num(a) <= to_num(b)
+}
+
+proc strict_eq(a, b) {
+    return type_of(a) == type_of(b) and a == b
+}
+
+# Equal as Map, Set and includes() see it: NaN is NaN.
+proc same_value(a, b) {
+    alloc t := type_of(a)
+    if t != type_of(b) {
+        return false
+    }
+    if a == b {
+        return true
+    }
+    return t == 3 and a != a and b != b
+}
+
+proc loose_eq(a, b) {
+    alloc ta := type_of(a)
+    alloc tb := type_of(b)
+    if ta == tb {
+        return a == b
+    }
+    alloc an := ta == 0 or (ta == 2 and a == 0)
+    alloc bn := tb == 0 or (tb == 2 and b == 0)
+    if an or bn {
+        return an and bn
+    }
+    if ta == 2 {
+        if H[a][0] == 7 {
+            return false
+        }
+        return loose_eq(to_prim(a, 2), b)
+    }
+    if tb == 2 {
+        if H[b][0] == 7 {
+            return false
+        }
+        return loose_eq(a, to_prim(b, 2))
+    }
+    return to_num(a) == to_num(b)
+}
+
+proc is_neg_zero(f) {
+    if f != 0.0 {
+        return false
+    }
+    alloc s := "" + f
+    return s[0] == "-"
+}
+
+proc div_f(a, b) {
+    if b == 0.0 {
+        if a == 0.0 or a != a {
+            return NAN
+        }
+        alloc neg := a < 0.0
+        if is_neg_zero(b) {
+            neg := neg == false
+        }
+        if neg {
+            return NEG_INF
+        }
+        return INF
+    }
+    return a / b
+}
+
+proc div_slow(a, b) {
+    alloc x := to_num(a)
+    return div_f(x, to_num(b))
+}
+
+proc mod_f(a, b) {
+    if b == 0.0 or a != a or b != b or a == INF or a == NEG_INF {
+        return NAN
+    }
+    if b == INF or b == NEG_INF or a == 0.0 {
+        return a
+    }
+    if b < 0.0 {
+        b := b * -1.0
+    }
+    if a < 0.0 {
+        alloc m := (a * -1.0) % b
+        return m * -1.0
+    }
+    return a % b
+}
+
+proc mod_slow(a, b) {
+    alloc x := to_num(a)
+    return mod_f(x, to_num(b))
+}
+
+proc pow_f(a, b) {
+    if b != b {
+        return NAN
+    }
+    if b == 0.0 {
+        return 1.0
+    }
+    if a != a {
+        return NAN
+    }
+    if (a == 1.0 or a == -1.0) and (b == INF or b == NEG_INF) {
+        return NAN
+    }
+    if a == 0.0 and b < 0.0 {
+        return INF
+    }
+    if b == 2.0 {
+        return a * a
+    }
+    if a < 0.0 and b != floor_f(b) {
+        return NAN
+    }
+    alloc r := NAN
+    try {
+        r := pow(a, b) * 1.0
+    } except e {
+        r := NAN
+    }
+    return r
+}
+
+proc instance_of(v, c) {
+    if is_callable(c) == false {
+        throw_type("Right-hand side of 'instanceof' is not callable")
+    }
+    alloc x := H[c][3]
+    if x[0] == 2 {
+        return instance_of(v, x[1])
+    }
+    if type_of(v) != 2 or v == 0 {
+        return false
+    }
+    alloc p := get_r(c, "prototype", c)
+    if type_of(p) != 2 or p == 0 {
+        throw_type("Function has non-object prototype in instanceof check")
+    }
+    alloc q := H[v][1]
+    loop q != 0 {
+        if q == p {
+            return true
+        }
+        q := H[q][1]
+    }
+    return false
+}
+
+proc has_in(key, obj) {
+    if type_of(obj) != 2 or obj == 0 {
+        throw_type("Cannot use 'in' operator to search for '" + to_key(key) + "' in " + show(obj))
+    }
+    return has_prop(obj, to_key(key))
+}
+
+proc get_global(name) {
+    if has_prop(GLOBAL, name) {
+        return get_r(GLOBAL, name, GLOBAL)
+    }
+    throw_ref(name + " is not defined")
+}
+
+# --- going through things ------------------------------------------------------------------
+
+# An iterator is an OMG list, never seen by the program: [kind, a, b].
+#   0  an array        a: its handle, b: the next index
+#   1  a string        a: the string, b: the next index
+#   2  anything else   a: the iterator object, b: its next()
+#   3  an OMG list     a: the list, b: the next index
+#   5  a generator     a: its handle
+proc make_iter(v) {
+    alloc t := type_of(v)
+    if t == 4 {
+        return [1, v, 0]
+    }
+    if t == 2 and v != 0 {
+        alloc o := H[v]
+        alloc c := o[0]
+        if c == 1 {
+            # an array whose way of being gone through nobody changed
+            if has_key(o[2], "@@iterator") == false and H[ARRAY_PROTO][2]["@@iterator"] == I[20] {
+                return [0, v, 0]
+            }
+        } elif c == 13 {
+            return [5, v, 0]
+        } elif c == 14 {
+            return o[3]
+        }
+        alloc m := get_r(v, "@@iterator", v)
+        if is_callable(m) {
+            alloc it := call(m, v, [])
+            if type_of(it) != 2 or it == 0 {
+                throw_type("Result of the Symbol.iterator method is not an object")
+            }
+            alloc ci := H[it][0]
+            if ci == 13 {
+                return [5, it, 0]
+            }
+            if ci == 14 {
+                return H[it][3]
+            }
+            return [2, it, get_r(it, "next", it)]
+        }
+    }
+    throw_type(show(v) + " is not iterable")
+}
+
+# The next value of iterator `it`, or DONE.
+proc iter_step(it) {
+    alloc k := it[0]
+    if k == 0 {
+        alloc o := H[it[1]]
+        alloc i := it[2]
+        if i < o[6] {
+            it[2] := i + 1
+            return o[3][i]
+        }
+        return DONE
+    }
+    if k == 3 {
+        alloc i3 := it[2]
+        if i3 < length(it[1]) {
+            it[2] := i3 + 1
+            return it[1][i3]
+        }
+        return DONE
+    }
+    if k == 1 {
+        alloc i1 := it[2]
+        if i1 < length(it[1]) {
+            it[2] := i1 + 1
+            return it[1][i1]
+        }
+        return DONE
+    }
+    if k == 5 {
+        alloc co := H[it[1]][3]
+        if co[0] == 3 {
+            return DONE
+        }
+        alloc v := co_resume(co, 0, U)
+        if YIELDED == 1 {
+            YIELDED := 0
+            return v
+        }
+        return DONE
+    }
+    alloc r := call(it[2], it[1], [])
+    if type_of(r) != 2 or r == 0 {
+        throw_type("Iterator result " + show(r) + " is not an object")
+    }
+    if to_bool(get_r(r, "done", r)) {
+        return DONE
+    }
+    return get_r(r, "value", r)
+}
+
+# Everything an iterable gives, as a new OMG list.
+proc iter_list(v) {
+    alloc it := make_iter(v)
+    if it[0] == 0 and it[2] == 0 {
+        alloc o := H[it[1]]
+        return o[3][0:o[6]]
+    }
+    alloc out := []
+    loop true {
+        alloc x := iter_step(it)
+        if type_of(x) == 5 {
+            break
+        }
+        append(out, x)
+    }
+    return out
+}
+
+proc iter_result(v, done) {
+    alloc h := new_obj(0, OBJECT_PROTO)
+    alloc p := H[h][2]
+    p["value"] := v
+    p["done"] := done
+    return h
+}
+
+# An iterator object the program can hold, around an iterator list.
+proc new_iter_object(it) {
+    alloc h := new_obj(14, I[25])
+    H[h][3] := it
+    return h
+}
+
+proc n_iter_next(this, args) {
+    if class_of(this) != 14 {
+        throw_type("next called on something that is no iterator")
+    }
+    alloc v := iter_step(H[this][3])
+    if type_of(v) == 5 {
+        return iter_result(U, true)
+    }
+    return iter_result(v, false)
+}
+
+proc n_iter_self(this, args) {
+    return this
+}
+
+# mode 0: next(v), 1: throw(v), 2: return(v)
+proc gen_resume(g, mode, v) {
+    if class_of(g) != 13 {
+        throw_type("next method called on incompatible receiver " + show(g))
+    }
+    alloc co := H[g][3]
+    if co[0] == 3 {
+        if mode == 1 {
+            throw_val(v)
+        }
+        if mode == 2 {
+            return iter_result(v, true)
+        }
+        return iter_result(U, true)
+    }
+    if mode == 2 {
+        # the generator is dropped where it stands (its finally blocks do not run)
+        co[0] := 3
+        co[2] := []
+        return iter_result(v, true)
+    }
+    if co[0] == 0 and mode == 1 {
+        co[0] := 3
+        throw_val(v)
+    }
+    alloc out := co_resume(co, mode, v)
+    alloc how := YIELDED
+    YIELDED := 0
+    return iter_result(out, how == 0)
+}
+
+proc n_gen_next(this, args) {
+    if length(args) > 0 {
+        return gen_resume(this, 0, args[0])
+    }
+    return gen_resume(this, 0, U)
+}
+
+proc n_gen_throw(this, args) {
+    if length(args) > 0 {
+        return gen_resume(this, 1, args[0])
+    }
+    return gen_resume(this, 1, U)
+}
+
+proc n_gen_return(this, args) {
+    if length(args) > 0 {
+        return gen_resume(this, 2, args[0])
+    }
+    return gen_resume(this, 2, U)
+}
+
+# --- what exec() leaves to procs ------------------------------------------------------------
+
+# A function value: template t closed over environment e, made while
+# frame f was running.
+proc make_closure(t, e, f) {
+    alloc h := new_obj(2, FUNCTION_PROTO)
+    alloc x := [0, t, e, U, 0, 0, false]
+    if (t[4] & 1) != 0 {
+        x[3] := f[3]
+        x[4] := H[f[4]][3][4]
+    }
+    H[h][3] := x
+    return h
+}
+
+# class ... extends sup: the prototype object of the new class.
+proc def_class(ctor, has_super, sup) {
+    alloc proto_parent := OBJECT_PROTO
+    alloc ctor_parent := FUNCTION_PROTO
+    if has_super {
+        if type_of(sup) == 2 and sup == 0 {
+            proto_parent := 0
+        } elif is_callable(sup) {
+            alloc pp := get_r(sup, "prototype", sup)
+            if type_of(pp) != 2 {
+                throw_type("Class extends value does not have valid prototype property")
+            }
+            proto_parent := pp
+            ctor_parent := sup
+        } else {
+            throw_type("Class extends value " + show(sup) + " is not a constructor or null")
+        }
+    }
+    alloc proto := new_obj(0, proto_parent)
+    define_hidden(proto, "constructor", ctor)
+    H[ctor][1] := ctor_parent
+    define_hidden(ctor, "prototype", proto)
+    H[ctor][3][4] := proto
+    return proto
+}
+
+# flags: 0 a method, 1 a getter, 2 a setter; +4 static.
+proc def_method(ctor, proto, key, fn, flags) {
+    alloc target := proto
+    if (flags & 4) != 0 {
+        target := ctor
+    }
+    H[fn][3][4] := target
+    alloc kind := flags & 3
+    if kind == 0 {
+        define_hidden(target, key, fn)
+    } else {
+        define_accessor(target, key, kind - 1, fn)
+        hide(target, key)
+    }
+    return true
+}
+
+# super(...args) in the constructor running in frame f.
+proc super_call(f, args) {
+    alloc fn := f[4]
+    alloc x := H[fn][3]
+    alloc parent := H[fn][1]
+    if (x[1][4] & 1) != 0 {
+        throw_syntax("super() in an arrow function is not supported")
+    }
+    if type_of(f[3]) != 0 {
+        throw_ref("Super constructor may only be called once")
+    }
+    alloc this := construct(parent, args, f[10])
+    f[3] := this
+    if x[5] != 0 {
+        call(x[5], this, [])
+    }
+    return this
+}
+
+proc super_home(f) {
+    alloc home := H[f[4]][3][4]
+    if home == 0 {
+        throw_syntax("'super' keyword unexpected here")
+    }
+    return H[home][1]
+}
+
+# Copy the properties of `src` that a for-in would see on it itself.
+proc copy_props(target, src, except_keys) {
+    alloc t := type_of(src)
+    if t == 4 {
+        alloc i := 0
+        loop i < length(src) {
+            define(target, "" + i, src[i])
+            i := i + 1
+        }
+        return true
+    }
+    if t != 2 or src == 0 {
+        return true
+    }
+    alloc skip := false
+    if length(except_keys) > 0 {
+        skip := {}
+        for e in except_keys {
+            skip[e] := 1
+        }
+    }
+    for k in own_keys(src, false) {
+        if skip != false and has_key(skip, k) {
+            continue
+        }
+        define(target, k, get_r(src, k, src))
+    }
+    # symbols too
+    alloc p := H[src][2]
+    if length(p) > 0 {
+        for k2 in dict_keys(p) {
+            if length(k2) > 2 and k2[0] == "@" and k2[1] == "@" {
+                alloc v := p[k2]
+                if type_of(v) != 5 {
+                    H[target][2][k2] := v
+                }
+            }
+        }
+    }
+    return true
+}
+
+alloc TPL_ROOTS := []          # the string lists of tagged templates, kept alive
+
+proc template_object(entry) {
+    if entry[2] != 0 {
+        return entry[2]
+    }
+    alloc cooked := []
+    for s in entry[0] {
+        if s == false {
+            append(cooked, U)
+        } else {
+            append(cooked, s)
+        }
+    }
+    alloc h := new_array(cooked)
+    define_hidden(h, "raw", new_array(entry[1][0:]))
+    entry[2] := h
+    append(TPL_ROOTS, h)
+    return h
+}
+
+proc concat_strs(parts) {
+    alloc s := ""
+    for v in parts {
+        if type_of(v) == 4 {
+            s := s + v
+        } else {
+            s := s + to_str(v)
+        }
+    }
+    return s
+}
+
+proc delete_elem(o, key) {
+    if type_of(o) != 2 or o == 0 {
+        if is_nullish(o) {
+            throw_type("Cannot convert undefined or null to object")
+        }
+        return true
+    }
+    return delete_prop(o, to_key(key))
+}
+
+proc typeof_global(name) {
+    if has_prop(GLOBAL, name) {
+        return typeof_str(get_r(GLOBAL, name, GLOBAL))
+    }
+    return "undefined"
+}
+
+proc set_proto_of(o, v) {
+    if type_of(v) == 2 {
+        H[o][1] := v
+    }
+    return true
+}
+
+# --- the loop ---------------------------------------------------------------------------------
+
+# "x.y is not a function": the compiler noted what each call calls.
+proc not_callable(f, pc, fn) {
+    alloc names := f[15][9]
+    alloc i := 0
+    alloc n := length(names)
+    loop i + 1 < n {
+        if names[i] == pc {
+            throw_type(names[i + 1] + " is not a function")
+        }
+        i := i + 2
+    }
+    throw_type(show(fn) + " is not a function")
+}
+
+# Run the current frame, and the frames it calls, until the frame
+# that was current when FP was `base` returns; gives what it returned.
+# Also comes back at a yield or an await, YIELDED saying so.
+#
+# The stack: S[sp - 1] is the top. Each instruction says what it
+# takes and leaves as [before] -> [after]. Anything that can call into
+# the program again first stores sp in SP, so that a frame started
+# from there does not write over this one's values.
+proc exec(base) {
+    alloc f := CUR
+    alloc code := f[0]
+    alloc K := f[1]
+    alloc R := f[2]
+    alloc pc := f[5]
+    alloc E := f[7]
+    alloc sp := SP
+    alloc op := 0
+    alloc a := 0
+    alloc b := 0
+    alloc c := 0
+    alloc o := 0
+    alloc p := 0
+    alloc x := 0
+    alloc t := 0
+    alloc fl := 0
+    alloc r := 0
+    alloc m := 0
+    alloc n := 0
+    alloc i := 0
+    alloc j := 0
+    alloc e := 0
+    alloc fn := 0
+    alloc ta := 0
+    alloc name := ""
+    alloc done := false
+    if RESUME_THROW {
+        RESUME_THROW := false
+        throw_val(EXC)
+    }
+    loop true {
+        op := code[pc]
+        if op < 16 {
+            if op < 8 {
+                if op < 4 {
+                    if op < 2 {
+                        if op < 1 {
+                            # 0 GETR r
+                            S[sp] := R[code[pc + 1]]
+                            sp := sp + 1
+                            pc := pc + 2
+                        } else {
+                            # 1 SETR r      keeps the value
+                            R[code[pc + 1]] := S[sp - 1]
+                            pc := pc + 2
+                        }
+                    } else {
+                        if op < 3 {
+                            # 2 CONST k
+                            S[sp] := K[code[pc + 1]]
+                            sp := sp + 1
+                            pc := pc + 2
+                        } else {
+                            # 3 POP
+                            sp := sp - 1
+                            pc := pc + 1
+                        }
+                    }
+                } else {
+                    if op < 6 {
+                        if op < 5 {
+                            # 4 GETE0 s
+                            S[sp] := E[code[pc + 1]]
+                            sp := sp + 1
+                            pc := pc + 2
+                        } else {
+                            # 5 SETE0 s     keeps the value
+                            E[code[pc + 1]] := S[sp - 1]
+                            pc := pc + 2
+                        }
+                    } else {
+                        if op < 7 {
+                            # 6 GETP k      [o] -> [o.k]
+                            a := S[sp - 1]
+                            name := K[code[pc + 1]]
+                            if type_of(a) == 2 and a != 0 {
+                                o := H[a]
+                                p := o[2]
+                                if has_key(p, name) and (o[4] & 1) == 0 {
+                                    S[sp - 1] := p[name]
+                                } else {
+                                    SP := sp
+                                    S[sp - 1] := get_r(a, name, a)
+                                }
+                            } else {
+                                SP := sp
+                                f[5] := pc
+                                S[sp - 1] := getv(a, name)
+                            }
+                            pc := pc + 2
+                        } else {
+                            # 7 CALL n      [f this a1..an] -> [result]
+                            n := code[pc + 1]
+                            i := sp - n - 2
+                            fn := S[i]
+                            pc := pc + 2
+                            done := false
+                            if type_of(fn) == 2 and fn != 0 {
+                                o := H[fn]
+                                if o[0] == 2 {
+                                    x := o[3]
+                                    if x[0] == 0 {
+                                        t := x[1]
+                                        fl := t[4]
+                                        if (fl & 22) == 0 {
+                                            # a plain function: go on in it, in this same loop
+                                            r := list_repeat(U, t[2])
+                                            m := t[3]
+                                            if n < m {
+                                                m := n
+                                            }
+                                            j := 0
+                                            loop j < m {
+                                                r[j] := S[i + 2 + j]
+                                                j := j + 1
+                                            }
+                                            a := S[i + 1]
+                                            if (fl & 1) != 0 {
+                                                a := x[3]
+                                            } elif (fl & 64) == 0 {
+                                                if type_of(a) == 0 or (type_of(a) == 2 and a == 0) {
+                                                    a := GLOBAL
+                                                }
+                                            }
+                                            b := false
+                                            if (fl & 512) != 0 {
+                                                b := S[i + 2:sp]
+                                            }
+                                            f[5] := pc
+                                            f[7] := E
+                                            if FP >= length(FR) {
+                                                append(FR, f)
+                                            } else {
+                                                FR[FP] := f
+                                            }
+                                            FP := FP + 1
+                                            if FP > 6000 {
+                                                FP := FP - 1
+                                                SP := sp
+                                                throw_range("Maximum call stack size exceeded")
+                                            }
+                                            E := x[2]
+                                            f := [t[0], t[1], r, a, fn, 0, i, E, false, b, U, 0, i, 0, 0, t]
+                                            CUR := f
+                                            code := t[0]
+                                            K := t[1]
+                                            R := r
+                                            pc := 0
+                                            sp := i
+                                            if sp + 300 > length(S) {
+                                                grow_stack()
+                                            }
+                                            done := true
+                                        }
+                                    } elif x[0] == 1 {
+                                        SP := sp
+                                        f[5] := pc
+                                        NATIVE_FN := fn
+                                        NEW_TARGET := U
+                                        a := x[1](S[i + 1], S[i + 2:sp])
+                                        S[i] := a
+                                        sp := i + 1
+                                        done := true
+                                    }
+                                }
+                            }
+                            if done == false {
+                                SP := sp
+                                f[5] := pc
+                                if is_callable(fn) == false {
+                                    not_callable(f, pc - 2, fn)
+                                }
+                                a := call(fn, S[i + 1], S[i + 2:sp])
+                                S[i] := a
+                                sp := i + 1
+                            }
+                        }
+                    }
+                }
+            } else {
+                if op < 12 {
+                    if op < 10 {
+                        if op < 9 {
+                            # 8 JF a
+                            sp := sp - 1
+                            a := S[sp]
+                            if type_of(a) == 1 {
+                                if a {
+                                    pc := pc + 2
+                                } else {
+                                    pc := code[pc + 1]
+                                }
+                            } elif to_bool(a) {
+                                pc := pc + 2
+                            } else {
+                                pc := code[pc + 1]
+                            }
+                        } else {
+                            # 9 JMP a
+                            pc := code[pc + 1]
+                        }
+                    } else {
+                        if op < 11 {
+                            # 10 ADD
+                            sp := sp - 1
+                            a := S[sp - 1]
+                            b := S[sp]
+                            ta := type_of(a)
+                            if ta == 3 and type_of(b) == 3 {
+                                S[sp - 1] := a + b
+                            } elif ta == 4 and type_of(b) == 4 {
+                                S[sp - 1] := a + b
+                            } else {
+                                SP := sp
+                                f[5] := pc
+                                S[sp - 1] := add_slow(a, b)
+                            }
+                            pc := pc + 1
+                        } else {
+                            # 11 LT
+                            sp := sp - 1
+                            a := S[sp - 1]
+                            b := S[sp]
+                            if type_of(a) == 3 and type_of(b) == 3 {
+                                S[sp - 1] := a < b
+                            } else {
+                                SP := sp
+                                f[5] := pc
+                                S[sp - 1] := lt_slow(a, b)
+                            }
+                            pc := pc + 1
+                        }
+                    }
+                } else {
+                    if op < 14 {
+                        if op < 13 {
+                            # 12 GETEL      [o key] -> [o[key]]
+                            sp := sp - 1
+                            a := S[sp - 1]
+                            b := S[sp]
+                            done := false
+                            if type_of(b) == 3 and type_of(a) == 2 and a != 0 {
+                                o := H[a]
+                                if o[0] == 1 and b >= 0.0 and b < 4294967295.0 {
+                                    i := int(b)
+                                    if i == b {
+                                        if i < o[6] {
+                                            S[sp - 1] := o[3][i]
+                                        } else {
+                                            S[sp - 1] := U
+                                        }
+                                        done := true
+                                    }
+                                }
+                            }
+                            if done == false {
+                                SP := sp
+                                f[5] := pc
+                                S[sp - 1] := get_elem(a, b)
+                            }
+                            pc := pc + 1
+                        } else {
+                            # 13 RET         [v] -> back in the caller, [v]
+                            a := S[sp - 1]
+                            if FP == base {
+                                if (f[11] & 1) != 0 {
+                                    a := ctor_result(f, a)
+                                }
+                                return a
+                            }
+                            i := f[6]
+                            FP := FP - 1
+                            f := FR[FP]
+                            CUR := f
+                            code := f[0]
+                            K := f[1]
+                            R := f[2]
+                            pc := f[5]
+                            E := f[7]
+                            S[i] := a
+                            sp := i + 1
+                        }
+                    } else {
+                        if op < 15 {
+                            # 14 GETG k      a global variable
+                            name := K[code[pc + 1]]
+                            p := H[GLOBAL][2]
+                            done := false
+                            if has_key(p, name) {
+                                a := p[name]
+                                if type_of(a) != 5 {
+                                    S[sp] := a
+                                    done := true
+                                }
+                            }
+                            if done == false {
+                                SP := sp
+                                f[5] := pc
+                                S[sp] := get_global(name)
+                            }
+                            sp := sp + 1
+                            pc := pc + 2
+                        } else {
+                            # 15 GETM k      [o] -> [o.k o], for a call
+                            a := S[sp - 1]
+                            name := K[code[pc + 1]]
+                            if type_of(a) == 2 and a != 0 {
+                                o := H[a]
+                                p := o[2]
+                                if has_key(p, name) and (o[4] & 1) == 0 {
+                                    S[sp - 1] := p[name]
+                                } else {
+                                    SP := sp
+                                    S[sp - 1] := get_r(a, name, a)
+                                }
+                            } else {
+                                SP := sp
+                                f[5] := pc
+                                S[sp - 1] := getv(a, name)
+                            }
+                            S[sp] := a
+                            sp := sp + 1
+                            pc := pc + 2
+                        }
+                    }
+                }
+            }
+        } elif op < 56 {
+            if op < 36 {
+                if op < 26 {
+                    if op < 21 {
+                        if op < 18 {
+                            if op < 17 {
+                                # 16 GETE d s    a variable d environments out
+                                e := E
+                                n := code[pc + 1]
+                                loop n > 0 {
+                                    e := e[0]
+                                    n := n - 1
+                                }
+                                S[sp] := e[code[pc + 2]]
+                                sp := sp + 1
+                                pc := pc + 3
+                            } else {
+                                # 17 SETE d s
+                                e := E
+                                n := code[pc + 1]
+                                loop n > 0 {
+                                    e := e[0]
+                                    n := n - 1
+                                }
+                                e[code[pc + 2]] := S[sp - 1]
+                                pc := pc + 3
+                            }
+                        } else {
+                            if op < 19 {
+                                # 18 SETP k      [o v] -> [v]
+                                sp := sp - 1
+                                a := S[sp - 1]
+                                b := S[sp]
+                                name := K[code[pc + 1]]
+                                if type_of(a) == 2 and a != 0 {
+                                    o := H[a]
+                                    p := o[2]
+                                    if o[4] == 0 and o[0] == 0 and has_key(p, name) {
+                                        p[name] := b
+                                    } else {
+                                        SP := sp + 1
+                                        put_r(a, name, b, a)
+                                    }
+                                } else {
+                                    SP := sp + 1
+                                    f[5] := pc
+                                    putv(a, name, b)
+                                }
+                                S[sp - 1] := b
+                                pc := pc + 2
+                            } else {
+                                if op < 20 {
+                                    # 19 SETEL       [o key v] -> [v]
+                                    sp := sp - 2
+                                    a := S[sp - 1]
+                                    b := S[sp]
+                                    c := S[sp + 1]
+                                    done := false
+                                    if type_of(b) == 3 and type_of(a) == 2 and a != 0 {
+                                        o := H[a]
+                                        if o[0] == 1 and b >= 0.0 and b < 4294967295.0 and (o[4] & 2) == 0 {
+                                            i := int(b)
+                                            if i == b {
+                                                if i < o[6] {
+                                                    o[3][i] := c
+                                                } else {
+                                                    arr_set(o, i, c)
+                                                }
+                                                done := true
+                                            }
+                                        }
+                                    }
+                                    if done == false {
+                                        SP := sp + 2
+                                        f[5] := pc
+                                        put_elem(a, b, c)
+                                    }
+                                    S[sp - 1] := c
+                                    pc := pc + 1
+                                } else {
+                                    # 20 UNDEF
+                                    S[sp] := U
+                                    sp := sp + 1
+                                    pc := pc + 1
+                                }
+                            }
+                        }
+                    } else {
+                        if op < 23 {
+                            if op < 22 {
+                                # 21 TRUE
+                                S[sp] := true
+                                sp := sp + 1
+                                pc := pc + 1
+                            } else {
+                                # 22 FALSE
+                                S[sp] := false
+                                sp := sp + 1
+                                pc := pc + 1
+                            }
+                        } else {
+                            if op < 24 {
+                                # 23 NULL
+                                S[sp] := 0
+                                sp := sp + 1
+                                pc := pc + 1
+                            } else {
+                                if op < 25 {
+                                    # 24 DUP
+                                    S[sp] := S[sp - 1]
+                                    sp := sp + 1
+                                    pc := pc + 1
+                                } else {
+                                    # 25 SUB
+                                    sp := sp - 1
+                                    a := S[sp - 1]
+                                    b := S[sp]
+                                    if type_of(a) == 3 and type_of(b) == 3 {
+                                        S[sp - 1] := a - b
+                                    } else {
+                                        SP := sp
+                                        f[5] := pc
+                                        a := to_num(a)
+                                        S[sp - 1] := a - to_num(b)
+                                    }
+                                    pc := pc + 1
+                                }
+                            }
+                        }
+                    }
+                } else {
+                    if op < 31 {
+                        if op < 28 {
+                            if op < 27 {
+                                # 26 MUL
+                                sp := sp - 1
+                                a := S[sp - 1]
+                                b := S[sp]
+                                if type_of(a) == 3 and type_of(b) == 3 {
+                                    S[sp - 1] := a * b
+                                } else {
+                                    SP := sp
+                                    f[5] := pc
+                                    a := to_num(a)
+                                    S[sp - 1] := a * to_num(b)
+                                }
+                                pc := pc + 1
+                            } else {
+                                # 27 SEQ         ===
+                                sp := sp - 1
+                                a := S[sp - 1]
+                                b := S[sp]
+                                S[sp - 1] := type_of(a) == type_of(b) and a == b
+                                pc := pc + 1
+                            }
+                        } else {
+                            if op < 29 {
+                                # 28 SNE         !==
+                                sp := sp - 1
+                                a := S[sp - 1]
+                                b := S[sp]
+                                S[sp - 1] := type_of(a) != type_of(b) or a != b
+                                pc := pc + 1
+                            } else {
+                                if op < 30 {
+                                    # 29 INC
+                                    a := S[sp - 1]
+                                    if type_of(a) == 3 {
+                                        S[sp - 1] := a + 1.0
+                                    } else {
+                                        SP := sp
+                                        S[sp - 1] := to_num(a) + 1.0
+                                    }
+                                    pc := pc + 1
+                                } else {
+                                    # 30 JT a
+                                    sp := sp - 1
+                                    a := S[sp]
+                                    if type_of(a) == 1 {
+                                        if a {
+                                            pc := code[pc + 1]
+                                        } else {
+                                            pc := pc + 2
+                                        }
+                                    } elif to_bool(a) {
+                                        pc := code[pc + 1]
+                                    } else {
+                                        pc := pc + 2
+                                    }
+                                }
+                            }
+                        }
+                    } else {
+                        if op < 33 {
+                            if op < 32 {
+                                # 31 THIS
+                                S[sp] := f[3]
+                                sp := sp + 1
+                                pc := pc + 1
+                            } else {
+                                # 32 DIV
+                                sp := sp - 1
+                                a := S[sp - 1]
+                                b := S[sp]
+                                if type_of(a) == 3 and type_of(b) == 3 and b != 0.0 {
+                                    S[sp - 1] := a / b
+                                } else {
+                                    SP := sp
+                                    f[5] := pc
+                                    S[sp - 1] := div_slow(a, b)
+                                }
+                                pc := pc + 1
+                            }
+                        } else {
+                            if op < 34 {
+                                # 33 MOD
+                                sp := sp - 1
+                                a := S[sp - 1]
+                                b := S[sp]
+                                if type_of(a) == 3 and type_of(b) == 3 and a >= 0.0 and b > 0.0 and b < 9000000000000000.0 and a < 9000000000000000.0 {
+                                    S[sp - 1] := a % b
+                                } else {
+                                    SP := sp
+                                    f[5] := pc
+                                    S[sp - 1] := mod_slow(a, b)
+                                }
+                                pc := pc + 1
+                            } else {
+                                if op < 35 {
+                                    # 34 EQ          ==
+                                    sp := sp - 1
+                                    a := S[sp - 1]
+                                    b := S[sp]
+                                    if type_of(a) == type_of(b) {
+                                        S[sp - 1] := a == b
+                                    } else {
+                                        SP := sp
+                                        S[sp - 1] := loose_eq(a, b)
+                                    }
+                                    pc := pc + 1
+                                } else {
+                                    # 35 NE          !=
+                                    sp := sp - 1
+                                    a := S[sp - 1]
+                                    b := S[sp]
+                                    if type_of(a) == type_of(b) {
+                                        S[sp - 1] := a != b
+                                    } else {
+                                        SP := sp
+                                        S[sp - 1] := loose_eq(a, b) == false
+                                    }
+                                    pc := pc + 1
+                                }
+                            }
+                        }
+                    }
+                }
+            } else {
+                if op < 46 {
+                    if op < 41 {
+                        if op < 38 {
+                            if op < 37 {
+                                # 36 LE
+                                sp := sp - 1
+                                a := S[sp - 1]
+                                b := S[sp]
+                                if type_of(a) == 3 and type_of(b) == 3 {
+                                    S[sp - 1] := a <= b
+                                } else {
+                                    SP := sp
+                                    f[5] := pc
+                                    S[sp - 1] := le_slow(a, b)
+                                }
+                                pc := pc + 1
+                            } else {
+                                # 37 GT
+                                sp := sp - 1
+                                a := S[sp - 1]
+                                b := S[sp]
+                                if type_of(a) == 3 and type_of(b) == 3 {
+                                    S[sp - 1] := a > b
+                                } else {
+                                    SP := sp
+                                    f[5] := pc
+                                    S[sp - 1] := lt_slow(b, a)
+                                }
+                                pc := pc + 1
+                            }
+                        } else {
+                            if op < 39 {
+                                # 38 GE
+                                sp := sp - 1
+                                a := S[sp - 1]
+                                b := S[sp]
+                                if type_of(a) == 3 and type_of(b) == 3 {
+                                    S[sp - 1] := a >= b
+                                } else {
+                                    SP := sp
+                                    f[5] := pc
+                                    S[sp - 1] := le_slow(b, a)
+                                }
+                                pc := pc + 1
+                            } else {
+                                if op < 40 {
+                                    # 39 NOT
+                                    a := S[sp - 1]
+                                    if type_of(a) == 1 {
+                                        S[sp - 1] := a == false
+                                    } else {
+                                        S[sp - 1] := to_bool(a) == false
+                                    }
+                                    pc := pc + 1
+                                } else {
+                                    # 40 NEG
+                                    a := S[sp - 1]
+                                    if type_of(a) != 3 {
+                                        SP := sp
+                                        a := to_num(a)
+                                    }
+                                    S[sp - 1] := a * -1.0
+                                    pc := pc + 1
+                                }
+                            }
+                        }
+                    } else {
+                        if op < 43 {
+                            if op < 42 {
+                                # 41 AND a       [v]: falsy, jump and keep it; else drop it
+                                a := S[sp - 1]
+                                if type_of(a) != 1 {
+                                    a := to_bool(a)
+                                }
+                                if a {
+                                    sp := sp - 1
+                                    pc := pc + 2
+                                } else {
+                                    pc := code[pc + 1]
+                                }
+                            } else {
+                                # 42 OR a
+                                a := S[sp - 1]
+                                if type_of(a) != 1 {
+                                    a := to_bool(a)
+                                }
+                                if a {
+                                    pc := code[pc + 1]
+                                } else {
+                                    sp := sp - 1
+                                    pc := pc + 2
+                                }
+                            }
+                        } else {
+                            if op < 44 {
+                                # 43 COALESCE a
+                                a := S[sp - 1]
+                                ta := type_of(a)
+                                if ta == 0 or (ta == 2 and a == 0) {
+                                    sp := sp - 1
+                                    pc := pc + 2
+                                } else {
+                                    pc := code[pc + 1]
+                                }
+                            } else {
+                                if op < 45 {
+                                    # 44 TYPEOF
+                                    S[sp - 1] := typeof_str(S[sp - 1])
+                                    pc := pc + 1
+                                } else {
+                                    # 45 DEC
+                                    a := S[sp - 1]
+                                    if type_of(a) == 3 {
+                                        S[sp - 1] := a - 1.0
+                                    } else {
+                                        SP := sp
+                                        S[sp - 1] := to_num(a) - 1.0
+                                    }
+                                    pc := pc + 1
+                                }
+                            }
+                        }
+                    }
+                } else {
+                    if op < 51 {
+                        if op < 48 {
+                            if op < 47 {
+                                # 46 TONUM
+                                a := S[sp - 1]
+                                if type_of(a) != 3 {
+                                    SP := sp
+                                    f[5] := pc
+                                    S[sp - 1] := to_num(a)
+                                }
+                                pc := pc + 1
+                            } else {
+                                # 47 SETG k      keeps the value
+                                SP := sp
+                                put_r(GLOBAL, K[code[pc + 1]], S[sp - 1], GLOBAL)
+                                pc := pc + 2
+                            }
+                        } else {
+                            if op < 49 {
+                                # 48 NEWOBJ
+                                S[sp] := new_obj(0, OBJECT_PROTO)
+                                sp := sp + 1
+                                pc := pc + 1
+                            } else {
+                                if op < 50 {
+                                    # 49 NEWARR n    [v1..vn] -> [array]
+                                    n := code[pc + 1]
+                                    sp := sp - n
+                                    if n == 0 {
+                                        S[sp] := new_array([])
+                                    } else {
+                                        S[sp] := new_array(S[sp:sp + n])
+                                    }
+                                    sp := sp + 1
+                                    pc := pc + 2
+                                } else {
+                                    # 50 INITP k     [o v] -> [o]
+                                    sp := sp - 1
+                                    H[S[sp - 1]][2][K[code[pc + 1]]] := S[sp]
+                                    pc := pc + 2
+                                }
+                            }
+                        }
+                    } else {
+                        if op < 53 {
+                            if op < 52 {
+                                # 51 APPEND      [array v] -> [array]
+                                sp := sp - 1
+                                o := H[S[sp - 1]]
+                                arr_set(o, o[6], S[sp])
+                                pc := pc + 1
+                            } else {
+                                # 52 CLOSURE k
+                                S[sp] := make_closure(K[code[pc + 1]], E, f)
+                                sp := sp + 1
+                                pc := pc + 2
+                            }
+                        } else {
+                            if op < 54 {
+                                # 53 NEW n       [f a1..an] -> [object]
+                                n := code[pc + 1]
+                                i := sp - n - 1
+                                SP := sp
+                                f[5] := pc
+                                fn := S[i]
+                                a := construct(fn, S[i + 1:sp], fn)
+                                S[i] := a
+                                sp := i + 1
+                                pc := pc + 2
+                            } else {
+                                if op < 55 {
+                                    # 54 RETU        return undefined
+                                    a := U
+                                    if FP == base {
+                                        if (f[11] & 1) != 0 {
+                                            a := ctor_result(f, a)
+                                        }
+                                        return a
+                                    }
+                                    i := f[6]
+                                    FP := FP - 1
+                                    f := FR[FP]
+                                    CUR := f
+                                    code := f[0]
+                                    K := f[1]
+                                    R := f[2]
+                                    pc := f[5]
+                                    E := f[7]
+                                    S[i] := a
+                                    sp := i + 1
+                                } else {
+                                    # 55 DUP2
+                                    S[sp] := S[sp - 2]
+                                    S[sp + 1] := S[sp - 1]
+                                    sp := sp + 2
+                                    pc := pc + 1
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        } else {
+            if op < 89 {
+                if op < 72 {
+                    if op < 64 {
+                        if op < 60 {
+                            if op < 58 {
+                                if op < 57 {
+                                    # 56 SWAP
+                                    a := S[sp - 1]
+                                    S[sp - 1] := S[sp - 2]
+                                    S[sp - 2] := a
+                                    pc := pc + 1
+                                } else {
+                                    # 57 GETELM      [o key] -> [o[key] o], for a call
+                                    a := S[sp - 2]
+                                    SP := sp
+                                    f[5] := pc
+                                    S[sp - 2] := get_elem(a, S[sp - 1])
+                                    S[sp - 1] := a
+                                    pc := pc + 1
+                                }
+                            } else {
+                                if op < 59 {
+                                    # 58 BAND
+                                    sp := sp - 1
+                                    SP := sp + 1
+                                    i := to_int32(S[sp - 1])
+                                    j := to_int32(S[sp])
+                                    S[sp - 1] := (i & j) * 1.0
+                                    pc := pc + 1
+                                } else {
+                                    # 59 BOR
+                                    sp := sp - 1
+                                    SP := sp + 1
+                                    i := to_int32(S[sp - 1])
+                                    j := to_int32(S[sp])
+                                    S[sp - 1] := (i | j) * 1.0
+                                    pc := pc + 1
+                                }
+                            }
+                        } else {
+                            if op < 62 {
+                                if op < 61 {
+                                    # 60 BXOR
+                                    sp := sp - 1
+                                    SP := sp + 1
+                                    i := to_int32(S[sp - 1])
+                                    j := to_int32(S[sp])
+                                    S[sp - 1] := (i ^ j) * 1.0
+                                    pc := pc + 1
+                                } else {
+                                    # 61 SHL
+                                    sp := sp - 1
+                                    SP := sp + 1
+                                    i := to_int32(S[sp - 1])
+                                    j := to_int32(S[sp])
+                                    S[sp - 1] := (wrap32(i << (j & 31))) * 1.0
+                                    pc := pc + 1
+                                }
+                            } else {
+                                if op < 63 {
+                                    # 62 SHR
+                                    sp := sp - 1
+                                    SP := sp + 1
+                                    i := to_int32(S[sp - 1])
+                                    j := to_int32(S[sp])
+                                    S[sp - 1] := (i >> (j & 31)) * 1.0
+                                    pc := pc + 1
+                                } else {
+                                    # 63 USHR
+                                    sp := sp - 1
+                                    SP := sp + 1
+                                    i := to_int32(S[sp - 1])
+                                    j := to_int32(S[sp])
+                                    S[sp - 1] := ((i & 4294967295) >> (j & 31)) * 1.0
+                                    pc := pc + 1
+                                }
+                            }
+                        }
+                    } else {
+                        if op < 68 {
+                            if op < 66 {
+                                if op < 65 {
+                                    # 64 BNOT
+                                    SP := sp
+                                    S[sp - 1] := (~to_int32(S[sp - 1])) * 1.0
+                                    pc := pc + 1
+                                } else {
+                                    # 65 PLUS        unary +
+                                    a := S[sp - 1]
+                                    if type_of(a) != 3 {
+                                        SP := sp
+                                        f[5] := pc
+                                        S[sp - 1] := to_num(a)
+                                    }
+                                    pc := pc + 1
+                                }
+                            } else {
+                                if op < 67 {
+                                    # 66 EXP         **
+                                    sp := sp - 1
+                                    SP := sp + 1
+                                    a := to_num(S[sp - 1])
+                                    S[sp - 1] := pow_f(a, to_num(S[sp]))
+                                    pc := pc + 1
+                                } else {
+                                    # 67 IN          [key o] -> [bool]
+                                    sp := sp - 1
+                                    SP := sp + 1
+                                    f[5] := pc
+                                    S[sp - 1] := has_in(S[sp - 1], S[sp])
+                                    pc := pc + 1
+                                }
+                            }
+                        } else {
+                            if op < 70 {
+                                if op < 69 {
+                                    # 68 INSTANCEOF
+                                    sp := sp - 1
+                                    SP := sp + 1
+                                    f[5] := pc
+                                    S[sp - 1] := instance_of(S[sp - 1], S[sp])
+                                    pc := pc + 1
+                                } else {
+                                    # 69 DELP k      [o] -> [bool]
+                                    SP := sp
+                                    f[5] := pc
+                                    S[sp - 1] := delete_elem(S[sp - 1], K[code[pc + 1]])
+                                    pc := pc + 2
+                                }
+                            } else {
+                                if op < 71 {
+                                    # 70 DELEL       [o key] -> [bool]
+                                    sp := sp - 1
+                                    SP := sp + 1
+                                    f[5] := pc
+                                    S[sp - 1] := delete_elem(S[sp - 1], S[sp])
+                                    pc := pc + 1
+                                } else {
+                                    # 71 TYPEOFG k   typeof a global that may not be there
+                                    SP := sp
+                                    S[sp] := typeof_global(K[code[pc + 1]])
+                                    sp := sp + 1
+                                    pc := pc + 2
+                                }
+                            }
+                        }
+                    }
+                } else {
+                    if op < 80 {
+                        if op < 76 {
+                            if op < 74 {
+                                if op < 73 {
+                                    # 72 DECLG k     var at the top level
+                                    name := K[code[pc + 1]]
+                                    if has_prop(GLOBAL, name) == false {
+                                        H[GLOBAL][2][name] := U
+                                    }
+                                    pc := pc + 2
+                                } else {
+                                    # 73 PUSHENV n   a new environment of n variables
+                                    e := list_repeat(U, code[pc + 1] + 1)
+                                    e[0] := E
+                                    E := e
+                                    pc := pc + 2
+                                }
+                            } else {
+                                if op < 75 {
+                                    # 74 POPENV
+                                    E := E[0]
+                                    pc := pc + 1
+                                } else {
+                                    # 75 COPYENV     a copy, so closures of the last turn keep theirs
+                                    E := E[0:]
+                                    pc := pc + 1
+                                }
+                            }
+                        } else {
+                            if op < 78 {
+                                if op < 77 {
+                                    # 76 TRY a       errors from here on go to a
+                                    e := f[8]
+                                    if e == false {
+                                        e := []
+                                        f[8] := e
+                                    }
+                                    n := f[13]
+                                    if n < length(e) {
+                                        e[n] := [code[pc + 1], sp - f[12], E]
+                                    } else {
+                                        append(e, [code[pc + 1], sp - f[12], E])
+                                    }
+                                    f[13] := n + 1
+                                    pc := pc + 2
+                                } else {
+                                    # 77 ENDTRY
+                                    f[13] := f[13] - 1
+                                    pc := pc + 1
+                                }
+                            } else {
+                                if op < 79 {
+                                    # 78 THROW
+                                    SP := sp
+                                    f[5] := pc
+                                    throw_val(S[sp - 1])
+                                } else {
+                                    # 79 SETRI r v   a plain number into a register
+                                    R[code[pc + 1]] := code[pc + 2]
+                                    pc := pc + 3
+                                }
+                            }
+                        }
+                    } else {
+                        if op < 84 {
+                            if op < 82 {
+                                if op < 81 {
+                                    # 80 ENDFIN rt rv  the end of a finally: go on, throw, or jump
+                                    i := R[code[pc + 1]]
+                                    if i == 0 {
+                                        pc := pc + 3
+                                    } elif i == 1 {
+                                        SP := sp
+                                        throw_val(R[code[pc + 2]])
+                                    } else {
+                                        pc := R[code[pc + 2]]
+                                    }
+                                } else {
+                                    # 81 GETITER     [v] -> [iterator]
+                                    SP := sp
+                                    f[5] := pc
+                                    S[sp - 1] := make_iter(S[sp - 1])
+                                    pc := pc + 1
+                                }
+                            } else {
+                                if op < 83 {
+                                    # 82 ITERNEXT r a  push the next value, or jump to a
+                                    e := R[code[pc + 1]]
+                                    if e[0] == 0 {
+                                        o := H[e[1]]
+                                        i := e[2]
+                                        if i < o[6] {
+                                            e[2] := i + 1
+                                            S[sp] := o[3][i]
+                                            sp := sp + 1
+                                            pc := pc + 3
+                                        } else {
+                                            pc := code[pc + 2]
+                                        }
+                                    } else {
+                                        SP := sp
+                                        f[5] := pc
+                                        a := iter_step(e)
+                                        if type_of(a) == 5 {
+                                            pc := code[pc + 2]
+                                        } else {
+                                            S[sp] := a
+                                            sp := sp + 1
+                                            pc := pc + 3
+                                        }
+                                    }
+                                } else {
+                                    # 83 FORIN       [o] -> [iterator over its keys]
+                                    SP := sp
+                                    S[sp - 1] := [3, enum_keys(S[sp - 1]), 0]
+                                    pc := pc + 1
+                                }
+                            }
+                        } else {
+                            if op < 86 {
+                                if op < 85 {
+                                    # 84 ITERVAL r   push the next value, undefined when there is none
+                                    SP := sp
+                                    f[5] := pc
+                                    a := iter_step(R[code[pc + 1]])
+                                    if type_of(a) == 5 {
+                                        a := U
+                                    }
+                                    S[sp] := a
+                                    sp := sp + 1
+                                    pc := pc + 2
+                                } else {
+                                    # 85 ITERREST r  push an array of what is left
+                                    SP := sp
+                                    f[5] := pc
+                                    e := R[code[pc + 1]]
+                                    r := []
+                                    loop true {
+                                        a := iter_step(e)
+                                        if type_of(a) == 5 {
+                                            break
+                                        }
+                                        append(r, a)
+                                    }
+                                    S[sp] := new_array(r)
+                                    sp := sp + 1
+                                    pc := pc + 2
+                                }
+                            } else {
+                                if op < 87 {
+                                    # 86 DEFAULT a   [v]: undefined, drop it and go on; else jump
+                                    if type_of(S[sp - 1]) == 0 {
+                                        sp := sp - 1
+                                        pc := pc + 2
+                                    } else {
+                                        pc := code[pc + 1]
+                                    }
+                                } else {
+                                    if op < 88 {
+                                        # 87 OBJREST k   [o] -> [o rest], rest being o less the keys K[k]
+                                        SP := sp
+                                        a := new_obj(0, OBJECT_PROTO)
+                                        copy_props(a, S[sp - 1], K[code[pc + 1]])
+                                        S[sp] := a
+                                        sp := sp + 1
+                                        pc := pc + 2
+                                    } else {
+                                        # 88 INITEL      [o key v] -> [o]
+                                        sp := sp - 2
+                                        SP := sp + 2
+                                        define(S[sp - 1], to_key(S[sp]), S[sp + 1])
+                                        pc := pc + 1
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            } else {
+                if op < 105 {
+                    if op < 97 {
+                        if op < 93 {
+                            if op < 91 {
+                                if op < 90 {
+                                    # 89 INITGET k   [o fn] -> [o]
+                                    sp := sp - 1
+                                    define_accessor(S[sp - 1], K[code[pc + 1]], 0, S[sp])
+                                    pc := pc + 2
+                                } else {
+                                    # 90 INITSET k
+                                    sp := sp - 1
+                                    define_accessor(S[sp - 1], K[code[pc + 1]], 1, S[sp])
+                                    pc := pc + 2
+                                }
+                            } else {
+                                if op < 92 {
+                                    # 91 INITGETEL   [o key fn] -> [o]
+                                    sp := sp - 2
+                                    SP := sp + 2
+                                    define_accessor(S[sp - 1], to_key(S[sp]), 0, S[sp + 1])
+                                    pc := pc + 1
+                                } else {
+                                    # 92 INITSETEL
+                                    sp := sp - 2
+                                    SP := sp + 2
+                                    define_accessor(S[sp - 1], to_key(S[sp]), 1, S[sp + 1])
+                                    pc := pc + 1
+                                }
+                            }
+                        } else {
+                            if op < 95 {
+                                if op < 94 {
+                                    # 93 SPREADOBJ   [o src] -> [o]
+                                    sp := sp - 1
+                                    SP := sp + 1
+                                    copy_props(S[sp - 1], S[sp], [])
+                                    pc := pc + 1
+                                } else {
+                                    # 94 APPENDSPREAD  [array iterable] -> [array]
+                                    sp := sp - 1
+                                    SP := sp + 1
+                                    f[5] := pc
+                                    r := iter_list(S[sp])
+                                    o := H[S[sp - 1]]
+                                    for a in r {
+                                        arr_set(o, o[6], a)
+                                    }
+                                    pc := pc + 1
+                                }
+                            } else {
+                                if op < 96 {
+                                    # 95 CALLSPREAD  [f this array] -> [result]
+                                    sp := sp - 2
+                                    SP := sp + 2
+                                    f[5] := pc
+                                    fn := S[sp - 1]
+                                    if is_callable(fn) == false {
+                                        not_callable(f, pc, fn)
+                                    }
+                                    a := call(fn, S[sp], items_of(S[sp + 1])[0:])
+                                    S[sp - 1] := a
+                                    pc := pc + 1
+                                } else {
+                                    # 96 NEWSPREAD   [f array] -> [object]
+                                    sp := sp - 1
+                                    SP := sp + 1
+                                    f[5] := pc
+                                    fn := S[sp - 1]
+                                    a := construct(fn, items_of(S[sp])[0:], fn)
+                                    S[sp - 1] := a
+                                    pc := pc + 1
+                                }
+                            }
+                        }
+                    } else {
+                        if op < 101 {
+                            if op < 99 {
+                                if op < 98 {
+                                    # 97 CONCAT n    [v1..vn] -> [one string]
+                                    n := code[pc + 1]
+                                    sp := sp - n
+                                    SP := sp + n
+                                    f[5] := pc
+                                    a := concat_strs(S[sp:sp + n])
+                                    S[sp] := a
+                                    sp := sp + 1
+                                    pc := pc + 2
+                                } else {
+                                    # 98 REGEX k
+                                    SP := sp
+                                    e := K[code[pc + 1]]
+                                    S[sp] := REGEX_NEW(e[0], e[1])
+                                    sp := sp + 1
+                                    pc := pc + 2
+                                }
+                            } else {
+                                if op < 100 {
+                                    # 99 TPLOBJ k    the strings of a tagged template
+                                    S[sp] := template_object(K[code[pc + 1]])
+                                    sp := sp + 1
+                                    pc := pc + 2
+                                } else {
+                                    # 100 DEFCLASS s  [super? ctor] -> [ctor proto]
+                                    SP := sp
+                                    f[5] := pc
+                                    if code[pc + 1] == 1 {
+                                        a := S[sp - 1]
+                                        b := def_class(a, true, S[sp - 2])
+                                        S[sp - 2] := a
+                                        S[sp - 1] := b
+                                    } else {
+                                        S[sp] := def_class(S[sp - 1], false, 0)
+                                        sp := sp + 1
+                                    }
+                                    pc := pc + 2
+                                }
+                            }
+                        } else {
+                            if op < 103 {
+                                if op < 102 {
+                                    # 101 DEFMETHOD k flags  [ctor proto fn] -> [ctor proto]
+                                    sp := sp - 1
+                                    def_method(S[sp - 2], S[sp - 1], K[code[pc + 1]], S[sp], code[pc + 2])
+                                    pc := pc + 3
+                                } else {
+                                    # 102 DEFMETHODEL flags  [ctor proto key fn] -> [ctor proto]
+                                    sp := sp - 2
+                                    SP := sp + 2
+                                    def_method(S[sp - 2], S[sp - 1], to_key(S[sp]), S[sp + 1], code[pc + 1])
+                                    pc := pc + 2
+                                }
+                            } else {
+                                if op < 104 {
+                                    # 103 GETSUPER k  super.k
+                                    SP := sp
+                                    f[5] := pc
+                                    S[sp] := get_r(super_home(f), K[code[pc + 1]], f[3])
+                                    sp := sp + 1
+                                    pc := pc + 2
+                                } else {
+                                    # 104 SUPERCALL n  [a1..an] -> [this]
+                                    n := code[pc + 1]
+                                    sp := sp - n
+                                    SP := sp + n
+                                    f[5] := pc
+                                    if n == 0 {
+                                        a := super_call(f, [])
+                                    } else {
+                                        a := super_call(f, S[sp:sp + n])
+                                    }
+                                    S[sp] := a
+                                    sp := sp + 1
+                                    pc := pc + 2
+                                }
+                            }
+                        }
+                    }
+                } else {
+                    if op < 113 {
+                        if op < 109 {
+                            if op < 107 {
+                                if op < 106 {
+                                    # 105 SUPERCALLSPREAD  [array] -> [this]
+                                    SP := sp
+                                    f[5] := pc
+                                    a := super_call(f, items_of(S[sp - 1])[0:])
+                                    S[sp - 1] := a
+                                    pc := pc + 1
+                                } else {
+                                    # 106 CALLEE      the function that is running
+                                    S[sp] := f[4]
+                                    sp := sp + 1
+                                    pc := pc + 1
+                                }
+                            } else {
+                                if op < 108 {
+                                    # 107 ARGUMENTS
+                                    S[sp] := new_array(f[9][0:])
+                                    sp := sp + 1
+                                    pc := pc + 1
+                                } else {
+                                    # 108 REST i      the arguments from the i-th on, as an array
+                                    e := f[9]
+                                    i := code[pc + 1]
+                                    if i < length(e) {
+                                        S[sp] := new_array(e[i:])
+                                    } else {
+                                        S[sp] := new_array([])
+                                    }
+                                    sp := sp + 1
+                                    pc := pc + 2
+                                }
+                            }
+                        } else {
+                            if op < 111 {
+                                if op < 110 {
+                                    # 109 NEWTARGET
+                                    S[sp] := f[10]
+                                    sp := sp + 1
+                                    pc := pc + 1
+                                } else {
+                                    # 110 YIELD       [v] -> stop here; the value sent in is on the stack after
+                                    sp := sp - 1
+                                    a := S[sp]
+                                    f[5] := pc + 1
+                                    f[7] := E
+                                    YSTACK := S[f[12]:sp]
+                                    YIELDED := 1
+                                    return a
+                                }
+                            } else {
+                                if op < 112 {
+                                    # 111 AWAIT
+                                    sp := sp - 1
+                                    a := S[sp]
+                                    f[5] := pc + 1
+                                    f[7] := E
+                                    YSTACK := S[f[12]:sp]
+                                    YIELDED := 2
+                                    return a
+                                } else {
+                                    # 112 OPTJ a      [v]: null or undefined, make it undefined and jump
+                                    a := S[sp - 1]
+                                    ta := type_of(a)
+                                    if ta == 0 or (ta == 2 and a == 0) {
+                                        S[sp - 1] := U
+                                        pc := code[pc + 1]
+                                    } else {
+                                        pc := pc + 2
+                                    }
+                                }
+                            }
+                        }
+                    } else {
+                        if op < 117 {
+                            if op < 115 {
+                                if op < 114 {
+                                    # 113 OPTJ2 a     [f this]: the same, looking at f
+                                    a := S[sp - 2]
+                                    ta := type_of(a)
+                                    if ta == 0 or (ta == 2 and a == 0) {
+                                        sp := sp - 1
+                                        S[sp - 1] := U
+                                        pc := code[pc + 1]
+                                    } else {
+                                        pc := pc + 2
+                                    }
+                                } else {
+                                    # 114 SETFIELDS   [ctor proto fn] -> [ctor proto], fn sets the fields of an instance
+                                    sp := sp - 1
+                                    H[S[sp - 2]][3][5] := S[sp]
+                                    H[S[sp]][3][4] := S[sp - 1]
+                                    pc := pc + 1
+                                }
+                            } else {
+                                if op < 116 {
+                                    # 115 GETSUPEREL  [key] -> [super[key]]
+                                    SP := sp
+                                    f[5] := pc
+                                    S[sp - 1] := get_r(super_home(f), to_key(S[sp - 1]), f[3])
+                                    pc := pc + 1
+                                } else {
+                                    # 116 NOP
+                                    pc := pc + 1
+                                }
+                            }
+                        } else {
+                            if op < 119 {
+                                if op < 118 {
+                                    # 117 STATICINIT  [ctor proto fn] -> [ctor proto], fn run with the class as this
+                                    sp := sp - 1
+                                    SP := sp + 1
+                                    f[5] := pc
+                                    H[S[sp]][3][4] := S[sp - 2]
+                                    call(S[sp], S[sp - 2], [])
+                                    pc := pc + 1
+                                } else {
+                                    # 118 ROT3        [a b c] -> [b c a]
+                                    a := S[sp - 3]
+                                    S[sp - 3] := S[sp - 2]
+                                    S[sp - 2] := S[sp - 1]
+                                    S[sp - 1] := a
+                                    pc := pc + 1
+                                }
+                            } else {
+                                if op < 120 {
+                                    # 119 SETPROTO    [o v] -> [o], __proto__ in a literal
+                                    sp := sp - 1
+                                    set_proto_of(S[sp - 1], S[sp])
+                                    pc := pc + 1
+                                } else {
+                                    if op < 121 {
+                                        # 120 THROWCONST  assignment to a constant
+                                        SP := sp
+                                        f[5] := pc
+                                        throw_type("Assignment to constant variable.")
+                                    } else {
+                                        # 121 TOKEY       [v] -> [the property key it names]
+                                        a := S[sp - 1]
+                                        if type_of(a) != 4 {
+                                            SP := sp
+                                            S[sp - 1] := to_key(a)
+                                        }
+                                        pc := pc + 1
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+# An error got out of exec(): find the try that takes it, in the
+# frames this run() owns, and set the machine to go on there. If there
+# is none, the error goes on to whoever called run().
+proc recover(e, base) {
+    if THROWN == false {
+        caught(e)
+    }
+    THROWN := false
+    loop true {
+        alloc f := CUR
+        alloc n := f[13]
+        if n > 0 {
+            n := n - 1
+            f[13] := n
+            alloc h := f[8][n]
+            f[5] := h[0]
+            f[7] := h[2]
+            alloc sp := f[12] + h[1]
+            S[sp] := EXC
+            SP := sp + 1
+            return true
+        }
+        if FP <= base {
+            THROWN := true
+            raise("js")
+        }
+        FP := FP - 1
+        CUR := FR[FP]
+    }
+}
+
+proc run(base) {
+    loop true {
+        alloc ok := false
+        alloc v := U
+        try {
+            v := exec(base)
+            ok := true
+        } except e {
+            recover(e, base)
+        }
+        if ok {
+            return v
+        }
+    }
+}
+
+# Run the template of a whole script.
+proc run_script(t) {
+    alloc fn := new_obj(2, FUNCTION_PROTO)
+    alloc x := [0, t, false, U, 0, 0, false]
+    H[fn][3] := x
+    return invoke(fn, x, t, GLOBAL, [], U, 0)
+}
+
+# A function value from a template, closed over nothing.
+proc closure_of(t) {
+    alloc fn := new_obj(2, FUNCTION_PROTO)
+    H[fn][3] := [0, t, false, U, 0, 0, false]
+    return fn
+}
+
+# --- the start --------------------------------------------------------------------------------
+
+alloc I_LIST_ITER_PROTO := 25
+
+# A new, empty world: a heap with the objects everything else hangs
+# from. The library files then fill them.
+proc init() {
+    H := [0]
+    FREE := []
+    NFREE := 0
+    ALLOCS := 0
+    I := list_repeat(0, 64)
+    S := list_repeat(0, 2048)
+    SP := 0
+    FR := []
+    FP := 0
+    CUR := false
+    EXC := 0
+    THROWN := false
+    RESUME_THROW := false
+    YIELDED := 0
+    TPL_ROOTS := []
+    OBJECT_PROTO := new_obj(0, 0)
+    H[OBJECT_PROTO][4] := 4
+    I[1] := OBJECT_PROTO
+    alloc i := 2
+    loop i <= 25 {
+        if i != 20 {
+            alloc h := new_obj(0, OBJECT_PROTO)
+            H[h][4] := 4
+            I[i] := h
+        }
+        i := i + 1
+    }
+    for sub in [9, 10, 11, 12, 21, 22] {
+        H[I[sub]][1] := I[8]
+    }
+    H[I[14]][1] := I[13]
+    H[I[25]][1] := I[13]
+    FUNCTION_PROTO := I[2]
+    ARRAY_PROTO := I[3]
+    STRING_PROTO := I[4]
+    NUMBER_PROTO := I[5]
+    BOOLEAN_PROTO := I[6]
+    SYMBOL_PROTO := I[7]
+    GLOBAL := new_obj(0, OBJECT_PROTO)
+    I[0] := GLOBAL
+    def(I[13], "@@iterator", n_iter_self, 0)
+    def(I[25], "next", n_iter_next, 0)
+    def(I[14], "next", n_gen_next, 1)
+    def(I[14], "throw", n_gen_throw, 1)
+    def(I[14], "return", n_gen_return, 1)
+    return true
+}
+
+proc global_object() {
+    return GLOBAL
+}
+
+proc intrinsic(i) {
+    return I[i]
+}
+
+proc undefined() {
+    return U
+}
