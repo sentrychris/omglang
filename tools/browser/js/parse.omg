@@ -2057,8 +2057,11 @@ proc program(bytes) {
 }
 
 # The body of a function made by `new Function(parameters, body)`.
-proc function_text(params, body) {
+proc function_text(params, body, is_async) {
     alloc src := "(function anonymous(" + params + "\n) {\n" + body + "\n})"
+    if is_async {
+        src := "(async function anonymous(" + params + "\n) {\n" + body + "\n})"
+    }
     alloc r := program(string_bytes(src))
     return r[0][0][1]
 }

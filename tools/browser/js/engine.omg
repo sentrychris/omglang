@@ -29,7 +29,11 @@ proc compile_script(bytes, name, want_value) {
 
 # new Function(parameters, body)
 proc make_function(params, body) {
-    alloc node := parse.function_text(params, body)
+    return make_function_kind(params, body, false)
+}
+
+proc make_function_kind(params, body, is_async) {
+    alloc node := parse.function_text(params, body, is_async)
     return c.closure_of(compile.toplevel_function(node, "<Function>"))
 }
 
@@ -40,7 +44,7 @@ proc eval_text(text) {
 
 proc start() {
     c.init()
-    base.set_hooks(make_function, eval_text)
+    base.set_hooks(make_function_kind, eval_text)
     base.setup()
     array.setup()
     string.setup()

@@ -474,6 +474,7 @@ proc n_define_setter(this, args) {
 # --- Function ---------------------------------------------------------------------------
 
 proc n_function(this, args) {
+    alloc kind := X["native_data"]()
     alloc n := length(args)
     alloc params := ""
     alloc body := ""
@@ -488,7 +489,7 @@ proc n_function(this, args) {
             i := i + 1
         }
     }
-    return FUNCTION_HOOK(params, body)
+    return FUNCTION_HOOK(params, body, type_of(kind) == 2 and kind == 1)
 }
 
 proc n_fn_call(this, args) {
@@ -1711,6 +1712,15 @@ proc setup() {
     def_ctor("Boolean", n_boolean, 1, bp)
     def(bp, "toString", n_boolean_to_string, 0)
     def(bp, "valueOf", n_boolean_value_of, 0)
+
+    # async functions have a prototype of their own, whose constructor
+    # makes one from text
+    alloc afp := I[27]
+    H[afp][1] := I[2]
+    alloc afc := X["new_native_with"](n_function, "AsyncFunction", 1, 1)
+    define_hidden(afc, "prototype", afp)
+    define_hidden(afp, "constructor", afc)
+    define_hidden(afp, "@@toStringTag", "AsyncFunction")
 
     alloc px := new_native(n_proxy, "Proxy", 2)
     define_hidden(g, "Proxy", px)

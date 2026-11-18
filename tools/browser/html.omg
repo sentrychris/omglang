@@ -865,6 +865,12 @@ proc write_html(node, parts, raw) {
     for k2 in node.kids {
         write_html(k2, parts, inner_raw)
     }
+    if has_key(node, "frag") {
+        # a <template> whose content dom.omg moved out of the tree
+        for k3 in node.frag.kids {
+            write_html(k3, parts, false)
+        }
+    }
     append(parts, "</" + node.tag + ">")
     return true
 }

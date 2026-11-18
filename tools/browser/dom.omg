@@ -177,6 +177,29 @@ proc host_get(h, o, k) {
     return MISS
 }
 
+# A property of a node as a getter and a setter of its own, for the
+# few that scripts take off the prototype.
+proc n_prop_get(this, args) {
+    alloc key := native_data()
+    if is_node(this) == false {
+        throw_type("Illegal invocation")
+    }
+    alloc v := host_get(this, H[this], key)
+    if type_of(v) == 5 {
+        return U
+    }
+    return v
+}
+
+proc n_prop_set(this, args) {
+    alloc key := native_data()
+    if is_node(this) == false {
+        throw_type("Illegal invocation")
+    }
+    host_set(this, H[this], key, arg(args, 0))
+    return U
+}
+
 proc host_set(h, o, k, v) {
     alloc cls := o[0]
     if cls == 32 {
@@ -249,6 +272,10 @@ proc adopt(node, parent) {
     if node.t != 3 {
         for k in node.kids {
             adopt(k, id)
+        }
+        if node.t == 1 and node.tag == "template" and length(node.kids) > 0 {
+            # what a <template> holds is not in the document
+            template_content(node)
         }
     }
     return id
@@ -592,6 +619,11 @@ proc copy_node(node, deep) {
         }
         if node.t == 1 {
             css.number_kids(out)
+        }
+        if node.t == 1 and has_key(node, "content") {
+            alloc fc := copy_node(NODES[node.content], true)
+            out.content := fc.nid
+            out.frag := fc
         }
     }
     return out
@@ -3193,7 +3225,8 @@ proc n_empty_string(this, args) {
 }
 
 # The content of a <template>: its children are moved into a fragment
-# of their own the first time a script asks.
+# of their own, where no query and no script that walks the tree finds
+# them.
 proc template_content(node) {
     if has_key(node, "content") == false {
         alloc frag := new_fragment()
@@ -3204,6 +3237,7 @@ proc template_content(node) {
             append(frag.kids, k)
         }
         node.content := frag.nid
+        node.frag := frag
         touched(node)
     }
     return NODES[node.content]
@@ -5891,18 +5925,46 @@ proc setup() {
         releasePointerCapture: n_nothing, hasPointerCapture: n_false, showModal: n_nothing,
         close: n_nothing, show: n_nothing, attachInternals: n_null
     }
-    for name2 in dict_keys(methods) {
-        def(np, name2, methods[name2], 1)
-    }
     alloc ep := iface("Element", np)
     alloc hp := iface("HTMLElement", ep)
     iface("SVGElement", ep)
     alloc cd := iface("CharacterData", np)
     iface("Text", cd)
     iface("Comment", cd)
-    iface("DocumentFragment", np)
-    iface("ShadowRoot", P["DocumentFragment"])
+    alloc fp := iface("DocumentFragment", np)
+    iface("ShadowRoot", fp)
     alloc dp := iface("Document", np)
+    # Each method goes where the DOM has it: scripts ask
+    # `node.getAttribute && ...` to tell an element from a text node.
+    alloc on_node := {appendChild: 1, insertBefore: 1, removeChild: 1, replaceChild: 1, cloneNode: 1,
+                      contains: 1, hasChildNodes: 1, compareDocumentPosition: 1, getRootNode: 1,
+                      isSameNode: 1, isEqualNode: 1, normalize: 1, toString: 1}
+    alloc on_child := {remove: 1, before: 1, after: 1, replaceWith: 1}
+    alloc on_parent := {append: 1, prepend: 1, replaceChildren: 1, querySelector: 1, querySelectorAll: 1}
+    alloc on_text := {splitText: 1, appendData: 1}
+    for name2 in dict_keys(methods) {
+        alloc fn2 := methods[name2]
+        if has_key(on_node, name2) {
+            def(np, name2, fn2, 1)
+        } elif has_key(on_child, name2) {
+            def(ep, name2, fn2, 1)
+            def(cd, name2, fn2, 1)
+        } elif has_key(on_parent, name2) {
+            def(ep, name2, fn2, 1)
+            def(dp, name2, fn2, 1)
+            def(fp, name2, fn2, 1)
+        } elif has_key(on_text, name2) {
+            def(cd, name2, fn2, 1)
+        } elif name2 == "getElementById" {
+            def(dp, name2, fn2, 1)
+            def(fp, name2, fn2, 1)
+        } elif name2 == "getElementsByTagName" or name2 == "getElementsByClassName" {
+            def(ep, name2, fn2, 1)
+            def(dp, name2, fn2, 1)
+        } else {
+            def(ep, name2, fn2, 1)
+        }
+    }
     define_hidden(g, "HTMLDocument", get(dp, "constructor"))
     for tag in dict_keys(TAG_NAMES) {
         alloc iname := TAG_NAMES[tag]
@@ -5912,6 +5974,16 @@ proc setup() {
         TAG_PROTO[tag] := P[iname]
     }
     TAG_PROTO["svg"] := P["SVGElement"]
+    # React (and what tests it) takes the setter of `value` off the
+    # prototype, to set a field behind the back of its own tracking
+    for pair in [["HTMLInputElement", "value"], ["HTMLInputElement", "checked"],
+                 ["HTMLTextAreaElement", "value"], ["HTMLSelectElement", "value"],
+                 ["HTMLSelectElement", "selectedIndex"], ["HTMLOptionElement", "selected"]] {
+        if has_key(P, pair[0]) {
+            X["define_accessor"](P[pair[0]], pair[1], 0, new_native_with(n_prop_get, "get " + pair[1], 0, pair[1]))
+            X["define_accessor"](P[pair[0]], pair[1], 1, new_native_with(n_prop_set, "set " + pair[1], 1, pair[1]))
+        }
+    }
     iface("HTMLUnknownElement", hp)
     iface("HTMLMediaElement", hp)
     NODELIST := new_obj(0, I[3])
