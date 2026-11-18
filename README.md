@@ -1061,8 +1061,10 @@ Some interesting starting points:
   HTTP and HTTPS (TLS 1.3 and 1.2, with the ciphers and the certificate
   checks), HTML, CSS with floats, tables, flexbox and grid, letters drawn
   from the system's TrueType fonts, PNG, JPEG and GIF pictures, links,
-  history and forms. No JavaScript. One executable of about 4.8 MB with
-  no library behind it. See [`docs/11-browser.md`](docs/11-browser.md).
+  history and forms, and a JavaScript engine of its own that runs the
+  scripts of pages (jQuery, Vue and React among them). One executable
+  of about 10 MB with no library behind it. See
+  [`docs/11-browser.md`](docs/11-browser.md).
 
 ---
 
