@@ -80,8 +80,10 @@ L(typeof fetch, typeof XMLHttpRequest, typeof MutationObserver, typeof Intersect
 // timers
 var order = [];
 setTimeout(function () { order.push("t0") }, 0); setTimeout(function () { order.push("t30") }, 30); var dead = setTimeout(function () { order.push("never") }, 5); clearTimeout(dead);
-var n = 0, iv = setInterval(function () { n++; if (n == 3) { clearInterval(iv); order.push("3 ticks") } }, 60);
+// The order is printed by the last tick and not by a timer of its
+// own some time later: on a slow machine the ticks come late, and a
+// timer set for a fixed moment would print before the third.
+var n = 0, iv = setInterval(function () { n++; if (n == 3) { clearInterval(iv); order.push("3 ticks"); L(order) } }, 60);
 queueMicrotask(function () { order.push("micro") }); Promise.resolve().then(function () { order.push("promise") }); order.push("script");
-setTimeout(function () { L(order) }, 400);
 </script>
 </body></html>

@@ -318,6 +318,15 @@ half its refcount traffic is a significant win.
 `OMG_NONE`, `OMG_FLOAT`. Only the heap-allocated tags (`LIST`, `DICT`,
 `CLOSURE`) actually count.
 
+A string is a C string: a pointer to its bytes, ended by a NUL, with
+no length kept beside it. So a string here cannot hold the character
+with code 0. `chr(0)` is the empty string, and `bytes_to_string` of
+bytes with a zero among them stops there. The x86-64 runtime and the
+JavaScript one keep the length and have no such limit. Programs that
+need the character (the browser's JavaScript engine, for `"\0"` in a
+script) lose it when built through C, which is what
+`tests/browser/js/nul.js` checks where it can.
+
 ## Heap structures
 
 ### Lists

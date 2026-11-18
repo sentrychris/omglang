@@ -19,7 +19,7 @@ axc | HeLLo | true | true | SS | αβγ
 aBC | trim | a\b\c | $0$1 | abb$2c | aaaaaa | bbb
 true | ["FF","aa","00"] | ["-1.5","em"]
 false | ababc | false | [""] | -a-b-c- | ["","","",""] | ["",""]
-true | true | true | true |  | \/ | true | /a/g | true | object
+true | true | true |  | \/ | true | /a/g | true | object
 tpl 1 and 2 | camel-case-string | [["x","1"],["y","2"]] | 1234567 | abbc
 a | b,c | a,b | ["a","b","c"] | true | true
 false | 0 | bbb | 0 | ba | {} | ["0","index","input","groups"]
