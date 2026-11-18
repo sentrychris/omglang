@@ -1,0 +1,132 @@
+<!DOCTYPE html>
+<html>
+<head><meta charset="utf-8"><title>What a collection must leave alone</title>
+<style id="look">.on { color: rgb(1, 2, 3); }</style></head>
+<body>
+<div id="main"><p id="para" class="a b">text</p><ul id="list"></ul><button id="btn">go</button></div>
+<template id="tpl"><li class="row"><span>cell</span></li></template>
+<script>
+// Everything here is set up, left alone while timers run (the test
+// runs this page a second time with --collect-always, which frees
+// what scripts cannot reach after every timer), and looked at again.
+// Chromium prints the same lines.
+function L() { console.log(Array.prototype.map.call(arguments, function (v) { return typeof v === "string" ? v : JSON.stringify(v); }).join(" | ")); }
+function $(id) { return document.getElementById(id); }
+function later(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
+function garbage() {
+  for (var i = 0; i < 300; i++) {
+    var d = document.createElement("div");
+    d.innerHTML = "<b>x</b><i>y</i>";
+    d.addEventListener("click", function () {});
+    d.note = { i: i };
+  }
+}
+var seen = [];
+
+// a property a script put on an element of the page that it holds no more
+$("para").mine = { n: 41 };
+$("btn").addEventListener("click", function (e) { seen.push("btn:" + e.target.id); });
+
+// an element that is in no document, held by a variable, with a listener and a property
+var loose = document.createElement("section");
+loose.innerHTML = "<div class='in'><em id='deep'>deep</em></div>";
+loose.tag = "loose";
+loose.addEventListener("ping", function (e) { seen.push("loose heard " + e.target.nodeName); });
+// ... and one of which only a node far inside is held
+var inner = (function () {
+  var top = document.createElement("article");
+  top.label = "top of a tree";
+  top.addEventListener("ping", function (e) { seen.push("top heard " + e.target.nodeName); });
+  top.innerHTML = "<div><span><u>leaf</u></span></div>";
+  return top.querySelector("u");
+})();
+
+// objects that stand for a part of an element, held without it
+var style = document.createElement("div").style;
+var classes = (function () { var d = document.createElement("div"); d.className = "one two"; return d.classList; })();
+var data = (function () { var d = document.createElement("div"); d.setAttribute("data-kind", "kept"); return d.dataset; })();
+
+// targets that are not nodes
+var stopper = new AbortController();
+stopper.signal.addEventListener("abort", function () { seen.push("stopped"); });
+var plain = new EventTarget();
+plain.addEventListener("note", function (e) { seen.push("plain " + e.type); });
+
+// the contents of a template, a document made from text, an event kept after it was sent
+var tpl = $("tpl");
+tpl.content.firstChild.mark = "row marked";
+var other = new DOMParser().parseFromString("<p id='op'>other <b>doc</b></p>", "text/html");
+other.getElementById("op").extra = [1, 2, 3];
+var kept_event = null;
+loose.addEventListener("keep", function (e) { kept_event = e; });
+loose.querySelector("#deep").dispatchEvent(new CustomEvent("keep", { bubbles: true, detail: { d: 7 } }));
+
+// an element taken out of the page, to be put back
+var away = $("para");
+away.addEventListener("click", function () { seen.push("para clicked"); });
+
+// a sheet, held without its element
+var sheet = $("look").sheet;
+sheet.insertRule(".off { color: rgb(9, 9, 9); }", 0);
+
+// a tree that points at itself through a closure
+(function () {
+  var a = document.createElement("div");
+  a.again = function () { return a; };
+  a.addEventListener("x", function () { return a.again(); });
+})();
+
+var rounds = 0;
+var timer = setInterval(function () {
+  rounds++;
+  garbage();
+  var list = $("list");
+  // rows come and go
+  for (var i = 0; i < 20; i++) {
+    var row = tpl.content.firstChild.cloneNode(true);
+    row.n = rounds * 100 + i;
+    row.addEventListener("click", function (e) { seen.push("row " + e.currentTarget.n); });
+    list.appendChild(row);
+  }
+  while (list.children.length > 5) list.removeChild(list.firstChild);
+  if (rounds == 2) away.remove();
+  if (rounds == 4) { clearInterval(timer); check(); }
+}, 5);
+
+async function check() {
+  await later(5);
+  garbage();
+  await later(5);
+  L($("main").children.length, $("list").children.length, $("list").lastChild.n, $("list").firstChild.n);
+  $("list").lastChild.click();
+  $("btn").click();
+  L(away.mine, away.parentNode, away.isConnected, away.className);
+  $("main").insertBefore(away, $("list"));
+  away.click();
+  L($("para").mine.n, $("para") === away, getComputedStyle(away).display);
+
+  loose.querySelector("#deep").dispatchEvent(new Event("ping", { bubbles: true }));
+  L(loose.tag, loose.firstChild.className, loose.querySelector("em").textContent);
+  var top = inner;
+  while (top.parentNode) top = top.parentNode;
+  inner.dispatchEvent(new Event("ping", { bubbles: true }));
+  L(top.nodeName, top.label, inner.textContent, top.querySelector("u") === inner);
+
+  style.color = "red";
+  style.setProperty("margin-top", "3px");
+  classes.add("three");
+  data.more = "new";
+  L(style.color, style.marginTop, style.cssText, classes.contains("one"), classes.length, String(classes), data.kind, Object.keys(data));
+
+  stopper.abort();
+  plain.dispatchEvent(new Event("note"));
+  L(stopper.signal.aborted, tpl.content.firstChild.mark, tpl.content.querySelector("span").textContent);
+  L(other.getElementById("op").extra, other.querySelector("b").textContent, other.title, other.body.children.length);
+  L(kept_event.type, kept_event.detail, kept_event.target.id, kept_event.target.parentNode.className, kept_event.target.ownerDocument === document);
+  L(sheet.cssRules.length, sheet.ownerNode.id, $("look").sheet === sheet);
+  L(seen);
+  L(document.title, document.querySelectorAll("li.row").length, rounds);
+}
+</script>
+</body>
+</html>

@@ -10,7 +10,8 @@
 # It fetches pages over HTTP and HTTPS, reads HTML and CSS, lays the
 # page out, draws it with the system's fonts, shows pictures (PNG,
 # JPEG, GIF), follows links, goes back and forward, scrolls, and fills
-# in and sends forms. It does not run JavaScript.
+# in and sends forms. It runs the scripts of pages, in a JavaScript
+# engine of its own (js/), with the page as scripts know it (dom.omg).
 #
 # Options:
 #
@@ -23,8 +24,13 @@
 #     --ca-file FILE      trust the certificates in this PEM file too
 #     --no-js             do not run the scripts of pages
 #     --console           print what scripts log (console.log) on the terminal
-#     --wait MS           with --screenshot: how long scripts may go on (3000)
-#     --dump              with --screenshot: print the page as HTML, as scripts left it
+#     --wait MS           with --screenshot or --dump: how long scripts
+#                         may go on at most, in ms (3000)
+#     --dump              load the page, print it as HTML as its scripts
+#                         left it, and leave (alone, or with --screenshot)
+#     --verbose           say how long each step took
+#     --collect-always    for testing: free the objects scripts no longer
+#                         reach at every chance, not when enough gathered
 #
 # Keys: Ctrl+L address, Enter go, Alt+Left / Backspace back, Alt+Right
 # forward, F5 / Ctrl+R reload, Escape stop, arrows, Space, PageUp,
@@ -33,7 +39,9 @@
 # The parts, each a file next to this one: url (addresses), net and
 # io (fetching), tls with its helpers (HTTPS), inflate (unpacking),
 # html and entities (parsing), css (styles), layout (where things
-# go), paint and gfx (drawing), font (letters), image (pictures).
+# go), paint and gfx (drawing), font (letters), image (pictures),
+# dom (the page for scripts: nodes, events, timers, requests) and the
+# folder js (the JavaScript engine: parse, compile, core, lib_*).
 
 import "util.omg" as u
 import "font.omg" as font
@@ -567,9 +575,10 @@ proc load_styles() {
         }
         if node.tag == "style" {
             alloc text := html.text_of(node)
-            if has_key(node, "rules") {
-                # what scripts added with sheet.insertRule()
-                text := text + "\n" + u.join(node.rules, "\n")
+            if has_key(node, "rules") and type_of(node.rules_of) == 4 and node.rules_of == text {
+                # scripts have changed the sheet rule by rule
+                # (sheet.insertRule): its rules are the sheet now
+                text := u.join(node.rules, "\n")
             }
             add_sheet(string_bytes(text), base_url, media, 0)
         } else {
@@ -1947,6 +1956,14 @@ proc js_refresh() {
     }
     alloc d := dom.take_dirty()
     if d[0] == false and d[1] == false {
+        if (styled == false or root == false) and doc != false {
+            # a script asks before the page was ever laid out
+            forms := {}
+            index_forms(doc, 0, 0)
+            js_title()
+            reflow()
+            return true
+        }
         if layout_stale {
             forms := {}
             index_forms(doc, 0, 0)
@@ -2087,8 +2104,24 @@ proc js_pump() {
     in_script := in_script - 1
     if did {
         js_after()
+        # nothing of the page's is running now: the moment to free
+        # what its scripts no longer reach
+        alloc freed := dom.collect_if_due()
+        if verbose and freed != false {
+            emit "collected in " + freed[0] + " ms: " + freed[1] + " objects freed, " + freed[2] + " left"
+        }
     }
     return did
+}
+
+# The nodes this file holds on to, which must stay known to the page
+# although no script may reach them.
+proc js_held() {
+    alloc out := [js_down, js_over, hover, focus]
+    for uid in dict_keys(forms) {
+        append(out, forms[uid])
+    }
+    return out
 }
 
 # From the outermost loop only: go where a script asked to go.
@@ -2417,7 +2450,7 @@ proc js_host() {
             history: js_history, history_length: js_history_length, reflow: js_reflow, restyle: js_restyle_host, rect: js_rect,
             view: js_view, scroll: js_scroll, title: js_set_title, cookie_get: js_cookie_get,
             cookie_set: js_cookie_set, log: js_log, alert: js_alert, focus: js_focus,
-            activate: js_activate, submit: js_submit, hit: js_hit, picture: js_picture}
+            activate: js_activate, submit: js_submit, hit: js_hit, picture: js_picture, held: js_held}
 }
 
 # --- start --------------------------------------------------------------------------------------
@@ -2447,6 +2480,9 @@ proc main() {
             i := i + 1
         } elif a == "--verbose" {
             verbose := true
+        } elif a == "--collect-always" {
+            # for testing: free what scripts no longer reach at every chance
+            dom.collect_always()
         } elif a == "--no-js" {
             scripting := false
         } elif a == "--console" {

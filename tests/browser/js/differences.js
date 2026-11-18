@@ -19,5 +19,14 @@ console.log("😀".length, "😀".charCodeAt(0));                         // 2 5
 // for its Symbol.replace or Symbol.split.
 console.log(typeof BigInt, typeof /a/[Symbol.replace]);             // function function
 
-// The weak collections hold on to their keys.
-console.log(typeof WeakRef, new WeakRef(o).deref() === o);          // function true (the same, until a collector runs)
+// Memory is collected between two pieces of work, never in the middle
+// of one, and as soon as a hundred thousand objects were made since
+// the last time: a WeakRef whose object nothing else holds is empty
+// in the next timer, and what a WeakMap held for it is gone. Node
+// promises neither when nor whether.
+var lost = new WeakRef({ gone: true }), kept = { here: true }, held = new WeakRef(kept);
+var notes = new WeakMap([[kept, "about kept"]]);
+for (var filler = 0; filler < 120000; filler++) ({ n: filler });
+setTimeout(function () {
+  console.log(typeof WeakRef, lost.deref(), held.deref() === kept, notes.get(kept));   // function undefined true about kept
+}, 0);

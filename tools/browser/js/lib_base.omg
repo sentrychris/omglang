@@ -607,6 +607,10 @@ proc n_error_to_string(this, args) {
 
 alloc SYMBOLS := {}            # Symbol.for: key to symbol
 
+proc gc_roots() {
+    return SYMBOLS
+}
+
 proc n_symbol(this, args) {
     alloc d := arg(args, 0)
     if type_of(d) == 0 {

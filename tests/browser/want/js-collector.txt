@@ -1,0 +1,12 @@
+2 | 5 | 419 | 415
+{"n":41} | null | false | a b
+41 | true | block
+loose | in | deep
+ARTICLE | top of a tree | leaf | true
+red | 3px | color: red; margin-top: 3px; | true | 3 | one two three | kept | ["kind","more"]
+true | row marked | cell
+[1,2,3] | doc |  | 1
+keep | {"d":7} | deep | in | true
+2 | look | true
+["row 419","btn:btn","para clicked","loose heard EM","top heard U","stopped","plain note"]
+What a collection must leave alone | 5 | 4
