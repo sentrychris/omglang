@@ -82,6 +82,7 @@ alloc S_SWITCH := 65
 alloc S_BLOCK := 66
 alloc S_LABEL := 67
 alloc S_EMPTY := 68
+alloc S_WITH := 69
 
 # The instructions; core.omg says what each does.
 alloc OP_GETR := 0
@@ -246,6 +247,13 @@ alloc NSAVED := 0
 # the scope whose record it is in] or [2].
 alloc SC := []
 alloc NSC := 0
+
+# The with statements around what is being compiled, innermost last:
+# each is [the hidden variable its object is kept in, the number of
+# its scope]. A name declared outside a with might be a property of
+# its object instead, which only the running program can tell.
+alloc WITHS := []
+alloc NWITH := 0
 
 proc fail(msg) {
     raise("SyntaxError: " + msg)
@@ -431,7 +439,71 @@ proc depth_to(owner) {
     return d
 }
 
+# The hidden variables of the with statements that `name` has to be
+# looked for in first, innermost first.
+proc withs_for(name) {
+    alloc at := -1
+    alloc i := NSC - 1
+    loop i >= 0 {
+        if has_key(SC[i][0], name) {
+            at := i
+            break
+        }
+        i := i - 1
+    }
+    alloc out := []
+    alloc j := length(WITHS) - 1
+    loop j >= 0 {
+        if WITHS[j][1] > at {
+            append(out, WITHS[j][0])
+        }
+        j := j - 1
+    }
+    return out
+}
+
+# [] -> [is `name` a property of the object of with statement w?]
+proc with_has(w, name) {
+    emit2(OP_CONST, kstr(name))
+    load_plain(w)
+    emit1(OP_IN)
+    return jump(OP_JF)
+}
+
 proc load(name) {
+    if length(WITHS) > 0 {
+        alloc ends := []
+        for w in withs_for(name) {
+            alloc j := with_has(w, name)
+            load_plain(w)
+            emit2(OP_GETP, kstr(name))
+            append(ends, jump(OP_JMP))
+            patch(j)
+        }
+        load_plain(name)
+        return patch_all(ends)
+    }
+    return load_plain(name)
+}
+
+# A name that is called: [] -> [function, its this]
+proc load_callee(name) {
+    alloc ends := []
+    if length(WITHS) > 0 {
+        for w in withs_for(name) {
+            alloc j := with_has(w, name)
+            load_plain(w)
+            emit2(OP_GETM, kstr(name))
+            append(ends, jump(OP_JMP))
+            patch(j)
+        }
+    }
+    load_plain(name)
+    emit1(OP_UNDEF)
+    return patch_all(ends)
+}
+
+proc load_plain(name) {
     alloc e := resolve(name)
     alloc k := e[0]
     if k == 0 {
@@ -453,6 +525,23 @@ proc load(name) {
 
 # Store the top of the stack in variable `name`; it stays on the stack.
 proc store(name) {
+    if length(WITHS) > 0 {
+        alloc ends := []
+        for w in withs_for(name) {
+            alloc j := with_has(w, name)
+            load_plain(w)
+            emit1(OP_SWAP)
+            emit2(OP_SETP, kstr(name))
+            append(ends, jump(OP_JMP))
+            patch(j)
+        }
+        store_plain(name)
+        return patch_all(ends)
+    }
+    return store_plain(name)
+}
+
+proc store_plain(name) {
     alloc e := resolve(name)
     alloc k := e[0]
     if k == 0 {
@@ -546,7 +635,7 @@ proc collect_vars1(s, out, top) {
         }
     } elif k == S_BLOCK {
         collect_vars(s[1], out, false)
-    } elif k == S_LABEL {
+    } elif k == S_LABEL or k == S_WITH {
         collect_vars1(s[2], out, false)
     }
     return out
@@ -817,6 +906,9 @@ proc callee(c) {
         expr(c[2])
         emit1(OP_GETELM)
         return true
+    }
+    if k == N_ID {
+        return load_callee(c[1])
     }
     expr(c)
     emit1(OP_UNDEF)
@@ -1318,7 +1410,19 @@ proc expr(n) {
         alloc op := n[1]
         if op == "typeof" {
             if n[2][0] == N_ID and resolve(n[2][1])[0] == 2 {
-                return emit2(OP_TYPEOFG, kstr(n[2][1]))
+                alloc tends := []
+                if length(WITHS) > 0 {
+                    for w in withs_for(n[2][1]) {
+                        alloc tj := with_has(w, n[2][1])
+                        load_plain(w)
+                        emit2(OP_GETP, kstr(n[2][1]))
+                        emit1(OP_TYPEOF)
+                        append(tends, jump(OP_JMP))
+                        patch(tj)
+                    }
+                }
+                emit2(OP_TYPEOFG, kstr(n[2][1]))
+                return patch_all(tends)
             }
             expr(n[2])
             return emit1(OP_TYPEOF)
@@ -1934,6 +2038,21 @@ proc statement(s, labels) {
         pop_ctrl()
         return patch_all(lc[2])
     }
+    if k == S_WITH {
+        expr(s[1])
+        alloc wsi := NSC
+        push_scope(false)
+        NWITH := NWITH + 1
+        alloc hidden := "%with" + NWITH
+        declare_in(hidden, wsi)
+        store_plain(hidden)
+        emit1(OP_POP)
+        append(WITHS, [hidden, wsi])
+        statement(s[2], [])
+        WITHS := WITHS[0:length(WITHS) - 1]
+        pop_scope()
+        return true
+    }
     if k == S_EMPTY {
         return true
     }
@@ -2087,6 +2206,7 @@ proc script(tree, source, want_value) {
     NSC := 0
     SAVED := []
     NSAVED := 0
+    WITHS := []
     CODE := []
     KS := []
     KMAP := {}
@@ -2139,6 +2259,7 @@ proc toplevel_function(node, source) {
     NSC := 0
     SAVED := []
     NSAVED := 0
+    WITHS := []
     CODE := []
     KS := []
     KMAP := {}

@@ -5741,9 +5741,35 @@ alloc TAG_NAMES := {
     picture: "HTMLPictureElement", time: "HTMLTimeElement", output: "HTMLOutputElement"
 }
 
+# Another document, made from text: for createHTMLDocument and
+# DOMParser. It is never shown.
+proc other_document(text) {
+    alloc d := html.parse(string_bytes(text))
+    adopt(d, -1)
+    css.prepare_doc(d)
+    return wrap(d)
+}
+
+proc n_create_html_document(this, args) {
+    alloc title := ""
+    if length(args) > 0 and type_of(args[0]) != 0 {
+        title := html.escape_text(to_str(args[0]), false)
+    }
+    return other_document("<!DOCTYPE html><html><head><title>" + title + "</title></head><body></body></html>")
+}
+
+proc n_parse_from_string(this, args) {
+    return other_document(to_str(arg(args, 0)))
+}
+
+proc n_dom_parser(this, args) {
+    return new_obj(0, P["DOMParser"])
+}
+
 proc g_implementation(h, node) {
     alloc o := new_object()
     def(o, "hasFeature", n_true, 0)
+    def(o, "createHTMLDocument", n_create_html_document, 1)
     return o
 }
 
@@ -5812,6 +5838,19 @@ proc setup() {
 
     alloc np := iface("Node", et)
     alloc node_ctor := get(np, "constructor")
+    # el.onclick reads as null until someone sets it, and
+    # `"onclick" in el` is how libraries ask what can be listened for
+    for name in ["click", "dblclick", "mousedown", "mouseup", "mousemove", "mouseover", "mouseout",
+                 "mouseenter", "mouseleave", "keydown", "keyup", "keypress", "input", "change",
+                 "submit", "reset", "focus", "blur", "focusin", "focusout", "load", "error",
+                 "scroll", "wheel", "contextmenu", "select", "toggle"] {
+        define_hidden(np, "on" + name, 0)
+        define_hidden(g, "on" + name, 0)
+    }
+    for name in ["unload", "beforeunload", "resize", "hashchange", "popstate", "message", "storage",
+                 "online", "offline", "pageshow", "pagehide", "unhandledrejection"] {
+        define_hidden(g, "on" + name, 0)
+    }
     alloc consts := {ELEMENT_NODE: 1.0, ATTRIBUTE_NODE: 2.0, TEXT_NODE: 3.0, CDATA_SECTION_NODE: 4.0,
                      PROCESSING_INSTRUCTION_NODE: 7.0, COMMENT_NODE: 8.0, DOCUMENT_NODE: 9.0,
                      DOCUMENT_TYPE_NODE: 10.0, DOCUMENT_FRAGMENT_NODE: 11.0,
@@ -6133,6 +6172,8 @@ proc setup() {
         def(obp, "takeRecords", n_empty_array, 0)
     }
     define_hidden(g, "WebKitMutationObserver", get(P["MutationObserver"], "constructor"))
+    alloc dpp := iface_with("DOMParser", object_proto, n_dom_parser, 0, 0)
+    def(dpp, "parseFromString", n_parse_from_string, 2)
     alloc acp := iface_with("AbortController", object_proto, n_abort_controller, 0, 0)
     def(acp, "abort", n_abort, 0)
     alloc dxp := iface_with("DOMException", I[8], n_dom_exception, 0, 0)

@@ -45,6 +45,9 @@ alloc arr_set_length := X["arr_set_length"]
 alloc rel_index := X["rel_index"]
 alloc str_join := X["str_join"]
 alloc show := X["show"]
+alloc put_elem := X["put_elem"]
+alloc delete_prop := X["delete_prop"]
+alloc to_key := X["to_key"]
 
 proc nothing() {
 }
@@ -67,7 +70,8 @@ proc rec_of(this) {
     return [1, 0, {}, items, 0, false, length(items)]
 }
 
-# The record of `this`, which must be an array.
+# The record of `this` when it is an array, else false: the caller
+# then goes through generic().
 proc arr_of(this) {
     if type_of(this) == 2 and this != 0 {
         alloc o := H[this]
@@ -75,7 +79,39 @@ proc arr_of(this) {
             return o
         }
     }
-    throw_type("this method needs an array, and " + show(this) + " is none")
+    return false
+}
+
+# A method that changes its array, asked of something that is merely
+# like one (jQuery does `push.apply(results, nodes)` on its own
+# objects): run it on a copy that is an array, then write the items
+# and the length back.
+proc generic(this, fn, args) {
+    if is_nullish(this) {
+        throw_type("Array.prototype method called on null or undefined")
+    }
+    alloc h := to_object(this)
+    alloc old := array_like_list(h)
+    alloc tmp := new_array(old)
+    alloc out := fn(tmp, args)
+    alloc o := H[tmp]
+    alloc items := o[3]
+    alloc n := o[6]
+    alloc i := 0
+    loop i < n {
+        put_elem(h, i * 1.0, items[i])
+        i := i + 1
+    }
+    alloc was := length(old)
+    loop i < was {
+        delete_prop(h, to_key(i * 1.0))
+        i := i + 1
+    }
+    put(h, "length", n * 1.0)
+    if type_of(out) == 2 and out == tmp {
+        return h
+    }
+    return out
 }
 
 proc need_fn(f) {
@@ -132,6 +168,9 @@ proc n_from(this, args) {
 
 proc n_push(this, args) {
     alloc o := arr_of(this)
+    if o == false {
+        return generic(this, n_push, args)
+    }
     if (o[4] & 2) != 0 {
         throw_type("Cannot add property, object is not extensible")
     }
@@ -151,6 +190,9 @@ proc n_push(this, args) {
 
 proc n_pop(this, args) {
     alloc o := arr_of(this)
+    if o == false {
+        return generic(this, n_pop, args)
+    }
     alloc n := o[6]
     if n == 0 {
         return U
@@ -164,6 +206,9 @@ proc n_pop(this, args) {
 
 proc n_shift(this, args) {
     alloc o := arr_of(this)
+    if o == false {
+        return generic(this, n_shift, args)
+    }
     alloc n := o[6]
     if n == 0 {
         return U
@@ -186,6 +231,9 @@ proc n_shift(this, args) {
 
 proc n_unshift(this, args) {
     alloc o := arr_of(this)
+    if o == false {
+        return generic(this, n_unshift, args)
+    }
     alloc n := o[6]
     if length(args) > 0 {
         o[3] := args + o[3][0:n]
@@ -207,6 +255,9 @@ proc n_slice(this, args) {
 
 proc n_splice(this, args) {
     alloc o := arr_of(this)
+    if o == false {
+        return generic(this, n_splice, args)
+    }
     alloc n := o[6]
     alloc a := o[3]
     alloc from := rel_index(arg(args, 0), n, 0)
@@ -341,6 +392,9 @@ proc n_to_string(this, args) {
 
 proc n_reverse(this, args) {
     alloc o := arr_of(this)
+    if o == false {
+        return generic(this, n_reverse, args)
+    }
     alloc a := o[3]
     alloc i := 0
     alloc j := o[6] - 1
@@ -674,6 +728,9 @@ proc sort_list(a, n) {
 
 proc n_sort(this, args) {
     alloc o := arr_of(this)
+    if o == false {
+        return generic(this, n_sort, args)
+    }
     alloc f := arg(args, 0)
     alloc old := SORT_FN
     SORT_FN := 0
@@ -749,6 +806,9 @@ proc n_flat_map(this, args) {
 
 proc n_fill(this, args) {
     alloc o := arr_of(this)
+    if o == false {
+        return generic(this, n_fill, args)
+    }
     alloc n := o[6]
     alloc v := arg(args, 0)
     alloc i := rel_index(arg(args, 1), n, 0)
@@ -774,6 +834,9 @@ proc n_at(this, args) {
 
 proc n_copy_within(this, args) {
     alloc o := arr_of(this)
+    if o == false {
+        return generic(this, n_copy_within, args)
+    }
     alloc n := o[6]
     alloc to := rel_index(arg(args, 0), n, 0)
     alloc from := rel_index(arg(args, 1), n, 0)
