@@ -11,8 +11,10 @@
 # lists cannot lose an entry, so a deleted one is marked (place -1,
 # key GONE) and the lot is made anew when the marks get many.
 #
-# The weak ones are not weak: they hold on to their keys. With no
-# collector running behind the program's back, nobody can tell.
+# The weak ones keep their keys the same way. What makes them weak is
+# the collector (core.omg): it does not follow them, and when it has
+# marked what is still reached it calls weak_prune() below, which
+# drops the entries whose key was not.
 #
 # Dates count in UTC only: the local time zone is taken to be UTC.
 
