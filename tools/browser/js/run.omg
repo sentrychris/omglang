@@ -1,0 +1,95 @@
+;;;omg
+
+# tools/browser/js/run.omg
+#
+# Run JavaScript files from the command line, with console.log going
+# to the terminal: the engine without a page around it.
+#
+#     omg --build tools/browser/js/run.omg jsrun
+#     ./jsrun script.js [more.js ...]
+#
+# The files run one after the other in the same world, then whatever
+# they left waiting (promises, timers) runs until nothing is left.
+# Exits 1 when a script throws.
+
+import "engine.omg" as js
+import "core.omg" as c
+
+proc n_log(this, args) {
+    emit js.format_args(args)
+    return c.undefined()
+}
+
+proc read_all(path) {
+    alloc h := file_open(path, "rb")
+    alloc out := bytes_repeat(0, 0)
+    loop true {
+        alloc b := file_read(h, 65536)
+        if length(b) == 0 {
+            break
+        }
+        out := out + b
+    }
+    file_close(h)
+    return out
+}
+
+# Run the waiting jobs and show what nobody caught. True when there
+# was something to show.
+proc settle() {
+    js.run_microtasks()
+    alloc bad := false
+    for v in js.take_errors() {
+        emit "Uncaught " + c.describe(v)
+        bad := true
+    }
+    return bad
+}
+
+proc main() {
+    js.start()
+    alloc g := c.global_object()
+    alloc console := c.new_object()
+    c.define_hidden(g, "console", console)
+    for name in ["log", "info", "warn", "error", "debug"] {
+        c.def(console, name, n_log, 0)
+    }
+    c.def(g, "print", n_log, 0)
+    alloc failed := false
+    alloc i := 1
+    loop i < length(args) {
+        if file_exists(args[i]) == false {
+            emit "jsrun: no such file: " + args[i]
+            exit(2)
+        }
+        alloc r := js.run(read_all(args[i]), args[i])
+        if r[0] == false {
+            emit "Uncaught " + c.describe(r[1])
+            failed := true
+        }
+        if settle() {
+            failed := true
+        }
+        i := i + 1
+    }
+    # what the scripts left for later: timers, and the jobs they start
+    loop true {
+        alloc due := js.next_due()
+        if due < 0 {
+            break
+        }
+        alloc wait := due - time_ms()
+        if wait > 0 {
+            sleep_ms(wait)
+        }
+        js.run_timers()
+        if settle() {
+            failed := true
+        }
+    }
+    if failed {
+        exit(1)
+    }
+}
+
+main()

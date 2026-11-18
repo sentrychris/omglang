@@ -1,0 +1,2147 @@
+;;;omg
+
+# tools/browser/js/lib_string.omg
+#
+# The standard library of the JavaScript engine: String, Number, Math
+# and the functions that escape text for an address.
+#
+# A JavaScript string is an OMG string, so a position in one counts
+# characters, not the 16-bit units JavaScript counts: the two differ
+# only for text outside the Basic Multilingual Plane (emoji), where
+# "😀".length is 1 here and 2 in other engines.
+
+import "core.omg" as c
+
+alloc X := c.exports()
+alloc H := X["H"]
+alloc I := X["I"]
+alloc arg := X["arg"]
+alloc def := X["def"]
+alloc def_ctor := X["def_ctor"]
+alloc define_hidden := X["define_hidden"]
+alloc get := X["get"]
+alloc get_r := X["get_r"]
+alloc get_elem := X["get_elem"]
+alloc new_obj := X["new_obj"]
+alloc new_object := X["new_object"]
+alloc new_array := X["new_array"]
+alloc new_iter_object := X["new_iter_object"]
+alloc make_error := X["make_error"]
+alloc throw_val := X["throw_val"]
+alloc throw_type := X["throw_type"]
+alloc throw_range := X["throw_range"]
+alloc to_str := X["to_str"]
+alloc to_num := X["to_num"]
+alloc to_bool := X["to_bool"]
+alloc to_integer := X["to_integer"]
+alloc to_int32 := X["to_int32"]
+alloc to_uint32 := X["to_uint32"]
+alloc wrap32 := X["wrap32"]
+alloc num_to_str := X["num_to_str"]
+alloc str_to_num := X["str_to_num"]
+alloc is_callable := X["is_callable"]
+alloc is_nullish := X["is_nullish"]
+alloc class_of := X["class_of"]
+alloc call := X["call"]
+alloc new_target := X["new_target"]
+alloc array_like_list := X["array_like_list"]
+alloc rel_index := X["rel_index"]
+alloc str_join := X["str_join"]
+alloc floor_f := X["floor_f"]
+alloc trunc_f := X["trunc_f"]
+alloc pow_f := X["pow_f"]
+alloc is_neg_zero := X["is_neg_zero"]
+
+proc nothing() {
+}
+
+alloc U := nothing()
+alloc INF := X["inf"]()
+alloc NAN := X["nan"]()
+alloc NEG_INF := INF * -1.0
+
+# What lib_regexp.omg does for the string methods that take a regular
+# expression: [match, match_all, replace, search, split], each a proc.
+alloc RX := false
+
+proc set_regex_fns(fns) {
+    RX := fns
+    return true
+}
+
+# --- text helpers -----------------------------------------------------------------------
+
+proc put_utf8(out, cp) {
+    if cp < 128 {
+        append(out, cp)
+    } elif cp < 2048 {
+        append(out, 192 | (cp >> 6))
+        append(out, 128 | (cp & 63))
+    } elif cp < 65536 {
+        append(out, 224 | (cp >> 12))
+        append(out, 128 | ((cp >> 6) & 63))
+        append(out, 128 | (cp & 63))
+    } else {
+        append(out, 240 | (cp >> 18))
+        append(out, 128 | ((cp >> 12) & 63))
+        append(out, 128 | ((cp >> 6) & 63))
+        append(out, 128 | (cp & 63))
+    }
+    return true
+}
+
+# The byte where character number `ci` starts.
+proc byte_offset(b, ci) {
+    alloc n := length(b)
+    alloc i := 0
+    alloc k := 0
+    loop i < n and k < ci {
+        alloc ch := b[i]
+        if ch < 128 {
+            i := i + 1
+        } elif ch < 224 {
+            i := i + 2
+        } elif ch < 240 {
+            i := i + 3
+        } else {
+            i := i + 4
+        }
+        k := k + 1
+    }
+    if i > n {
+        return n
+    }
+    return i
+}
+
+# The number of the character that starts at byte `bi`.
+proc char_offset(b, bi) {
+    alloc i := 0
+    alloc k := 0
+    loop i < bi {
+        if (b[i] & 192) != 128 {
+            k := k + 1
+        }
+        i := i + 1
+    }
+    return k
+}
+
+proc find_bytes(b, nb, from) {
+    alloc n := length(b)
+    alloc m := length(nb)
+    if m == 0 {
+        return from
+    }
+    alloc first := nb[0]
+    alloc last := n - m
+    alloc i := from
+    loop i <= last {
+        if b[i] == first {
+            alloc j := 1
+            loop j < m and b[i + j] == nb[j] {
+                j := j + 1
+            }
+            if j == m {
+                return i
+            }
+        }
+        i := i + 1
+    }
+    return -1
+}
+
+proc rfind_bytes(b, nb, from) {
+    alloc n := length(b)
+    alloc m := length(nb)
+    alloc i := n - m
+    if from < i {
+        i := from
+    }
+    loop i >= 0 {
+        alloc j := 0
+        loop j < m and b[i + j] == nb[j] {
+            j := j + 1
+        }
+        if j == m {
+            return i
+        }
+        i := i - 1
+    }
+    return -1
+}
+
+# Where `needle` first is in s at or after character `from`; -1 for nowhere.
+proc find(s, needle, from) {
+    alloc n := length(s)
+    if from > n {
+        from := n
+    }
+    if length(needle) == 0 {
+        return from
+    }
+    alloc b := string_bytes(s)
+    alloc nb := string_bytes(needle)
+    if length(b) == n {
+        return find_bytes(b, nb, from)
+    }
+    alloc at := find_bytes(b, nb, byte_offset(b, from))
+    if at < 0 {
+        return -1
+    }
+    return char_offset(b, at)
+}
+
+proc rfind(s, needle, from) {
+    alloc n := length(s)
+    if from > n {
+        from := n
+    }
+    alloc b := string_bytes(s)
+    alloc nb := string_bytes(needle)
+    if length(b) == n {
+        return rfind_bytes(b, nb, from)
+    }
+    alloc at := rfind_bytes(b, nb, byte_offset(b, from))
+    if at < 0 {
+        return -1
+    }
+    return char_offset(b, at)
+}
+
+proc is_space_cp(cp) {
+    if cp == 32 or (cp >= 9 and cp <= 13) {
+        return true
+    }
+    if cp < 160 {
+        return false
+    }
+    return cp == 160 or cp == 65279 or cp == 8232 or cp == 8233 or (cp >= 8192 and cp <= 8202) or cp == 12288 or cp == 5760 or cp == 8239 or cp == 8287
+}
+
+proc trim_of(s, left, right) {
+    alloc n := length(s)
+    alloc a := 0
+    alloc b := n
+    if left {
+        loop a < n and is_space_cp(ascii(s[a])) {
+            a := a + 1
+        }
+    }
+    if right {
+        loop b > a and is_space_cp(ascii(s[b - 1])) {
+            b := b - 1
+        }
+    }
+    if a == 0 and b == n {
+        return s
+    }
+    return s[a:b]
+}
+
+proc lower_cp(cp) {
+    if cp < 128 {
+        if cp >= 65 and cp <= 90 {
+            return cp + 32
+        }
+        return cp
+    }
+    if cp >= 192 and cp <= 222 and cp != 215 {
+        return cp + 32
+    }
+    if cp >= 256 and cp <= 383 {
+        if (cp < 312 or (cp > 329 and cp < 376)) {
+            if (cp & 1) == 0 {
+                return cp + 1
+            }
+        } elif (cp >= 313 and cp <= 328) or (cp >= 377 and cp <= 382) {
+            if (cp & 1) == 1 {
+                return cp + 1
+            }
+        } elif cp == 376 {
+            return 255
+        }
+        return cp
+    }
+    if cp >= 913 and cp <= 939 and cp != 930 {
+        return cp + 32
+    }
+    if cp >= 1040 and cp <= 1071 {
+        return cp + 32
+    }
+    if cp >= 1024 and cp <= 1039 {
+        return cp + 80
+    }
+    return cp
+}
+
+proc upper_cp(cp) {
+    if cp < 128 {
+        if cp >= 97 and cp <= 122 {
+            return cp - 32
+        }
+        return cp
+    }
+    if cp >= 224 and cp <= 254 and cp != 247 {
+        return cp - 32
+    }
+    if cp == 255 {
+        return 376
+    }
+    if cp == 181 {
+        return 924
+    }
+    if cp >= 256 and cp <= 383 {
+        if (cp < 312 or (cp > 329 and cp < 376)) {
+            if (cp & 1) == 1 {
+                return cp - 1
+            }
+        } elif (cp >= 313 and cp <= 328) or (cp >= 377 and cp <= 382) {
+            if (cp & 1) == 0 {
+                return cp - 1
+            }
+        }
+        return cp
+    }
+    if cp >= 945 and cp <= 971 and cp != 962 {
+        return cp - 32
+    }
+    if cp == 962 {
+        return 931
+    }
+    if cp >= 1072 and cp <= 1103 {
+        return cp - 32
+    }
+    if cp >= 1104 and cp <= 1119 {
+        return cp - 80
+    }
+    return cp
+}
+
+proc change_case(s, up) {
+    alloc b := string_bytes(s)
+    alloc n := length(b)
+    if n == length(s) {
+        alloc i := 0
+        if up {
+            loop i < n {
+                alloc ch := b[i]
+                if ch >= 97 and ch <= 122 {
+                    b[i] := ch - 32
+                }
+                i := i + 1
+            }
+        } else {
+            loop i < n {
+                alloc c2 := b[i]
+                if c2 >= 65 and c2 <= 90 {
+                    b[i] := c2 + 32
+                }
+                i := i + 1
+            }
+        }
+        return bytes_to_string(b)
+    }
+    alloc out := bytes_repeat(0, 0)
+    for ch2 in s {
+        alloc cp := ascii(ch2)
+        if up {
+            if cp == 223 {
+                append(out, 83)
+                append(out, 83)
+            } else {
+                put_utf8(out, upper_cp(cp))
+            }
+        } else {
+            put_utf8(out, lower_cp(cp))
+        }
+    }
+    return bytes_to_string(out)
+}
+
+proc repeat_str(s, n) {
+    if n <= 0 or s == "" {
+        return ""
+    }
+    if n * length(s) > 268435456 {
+        throw_range("Invalid string length")
+    }
+    alloc out := ""
+    alloc piece := s
+    loop n > 0 {
+        if (n & 1) == 1 {
+            out := out + piece
+        }
+        n := n >> 1
+        if n > 0 {
+            piece := piece + piece
+        }
+    }
+    return out
+}
+
+# --- String -----------------------------------------------------------------------------
+
+proc this_str(this) {
+    alloc t := type_of(this)
+    if t == 4 {
+        return this
+    }
+    if t == 0 or (t == 2 and this == 0) {
+        throw_type("String.prototype method called on null or undefined")
+    }
+    if t == 2 and H[this][0] == 6 {
+        return H[this][3]
+    }
+    return to_str(this)
+}
+
+proc n_string(this, args) {
+    alloc s := ""
+    if length(args) > 0 {
+        alloc v := args[0]
+        if class_of(v) == 7 and type_of(new_target()) == 0 {
+            s := "Symbol(" + H[v][3][1] + ")"
+        } else {
+            s := to_str(v)
+        }
+    }
+    if type_of(new_target()) == 0 {
+        return s
+    }
+    alloc h := new_obj(6, I[4])
+    H[h][3] := s
+    return h
+}
+
+proc n_from_char_code(this, args) {
+    alloc out := bytes_repeat(0, 0)
+    alloc i := 0
+    alloc n := length(args)
+    loop i < n {
+        alloc cp := to_uint32(args[i]) & 65535
+        if cp >= 55296 and cp < 56320 and i + 1 < n {
+            alloc lo := to_uint32(args[i + 1]) & 65535
+            if lo >= 56320 and lo < 57344 {
+                cp := 65536 + ((cp - 55296) << 10) + (lo - 56320)
+                i := i + 1
+            }
+        }
+        if cp >= 55296 and cp < 57344 {
+            cp := 65533
+        }
+        put_utf8(out, cp)
+        i := i + 1
+    }
+    return bytes_to_string(out)
+}
+
+proc n_from_code_point(this, args) {
+    alloc out := bytes_repeat(0, 0)
+    for a in args {
+        alloc cp := to_integer(a)
+        if cp < 0 or cp > 1114111 {
+            throw_range("Invalid code point " + to_str(a))
+        }
+        if cp >= 55296 and cp < 57344 {
+            cp := 65533
+        }
+        put_utf8(out, cp)
+    }
+    return bytes_to_string(out)
+}
+
+proc n_raw(this, args) {
+    alloc strs := arg(args, 0)
+    alloc raw := array_like_list(get(strs, "raw"))
+    alloc out := ""
+    alloc i := 0
+    loop i < length(raw) {
+        out := out + to_str(raw[i])
+        if i + 1 < length(raw) and i + 1 < length(args) {
+            out := out + to_str(args[i + 1])
+        }
+        i := i + 1
+    }
+    return out
+}
+
+proc n_str_to_string(this, args) {
+    if type_of(this) == 4 {
+        return this
+    }
+    if class_of(this) == 6 {
+        return H[this][3]
+    }
+    throw_type("String.prototype.toString requires that 'this' be a String")
+}
+
+proc n_char_at(this, args) {
+    alloc s := this_str(this)
+    alloc i := to_integer(arg(args, 0))
+    if i < 0 or i >= length(s) {
+        return ""
+    }
+    return s[i]
+}
+
+proc n_char_code_at(this, args) {
+    alloc s := this_str(this)
+    alloc i := 0
+    if length(args) > 0 {
+        alloc a := args[0]
+        if type_of(a) == 3 and a >= 0.0 and a < 1000000000.0 {
+            i := int(a)
+        } else {
+            i := to_integer(a)
+        }
+    }
+    if i < 0 or i >= length(s) {
+        return NAN
+    }
+    return ascii(s[i]) * 1.0
+}
+
+proc n_code_point_at(this, args) {
+    alloc s := this_str(this)
+    alloc i := to_integer(arg(args, 0))
+    if i < 0 or i >= length(s) {
+        return U
+    }
+    return ascii(s[i]) * 1.0
+}
+
+proc n_str_at(this, args) {
+    alloc s := this_str(this)
+    alloc i := to_integer(arg(args, 0))
+    if i < 0 {
+        i := i + length(s)
+    }
+    if i < 0 or i >= length(s) {
+        return U
+    }
+    return s[i]
+}
+
+proc n_index_of(this, args) {
+    alloc s := this_str(this)
+    alloc from := to_integer(arg(args, 1))
+    if from < 0 {
+        from := 0
+    }
+    return find(s, to_str(arg(args, 0)), from) * 1.0
+}
+
+proc n_last_index_of(this, args) {
+    alloc s := this_str(this)
+    alloc from := length(s)
+    if type_of(arg(args, 1)) != 0 {
+        alloc f := to_num(args[1])
+        if f == f {
+            from := to_integer(f)
+            if from < 0 {
+                from := 0
+            }
+        }
+    }
+    return rfind(s, to_str(arg(args, 0)), from) * 1.0
+}
+
+proc no_regex(v, what) {
+    if class_of(v) == 9 {
+        throw_type("First argument to String.prototype." + what + " must not be a regular expression")
+    }
+    return true
+}
+
+proc n_includes(this, args) {
+    alloc s := this_str(this)
+    no_regex(arg(args, 0), "includes")
+    alloc from := to_integer(arg(args, 1))
+    if from < 0 {
+        from := 0
+    }
+    return find(s, to_str(arg(args, 0)), from) >= 0
+}
+
+proc n_starts_with(this, args) {
+    alloc s := this_str(this)
+    no_regex(arg(args, 0), "startsWith")
+    alloc p := to_str(arg(args, 0))
+    alloc from := to_integer(arg(args, 1))
+    if from < 0 {
+        from := 0
+    }
+    alloc n := length(p)
+    if from + n > length(s) {
+        return false
+    }
+    return s[from:from + n] == p
+}
+
+proc n_ends_with(this, args) {
+    alloc s := this_str(this)
+    no_regex(arg(args, 0), "endsWith")
+    alloc p := to_str(arg(args, 0))
+    alloc end := length(s)
+    if type_of(arg(args, 1)) != 0 {
+        end := to_integer(args[1])
+        if end > length(s) {
+            end := length(s)
+        }
+    }
+    alloc n := length(p)
+    if end - n < 0 {
+        return false
+    }
+    return s[end - n:end] == p
+}
+
+proc n_slice(this, args) {
+    alloc s := this_str(this)
+    alloc n := length(s)
+    alloc from := rel_index(arg(args, 0), n, 0)
+    alloc to := rel_index(arg(args, 1), n, n)
+    if to <= from {
+        return ""
+    }
+    return s[from:to]
+}
+
+proc clamp(v, n, otherwise) {
+    if type_of(v) == 0 {
+        return otherwise
+    }
+    alloc i := to_integer(v)
+    if i < 0 {
+        return 0
+    }
+    if i > n {
+        return n
+    }
+    return i
+}
+
+proc n_substring(this, args) {
+    alloc s := this_str(this)
+    alloc n := length(s)
+    alloc a := clamp(arg(args, 0), n, 0)
+    alloc b := clamp(arg(args, 1), n, n)
+    if a > b {
+        alloc t := a
+        a := b
+        b := t
+    }
+    if a == b {
+        return ""
+    }
+    return s[a:b]
+}
+
+proc n_substr(this, args) {
+    alloc s := this_str(this)
+    alloc n := length(s)
+    alloc a := rel_index(arg(args, 0), n, 0)
+    alloc count := n - a
+    if type_of(arg(args, 1)) != 0 {
+        count := to_integer(args[1])
+    }
+    if count > n - a {
+        count := n - a
+    }
+    if count <= 0 {
+        return ""
+    }
+    return s[a:a + count]
+}
+
+proc n_to_upper(this, args) {
+    return change_case(this_str(this), true)
+}
+
+proc n_to_lower(this, args) {
+    return change_case(this_str(this), false)
+}
+
+proc n_trim(this, args) {
+    return trim_of(this_str(this), true, true)
+}
+
+proc n_trim_start(this, args) {
+    return trim_of(this_str(this), true, false)
+}
+
+proc n_trim_end(this, args) {
+    return trim_of(this_str(this), false, true)
+}
+
+proc pad(this, args, at_start) {
+    alloc s := this_str(this)
+    alloc want := to_integer(arg(args, 0))
+    alloc fill := " "
+    if type_of(arg(args, 1)) != 0 {
+        fill := to_str(args[1])
+    }
+    alloc need := want - length(s)
+    if need <= 0 or fill == "" {
+        return s
+    }
+    alloc p := repeat_str(fill, need // length(fill) + 1)[0:need]
+    if at_start {
+        return p + s
+    }
+    return s + p
+}
+
+proc n_pad_start(this, args) {
+    return pad(this, args, true)
+}
+
+proc n_pad_end(this, args) {
+    return pad(this, args, false)
+}
+
+proc n_repeat(this, args) {
+    alloc s := this_str(this)
+    alloc f := to_num(arg(args, 0))
+    if f < 0.0 or f == INF {
+        throw_range("Invalid count value: " + to_str(arg(args, 0)))
+    }
+    return repeat_str(s, to_integer(f))
+}
+
+proc n_concat(this, args) {
+    alloc s := this_str(this)
+    for a in args {
+        s := s + to_str(a)
+    }
+    return s
+}
+
+proc split_str(s, sep, limit) {
+    alloc out := []
+    if limit == 0 {
+        return out
+    }
+    if sep == "" {
+        for ch in s {
+            append(out, ch)
+            if length(out) >= limit {
+                break
+            }
+        }
+        return out
+    }
+    alloc b := string_bytes(s)
+    alloc sb := string_bytes(sep)
+    alloc ns := length(sb)
+    alloc at := 0
+    loop true {
+        alloc i := find_bytes(b, sb, at)
+        if i < 0 {
+            break
+        }
+        append(out, bytes_to_string(b[at:i]))
+        if length(out) >= limit {
+            return out
+        }
+        at := i + ns
+    }
+    append(out, bytes_to_string(b[at:]))
+    return out
+}
+
+proc n_split(this, args) {
+    alloc s := this_str(this)
+    alloc sep := arg(args, 0)
+    alloc limit := 4294967295
+    if type_of(arg(args, 1)) != 0 {
+        limit := to_uint32(args[1])
+    }
+    if class_of(sep) == 9 {
+        return RX[4](sep, s, limit)
+    }
+    if type_of(sep) == 0 {
+        return new_array([s])
+    }
+    return new_array(split_str(s, to_str(sep), limit))
+}
+
+# The text a replacement pattern ("$1 and $&") stands for.
+# m: [text of the match, groups...], at: where it was found.
+proc expand(rep, s, m, at, named) {
+    if find(rep, "$", 0) < 0 {
+        return rep
+    }
+    alloc out := ""
+    alloc n := length(rep)
+    alloc i := 0
+    loop i < n {
+        alloc ch := rep[i]
+        if ch == "$" and i + 1 < n {
+            alloc d := rep[i + 1]
+            if d == "$" {
+                out := out + "$"
+                i := i + 2
+                continue
+            }
+            if d == "&" {
+                out := out + m[0]
+                i := i + 2
+                continue
+            }
+            if d == "`" {
+                out := out + s[0:at]
+                i := i + 2
+                continue
+            }
+            if d == "'" {
+                out := out + s[at + length(m[0]):]
+                i := i + 2
+                continue
+            }
+            alloc dc := ascii(d)
+            if dc >= 48 and dc <= 57 {
+                alloc num := dc - 48
+                alloc used := 2
+                if i + 2 < n {
+                    alloc d2 := ascii(rep[i + 2])
+                    if d2 >= 48 and d2 <= 57 and num * 10 + d2 - 48 < length(m) {
+                        num := num * 10 + d2 - 48
+                        used := 3
+                    }
+                }
+                if num >= 1 and num < length(m) {
+                    if type_of(m[num]) == 4 {
+                        out := out + m[num]
+                    }
+                    i := i + used
+                    continue
+                }
+            }
+            if d == "<" and named != false {
+                alloc close := find(rep, ">", i + 2)
+                if close > 0 {
+                    alloc gv := get_r(named, rep[i + 2:close], named)
+                    if type_of(gv) != 0 {
+                        out := out + to_str(gv)
+                    }
+                    i := close + 1
+                    continue
+                }
+            }
+        }
+        out := out + ch
+        i := i + 1
+    }
+    return out
+}
+
+proc expand_fn() {
+    return expand
+}
+
+proc replace_str(s, pat, rep, all) {
+    alloc at := find(s, pat, 0)
+    if at < 0 {
+        return s
+    }
+    alloc is_fn := is_callable(rep)
+    alloc rs := ""
+    if is_fn == false {
+        rs := to_str(rep)
+    }
+    alloc out := ""
+    alloc pos := 0
+    alloc np := length(pat)
+    loop at >= 0 {
+        alloc with := ""
+        if is_fn {
+            with := to_str(call(rep, U, [pat, at * 1.0, s]))
+        } else {
+            with := expand(rs, s, [pat], at, false)
+        }
+        out := out + s[pos:at] + with
+        pos := at + np
+        if all == false {
+            break
+        }
+        if np == 0 {
+            if pos >= length(s) {
+                break
+            }
+            out := out + s[pos]
+            pos := pos + 1
+            at := pos
+        } else {
+            at := find(s, pat, pos)
+        }
+    }
+    return out + s[pos:]
+}
+
+proc n_replace(this, args) {
+    alloc s := this_str(this)
+    alloc pat := arg(args, 0)
+    if class_of(pat) == 9 {
+        return RX[2](pat, s, arg(args, 1), false)
+    }
+    return replace_str(s, to_str(pat), arg(args, 1), false)
+}
+
+proc n_replace_all(this, args) {
+    alloc s := this_str(this)
+    alloc pat := arg(args, 0)
+    if class_of(pat) == 9 {
+        return RX[2](pat, s, arg(args, 1), true)
+    }
+    return replace_str(s, to_str(pat), arg(args, 1), true)
+}
+
+proc n_match(this, args) {
+    return RX[0](arg(args, 0), this_str(this))
+}
+
+proc n_match_all(this, args) {
+    return RX[1](arg(args, 0), this_str(this))
+}
+
+proc n_search(this, args) {
+    return RX[3](arg(args, 0), this_str(this))
+}
+
+proc n_locale_compare(this, args) {
+    alloc s := this_str(this)
+    alloc o := to_str(arg(args, 0))
+    if s == o {
+        return 0.0
+    }
+    # letters before their capitals, the two together before the next letter
+    alloc a := change_case(s, false)
+    alloc b := change_case(o, false)
+    if a == b {
+        if s > o {
+            return -1.0
+        }
+        return 1.0
+    }
+    if a < b {
+        return -1.0
+    }
+    return 1.0
+}
+
+proc n_normalize(this, args) {
+    return this_str(this)
+}
+
+proc n_str_iterator(this, args) {
+    return new_iter_object([1, this_str(this), 0])
+}
+
+# --- Number -----------------------------------------------------------------------------
+
+proc this_num(this) {
+    if type_of(this) == 3 {
+        return this
+    }
+    if class_of(this) == 5 {
+        return H[this][3]
+    }
+    throw_type("Number.prototype method requires that 'this' be a Number")
+}
+
+proc n_number(this, args) {
+    alloc v := 0.0
+    if length(args) > 0 {
+        v := to_num(args[0])
+    }
+    if type_of(new_target()) == 0 {
+        return v
+    }
+    alloc h := new_obj(5, I[5])
+    H[h][3] := v
+    return h
+}
+
+proc is_finite(f) {
+    return f == f and f != INF and f != NEG_INF
+}
+
+proc n_num_is_integer(this, args) {
+    alloc v := arg(args, 0)
+    return type_of(v) == 3 and is_finite(v) and floor_f(v) == v
+}
+
+proc n_num_is_safe_integer(this, args) {
+    alloc v := arg(args, 0)
+    return type_of(v) == 3 and is_finite(v) and floor_f(v) == v and v <= 9007199254740991.0 and v >= -9007199254740991.0
+}
+
+proc n_num_is_finite(this, args) {
+    alloc v := arg(args, 0)
+    return type_of(v) == 3 and is_finite(v)
+}
+
+proc n_num_is_nan(this, args) {
+    alloc v := arg(args, 0)
+    return type_of(v) == 3 and v != v
+}
+
+alloc DIGITS := "0123456789abcdefghijklmnopqrstuvwxyz"
+
+proc radix_str(f, radix) {
+    if f != f {
+        return "NaN"
+    }
+    if f == INF {
+        return "Infinity"
+    }
+    if f == NEG_INF {
+        return "-Infinity"
+    }
+    alloc neg := f < 0.0
+    if neg {
+        f := f * -1.0
+    }
+    alloc whole := floor_f(f)
+    alloc frac := f - whole
+    alloc s := ""
+    if whole < 9000000000000000000.0 {
+        alloc n := int(whole)
+        if n == 0 {
+            s := "0"
+        }
+        loop n > 0 {
+            s := DIGITS[n % radix] + s
+            n := n // radix
+        }
+    } else {
+        alloc fr := radix * 1.0
+        loop whole >= 1.0 {
+            alloc q := floor_f(whole / fr)
+            alloc d := int(whole - q * fr)
+            if d < 0 {
+                d := 0
+            }
+            s := DIGITS[d] + s
+            whole := q
+        }
+    }
+    if frac > 0.0 {
+        s := s + "."
+        alloc count := 0
+        loop frac > 0.0 and count < 52 {
+            frac := frac * radix
+            alloc d2 := int(frac)
+            s := s + DIGITS[d2]
+            frac := frac - d2
+            count := count + 1
+        }
+    }
+    if neg {
+        return "-" + s
+    }
+    return s
+}
+
+proc n_num_to_string(this, args) {
+    alloc f := this_num(this)
+    alloc r := arg(args, 0)
+    if type_of(r) == 0 {
+        return num_to_str(f)
+    }
+    alloc radix := to_integer(r)
+    if radix == 10 {
+        return num_to_str(f)
+    }
+    if radix < 2 or radix > 36 {
+        throw_range("toString() radix must be between 2 and 36")
+    }
+    return radix_str(f, radix)
+}
+
+proc zeros(n) {
+    return repeat_str("0", n)
+}
+
+# |x| with d digits after the point, x being 0 or more and below 1e21.
+proc fixed(x, d) {
+    alloc scale := pow_f(10.0, d * 1.0)
+    alloc y := x * scale
+    if y >= 9000000000000000.0 {
+        # no digit after the point is known any more
+        alloc w := num_to_str(floor_f(x))
+        if d > 0 {
+            return w + "." + zeros(d)
+        }
+        return w
+    }
+    alloc n := floor(y + 0.5)
+    # x.5 that is not exactly a half in binary is written as it is
+    alloc back := n * 1.0 / scale
+    if back > x and (back - x) * scale > 0.5 {
+        n := n - 1
+    }
+    alloc s := "" + n
+    if d == 0 {
+        return s
+    }
+    if length(s) <= d {
+        s := zeros(d + 1 - length(s)) + s
+    }
+    alloc k := length(s) - d
+    return s[0:k] + "." + s[k:]
+}
+
+proc n_to_fixed(this, args) {
+    alloc f := this_num(this)
+    alloc d := to_integer(arg(args, 0))
+    if d < 0 or d > 100 {
+        throw_range("toFixed() digits argument must be between 0 and 100")
+    }
+    if f != f or f == INF or f == NEG_INF {
+        return num_to_str(f)
+    }
+    alloc neg := f < 0.0
+    if neg {
+        f := f * -1.0
+    }
+    if f >= 1000000000000000000000.0 {
+        if neg {
+            return "-" + num_to_str(f)
+        }
+        return num_to_str(f)
+    }
+    alloc s := fixed(f, d)
+    if neg {
+        alloc all_zero := true
+        for ch in s {
+            if ch != "0" and ch != "." {
+                all_zero := false
+            }
+        }
+        if all_zero == false {
+            return "-" + s
+        }
+    }
+    return s
+}
+
+alloc LN10 := 2.302585092994046
+
+# The power of ten x starts at: 10^e <= x < 10^(e+1), x above 0.
+proc exponent10(x) {
+    alloc e := floor(log(x) / LN10)
+    alloc p := pow_f(10.0, e * 1.0)
+    if p > x {
+        e := e - 1
+    } elif p * 10.0 <= x {
+        e := e + 1
+    }
+    return e
+}
+
+proc exp_form(x, digits) {
+    # x above 0; digits after the point of the mantissa
+    alloc e := exponent10(x)
+    alloc m := x / pow_f(10.0, e * 1.0)
+    alloc s := fixed(m, digits)
+    if s[0:2] == "10" {
+        e := e + 1
+        s := fixed(m / 10.0, digits)
+    }
+    if e < 0 {
+        return s + "e-" + (0 - e)
+    }
+    return s + "e+" + e
+}
+
+proc n_to_precision(this, args) {
+    alloc f := this_num(this)
+    if type_of(arg(args, 0)) == 0 {
+        return num_to_str(f)
+    }
+    alloc p := to_integer(args[0])
+    if f != f or f == INF or f == NEG_INF {
+        return num_to_str(f)
+    }
+    if p < 1 or p > 100 {
+        throw_range("toPrecision() argument must be between 1 and 100")
+    }
+    alloc neg := f < 0.0
+    if neg {
+        f := f * -1.0
+    }
+    alloc s := ""
+    if f == 0.0 {
+        s := fixed(0.0, p - 1)
+    } else {
+        alloc e := exponent10(f)
+        if e < -6 or e >= p {
+            s := exp_form(f, p - 1)
+        } else {
+            s := fixed(f, p - 1 - e)
+            # rounding may have gained a digit: 9.99 to 2 places is 10
+            alloc count := 0
+            for ch in s {
+                if ch != "." {
+                    count := count + 1
+                }
+            }
+            if s[0] != "0" and count > p {
+                if e + 1 >= p {
+                    s := exp_form(f, p - 1)
+                } else {
+                    s := fixed(f, p - 2 - e)
+                }
+            }
+        }
+    }
+    if neg {
+        return "-" + s
+    }
+    return s
+}
+
+proc n_to_exponential(this, args) {
+    alloc f := this_num(this)
+    if f != f or f == INF or f == NEG_INF {
+        return num_to_str(f)
+    }
+    alloc neg := f < 0.0
+    if neg {
+        f := f * -1.0
+    }
+    alloc s := ""
+    if type_of(arg(args, 0)) == 0 {
+        # as many digits as the number has
+        alloc t := num_to_str(f)
+        alloc digits := 0
+        alloc seen := false
+        for ch in t {
+            if ch == "e" {
+                break
+            }
+            if ch != "." and (ch != "0" or seen) {
+                seen := true
+                digits := digits + 1
+            }
+        }
+        if digits < 1 {
+            digits := 1
+        }
+        if f == 0.0 {
+            s := "0e+0"
+        } else {
+            s := exp_form(f, digits - 1)
+            # trailing zeros of the mantissa go
+            alloc ep := find(s, "e", 0)
+            alloc mant := s[0:ep]
+            if find(mant, ".", 0) >= 0 {
+                alloc end := length(mant)
+                loop end > 1 and mant[end - 1] == "0" {
+                    end := end - 1
+                }
+                if mant[end - 1] == "." {
+                    end := end - 1
+                }
+                s := mant[0:end] + s[ep:]
+            }
+        }
+    } else {
+        alloc d := to_integer(args[0])
+        if d < 0 or d > 100 {
+            throw_range("toExponential() argument must be between 0 and 100")
+        }
+        if f == 0.0 {
+            s := fixed(0.0, d) + "e+0"
+        } else {
+            s := exp_form(f, d)
+        }
+    }
+    if neg {
+        return "-" + s
+    }
+    return s
+}
+
+proc n_num_value_of(this, args) {
+    return this_num(this)
+}
+
+proc n_num_to_locale_string(this, args) {
+    alloc f := this_num(this)
+    if f != f or f == INF or f == NEG_INF {
+        return num_to_str(f)
+    }
+    alloc neg := f < 0.0
+    if neg {
+        f := f * -1.0
+    }
+    alloc s := fixed(f, 3)
+    alloc dot := find(s, ".", 0)
+    alloc whole := s[0:dot]
+    alloc frac := s[dot + 1:]
+    alloc end := length(frac)
+    loop end > 0 and frac[end - 1] == "0" {
+        end := end - 1
+    }
+    frac := frac[0:end]
+    alloc out := ""
+    alloc n := length(whole)
+    alloc i := 0
+    loop i < n {
+        if i > 0 and (n - i) % 3 == 0 {
+            out := out + ","
+        }
+        out := out + whole[i]
+        i := i + 1
+    }
+    if frac != "" {
+        out := out + "." + frac
+    }
+    if neg {
+        return "-" + out
+    }
+    return out
+}
+
+# --- Math -------------------------------------------------------------------------------
+
+alloc PI := 3.141592653589793
+alloc E := 2.718281828459045
+alloc LN2 := 0.6931471805599453
+
+proc num1(args) {
+    if length(args) == 0 {
+        return NAN
+    }
+    alloc v := args[0]
+    if type_of(v) == 3 {
+        return v
+    }
+    return to_num(v)
+}
+
+proc n_abs(this, args) {
+    alloc x := num1(args)
+    if x < 0.0 {
+        return x * -1.0
+    }
+    if x == 0.0 {
+        return 0.0
+    }
+    return x
+}
+
+proc n_floor(this, args) {
+    alloc x := num1(args)
+    if x < 9000000000000000.0 and x > -9000000000000000.0 {
+        return floor(x) * 1.0
+    }
+    return x
+}
+
+proc n_ceil(this, args) {
+    alloc x := num1(args)
+    if x < 9000000000000000.0 and x > -9000000000000000.0 {
+        alloc r := ceil(x) * 1.0
+        if r == 0.0 and x < 0.0 {
+            return -0.0
+        }
+        return r
+    }
+    return x
+}
+
+proc n_round(this, args) {
+    alloc x := num1(args)
+    if x < 9000000000000000.0 and x > -9000000000000000.0 {
+        alloc r := floor(x + 0.5) * 1.0
+        if r == 0.0 and x < 0.0 {
+            return -0.0
+        }
+        return r
+    }
+    return x
+}
+
+proc n_trunc(this, args) {
+    return trunc_f(num1(args))
+}
+
+proc n_sign(this, args) {
+    alloc x := num1(args)
+    if x > 0.0 {
+        return 1.0
+    }
+    if x < 0.0 {
+        return -1.0
+    }
+    return x
+}
+
+proc n_sqrt(this, args) {
+    alloc x := num1(args)
+    if x < 0.0 or x != x {
+        return NAN
+    }
+    if x == INF {
+        return INF
+    }
+    return sqrt(x)
+}
+
+proc n_cbrt(this, args) {
+    alloc x := num1(args)
+    if x != x or x == 0.0 or x == INF or x == NEG_INF {
+        return x
+    }
+    alloc neg := x < 0.0
+    if neg {
+        x := x * -1.0
+    }
+    alloc r := pow_f(x, 1.0 / 3.0)
+    # one step of Newton makes whole cubes come out whole
+    r := r - (r * r * r - x) / (3.0 * r * r)
+    if neg {
+        return r * -1.0
+    }
+    return r
+}
+
+proc n_pow(this, args) {
+    alloc a := to_num(arg(args, 0))
+    return pow_f(a, to_num(arg(args, 1)))
+}
+
+proc n_max(this, args) {
+    alloc m := NEG_INF
+    for a in args {
+        alloc x := a
+        if type_of(x) != 3 {
+            x := to_num(x)
+        }
+        if x != x {
+            return NAN
+        }
+        if x > m {
+            m := x
+        }
+    }
+    return m
+}
+
+proc n_min(this, args) {
+    alloc m := INF
+    for a in args {
+        alloc x := a
+        if type_of(x) != 3 {
+            x := to_num(x)
+        }
+        if x != x {
+            return NAN
+        }
+        if x < m {
+            m := x
+        }
+    }
+    return m
+}
+
+alloc SEED := 88172645463325252
+
+proc n_random(this, args) {
+    alloc s := SEED
+    s := s ^ (s << 13)
+    s := s ^ ((s >> 7) & 144115188075855871)
+    s := s ^ (s << 17)
+    SEED := s
+    return (s & 9007199254740991) / 9007199254740992.0
+}
+
+proc n_sin(this, args) {
+    alloc x := num1(args)
+    if is_finite(x) == false {
+        return NAN
+    }
+    return sin(x)
+}
+
+proc n_cos(this, args) {
+    alloc x := num1(args)
+    if is_finite(x) == false {
+        return NAN
+    }
+    return cos(x)
+}
+
+proc n_tan(this, args) {
+    alloc x := num1(args)
+    if is_finite(x) == false {
+        return NAN
+    }
+    return tan(x)
+}
+
+proc atan_f(x) {
+    if x != x {
+        return NAN
+    }
+    alloc neg := x < 0.0
+    if neg {
+        x := x * -1.0
+    }
+    alloc r := 0.0
+    if x > 1000000000000000000.0 {
+        r := PI / 2.0
+    } else {
+        alloc inv := x > 1.0
+        if inv {
+            x := 1.0 / x
+        }
+        alloc shift := 0.0
+        if x > 0.2679491924311227 {
+            x := (x * 1.7320508075688772 - 1.0) / (x + 1.7320508075688772)
+            shift := PI / 6.0
+        }
+        alloc x2 := x * x
+        alloc term := x
+        alloc sum := x
+        alloc k := 3
+        loop k < 40 {
+            term := term * x2 * -1.0
+            sum := sum + term / k
+            k := k + 2
+        }
+        r := shift + sum
+        if inv {
+            r := PI / 2.0 - r
+        }
+    }
+    if neg {
+        return r * -1.0
+    }
+    return r
+}
+
+proc atan2_f(y, x) {
+    if x != x or y != y {
+        return NAN
+    }
+    if x == 0.0 {
+        if y == 0.0 {
+            if is_neg_zero(x) {
+                if is_neg_zero(y) {
+                    return PI * -1.0
+                }
+                return PI
+            }
+            return y
+        }
+        if y > 0.0 {
+            return PI / 2.0
+        }
+        return PI / -2.0
+    }
+    if x == INF or x == NEG_INF {
+        if y == INF or y == NEG_INF {
+            alloc q := PI / 4.0
+            if x < 0.0 {
+                q := 3.0 * PI / 4.0
+            }
+            if y < 0.0 {
+                return q * -1.0
+            }
+            return q
+        }
+        if x > 0.0 {
+            if y < 0.0 {
+                return -0.0
+            }
+            return 0.0
+        }
+        if y < 0.0 {
+            return PI * -1.0
+        }
+        return PI
+    }
+    if y == INF {
+        return PI / 2.0
+    }
+    if y == NEG_INF {
+        return PI / -2.0
+    }
+    alloc a := atan_f(y / x)
+    if x > 0.0 {
+        return a
+    }
+    if y >= 0.0 {
+        return a + PI
+    }
+    return a - PI
+}
+
+proc n_atan(this, args) {
+    return atan_f(num1(args))
+}
+
+proc n_atan2(this, args) {
+    alloc y := to_num(arg(args, 0))
+    return atan2_f(y, to_num(arg(args, 1)))
+}
+
+proc n_asin(this, args) {
+    alloc x := num1(args)
+    if x != x or x > 1.0 or x < -1.0 {
+        return NAN
+    }
+    return atan2_f(x, sqrt(1.0 - x * x))
+}
+
+proc n_acos(this, args) {
+    alloc x := num1(args)
+    if x != x or x > 1.0 or x < -1.0 {
+        return NAN
+    }
+    return atan2_f(sqrt(1.0 - x * x), x)
+}
+
+proc exp_f(x) {
+    if x != x {
+        return NAN
+    }
+    if x > 709.782712893384 {
+        return INF
+    }
+    if x < -745.2 {
+        return 0.0
+    }
+    if x == 0.0 {
+        return 1.0
+    }
+    return pow_f(E, x)
+}
+
+proc log_f(x) {
+    if x != x or x < 0.0 {
+        return NAN
+    }
+    if x == 0.0 {
+        return NEG_INF
+    }
+    if x == INF {
+        return INF
+    }
+    return log(x)
+}
+
+proc n_exp(this, args) {
+    return exp_f(num1(args))
+}
+
+proc n_expm1(this, args) {
+    alloc x := num1(args)
+    if x > -0.00001 and x < 0.00001 {
+        return x + x * x / 2.0
+    }
+    return exp_f(x) - 1.0
+}
+
+proc n_log(this, args) {
+    return log_f(num1(args))
+}
+
+proc n_log2(this, args) {
+    alloc x := num1(args)
+    alloc r := log_f(x) / LN2
+    if is_finite(r) {
+        alloc w := floor_f(r + 0.5)
+        if pow_f(2.0, w) == x {
+            return w
+        }
+    }
+    return r
+}
+
+proc n_log10(this, args) {
+    alloc x := num1(args)
+    alloc r := log_f(x) / LN10
+    if is_finite(r) {
+        alloc w := floor_f(r + 0.5)
+        if pow_f(10.0, w) == x {
+            return w
+        }
+    }
+    return r
+}
+
+proc n_log1p(this, args) {
+    alloc x := num1(args)
+    if x > -0.00001 and x < 0.00001 {
+        return x - x * x / 2.0
+    }
+    return log_f(1.0 + x)
+}
+
+proc n_sinh(this, args) {
+    alloc x := num1(args)
+    return (exp_f(x) - exp_f(x * -1.0)) / 2.0
+}
+
+proc n_cosh(this, args) {
+    alloc x := num1(args)
+    return (exp_f(x) + exp_f(x * -1.0)) / 2.0
+}
+
+proc n_tanh(this, args) {
+    alloc x := num1(args)
+    if x > 20.0 {
+        return 1.0
+    }
+    if x < -20.0 {
+        return -1.0
+    }
+    alloc a := exp_f(x)
+    alloc b := exp_f(x * -1.0)
+    return (a - b) / (a + b)
+}
+
+proc n_hypot(this, args) {
+    alloc sum := 0.0
+    for a in args {
+        alloc x := to_num(a)
+        sum := sum + x * x
+    }
+    if sum != sum {
+        return NAN
+    }
+    if sum == INF {
+        return INF
+    }
+    return sqrt(sum)
+}
+
+proc n_fround(this, args) {
+    return num1(args)
+}
+
+proc n_imul(this, args) {
+    alloc a := to_int32(arg(args, 0))
+    alloc b := to_int32(arg(args, 1))
+    return wrap32((a & 65535) * b + ((((a >> 16) & 65535) * b) << 16)) * 1.0
+}
+
+proc n_clz32(this, args) {
+    alloc v := to_uint32(arg(args, 0))
+    alloc n := 32
+    loop v > 0 {
+        v := v >> 1
+        n := n - 1
+    }
+    return n * 1.0
+}
+
+# --- text for an address ------------------------------------------------------------------
+
+alloc HEXU := "0123456789ABCDEF"
+
+proc uri_encode(s, keep) {
+    alloc b := string_bytes(s)
+    alloc out := bytes_repeat(0, 0)
+    for ch in b {
+        alloc ok := (ch >= 97 and ch <= 122) or (ch >= 65 and ch <= 90) or (ch >= 48 and ch <= 57)
+        if ok == false and ch < 128 {
+            ok := has_key(keep, chr(ch))
+        }
+        if ok {
+            append(out, ch)
+        } else {
+            append(out, 37)
+            append(out, ascii(HEXU[ch >> 4]))
+            append(out, ascii(HEXU[ch & 15]))
+        }
+    }
+    return bytes_to_string(out)
+}
+
+alloc KEEP_COMPONENT := {"-": 1, "_": 1, ".": 1, "!": 1, "~": 1, "*": 1, "'": 1, "(": 1, ")": 1}
+alloc KEEP_URI := {"-": 1, "_": 1, ".": 1, "!": 1, "~": 1, "*": 1, "'": 1, "(": 1, ")": 1,
+    ";": 1, "/": 1, "?": 1, ":": 1, "@": 1, "&": 1, "=": 1, "+": 1, "$": 1, ",": 1, "#": 1}
+alloc RESERVED := {";": 1, "/": 1, "?": 1, ":": 1, "@": 1, "&": 1, "=": 1, "+": 1, "$": 1, ",": 1, "#": 1}
+
+proc hexval(ch) {
+    if ch >= 48 and ch <= 57 {
+        return ch - 48
+    }
+    alloc l := ch | 32
+    if l >= 97 and l <= 102 {
+        return l - 87
+    }
+    return -1
+}
+
+proc uri_error() {
+    throw_val(make_error(22, "URI malformed"))
+}
+
+proc uri_decode(s, keep_reserved) {
+    alloc b := string_bytes(s)
+    alloc n := length(b)
+    alloc out := bytes_repeat(0, 0)
+    alloc i := 0
+    alloc any := false
+    loop i < n {
+        alloc ch := b[i]
+        if ch == 37 {
+            if i + 2 >= n {
+                uri_error()
+            }
+            alloc h1 := hexval(b[i + 1])
+            alloc h2 := hexval(b[i + 2])
+            if h1 < 0 or h2 < 0 {
+                uri_error()
+            }
+            alloc v := h1 * 16 + h2
+            if keep_reserved and v < 128 and has_key(RESERVED, chr(v)) {
+                append(out, 37)
+                append(out, b[i + 1])
+                append(out, b[i + 2])
+            } else {
+                append(out, v)
+                any := true
+            }
+            i := i + 3
+        } else {
+            append(out, ch)
+            i := i + 1
+        }
+    }
+    if any == false {
+        return s
+    }
+    # what came out must be UTF-8
+    alloc m := length(out)
+    alloc j := 0
+    loop j < m {
+        alloc c2 := out[j]
+        alloc more := 0
+        if c2 >= 240 and c2 < 248 {
+            more := 3
+        } elif c2 >= 224 {
+            more := 2
+        } elif c2 >= 192 {
+            more := 1
+        } elif c2 >= 128 {
+            uri_error()
+        }
+        if c2 >= 248 or (more > 0 and j + more >= m) {
+            uri_error()
+        }
+        alloc k := 1
+        loop k <= more {
+            if (out[j + k] & 192) != 128 {
+                uri_error()
+            }
+            k := k + 1
+        }
+        j := j + more + 1
+    }
+    return bytes_to_string(out)
+}
+
+proc n_encode_uri_component(this, args) {
+    return uri_encode(to_str(arg(args, 0)), KEEP_COMPONENT)
+}
+
+proc n_encode_uri(this, args) {
+    return uri_encode(to_str(arg(args, 0)), KEEP_URI)
+}
+
+proc n_decode_uri_component(this, args) {
+    return uri_decode(to_str(arg(args, 0)), false)
+}
+
+proc n_decode_uri(this, args) {
+    return uri_decode(to_str(arg(args, 0)), true)
+}
+
+alloc KEEP_ESCAPE := {"@": 1, "*": 1, "_": 1, "+": 1, "-": 1, ".": 1, "/": 1}
+
+proc n_escape(this, args) {
+    alloc s := to_str(arg(args, 0))
+    alloc out := ""
+    for ch in s {
+        alloc cp := ascii(ch)
+        alloc ok := (cp >= 97 and cp <= 122) or (cp >= 65 and cp <= 90) or (cp >= 48 and cp <= 57)
+        if ok or (cp < 128 and has_key(KEEP_ESCAPE, ch)) {
+            out := out + ch
+        } elif cp < 256 {
+            out := out + "%" + HEXU[cp >> 4] + HEXU[cp & 15]
+        } else {
+            if cp > 65535 {
+                cp := 65533
+            }
+            out := out + "%u" + HEXU[cp >> 12] + HEXU[(cp >> 8) & 15] + HEXU[(cp >> 4) & 15] + HEXU[cp & 15]
+        }
+    }
+    return out
+}
+
+proc n_unescape(this, args) {
+    alloc s := to_str(arg(args, 0))
+    alloc n := length(s)
+    alloc out := bytes_repeat(0, 0)
+    alloc i := 0
+    loop i < n {
+        alloc ch := s[i]
+        if ch == "%" and i + 5 < n and s[i + 1] == "u" {
+            alloc v := 0
+            alloc ok := true
+            alloc k := 2
+            loop k < 6 {
+                alloc h := hexval(ascii(s[i + k]))
+                if h < 0 {
+                    ok := false
+                }
+                v := v * 16 + h
+                k := k + 1
+            }
+            if ok {
+                put_utf8(out, v)
+                i := i + 6
+                continue
+            }
+        }
+        if ch == "%" and i + 2 < n {
+            alloc h1 := hexval(ascii(s[i + 1]))
+            alloc h2 := hexval(ascii(s[i + 2]))
+            if h1 >= 0 and h2 >= 0 {
+                put_utf8(out, h1 * 16 + h2)
+                i := i + 3
+                continue
+            }
+        }
+        put_utf8(out, ascii(ch))
+        i := i + 1
+    }
+    return bytes_to_string(out)
+}
+
+alloc B64 := "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
+
+proc n_btoa(this, args) {
+    alloc s := to_str(arg(args, 0))
+    alloc bytes := []
+    for ch in s {
+        alloc cp := ascii(ch)
+        if cp > 255 {
+            throw_val(make_error(8, "The string to be encoded contains characters outside of the Latin1 range."))
+        }
+        append(bytes, cp)
+    }
+    alloc out := bytes_repeat(0, 0)
+    alloc n := length(bytes)
+    alloc i := 0
+    loop i < n {
+        alloc b0 := bytes[i]
+        alloc b1 := 0
+        alloc b2 := 0
+        if i + 1 < n {
+            b1 := bytes[i + 1]
+        }
+        if i + 2 < n {
+            b2 := bytes[i + 2]
+        }
+        append(out, ascii(B64[b0 >> 2]))
+        append(out, ascii(B64[((b0 & 3) << 4) | (b1 >> 4)]))
+        if i + 1 < n {
+            append(out, ascii(B64[((b1 & 15) << 2) | (b2 >> 6)]))
+        } else {
+            append(out, 61)
+        }
+        if i + 2 < n {
+            append(out, ascii(B64[b2 & 63]))
+        } else {
+            append(out, 61)
+        }
+        i := i + 3
+    }
+    return bytes_to_string(out)
+}
+
+proc b64val(ch) {
+    if ch >= 65 and ch <= 90 {
+        return ch - 65
+    }
+    if ch >= 97 and ch <= 122 {
+        return ch - 71
+    }
+    if ch >= 48 and ch <= 57 {
+        return ch + 4
+    }
+    if ch == 43 or ch == 45 {
+        return 62
+    }
+    if ch == 47 or ch == 95 {
+        return 63
+    }
+    return -1
+}
+
+proc n_atob(this, args) {
+    alloc b := string_bytes(to_str(arg(args, 0)))
+    alloc out := bytes_repeat(0, 0)
+    alloc acc := 0
+    alloc bits := 0
+    for ch in b {
+        if ch == 61 or ch == 32 or ch == 10 or ch == 13 or ch == 9 {
+            continue
+        }
+        alloc v := b64val(ch)
+        if v < 0 {
+            throw_val(make_error(8, "The string to be decoded is not correctly encoded."))
+        }
+        acc := (acc << 6) | v
+        bits := bits + 6
+        if bits >= 8 {
+            bits := bits - 8
+            put_utf8(out, (acc >> bits) & 255)
+        }
+    }
+    return bytes_to_string(out)
+}
+
+# --- putting it in place ----------------------------------------------------------------
+
+proc setup() {
+    alloc g := I[0]
+    alloc sp := I[4]
+    alloc s := def_ctor("String", n_string, 1, sp)
+    def(s, "fromCharCode", n_from_char_code, 1)
+    def(s, "fromCodePoint", n_from_code_point, 1)
+    def(s, "raw", n_raw, 1)
+    def(sp, "toString", n_str_to_string, 0)
+    def(sp, "valueOf", n_str_to_string, 0)
+    def(sp, "charAt", n_char_at, 1)
+    def(sp, "charCodeAt", n_char_code_at, 1)
+    def(sp, "codePointAt", n_code_point_at, 1)
+    def(sp, "at", n_str_at, 1)
+    def(sp, "indexOf", n_index_of, 1)
+    def(sp, "lastIndexOf", n_last_index_of, 1)
+    def(sp, "includes", n_includes, 1)
+    def(sp, "startsWith", n_starts_with, 1)
+    def(sp, "endsWith", n_ends_with, 1)
+    def(sp, "slice", n_slice, 2)
+    def(sp, "substring", n_substring, 2)
+    def(sp, "substr", n_substr, 2)
+    def(sp, "toUpperCase", n_to_upper, 0)
+    def(sp, "toLowerCase", n_to_lower, 0)
+    def(sp, "toLocaleUpperCase", n_to_upper, 0)
+    def(sp, "toLocaleLowerCase", n_to_lower, 0)
+    def(sp, "trim", n_trim, 0)
+    def(sp, "trimStart", n_trim_start, 0)
+    def(sp, "trimEnd", n_trim_end, 0)
+    def(sp, "trimLeft", n_trim_start, 0)
+    def(sp, "trimRight", n_trim_end, 0)
+    def(sp, "padStart", n_pad_start, 2)
+    def(sp, "padEnd", n_pad_end, 2)
+    def(sp, "repeat", n_repeat, 1)
+    def(sp, "concat", n_concat, 1)
+    def(sp, "split", n_split, 2)
+    def(sp, "replace", n_replace, 2)
+    def(sp, "replaceAll", n_replace_all, 2)
+    def(sp, "match", n_match, 1)
+    def(sp, "matchAll", n_match_all, 1)
+    def(sp, "search", n_search, 1)
+    def(sp, "localeCompare", n_locale_compare, 1)
+    def(sp, "normalize", n_normalize, 0)
+    def(sp, "@@iterator", n_str_iterator, 0)
+
+    alloc np := I[5]
+    alloc n := def_ctor("Number", n_number, 1, np)
+    def(n, "isInteger", n_num_is_integer, 1)
+    def(n, "isSafeInteger", n_num_is_safe_integer, 1)
+    def(n, "isFinite", n_num_is_finite, 1)
+    def(n, "isNaN", n_num_is_nan, 1)
+    define_hidden(n, "parseFloat", get(g, "parseFloat"))
+    define_hidden(n, "parseInt", get(g, "parseInt"))
+    define_hidden(n, "MAX_SAFE_INTEGER", 9007199254740991.0)
+    define_hidden(n, "MIN_SAFE_INTEGER", -9007199254740991.0)
+    define_hidden(n, "MAX_VALUE", bits_to_float(9218868437227405311))
+    define_hidden(n, "MIN_VALUE", bits_to_float(1))
+    define_hidden(n, "EPSILON", bits_to_float(4372995238176751616))
+    define_hidden(n, "POSITIVE_INFINITY", INF)
+    define_hidden(n, "NEGATIVE_INFINITY", NEG_INF)
+    define_hidden(n, "NaN", NAN)
+    def(np, "toString", n_num_to_string, 1)
+    def(np, "toFixed", n_to_fixed, 1)
+    def(np, "toPrecision", n_to_precision, 1)
+    def(np, "toExponential", n_to_exponential, 1)
+    def(np, "valueOf", n_num_value_of, 0)
+    def(np, "toLocaleString", n_num_to_locale_string, 0)
+
+    alloc m := new_object()
+    define_hidden(g, "Math", m)
+    define_hidden(m, "@@toStringTag", "Math")
+    define_hidden(m, "PI", PI)
+    define_hidden(m, "E", E)
+    define_hidden(m, "LN2", LN2)
+    define_hidden(m, "LN10", LN10)
+    define_hidden(m, "LOG2E", 1.4426950408889634)
+    define_hidden(m, "LOG10E", 0.4342944819032518)
+    define_hidden(m, "SQRT2", 1.4142135623730951)
+    define_hidden(m, "SQRT1_2", 0.7071067811865476)
+    def(m, "abs", n_abs, 1)
+    def(m, "floor", n_floor, 1)
+    def(m, "ceil", n_ceil, 1)
+    def(m, "round", n_round, 1)
+    def(m, "trunc", n_trunc, 1)
+    def(m, "sign", n_sign, 1)
+    def(m, "sqrt", n_sqrt, 1)
+    def(m, "cbrt", n_cbrt, 1)
+    def(m, "pow", n_pow, 2)
+    def(m, "max", n_max, 2)
+    def(m, "min", n_min, 2)
+    def(m, "random", n_random, 0)
+    def(m, "sin", n_sin, 1)
+    def(m, "cos", n_cos, 1)
+    def(m, "tan", n_tan, 1)
+    def(m, "asin", n_asin, 1)
+    def(m, "acos", n_acos, 1)
+    def(m, "atan", n_atan, 1)
+    def(m, "atan2", n_atan2, 2)
+    def(m, "exp", n_exp, 1)
+    def(m, "expm1", n_expm1, 1)
+    def(m, "log", n_log, 1)
+    def(m, "log2", n_log2, 1)
+    def(m, "log10", n_log10, 1)
+    def(m, "log1p", n_log1p, 1)
+    def(m, "sinh", n_sinh, 1)
+    def(m, "cosh", n_cosh, 1)
+    def(m, "tanh", n_tanh, 1)
+    def(m, "hypot", n_hypot, 2)
+    def(m, "fround", n_fround, 1)
+    def(m, "imul", n_imul, 2)
+    def(m, "clz32", n_clz32, 1)
+    alloc rb := random_bytes(8)
+    alloc seed := 0
+    for b in rb {
+        seed := (seed << 8) | b
+    }
+    if seed == 0 {
+        seed := 88172645463325252
+    }
+    SEED := seed
+
+    def(g, "encodeURIComponent", n_encode_uri_component, 1)
+    def(g, "encodeURI", n_encode_uri, 1)
+    def(g, "decodeURIComponent", n_decode_uri_component, 1)
+    def(g, "decodeURI", n_decode_uri, 1)
+    def(g, "escape", n_escape, 1)
+    def(g, "unescape", n_unescape, 1)
+    def(g, "btoa", n_btoa, 1)
+    def(g, "atob", n_atob, 1)
+    return true
+}

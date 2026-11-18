@@ -1,0 +1,1633 @@
+;;;omg
+
+# tools/browser/js/lib_base.omg
+#
+# The standard library of the JavaScript engine, first part: Object,
+# Function, the errors, Symbol, Boolean, Reflect, JSON and the global
+# functions (parseInt and friends).
+#
+# A function of the library is an OMG proc taking (this, args), args
+# being a list; setup() hangs them on the objects core.omg made.
+
+import "core.omg" as c
+
+alloc X := c.exports()
+alloc H := X["H"]
+alloc I := X["I"]
+alloc arg := X["arg"]
+alloc def := X["def"]
+alloc def_ctor := X["def_ctor"]
+alloc def_getter := X["def_getter"]
+alloc def_setter := X["def_setter"]
+alloc define := X["define"]
+alloc define_hidden := X["define_hidden"]
+alloc define_accessor := X["define_accessor"]
+alloc hide := X["hide"]
+alloc get := X["get"]
+alloc get_r := X["get_r"]
+alloc getv := X["getv"]
+alloc get_elem := X["get_elem"]
+alloc put := X["put"]
+alloc put_r := X["put_r"]
+alloc has_own := X["has_own"]
+alloc has_prop := X["has_prop"]
+alloc own_raw := X["own_raw"]
+alloc own_keys := X["own_keys"]
+alloc delete_prop := X["delete_prop"]
+alloc copy_props := X["copy_props"]
+alloc new_obj := X["new_obj"]
+alloc new_object := X["new_object"]
+alloc new_array := X["new_array"]
+alloc new_native := X["new_native"]
+alloc new_symbol := X["new_symbol"]
+alloc make_error := X["make_error"]
+alloc throw_type := X["throw_type"]
+alloc throw_syntax := X["throw_syntax"]
+alloc throw_range := X["throw_range"]
+alloc to_str := X["to_str"]
+alloc to_num := X["to_num"]
+alloc to_bool := X["to_bool"]
+alloc to_key := X["to_key"]
+alloc to_integer := X["to_integer"]
+alloc to_object := X["to_object"]
+alloc to_prim := X["to_prim"]
+alloc num_to_str := X["num_to_str"]
+alloc str_to_num := X["str_to_num"]
+alloc is_callable := X["is_callable"]
+alloc is_nullish := X["is_nullish"]
+alloc class_of := X["class_of"]
+alloc call := X["call"]
+alloc construct := X["construct"]
+alloc new_target := X["new_target"]
+alloc same_value := X["same_value"]
+alloc iter_list := X["iter_list"]
+alloc array_like_list := X["array_like_list"]
+alloc typeof_str := X["typeof_str"]
+alloc func_name := X["func_name"]
+alloc describe := X["describe"]
+alloc nan := X["nan"]
+alloc inf := X["inf"]
+
+proc nothing() {
+}
+
+alloc U := nothing()
+
+alloc FUNCTION_HOOK := false   # proc(parameters, body) -> a function; engine.omg sets it
+alloc EVAL_HOOK := false       # proc(text) -> the value of the script
+
+proc set_hooks(f, e) {
+    FUNCTION_HOOK := f
+    EVAL_HOOK := e
+    return true
+}
+
+proc is_object(v) {
+    return type_of(v) == 2 and v != 0
+}
+
+# --- Object -----------------------------------------------------------------------------
+
+proc n_object(this, args) {
+    alloc v := arg(args, 0)
+    if is_nullish(v) {
+        return new_object()
+    }
+    return to_object(v)
+}
+
+proc n_keys(this, args) {
+    return new_array(own_keys(to_object(arg(args, 0)), false))
+}
+
+proc n_values(this, args) {
+    alloc o := to_object(arg(args, 0))
+    alloc out := []
+    for k in own_keys(o, false) {
+        append(out, get_r(o, k, o))
+    }
+    return new_array(out)
+}
+
+proc n_entries(this, args) {
+    alloc o := to_object(arg(args, 0))
+    alloc out := []
+    for k in own_keys(o, false) {
+        append(out, new_array([k, get_r(o, k, o)]))
+    }
+    return new_array(out)
+}
+
+proc n_assign(this, args) {
+    alloc t := to_object(arg(args, 0))
+    alloc i := 1
+    loop i < length(args) {
+        alloc src := args[i]
+        if type_of(src) == 4 {
+            copy_props(t, src, [])
+        } elif is_object(src) {
+            for k in own_keys(src, false) {
+                put_r(t, k, get_r(src, k, src), t)
+            }
+            # symbols
+            alloc p := H[src][2]
+            for k2 in dict_keys(p) {
+                if length(k2) > 2 and k2[0] == "@" and k2[1] == "@" and type_of(p[k2]) != 5 {
+                    H[t][2][k2] := p[k2]
+                }
+            }
+        }
+        i := i + 1
+    }
+    return t
+}
+
+proc n_freeze(this, args) {
+    alloc o := arg(args, 0)
+    if is_object(o) {
+        H[o][4] := H[o][4] | 10
+    }
+    return o
+}
+
+proc n_is_frozen(this, args) {
+    alloc o := arg(args, 0)
+    if is_object(o) {
+        return (H[o][4] & 2) != 0
+    }
+    return true
+}
+
+proc n_seal(this, args) {
+    alloc o := arg(args, 0)
+    if is_object(o) {
+        H[o][4] := H[o][4] | 8
+    }
+    return o
+}
+
+proc n_is_sealed(this, args) {
+    alloc o := arg(args, 0)
+    if is_object(o) {
+        return (H[o][4] & 8) != 0
+    }
+    return true
+}
+
+proc n_is_extensible(this, args) {
+    alloc o := arg(args, 0)
+    if is_object(o) {
+        return (H[o][4] & 8) == 0
+    }
+    return false
+}
+
+proc is_hidden(o, k) {
+    alloc rec := H[o]
+    if (rec[4] & 4) != 0 {
+        return true
+    }
+    alloc hid := rec[5]
+    return hid != false and has_key(hid, k) and hid[k] == 1
+}
+
+# Object.defineProperty, the part that does the work.
+proc define_from(o, key, desc) {
+    if is_object(desc) == false {
+        throw_type("Property description must be an object: " + to_str(desc))
+    }
+    alloc existed := has_own(o, key)
+    alloc g := get(desc, "get")
+    alloc s := get(desc, "set")
+    if is_callable(g) or is_callable(s) {
+        if existed {
+            alloc raw := own_raw(o, key)
+            if type_of(raw) != 5 {
+                # a value becomes an accessor: start from nothing
+                H[o][2][key] := [0, 0]
+                H[o][4] := H[o][4] | 1
+            }
+        }
+        if is_callable(g) {
+            define_accessor(o, key, 0, g)
+        }
+        if is_callable(s) {
+            define_accessor(o, key, 1, s)
+        }
+    } elif has_prop(desc, "value") or existed == false {
+        define(o, key, get(desc, "value"))
+    }
+    if has_prop(desc, "enumerable") {
+        if to_bool(get(desc, "enumerable")) {
+            alloc hid := H[o][5]
+            if hid != false and has_key(hid, key) {
+                hid[key] := 0
+            }
+        } else {
+            hide(o, key)
+        }
+    } elif existed == false {
+        hide(o, key)
+    }
+    return true
+}
+
+proc n_define_property(this, args) {
+    alloc o := arg(args, 0)
+    if is_object(o) == false {
+        throw_type("Object.defineProperty called on non-object")
+    }
+    define_from(o, to_key(arg(args, 1)), arg(args, 2))
+    return o
+}
+
+proc n_define_properties(this, args) {
+    alloc o := arg(args, 0)
+    alloc props := arg(args, 1)
+    if is_object(o) == false {
+        throw_type("Object.defineProperties called on non-object")
+    }
+    alloc ps := to_object(props)
+    for k in own_keys(ps, false) {
+        define_from(o, k, get(ps, k))
+    }
+    return o
+}
+
+proc n_create(this, args) {
+    alloc proto := arg(args, 0)
+    if type_of(proto) != 2 {
+        throw_type("Object prototype may only be an Object or null: " + to_str(proto))
+    }
+    alloc o := new_obj(0, proto)
+    alloc props := arg(args, 1)
+    if is_object(props) {
+        for k in own_keys(props, false) {
+            define_from(o, k, get(props, k))
+        }
+    }
+    return o
+}
+
+proc n_get_prototype_of(this, args) {
+    alloc o := to_object(arg(args, 0))
+    return H[o][1]
+}
+
+proc n_set_prototype_of(this, args) {
+    alloc o := arg(args, 0)
+    alloc p := arg(args, 1)
+    if is_object(o) and type_of(p) == 2 {
+        H[o][1] := p
+    }
+    return o
+}
+
+proc descriptor(o, key) {
+    alloc raw := own_raw(o, key)
+    if type_of(raw) == 5 {
+        if length(raw) != 2 {
+            return U
+        }
+        alloc d := new_object()
+        alloc dp := H[d][2]
+        if raw[0] == 0 {
+            dp["get"] := U
+        } else {
+            dp["get"] := raw[0]
+        }
+        if raw[1] == 0 {
+            dp["set"] := U
+        } else {
+            dp["set"] := raw[1]
+        }
+        dp["enumerable"] := is_hidden(o, key) == false
+        dp["configurable"] := true
+        return d
+    }
+    alloc d2 := new_object()
+    alloc dp2 := H[d2][2]
+    dp2["value"] := raw
+    dp2["writable"] := (H[o][4] & 2) == 0
+    dp2["enumerable"] := is_hidden(o, key) == false
+    dp2["configurable"] := (H[o][4] & 2) == 0
+    return d2
+}
+
+proc n_get_own_property_descriptor(this, args) {
+    alloc o := to_object(arg(args, 0))
+    return descriptor(o, to_key(arg(args, 1)))
+}
+
+proc n_get_own_property_descriptors(this, args) {
+    alloc o := to_object(arg(args, 0))
+    alloc out := new_object()
+    for k in own_keys(o, true) {
+        H[out][2][k] := descriptor(o, k)
+    }
+    return out
+}
+
+proc n_get_own_property_names(this, args) {
+    alloc o := to_object(arg(args, 0))
+    alloc keys := own_keys(o, true)
+    alloc cls := H[o][0]
+    if cls == 1 or cls == 6 {
+        append(keys, "length")
+    }
+    return new_array(keys)
+}
+
+proc n_get_own_property_symbols(this, args) {
+    return new_array([])
+}
+
+proc n_object_is(this, args) {
+    return same_value(arg(args, 0), arg(args, 1))
+}
+
+proc n_from_entries(this, args) {
+    alloc out := new_object()
+    for e in iter_list(arg(args, 0)) {
+        define(out, to_key(get_elem(e, 0.0)), get_elem(e, 1.0))
+    }
+    return out
+}
+
+proc n_has_own(this, args) {
+    return has_own(to_object(arg(args, 0)), to_key(arg(args, 1)))
+}
+
+proc n_has_own_property(this, args) {
+    return has_own(to_object(this), to_key(arg(args, 0)))
+}
+
+proc n_is_prototype_of(this, args) {
+    alloc v := arg(args, 0)
+    if is_object(v) == false or is_object(this) == false {
+        return false
+    }
+    alloc q := H[v][1]
+    loop q != 0 {
+        if q == this {
+            return true
+        }
+        q := H[q][1]
+    }
+    return false
+}
+
+proc n_property_is_enumerable(this, args) {
+    alloc o := to_object(this)
+    alloc k := to_key(arg(args, 0))
+    return has_own(o, k) and is_hidden(o, k) == false
+}
+
+alloc CLASS_NAMES := ["Object", "Array", "Function", "Error", "Boolean", "Number", "String", "Symbol",
+    "Date", "RegExp", "Map", "Set", "Promise", "Generator", "Object", "Object"]
+
+proc n_object_to_string(this, args) {
+    if type_of(this) == 0 {
+        return "[object Undefined]"
+    }
+    if type_of(this) == 2 and this == 0 {
+        return "[object Null]"
+    }
+    alloc o := to_object(this)
+    alloc tag := get(o, "@@toStringTag")
+    if type_of(tag) == 4 {
+        return "[object " + tag + "]"
+    }
+    alloc cls := H[o][0]
+    if cls < 16 {
+        return "[object " + CLASS_NAMES[cls] + "]"
+    }
+    return "[object Object]"
+}
+
+proc n_object_to_locale_string(this, args) {
+    return to_str(this)
+}
+
+proc n_object_value_of(this, args) {
+    return to_object(this)
+}
+
+proc n_proto_get(this, args) {
+    alloc o := to_object(this)
+    return H[o][1]
+}
+
+proc n_proto_set(this, args) {
+    alloc p := arg(args, 0)
+    if is_object(this) and type_of(p) == 2 {
+        H[this][1] := p
+    }
+    return U
+}
+
+proc n_define_getter(this, args) {
+    define_accessor(to_object(this), to_key(arg(args, 0)), 0, arg(args, 1))
+    return U
+}
+
+proc n_define_setter(this, args) {
+    define_accessor(to_object(this), to_key(arg(args, 0)), 1, arg(args, 1))
+    return U
+}
+
+# --- Function ---------------------------------------------------------------------------
+
+proc n_function(this, args) {
+    alloc n := length(args)
+    alloc params := ""
+    alloc body := ""
+    if n > 0 {
+        body := to_str(args[n - 1])
+        alloc i := 0
+        loop i < n - 1 {
+            if i > 0 {
+                params := params + ","
+            }
+            params := params + to_str(args[i])
+            i := i + 1
+        }
+    }
+    return FUNCTION_HOOK(params, body)
+}
+
+proc n_fn_call(this, args) {
+    if length(args) > 1 {
+        return call(this, args[0], args[1:])
+    }
+    return call(this, arg(args, 0), [])
+}
+
+proc n_fn_apply(this, args) {
+    return call(this, arg(args, 0), array_like_list(arg(args, 1)))
+}
+
+proc n_fn_bind(this, args) {
+    if is_callable(this) == false {
+        throw_type("Bind must be called on a function")
+    }
+    alloc h := new_obj(2, H[this][1])
+    alloc rest := []
+    if length(args) > 1 {
+        rest := args[1:]
+    }
+    H[h][3] := [2, this, arg(args, 0), rest]
+    return h
+}
+
+proc n_fn_to_string(this, args) {
+    if is_callable(this) == false {
+        throw_type("Function.prototype.toString requires that 'this' be a Function")
+    }
+    alloc x := H[this][3]
+    alloc name := to_str(get(this, "name"))
+    if x[0] == 0 and (x[1][4] & 16) != 0 {
+        return "class " + name + " { }"
+    }
+    return "function " + name + "() { [native code] }"
+}
+
+proc n_fn_has_instance(this, args) {
+    return X["instance_of"](arg(args, 0), this)
+}
+
+proc n_empty(this, args) {
+    return U
+}
+
+# --- errors -----------------------------------------------------------------------------
+
+proc error_new(which, args) {
+    alloc msg := arg(args, 0)
+    alloc text := ""
+    if type_of(msg) != 0 {
+        text := to_str(msg)
+    }
+    alloc h := make_error(which, text)
+    alloc opts := arg(args, 1)
+    if is_object(opts) and has_prop(opts, "cause") {
+        define_hidden(h, "cause", get(opts, "cause"))
+    }
+    return h
+}
+
+proc n_error(this, args) {
+    return error_new(8, args)
+}
+
+proc n_type_error(this, args) {
+    return error_new(9, args)
+}
+
+proc n_range_error(this, args) {
+    return error_new(10, args)
+}
+
+proc n_reference_error(this, args) {
+    return error_new(11, args)
+}
+
+proc n_syntax_error(this, args) {
+    return error_new(12, args)
+}
+
+proc n_eval_error(this, args) {
+    return error_new(21, args)
+}
+
+proc n_uri_error(this, args) {
+    return error_new(22, args)
+}
+
+proc n_error_to_string(this, args) {
+    if is_object(this) == false {
+        throw_type("Error.prototype.toString called on a non-object")
+    }
+    alloc name := get(this, "name")
+    alloc msg := get(this, "message")
+    alloc ns := "Error"
+    if type_of(name) != 0 {
+        ns := to_str(name)
+    }
+    alloc ms := ""
+    if type_of(msg) != 0 {
+        ms := to_str(msg)
+    }
+    if ms == "" {
+        return ns
+    }
+    if ns == "" {
+        return ms
+    }
+    return ns + ": " + ms
+}
+
+# --- Symbol -----------------------------------------------------------------------------
+
+alloc SYMBOLS := {}            # Symbol.for: key to symbol
+
+proc n_symbol(this, args) {
+    alloc d := arg(args, 0)
+    if type_of(d) == 0 {
+        return new_symbol("")
+    }
+    return new_symbol(to_str(d))
+}
+
+proc n_symbol_for(this, args) {
+    alloc key := to_str(arg(args, 0))
+    if has_key(SYMBOLS, key) {
+        return SYMBOLS[key]
+    }
+    alloc h := new_obj(7, I[7])
+    H[h][3] := ["@@for:" + key, key]
+    SYMBOLS[key] := h
+    return h
+}
+
+proc n_symbol_key_for(this, args) {
+    alloc s := arg(args, 0)
+    if class_of(s) == 7 {
+        alloc k := H[s][3][0]
+        if length(k) > 6 and k[0:6] == "@@for:" {
+            return H[s][3][1]
+        }
+    }
+    return U
+}
+
+proc n_symbol_to_string(this, args) {
+    if class_of(this) != 7 {
+        throw_type("Symbol.prototype.toString requires that 'this' be a Symbol")
+    }
+    return "Symbol(" + H[this][3][1] + ")"
+}
+
+proc n_symbol_description(this, args) {
+    if class_of(this) != 7 {
+        return U
+    }
+    return H[this][3][1]
+}
+
+proc n_this(this, args) {
+    return this
+}
+
+# --- Boolean ----------------------------------------------------------------------------
+
+proc n_boolean(this, args) {
+    alloc v := to_bool(arg(args, 0))
+    if type_of(new_target()) == 0 {
+        return v
+    }
+    alloc h := new_obj(4, I[6])
+    H[h][3] := v
+    return h
+}
+
+proc this_bool(this) {
+    if type_of(this) == 1 {
+        return this
+    }
+    if class_of(this) == 4 {
+        return H[this][3]
+    }
+    throw_type("Boolean.prototype.valueOf requires that 'this' be a Boolean")
+}
+
+proc n_boolean_to_string(this, args) {
+    if this_bool(this) {
+        return "true"
+    }
+    return "false"
+}
+
+proc n_boolean_value_of(this, args) {
+    return this_bool(this)
+}
+
+# --- Reflect ----------------------------------------------------------------------------
+
+proc n_reflect_own_keys(this, args) {
+    return new_array(own_keys(to_object(arg(args, 0)), true))
+}
+
+proc n_reflect_has(this, args) {
+    return has_prop(to_object(arg(args, 0)), to_key(arg(args, 1)))
+}
+
+proc n_reflect_get(this, args) {
+    alloc o := to_object(arg(args, 0))
+    if length(args) > 2 {
+        return get_r(o, to_key(arg(args, 1)), args[2])
+    }
+    return get_r(o, to_key(arg(args, 1)), o)
+}
+
+proc n_reflect_set(this, args) {
+    alloc o := to_object(arg(args, 0))
+    if length(args) > 3 {
+        return put_r(o, to_key(arg(args, 1)), arg(args, 2), args[3])
+    }
+    return put_r(o, to_key(arg(args, 1)), arg(args, 2), o)
+}
+
+proc n_reflect_apply(this, args) {
+    return call(arg(args, 0), arg(args, 1), array_like_list(arg(args, 2)))
+}
+
+proc n_reflect_construct(this, args) {
+    alloc f := arg(args, 0)
+    alloc nt := f
+    if length(args) > 2 {
+        nt := args[2]
+    }
+    return construct(f, array_like_list(arg(args, 1)), nt)
+}
+
+proc n_reflect_define_property(this, args) {
+    alloc o := arg(args, 0)
+    if is_object(o) == false {
+        throw_type("Reflect.defineProperty called on non-object")
+    }
+    define_from(o, to_key(arg(args, 1)), arg(args, 2))
+    return true
+}
+
+proc n_reflect_delete_property(this, args) {
+    return delete_prop(to_object(arg(args, 0)), to_key(arg(args, 1)))
+}
+
+# --- the global functions ----------------------------------------------------------------
+
+proc digit_of(c) {
+    if c >= 48 and c <= 57 {
+        return c - 48
+    }
+    alloc l := c | 32
+    if l >= 97 and l <= 122 {
+        return l - 87
+    }
+    return 99
+}
+
+proc n_parse_int(this, args) {
+    alloc b := string_bytes(to_str(arg(args, 0)))
+    alloc n := length(b)
+    alloc i := 0
+    loop i < n and (b[i] == 32 or (b[i] >= 9 and b[i] <= 13)) {
+        i := i + 1
+    }
+    alloc neg := false
+    if i < n and (b[i] == 43 or b[i] == 45) {
+        neg := b[i] == 45
+        i := i + 1
+    }
+    alloc radix := to_integer(arg(args, 1))
+    if radix == 0 {
+        radix := 10
+        if i + 1 < n and b[i] == 48 and (b[i + 1] | 32) == 120 {
+            radix := 16
+            i := i + 2
+        }
+    } elif radix == 16 {
+        if i + 1 < n and b[i] == 48 and (b[i + 1] | 32) == 120 {
+            i := i + 2
+        }
+    }
+    if radix < 2 or radix > 36 {
+        return nan()
+    }
+    alloc v := 0.0
+    alloc any := false
+    alloc fr := radix * 1.0
+    loop i < n {
+        alloc d := digit_of(b[i])
+        if d >= radix {
+            break
+        }
+        v := v * fr + d
+        any := true
+        i := i + 1
+    }
+    if any == false {
+        return nan()
+    }
+    if neg {
+        return v * -1.0
+    }
+    return v
+}
+
+proc n_parse_float(this, args) {
+    alloc b := string_bytes(to_str(arg(args, 0)))
+    alloc n := length(b)
+    alloc i := 0
+    loop i < n and (b[i] == 32 or (b[i] >= 9 and b[i] <= 13)) {
+        i := i + 1
+    }
+    alloc start := i
+    if i < n and (b[i] == 43 or b[i] == 45) {
+        i := i + 1
+    }
+    if i + 8 <= n and b[i] == 73 {
+        if bytes_to_string(b[i:i + 8]) == "Infinity" {
+            if b[start] == 45 {
+                return inf() * -1.0
+            }
+            return inf()
+        }
+    }
+    alloc digits := 0
+    loop i < n and b[i] >= 48 and b[i] <= 57 {
+        i := i + 1
+        digits := digits + 1
+    }
+    if i < n and b[i] == 46 {
+        alloc j := i + 1
+        alloc fd := 0
+        loop j < n and b[j] >= 48 and b[j] <= 57 {
+            j := j + 1
+            fd := fd + 1
+        }
+        if digits + fd > 0 {
+            i := j
+            digits := digits + fd
+        }
+    }
+    if digits == 0 {
+        return nan()
+    }
+    if i < n and (b[i] | 32) == 101 {
+        alloc j2 := i + 1
+        if j2 < n and (b[j2] == 43 or b[j2] == 45) {
+            j2 := j2 + 1
+        }
+        alloc ed := 0
+        loop j2 < n and b[j2] >= 48 and b[j2] <= 57 {
+            j2 := j2 + 1
+            ed := ed + 1
+        }
+        if ed > 0 {
+            i := j2
+        }
+    }
+    return str_to_num(bytes_to_string(b[start:i]))
+}
+
+proc n_is_nan(this, args) {
+    alloc f := to_num(arg(args, 0))
+    return f != f
+}
+
+proc n_is_finite(this, args) {
+    alloc f := to_num(arg(args, 0))
+    return f == f and f != inf() and f != inf() * -1.0
+}
+
+proc n_eval(this, args) {
+    alloc v := arg(args, 0)
+    if type_of(v) != 4 {
+        return v
+    }
+    return EVAL_HOOK(v)
+}
+
+# --- JSON -------------------------------------------------------------------------------
+
+alloc HEXD := "0123456789abcdef"
+
+# A string as JSON writes it, quotes and all.
+proc quote(s) {
+    alloc b := string_bytes(s)
+    alloc n := length(b)
+    alloc plain := true
+    alloc i := 0
+    loop i < n {
+        alloc ch := b[i]
+        if ch < 32 or ch == 34 or ch == 92 {
+            plain := false
+            break
+        }
+        i := i + 1
+    }
+    if plain {
+        return "\"" + s + "\""
+    }
+    alloc out := bytes_repeat(0, 0)
+    append(out, 34)
+    i := 0
+    loop i < n {
+        alloc c2 := b[i]
+        if c2 == 34 or c2 == 92 {
+            append(out, 92)
+            append(out, c2)
+        } elif c2 >= 32 {
+            append(out, c2)
+        } elif c2 == 10 {
+            append(out, 92)
+            append(out, 110)
+        } elif c2 == 13 {
+            append(out, 92)
+            append(out, 114)
+        } elif c2 == 9 {
+            append(out, 92)
+            append(out, 116)
+        } elif c2 == 8 {
+            append(out, 92)
+            append(out, 98)
+        } elif c2 == 12 {
+            append(out, 92)
+            append(out, 102)
+        } else {
+            append(out, 92)
+            append(out, 117)
+            append(out, 48)
+            append(out, 48)
+            append(out, ascii(HEXD[c2 >> 4]))
+            append(out, ascii(HEXD[c2 & 15]))
+        }
+        i := i + 1
+    }
+    append(out, 34)
+    return bytes_to_string(out)
+}
+
+alloc JS_REPLACER := 0         # the function given to stringify, or 0
+alloc JS_ALLOW := false        # or the list of keys it gave
+alloc JS_GAP := ""
+alloc JS_STACK := []
+alloc JS_DEPTH := 0
+
+# The JSON of value v, found as holder[key]; false when it has none.
+proc ser(holder, key, v, indent) {
+    if type_of(v) == 2 and v != 0 {
+        alloc tj := get_r(v, "toJSON", v)
+        if is_callable(tj) {
+            v := call(tj, v, [key])
+        }
+    }
+    if JS_REPLACER != 0 {
+        v := call(JS_REPLACER, holder, [key, v])
+    }
+    alloc t := type_of(v)
+    if t == 4 {
+        return quote(v)
+    }
+    if t == 3 {
+        if v != v or v == inf() or v == inf() * -1.0 {
+            return "null"
+        }
+        return num_to_str(v)
+    }
+    if t == 1 {
+        if v {
+            return "true"
+        }
+        return "false"
+    }
+    if t == 0 {
+        return false
+    }
+    if v == 0 {
+        return "null"
+    }
+    alloc cls := H[v][0]
+    if cls == 2 or cls == 7 {
+        return false
+    }
+    if cls == 4 or cls == 5 or cls == 6 {
+        return ser(holder, key, H[v][3], indent)
+    }
+    alloc d := 0
+    loop d < JS_DEPTH {
+        if JS_STACK[d] == v {
+            throw_type("Converting circular structure to JSON")
+        }
+        d := d + 1
+    }
+    if JS_DEPTH < length(JS_STACK) {
+        JS_STACK[JS_DEPTH] := v
+    } else {
+        append(JS_STACK, v)
+    }
+    JS_DEPTH := JS_DEPTH + 1
+    alloc inner := indent + JS_GAP
+    alloc sep := ","
+    alloc open := ""
+    alloc close := ""
+    if JS_GAP != "" {
+        sep := ",\n" + inner
+        open := "\n" + inner
+        close := "\n" + indent
+    }
+    alloc out := ""
+    alloc first := true
+    if cls == 1 {
+        alloc items := H[v][3]
+        alloc n := H[v][6]
+        alloc i := 0
+        alloc parts := []
+        loop i < n {
+            alloc sv := ser(v, "" + i, items[i], inner)
+            if sv == false {
+                sv := "null"
+            }
+            append(parts, sv)
+            i := i + 1
+        }
+        JS_DEPTH := JS_DEPTH - 1
+        if n == 0 {
+            return "[]"
+        }
+        return "[" + open + join(parts, sep) + close + "]"
+    }
+    alloc keys := JS_ALLOW
+    if keys == false {
+        keys := own_keys(v, false)
+    }
+    alloc parts2 := []
+    for k in keys {
+        if JS_ALLOW != false and has_own(v, k) == false {
+            continue
+        }
+        alloc sv2 := ser(v, k, get_r(v, k, v), inner)
+        if sv2 != false {
+            if JS_GAP != "" {
+                append(parts2, quote(k) + ": " + sv2)
+            } else {
+                append(parts2, quote(k) + ":" + sv2)
+            }
+        }
+    }
+    JS_DEPTH := JS_DEPTH - 1
+    if length(parts2) == 0 {
+        return "{}"
+    }
+    return "{" + open + join(parts2, sep) + close + "}"
+}
+
+# Strings put end to end with `sep` between them, in one go.
+proc join(parts, sep) {
+    alloc n := length(parts)
+    if n == 0 {
+        return ""
+    }
+    if n == 1 {
+        return parts[0]
+    }
+    alloc sb := string_bytes(sep)
+    alloc ns := length(sb)
+    alloc bs := []
+    alloc total := ns * (n - 1)
+    for p in parts {
+        alloc pb := string_bytes(p)
+        append(bs, pb)
+        total := total + length(pb)
+    }
+    alloc out := bytes_repeat(0, total)
+    alloc at := 0
+    alloc i := 0
+    for pb2 in bs {
+        if i > 0 and ns > 0 {
+            bytes_copy(sb, 0, out, at, ns)
+            at := at + ns
+        }
+        alloc np := length(pb2)
+        if np > 0 {
+            bytes_copy(pb2, 0, out, at, np)
+            at := at + np
+        }
+        i := i + 1
+    }
+    return bytes_to_string(out)
+}
+
+proc n_json_stringify(this, args) {
+    alloc v := arg(args, 0)
+    alloc r := arg(args, 1)
+    alloc sp := arg(args, 2)
+    JS_REPLACER := 0
+    JS_ALLOW := false
+    JS_GAP := ""
+    JS_DEPTH := 0
+    if is_callable(r) {
+        JS_REPLACER := r
+    } elif class_of(r) == 1 {
+        JS_ALLOW := []
+        for k in array_like_list(r) {
+            append(JS_ALLOW, to_str(k))
+        }
+    }
+    if type_of(sp) == 3 {
+        alloc n := to_integer(sp)
+        if n > 10 {
+            n := 10
+        }
+        loop n > 0 {
+            JS_GAP := JS_GAP + " "
+            n := n - 1
+        }
+    } elif type_of(sp) == 4 {
+        JS_GAP := sp
+        if length(sp) > 10 {
+            JS_GAP := sp[0:10]
+        }
+    }
+    alloc holder := new_object()
+    H[holder][2][""] := v
+    alloc out := ser(holder, "", v, "")
+    JS_REPLACER := 0
+    if out == false {
+        return U
+    }
+    return out
+}
+
+alloc JB := []
+alloc JN := 0
+alloc JP := 0
+
+proc jfail() {
+    if JP >= JN {
+        throw_syntax("Unexpected end of JSON input")
+    }
+    throw_syntax("Unexpected token " + bytes_to_string([JB[JP]]) + " in JSON at position " + JP)
+}
+
+proc put_utf8(out, cp) {
+    if cp < 128 {
+        append(out, cp)
+    } elif cp < 2048 {
+        append(out, 192 | (cp >> 6))
+        append(out, 128 | (cp & 63))
+    } elif cp < 65536 {
+        append(out, 224 | (cp >> 12))
+        append(out, 128 | ((cp >> 6) & 63))
+        append(out, 128 | (cp & 63))
+    } else {
+        append(out, 240 | (cp >> 18))
+        append(out, 128 | ((cp >> 12) & 63))
+        append(out, 128 | ((cp >> 6) & 63))
+        append(out, 128 | (cp & 63))
+    }
+    return true
+}
+
+proc jhex4(at) {
+    if at + 4 > JN {
+        jfail()
+    }
+    alloc v := 0
+    alloc i := 0
+    loop i < 4 {
+        alloc d := digit_of(JB[at + i])
+        if d > 15 {
+            JP := at + i
+            jfail()
+        }
+        v := v * 16 + d
+        i := i + 1
+    }
+    return v
+}
+
+# JP is at the opening quote.
+proc jstring() {
+    alloc start := JP + 1
+    alloc i := start
+    alloc b := JB
+    alloc n := JN
+    loop i < n {
+        alloc ch := b[i]
+        if ch == 34 {
+            JP := i + 1
+            return bytes_to_string(b[start:i])
+        }
+        if ch == 92 {
+            break
+        }
+        if ch < 32 {
+            JP := i
+            jfail()
+        }
+        i := i + 1
+    }
+    alloc out := b[start:i]
+    loop i < n {
+        alloc c2 := b[i]
+        if c2 == 34 {
+            JP := i + 1
+            return bytes_to_string(out)
+        }
+        if c2 == 92 {
+            i := i + 1
+            if i >= n {
+                break
+            }
+            alloc e := b[i]
+            if e == 110 {
+                append(out, 10)
+            } elif e == 116 {
+                append(out, 9)
+            } elif e == 114 {
+                append(out, 13)
+            } elif e == 98 {
+                append(out, 8)
+            } elif e == 102 {
+                append(out, 12)
+            } elif e == 117 {
+                alloc cp := jhex4(i + 1)
+                i := i + 4
+                if cp >= 55296 and cp < 56320 and i + 6 < n and b[i + 1] == 92 and b[i + 2] == 117 {
+                    alloc lo := jhex4(i + 3)
+                    if lo >= 56320 and lo < 57344 {
+                        cp := 65536 + ((cp - 55296) << 10) + (lo - 56320)
+                        i := i + 6
+                    }
+                }
+                if cp >= 55296 and cp < 57344 {
+                    cp := 65533
+                }
+                put_utf8(out, cp)
+            } elif e == 34 or e == 92 or e == 47 {
+                append(out, e)
+            } else {
+                JP := i
+                jfail()
+            }
+            i := i + 1
+        } else {
+            append(out, c2)
+            i := i + 1
+        }
+    }
+    JP := n
+    jfail()
+}
+
+proc jskip() {
+    alloc b := JB
+    alloc i := JP
+    alloc n := JN
+    loop i < n {
+        alloc ch := b[i]
+        if ch != 32 and ch != 10 and ch != 13 and ch != 9 {
+            break
+        }
+        i := i + 1
+    }
+    JP := i
+    return true
+}
+
+proc jvalue(depth) {
+    jskip()
+    if JP >= JN {
+        jfail()
+    }
+    alloc b := JB
+    alloc ch := b[JP]
+    if ch == 34 {
+        return jstring()
+    }
+    if ch == 123 {
+        if depth > 2000 {
+            throw_range("Maximum call stack size exceeded")
+        }
+        alloc h := new_object()
+        alloc p := H[h][2]
+        JP := JP + 1
+        jskip()
+        if JP < JN and b[JP] == 125 {
+            JP := JP + 1
+            return h
+        }
+        loop true {
+            jskip()
+            if JP >= JN or b[JP] != 34 {
+                jfail()
+            }
+            alloc key := jstring()
+            jskip()
+            if JP >= JN or b[JP] != 58 {
+                jfail()
+            }
+            JP := JP + 1
+            p[key] := jvalue(depth + 1)
+            jskip()
+            if JP < JN and b[JP] == 44 {
+                JP := JP + 1
+            } elif JP < JN and b[JP] == 125 {
+                JP := JP + 1
+                return h
+            } else {
+                jfail()
+            }
+        }
+    }
+    if ch == 91 {
+        if depth > 2000 {
+            throw_range("Maximum call stack size exceeded")
+        }
+        alloc items := []
+        JP := JP + 1
+        jskip()
+        if JP < JN and b[JP] == 93 {
+            JP := JP + 1
+            return new_array(items)
+        }
+        loop true {
+            append(items, jvalue(depth + 1))
+            jskip()
+            if JP < JN and b[JP] == 44 {
+                JP := JP + 1
+            } elif JP < JN and b[JP] == 93 {
+                JP := JP + 1
+                return new_array(items)
+            } else {
+                jfail()
+            }
+        }
+    }
+    if ch == 116 {
+        if JP + 4 <= JN and b[JP + 1] == 114 and b[JP + 2] == 117 and b[JP + 3] == 101 {
+            JP := JP + 4
+            return true
+        }
+        jfail()
+    }
+    if ch == 102 {
+        if JP + 5 <= JN and b[JP + 1] == 97 and b[JP + 2] == 108 and b[JP + 3] == 115 and b[JP + 4] == 101 {
+            JP := JP + 5
+            return false
+        }
+        jfail()
+    }
+    if ch == 110 {
+        if JP + 4 <= JN and b[JP + 1] == 117 and b[JP + 2] == 108 and b[JP + 3] == 108 {
+            JP := JP + 4
+            return 0
+        }
+        jfail()
+    }
+    if ch == 45 or (ch >= 48 and ch <= 57) {
+        alloc start := JP
+        alloc i := JP + 1
+        alloc whole := true
+        loop i < JN {
+            alloc d := b[i]
+            if d >= 48 and d <= 57 {
+                i := i + 1
+            } elif d == 46 or d == 101 or d == 69 or d == 43 or d == 45 {
+                whole := false
+                i := i + 1
+            } else {
+                break
+            }
+        }
+        JP := i
+        alloc text := bytes_to_string(b[start:i])
+        if whole and i - start < 16 {
+            if text == "-" {
+                JP := start
+                jfail()
+            }
+            if text == "-0" {
+                return -0.0
+            }
+            return int(text) * 1.0
+        }
+        alloc f := str_to_num(text)
+        if f != f {
+            JP := start
+            jfail()
+        }
+        return f
+    }
+    jfail()
+}
+
+proc revive(holder, key, fn) {
+    alloc v := get(holder, key)
+    if type_of(v) == 2 and v != 0 {
+        for k in own_keys(v, false) {
+            alloc nv := revive(v, k, fn)
+            if type_of(nv) == 0 {
+                delete_prop(v, k)
+            } else {
+                define(v, k, nv)
+            }
+        }
+    }
+    return call(fn, holder, [key, v])
+}
+
+proc n_json_parse(this, args) {
+    JB := string_bytes(to_str(arg(args, 0)))
+    JN := length(JB)
+    JP := 0
+    alloc v := jvalue(0)
+    jskip()
+    if JP < JN {
+        jfail()
+    }
+    JB := []
+    alloc fn := arg(args, 1)
+    if is_callable(fn) {
+        alloc holder := new_object()
+        H[holder][2][""] := v
+        return revive(holder, "", fn)
+    }
+    return v
+}
+
+# --- values as text for a person: console.log ----------------------------------------------
+
+proc inspect(v, depth, top) {
+    alloc t := type_of(v)
+    if t == 4 {
+        if top {
+            return v
+        }
+        return "'" + v + "'"
+    }
+    if t != 2 or v == 0 {
+        if t == 3 and v == 0.0 and X["is_neg_zero"](v) {
+            return "-0"
+        }
+        return to_str(v)
+    }
+    alloc cls := H[v][0]
+    if cls == 7 {
+        return "Symbol(" + H[v][3][1] + ")"
+    }
+    if cls == 2 {
+        alloc x := H[v][3]
+        alloc name := ""
+        alloc nv := get(v, "name")
+        if type_of(nv) == 4 {
+            name := nv
+        }
+        if x[0] == 0 and (x[1][4] & 16) != 0 {
+            return "[class " + name + "]"
+        }
+        if name == "" {
+            return "[Function (anonymous)]"
+        }
+        return "[Function: " + name + "]"
+    }
+    if cls == 3 {
+        return describe(v)
+    }
+    if cls == 4 or cls == 5 or cls == 6 {
+        return "[" + CLASS_NAMES[cls] + ": " + inspect(H[v][3], depth, false) + "]"
+    }
+    if cls == 8 or cls == 9 {
+        alloc s := ""
+        try {
+            s := to_str(v)
+        } except e {
+            X["caught"](e)
+            s := "[object]"
+        }
+        return s
+    }
+    if depth > 2 {
+        if cls == 1 {
+            return "[Array]"
+        }
+        return "[Object]"
+    }
+    alloc parts := []
+    if cls == 1 {
+        alloc items := H[v][3]
+        alloc n := H[v][6]
+        alloc i := 0
+        loop i < n and i < 100 {
+            append(parts, inspect(items[i], depth + 1, false))
+            i := i + 1
+        }
+        if n > 100 {
+            append(parts, "... " + (n - 100) + " more items")
+        }
+        if length(parts) == 0 {
+            return "[]"
+        }
+        return "[ " + join(parts, ", ") + " ]"
+    }
+    alloc keys := own_keys(v, false)
+    for k in keys {
+        alloc raw := own_raw(v, k)
+        if type_of(raw) == 5 {
+            append(parts, k + ": [Getter]")
+        } else {
+            append(parts, k + ": " + inspect(raw, depth + 1, false))
+        }
+    }
+    alloc head := ""
+    if cls == 10 {
+        head := "Map(" + H[v][3][3] + ") "
+    } elif cls == 11 {
+        head := "Set(" + H[v][3][3] + ") "
+    } elif cls == 12 {
+        head := "Promise "
+    } else {
+        alloc ctor := U
+        try {
+            ctor := get(v, "constructor")
+        } except e2 {
+            X["caught"](e2)
+        }
+        if is_callable(ctor) {
+            alloc cn := get(ctor, "name")
+            if type_of(cn) == 4 and cn != "Object" and cn != "" {
+                head := cn + " "
+            }
+        }
+    }
+    if length(parts) == 0 {
+        return head + "{}"
+    }
+    return head + "{ " + join(parts, ", ") + " }"
+}
+
+# The arguments of console.log as one line.
+proc format_args(args) {
+    alloc parts := []
+    for a in args {
+        append(parts, inspect(a, 0, true))
+    }
+    return join(parts, " ")
+}
+
+# --- putting it in place ----------------------------------------------------------------
+
+proc well_known(name) {
+    alloc h := new_obj(7, I[7])
+    H[h][3] := ["@@" + name, "Symbol." + name]
+    return h
+}
+
+proc error_type(name, fn, which) {
+    alloc ctor := def_ctor(name, fn, 1, I[which])
+    define_hidden(I[which], "name", name)
+    define_hidden(I[which], "message", "")
+    if which != 8 {
+        H[ctor][1] := get(I[0], "Error")
+    }
+    return ctor
+}
+
+proc setup() {
+    alloc g := I[0]
+    alloc op := I[1]
+    SYMBOLS := {}
+    define_hidden(g, "globalThis", g)
+    define_hidden(g, "NaN", nan())
+    define_hidden(g, "Infinity", inf())
+    define_hidden(g, "undefined", U)
+
+    alloc o := def_ctor("Object", n_object, 1, op)
+    def(o, "keys", n_keys, 1)
+    def(o, "values", n_values, 1)
+    def(o, "entries", n_entries, 1)
+    def(o, "assign", n_assign, 2)
+    def(o, "freeze", n_freeze, 1)
+    def(o, "isFrozen", n_is_frozen, 1)
+    def(o, "seal", n_seal, 1)
+    def(o, "isSealed", n_is_sealed, 1)
+    def(o, "preventExtensions", n_seal, 1)
+    def(o, "isExtensible", n_is_extensible, 1)
+    def(o, "create", n_create, 2)
+    def(o, "getPrototypeOf", n_get_prototype_of, 1)
+    def(o, "setPrototypeOf", n_set_prototype_of, 2)
+    def(o, "defineProperty", n_define_property, 3)
+    def(o, "defineProperties", n_define_properties, 2)
+    def(o, "getOwnPropertyNames", n_get_own_property_names, 1)
+    def(o, "getOwnPropertyDescriptor", n_get_own_property_descriptor, 2)
+    def(o, "getOwnPropertyDescriptors", n_get_own_property_descriptors, 1)
+    def(o, "getOwnPropertySymbols", n_get_own_property_symbols, 1)
+    def(o, "is", n_object_is, 2)
+    def(o, "fromEntries", n_from_entries, 1)
+    def(o, "hasOwn", n_has_own, 2)
+    def(op, "hasOwnProperty", n_has_own_property, 1)
+    def(op, "isPrototypeOf", n_is_prototype_of, 1)
+    def(op, "propertyIsEnumerable", n_property_is_enumerable, 1)
+    def(op, "toString", n_object_to_string, 0)
+    def(op, "toLocaleString", n_object_to_locale_string, 0)
+    def(op, "valueOf", n_object_value_of, 0)
+    def(op, "__defineGetter__", n_define_getter, 2)
+    def(op, "__defineSetter__", n_define_setter, 2)
+    def_getter(op, "__proto__", n_proto_get)
+    def_setter(op, "__proto__", n_proto_set)
+
+    alloc fp := I[2]
+    alloc f := def_ctor("Function", n_function, 1, fp)
+    def(fp, "call", n_fn_call, 1)
+    def(fp, "apply", n_fn_apply, 2)
+    def(fp, "bind", n_fn_bind, 1)
+    def(fp, "toString", n_fn_to_string, 0)
+    def(fp, "@@hasInstance", n_fn_has_instance, 1)
+
+    alloc e := error_type("Error", n_error, 8)
+    def(I[8], "toString", n_error_to_string, 0)
+    def(e, "captureStackTrace", n_empty, 1)
+    define_hidden(e, "stackTraceLimit", 10.0)
+    error_type("TypeError", n_type_error, 9)
+    error_type("RangeError", n_range_error, 10)
+    error_type("ReferenceError", n_reference_error, 11)
+    error_type("SyntaxError", n_syntax_error, 12)
+    error_type("EvalError", n_eval_error, 21)
+    error_type("URIError", n_uri_error, 22)
+
+    alloc sp := I[7]
+    alloc s := def_ctor("Symbol", n_symbol, 0, sp)
+    for wk in ["iterator", "asyncIterator", "hasInstance", "toPrimitive", "toStringTag", "species",
+            "isConcatSpreadable", "unscopables", "match", "matchAll", "replace", "search", "split"] {
+        define_hidden(s, wk, well_known(wk))
+    }
+    def(s, "for", n_symbol_for, 1)
+    def(s, "keyFor", n_symbol_key_for, 1)
+    def(sp, "toString", n_symbol_to_string, 0)
+    def(sp, "valueOf", n_this, 0)
+    def_getter(sp, "description", n_symbol_description)
+
+    alloc bp := I[6]
+    def_ctor("Boolean", n_boolean, 1, bp)
+    def(bp, "toString", n_boolean_to_string, 0)
+    def(bp, "valueOf", n_boolean_value_of, 0)
+
+    alloc r := new_object()
+    define_hidden(g, "Reflect", r)
+    def(r, "ownKeys", n_reflect_own_keys, 1)
+    def(r, "has", n_reflect_has, 2)
+    def(r, "get", n_reflect_get, 2)
+    def(r, "set", n_reflect_set, 3)
+    def(r, "apply", n_reflect_apply, 3)
+    def(r, "construct", n_reflect_construct, 2)
+    def(r, "defineProperty", n_reflect_define_property, 3)
+    def(r, "deleteProperty", n_reflect_delete_property, 2)
+    def(r, "getPrototypeOf", n_get_prototype_of, 1)
+    def(r, "setPrototypeOf", n_set_prototype_of, 2)
+    def(r, "getOwnPropertyDescriptor", n_get_own_property_descriptor, 2)
+
+    def(g, "parseInt", n_parse_int, 2)
+    def(g, "parseFloat", n_parse_float, 1)
+    def(g, "isNaN", n_is_nan, 1)
+    def(g, "isFinite", n_is_finite, 1)
+    def(g, "eval", n_eval, 1)
+
+    alloc j := new_object()
+    define_hidden(g, "JSON", j)
+    define_hidden(j, "@@toStringTag", "JSON")
+    def(j, "stringify", n_json_stringify, 3)
+    def(j, "parse", n_json_parse, 2)
+    return true
+}

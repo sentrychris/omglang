@@ -14,15 +14,69 @@
 import "parse.omg" as parse
 import "compile.omg" as compile
 import "core.omg" as c
+import "lib_base.omg" as base
+import "lib_array.omg" as array
+import "lib_string.omg" as string
+import "lib_regexp.omg" as regexp
+import "lib_coll.omg" as coll
+import "lib_promise.omg" as promise
 
 # Compile a script; raises "SyntaxError: ..." on bad text.
 proc compile_script(bytes, name, want_value) {
     return compile.script(parse.program(bytes), name, want_value)
 }
 
+# new Function(parameters, body)
+proc make_function(params, body) {
+    alloc node := parse.function_text(params, body)
+    return c.closure_of(compile.toplevel_function(node, "<Function>"))
+}
+
+# eval(text), which here always runs at the top level
+proc eval_text(text) {
+    return c.run_script(compile.script(parse.program(string_bytes(text)), "<eval>", true))
+}
+
 proc start() {
     c.init()
+    base.set_hooks(make_function, eval_text)
+    base.setup()
+    array.setup()
+    string.setup()
+    regexp.setup()
+    coll.setup()
+    promise.setup()
+    promise.set_eval(eval_text)
+    string.set_regex_fns(regexp.fns())
+    regexp.set_expand(string.expand_fn())
     return true
+}
+
+# The arguments of console.log as a line of text.
+proc format_args(args) {
+    return base.format_args(args)
+}
+
+# Run the jobs that promises left waiting. Call it whenever a script
+# or a handler has returned.
+proc run_microtasks() {
+    return promise.run_microtasks()
+}
+
+# Run the timers that are due; next_due() says when the next one is,
+# in the ms of time_ms(), or -1.
+proc run_timers() {
+    return promise.run_timers()
+}
+
+proc next_due() {
+    return promise.next_due()
+}
+
+# What was thrown where no script could catch it, and the reasons of
+# promises broken with nobody listening, since the last call.
+proc take_errors() {
+    return promise.take_errors() + promise.take_unhandled()
 }
 
 # Run the text of a script. Never raises.

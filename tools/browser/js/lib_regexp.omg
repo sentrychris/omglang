@@ -1,0 +1,1862 @@
+;;;omg
+
+# tools/browser/js/lib_regexp.omg
+#
+# The standard library of the JavaScript engine: regular expressions.
+#
+# A pattern is read into a tree, the tree is written out as a small
+# program, and the program is run by a matcher that tries the first
+# way and comes back for the others (backtracking), as the language
+# says a match is to be found.
+#
+# The text being searched is a list of code points (a byte list when
+# it is all ASCII, which costs nothing to get), so positions are the
+# same as in strings.
+#
+# What is there: | () (?:) (?<name>) (?=) (?!) (?<=) (?<!) [] [^] . ^ $
+# \b \B \d \w \s and their opposites, * + ? {n,m} and the lazy forms,
+# back references by number and name, the escapes, \p{L} and a few
+# more classes of letters, and the flags g i m s u y.
+# Not there: most of \p{...}, and the v flag.
+
+import "core.omg" as c
+
+alloc X := c.exports()
+alloc H := X["H"]
+alloc I := X["I"]
+alloc arg := X["arg"]
+alloc def := X["def"]
+alloc def_ctor := X["def_ctor"]
+alloc def_getter := X["def_getter"]
+alloc define_hidden := X["define_hidden"]
+alloc get := X["get"]
+alloc put := X["put"]
+alloc new_obj := X["new_obj"]
+alloc new_object := X["new_object"]
+alloc new_array := X["new_array"]
+alloc new_iter_object := X["new_iter_object"]
+alloc throw_type := X["throw_type"]
+alloc throw_syntax := X["throw_syntax"]
+alloc throw_error := X["throw_error"]
+alloc to_str := X["to_str"]
+alloc to_integer := X["to_integer"]
+alloc is_callable := X["is_callable"]
+alloc class_of := X["class_of"]
+alloc call := X["call"]
+
+proc nothing() {
+}
+
+alloc U := nothing()
+
+# The instructions of a pattern's program.
+alloc R_CHAR := 0              # c
+alloc R_ANY := 1               # any character but a line end
+alloc R_ANYNL := 2             # any character
+alloc R_CLASS := 3             # k: one of the classes
+alloc R_SPLIT := 4             # a b: try from a, and if that fails from b
+alloc R_JMP := 5               # a
+alloc R_SAVE := 6              # k: note the position in capture slot k
+alloc R_BOL := 7
+alloc R_EOL := 8
+alloc R_MBOL := 9              # ^ with the m flag
+alloc R_MEOL := 10
+alloc R_WORDB := 11
+alloc R_NWORDB := 12
+alloc R_BACKREF := 13          # k
+alloc R_LOOK := 14             # kind end: 0 (?= 1 (?! 2 (?<= 3 (?<!
+alloc R_MATCH := 15
+alloc R_MARK := 16             # r: note the position at the start of a turn of a loop
+alloc R_CHECK := 17            # r: fail if the turn matched nothing
+alloc R_CHARI := 18            # c: a character, whatever its case
+
+# Flags.
+alloc FL_G := 1
+alloc FL_I := 2
+alloc FL_M := 4
+alloc FL_S := 8
+alloc FL_U := 16
+alloc FL_Y := 32
+alloc FL_D := 64
+
+# --- reading a pattern --------------------------------------------------------------------
+
+alloc PT := []                 # the pattern, as code points
+alloc PN := 0
+alloc PP := 0
+alloc PFLAGS := 0
+alloc NGROUPS := 0             # capturing groups, counted before the reading
+alloc GROUP_AT := 0            # ... and while reading
+alloc NAMES := false           # name of a group to its number
+alloc SRC := ""
+
+proc bad(msg) {
+    throw_syntax("Invalid regular expression: /" + SRC + "/: " + msg)
+}
+
+proc lower_cp(cp) {
+    if cp < 128 {
+        if cp >= 65 and cp <= 90 {
+            return cp + 32
+        }
+        return cp
+    }
+    if cp >= 192 and cp <= 222 and cp != 215 {
+        return cp + 32
+    }
+    if (cp >= 913 and cp <= 939) or (cp >= 1040 and cp <= 1071) {
+        return cp + 32
+    }
+    if cp >= 1024 and cp <= 1039 {
+        return cp + 80
+    }
+    if cp >= 256 and cp <= 383 and (cp & 1) == 0 and cp != 304 and cp != 312 {
+        return cp + 1
+    }
+    return cp
+}
+
+proc upper_cp(cp) {
+    if cp < 128 {
+        if cp >= 97 and cp <= 122 {
+            return cp - 32
+        }
+        return cp
+    }
+    if cp >= 224 and cp <= 254 and cp != 247 {
+        return cp - 32
+    }
+    if (cp >= 945 and cp <= 971 and cp != 962) or (cp >= 1072 and cp <= 1103) {
+        return cp - 32
+    }
+    if cp >= 1104 and cp <= 1119 {
+        return cp - 80
+    }
+    if cp >= 256 and cp <= 383 and (cp & 1) == 1 and cp != 305 and cp != 313 {
+        return cp - 1
+    }
+    return cp
+}
+
+alloc DIGIT := [48, 57]
+alloc WORD := [48, 57, 65, 90, 95, 95, 97, 122]
+alloc SPACE := [9, 13, 32, 32, 160, 160, 5760, 5760, 8192, 8202, 8232, 8233, 8239, 8239, 8287, 8287, 12288, 12288, 65279, 65279]
+alloc LETTER := [65, 90, 97, 122, 170, 170, 181, 181, 186, 186, 192, 214, 216, 246, 248, 705, 880, 1023, 1024, 1327,
+    1329, 1366, 1377, 1415, 1488, 1514, 1569, 1610, 1646, 1747, 2308, 2361, 3585, 3632, 4352, 4607, 7680, 8191,
+    12353, 12438, 12449, 12538, 13312, 19893, 19968, 40959, 44032, 55203, 63744, 64255, 65313, 65338, 65345, 65370]
+alloc UPPER := [65, 90, 192, 214, 216, 222, 913, 939, 1024, 1071]
+alloc LOWER := [97, 122, 181, 181, 223, 246, 248, 255, 945, 974, 1072, 1119]
+alloc NUMBER := [48, 57, 178, 179, 185, 185, 188, 190, 1632, 1641, 1776, 1785, 2406, 2415, 65296, 65305]
+alloc PUNCT := [33, 35, 37, 42, 44, 47, 58, 59, 63, 64, 91, 93, 95, 95, 123, 123, 125, 125, 161, 161, 167, 167,
+    171, 171, 182, 183, 187, 187, 191, 191, 8208, 8231, 8240, 8259, 12289, 12291, 12296, 12305]
+
+# The ranges of everything not in `ranges`.
+proc negated(ranges) {
+    # sort and merge first
+    alloc pairs := []
+    alloc i := 0
+    loop i < length(ranges) {
+        append(pairs, [ranges[i], ranges[i + 1]])
+        i := i + 2
+    }
+    alloc n := length(pairs)
+    alloc a := 1
+    loop a < n {
+        alloc x := pairs[a]
+        alloc b := a - 1
+        loop b >= 0 and pairs[b][0] > x[0] {
+            pairs[b + 1] := pairs[b]
+            b := b - 1
+        }
+        pairs[b + 1] := x
+        a := a + 1
+    }
+    alloc out := []
+    alloc next := 0
+    for p in pairs {
+        if p[0] > next {
+            append(out, next)
+            append(out, p[0] - 1)
+        }
+        if p[1] + 1 > next {
+            next := p[1] + 1
+        }
+    }
+    if next <= 1114111 {
+        append(out, next)
+        append(out, 1114111)
+    }
+    return out
+}
+
+proc add_all(out, ranges) {
+    for r in ranges {
+        append(out, r)
+    }
+    return out
+}
+
+# \p{Name}: PP is just after the p or P.
+proc property_class(negate) {
+    if PP >= PN or PT[PP] != 123 {
+        bad("Invalid property name")
+    }
+    alloc start := PP + 1
+    alloc end := start
+    loop end < PN and PT[end] != 125 {
+        end := end + 1
+    }
+    alloc name := ""
+    alloc i := start
+    loop i < end {
+        name := name + bytes_to_string([PT[i]])
+        i := i + 1
+    }
+    PP := end + 1
+    alloc eq := 0
+    loop eq < length(name) and name[eq] != "=" {
+        eq := eq + 1
+    }
+    if eq < length(name) {
+        name := name[eq + 1:]
+    }
+    alloc r := []
+    if name == "L" or name == "Letter" or name == "Alphabetic" or name == "Alpha" {
+        r := LETTER
+    } elif name == "Lu" or name == "Uppercase_Letter" or name == "Uppercase" {
+        r := UPPER
+    } elif name == "Ll" or name == "Lowercase_Letter" or name == "Lowercase" {
+        r := LOWER
+    } elif name == "N" or name == "Nd" or name == "Number" or name == "Decimal_Number" {
+        r := NUMBER
+    } elif name == "P" or name == "Punctuation" {
+        r := PUNCT
+    } elif name == "Z" or name == "Zs" or name == "White_Space" or name == "Separator" {
+        r := SPACE
+    } elif name == "Latin" {
+        r := [65, 90, 97, 122, 170, 170, 186, 186, 192, 214, 216, 246, 248, 696, 7680, 7935]
+    } elif name == "Greek" {
+        r := [880, 1023, 7936, 8191]
+    } elif name == "Cyrillic" {
+        r := [1024, 1327]
+    } elif name == "Han" {
+        r := [11904, 12031, 12293, 12295, 13312, 19893, 19968, 40959, 63744, 64255]
+    } elif name == "Hiragana" {
+        r := [12353, 12447]
+    } elif name == "Katakana" {
+        r := [12449, 12543]
+    } elif name == "Emoji" or name == "Extended_Pictographic" or name == "Emoji_Presentation" {
+        r := [169, 169, 174, 174, 8252, 8252, 8265, 8265, 8482, 8482, 8596, 8601, 9728, 10175, 11013, 11093, 126976, 129791]
+    } elif name == "M" or name == "Mn" or name == "Mark" {
+        r := [768, 879, 1155, 1161, 6832, 6911, 7616, 7679, 8400, 8447, 65056, 65071]
+    } elif name == "S" or name == "Symbol" or name == "Sm" or name == "Sc" {
+        r := [36, 36, 43, 43, 60, 62, 94, 94, 96, 96, 124, 124, 126, 126, 162, 169, 172, 172, 174, 177, 180, 180, 184, 184, 215, 215, 247, 247, 8352, 8399, 8592, 9215]
+    } elif name == "Any" {
+        r := [0, 1114111]
+    } elif name == "ASCII" {
+        r := [0, 127]
+    } else {
+        bad("Invalid property name")
+    }
+    if negate {
+        return negated(r)
+    }
+    return r
+}
+
+proc hex_digits(count) {
+    alloc v := 0
+    alloc i := 0
+    loop i < count {
+        if PP >= PN {
+            return -1
+        }
+        alloc ch := PT[PP]
+        alloc d := -1
+        if ch >= 48 and ch <= 57 {
+            d := ch - 48
+        } elif (ch | 32) >= 97 and (ch | 32) <= 102 {
+            d := (ch | 32) - 87
+        }
+        if d < 0 {
+            return -1
+        }
+        v := v * 16 + d
+        PP := PP + 1
+        i := i + 1
+    }
+    return v
+}
+
+# An escape that stands for one character; PP is after the backslash.
+# Gives the code point, or -1 when it is one of the class escapes.
+proc char_escape(in_class) {
+    alloc ch := PT[PP]
+    PP := PP + 1
+    if ch == 110 {
+        return 10
+    }
+    if ch == 114 {
+        return 13
+    }
+    if ch == 116 {
+        return 9
+    }
+    if ch == 118 {
+        return 11
+    }
+    if ch == 102 {
+        return 12
+    }
+    if ch == 48 and (PP >= PN or PT[PP] < 48 or PT[PP] > 57) {
+        return 0
+    }
+    if ch == 98 and in_class {
+        return 8
+    }
+    if ch == 120 {
+        alloc save := PP
+        alloc v := hex_digits(2)
+        if v < 0 {
+            PP := save
+            return 120
+        }
+        return v
+    }
+    if ch == 117 {
+        alloc save2 := PP
+        if PP < PN and PT[PP] == 123 {
+            PP := PP + 1
+            alloc v2 := 0
+            alloc any := false
+            loop PP < PN and PT[PP] != 125 {
+                alloc d := hex_digits(1)
+                if d < 0 {
+                    bad("Invalid Unicode escape")
+                }
+                v2 := v2 * 16 + d
+                any := true
+            }
+            if PP >= PN or any == false {
+                bad("Invalid Unicode escape")
+            }
+            PP := PP + 1
+            return v2
+        }
+        alloc v3 := hex_digits(4)
+        if v3 < 0 {
+            PP := save2
+            return 117
+        }
+        if v3 >= 55296 and v3 < 56320 and PP + 1 < PN and PT[PP] == 92 and PT[PP + 1] == 117 {
+            alloc save3 := PP
+            PP := PP + 2
+            alloc lo := hex_digits(4)
+            if lo >= 56320 and lo < 57344 {
+                return 65536 + ((v3 - 55296) << 10) + (lo - 56320)
+            }
+            PP := save3
+        }
+        return v3
+    }
+    if ch == 99 {
+        if PP < PN {
+            alloc l := PT[PP] | 32
+            if l >= 97 and l <= 122 {
+                PP := PP + 1
+                return l & 31
+            }
+        }
+        PP := PP - 1
+        return 92
+    }
+    return ch
+}
+
+# [ ... ]: PP is after the [. Gives a class node.
+proc read_class() {
+    alloc negate := false
+    if PP < PN and PT[PP] == 94 {
+        negate := true
+        PP := PP + 1
+    }
+    alloc ranges := []
+    alloc first := true
+    loop true {
+        if PP >= PN {
+            bad("Unterminated character class")
+        }
+        alloc ch := PT[PP]
+        if ch == 93 and (first == false or true) {
+            PP := PP + 1
+            break
+        }
+        first := false
+        alloc lo := -1
+        if ch == 92 {
+            PP := PP + 1
+            if PP >= PN {
+                bad("\\ at end of pattern")
+            }
+            alloc e := PT[PP]
+            if e == 100 {
+                add_all(ranges, DIGIT)
+                PP := PP + 1
+            } elif e == 68 {
+                add_all(ranges, negated(DIGIT))
+                PP := PP + 1
+            } elif e == 119 {
+                add_all(ranges, WORD)
+                PP := PP + 1
+            } elif e == 87 {
+                add_all(ranges, negated(WORD))
+                PP := PP + 1
+            } elif e == 115 {
+                add_all(ranges, SPACE)
+                PP := PP + 1
+            } elif e == 83 {
+                add_all(ranges, negated(SPACE))
+                PP := PP + 1
+            } elif (e == 112 or e == 80) and (PFLAGS & FL_U) != 0 {
+                PP := PP + 1
+                add_all(ranges, property_class(e == 80))
+            } else {
+                lo := char_escape(true)
+            }
+        } else {
+            lo := ch
+            PP := PP + 1
+        }
+        if lo < 0 {
+            continue
+        }
+        alloc hi := lo
+        if PP + 1 < PN and PT[PP] == 45 and PT[PP + 1] != 93 {
+            alloc save := PP
+            PP := PP + 1
+            alloc h := PT[PP]
+            if h == 92 {
+                PP := PP + 1
+                alloc e2 := PT[PP]
+                if e2 == 100 or e2 == 68 or e2 == 119 or e2 == 87 or e2 == 115 or e2 == 83 {
+                    # a-\d: the dash is a dash
+                    PP := save
+                    h := -1
+                } else {
+                    h := char_escape(true)
+                }
+            } else {
+                PP := PP + 1
+            }
+            if h >= 0 {
+                if h < lo {
+                    bad("Range out of order in character class")
+                }
+                hi := h
+            }
+        }
+        append(ranges, lo)
+        append(ranges, hi)
+    }
+    return [2, ranges, negate]
+}
+
+proc read_name() {
+    # PP is after the <
+    alloc name := ""
+    loop PP < PN and PT[PP] != 62 {
+        name := name + bytes_to_string([PT[PP]])
+        PP := PP + 1
+    }
+    if PP >= PN or name == "" {
+        bad("Invalid capture group name")
+    }
+    PP := PP + 1
+    return name
+}
+
+proc read_number() {
+    alloc v := -1
+    loop PP < PN and PT[PP] >= 48 and PT[PP] <= 57 {
+        if v < 0 {
+            v := 0
+        }
+        if v < 100000 {
+            v := v * 10 + PT[PP] - 48
+        }
+        PP := PP + 1
+    }
+    return v
+}
+
+proc read_atom() {
+    alloc ch := PT[PP]
+    PP := PP + 1
+    if ch == 46 {
+        return [1]
+    }
+    if ch == 40 {
+        if PP < PN and PT[PP] == 63 {
+            alloc k := 0
+            if PP + 1 < PN {
+                k := PT[PP + 1]
+            }
+            if k == 58 {
+                PP := PP + 2
+                alloc inner := read_alt()
+                expect_close()
+                return [5, inner, -1]
+            }
+            if k == 61 or k == 33 {
+                PP := PP + 2
+                alloc la := read_alt()
+                expect_close()
+                if k == 61 {
+                    return [12, 0, la]
+                }
+                return [12, 1, la]
+            }
+            if k == 60 and PP + 2 < PN and (PT[PP + 2] == 61 or PT[PP + 2] == 33) {
+                alloc kind := 2
+                if PT[PP + 2] == 33 {
+                    kind := 3
+                }
+                PP := PP + 3
+                alloc lb := read_alt()
+                expect_close()
+                return [12, kind, lb]
+            }
+            if k == 60 {
+                PP := PP + 2
+                alloc name := read_name()
+                GROUP_AT := GROUP_AT + 1
+                alloc gi := GROUP_AT
+                if NAMES == false {
+                    NAMES := {}
+                }
+                NAMES[name] := gi
+                alloc ng := read_alt()
+                expect_close()
+                return [5, ng, gi]
+            }
+            bad("Invalid group")
+        }
+        GROUP_AT := GROUP_AT + 1
+        alloc gi2 := GROUP_AT
+        alloc g := read_alt()
+        expect_close()
+        return [5, g, gi2]
+    }
+    if ch == 91 {
+        return read_class()
+    }
+    if ch == 94 {
+        return [7]
+    }
+    if ch == 36 {
+        return [8]
+    }
+    if ch == 92 {
+        if PP >= PN {
+            bad("\\ at end of pattern")
+        }
+        alloc e := PT[PP]
+        if e == 100 {
+            PP := PP + 1
+            return [2, DIGIT, false]
+        }
+        if e == 68 {
+            PP := PP + 1
+            return [2, DIGIT, true]
+        }
+        if e == 119 {
+            PP := PP + 1
+            return [2, WORD, false]
+        }
+        if e == 87 {
+            PP := PP + 1
+            return [2, WORD, true]
+        }
+        if e == 115 {
+            PP := PP + 1
+            return [2, SPACE, false]
+        }
+        if e == 83 {
+            PP := PP + 1
+            return [2, SPACE, true]
+        }
+        if e == 98 {
+            PP := PP + 1
+            return [9]
+        }
+        if e == 66 {
+            PP := PP + 1
+            return [10]
+        }
+        if (e == 112 or e == 80) and (PFLAGS & FL_U) != 0 {
+            PP := PP + 1
+            return [2, property_class(e == 80), false]
+        }
+        if e == 107 and PP + 1 < PN and PT[PP + 1] == 60 {
+            PP := PP + 2
+            return [13, read_name()]
+        }
+        if e >= 49 and e <= 57 {
+            alloc save := PP
+            alloc num := read_number()
+            if num <= NGROUPS {
+                return [11, num]
+            }
+            PP := save
+            # \8 and \9, or an octal escape
+            if e >= 56 {
+                PP := PP + 1
+                return [0, e]
+            }
+            alloc v := 0
+            alloc count := 0
+            loop PP < PN and PT[PP] >= 48 and PT[PP] <= 55 and count < 3 and v * 8 + PT[PP] - 48 < 256 {
+                v := v * 8 + PT[PP] - 48
+                PP := PP + 1
+                count := count + 1
+            }
+            return [0, v]
+        }
+        return [0, char_escape(false)]
+    }
+    if ch == 42 or ch == 43 or ch == 63 {
+        bad("Nothing to repeat")
+    }
+    return [0, ch]
+}
+
+proc expect_close() {
+    if PP >= PN or PT[PP] != 41 {
+        bad("Unterminated group")
+    }
+    PP := PP + 1
+    return true
+}
+
+# {n}, {n,} or {n,m} at PP (which is at the {): [min, max], or false
+# when it is no such thing (then the { is a plain character).
+proc read_braces() {
+    alloc save := PP
+    PP := PP + 1
+    alloc lo := read_number()
+    if lo < 0 {
+        PP := save
+        return false
+    }
+    alloc hi := lo
+    if PP < PN and PT[PP] == 44 {
+        PP := PP + 1
+        hi := read_number()
+    }
+    if PP >= PN or PT[PP] != 125 {
+        PP := save
+        return false
+    }
+    PP := PP + 1
+    if hi >= 0 and hi < lo {
+        bad("numbers out of order in {} quantifier")
+    }
+    return [lo, hi]
+}
+
+proc read_seq() {
+    alloc items := []
+    loop PP < PN {
+        alloc ch := PT[PP]
+        if ch == 124 or ch == 41 {
+            break
+        }
+        alloc atom := read_atom()
+        if PP < PN {
+            alloc q := PT[PP]
+            alloc lo := -1
+            alloc hi := -1
+            if q == 42 {
+                lo := 0
+                PP := PP + 1
+            } elif q == 43 {
+                lo := 1
+                PP := PP + 1
+            } elif q == 63 {
+                lo := 0
+                hi := 1
+                PP := PP + 1
+            } elif q == 123 {
+                alloc br := read_braces()
+                if br != false {
+                    lo := br[0]
+                    hi := br[1]
+                }
+            }
+            if lo >= 0 {
+                alloc greedy := true
+                if PP < PN and PT[PP] == 63 {
+                    greedy := false
+                    PP := PP + 1
+                }
+                atom := [6, atom, lo, hi, greedy]
+            }
+        }
+        append(items, atom)
+    }
+    if length(items) == 1 {
+        return items[0]
+    }
+    return [3, items]
+}
+
+proc read_alt() {
+    alloc first := read_seq()
+    if PP >= PN or PT[PP] != 124 {
+        return first
+    }
+    alloc alts := [first]
+    loop PP < PN and PT[PP] == 124 {
+        PP := PP + 1
+        append(alts, read_seq())
+    }
+    return [4, alts]
+}
+
+# --- writing the program ----------------------------------------------------------------
+
+alloc P := []
+alloc CLASSES := []
+alloc NREGS := 0
+
+proc nullable(n) {
+    alloc k := n[0]
+    if k == 0 or k == 1 or k == 2 {
+        return false
+    }
+    if k == 3 {
+        for it in n[1] {
+            if nullable(it) == false {
+                return false
+            }
+        }
+        return true
+    }
+    if k == 4 {
+        for a in n[1] {
+            if nullable(a) {
+                return true
+            }
+        }
+        return false
+    }
+    if k == 5 {
+        return nullable(n[1])
+    }
+    if k == 6 {
+        return n[2] == 0 or nullable(n[1])
+    }
+    return true
+}
+
+proc make_class(ranges, negate) {
+    alloc icase := (PFLAGS & FL_I) != 0
+    alloc table := list_repeat(false, 128)
+    alloc high := []
+    alloc i := 0
+    loop i < length(ranges) {
+        alloc lo := ranges[i]
+        alloc hi := ranges[i + 1]
+        alloc cc := lo
+        loop cc <= hi and cc < 128 {
+            table[cc] := true
+            if icase {
+                if cc >= 65 and cc <= 90 {
+                    table[cc + 32] := true
+                } elif cc >= 97 and cc <= 122 {
+                    table[cc - 32] := true
+                }
+            }
+            cc := cc + 1
+        }
+        if hi >= 128 {
+            if lo < 128 {
+                lo := 128
+            }
+            append(high, lo)
+            append(high, hi)
+        }
+        i := i + 2
+    }
+    append(CLASSES, [table, high, negate, icase])
+    return length(CLASSES) - 1
+}
+
+proc emit_node(n) {
+    alloc k := n[0]
+    if k == 0 {
+        if (PFLAGS & FL_I) != 0 and lower_cp(n[1]) != upper_cp(n[1]) {
+            append(P, R_CHARI)
+            append(P, lower_cp(n[1]))
+        } else {
+            append(P, R_CHAR)
+            append(P, n[1])
+        }
+    } elif k == 1 {
+        if (PFLAGS & FL_S) != 0 {
+            append(P, R_ANYNL)
+        } else {
+            append(P, R_ANY)
+        }
+    } elif k == 2 {
+        append(P, R_CLASS)
+        append(P, make_class(n[1], n[2]))
+    } elif k == 3 {
+        for it in n[1] {
+            emit_node(it)
+        }
+    } elif k == 4 {
+        alloc ends := []
+        alloc alts := n[1]
+        alloc i := 0
+        loop i < length(alts) {
+            if i + 1 < length(alts) {
+                append(P, R_SPLIT)
+                append(P, length(P) + 2)
+                append(P, 0)
+                alloc fix := length(P) - 1
+                emit_node(alts[i])
+                append(P, R_JMP)
+                append(P, 0)
+                append(ends, length(P) - 1)
+                P[fix] := length(P)
+            } else {
+                emit_node(alts[i])
+            }
+            i := i + 1
+        }
+        for e in ends {
+            P[e] := length(P)
+        }
+    } elif k == 5 {
+        if n[2] >= 0 {
+            append(P, R_SAVE)
+            append(P, n[2] * 2)
+            emit_node(n[1])
+            append(P, R_SAVE)
+            append(P, n[2] * 2 + 1)
+        } else {
+            emit_node(n[1])
+        }
+    } elif k == 6 {
+        alloc body := n[1]
+        alloc lo := n[2]
+        alloc hi := n[3]
+        alloc greedy := n[4]
+        alloc j := 0
+        loop j < lo {
+            emit_node(body)
+            j := j + 1
+            if length(P) > 200000 {
+                bad("too large")
+            }
+        }
+        if hi < 0 {
+            alloc top := length(P)
+            append(P, R_SPLIT)
+            append(P, 0)
+            append(P, 0)
+            alloc sp := length(P) - 2
+            alloc guard := nullable(body)
+            alloc reg := 0
+            if guard {
+                reg := NREGS
+                NREGS := NREGS + 1
+                append(P, R_MARK)
+                append(P, reg)
+            }
+            alloc start := sp + 2
+            emit_node(body)
+            if guard {
+                append(P, R_CHECK)
+                append(P, reg)
+            }
+            append(P, R_JMP)
+            append(P, top)
+            if greedy {
+                P[sp] := start
+                P[sp + 1] := length(P)
+            } else {
+                P[sp] := length(P)
+                P[sp + 1] := start
+            }
+        } elif hi > lo {
+            alloc outs := []
+            alloc m := lo
+            loop m < hi {
+                append(P, R_SPLIT)
+                append(P, 0)
+                append(P, 0)
+                alloc sp2 := length(P) - 2
+                if greedy {
+                    P[sp2] := length(P)
+                    append(outs, sp2 + 1)
+                } else {
+                    P[sp2 + 1] := length(P)
+                    append(outs, sp2)
+                }
+                emit_node(body)
+                m := m + 1
+                if length(P) > 200000 {
+                    bad("too large")
+                }
+            }
+            for o in outs {
+                P[o] := length(P)
+            }
+        }
+    } elif k == 7 {
+        if (PFLAGS & FL_M) != 0 {
+            append(P, R_MBOL)
+        } else {
+            append(P, R_BOL)
+        }
+    } elif k == 8 {
+        if (PFLAGS & FL_M) != 0 {
+            append(P, R_MEOL)
+        } else {
+            append(P, R_EOL)
+        }
+    } elif k == 9 {
+        append(P, R_WORDB)
+    } elif k == 10 {
+        append(P, R_NWORDB)
+    } elif k == 11 {
+        append(P, R_BACKREF)
+        append(P, n[1])
+    } elif k == 12 {
+        append(P, R_LOOK)
+        append(P, n[1])
+        append(P, 0)
+        alloc fix2 := length(P) - 1
+        emit_node(n[2])
+        append(P, R_MATCH)
+        P[fix2] := length(P)
+    } elif k == 13 {
+        if NAMES == false or has_key(NAMES, n[1]) == false {
+            bad("Invalid named reference")
+        }
+        append(P, R_BACKREF)
+        append(P, NAMES[n[1]])
+    }
+    return true
+}
+
+alloc CACHE := {}
+alloc NCACHE := 0
+
+proc parse_flags(flags) {
+    alloc f := 0
+    for ch in flags {
+        alloc bit := 0
+        if ch == "g" {
+            bit := FL_G
+        } elif ch == "i" {
+            bit := FL_I
+        } elif ch == "m" {
+            bit := FL_M
+        } elif ch == "s" {
+            bit := FL_S
+        } elif ch == "u" or ch == "v" {
+            bit := FL_U
+        } elif ch == "y" {
+            bit := FL_Y
+        } elif ch == "d" {
+            bit := FL_D
+        } else {
+            throw_syntax("Invalid flags supplied to RegExp constructor '" + flags + "'")
+        }
+        if (f & bit) != 0 {
+            throw_syntax("Invalid flags supplied to RegExp constructor '" + flags + "'")
+        }
+        f := f | bit
+    }
+    return f
+}
+
+# The program of a pattern: [program, classes, groups, names, flags,
+# loop registers, first character or -1].
+proc compile(source, flags) {
+    alloc key := flags + "/" + source
+    if has_key(CACHE, key) {
+        return CACHE[key]
+    }
+    SRC := source
+    PFLAGS := parse_flags(flags)
+    PT := []
+    for ch in source {
+        append(PT, ascii(ch))
+    }
+    PN := length(PT)
+    # count the groups first: \3 is a back reference only if there are three
+    NGROUPS := 0
+    alloc i := 0
+    alloc in_class := false
+    loop i < PN {
+        alloc cc := PT[i]
+        if cc == 92 {
+            i := i + 1
+        } elif in_class {
+            if cc == 93 {
+                in_class := false
+            }
+        } elif cc == 91 {
+            in_class := true
+        } elif cc == 40 {
+            if i + 1 < PN and PT[i + 1] == 63 {
+                if i + 2 < PN and PT[i + 2] == 60 and i + 3 < PN and PT[i + 3] != 61 and PT[i + 3] != 33 {
+                    NGROUPS := NGROUPS + 1
+                }
+            } else {
+                NGROUPS := NGROUPS + 1
+            }
+        }
+        i := i + 1
+    }
+    PP := 0
+    GROUP_AT := 0
+    NAMES := false
+    alloc tree := read_alt()
+    if PP < PN {
+        if PT[PP] == 41 {
+            bad("Unmatched ')'")
+        }
+        bad("Unexpected character")
+    }
+    P := []
+    CLASSES := []
+    NREGS := 0
+    append(P, R_SAVE)
+    append(P, 0)
+    emit_node(tree)
+    append(P, R_SAVE)
+    append(P, 1)
+    append(P, R_MATCH)
+    alloc first := -1
+    if P[2] == R_CHAR {
+        first := P[3]
+    }
+    alloc prog := [P, CLASSES, GROUP_AT, NAMES, PFLAGS, NREGS, first]
+    if NCACHE > 2000 {
+        CACHE := {}
+        NCACHE := 0
+    }
+    CACHE[key] := prog
+    NCACHE := NCACHE + 1
+    P := []
+    CLASSES := []
+    PT := []
+    return prog
+}
+
+# --- running a program ---------------------------------------------------------------------
+
+alloc RI := []                 # the text, as code points
+alloc RN := 0
+alloc RC := []                 # the captures: start and end of each group, -1 for none
+alloc RG := []                 # the loop registers
+alloc RCLS := []
+alloc RSTK := []               # what to come back to: kind, a, b
+alloc RSP := 0
+alloc STEPS := 0
+alloc LAST_TEXT := ""
+alloc LAST_INPUT := []
+
+proc is_word_at(i) {
+    if i < 0 or i >= RN {
+        return false
+    }
+    alloc ch := RI[i]
+    return (ch >= 97 and ch <= 122) or (ch >= 65 and ch <= 90) or (ch >= 48 and ch <= 57) or ch == 95
+}
+
+proc in_class(cls, cp) {
+    alloc r := false
+    if cp < 128 {
+        r := cls[0][cp]
+    } else {
+        alloc high := cls[1]
+        alloc n := length(high)
+        alloc i := 0
+        loop i < n {
+            if cp >= high[i] and cp <= high[i + 1] {
+                r := true
+                break
+            }
+            i := i + 2
+        }
+        if r == false and cls[3] {
+            alloc l := lower_cp(cp)
+            alloc u := upper_cp(cp)
+            if l != cp or u != cp {
+                i := 0
+                loop i < n {
+                    if (l >= high[i] and l <= high[i + 1]) or (u >= high[i] and u <= high[i + 1]) {
+                        r := true
+                        break
+                    }
+                    i := i + 2
+                }
+                if r == false and l < 128 {
+                    r := cls[0][l]
+                }
+            }
+        }
+    }
+    return r != cls[2]
+}
+
+# Run program p from instruction pc at position pos. Gives where the
+# match ends, or -1. With must_end at 0 or more, only a match ending
+# there counts (a look behind).
+proc rx_run(p, pc, pos, must_end, icase) {
+    alloc inp := RI
+    alloc n := RN
+    alloc caps := RC
+    alloc stk := RSTK
+    alloc base := RSP
+    alloc sp := RSP
+    alloc cap := length(stk)
+    alloc steps := 0
+    loop true {
+        alloc op := p[pc]
+        alloc ok := true
+        if op == 0 {
+            if pos < n and inp[pos] == p[pc + 1] {
+                pos := pos + 1
+                pc := pc + 2
+            } else {
+                ok := false
+            }
+        } elif op == 3 {
+            if pos < n {
+                alloc cp := inp[pos]
+                alloc cls := RCLS[p[pc + 1]]
+                alloc hit := false
+                if cp < 128 {
+                    hit := cls[0][cp] != cls[2]
+                } else {
+                    hit := in_class(cls, cp)
+                }
+                if hit {
+                    pos := pos + 1
+                    pc := pc + 2
+                } else {
+                    ok := false
+                }
+            } else {
+                ok := false
+            }
+        } elif op == 4 {
+            if sp + 3 > cap {
+                append(stk, 0)
+                append(stk, 0)
+                append(stk, 0)
+                cap := cap + 3
+            }
+            stk[sp] := 0
+            stk[sp + 1] := p[pc + 2]
+            stk[sp + 2] := pos
+            sp := sp + 3
+            pc := p[pc + 1]
+        } elif op == 5 {
+            pc := p[pc + 1]
+        } elif op == 6 {
+            alloc slot := p[pc + 1]
+            if sp + 3 > cap {
+                append(stk, 0)
+                append(stk, 0)
+                append(stk, 0)
+                cap := cap + 3
+            }
+            stk[sp] := 1
+            stk[sp + 1] := slot
+            stk[sp + 2] := caps[slot]
+            sp := sp + 3
+            caps[slot] := pos
+            pc := pc + 2
+        } elif op == 1 {
+            if pos < n and inp[pos] != 10 and inp[pos] != 13 and inp[pos] != 8232 and inp[pos] != 8233 {
+                pos := pos + 1
+                pc := pc + 1
+            } else {
+                ok := false
+            }
+        } elif op == 2 {
+            if pos < n {
+                pos := pos + 1
+                pc := pc + 1
+            } else {
+                ok := false
+            }
+        } elif op == 15 {
+            if must_end < 0 or pos == must_end {
+                RSP := base
+                return pos
+            }
+            ok := false
+        } elif op == 18 {
+            if pos < n and lower_cp(inp[pos]) == p[pc + 1] {
+                pos := pos + 1
+                pc := pc + 2
+            } else {
+                ok := false
+            }
+        } elif op == 7 {
+            if pos == 0 {
+                pc := pc + 1
+            } else {
+                ok := false
+            }
+        } elif op == 8 {
+            if pos == n {
+                pc := pc + 1
+            } else {
+                ok := false
+            }
+        } elif op == 9 {
+            if pos == 0 or inp[pos - 1] == 10 or inp[pos - 1] == 13 or inp[pos - 1] == 8232 or inp[pos - 1] == 8233 {
+                pc := pc + 1
+            } else {
+                ok := false
+            }
+        } elif op == 10 {
+            if pos == n or inp[pos] == 10 or inp[pos] == 13 or inp[pos] == 8232 or inp[pos] == 8233 {
+                pc := pc + 1
+            } else {
+                ok := false
+            }
+        } elif op == 11 {
+            if is_word_at(pos - 1) != is_word_at(pos) {
+                pc := pc + 1
+            } else {
+                ok := false
+            }
+        } elif op == 12 {
+            if is_word_at(pos - 1) == is_word_at(pos) {
+                pc := pc + 1
+            } else {
+                ok := false
+            }
+        } elif op == 13 {
+            alloc k := p[pc + 1]
+            alloc s := caps[k * 2]
+            alloc e := caps[k * 2 + 1]
+            if s >= 0 and e >= 0 {
+                alloc len := e - s
+                if pos + len > n {
+                    ok := false
+                } else {
+                    alloc j := 0
+                    loop j < len {
+                        alloc a := inp[s + j]
+                        alloc b := inp[pos + j]
+                        if a != b and (icase == false or lower_cp(a) != lower_cp(b)) {
+                            ok := false
+                            break
+                        }
+                        j := j + 1
+                    }
+                    if ok {
+                        pos := pos + len
+                    }
+                }
+            }
+            if ok {
+                pc := pc + 2
+            }
+        } elif op == 14 {
+            alloc kind := p[pc + 1]
+            RSP := sp
+            alloc found := false
+            if kind <= 1 {
+                alloc snapshot := false
+                if kind == 1 {
+                    snapshot := caps[0:]
+                }
+                found := rx_run(p, pc + 3, pos, -1, icase) >= 0
+                if kind == 1 {
+                    alloc ci := 0
+                    loop ci < length(caps) {
+                        caps[ci] := snapshot[ci]
+                        ci := ci + 1
+                    }
+                }
+            } else {
+                alloc from := pos
+                loop from >= 0 and found == false {
+                    found := rx_run(p, pc + 3, from, pos, icase) >= 0
+                    from := from - 1
+                }
+            }
+            stk := RSTK
+            cap := length(stk)
+            if found == (kind == 0 or kind == 2) {
+                pc := p[pc + 2]
+            } else {
+                ok := false
+            }
+        } elif op == 16 {
+            alloc reg := p[pc + 1]
+            if sp + 3 > cap {
+                append(stk, 0)
+                append(stk, 0)
+                append(stk, 0)
+                cap := cap + 3
+            }
+            stk[sp] := 2
+            stk[sp + 1] := reg
+            stk[sp + 2] := RG[reg]
+            sp := sp + 3
+            RG[reg] := pos
+            pc := pc + 2
+        } elif op == 17 {
+            if RG[p[pc + 1]] == pos {
+                ok := false
+            } else {
+                pc := pc + 2
+            }
+        }
+        if ok == false {
+            steps := steps + 1
+            if steps > 20000000 {
+                RSP := base
+                throw_error("a regular expression took too long (it keeps trying the same text in other ways)")
+            }
+            loop true {
+                if sp == base {
+                    RSP := base
+                    return -1
+                }
+                sp := sp - 3
+                alloc kind2 := stk[sp]
+                if kind2 == 0 {
+                    pc := stk[sp + 1]
+                    pos := stk[sp + 2]
+                    break
+                }
+                if kind2 == 1 {
+                    caps[stk[sp + 1]] := stk[sp + 2]
+                } else {
+                    RG[stk[sp + 1]] := stk[sp + 2]
+                }
+            }
+        }
+    }
+}
+
+# Make `text` the input of the matcher.
+proc set_input(text) {
+    if text == LAST_TEXT and length(LAST_INPUT) > 0 {
+        RI := LAST_INPUT
+        RN := length(RI)
+        return true
+    }
+    alloc b := string_bytes(text)
+    if length(b) == length(text) {
+        RI := b
+    } else {
+        alloc out := []
+        for ch in text {
+            append(out, ascii(ch))
+        }
+        RI := out
+    }
+    RN := length(RI)
+    LAST_TEXT := text
+    LAST_INPUT := RI
+    return true
+}
+
+# Search `text` with program `prog` from position `from`. Gives the
+# captures (a list: start, end, start of group 1, ...) or false.
+proc search(prog, text, from, sticky) {
+    set_input(text)
+    alloc p := prog[0]
+    alloc ncap := (prog[2] + 1) * 2
+    RC := list_repeat(-1, ncap)
+    RG := list_repeat(-1, prog[5] + 1)
+    RCLS := prog[1]
+    alloc icase := (prog[4] & FL_I) != 0
+    alloc first := prog[6]
+    alloc n := RN
+    alloc inp := RI
+    alloc start := from
+    loop start <= n {
+        if first >= 0 and sticky == false {
+            loop start < n and inp[start] != first {
+                start := start + 1
+            }
+            if start >= n {
+                return false
+            }
+        }
+        RSP := 0
+        alloc end := rx_run(p, 0, start, -1, icase)
+        if end >= 0 {
+            return RC
+        }
+        if sticky {
+            return false
+        }
+        alloc i := 0
+        loop i < ncap {
+            RC[i] := -1
+            i := i + 1
+        }
+        start := start + 1
+    }
+    return false
+}
+
+# --- RegExp ---------------------------------------------------------------------------------
+
+# The source with every bare "/" written "\/", as .source shows it.
+proc escape_slashes(source) {
+    alloc found := false
+    for ch in source {
+        if ch == "/" {
+            found := true
+        }
+    }
+    if found == false {
+        return source
+    }
+    alloc out := ""
+    alloc esc := false
+    alloc in_class := false
+    for ch2 in source {
+        if esc {
+            esc := false
+        } elif ch2 == "\\" {
+            esc := true
+        } elif ch2 == "[" {
+            in_class := true
+        } elif ch2 == "]" {
+            in_class := false
+        } elif ch2 == "/" and in_class == false {
+            out := out + "\\"
+        }
+        out := out + ch2
+    }
+    return out
+}
+
+proc regex_new(source, flags) {
+    alloc prog := compile(source, flags)
+    alloc h := new_obj(9, I[16])
+    H[h][3] := [source, flags, prog]
+    H[h][2]["lastIndex"] := 0.0
+    H[h][5] := {lastIndex: 1}
+    return h
+}
+
+proc n_regexp(this, args) {
+    alloc pat := arg(args, 0)
+    alloc fl := arg(args, 1)
+    alloc source := ""
+    alloc flags := ""
+    if class_of(pat) == 9 {
+        source := H[pat][3][0]
+        flags := H[pat][3][1]
+    } elif type_of(pat) != 0 {
+        source := to_str(pat)
+    }
+    if type_of(fl) != 0 {
+        flags := to_str(fl)
+    }
+    if source == "" {
+        source := "(?:)"
+    }
+    return regex_new(escape_slashes(source), flags)
+}
+
+proc this_rx(this) {
+    if class_of(this) != 9 {
+        throw_type("RegExp method called on something that is no regular expression")
+    }
+    return H[this][3]
+}
+
+# The array exec() gives for the captures `caps` found in `text`.
+proc match_object(x, text, caps) {
+    alloc items := []
+    alloc i := 0
+    alloc n := length(caps)
+    loop i < n {
+        if caps[i] >= 0 and caps[i + 1] >= 0 {
+            append(items, text[caps[i]:caps[i + 1]])
+        } else {
+            append(items, U)
+        }
+        i := i + 2
+    }
+    alloc h := new_array(items)
+    alloc p := H[h][2]
+    p["index"] := caps[0] * 1.0
+    p["input"] := text
+    alloc names := x[2][3]
+    if names == false {
+        p["groups"] := U
+    } else {
+        alloc g := new_object()
+        for name in dict_keys(names) {
+            H[g][2][name] := items[names[name]]
+        }
+        p["groups"] := g
+    }
+    return h
+}
+
+# One exec(): the captures or false, lastIndex kept as the flags say.
+proc exec_raw(re, x, text) {
+    alloc flags := x[2][4]
+    alloc moving := (flags & (FL_G | FL_Y)) != 0
+    alloc from := 0
+    if moving {
+        from := to_integer(get(re, "lastIndex"))
+        if from < 0 {
+            from := 0
+        }
+        if from > length(text) {
+            H[re][2]["lastIndex"] := 0.0
+            return false
+        }
+    }
+    alloc caps := search(x[2], text, from, (flags & FL_Y) != 0)
+    if caps == false {
+        if moving {
+            H[re][2]["lastIndex"] := 0.0
+        }
+        return false
+    }
+    if moving {
+        H[re][2]["lastIndex"] := caps[1] * 1.0
+    }
+    return caps
+}
+
+proc n_exec(this, args) {
+    alloc x := this_rx(this)
+    alloc text := to_str(arg(args, 0))
+    alloc caps := exec_raw(this, x, text)
+    if caps == false {
+        return 0
+    }
+    return match_object(x, text, caps)
+}
+
+proc n_test(this, args) {
+    alloc x := this_rx(this)
+    return exec_raw(this, x, to_str(arg(args, 0))) != false
+}
+
+proc n_rx_to_string(this, args) {
+    alloc x := this_rx(this)
+    return "/" + x[0] + "/" + x[1]
+}
+
+proc n_source(this, args) {
+    if class_of(this) != 9 {
+        return "(?:)"
+    }
+    return H[this][3][0]
+}
+
+proc n_flags(this, args) {
+    if class_of(this) != 9 {
+        return ""
+    }
+    alloc f := H[this][3][2][4]
+    alloc out := ""
+    if (f & FL_D) != 0 {
+        out := out + "d"
+    }
+    if (f & FL_G) != 0 {
+        out := out + "g"
+    }
+    if (f & FL_I) != 0 {
+        out := out + "i"
+    }
+    if (f & FL_M) != 0 {
+        out := out + "m"
+    }
+    if (f & FL_S) != 0 {
+        out := out + "s"
+    }
+    if (f & FL_U) != 0 {
+        out := out + "u"
+    }
+    if (f & FL_Y) != 0 {
+        out := out + "y"
+    }
+    return out
+}
+
+proc has_flag(this, bit) {
+    if class_of(this) != 9 {
+        return U
+    }
+    return (H[this][3][2][4] & bit) != 0
+}
+
+proc n_global(this, args) {
+    return has_flag(this, FL_G)
+}
+
+proc n_ignore_case(this, args) {
+    return has_flag(this, FL_I)
+}
+
+proc n_multiline(this, args) {
+    return has_flag(this, FL_M)
+}
+
+proc n_dot_all(this, args) {
+    return has_flag(this, FL_S)
+}
+
+proc n_unicode(this, args) {
+    return has_flag(this, FL_U)
+}
+
+proc n_sticky(this, args) {
+    return has_flag(this, FL_Y)
+}
+
+# --- what strings do with one -----------------------------------------------------------------
+
+proc as_regex(v, flags) {
+    if class_of(v) == 9 {
+        return v
+    }
+    if type_of(v) == 0 {
+        return regex_new("(?:)", flags)
+    }
+    return regex_new(to_str(v), flags)
+}
+
+# All the matches of a global pattern in text: a list of capture lists.
+proc all_matches(re, x, text) {
+    alloc out := []
+    alloc prog := x[2]
+    alloc sticky := (prog[4] & FL_Y) != 0
+    alloc from := 0
+    alloc n := length(text)
+    loop from <= n {
+        alloc caps := search(prog, text, from, sticky)
+        if caps == false {
+            break
+        }
+        append(out, caps[0:])
+        if caps[1] == caps[0] {
+            from := caps[1] + 1
+        } else {
+            from := caps[1]
+        }
+    }
+    H[re][2]["lastIndex"] := 0.0
+    return out
+}
+
+proc str_match(pattern, text) {
+    alloc re := as_regex(pattern, "")
+    alloc x := H[re][3]
+    if (x[2][4] & FL_G) == 0 {
+        alloc caps := exec_raw(re, x, text)
+        if caps == false {
+            return 0
+        }
+        return match_object(x, text, caps)
+    }
+    alloc found := all_matches(re, x, text)
+    if length(found) == 0 {
+        return 0
+    }
+    alloc items := []
+    for m in found {
+        append(items, text[m[0]:m[1]])
+    }
+    return new_array(items)
+}
+
+proc str_match_all(pattern, text) {
+    alloc re := as_regex(pattern, "g")
+    alloc x := H[re][3]
+    if (x[2][4] & FL_G) == 0 {
+        throw_type("String.prototype.matchAll called with a non-global RegExp argument")
+    }
+    alloc items := []
+    for m in all_matches(re, x, text) {
+        append(items, match_object(x, text, m))
+    }
+    return new_iter_object([3, items, 0])
+}
+
+proc str_search(pattern, text) {
+    alloc re := as_regex(pattern, "")
+    alloc caps := search(H[re][3][2], text, 0, false)
+    if caps == false {
+        return -1.0
+    }
+    return caps[0] * 1.0
+}
+
+alloc EXPAND := false          # expand() of lib_string.omg
+
+proc set_expand(f) {
+    EXPAND := f
+    return true
+}
+
+proc str_replace(re, text, rep, all) {
+    alloc x := H[re][3]
+    alloc found := []
+    if (x[2][4] & FL_G) != 0 {
+        found := all_matches(re, x, text)
+    } else {
+        if all {
+            throw_type("replaceAll must be called with a global RegExp")
+        }
+        alloc caps := exec_raw(re, x, text)
+        if caps != false {
+            found := [caps[0:]]
+        }
+    }
+    if length(found) == 0 {
+        return text
+    }
+    alloc is_fn := is_callable(rep)
+    alloc rs := ""
+    if is_fn == false {
+        rs := to_str(rep)
+    }
+    alloc names := x[2][3]
+    alloc parts := []
+    alloc pos := 0
+    for m in found {
+        alloc groups := []
+        alloc i := 0
+        loop i < length(m) {
+            if m[i] >= 0 and m[i + 1] >= 0 {
+                append(groups, text[m[i]:m[i + 1]])
+            } else {
+                append(groups, U)
+            }
+            i := i + 2
+        }
+        alloc named := false
+        if names != false {
+            named := new_object()
+            for name in dict_keys(names) {
+                H[named][2][name] := groups[names[name]]
+            }
+        }
+        alloc with := ""
+        if is_fn {
+            alloc fargs := groups + [m[0] * 1.0, text]
+            if named != false {
+                append(fargs, named)
+            }
+            with := to_str(call(rep, U, fargs))
+        } else {
+            with := EXPAND(rs, text, groups, m[0], named)
+        }
+        if m[0] > pos {
+            append(parts, text[pos:m[0]])
+        }
+        append(parts, with)
+        pos := m[1]
+    }
+    if pos < length(text) {
+        append(parts, text[pos:])
+    }
+    return X["str_join"](parts, "")
+}
+
+proc str_split(re, text, limit) {
+    alloc x := H[re][3]
+    alloc prog := x[2]
+    alloc out := []
+    alloc n := length(text)
+    if limit == 0 {
+        return new_array(out)
+    }
+    if n == 0 {
+        if search(prog, text, 0, true) == false {
+            append(out, text)
+        }
+        return new_array(out)
+    }
+    alloc last := 0
+    alloc from := 0
+    loop from < n {
+        alloc caps := search(prog, text, from, false)
+        if caps == false or caps[0] >= n {
+            break
+        }
+        alloc s := caps[0]
+        alloc e := caps[1]
+        if e == last {
+            # nothing matched where the last piece ended: look further on
+            from := s + 1
+            continue
+        }
+        append(out, text[last:s])
+        if length(out) >= limit {
+            return new_array(out)
+        }
+        alloc i := 2
+        loop i < length(caps) {
+            if caps[i] >= 0 and caps[i + 1] >= 0 {
+                append(out, text[caps[i]:caps[i + 1]])
+            } else {
+                append(out, U)
+            }
+            if length(out) >= limit {
+                return new_array(out)
+            }
+            i := i + 2
+        }
+        last := e
+        from := e
+    }
+    append(out, text[last:])
+    return new_array(out)
+}
+
+proc fns() {
+    return [str_match, str_match_all, str_replace, str_search, str_split]
+}
+
+proc setup() {
+    CACHE := {}
+    NCACHE := 0
+    LAST_TEXT := ""
+    LAST_INPUT := []
+    alloc rp := I[16]
+    def_ctor("RegExp", n_regexp, 2, rp)
+    def(rp, "exec", n_exec, 1)
+    def(rp, "test", n_test, 1)
+    def(rp, "toString", n_rx_to_string, 0)
+    def_getter(rp, "source", n_source)
+    def_getter(rp, "flags", n_flags)
+    def_getter(rp, "global", n_global)
+    def_getter(rp, "ignoreCase", n_ignore_case)
+    def_getter(rp, "multiline", n_multiline)
+    def_getter(rp, "dotAll", n_dot_all)
+    def_getter(rp, "unicode", n_unicode)
+    def_getter(rp, "sticky", n_sticky)
+    c.set_regex_hook(regex_new)
+    return true
+}

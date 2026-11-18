@@ -1,0 +1,869 @@
+;;;omg
+
+# tools/browser/js/lib_array.omg
+#
+# The standard library of the JavaScript engine: Array.
+#
+# An array keeps its items in an OMG list (record[3]) and how many of
+# them count in record[6], the list being as long or longer. Methods
+# that only read also work on things that are merely like an array
+# (`arguments`, a NodeList, a string): those are copied to a list
+# first, see rec_of().
+
+import "core.omg" as c
+
+alloc X := c.exports()
+alloc H := X["H"]
+alloc I := X["I"]
+alloc arg := X["arg"]
+alloc def := X["def"]
+alloc def_ctor := X["def_ctor"]
+alloc define_hidden := X["define_hidden"]
+alloc get := X["get"]
+alloc get_r := X["get_r"]
+alloc put := X["put"]
+alloc new_obj := X["new_obj"]
+alloc new_array := X["new_array"]
+alloc new_iter_object := X["new_iter_object"]
+alloc throw_type := X["throw_type"]
+alloc throw_range := X["throw_range"]
+alloc to_str := X["to_str"]
+alloc to_num := X["to_num"]
+alloc to_bool := X["to_bool"]
+alloc to_integer := X["to_integer"]
+alloc to_object := X["to_object"]
+alloc is_callable := X["is_callable"]
+alloc is_nullish := X["is_nullish"]
+alloc class_of := X["class_of"]
+alloc call := X["call"]
+alloc new_target := X["new_target"]
+alloc same_value := X["same_value"]
+alloc iter_list := X["iter_list"]
+alloc array_like_list := X["array_like_list"]
+alloc arr_set := X["arr_set"]
+alloc arr_set_length := X["arr_set_length"]
+alloc rel_index := X["rel_index"]
+alloc str_join := X["str_join"]
+alloc show := X["show"]
+
+proc nothing() {
+}
+
+alloc U := nothing()
+
+# The record of `this` when it is an array; else a record made up
+# around a copy of its items, which is good for reading only.
+proc rec_of(this) {
+    if type_of(this) == 2 and this != 0 {
+        alloc o := H[this]
+        if o[0] == 1 {
+            return o
+        }
+    }
+    if is_nullish(this) {
+        throw_type("Array.prototype method called on null or undefined")
+    }
+    alloc items := array_like_list(this)
+    return [1, 0, {}, items, 0, false, length(items)]
+}
+
+# The record of `this`, which must be an array.
+proc arr_of(this) {
+    if type_of(this) == 2 and this != 0 {
+        alloc o := H[this]
+        if o[0] == 1 {
+            return o
+        }
+    }
+    throw_type("this method needs an array, and " + show(this) + " is none")
+}
+
+proc need_fn(f) {
+    if is_callable(f) == false {
+        throw_type(show(f) + " is not a function")
+    }
+    return true
+}
+
+proc n_array(this, args) {
+    if length(args) == 1 and type_of(args[0]) == 3 {
+        alloc n := args[0]
+        if n < 0.0 or n != X["floor_f"](n) or n > 4294967295.0 {
+            throw_range("Invalid array length")
+        }
+        return new_array(list_repeat(U, int(n)))
+    }
+    return new_array(args[0:])
+}
+
+proc n_is_array(this, args) {
+    return class_of(arg(args, 0)) == 1
+}
+
+proc n_of(this, args) {
+    return new_array(args[0:])
+}
+
+proc n_from(this, args) {
+    alloc src := arg(args, 0)
+    alloc f := arg(args, 1)
+    alloc items := []
+    if is_nullish(src) {
+        throw_type(show(src) + " is not iterable")
+    }
+    if type_of(src) == 4 {
+        items := array_like_list(src)
+    } elif type_of(src) == 2 and type_of(get_r(src, "@@iterator", src)) != 0 {
+        items := iter_list(src)
+    } else {
+        items := array_like_list(src)
+    }
+    if is_callable(f) {
+        alloc t := arg(args, 2)
+        alloc i := 0
+        alloc n := length(items)
+        loop i < n {
+            items[i] := call(f, t, [items[i], i * 1.0])
+            i := i + 1
+        }
+    }
+    return new_array(items)
+}
+
+proc n_push(this, args) {
+    alloc o := arr_of(this)
+    if (o[4] & 2) != 0 {
+        throw_type("Cannot add property, object is not extensible")
+    }
+    alloc a := o[3]
+    alloc n := o[6]
+    for v in args {
+        if n < length(a) {
+            a[n] := v
+        } else {
+            append(a, v)
+        }
+        n := n + 1
+    }
+    o[6] := n
+    return n * 1.0
+}
+
+proc n_pop(this, args) {
+    alloc o := arr_of(this)
+    alloc n := o[6]
+    if n == 0 {
+        return U
+    }
+    alloc a := o[3]
+    alloc v := a[n - 1]
+    a[n - 1] := U
+    o[6] := n - 1
+    return v
+}
+
+proc n_shift(this, args) {
+    alloc o := arr_of(this)
+    alloc n := o[6]
+    if n == 0 {
+        return U
+    }
+    alloc a := o[3]
+    alloc v := a[0]
+    if n > 64 {
+        o[3] := a[1:n]
+    } else {
+        alloc i := 1
+        loop i < n {
+            a[i - 1] := a[i]
+            i := i + 1
+        }
+        a[n - 1] := U
+    }
+    o[6] := n - 1
+    return v
+}
+
+proc n_unshift(this, args) {
+    alloc o := arr_of(this)
+    alloc n := o[6]
+    if length(args) > 0 {
+        o[3] := args + o[3][0:n]
+        o[6] := n + length(args)
+    }
+    return o[6] * 1.0
+}
+
+proc n_slice(this, args) {
+    alloc o := rec_of(this)
+    alloc n := o[6]
+    alloc from := rel_index(arg(args, 0), n, 0)
+    alloc to := rel_index(arg(args, 1), n, n)
+    if to <= from {
+        return new_array([])
+    }
+    return new_array(o[3][from:to])
+}
+
+proc n_splice(this, args) {
+    alloc o := arr_of(this)
+    alloc n := o[6]
+    alloc a := o[3]
+    alloc from := rel_index(arg(args, 0), n, 0)
+    alloc count := n - from
+    if length(args) == 0 {
+        count := 0
+    } elif length(args) > 1 {
+        count := to_integer(args[1])
+        if count < 0 {
+            count := 0
+        }
+        if count > n - from {
+            count := n - from
+        }
+    }
+    alloc removed := []
+    if count > 0 {
+        removed := a[from:from + count]
+    }
+    alloc added := []
+    if length(args) > 2 {
+        added := args[2:]
+    }
+    alloc na := length(added)
+    if na == count {
+        alloc i := 0
+        loop i < na {
+            a[from + i] := added[i]
+            i := i + 1
+        }
+    } else {
+        alloc head := []
+        if from > 0 {
+            head := a[0:from]
+        }
+        alloc tail := []
+        if from + count < n {
+            tail := a[from + count:n]
+        }
+        o[3] := head + added + tail
+        o[6] := n - count + na
+    }
+    return new_array(removed)
+}
+
+proc is_spreadable(v) {
+    if type_of(v) != 2 or v == 0 {
+        return false
+    }
+    alloc s := get_r(v, "@@isConcatSpreadable", v)
+    if type_of(s) != 0 {
+        return to_bool(s)
+    }
+    return H[v][0] == 1
+}
+
+proc n_concat(this, args) {
+    alloc out := []
+    alloc all := [this] + args
+    for v in all {
+        if is_spreadable(v) {
+            alloc o := H[v]
+            if o[0] == 1 {
+                alloc a := o[3]
+                alloc n := o[6]
+                alloc i := 0
+                loop i < n {
+                    append(out, a[i])
+                    i := i + 1
+                }
+            } else {
+                for x in array_like_list(v) {
+                    append(out, x)
+                }
+            }
+        } else {
+            append(out, v)
+        }
+    }
+    return new_array(out)
+}
+
+alloc JOINING := []            # the arrays being joined, so that one inside itself ends
+
+proc n_join(this, args) {
+    alloc o := rec_of(this)
+    alloc sep := ","
+    if type_of(arg(args, 0)) != 0 {
+        sep := to_str(args[0])
+    }
+    for j in JOINING {
+        if j == this and type_of(this) == 2 {
+            return ""
+        }
+    }
+    alloc depth := length(JOINING)
+    append(JOINING, this)
+    alloc parts := []
+    alloc i := 0
+    alloc failed := false
+    alloc err := 0
+    try {
+        loop i < o[6] {
+            alloc v := o[3][i]
+            alloc t := type_of(v)
+            if t == 4 {
+                append(parts, v)
+            } elif t == 0 or (t == 2 and v == 0) {
+                append(parts, "")
+            } else {
+                append(parts, to_str(v))
+            }
+            i := i + 1
+        }
+    } except e {
+        failed := true
+        err := X["caught"](e)
+    }
+    JOINING := JOINING[0:depth]
+    if failed {
+        X["throw_val"](err)
+    }
+    return str_join(parts, sep)
+}
+
+proc n_to_string(this, args) {
+    if class_of(this) != 1 {
+        return "[object Object]"
+    }
+    return n_join(this, [])
+}
+
+proc n_reverse(this, args) {
+    alloc o := arr_of(this)
+    alloc a := o[3]
+    alloc i := 0
+    alloc j := o[6] - 1
+    loop i < j {
+        alloc t := a[i]
+        a[i] := a[j]
+        a[j] := t
+        i := i + 1
+        j := j - 1
+    }
+    return this
+}
+
+proc n_index_of(this, args) {
+    alloc o := rec_of(this)
+    alloc n := o[6]
+    alloc a := o[3]
+    alloc v := arg(args, 0)
+    alloc tv := type_of(v)
+    alloc i := rel_index(arg(args, 1), n, 0)
+    loop i < n {
+        alloc x := a[i]
+        if type_of(x) == tv and x == v {
+            return i * 1.0
+        }
+        i := i + 1
+    }
+    return -1.0
+}
+
+proc n_last_index_of(this, args) {
+    alloc o := rec_of(this)
+    alloc n := o[6]
+    alloc a := o[3]
+    alloc v := arg(args, 0)
+    alloc tv := type_of(v)
+    alloc i := n - 1
+    if length(args) > 1 {
+        i := to_integer(args[1])
+        if i < 0 {
+            i := i + n
+        }
+        if i >= n {
+            i := n - 1
+        }
+    }
+    loop i >= 0 {
+        alloc x := a[i]
+        if type_of(x) == tv and x == v {
+            return i * 1.0
+        }
+        i := i - 1
+    }
+    return -1.0
+}
+
+proc n_includes(this, args) {
+    alloc o := rec_of(this)
+    alloc n := o[6]
+    alloc a := o[3]
+    alloc v := arg(args, 0)
+    alloc i := rel_index(arg(args, 1), n, 0)
+    loop i < n {
+        if same_value(a[i], v) {
+            return true
+        }
+        i := i + 1
+    }
+    return false
+}
+
+proc n_for_each(this, args) {
+    alloc o := rec_of(this)
+    alloc f := arg(args, 0)
+    alloc t := arg(args, 1)
+    need_fn(f)
+    alloc i := 0
+    loop i < o[6] {
+        call(f, t, [o[3][i], i * 1.0, this])
+        i := i + 1
+    }
+    return U
+}
+
+proc n_map(this, args) {
+    alloc o := rec_of(this)
+    alloc f := arg(args, 0)
+    alloc t := arg(args, 1)
+    need_fn(f)
+    alloc n := o[6]
+    alloc out := list_repeat(U, n)
+    alloc i := 0
+    loop i < n and i < o[6] {
+        out[i] := call(f, t, [o[3][i], i * 1.0, this])
+        i := i + 1
+    }
+    return new_array(out)
+}
+
+proc n_filter(this, args) {
+    alloc o := rec_of(this)
+    alloc f := arg(args, 0)
+    alloc t := arg(args, 1)
+    need_fn(f)
+    alloc out := []
+    alloc i := 0
+    loop i < o[6] {
+        alloc v := o[3][i]
+        alloc r := call(f, t, [v, i * 1.0, this])
+        if type_of(r) != 1 {
+            r := to_bool(r)
+        }
+        if r {
+            append(out, v)
+        }
+        i := i + 1
+    }
+    return new_array(out)
+}
+
+# The index of the first item f says yes to, from the front or the back.
+proc find_index(this, args, backwards) {
+    alloc o := rec_of(this)
+    alloc f := arg(args, 0)
+    alloc t := arg(args, 1)
+    need_fn(f)
+    alloc i := 0
+    alloc step := 1
+    if backwards {
+        i := o[6] - 1
+        step := -1
+    }
+    loop i >= 0 and i < o[6] {
+        alloc r := call(f, t, [o[3][i], i * 1.0, this])
+        if type_of(r) != 1 {
+            r := to_bool(r)
+        }
+        if r {
+            return i
+        }
+        i := i + step
+    }
+    return -1
+}
+
+proc n_find(this, args) {
+    alloc i := find_index(this, args, false)
+    if i < 0 {
+        return U
+    }
+    return rec_of(this)[3][i]
+}
+
+proc n_find_index(this, args) {
+    return find_index(this, args, false) * 1.0
+}
+
+proc n_find_last(this, args) {
+    alloc i := find_index(this, args, true)
+    if i < 0 {
+        return U
+    }
+    return rec_of(this)[3][i]
+}
+
+proc n_find_last_index(this, args) {
+    return find_index(this, args, true) * 1.0
+}
+
+proc n_some(this, args) {
+    return find_index(this, args, false) >= 0
+}
+
+proc n_every(this, args) {
+    alloc o := rec_of(this)
+    alloc f := arg(args, 0)
+    alloc t := arg(args, 1)
+    need_fn(f)
+    alloc i := 0
+    loop i < o[6] {
+        if to_bool(call(f, t, [o[3][i], i * 1.0, this])) == false {
+            return false
+        }
+        i := i + 1
+    }
+    return true
+}
+
+proc n_reduce(this, args) {
+    alloc o := rec_of(this)
+    alloc f := arg(args, 0)
+    need_fn(f)
+    alloc i := 0
+    alloc acc := U
+    if length(args) > 1 {
+        acc := args[1]
+    } else {
+        if o[6] == 0 {
+            throw_type("Reduce of empty array with no initial value")
+        }
+        acc := o[3][0]
+        i := 1
+    }
+    loop i < o[6] {
+        acc := call(f, U, [acc, o[3][i], i * 1.0, this])
+        i := i + 1
+    }
+    return acc
+}
+
+proc n_reduce_right(this, args) {
+    alloc o := rec_of(this)
+    alloc f := arg(args, 0)
+    need_fn(f)
+    alloc i := o[6] - 1
+    alloc acc := U
+    if length(args) > 1 {
+        acc := args[1]
+    } else {
+        if o[6] == 0 {
+            throw_type("Reduce of empty array with no initial value")
+        }
+        acc := o[3][i]
+        i := i - 1
+    }
+    loop i >= 0 {
+        if i < o[6] {
+            acc := call(f, U, [acc, o[3][i], i * 1.0, this])
+        }
+        i := i - 1
+    }
+    return acc
+}
+
+alloc SORT_FN := 0
+
+# Is a after b in the order asked for?
+proc sort_after(a, b) {
+    alloc ta := type_of(a)
+    alloc tb := type_of(b)
+    if ta == 0 {
+        return tb != 0
+    }
+    if tb == 0 {
+        return false
+    }
+    if SORT_FN != 0 {
+        alloc r := call(SORT_FN, U, [a, b])
+        if type_of(r) != 3 {
+            r := to_num(r)
+        }
+        return r > 0.0
+    }
+    if ta == 4 and tb == 4 {
+        return a > b
+    }
+    return to_str(a) > to_str(b)
+}
+
+# A merge sort, which keeps equal items in their order.
+proc sort_list(a, n) {
+    if n < 2 {
+        return a
+    }
+    # short runs by insertion
+    alloc run := 8
+    alloc lo := 0
+    loop lo < n {
+        alloc hi := lo + run
+        if hi > n {
+            hi := n
+        }
+        alloc i := lo + 1
+        loop i < hi {
+            alloc v := a[i]
+            alloc j := i - 1
+            loop j >= lo and sort_after(a[j], v) {
+                a[j + 1] := a[j]
+                j := j - 1
+            }
+            a[j + 1] := v
+            i := i + 1
+        }
+        lo := hi
+    }
+    alloc src := a
+    alloc dst := list_repeat(U, n)
+    loop run < n {
+        lo := 0
+        loop lo < n {
+            alloc mid := lo + run
+            if mid > n {
+                mid := n
+            }
+            alloc end := mid + run
+            if end > n {
+                end := n
+            }
+            alloc l := lo
+            alloc r := mid
+            alloc k := lo
+            loop l < mid and r < end {
+                if sort_after(src[l], src[r]) {
+                    dst[k] := src[r]
+                    r := r + 1
+                } else {
+                    dst[k] := src[l]
+                    l := l + 1
+                }
+                k := k + 1
+            }
+            loop l < mid {
+                dst[k] := src[l]
+                l := l + 1
+                k := k + 1
+            }
+            loop r < end {
+                dst[k] := src[r]
+                r := r + 1
+                k := k + 1
+            }
+            lo := end
+        }
+        alloc t := src
+        src := dst
+        dst := t
+        run := run * 2
+    }
+    return src
+}
+
+proc n_sort(this, args) {
+    alloc o := arr_of(this)
+    alloc f := arg(args, 0)
+    alloc old := SORT_FN
+    SORT_FN := 0
+    if type_of(f) != 0 {
+        need_fn(f)
+        SORT_FN := f
+    }
+    alloc n := o[6]
+    alloc work := o[3][0:n]
+    alloc sorted := []
+    alloc failed := false
+    alloc err := 0
+    try {
+        sorted := sort_list(work, n)
+    } except e {
+        failed := true
+        err := X["caught"](e)
+    }
+    SORT_FN := old
+    if failed {
+        X["throw_val"](err)
+    }
+    o[3] := sorted
+    o[6] := n
+    return this
+}
+
+proc flatten(o, depth, out) {
+    alloc i := 0
+    loop i < o[6] {
+        alloc v := o[3][i]
+        if depth > 0 and class_of(v) == 1 {
+            flatten(H[v], depth - 1, out)
+        } else {
+            append(out, v)
+        }
+        i := i + 1
+    }
+    return out
+}
+
+proc n_flat(this, args) {
+    alloc depth := 1
+    if type_of(arg(args, 0)) != 0 {
+        depth := to_integer(args[0])
+    }
+    return new_array(flatten(rec_of(this), depth, []))
+}
+
+proc n_flat_map(this, args) {
+    alloc o := rec_of(this)
+    alloc f := arg(args, 0)
+    alloc t := arg(args, 1)
+    need_fn(f)
+    alloc out := []
+    alloc i := 0
+    loop i < o[6] {
+        alloc v := call(f, t, [o[3][i], i * 1.0, this])
+        if class_of(v) == 1 {
+            alloc vo := H[v]
+            alloc j := 0
+            loop j < vo[6] {
+                append(out, vo[3][j])
+                j := j + 1
+            }
+        } else {
+            append(out, v)
+        }
+        i := i + 1
+    }
+    return new_array(out)
+}
+
+proc n_fill(this, args) {
+    alloc o := arr_of(this)
+    alloc n := o[6]
+    alloc v := arg(args, 0)
+    alloc i := rel_index(arg(args, 1), n, 0)
+    alloc end := rel_index(arg(args, 2), n, n)
+    loop i < end {
+        o[3][i] := v
+        i := i + 1
+    }
+    return this
+}
+
+proc n_at(this, args) {
+    alloc o := rec_of(this)
+    alloc i := to_integer(arg(args, 0))
+    if i < 0 {
+        i := i + o[6]
+    }
+    if i < 0 or i >= o[6] {
+        return U
+    }
+    return o[3][i]
+}
+
+proc n_copy_within(this, args) {
+    alloc o := arr_of(this)
+    alloc n := o[6]
+    alloc to := rel_index(arg(args, 0), n, 0)
+    alloc from := rel_index(arg(args, 1), n, 0)
+    alloc end := rel_index(arg(args, 2), n, n)
+    alloc piece := []
+    if end > from {
+        piece := o[3][from:end]
+    }
+    for v in piece {
+        if to >= n {
+            break
+        }
+        o[3][to] := v
+        to := to + 1
+    }
+    return this
+}
+
+proc n_values(this, args) {
+    if class_of(this) == 1 {
+        return new_iter_object([0, this, 0])
+    }
+    return new_iter_object([3, rec_of(this)[3], 0])
+}
+
+proc n_keys(this, args) {
+    alloc o := rec_of(this)
+    alloc out := []
+    alloc i := 0
+    loop i < o[6] {
+        append(out, i * 1.0)
+        i := i + 1
+    }
+    return new_iter_object([3, out, 0])
+}
+
+proc n_entries(this, args) {
+    alloc o := rec_of(this)
+    alloc out := []
+    alloc i := 0
+    loop i < o[6] {
+        append(out, new_array([i * 1.0, o[3][i]]))
+        i := i + 1
+    }
+    return new_iter_object([3, out, 0])
+}
+
+proc setup() {
+    alloc ap := I[3]
+    alloc a := def_ctor("Array", n_array, 1, ap)
+    def(a, "isArray", n_is_array, 1)
+    def(a, "of", n_of, 0)
+    def(a, "from", n_from, 1)
+    def(ap, "push", n_push, 1)
+    def(ap, "pop", n_pop, 0)
+    def(ap, "shift", n_shift, 0)
+    def(ap, "unshift", n_unshift, 1)
+    def(ap, "slice", n_slice, 2)
+    def(ap, "splice", n_splice, 2)
+    def(ap, "concat", n_concat, 1)
+    def(ap, "join", n_join, 1)
+    def(ap, "toString", n_to_string, 0)
+    def(ap, "toLocaleString", n_to_string, 0)
+    def(ap, "reverse", n_reverse, 0)
+    def(ap, "indexOf", n_index_of, 1)
+    def(ap, "lastIndexOf", n_last_index_of, 1)
+    def(ap, "includes", n_includes, 1)
+    def(ap, "forEach", n_for_each, 1)
+    def(ap, "map", n_map, 1)
+    def(ap, "filter", n_filter, 1)
+    def(ap, "find", n_find, 1)
+    def(ap, "findIndex", n_find_index, 1)
+    def(ap, "findLast", n_find_last, 1)
+    def(ap, "findLastIndex", n_find_last_index, 1)
+    def(ap, "some", n_some, 1)
+    def(ap, "every", n_every, 1)
+    def(ap, "reduce", n_reduce, 1)
+    def(ap, "reduceRight", n_reduce_right, 1)
+    def(ap, "sort", n_sort, 1)
+    def(ap, "flat", n_flat, 0)
+    def(ap, "flatMap", n_flat_map, 1)
+    def(ap, "fill", n_fill, 1)
+    def(ap, "at", n_at, 1)
+    def(ap, "copyWithin", n_copy_within, 2)
+    def(ap, "keys", n_keys, 0)
+    def(ap, "entries", n_entries, 0)
+    alloc values := def(ap, "values", n_values, 0)
+    define_hidden(ap, "@@iterator", values)
+    I[20] := values
+    JOINING := []
+    SORT_FN := 0
+    return true
+}

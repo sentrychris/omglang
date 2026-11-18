@@ -1471,7 +1471,7 @@ proc unary() {
             next()
             alloc arg := unary()
             if p == "-" and arg[0] == N_NUM {
-                return [N_NUM, 0.0 - arg[1]]
+                return [N_NUM, arg[1] * -1.0]
             }
             return [N_UNARY, p, arg]
         }
