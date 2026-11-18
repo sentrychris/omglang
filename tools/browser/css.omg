@@ -4605,6 +4605,32 @@ proc style_tree(doc, w, h) {
     return true
 }
 
+# Work out again the style of one element and of all below it, after
+# style_tree() did the whole document once. `chain` is the element's
+# ancestors from the root down, the element last; `places` is where
+# each of them sits among its parent's children.
+proc restyle(chain, places) {
+    alloc d := length(chain) - 1
+    alloc ps := false
+    if d > 0 {
+        alloc parent := chain[d - 1]
+        if has_key(parent, "style") == false {
+            # never shown: something above it has display: none
+            return false
+        }
+        ps := parent.style
+        if get(ps, "display") == "none" {
+            return false
+        }
+    }
+    path := chain
+    pidx := places
+    style_node(chain[d], ps, d)
+    path := []
+    pidx := []
+    return true
+}
+
 # How many rules are loaded (for tests and curiosity).
 proc rules() {
     return rule_count
