@@ -202,12 +202,12 @@ else
 fi
 # A string of a program built through C ends at its first NUL
 # character (omg_rt.h keeps strings the way C does), so there the
-# engine cannot hold "\0" either. nul.js is everything that needs
+# engine cannot hold "\0" either. char-zero.js is everything that needs
 # one, and is run only where omg writes machine code itself.
 br_scripts=""
 for br_js in tests/browser/js/*.js; do
     case "$(omg_default_target):$br_js" in
-        c:*/nul.js) echo "  (built through C: nul.js not run, see docs/06-runtime.md)" ;;
+        c:*/char-zero.js) echo "  (built through C: char-zero.js not run, see docs/06-runtime.md)" ;;
         *) br_scripts="$br_scripts $br_js" ;;
     esac
 done

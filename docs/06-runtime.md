@@ -325,7 +325,7 @@ bytes with a zero among them stops there. The x86-64 runtime and the
 JavaScript one keep the length and have no such limit. Programs that
 need the character (the browser's JavaScript engine, for `"\0"` in a
 script) lose it when built through C, which is what
-`tests/browser/js/nul.js` checks where it can.
+`tests/browser/js/char-zero.js` checks where it can.
 
 ## Heap structures
 
