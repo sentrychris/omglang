@@ -255,7 +255,7 @@ proc read_rest(c) {
 }
 
 # Open a connection to the site of p. Returns it, or {err: why}.
-proc open(p) {
+proc open_once(p) {
     alloc port := p.port
     if port == 0 {
         port := url.default_port(p.scheme)
@@ -309,6 +309,17 @@ proc open(p) {
             return {err: "the secure connection to " + host + " failed: " + tls.error()}
         }
         c.tls := t
+    }
+    return c
+}
+
+# A fresh connection for address parts p. A server that hangs up
+# before saying anything gets a second try: on a busy site one of
+# many machines may be down.
+proc open(p) {
+    alloc c := open_once(p)
+    if c.err != "" and u.contains(c.err, "closed the connection during the handshake") and io.is_stopped() == false {
+        c := open_once(p)
     }
     return c
 }

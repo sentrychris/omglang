@@ -50,6 +50,7 @@ alloc W := 1100
 alloc H := 760
 alloc win := false
 alloc headless := false
+alloc verbose := false          # --verbose: say how long each step took
 alloc running := true
 alloc dirty := true
 alloc ui := false              # the font of the bar
@@ -334,14 +335,36 @@ proc set_addr(text) {
 
 # Style, lay out and paint the document again (after the window
 # changed size, a picture arrived, or a <details> opened).
+proc reflow_inner() {
+    alloc t0 := time_ms()
+    css.style_tree(doc, view_w(), view_h())
+    alloc t1 := time_ms()
+    root := lay.build(doc)
+    alloc t2 := time_ms()
+    lay.layout(root, view_w(), view_h())
+    alloc t3 := time_ms()
+    paint.render(root)
+    if verbose {
+        emit "style " + (t1 - t0) + " ms, boxes " + (t2 - t1) + " ms, layout " + (t3 - t2) + " ms, display list " + (time_ms() - t3) + " ms"
+    }
+    return true
+}
+
 proc reflow() {
     if doc == false {
         return true
     }
-    css.style_tree(doc, view_w(), view_h())
-    root := lay.build(doc)
-    lay.layout(root, view_w(), view_h())
-    paint.render(root)
+    try {
+        reflow_inner()
+    } except e {
+        # a page this browser trips over: say so and stay up
+        if verbose {
+            emit "" + e
+        }
+        doc := html.parse(string_bytes(error_page(page_url, "The browser could not lay this page out (" + e + ")")))
+        css.reset()
+        reflow_inner()
+    }
     alloc size := paint.size()
     doc_w := size[0]
     doc_h := size[1]
@@ -458,6 +481,9 @@ proc add_sheet(bytes, address, media, depth) {
 
 proc load_styles() {
     css.reset()
+    if has_key(doc, "quirks") and doc.quirks {
+        css.add_quirks()
+    }
     sheet_count := 0
     alloc nodes := []
     collect_styles(doc, nodes)
@@ -534,9 +560,18 @@ proc get_picture(where) {
         return pictures[where]
     }
     alloc im := false
+    alloc t0 := time_ms()
     alloc r := net.fetch(where, "GET", false, "", base_url)
+    alloc t1 := time_ms()
     if r.status == 200 and length(r.body) > 0 {
         im := image.decode(r.body)
+    }
+    if verbose {
+        alloc shown := where
+        if length(shown) > 90 {
+            shown := shown[0:90] + "..."
+        }
+        emit "picture " + shown + ": " + r.status + ", " + length(r.body) + " bytes, fetched in " + (t1 - t0) + " ms, decoded in " + (time_ms() - t1) + " ms, " + (im != false)
     }
     if r.status == 0 and r.error == "stopped" {
         return false
@@ -632,6 +667,7 @@ proc charset_of(ctype) {
 # Load an address and show it. `how` is 0 for a new page (it joins
 # the history), 1 for going back or forward or loading again.
 proc load(address, method, body, ctype, how, scroll_to) {
+    alloc t_load := time_ms()
     busy := true
     halt := false
     io.restart()
@@ -722,7 +758,11 @@ proc load(address, method, body, ctype, how, scroll_to) {
         body := false
         ctype := ""
     }
+    alloc t_styles := time_ms()
     load_styles()
+    if verbose {
+        emit "page " + (t_styles - t_load) + " ms, style sheets " + (time_ms() - t_styles) + " ms (" + length(bytes) + " bytes of HTML)"
+    }
     sx := 0
     sy := 0
     if how == 0 {
@@ -743,7 +783,11 @@ proc load(address, method, body, ctype, how, scroll_to) {
     }
     set_status("")
     tick()
+    alloc t_pics := time_ms()
     load_pictures()
+    if verbose {
+        emit "pictures " + (time_ms() - t_pics) + " ms"
+    }
     if scroll_to > 0 and sy != scroll_to {
         sy := scroll_to
         clamp_scroll()
@@ -1634,6 +1678,8 @@ proc main() {
         } elif a == "--scroll" and i + 1 < length(args) {
             shot_scroll := u.to_int(args[i + 1], 0)
             i := i + 1
+        } elif a == "--verbose" {
+            verbose := true
         } elif a == "--page-only" {
             page_only := true
         } elif a == "--proxy" and i + 1 < length(args) {

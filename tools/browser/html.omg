@@ -646,7 +646,7 @@ proc parse(bytes) {
     src := bytes
     pos := 0
     len := length(bytes)
-    doc := {t: 9, kids: [], head: false, body: false}
+    doc := {t: 9, kids: [], head: false, body: false, quirks: true}
     root := false
     head := false
     body := false
@@ -733,6 +733,9 @@ proc parse(bytes) {
                 pos := e2 + 3
             } else {
                 # <!DOCTYPE ...> and anything else that starts "<!"
+                if pos + 9 < len and (b[pos + 2] | 32) == 100 and (b[pos + 3] | 32) == 111 and (b[pos + 4] | 32) == 99 {
+                    doc.quirks := false
+                }
                 loop pos < len and b[pos] != 62 {
                     pos := pos + 1
                 }

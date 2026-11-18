@@ -826,6 +826,10 @@ proc props_init() {
     words("clear", "left right both none inline-start=left inline-end=right")
     prop("visibility", 4, true, "visible")
     words("visibility", "visible hidden collapse")
+    # set by mask-image: the box is a stencil for a picture this
+    # browser does not cut out, so its colour is better left unpainted
+    prop("-masked", 4, false, "no")
+    words("-masked", "no yes")
     for side in SIDES {
         prop(side, 1, false, AUTO)
         prop("margin-" + side, 1, false, ZERO)
@@ -1895,6 +1899,14 @@ proc declare(out, name, toks, important) {
     alloc n := length(toks)
     if n == 0 {
         return false
+    }
+    if name == "mask-image" or name == "-webkit-mask-image" or name == "mask" or name == "-webkit-mask" {
+        if n == 1 and toks[0][0] == 1 and toks[0][1] == "none" {
+            put(out, "-masked", "no", important)
+        } else {
+            put(out, "-masked", "yes", important)
+        }
+        return true
     }
     if n == 1 and toks[0][0] == 1 {
         alloc word := toks[0][1]
@@ -4377,6 +4389,14 @@ proc rules() {
 # What HTML looks like before a page says anything: which elements are
 # blocks, how big a heading is, that links are blue. It follows the
 # sheet in the HTML standard ("Rendering"), cut down.
+
+# What pages without a <!DOCTYPE> get on top: there a table starts
+# afresh instead of taking these from what it stands in.
+alloc QUIRKS_SHEET := "table { text-align: left; font-size: medium; font-weight: normal; font-style: normal; white-space: normal; line-height: normal }"
+
+proc add_quirks() {
+    return add_sheet(string_bytes(QUIRKS_SHEET), 0, -1)
+}
 
 alloc UA_SHEET := "
 html, body, div, p, h1, h2, h3, h4, h5, h6, ul, ol, dl, dt, dd, blockquote, pre, form, fieldset, legend,

@@ -169,7 +169,7 @@ proc decor(box, st, x, y, w, h, sides) {
         }
     }
     alloc bg := css.color(st, "background-color")
-    if ((bg >> 24) & 255) != 0 and has_key(box, "nobg") == false and w > 0 and h > 0 {
+    if ((bg >> 24) & 255) != 0 and has_key(box, "nobg") == false and w > 0 and h > 0 and css.get(st, "-masked") == "no" {
         if radius > 0 {
             append(cmds, [6, x, y, w, h, radius, 0, tint(bg)])
         } else {

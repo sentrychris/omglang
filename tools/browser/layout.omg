@@ -396,6 +396,10 @@ proc build_kids(parent, node, link) {
             continue
         }
         alloc box := element_box(k, kst, d, klink)
+        if css.get(st, "text-align") == "-center" {
+            # inside <center>: blocks are centred too
+            box.pc := true
+        }
         if d == "list-item" {
             if has_key(k.attrs, "value") {
                 ordinal := u.to_int(k.attrs["value"], ordinal)
@@ -1139,7 +1143,7 @@ proc size_replaced(box, cbw, cbh, mode, fw, fh) {
                 box.ml := box.ml + floor(free / 2)
             } elif (am & 1) != 0 {
                 box.ml := box.ml + free
-            } elif css.get(st, "text-align") == "-center" {
+            } elif has_key(box, "pc") {
                 box.ml := box.ml + floor(free / 2)
             }
         }
@@ -1365,6 +1369,10 @@ proc fc_band(fc, y, h, x0, x1) {
 # room), or false.
 proc fc_next(fc, y) {
     alloc best := false
+    # "a little below": after adding and taking away offsets y may be
+    # a hair short of the bottom it was set to, and must not get the
+    # same bottom again for ever
+    y := y + 0.01
     for f in fc.l {
         if f[3] > y and (best == false or f[3] < best) {
             best := f[3]
@@ -1543,7 +1551,7 @@ proc lay(box, cbw, cbh, mode, fw, fh, ox, oy, fc) {
                     box.ml := box.ml + floor(free / 2)
                 } elif (am & 1) != 0 {
                     box.ml := box.ml + free
-                } elif (am & 2) == 0 and box.node != false and css.get(st, "text-align") == "-center" {
+                } elif (am & 2) == 0 and has_key(box, "pc") {
                     box.ml := box.ml + floor(free / 2)
                 }
             }
@@ -3340,7 +3348,7 @@ proc lay_table(box, cbw, cbh, mode, fw, fh) {
                 box.ml := box.ml + floor(free / 2)
             } elif (am & 1) != 0 {
                 box.ml := box.ml + free
-            } elif (am & 2) == 0 and css.get(st, "text-align") == "-center" {
+            } elif (am & 2) == 0 and has_key(box, "pc") {
                 box.ml := box.ml + floor(free / 2)
             }
         }
