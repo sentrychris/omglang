@@ -20,6 +20,7 @@ VM, the back ends and the runtimes are put together.
 | ...use it on Windows                               | [08-windows.md](08-windows.md) |
 | ...serve web pages from an OMG program             | [09-http-server.md](09-http-server.md) |
 | ...open a window, play sound, or play a video      | [10-video.md](10-video.md) |
+| ...browse the web, or see how a browser works      | [11-browser.md](11-browser.md) |
 
 ## TL;DR
 
