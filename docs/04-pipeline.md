@@ -369,7 +369,9 @@ int main(int argc, char **argv) {
 
 (The `// ...` annotations are added here for clarity; the generated C
 doesn't include them.) Each bytecode op becomes a few lines of C, and
-`cc` does the rest:
+`cc` does the rest. The stack is 1024 values long at the top level and
+256 in a proc, or as long as the code needs when that is more: the
+back end follows the code and counts.
 
 ```sh
 cc -O2 -w /tmp/trace.c -o /tmp/trace -lm
