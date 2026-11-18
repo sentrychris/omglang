@@ -1169,6 +1169,7 @@ const _omg_builtins = {
     clipboard_get: omg_clipboard_get,
     clipboard_set: omg_clipboard_set,
     random_bytes: omg_random_bytes,
+    type_of: omg_type_of,
     audio_open: omg_audio_open,
     audio_write: omg_audio_write,
     audio_played: omg_audio_played,
@@ -1290,6 +1291,22 @@ function omg_clipboard_get(_win) {
 }
 function omg_clipboard_set(_win, _text) {
     omg_panic('ValueError', 'clipboard_set is not supported in the JS runtime');
+}
+
+// type_of(v): what kind of value v is: 0 none, 1 bool, 2 int,
+// 3 float, 4 string, 5 list (a byte list too), 6 dict, 7 proc.
+function omg_type_of(v) {
+    if (v === null || v === undefined) return 0n;
+    switch (typeof v) {
+        case 'boolean': return 1n;
+        case 'bigint': return 2n;
+        case 'number': return 3n;
+        case 'string': return 4n;
+        case 'function': return 7n;
+    }
+    if (Array.isArray(v) || v instanceof OmgBytes) return 5n;
+    if (v instanceof Map) return 6n;
+    return 7n;
 }
 
 // random_bytes(n): n bytes nobody can guess, from the engine's own

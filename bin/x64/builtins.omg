@@ -2071,6 +2071,23 @@ proc bi_clipboard_set(t, h, tt, text) {
     return 0
 }
 
+# type_of(v): what kind of value v is, as a small whole number:
+# 0 none, 1 bool, 2 int, 3 float, 4 string, 5 list (a byte list too),
+# 6 dict, 7 proc. A number and not a name, because the programs that
+# ask (an interpreter looking at every value it handles) ask millions
+# of times a second, and comparing numbers costs nothing.
+proc bi_type_of(t, v) {
+    rt_tag := T_INT
+    if t == T_FLOAT { return 3 }
+    if t == T_INT { return 2 }
+    if t == T_STR { return 4 }
+    if t == T_BOOL { return 1 }
+    if t == T_LIST or t == T_BYTES { return 5 }
+    if t == T_DICT { return 6 }
+    if t == T_CLOSURE { return 7 }
+    return 0
+}
+
 # random_bytes(n): n bytes nobody can guess, from the system, as a
 # byte list.
 proc bi_random_bytes(t, n) {
@@ -2351,6 +2368,7 @@ proc rt_bi_init() {
     rt_bi_add("clipboard_get", bi_clipboard_get, 1)
     rt_bi_add("clipboard_set", bi_clipboard_set, 2)
     rt_bi_add("random_bytes", bi_random_bytes, 1)
+    rt_bi_add("type_of", bi_type_of, 1)
     rt_bi_add("audio_open", bi_audio_open, 2)
     rt_bi_add("audio_write", bi_audio_write, 3)
     rt_bi_add("audio_played", bi_audio_played, 1)
